@@ -6,7 +6,7 @@ using HarmonyLib;
 using UnityEngine;
 using UnityGameTranslator.Core;
 
-[assembly: MelonInfo(typeof(UnityGameTranslator.MelonLoader.TranslatorMod), "UnityGameTranslator", "0.8.0", "Community")]
+[assembly: MelonInfo(typeof(UnityGameTranslator.MelonLoader.TranslatorMod), "UnityGameTranslator", "0.9.0", "Community")]
 [assembly: MelonGame(null, null)]
 
 namespace UnityGameTranslator.MelonLoader

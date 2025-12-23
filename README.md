@@ -26,7 +26,7 @@ A universal translation mod for Unity games using local AI (Ollama).
 
 > **BepInEx 6** is in beta but supports both Mono and IL2CPP games. Use the version matching your game type.
 
-> **Architecture:** UnityGameTranslator is compiled as AnyCPU and works with both x86 and x64 games. Install the mod loader version (x86/x64) matching your game, then use the same UnityGameTranslator plugin.
+> **Cross-platform:** UnityGameTranslator DLLs are .NET assemblies that work on Windows, macOS, and Linux. The same release package works on all platforms. Install the mod loader version matching your OS and architecture, then use the same UnityGameTranslator plugin.
 
 **How to know your game type:**
 - `GameAssembly.dll` in game folder → **IL2CPP**

@@ -12,7 +12,7 @@ using Il2CppInterop.Runtime.Injection;
 
 namespace UnityGameTranslator.BepInEx6IL2CPP
 {
-    [BepInPlugin("com.community.unitygametranslator", "UnityGameTranslator", "0.8.0")]
+    [BepInPlugin("com.community.unitygametranslator", "UnityGameTranslator", "0.9.0")]
     public class Plugin : BasePlugin
     {
         private static Plugin Instance;

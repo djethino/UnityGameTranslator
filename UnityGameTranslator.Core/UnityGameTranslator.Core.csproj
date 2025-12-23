@@ -6,7 +6,6 @@
     <LangVersion>latest</LangVersion>
     <OutputPath>bin\</OutputPath>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
-    <Version>0.8.0</Version>
   </PropertyGroup>
 
   <ItemGroup>

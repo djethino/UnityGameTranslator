@@ -40,7 +40,6 @@ namespace UnityGameTranslator.Core
         private static int translatedCount = 0;
         private static int ollamaCount = 0;
         private static int cacheHitCount = 0;
-        private static HashSet<string> loggedTranslations = new HashSet<string>();
         private static Dictionary<int, string> lastSeenText = new Dictionary<int, string>();
         private static HashSet<string> pendingTranslations = new HashSet<string>();
         private static Queue<string> translationQueue = new Queue<string>();
@@ -61,6 +60,13 @@ namespace UnityGameTranslator.Core
 
         // Callback for updating components when translation completes
         public static Action<string, string, List<object>> OnTranslationComplete;
+
+        // Queue status for UI overlay
+        private static bool isTranslating = false;
+        private static string currentlyTranslating = null;
+        public static int QueueCount { get { lock (lockObj) { return translationQueue.Count; } } }
+        public static bool IsTranslating => isTranslating;
+        public static string CurrentText => currentlyTranslating;
 
         private static readonly Regex NumberPattern = new Regex(@"(?<!\[v)(-?\d+(?:[.,]\d+)?%?)", RegexOptions.Compiled);
 
@@ -116,7 +122,6 @@ namespace UnityGameTranslator.Core
         public static void OnSceneChanged(string sceneName)
         {
             lastSeenText.Clear();
-            loggedTranslations.Clear();
 
             if (DebugMode)
                 Adapter?.LogInfo($"Scene: {sceneName}");
@@ -294,10 +299,24 @@ namespace UnityGameTranslator.Core
                     if (translationQueue.Count > 0)
                     {
                         textToTranslate = translationQueue.Dequeue();
+
+                        // TAKE components (remove from dict) so new queues create fresh entries
                         if (pendingComponents.TryGetValue(textToTranslate, out var comps))
                         {
-                            componentsToUpdate = new List<object>(comps);
+                            componentsToUpdate = comps; // Take the list directly
+                            pendingComponents.Remove(textToTranslate); // Remove NOW
+                            if (Config.debug_ollama)
+                                Adapter?.LogInfo($"[Worker] Found {comps.Count} components for text");
                         }
+                        else
+                        {
+                            if (Config.debug_ollama)
+                                Adapter?.LogWarning($"[Worker] NO components found for text!");
+                        }
+
+                        // Remove from pending so same text can be re-queued with new components
+                        pendingTranslations.Remove(textToTranslate);
+
                         if (Config.debug_ollama)
                             Adapter?.LogInfo($"[Worker] Dequeued: {textToTranslate?.Substring(0, Math.Min(30, textToTranslate?.Length ?? 0))}...");
                     }
@@ -306,6 +325,8 @@ namespace UnityGameTranslator.Core
                 if (textToTranslate != null)
                 {
                     string originalText = textToTranslate;
+                    isTranslating = true;
+                    currentlyTranslating = textToTranslate.Length > 50 ? textToTranslate.Substring(0, 50) + "..." : textToTranslate;
                     try
                     {
                         if (Config.debug_ollama)
@@ -319,7 +340,23 @@ namespace UnityGameTranslator.Core
                             normalizedOriginal = ExtractNumbersToPlaceholders(textToTranslate, out extractedNumbers);
                         }
 
-                        string translation = TranslateWithOllama(normalizedOriginal, extractedNumbers);
+                        // Check cache first (another request might have already translated this)
+                        string translation = null;
+                        if (TranslationCache.TryGetValue(normalizedOriginal, out string alreadyCached))
+                        {
+                            if (alreadyCached != normalizedOriginal)
+                            {
+                                translation = alreadyCached;
+                                if (Config.debug_ollama)
+                                    Adapter?.LogInfo($"[Worker] Cache hit for normalized text, skipping Ollama");
+                            }
+                        }
+
+                        // Only call Ollama if not in cache
+                        if (translation == null)
+                        {
+                            translation = TranslateWithOllama(normalizedOriginal, extractedNumbers);
+                        }
                         if (Config.debug_ollama)
                             Adapter?.LogInfo($"[Worker] Ollama returned: {translation?.Substring(0, Math.Min(30, translation?.Length ?? 0))}...");
 
@@ -355,12 +392,13 @@ namespace UnityGameTranslator.Core
                         if (Config.debug_ollama)
                             Adapter?.LogWarning($"Ollama error: {e.Message}");
                     }
-
-                    lock (lockObj)
+                    finally
                     {
-                        pendingTranslations.Remove(originalText);
-                        pendingComponents.Remove(originalText);
+                        isTranslating = false;
+                        currentlyTranslating = null;
                     }
+
+                    // Note: pendingTranslations and pendingComponents already cleaned at dequeue time
                 }
                 else
                 {
@@ -410,7 +448,7 @@ namespace UnityGameTranslator.Core
                         new { role = "assistant", content = "<think>\n\n</think>\n\n" }
                     },
                     stream = false,
-                    options = new { temperature = 0.0, num_predict = 100 }
+                    options = new { temperature = 0.0, num_predict = Math.Max(200, textToTranslate.Length * 2) }
                 };
 
                 string jsonRequest = JsonConvert.SerializeObject(requestBody);
@@ -470,10 +508,11 @@ namespace UnityGameTranslator.Core
             // Remove common prefixes (only at start)
             text = Regex.Replace(text, @"^(Translation|Traduction|Here'?s?|The translation is)\s*[:\-]?\s*", "", RegexOptions.IgnoreCase);
 
-            // Remove explanation blocks that come after double newline
-            int doubleNewline = text.IndexOf("\n\n");
-            if (doubleNewline > 0)
-                text = text.Substring(0, doubleNewline);
+            // Remove explanation blocks - only if they start with typical LLM explanation patterns
+            // Don't cut legitimate double newlines in the source text
+            var explanationMatch = Regex.Match(text, @"\n\n(Note:|I |This |Here |The above|Explanation:|Translation note:)", RegexOptions.IgnoreCase);
+            if (explanationMatch.Success)
+                text = text.Substring(0, explanationMatch.Index);
 
             // Remove quotes only if they wrap the entire text
             text = text.Trim();
@@ -617,7 +656,8 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Main translation method - translate text from cache or queue for Ollama
+        /// Main translation method - translate text from cache or queue for Ollama.
+        /// Treats multiline text as a single unit to preserve context and ensure consistency.
         /// </summary>
         public static string TranslateText(string text)
         {
@@ -627,33 +667,7 @@ namespace UnityGameTranslator.Core
             if (IsNumericOrSymbol(text))
                 return text;
 
-            if (text.Contains("\n"))
-            {
-                string[] lines = text.Split('\n');
-                bool anyTranslated = false;
-
-                for (int i = 0; i < lines.Length; i++)
-                {
-                    string trimmed = lines[i].Trim();
-                    if (string.IsNullOrEmpty(trimmed)) continue;
-
-                    string translated = TranslateSingleText(trimmed);
-                    if (translated != trimmed)
-                    {
-                        lines[i] = lines[i].Replace(trimmed, translated);
-                        anyTranslated = true;
-                    }
-                }
-
-                if (anyTranslated)
-                {
-                    translatedCount++;
-                    return string.Join("\n", lines);
-                }
-
-                return text;
-            }
-
+            // No line splitting - treat multiline as single unit for context preservation
             string result = TranslateSingleText(text);
             if (result != text)
                 translatedCount++;
@@ -668,26 +682,51 @@ namespace UnityGameTranslator.Core
             if (IsNumericOrSymbol(text))
                 return text;
 
-            if (TranslationCache.TryGetValue(text, out string cached))
+            // Normalize FIRST (extract numbers to placeholders)
+            string normalizedText = text;
+            List<string> extractedNumbers = null;
+            if (Config.normalize_numbers)
             {
-                if (cached != text)
+                normalizedText = ExtractNumbersToPlaceholders(text, out extractedNumbers);
+            }
+
+            // Check cache with NORMALIZED key
+            bool foundInCache = false;
+            if (TranslationCache.TryGetValue(normalizedText, out string cached))
+            {
+                foundInCache = true;
+                if (cached != normalizedText)
                 {
                     cacheHitCount++;
                     translatedCount++;
-                    return cached;
+                    return (extractedNumbers != null && extractedNumbers.Count > 0)
+                        ? RestoreNumbersFromPlaceholders(cached, extractedNumbers)
+                        : cached;
                 }
+                // If cached == normalizedText, it means "no translation needed", still a cache hit
             }
 
-            string trimmed = text.Trim();
-            if (trimmed != text && TranslationCache.TryGetValue(trimmed, out string cachedTrimmed))
+            // Try trimmed normalized
+            string trimmed = normalizedText.Trim();
+            if (trimmed != normalizedText && TranslationCache.TryGetValue(trimmed, out string cachedTrimmed))
             {
+                foundInCache = true;
                 if (cachedTrimmed != trimmed)
                 {
                     cacheHitCount++;
-                    return cachedTrimmed;
+                    return (extractedNumbers != null && extractedNumbers.Count > 0)
+                        ? RestoreNumbersFromPlaceholders(cachedTrimmed, extractedNumbers)
+                        : cachedTrimmed;
                 }
             }
 
+            // If found in cache with key == value, no translation needed, don't queue
+            if (foundInCache)
+            {
+                return text;
+            }
+
+            // Pattern matching (keep for non-number patterns)
             string patternResult = TryPatternMatch(text);
             if (patternResult != null)
             {
@@ -697,7 +736,8 @@ namespace UnityGameTranslator.Core
 
             if (Config.enable_ollama && !string.IsNullOrEmpty(text) && text.Length >= 3)
             {
-                if (translatedTexts.Contains(text))
+                // Check reverse cache with NORMALIZED text (translations are stored normalized)
+                if (translatedTexts.Contains(normalizedText))
                 {
                     skippedAlreadyTranslated++;
                     return text;
@@ -717,7 +757,8 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Translate with component tracking for async updates
+        /// Translate with component tracking for async updates.
+        /// Treats multiline text as a single unit to ensure proper component tracking.
         /// </summary>
         public static string TranslateTextWithTracking(string text, object component)
         {
@@ -727,33 +768,7 @@ namespace UnityGameTranslator.Core
             if (IsNumericOrSymbol(text))
                 return text;
 
-            if (text.Contains("\n"))
-            {
-                string[] lines = text.Split('\n');
-                bool anyTranslated = false;
-
-                for (int i = 0; i < lines.Length; i++)
-                {
-                    string trimmed = lines[i].Trim();
-                    if (string.IsNullOrEmpty(trimmed)) continue;
-
-                    string translated = TranslateSingleTextWithTracking(trimmed, component);
-                    if (translated != trimmed)
-                    {
-                        lines[i] = lines[i].Replace(trimmed, translated);
-                        anyTranslated = true;
-                    }
-                }
-
-                if (anyTranslated)
-                {
-                    translatedCount++;
-                    return string.Join("\n", lines);
-                }
-
-                return text;
-            }
-
+            // Don't split multiline - treat as single unit for proper component tracking
             string result = TranslateSingleTextWithTracking(text, component);
             if (result != text)
                 translatedCount++;
@@ -768,36 +783,80 @@ namespace UnityGameTranslator.Core
             if (IsNumericOrSymbol(text))
                 return text;
 
-            if (TranslationCache.TryGetValue(text, out string cached))
+            // Normalize FIRST (extract numbers to placeholders)
+            string normalizedText = text;
+            List<string> extractedNumbers = null;
+            if (Config.normalize_numbers)
             {
-                if (cached != text)
+                normalizedText = ExtractNumbersToPlaceholders(text, out extractedNumbers);
+            }
+
+            string translation = null;
+
+            // Check cache with NORMALIZED key
+            bool foundInCache = false;
+            if (TranslationCache.TryGetValue(normalizedText, out string cached))
+            {
+                foundInCache = true;
+                if (cached != normalizedText)
                 {
                     cacheHitCount++;
                     translatedCount++;
-                    return cached;
+                    // Restore numbers in the translation
+                    translation = (extractedNumbers != null && extractedNumbers.Count > 0)
+                        ? RestoreNumbersFromPlaceholders(cached, extractedNumbers)
+                        : cached;
                 }
+                // If cached == normalizedText, it means "no translation needed", still a cache hit
             }
 
-            string trimmed = text.Trim();
-            if (trimmed != text && TranslationCache.TryGetValue(trimmed, out string cachedTrimmed))
+            // Try trimmed normalized
+            if (translation == null && !foundInCache)
             {
-                if (cachedTrimmed != trimmed)
+                string trimmed = normalizedText.Trim();
+                if (trimmed != normalizedText && TranslationCache.TryGetValue(trimmed, out string cachedTrimmed))
                 {
-                    cacheHitCount++;
-                    return cachedTrimmed;
+                    foundInCache = true;
+                    if (cachedTrimmed != trimmed)
+                    {
+                        cacheHitCount++;
+                        translation = (extractedNumbers != null && extractedNumbers.Count > 0)
+                            ? RestoreNumbersFromPlaceholders(cachedTrimmed, extractedNumbers)
+                            : cachedTrimmed;
+                    }
                 }
             }
 
-            string patternResult = TryPatternMatch(text);
-            if (patternResult != null)
+            // Pattern matching no longer needed for numbers (normalized lookup handles it)
+            // But keep for other patterns that might exist
+            if (translation == null)
             {
-                translatedCount++;
-                return patternResult;
+                string patternResult = TryPatternMatch(text);
+                if (patternResult != null)
+                {
+                    translatedCount++;
+                    translation = patternResult;
+                }
             }
 
+            // If we found a translation in cache, return it synchronously
+            // This prevents the game from reading back translated text and appending to it
+            if (translation != null)
+            {
+                return translation;
+            }
+
+            // If found in cache with key == value, no translation needed, don't queue
+            if (foundInCache)
+            {
+                return text;
+            }
+
+            // No cache hit - queue for Ollama if enabled
             if (Config.enable_ollama && !string.IsNullOrEmpty(text) && text.Length >= 3)
             {
-                if (translatedTexts.Contains(text))
+                // Check reverse cache with NORMALIZED text (translations are stored normalized)
+                if (translatedTexts.Contains(normalizedText))
                 {
                     skippedAlreadyTranslated++;
                     return text;
@@ -818,32 +877,9 @@ namespace UnityGameTranslator.Core
 
         public static bool IsTargetLanguage(string text)
         {
-            if (string.IsNullOrEmpty(text) || text.Length < 8)
-                return false;
-
-            string targetLang = Config.GetTargetLanguage().ToLower();
-
-            if (targetLang == "french" || targetLang == "français" || targetLang == "fr")
-            {
-                if (Regex.IsMatch(text, @"[éèêëàâùûôîç]"))
-                    return true;
-                if (Regex.IsMatch(text.ToLower(), @"\b(le|la|les|une|des|du|est|sont|vous|nous|cette|nouveau|nouvelle|chargement|sauvegarde|partie|niveau|terminé|joueur)\b"))
-                {
-                    if (!Regex.IsMatch(text.ToLower(), @"\b(the|this|that|is|are|was|has|have|player|game|level|save|load|health)\b"))
-                        return true;
-                }
-            }
-            else if (targetLang == "german" || targetLang == "deutsch" || targetLang == "de")
-            {
-                if (Regex.IsMatch(text, @"[äöüßÄÖÜ]"))
-                    return true;
-            }
-            else if (targetLang == "spanish" || targetLang == "español" || targetLang == "es")
-            {
-                if (Regex.IsMatch(text, @"[áéíóúñ¿¡]"))
-                    return true;
-            }
-
+            // Disabled: too many false positives with mixed-language content
+            // The reverse cache (translatedTexts) handles exact matches
+            // Ollama can recognize already-translated text and return it unchanged
             return false;
         }
 

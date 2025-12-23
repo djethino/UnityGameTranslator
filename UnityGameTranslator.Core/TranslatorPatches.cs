@@ -133,26 +133,28 @@ namespace UnityGameTranslator.Core
 
         public static void StringTableEntry_Postfix(object __instance, ref string __result)
         {
-            if (__instance == null || string.IsNullOrEmpty(__result)) return;
-            try { __result = TranslatorCore.TranslateText(__result); } catch { }
+            // Disabled: sync translation here causes issues when the game builds strings
+            // using translated parts. Let TMP_Text/UI.Text patches handle translation instead.
+            // if (__instance == null || string.IsNullOrEmpty(__result)) return;
+            // try { __result = TranslatorCore.TranslateText(__result); } catch { }
         }
 
         public static void TMPText_SetText_Prefix(TMP_Text __instance, ref string value)
         {
             if (string.IsNullOrEmpty(value)) return;
-            try { value = TranslatorCore.TranslateText(value); } catch { }
+            try { value = TranslatorCore.TranslateTextWithTracking(value, __instance); } catch { }
         }
 
-        public static void TMPText_SetTextMethod_Prefix(ref string __0)
+        public static void TMPText_SetTextMethod_Prefix(TMP_Text __instance, ref string __0)
         {
             if (string.IsNullOrEmpty(__0)) return;
-            try { __0 = TranslatorCore.TranslateText(__0); } catch { }
+            try { __0 = TranslatorCore.TranslateTextWithTracking(__0, __instance); } catch { }
         }
 
         public static void UIText_SetText_Prefix(Text __instance, ref string value)
         {
             if (string.IsNullOrEmpty(value)) return;
-            try { value = TranslatorCore.TranslateText(value); } catch { }
+            try { value = TranslatorCore.TranslateTextWithTracking(value, __instance); } catch { }
         }
 
         #endregion

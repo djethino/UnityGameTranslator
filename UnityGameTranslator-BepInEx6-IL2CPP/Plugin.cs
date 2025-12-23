@@ -87,6 +87,26 @@ namespace UnityGameTranslator.BepInEx6IL2CPP
             {
                 TranslatorCore.OnShutdown();
             }
+
+            void OnGUI()
+            {
+                int queueCount = TranslatorCore.QueueCount;
+                bool isTranslating = TranslatorCore.IsTranslating;
+
+                if (queueCount > 0 || isTranslating)
+                {
+                    string status = isTranslating
+                        ? $"Traduction... ({queueCount} en attente)"
+                        : $"En attente: {queueCount}";
+
+                    float width = 250f;
+                    float height = 25f;
+                    float x = Screen.width - width - 10;
+                    float y = 10;
+
+                    GUI.Box(new Rect(x, y, width, height), status);
+                }
+            }
         }
 
         private void OnUpdate()

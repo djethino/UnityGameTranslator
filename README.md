@@ -6,9 +6,10 @@ A universal translation mod for Unity games using local AI (Ollama).
 
 - **Runtime translation** - text is translated as you encounter it in-game
 - **Local AI translation** via Ollama (no internet required, no API costs)
+- **Instant cache hits** - cached translations apply synchronously
+- **Number normalization** - "Kill 5 enemies" and "Kill 10 enemies" share the same translation
+- **Translation queue overlay** - shows progress when Ollama is translating (top-right corner)
 - **Auto language detection** - detects system language as target
-- **Translation caching** - translated text is saved to avoid re-translating
-- **Pattern matching** - handles dynamic text with numbers (e.g., "5 HP" → "5 PV")
 - **Cross-platform** - works on Windows, macOS, Linux
 
 > **Note:** Only text displayed during gameplay is translated. Play through the game to build the translation cache.
@@ -77,7 +78,8 @@ Config file location:
   "game_context": "",
   "enable_ollama": false,
   "normalize_numbers": true,
-  "preload_model": true
+  "preload_model": true,
+  "debug_ollama": false
 }
 ```
 
@@ -88,6 +90,8 @@ Config file location:
 | `game_context` | Game description for better translations (e.g., `"Medieval fantasy RPG"`) |
 | `enable_ollama` | `true` to enable live AI translation |
 | `model` | Ollama model to use |
+| `normalize_numbers` | `true` to replace numbers with placeholders for better cache reuse |
+| `debug_ollama` | `true` to log detailed Ollama requests/responses |
 
 ## Sharing translations
 

@@ -34,6 +34,11 @@ A universal translation mod for Unity games using local AI (Ollama).
 
 ### 2. Install UnityGameTranslator
 
+**First run:** Launch the game once with the mod loader installed, then quit. This creates the required folder structure for plugins.
+
+- [BepInEx installation guide](https://docs.bepinex.dev/articles/user_guide/installation/index.html)
+- [MelonLoader installation guide](https://melonwiki.xyz/#/?id=requirements)
+
 Download the release matching your mod loader and extract to:
 
 | Mod Loader | Extract to |
@@ -61,7 +66,7 @@ By default, the plugin only uses cached translations. To enable live AI translat
    "enable_ollama": true
    ```
 
-> **VRAM requirements:** qwen3:8b requires ~6-8 GB VRAM (Q4 quantization). Smaller models use less VRAM but may reduce translation quality.
+> **Recommended model:** `qwen3:8b` is the tested and optimized model (requires ~6-8 GB VRAM). It provides the best balance of speed, quality, and multilingual support. Other models may work but are experimental.
 
 ## Configuration
 
@@ -89,13 +94,20 @@ Config file location:
 | `source_language` | Source language (`"auto"` = let AI detect) |
 | `game_context` | Game description for better translations (e.g., `"Medieval fantasy RPG"`) |
 | `enable_ollama` | `true` to enable live AI translation |
-| `model` | Ollama model to use |
+| `model` | Ollama model (`qwen3:8b` recommended, other models are experimental) |
 | `normalize_numbers` | `true` to replace numbers with placeholders for better cache reuse |
 | `debug_ollama` | `true` to log detailed Ollama requests/responses |
 
 ## Sharing translations
 
-Translation caches are stored in `translations.json`. Share this file to provide translations without requiring Ollama.
+Translation caches are stored in `translations.json` in the plugin folder:
+- BepInEx: `<Game>/BepInEx/plugins/UnityGameTranslator/translations.json`
+- MelonLoader: `<Game>/UserData/UnityGameTranslator/translations.json`
+
+To use a shared translation file:
+1. Copy `translations.json` to your plugin folder
+2. Set `target_language` in `config.json` to match the translation language (e.g., `"French"`)
+3. Set the game's language to the source language used for translation (usually English)
 
 ---
 
@@ -143,6 +155,13 @@ extlibs/
 ### Build
 
 ```bash
+./prepare-release.ps1
+```
+
+This script builds all projects and creates release zips in `releases/`.
+
+Or build individually:
+```bash
 dotnet build UnityGameTranslator-BepInEx5/UnityGameTranslator.BepInEx5.csproj -c Release
 dotnet build UnityGameTranslator-BepInEx6-Mono/UnityGameTranslator.BepInEx6Mono.csproj -c Release
 dotnet build UnityGameTranslator-BepInEx6-IL2CPP/UnityGameTranslator.BepInEx6IL2CPP.csproj -c Release
@@ -150,6 +169,10 @@ dotnet build UnityGameTranslator-MelonLoader/UnityGameTranslator.MelonLoader.csp
 ```
 
 Output DLLs are in each project's `bin/` folder.
+
+### Versioning
+
+The version is centralized in `Directory.Build.props`. Update the `<Version>` tag before release—all projects inherit it automatically.
 
 ---
 

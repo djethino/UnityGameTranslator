@@ -51,6 +51,7 @@ namespace UnityGameTranslator.BepInEx6Mono
             SceneManager.sceneLoaded += (scene, mode) =>
             {
                 TranslatorCore.OnSceneChanged(scene.name);
+                TranslatorScanner.OnSceneChange();
                 lastScanTime = Time.realtimeSinceStartup - 0.04f;
             };
         }

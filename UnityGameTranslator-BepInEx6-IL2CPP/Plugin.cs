@@ -78,6 +78,7 @@ namespace UnityGameTranslator.BepInEx6IL2CPP
                 {
                     lastSceneName = activeScene.name;
                     TranslatorCore.OnSceneChanged(activeScene.name);
+                    TranslatorScanner.OnSceneChange();
                     Instance.lastScanTime = Time.realtimeSinceStartup - 0.04f;
                 }
             }

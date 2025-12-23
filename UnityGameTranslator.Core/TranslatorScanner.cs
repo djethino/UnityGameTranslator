@@ -9,19 +9,80 @@ namespace UnityGameTranslator.Core
 {
     /// <summary>
     /// Handles component scanning for both Mono and IL2CPP runtimes.
+    /// Optimized for minimal per-frame overhead.
     /// </summary>
     public static class TranslatorScanner
     {
-        // IL2CPP support
+        #region IL2CPP Reflection Cache
+
         private static MethodInfo il2cppTypeOfMethod;
         private static MethodInfo resourcesFindAllMethod;
         private static MethodInfo tryCastMethod;
         private static bool il2cppMethodsInitialized = false;
         private static bool il2cppScanAvailable = false;
 
+        // Cached generic methods (avoid MakeGenericMethod every call)
+        private static MethodInfo tryCastTMPMethod;
+        private static MethodInfo tryCastTextMethod;
+        private static object il2cppTypeTMP;
+        private static object il2cppTypeText;
+
+        #endregion
+
+        #region Component Cache
+
+        // Cache found components to avoid FindObjectsOfTypeAll every frame
+        private static UnityEngine.Object[] cachedTMPComponents;
+        private static UnityEngine.Object[] cachedUIComponents;
+        private static TMP_Text[] cachedTMPMono;
+        private static Text[] cachedUIMono;
+        private static float lastComponentCacheTime = 0f;
+        private const float COMPONENT_CACHE_DURATION = 2f; // Refresh every 2 seconds
+
+        // For Mono: cache direct references
+        private static Dictionary<int, TMP_Text> tmpComponentCache = new Dictionary<int, TMP_Text>();
+        private static Dictionary<int, Text> uiComponentCache = new Dictionary<int, Text>();
+
+        #endregion
+
+        #region Batch Processing
+
+        private static int currentBatchIndexTMP = 0;
+        private static int currentBatchIndexUI = 0;
+        private const int BATCH_SIZE = 150; // Process 150 components per scan cycle
+
+        #endregion
+
+        #region Quick Skip Cache
+
+        // Track objects that have been processed and haven't changed
+        // Key: instanceId, Value: last processed text hash
+        private static Dictionary<int, int> processedTextHashes = new Dictionary<int, int>();
+
+        #endregion
+
         // Logging flags (one-time)
         private static bool scanLoggedTMP = false;
         private static bool scanLoggedUI = false;
+
+        /// <summary>
+        /// Reset caches on scene change.
+        /// </summary>
+        public static void OnSceneChange()
+        {
+            cachedTMPComponents = null;
+            cachedUIComponents = null;
+            cachedTMPMono = null;
+            cachedUIMono = null;
+            lastComponentCacheTime = 0f;
+            currentBatchIndexTMP = 0;
+            currentBatchIndexUI = 0;
+            processedTextHashes.Clear();
+            tmpComponentCache.Clear();
+            uiComponentCache.Clear();
+            scanLoggedTMP = false;
+            scanLoggedUI = false;
+        }
 
         /// <summary>
         /// Initialize IL2CPP methods via reflection. Call once at startup for IL2CPP games.
@@ -99,13 +160,27 @@ namespace UnityGameTranslator.Core
 
                 il2cppScanAvailable = il2cppTypeOfMethod != null && resourcesFindAllMethod != null;
 
+                // Pre-cache generic methods for TMP_Text and Text
                 if (il2cppScanAvailable)
                 {
-                    TranslatorCore.LogInfo($"IL2CPP scan initialized (TryCast: {tryCastMethod != null})");
+                    try
+                    {
+                        il2cppTypeTMP = il2cppTypeOfMethod.MakeGenericMethod(typeof(TMP_Text)).Invoke(null, null);
+                        il2cppTypeText = il2cppTypeOfMethod.MakeGenericMethod(typeof(Text)).Invoke(null, null);
+                    }
+                    catch { }
+
+                    if (tryCastMethod != null)
+                    {
+                        tryCastTMPMethod = tryCastMethod.MakeGenericMethod(typeof(TMP_Text));
+                        tryCastTextMethod = tryCastMethod.MakeGenericMethod(typeof(Text));
+                    }
+
+                    TranslatorCore.LogInfo($"IL2CPP scan initialized (TryCast cached: {tryCastTMPMethod != null})");
                 }
                 else
                 {
-                    TranslatorCore.LogWarning($"IL2CPP scan not available - Il2CppType.Of: {il2cppTypeOfMethod != null}, FindObjectsOfTypeAll: {resourcesFindAllMethod != null}");
+                    TranslatorCore.LogWarning($"IL2CPP scan not available");
                 }
             }
             catch (Exception e)
@@ -119,110 +194,237 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static bool IsIL2CPPScanAvailable => il2cppScanAvailable;
 
+        #region Mono Scanning
+
         /// <summary>
-        /// Scan and translate all text components (Mono version).
+        /// Scan and translate text components (Mono version) - batched for performance.
         /// </summary>
         public static void ScanMono()
         {
+            float currentTime = Time.realtimeSinceStartup;
+
+            // Refresh component cache periodically
+            if (cachedTMPMono == null || currentTime - lastComponentCacheTime > COMPONENT_CACHE_DURATION)
+            {
+                RefreshMonoCache();
+                lastComponentCacheTime = currentTime;
+            }
+
             try
             {
-                // TMP_Text
-                TMP_Text[] allTMP;
-                try { allTMP = UnityEngine.Object.FindObjectsOfType<TMP_Text>(true); }
-                catch { allTMP = UnityEngine.Object.FindObjectsOfType<TMP_Text>(); }
-
-                foreach (var tmp in allTMP)
+                // Process TMP batch
+                if (cachedTMPMono != null && cachedTMPMono.Length > 0)
                 {
-                    if (tmp == null) continue;
-                    ProcessComponent(tmp, tmp.GetInstanceID(), tmp.text, text => tmp.text = text);
+                    int endIndex = Math.Min(currentBatchIndexTMP + BATCH_SIZE, cachedTMPMono.Length);
+                    for (int i = currentBatchIndexTMP; i < endIndex; i++)
+                    {
+                        var tmp = cachedTMPMono[i];
+                        if (tmp == null) continue;
+                        ProcessTMPComponent(tmp);
+                    }
+                    currentBatchIndexTMP = endIndex >= cachedTMPMono.Length ? 0 : endIndex;
                 }
 
-                // UI.Text
-                Text[] allUI;
-                try { allUI = UnityEngine.Object.FindObjectsOfType<Text>(true); }
-                catch { allUI = UnityEngine.Object.FindObjectsOfType<Text>(); }
-
-                foreach (var ui in allUI)
+                // Process UI batch
+                if (cachedUIMono != null && cachedUIMono.Length > 0)
                 {
-                    if (ui == null) continue;
-                    ProcessComponent(ui, ui.GetInstanceID(), ui.text, text => ui.text = text);
+                    int endIndex = Math.Min(currentBatchIndexUI + BATCH_SIZE, cachedUIMono.Length);
+                    for (int i = currentBatchIndexUI; i < endIndex; i++)
+                    {
+                        var ui = cachedUIMono[i];
+                        if (ui == null) continue;
+                        ProcessUITextComponent(ui);
+                    }
+                    currentBatchIndexUI = endIndex >= cachedUIMono.Length ? 0 : endIndex;
                 }
             }
             catch { }
         }
 
+        private static void RefreshMonoCache()
+        {
+            try
+            {
+                try { cachedTMPMono = UnityEngine.Object.FindObjectsOfType<TMP_Text>(true); }
+                catch { cachedTMPMono = UnityEngine.Object.FindObjectsOfType<TMP_Text>(); }
+
+                try { cachedUIMono = UnityEngine.Object.FindObjectsOfType<Text>(true); }
+                catch { cachedUIMono = UnityEngine.Object.FindObjectsOfType<Text>(); }
+
+                currentBatchIndexTMP = 0;
+                currentBatchIndexUI = 0;
+            }
+            catch { }
+        }
+
+        #endregion
+
+        #region IL2CPP Scanning
+
         /// <summary>
-        /// Scan and translate all text components (IL2CPP version).
+        /// Scan and translate text components (IL2CPP version) - batched for performance.
         /// </summary>
         public static void ScanIL2CPP()
         {
             if (!il2cppMethodsInitialized) InitializeIL2CPP();
             if (!il2cppScanAvailable) return;
 
+            float currentTime = Time.realtimeSinceStartup;
+
+            // Refresh component cache periodically
+            if (cachedTMPComponents == null || currentTime - lastComponentCacheTime > COMPONENT_CACHE_DURATION)
+            {
+                RefreshIL2CPPCache();
+                lastComponentCacheTime = currentTime;
+            }
+
             try
             {
-                // TMP_Text
-                var foundTMP = FindAllComponentsIL2CPP(typeof(TMP_Text));
-                if (foundTMP != null)
+                // Process TMP batch
+                if (cachedTMPComponents != null && cachedTMPComponents.Length > 0)
                 {
                     if (!scanLoggedTMP)
                     {
-                        TranslatorCore.LogInfo($"Scan: Found {foundTMP.Length} TMP_Text components");
+                        TranslatorCore.LogInfo($"Scan: Found {cachedTMPComponents.Length} TMP_Text components");
                         scanLoggedTMP = true;
                     }
 
-                    foreach (var obj in foundTMP)
+                    int endIndex = Math.Min(currentBatchIndexTMP + BATCH_SIZE, cachedTMPComponents.Length);
+                    for (int i = currentBatchIndexTMP; i < endIndex; i++)
                     {
-                        var tmp = TryCastIL2CPP<TMP_Text>(obj);
+                        var obj = cachedTMPComponents[i];
+                        if (obj == null) continue;
+
+                        // Quick skip: check if we've already processed this object with same text
+                        int objId = obj.GetInstanceID();
+
+                        var tmp = TryCastTMP(obj);
                         if (tmp == null) continue;
-                        ProcessComponent(tmp, tmp.GetInstanceID(), tmp.text, text => tmp.text = text);
+
+                        ProcessTMPComponent(tmp);
                     }
+                    currentBatchIndexTMP = endIndex >= cachedTMPComponents.Length ? 0 : endIndex;
                 }
 
-                // UI.Text
-                var foundUI = FindAllComponentsIL2CPP(typeof(Text));
-                if (foundUI != null)
+                // Process UI batch
+                if (cachedUIComponents != null && cachedUIComponents.Length > 0)
                 {
                     if (!scanLoggedUI)
                     {
-                        TranslatorCore.LogInfo($"Scan: Found {foundUI.Length} UI.Text components");
+                        TranslatorCore.LogInfo($"Scan: Found {cachedUIComponents.Length} UI.Text components");
                         scanLoggedUI = true;
                     }
 
-                    foreach (var obj in foundUI)
+                    int endIndex = Math.Min(currentBatchIndexUI + BATCH_SIZE, cachedUIComponents.Length);
+                    for (int i = currentBatchIndexUI; i < endIndex; i++)
                     {
-                        var ui = TryCastIL2CPP<Text>(obj);
+                        var obj = cachedUIComponents[i];
+                        if (obj == null) continue;
+
+                        var ui = TryCastText(obj);
                         if (ui == null) continue;
-                        ProcessComponent(ui, ui.GetInstanceID(), ui.text, text => ui.text = text);
+
+                        ProcessUITextComponent(ui);
                     }
+                    currentBatchIndexUI = endIndex >= cachedUIComponents.Length ? 0 : endIndex;
                 }
             }
             catch { }
         }
 
-        /// <summary>
-        /// Process a single component for translation.
-        /// </summary>
-        private static void ProcessComponent(object component, int instanceId, string currentText, Action<string> setText)
+        private static void RefreshIL2CPPCache()
         {
             try
             {
-                if (string.IsNullOrEmpty(currentText) || currentText.Length < 2) return;
-                if (TranslatorCore.HasSeenText(instanceId, currentText, out _)) return;
+                cachedTMPComponents = FindAllComponentsIL2CPPCached(il2cppTypeTMP);
+                cachedUIComponents = FindAllComponentsIL2CPPCached(il2cppTypeText);
+                currentBatchIndexTMP = 0;
+                currentBatchIndexUI = 0;
+            }
+            catch { }
+        }
 
-                string translated = TranslatorCore.TranslateTextWithTracking(currentText, component);
+        #endregion
+
+        #region Component Processing
+
+        private static void ProcessTMPComponent(TMP_Text tmp)
+        {
+            try
+            {
+                string currentText = tmp.text;
+                if (string.IsNullOrEmpty(currentText) || currentText.Length < 2) return;
+
+                int instanceId = tmp.GetInstanceID();
+                int textHash = currentText.GetHashCode();
+
+                // Quick skip: already processed with same text
+                if (processedTextHashes.TryGetValue(instanceId, out int lastHash) && lastHash == textHash)
+                    return;
+
+                // Check if text changed since last seen
+                if (TranslatorCore.HasSeenText(instanceId, currentText, out _))
+                {
+                    processedTextHashes[instanceId] = textHash;
+                    return;
+                }
+
+                string translated = TranslatorCore.TranslateTextWithTracking(currentText, tmp);
                 if (translated != currentText)
                 {
-                    setText(translated);
+                    tmp.text = translated;
                     TranslatorCore.UpdateSeenText(instanceId, translated);
+                    processedTextHashes[instanceId] = translated.GetHashCode();
                 }
                 else
                 {
                     TranslatorCore.UpdateSeenText(instanceId, currentText);
+                    processedTextHashes[instanceId] = textHash;
                 }
             }
             catch { }
         }
+
+        private static void ProcessUITextComponent(Text ui)
+        {
+            try
+            {
+                string currentText = ui.text;
+                if (string.IsNullOrEmpty(currentText) || currentText.Length < 2) return;
+
+                int instanceId = ui.GetInstanceID();
+                int textHash = currentText.GetHashCode();
+
+                // Quick skip: already processed with same text
+                if (processedTextHashes.TryGetValue(instanceId, out int lastHash) && lastHash == textHash)
+                    return;
+
+                // Check if text changed since last seen
+                if (TranslatorCore.HasSeenText(instanceId, currentText, out _))
+                {
+                    processedTextHashes[instanceId] = textHash;
+                    return;
+                }
+
+                string translated = TranslatorCore.TranslateTextWithTracking(currentText, ui);
+                if (translated != currentText)
+                {
+                    ui.text = translated;
+                    TranslatorCore.UpdateSeenText(instanceId, translated);
+                    processedTextHashes[instanceId] = translated.GetHashCode();
+                }
+                else
+                {
+                    TranslatorCore.UpdateSeenText(instanceId, currentText);
+                    processedTextHashes[instanceId] = textHash;
+                }
+            }
+            catch { }
+        }
+
+        #endregion
+
+        #region Translation Callback
 
         /// <summary>
         /// Callback for when async translation completes. Updates tracked components.
@@ -238,32 +440,39 @@ namespace UnityGameTranslator.Core
                     if (comp is TMP_Text tmp && tmp != null && tmp.text == originalText)
                     {
                         tmp.text = translation;
+                        int id = tmp.GetInstanceID();
+                        TranslatorCore.UpdateSeenText(id, translation);
+                        processedTextHashes[id] = translation.GetHashCode();
                     }
                     else if (comp is Text ui && ui != null && ui.text == originalText)
                     {
                         ui.text = translation;
+                        int id = ui.GetInstanceID();
+                        TranslatorCore.UpdateSeenText(id, translation);
+                        processedTextHashes[id] = translation.GetHashCode();
                     }
                 }
                 catch { }
             }
         }
 
-        #region IL2CPP Helpers
+        #endregion
 
-        private static T TryCastIL2CPP<T>(object obj) where T : class
+        #region IL2CPP Helpers (Optimized)
+
+        private static TMP_Text TryCastTMP(object obj)
         {
             if (obj == null) return null;
-            if (obj is T direct) return direct;
+            if (obj is TMP_Text direct) return direct;
 
-            if (tryCastMethod != null)
+            if (tryCastTMPMethod != null)
             {
                 try
                 {
-                    var genericMethod = tryCastMethod.MakeGenericMethod(typeof(T));
                     if (tryCastMethod.IsStatic)
-                        return genericMethod.Invoke(null, new[] { obj }) as T;
+                        return tryCastTMPMethod.Invoke(null, new[] { obj }) as TMP_Text;
                     else
-                        return genericMethod.Invoke(obj, null) as T;
+                        return tryCastTMPMethod.Invoke(obj, null) as TMP_Text;
                 }
                 catch { }
             }
@@ -271,16 +480,32 @@ namespace UnityGameTranslator.Core
             return null;
         }
 
-        private static UnityEngine.Object[] FindAllComponentsIL2CPP(Type componentType)
+        private static Text TryCastText(object obj)
         {
-            if (!il2cppScanAvailable) return null;
+            if (obj == null) return null;
+            if (obj is Text direct) return direct;
+
+            if (tryCastTextMethod != null)
+            {
+                try
+                {
+                    if (tryCastMethod.IsStatic)
+                        return tryCastTextMethod.Invoke(null, new[] { obj }) as Text;
+                    else
+                        return tryCastTextMethod.Invoke(obj, null) as Text;
+                }
+                catch { }
+            }
+
+            return null;
+        }
+
+        private static UnityEngine.Object[] FindAllComponentsIL2CPPCached(object il2cppType)
+        {
+            if (!il2cppScanAvailable || il2cppType == null) return null;
 
             try
             {
-                var genericMethod = il2cppTypeOfMethod.MakeGenericMethod(componentType);
-                var il2cppType = genericMethod.Invoke(null, null);
-                if (il2cppType == null) return null;
-
                 var result = resourcesFindAllMethod.Invoke(null, new[] { il2cppType });
                 if (result == null) return null;
 

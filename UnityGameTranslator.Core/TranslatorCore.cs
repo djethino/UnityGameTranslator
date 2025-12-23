@@ -56,6 +56,9 @@ namespace UnityGameTranslator.Core
         // Component tracking: components waiting for a translation (using object to avoid Unity dependencies)
         private static Dictionary<string, List<object>> pendingComponents = new Dictionary<string, List<object>>();
 
+        // Pattern match failure cache (texts that don't match any pattern)
+        private static HashSet<string> patternMatchFailures = new HashSet<string>();
+
         // Callback for updating components when translation completes
         public static Action<string, string, List<object>> OnTranslationComplete;
 
@@ -846,6 +849,10 @@ namespace UnityGameTranslator.Core
 
         public static string TryPatternMatch(string text)
         {
+            // Quick skip if we already know this text doesn't match any pattern
+            if (patternMatchFailures.Contains(text))
+                return null;
+
             foreach (var entry in PatternEntries)
             {
                 try
@@ -871,6 +878,9 @@ namespace UnityGameTranslator.Core
                 }
                 catch { }
             }
+
+            // Cache this failure to avoid re-checking all patterns next time
+            patternMatchFailures.Add(text);
             return null;
         }
 

@@ -50,6 +50,7 @@ namespace UnityGameTranslator.MelonLoader
         public override void OnSceneWasLoaded(int buildIndex, string sceneName)
         {
             TranslatorCore.OnSceneChanged(sceneName);
+            TranslatorScanner.OnSceneChange();
             lastScanTime = Time.realtimeSinceStartup - 0.04f;
         }
 

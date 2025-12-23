@@ -59,9 +59,9 @@ Write-Host "`nCreating release zips..." -ForegroundColor Yellow
 # BepInEx 5
 $bepinex5Dir = "$releasesDir/UnityGameTranslator-BepInEx5-v$Version"
 New-Item -ItemType Directory -Path $bepinex5Dir | Out-Null
-Copy-Item "UnityGameTranslator-BepInEx5/bin/Release/UnityGameTranslator.dll" $bepinex5Dir
-Copy-Item "UnityGameTranslator-BepInEx5/bin/Release/UnityGameTranslator.Core.dll" $bepinex5Dir
-Copy-Item "UnityGameTranslator-BepInEx5/bin/Release/Newtonsoft.Json.dll" $bepinex5Dir
+Copy-Item "UnityGameTranslator-BepInEx5/bin/UnityGameTranslator.dll" $bepinex5Dir
+Copy-Item "UnityGameTranslator-BepInEx5/bin/UnityGameTranslator.Core.dll" $bepinex5Dir
+Copy-Item "UnityGameTranslator-BepInEx5/bin/Newtonsoft.Json.dll" $bepinex5Dir
 $configJson | Out-File -FilePath "$bepinex5Dir/config.json" -Encoding utf8NoBOM
 Compress-Archive -Path "$bepinex5Dir/*" -DestinationPath "$releasesDir/UnityGameTranslator-BepInEx5-v$Version.zip"
 Write-Host "  Created UnityGameTranslator-BepInEx5-v$Version.zip" -ForegroundColor Gray
@@ -69,9 +69,9 @@ Write-Host "  Created UnityGameTranslator-BepInEx5-v$Version.zip" -ForegroundCol
 # BepInEx 6 Mono
 $bepinex6MonoDir = "$releasesDir/UnityGameTranslator-BepInEx6-Mono-v$Version"
 New-Item -ItemType Directory -Path $bepinex6MonoDir | Out-Null
-Copy-Item "UnityGameTranslator-BepInEx6-Mono/bin/Release/UnityGameTranslator.dll" $bepinex6MonoDir
-Copy-Item "UnityGameTranslator-BepInEx6-Mono/bin/Release/UnityGameTranslator.Core.dll" $bepinex6MonoDir
-Copy-Item "UnityGameTranslator-BepInEx6-Mono/bin/Release/Newtonsoft.Json.dll" $bepinex6MonoDir
+Copy-Item "UnityGameTranslator-BepInEx6-Mono/bin/UnityGameTranslator.dll" $bepinex6MonoDir
+Copy-Item "UnityGameTranslator-BepInEx6-Mono/bin/UnityGameTranslator.Core.dll" $bepinex6MonoDir
+Copy-Item "UnityGameTranslator-BepInEx6-Mono/bin/Newtonsoft.Json.dll" $bepinex6MonoDir
 $configJson | Out-File -FilePath "$bepinex6MonoDir/config.json" -Encoding utf8NoBOM
 Compress-Archive -Path "$bepinex6MonoDir/*" -DestinationPath "$releasesDir/UnityGameTranslator-BepInEx6-Mono-v$Version.zip"
 Write-Host "  Created UnityGameTranslator-BepInEx6-Mono-v$Version.zip" -ForegroundColor Gray
@@ -79,9 +79,9 @@ Write-Host "  Created UnityGameTranslator-BepInEx6-Mono-v$Version.zip" -Foregrou
 # BepInEx 6 IL2CPP
 $bepinex6IL2CPPDir = "$releasesDir/UnityGameTranslator-BepInEx6-IL2CPP-v$Version"
 New-Item -ItemType Directory -Path $bepinex6IL2CPPDir | Out-Null
-Copy-Item "UnityGameTranslator-BepInEx6-IL2CPP/bin/Release/UnityGameTranslator.dll" $bepinex6IL2CPPDir
-Copy-Item "UnityGameTranslator-BepInEx6-IL2CPP/bin/Release/UnityGameTranslator.Core.dll" $bepinex6IL2CPPDir
-Copy-Item "UnityGameTranslator-BepInEx6-IL2CPP/bin/Release/Newtonsoft.Json.dll" $bepinex6IL2CPPDir
+Copy-Item "UnityGameTranslator-BepInEx6-IL2CPP/bin/UnityGameTranslator.dll" $bepinex6IL2CPPDir
+Copy-Item "UnityGameTranslator-BepInEx6-IL2CPP/bin/UnityGameTranslator.Core.dll" $bepinex6IL2CPPDir
+Copy-Item "UnityGameTranslator-BepInEx6-IL2CPP/bin/Newtonsoft.Json.dll" $bepinex6IL2CPPDir
 $configJson | Out-File -FilePath "$bepinex6IL2CPPDir/config.json" -Encoding utf8NoBOM
 Compress-Archive -Path "$bepinex6IL2CPPDir/*" -DestinationPath "$releasesDir/UnityGameTranslator-BepInEx6-IL2CPP-v$Version.zip"
 Write-Host "  Created UnityGameTranslator-BepInEx6-IL2CPP-v$Version.zip" -ForegroundColor Gray
@@ -89,9 +89,9 @@ Write-Host "  Created UnityGameTranslator-BepInEx6-IL2CPP-v$Version.zip" -Foregr
 # MelonLoader
 $melonDir = "$releasesDir/UnityGameTranslator-MelonLoader-v$Version"
 New-Item -ItemType Directory -Path $melonDir | Out-Null
-Copy-Item "UnityGameTranslator-MelonLoader/bin/Release/UnityGameTranslator.dll" $melonDir
-Copy-Item "UnityGameTranslator-MelonLoader/bin/Release/UnityGameTranslator.Core.dll" $melonDir
-Copy-Item "UnityGameTranslator-MelonLoader/bin/Release/Newtonsoft.Json.dll" $melonDir
+Copy-Item "UnityGameTranslator-MelonLoader/bin/UnityGameTranslator.dll" $melonDir
+Copy-Item "UnityGameTranslator-MelonLoader/bin/UnityGameTranslator.Core.dll" $melonDir
+Copy-Item "UnityGameTranslator-MelonLoader/bin/Newtonsoft.Json.dll" $melonDir
 $configJson | Out-File -FilePath "$melonDir/config.json" -Encoding utf8NoBOM
 Compress-Archive -Path "$melonDir/*" -DestinationPath "$releasesDir/UnityGameTranslator-MelonLoader-v$Version.zip"
 Write-Host "  Created UnityGameTranslator-MelonLoader-v$Version.zip" -ForegroundColor Gray

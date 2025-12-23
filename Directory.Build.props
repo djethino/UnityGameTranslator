@@ -1,6 +1,24 @@
 <Project>
   <PropertyGroup>
     <Version>0.9.0</Version>
-    <PluginVersion>0.9.0</PluginVersion>
   </PropertyGroup>
+
+  <!-- Generate PluginVersion.g.cs with version constant before build -->
+  <Target Name="GenerateVersionFile" BeforeTargets="CoreCompile">
+    <PropertyGroup>
+      <VersionFileContent>
+namespace UnityGameTranslator {
+    internal static class PluginInfo {
+        public const string Version = "$(Version)"%3B
+    }
+}
+      </VersionFileContent>
+    </PropertyGroup>
+    <WriteLinesToFile File="$(IntermediateOutputPath)PluginVersion.g.cs"
+                      Lines="$(VersionFileContent)"
+                      Overwrite="true" />
+    <ItemGroup>
+      <Compile Include="$(IntermediateOutputPath)PluginVersion.g.cs" />
+    </ItemGroup>
+  </Target>
 </Project>

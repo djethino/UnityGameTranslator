@@ -11,7 +11,7 @@ using UnityGameTranslator.Core;
 
 namespace UnityGameTranslator.BepInEx6Mono
 {
-    [BepInPlugin("com.community.unitygametranslator", "UnityGameTranslator", "0.9.0")]
+    [BepInPlugin("com.community.unitygametranslator", "UnityGameTranslator", PluginInfo.Version)]
     public class Plugin : BaseUnityPlugin
     {
         private static Harmony harmony;

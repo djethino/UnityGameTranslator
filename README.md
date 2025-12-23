@@ -104,7 +104,7 @@ Translation caches are stored in `translations.json` in the plugin folder:
 - BepInEx: `<Game>/BepInEx/plugins/UnityGameTranslator/translations.json`
 - MelonLoader: `<Game>/UserData/UnityGameTranslator/translations.json`
 
-To use a shared translation file, copy `translations.json` to your plugin folder. The source language is auto-detected.
+To use a shared translation file, copy `translations.json` to your plugin folder. Make sure your game language matches the source language of the translation (e.g., for an English→French file, set your game to English).
 
 ---
 

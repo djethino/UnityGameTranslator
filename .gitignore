@@ -1,0 +1,23 @@
+# Build outputs
+bin/
+obj/
+
+# IDE
+.vs/
+.vscode/
+*.user
+*.suo
+
+# External libraries (download separately - see README)
+extlibs/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# NuGet
+packages/
+*.nupkg

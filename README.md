@@ -100,11 +100,26 @@ Config file location:
 
 ## Sharing translations
 
+### Community website
+
+Share and download translation files on the official community platform:
+
+**[unitygametranslator.asymptomatikgames.com](https://unitygametranslator.asymptomatikgames.com)**
+
+- Browse existing translations by game and language
+- Upload your translation files to help others
+- Fork and improve existing translations
+- Automatic lineage tracking via file UUID
+
+### Manual sharing
+
 Translation caches are stored in `translations.json` in the plugin folder:
 - BepInEx: `<Game>/BepInEx/plugins/UnityGameTranslator/translations.json`
 - MelonLoader: `<Game>/UserData/UnityGameTranslator/translations.json`
 
 To use a shared translation file, copy `translations.json` to your plugin folder. Make sure your game language matches the source language of the translation (e.g., for an English→French file, set your game to English).
+
+Each `translations.json` file contains a unique `_uuid` that tracks its lineage. When you upload a file to the website, forks are automatically detected and linked to the original.
 
 ---
 

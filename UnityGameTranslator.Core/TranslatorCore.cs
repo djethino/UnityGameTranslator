@@ -35,6 +35,7 @@ namespace UnityGameTranslator.Core
         public static string ConfigPath { get; private set; }
         public static string ModFolder { get; private set; }
         public static bool DebugMode { get; private set; } = false;
+        public static string FileUuid { get; private set; }
 
         private static float lastSaveTime = 0f;
         private static int translatedCount = 0;
@@ -181,7 +182,10 @@ namespace UnityGameTranslator.Core
         {
             if (!File.Exists(CachePath))
             {
-                Adapter.LogInfo("No cache file found, starting fresh");
+                // Generate UUID for new translation file
+                FileUuid = Guid.NewGuid().ToString();
+                Adapter.LogInfo($"No cache file found, starting fresh with UUID: {FileUuid}");
+                SaveCache(); // Save immediately to persist UUID
                 return;
             }
 
@@ -190,6 +194,20 @@ namespace UnityGameTranslator.Core
                 string json = File.ReadAllText(CachePath);
                 TranslationCache = JsonConvert.DeserializeObject<Dictionary<string, string>>(json)
                     ?? new Dictionary<string, string>();
+
+                // Extract UUID from cache (special key)
+                if (TranslationCache.TryGetValue("_uuid", out string uuid))
+                {
+                    FileUuid = uuid;
+                    TranslationCache.Remove("_uuid"); // Don't treat as translation
+                }
+                else
+                {
+                    // Legacy file without UUID - generate one
+                    FileUuid = Guid.NewGuid().ToString();
+                    cacheModified = true; // Will save UUID on next save
+                    Adapter.LogInfo($"Legacy cache file, generated UUID: {FileUuid}");
+                }
 
                 // Build reverse cache: all translated values
                 translatedTexts.Clear();
@@ -202,12 +220,13 @@ namespace UnityGameTranslator.Core
                 }
 
                 BuildPatternEntries();
-                Adapter.LogInfo($"Loaded {TranslationCache.Count} cached translations, {translatedTexts.Count} reverse entries");
+                Adapter.LogInfo($"Loaded {TranslationCache.Count} cached translations, {translatedTexts.Count} reverse entries, UUID: {FileUuid}");
             }
             catch (Exception e)
             {
                 Adapter.LogError($"Failed to load cache: {e.Message}");
                 TranslationCache = new Dictionary<string, string>();
+                FileUuid = Guid.NewGuid().ToString();
             }
         }
 
@@ -951,13 +970,22 @@ namespace UnityGameTranslator.Core
             {
                 try
                 {
+                    // Create ordered dictionary with UUID first, then sorted translations
+                    var output = new Dictionary<string, string>();
+                    output["_uuid"] = FileUuid;
+
                     var sorted = new SortedDictionary<string, string>(TranslationCache);
-                    string json = JsonConvert.SerializeObject(sorted, Formatting.Indented);
+                    foreach (var kv in sorted)
+                    {
+                        output[kv.Key] = kv.Value;
+                    }
+
+                    string json = JsonConvert.SerializeObject(output, Formatting.Indented);
                     File.WriteAllText(CachePath, json);
                     cacheModified = false;
 
                     if (DebugMode)
-                        Adapter?.LogInfo($"Saved {sorted.Count} cache entries");
+                        Adapter?.LogInfo($"Saved {sorted.Count} cache entries with UUID: {FileUuid}");
                 }
                 catch (Exception e)
                 {

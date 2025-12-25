@@ -192,4 +192,4 @@ The version is centralized in `Directory.Build.props`. Update the `<Version>` ta
 
 ## License
 
-Apache 2.0
+MIT License - see [LICENSE](LICENSE) for details.

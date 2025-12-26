@@ -51,6 +51,7 @@ namespace UnityGameTranslator.BepInEx6IL2CPP
             public void LogWarning(string message) => logger.LogWarning(message);
             public void LogError(string message) => logger.LogError(message);
             public string GetPluginFolder() => pluginPath;
+            public string ModLoaderType => "BepInEx6-IL2CPP";
 
             public Rect DrawWindow(int id, Rect rect, Action<int> drawFunc, string title)
             {

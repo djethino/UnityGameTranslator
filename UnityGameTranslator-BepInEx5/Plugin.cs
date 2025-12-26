@@ -31,6 +31,7 @@ namespace UnityGameTranslator.BepInEx5
             public void LogWarning(string message) => logger.LogWarning(message);
             public void LogError(string message) => logger.LogError(message);
             public string GetPluginFolder() => pluginPath;
+            public string ModLoaderType => "BepInEx5";
 
             public Rect DrawWindow(int id, Rect rect, Action<int> drawFunc, string title)
             {

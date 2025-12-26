@@ -18,6 +18,7 @@ A universal translation mod for Unity games with local AI (Ollama) and online co
 - **Community translations** - download translations from the community website
 - **Automatic game detection** - detects game via Steam ID or product name
 - **Update notifications** - get notified when translations are updated
+- **Mod update checker** - get notified when a new mod version is available on GitHub
 - **Upload your work** - share translations with the community
 - **3-way merge** - intelligently merge updates while keeping your local changes
 - **Device Flow login** - secure authentication without entering passwords in-game
@@ -128,6 +129,7 @@ Config file location:
     "check_update_on_start": true,
     "auto_download": false,
     "notify_updates": true,
+    "check_mod_updates": true,
     "merge_strategy": "ask",
     "ignored_uuids": []
   }
@@ -161,6 +163,7 @@ Config file location:
 | `check_update_on_start` | Check for translation updates when game starts |
 | `auto_download` | Automatically download updates (if no conflicts) |
 | `notify_updates` | Show notification when updates are available |
+| `check_mod_updates` | Check for new mod versions on GitHub at startup |
 | `merge_strategy` | How to handle updates: `"ask"`, `"merge"`, or `"replace"` |
 | `ignored_uuids` | List of translation UUIDs to ignore updates for |
 
@@ -292,6 +295,7 @@ UnityGameTranslator/
 │   ├── TranslatorUI.cs                 # IMGUI overlay system
 │   ├── ApiClient.cs                    # HTTP client for website API
 │   ├── GameDetector.cs                 # Game identification
+│   ├── GitHubUpdateChecker.cs          # GitHub releases update checker
 │   └── TranslationMerger.cs            # 3-way merge logic
 ├── UnityGameTranslator-BepInEx5/       # BepInEx 5 adapter
 ├── UnityGameTranslator-BepInEx6-Mono/  # BepInEx 6 Mono adapter

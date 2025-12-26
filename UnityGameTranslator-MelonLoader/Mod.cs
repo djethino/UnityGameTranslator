@@ -48,6 +48,7 @@ namespace UnityGameTranslator.MelonLoader
             public void LogWarning(string message) => MelonLogger.Warning(message);
             public void LogError(string message) => MelonLogger.Error(message);
             public string GetPluginFolder() => Path.Combine(MelonEnvironment.UserDataDirectory, "UnityGameTranslator");
+            public string ModLoaderType => "MelonLoader";
 
             public Rect DrawWindow(int id, Rect rect, Action<int> drawFunc, string title)
             {

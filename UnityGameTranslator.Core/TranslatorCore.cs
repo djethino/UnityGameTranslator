@@ -23,6 +23,12 @@ namespace UnityGameTranslator.Core
         string GetPluginFolder();
 
         /// <summary>
+        /// Mod loader type identifier for GitHub release asset selection.
+        /// Values: "BepInEx5", "BepInEx6-Mono", "BepInEx6-IL2CPP", "MelonLoader"
+        /// </summary>
+        string ModLoaderType { get; }
+
+        /// <summary>
         /// Draw a GUI window. Required because IL2CPP needs special delegate handling.
         /// </summary>
         /// <param name="id">Window ID</param>
@@ -1429,6 +1435,17 @@ namespace UnityGameTranslator.Core
         public bool notify_updates { get; set; } = true;
         public string merge_strategy { get; set; } = "ask";
         public List<string> ignored_uuids { get; set; } = new List<string>();
+
+        /// <summary>
+        /// Check for mod updates on GitHub at startup.
+        /// Only works when online_mode is enabled.
+        /// </summary>
+        public bool check_mod_updates { get; set; } = true;
+
+        /// <summary>
+        /// Last known mod version (to avoid notifying about same version again)
+        /// </summary>
+        public string last_seen_mod_version { get; set; } = null;
     }
 
     /// <summary>

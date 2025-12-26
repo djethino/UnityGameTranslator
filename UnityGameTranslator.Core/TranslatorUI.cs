@@ -225,6 +225,7 @@ namespace UnityGameTranslator.Core
         private static bool settingsCheckUpdates;
         private static bool settingsAutoDownload;
         private static bool settingsNotifyUpdates;
+        private static bool settingsCheckModUpdates;
         private static string settingsHotkey;
         private static bool settingsHotkeyWaiting;
         private static bool settingsHotkeyCtrl;
@@ -285,6 +286,11 @@ namespace UnityGameTranslator.Core
         public static TranslationCheckResult PendingUpdateInfo { get; private set; } = null;
         public static UpdateDirection PendingUpdateDirection { get; private set; } = UpdateDirection.None;
         private static bool notificationDismissed = false; // User dismissed the notification for this session
+
+        // Mod update notification state
+        public static bool HasModUpdate { get; private set; } = false;
+        public static ModUpdateInfo ModUpdateInfo { get; private set; } = null;
+        private static bool modUpdateDismissed = false; // User dismissed mod update notification for this session
 
         // Merge dialog state
         private static bool showMergeDialog = false;
@@ -386,13 +392,19 @@ namespace UnityGameTranslator.Core
             // Wait a bit to let the game initialize
             await Task.Delay(3000);
 
+            // Check for mod updates first (non-blocking, independent of auth)
+            if (TranslatorCore.Config.online_mode && TranslatorCore.Config.sync.check_mod_updates)
+            {
+                CheckForModUpdates();
+            }
+
             // Fetch server state if online mode is enabled and we have a token
             if (TranslatorCore.Config.online_mode && !string.IsNullOrEmpty(TranslatorCore.Config.api_token))
             {
                 await FetchServerState();
             }
 
-            // Then check for updates (only if we have server state with a site_id)
+            // Then check for translation updates (only if we have server state with a site_id)
             CheckForUpdates();
         }
 
@@ -1190,6 +1202,7 @@ namespace UnityGameTranslator.Core
             settingsCheckUpdates = TranslatorCore.Config.sync.check_update_on_start;
             settingsAutoDownload = TranslatorCore.Config.sync.auto_download;
             settingsNotifyUpdates = TranslatorCore.Config.sync.notify_updates;
+            settingsCheckModUpdates = TranslatorCore.Config.sync.check_mod_updates;
 
             // Hotkey - parse modifiers from stored string (e.g., "Ctrl+Alt+F10")
             string storedHotkey = TranslatorCore.Config.settings_hotkey ?? "F10";
@@ -1359,11 +1372,17 @@ namespace UnityGameTranslator.Core
                 GUILayout.BeginHorizontal();
                 WindowHelper.Label("Not connected", italic: true);
                 GUILayout.FlexibleSpace();
+                GUI.enabled = TranslatorCore.Config.online_mode;
                 if (GUILayout.Button("Login", GUILayout.Width(70), GUILayout.Height(22)))
                 {
                     ShowLogin();
                 }
+                GUI.enabled = true;
                 GUILayout.EndHorizontal();
+                if (!TranslatorCore.Config.online_mode)
+                {
+                    WindowHelper.Label("Enable online mode to login", italic: true, fontSize: 10);
+                }
             }
             GUILayout.EndVertical();
 
@@ -1395,14 +1414,19 @@ namespace UnityGameTranslator.Core
                 uploadHint = "Create a new translation";
             }
 
-            GUI.enabled = isLoggedIn && TranslatorCore.TranslationCache.Count > 0;
+            bool canUpload = isLoggedIn && TranslatorCore.Config.online_mode && TranslatorCore.TranslationCache.Count > 0;
+            GUI.enabled = canUpload;
             if (WindowHelper.Button(uploadAction))
             {
                 ShowUpload();
             }
             WindowHelper.Label(uploadHint, italic: true, fontSize: 11);
 
-            if (!isLoggedIn)
+            if (!TranslatorCore.Config.online_mode)
+            {
+                WindowHelper.Label("Offline mode - upload disabled", italic: true, fontSize: 11);
+            }
+            else if (!isLoggedIn)
             {
                 WindowHelper.Label("Login required", italic: true, fontSize: 11);
             }
@@ -1501,9 +1525,10 @@ namespace UnityGameTranslator.Core
             settingsOnlineMode = GUILayout.Toggle(settingsOnlineMode, " Enable Online Mode");
 
             GUI.enabled = settingsOnlineMode;
-            settingsCheckUpdates = GUILayout.Toggle(settingsCheckUpdates, " Check for updates on start");
+            settingsCheckUpdates = GUILayout.Toggle(settingsCheckUpdates, " Check for translation updates on start");
             settingsNotifyUpdates = GUILayout.Toggle(settingsNotifyUpdates, " Notify when updates available");
             settingsAutoDownload = GUILayout.Toggle(settingsAutoDownload, " Auto-download updates (no conflicts)");
+            settingsCheckModUpdates = GUILayout.Toggle(settingsCheckModUpdates, " Check for mod updates on GitHub");
             GUI.enabled = true;
             GUILayout.EndVertical();
 
@@ -1574,6 +1599,7 @@ namespace UnityGameTranslator.Core
             TranslatorCore.Config.sync.check_update_on_start = settingsCheckUpdates;
             TranslatorCore.Config.sync.auto_download = settingsAutoDownload;
             TranslatorCore.Config.sync.notify_updates = settingsNotifyUpdates;
+            TranslatorCore.Config.sync.check_mod_updates = settingsCheckModUpdates;
 
             // Build hotkey string with modifiers
             string hotkeyString = "";
@@ -1604,7 +1630,16 @@ namespace UnityGameTranslator.Core
 
         private static void DrawStatusOverlay()
         {
-            // Check if we should show notification:
+            float currentY = 10; // Track vertical position for stacking notifications
+
+            // First: Mod update notification (highest priority)
+            bool showModUpdate = HasModUpdate && !modUpdateDismissed;
+            if (showModUpdate)
+            {
+                DrawModUpdateNotification(ref currentY);
+            }
+
+            // Check if we should show translation notification:
             // 1. Local changes to upload (real-time)
             // 2. OR server update available (from startup check)
             // 3. OR merge needed (both sides changed)
@@ -1614,11 +1649,11 @@ namespace UnityGameTranslator.Core
             bool hasServerUpdate = HasPendingUpdate && PendingUpdateDirection == UpdateDirection.Download;
             bool needsMerge = HasPendingUpdate && PendingUpdateDirection == UpdateDirection.Merge;
 
-            bool shouldShowNotification = (hasLocalChanges || hasServerUpdate || needsMerge) && !notificationDismissed;
+            bool shouldShowTranslationNotification = (hasLocalChanges || hasServerUpdate || needsMerge) && !notificationDismissed;
 
-            if (shouldShowNotification)
+            if (shouldShowTranslationNotification)
             {
-                DrawUpdateNotification(PendingUpdateDirection);
+                DrawUpdateNotification(PendingUpdateDirection, ref currentY);
             }
 
             // Only show queue if Ollama is enabled
@@ -1632,7 +1667,7 @@ namespace UnityGameTranslator.Core
             float width = 250;
             float height = 45;
             float x = Screen.width - width - 10;
-            float y = shouldShowNotification ? 80 : 10;
+            float y = currentY;
 
             GUI.Box(new Rect(x, y, width, height), "");
 
@@ -1653,12 +1688,56 @@ namespace UnityGameTranslator.Core
             GUILayout.EndArea();
         }
 
-        private static void DrawUpdateNotification(UpdateDirection direction)
+        private static void DrawModUpdateNotification(ref float y)
+        {
+            float width = 380;
+            float height = 75;
+            float x = Screen.width - width - 10;
+
+            GUI.Box(new Rect(x, y, width, height), "");
+
+            GUILayout.BeginArea(new Rect(x + 10, y + 5, width - 20, height - 10));
+            GUILayout.BeginVertical();
+
+            string message = $"Mod update available: v{ModUpdateInfo?.LatestVersion}";
+            GUILayout.Label(message, new GUIStyle(GUI.skin.label) { fontStyle = FontStyle.Bold });
+
+            GUILayout.BeginHorizontal();
+
+            // Show direct download button if we have the URL
+            if (!string.IsNullOrEmpty(ModUpdateInfo?.DownloadUrl))
+            {
+                if (GUILayout.Button("Download", GUILayout.Width(80)))
+                {
+                    OpenModUpdateUrl();
+                }
+            }
+            else if (!string.IsNullOrEmpty(ModUpdateInfo?.ReleaseUrl))
+            {
+                if (GUILayout.Button("View Release", GUILayout.Width(100)))
+                {
+                    OpenModUpdateUrl();
+                }
+            }
+
+            if (GUILayout.Button("Ignore", GUILayout.Width(60)))
+            {
+                DismissModUpdate();
+            }
+
+            GUILayout.EndHorizontal();
+
+            GUILayout.EndVertical();
+            GUILayout.EndArea();
+
+            y += height + 5; // Move down for next notification
+        }
+
+        private static void DrawUpdateNotification(UpdateDirection direction, ref float y)
         {
             float width = 340;
             float height = 65;
             float x = Screen.width - width - 10;
-            float y = 10;
 
             GUI.Box(new Rect(x, y, width, height), "");
 
@@ -1679,7 +1758,7 @@ namespace UnityGameTranslator.Core
                     buttonText = "Download";
                     break;
                 case UpdateDirection.Merge:
-                    message = "⚠ Conflict: Both local and server changed!";
+                    message = "Conflict: Both local and server changed!";
                     buttonText = "Merge";
                     break;
                 default:
@@ -1723,6 +1802,8 @@ namespace UnityGameTranslator.Core
 
             GUILayout.EndVertical();
             GUILayout.EndArea();
+
+            y += height + 5; // Move down for next notification
         }
 
         #endregion
@@ -1839,6 +1920,87 @@ namespace UnityGameTranslator.Core
             catch (Exception e)
             {
                 TranslatorCore.LogWarning($"[UpdateCheck] Error: {e.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Check for mod updates on GitHub.
+        /// Only called if online_mode and check_mod_updates are enabled.
+        /// </summary>
+        public static async void CheckForModUpdates()
+        {
+            // Safety checks - must respect offline mode
+            if (!TranslatorCore.Config.online_mode)
+            {
+                TranslatorCore.LogInfo("[ModUpdate] Skipped - online mode disabled");
+                return;
+            }
+
+            if (!TranslatorCore.Config.sync.check_mod_updates)
+            {
+                TranslatorCore.LogInfo("[ModUpdate] Skipped - check_mod_updates disabled");
+                return;
+            }
+
+            try
+            {
+                string currentVersion = PluginInfo.Version;
+                string modLoaderType = TranslatorCore.Adapter?.ModLoaderType ?? "Unknown";
+
+                var result = await GitHubUpdateChecker.CheckForUpdatesAsync(currentVersion, modLoaderType);
+
+                if (result.Success && result.HasUpdate)
+                {
+                    // Check if we already notified about this version
+                    if (TranslatorCore.Config.sync.last_seen_mod_version == result.LatestVersion)
+                    {
+                        TranslatorCore.LogInfo($"[ModUpdate] Already notified about v{result.LatestVersion}");
+                        return;
+                    }
+
+                    HasModUpdate = true;
+                    ModUpdateInfo = result;
+                    TranslatorCore.LogInfo($"[ModUpdate] New version available: v{result.LatestVersion} (current: v{currentVersion})");
+
+                    // Update last seen version so we don't notify again
+                    TranslatorCore.Config.sync.last_seen_mod_version = result.LatestVersion;
+                    TranslatorCore.SaveConfig();
+                }
+                else if (result.Success)
+                {
+                    TranslatorCore.LogInfo($"[ModUpdate] Mod is up to date (v{currentVersion})");
+                }
+                else
+                {
+                    TranslatorCore.LogWarning($"[ModUpdate] Check failed: {result.Error}");
+                }
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogWarning($"[ModUpdate] Error: {e.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Dismiss the mod update notification for this session.
+        /// </summary>
+        public static void DismissModUpdate()
+        {
+            modUpdateDismissed = true;
+        }
+
+        /// <summary>
+        /// Open the download URL for the mod update.
+        /// </summary>
+        public static void OpenModUpdateUrl()
+        {
+            if (ModUpdateInfo != null)
+            {
+                string url = ModUpdateInfo.DownloadUrl ?? ModUpdateInfo.ReleaseUrl;
+                if (!string.IsNullOrEmpty(url))
+                {
+                    UnityEngine.Application.OpenURL(url);
+                }
             }
         }
 
@@ -2224,6 +2386,13 @@ namespace UnityGameTranslator.Core
 
         public static void ShowLogin()
         {
+            // Enforce offline mode
+            if (!TranslatorCore.Config.online_mode)
+            {
+                TranslatorCore.LogInfo("[Login] Blocked - offline mode enabled");
+                return;
+            }
+
             showLoginDialog = true;
             loginStatus = "";
             InitiateLogin();
@@ -2366,6 +2535,13 @@ namespace UnityGameTranslator.Core
 
         public static void ShowUpload()
         {
+            // Enforce offline mode
+            if (!TranslatorCore.Config.online_mode)
+            {
+                TranslatorCore.LogInfo("[Upload] Blocked - offline mode enabled");
+                return;
+            }
+
             if (string.IsNullOrEmpty(TranslatorCore.Config.api_token))
             {
                 // Need to login first
@@ -2932,6 +3108,13 @@ namespace UnityGameTranslator.Core
         {
             if (string.IsNullOrEmpty(gameSearchQuery) || gameSearchQuery.Length < 2)
                 return;
+
+            // Enforce offline mode
+            if (!TranslatorCore.Config.online_mode)
+            {
+                TranslatorCore.LogInfo("[GameSearch] Blocked - offline mode enabled");
+                return;
+            }
 
             isSearchingGames = true;
             gameSearchResults = null;

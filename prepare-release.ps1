@@ -62,6 +62,7 @@ New-Item -ItemType Directory -Path $bepinex5Dir | Out-Null
 Copy-Item "UnityGameTranslator-BepInEx5/bin/UnityGameTranslator.dll" $bepinex5Dir
 Copy-Item "UnityGameTranslator-BepInEx5/bin/UnityGameTranslator.Core.dll" $bepinex5Dir
 Copy-Item "UnityGameTranslator-BepInEx5/bin/Newtonsoft.Json.dll" $bepinex5Dir
+Copy-Item "UnityGameTranslator-BepInEx5/bin/System.Security.Cryptography.ProtectedData.dll" $bepinex5Dir
 [System.IO.File]::WriteAllText("$bepinex5Dir/config.json", $configJson)
 Compress-Archive -Path "$bepinex5Dir/*" -DestinationPath "$releasesDir/UnityGameTranslator-BepInEx5-v$Version.zip"
 Write-Host "  Created UnityGameTranslator-BepInEx5-v$Version.zip" -ForegroundColor Gray
@@ -72,6 +73,7 @@ New-Item -ItemType Directory -Path $bepinex6MonoDir | Out-Null
 Copy-Item "UnityGameTranslator-BepInEx6-Mono/bin/UnityGameTranslator.dll" $bepinex6MonoDir
 Copy-Item "UnityGameTranslator-BepInEx6-Mono/bin/UnityGameTranslator.Core.dll" $bepinex6MonoDir
 Copy-Item "UnityGameTranslator-BepInEx6-Mono/bin/Newtonsoft.Json.dll" $bepinex6MonoDir
+Copy-Item "UnityGameTranslator-BepInEx6-Mono/bin/System.Security.Cryptography.ProtectedData.dll" $bepinex6MonoDir
 [System.IO.File]::WriteAllText("$bepinex6MonoDir/config.json", $configJson)
 Compress-Archive -Path "$bepinex6MonoDir/*" -DestinationPath "$releasesDir/UnityGameTranslator-BepInEx6-Mono-v$Version.zip"
 Write-Host "  Created UnityGameTranslator-BepInEx6-Mono-v$Version.zip" -ForegroundColor Gray
@@ -82,6 +84,7 @@ New-Item -ItemType Directory -Path $bepinex6IL2CPPDir | Out-Null
 Copy-Item "UnityGameTranslator-BepInEx6-IL2CPP/bin/UnityGameTranslator.dll" $bepinex6IL2CPPDir
 Copy-Item "UnityGameTranslator-BepInEx6-IL2CPP/bin/UnityGameTranslator.Core.dll" $bepinex6IL2CPPDir
 Copy-Item "UnityGameTranslator-BepInEx6-IL2CPP/bin/Newtonsoft.Json.dll" $bepinex6IL2CPPDir
+Copy-Item "UnityGameTranslator-BepInEx6-IL2CPP/bin/System.Security.Cryptography.ProtectedData.dll" $bepinex6IL2CPPDir
 [System.IO.File]::WriteAllText("$bepinex6IL2CPPDir/config.json", $configJson)
 Compress-Archive -Path "$bepinex6IL2CPPDir/*" -DestinationPath "$releasesDir/UnityGameTranslator-BepInEx6-IL2CPP-v$Version.zip"
 Write-Host "  Created UnityGameTranslator-BepInEx6-IL2CPP-v$Version.zip" -ForegroundColor Gray
@@ -92,6 +95,7 @@ New-Item -ItemType Directory -Path $melonDir | Out-Null
 Copy-Item "UnityGameTranslator-MelonLoader/bin/UnityGameTranslator.dll" $melonDir
 Copy-Item "UnityGameTranslator-MelonLoader/bin/UnityGameTranslator.Core.dll" $melonDir
 Copy-Item "UnityGameTranslator-MelonLoader/bin/Newtonsoft.Json.dll" $melonDir
+Copy-Item "UnityGameTranslator-MelonLoader/bin/System.Security.Cryptography.ProtectedData.dll" $melonDir
 [System.IO.File]::WriteAllText("$melonDir/config.json", $configJson)
 Compress-Archive -Path "$melonDir/*" -DestinationPath "$releasesDir/UnityGameTranslator-MelonLoader-v$Version.zip"
 Write-Host "  Created UnityGameTranslator-MelonLoader-v$Version.zip" -ForegroundColor Gray

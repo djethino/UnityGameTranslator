@@ -37,6 +37,7 @@ namespace UnityGameTranslator.BepInEx5
         {
             TranslatorCore.Initialize(new BepInExAdapter(Logger));
             TranslatorCore.OnTranslationComplete = TranslatorScanner.OnTranslationComplete;
+            TranslatorUI.Initialize();
 
             harmony = new Harmony("com.community.unitygametranslator");
             int patchCount = TranslatorPatches.ApplyAll((target, prefix, postfix) =>
@@ -57,6 +58,8 @@ namespace UnityGameTranslator.BepInEx5
 
         void Update()
         {
+            TranslatorUI.CheckHotkey();
+
             float currentTime = Time.realtimeSinceStartup;
             TranslatorCore.OnUpdate(currentTime);
 
@@ -74,22 +77,7 @@ namespace UnityGameTranslator.BepInEx5
 
         void OnGUI()
         {
-            int queueCount = TranslatorCore.QueueCount;
-            bool isTranslating = TranslatorCore.IsTranslating;
-
-            if (queueCount > 0 || isTranslating)
-            {
-                string status = isTranslating
-                    ? $"Traduction... ({queueCount} en attente)"
-                    : $"En attente: {queueCount}";
-
-                float width = 250f;
-                float height = 25f;
-                float x = Screen.width - width - 10;
-                float y = 10;
-
-                GUI.Box(new Rect(x, y, width, height), status);
-            }
+            TranslatorUI.OnGUI();
         }
     }
 }

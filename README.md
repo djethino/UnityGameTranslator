@@ -2,17 +2,33 @@
 
 https://unitygametranslator.asymptomatikgames.com/
 
-A universal translation mod for Unity games using local AI (Ollama).
+A universal translation mod for Unity games with local AI (Ollama) and online community translations.
 
 ## Features
 
+### Translation Engine
 - **Runtime translation** - text is translated as you encounter it in-game
 - **Local AI translation** via Ollama (no internet required, no API costs)
 - **Instant cache hits** - cached translations apply synchronously
 - **Number normalization** - "Kill 5 enemies" and "Kill 10 enemies" share the same translation
-- **Translation queue overlay** - shows progress when Ollama is translating (top-right corner)
 - **Auto language detection** - detects system language as target
 - **Cross-platform** - works on Windows, macOS, Linux
+
+### Online Sync
+- **Community translations** - download translations from the community website
+- **Automatic game detection** - detects game via Steam ID or product name
+- **Update notifications** - get notified when translations are updated
+- **Upload your work** - share translations with the community
+- **3-way merge** - intelligently merge updates while keeping your local changes
+- **Device Flow login** - secure authentication without entering passwords in-game
+
+### In-Game Overlay
+- **Settings hotkey** - press F10 (configurable) to open settings
+- **First-run wizard** - guided setup on first launch
+- **Ollama configuration** - test connection, select model, set game context
+- **Sync options** - configure update checking and merge behavior
+- **Translation info** - view current translation source and local changes
+- **Login/Upload** - authenticate and upload translations without leaving the game
 
 > **Note:** Only text displayed during gameplay is translated. Play through the game to build the translation cache.
 
@@ -54,16 +70,27 @@ The zip contains:
 - `Newtonsoft.Json.dll` - JSON library
 - `config.json` - default configuration
 
-### 3. Enable AI translation (optional)
+### 3. First Launch
 
-By default, the plugin only uses cached translations. To enable live AI translation:
+On first launch, the mod displays a setup wizard:
+1. **Welcome screen** - introduction to the mod
+2. **Online mode** - choose to enable community features or stay offline
+3. **Settings hotkey** - pick a key to open settings (default: F10)
+4. **Translation search** - if online, search for existing translations
+5. **Ollama setup** - configure local AI translation (optional)
+
+After setup, press the hotkey anytime to open settings.
+
+### 4. Enable AI translation (optional)
+
+By default, the plugin only uses cached/downloaded translations. To enable live AI translation:
 
 1. Install Ollama: https://ollama.ai
 2. Download a model:
    ```
    ollama pull qwen3:8b
    ```
-3. Edit `config.json` and set:
+3. Open settings (F10) and enable Ollama, or edit `config.json`:
    ```json
    "enable_ollama": true
    ```
@@ -86,9 +113,26 @@ Config file location:
   "enable_ollama": false,
   "normalize_numbers": true,
   "preload_model": true,
-  "debug_ollama": false
+  "debug_ollama": false,
+
+  "settings_hotkey": "F10",
+  "first_run_completed": true,
+  "online_mode": true,
+
+  "api_token": null,
+  "api_user": null,
+
+  "sync": {
+    "check_update_on_start": true,
+    "auto_download": false,
+    "notify_updates": true,
+    "merge_strategy": "ask",
+    "ignored_uuids": []
+  }
 }
 ```
+
+### Translation Options
 
 | Option | Description |
 |--------|-------------|
@@ -100,28 +144,74 @@ Config file location:
 | `normalize_numbers` | `true` to replace numbers with placeholders for better cache reuse |
 | `debug_ollama` | `true` to log detailed Ollama requests/responses |
 
-## Sharing translations
+### UI Options
 
-### Community website
+| Option | Description |
+|--------|-------------|
+| `settings_hotkey` | Key to open settings overlay (default: `F10`) |
+| `first_run_completed` | `true` after completing the setup wizard |
+| `online_mode` | `true` to enable community features (sync, upload) |
 
-Share and download translation files on the official community platform:
+### Sync Options
 
-**[unitygametranslator.asymptomatikgames.com](https://unitygametranslator.asymptomatikgames.com)**
+| Option | Description |
+|--------|-------------|
+| `check_update_on_start` | Check for translation updates when game starts |
+| `auto_download` | Automatically download updates (if no conflicts) |
+| `notify_updates` | Show notification when updates are available |
+| `merge_strategy` | How to handle updates: `"ask"`, `"merge"`, or `"replace"` |
+| `ignored_uuids` | List of translation UUIDs to ignore updates for |
 
-- Browse existing translations by game and language
-- Upload your translation files to help others
-- Fork and improve existing translations
-- Automatic lineage tracking via file UUID
+### Authentication
 
-### Manual sharing
+| Option | Description |
+|--------|-------------|
+| `api_token` | API token for authenticated actions (set via login flow) |
+| `api_user` | Username of logged-in user |
+
+## Community Features
+
+### Downloading Translations
+
+1. Press F10 to open settings
+2. Click "Search translations" or enable "Check updates on start"
+3. The mod searches for translations matching your game and language
+4. Select a translation to download
+
+### Uploading Translations
+
+1. Press F10 to open settings
+2. Click "Login" to authenticate via the website
+3. Enter the displayed code at the website
+4. Once logged in, click "Upload" to share your translation
+
+### Merging Updates
+
+When a translation you downloaded has updates:
+- **Merge** - keeps your local changes + adds new entries from remote
+- **Replace** - overwrites everything with the new version
+- **Ignore** - keep your version, don't ask again for this translation
+
+The mod uses 3-way merge logic to intelligently combine changes.
+
+### Manual Sharing
 
 Translation caches are stored in `translations.json` in the plugin folder:
 - BepInEx: `<Game>/BepInEx/plugins/UnityGameTranslator/translations.json`
 - MelonLoader: `<Game>/UserData/UnityGameTranslator/translations.json`
 
-To use a shared translation file, copy `translations.json` to your plugin folder. Make sure your game language matches the source language of the translation (e.g., for an English→French file, set your game to English).
+Each file contains metadata for tracking:
+```json
+{
+  "_uuid": "unique-file-id",
+  "_game": { "name": "Game Name", "steam_id": "12345" },
+  "_source": { "site_id": 123, "uploader": "user", "hash": "sha256:..." },
+  "_local_changes": 42,
 
-Each `translations.json` file contains a unique `_uuid` that tracks its lineage. When you upload a file to the website, forks are automatically detected and linked to the original.
+  "Hello": "Bonjour",
+  "Play": "Jouer"
+}
+```
 
 ---
 
@@ -157,6 +247,8 @@ extlibs/
     ├── UnityEngine.CoreModule.dll
     ├── UnityEngine.UI.dll
     ├── UnityEngine.IMGUIModule.dll
+    ├── UnityEngine.TextRenderingModule.dll
+    ├── UnityEngine.InputLegacyModule.dll
     └── Unity.TextMeshPro.dll
 ```
 
@@ -187,6 +279,27 @@ Output DLLs are in each project's `bin/` folder.
 ### Versioning
 
 The version is centralized in `Directory.Build.props`. Update the `<Version>` tag before release—all projects inherit it automatically.
+
+### Project Structure
+
+```
+UnityGameTranslator/
+├── UnityGameTranslator.Core/           # Shared translation engine
+│   ├── TranslatorCore.cs               # Main logic, config, Ollama API
+│   ├── TranslatorPatches.cs            # Harmony patches for text
+│   ├── TranslatorScanner.cs            # Scene scanning for UI
+│   ├── TranslatorUI.cs                 # IMGUI overlay system
+│   ├── ApiClient.cs                    # HTTP client for website API
+│   ├── GameDetector.cs                 # Game identification
+│   └── TranslationMerger.cs            # 3-way merge logic
+├── UnityGameTranslator-BepInEx5/       # BepInEx 5 adapter
+├── UnityGameTranslator-BepInEx6-Mono/  # BepInEx 6 Mono adapter
+├── UnityGameTranslator-BepInEx6-IL2CPP/# BepInEx 6 IL2CPP adapter
+├── UnityGameTranslator-MelonLoader/    # MelonLoader adapter
+├── extlibs/                            # External DLLs
+├── releases/                           # Build output
+└── Directory.Build.props               # Shared version
+```
 
 ---
 

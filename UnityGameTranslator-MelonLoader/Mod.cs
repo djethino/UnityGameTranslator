@@ -30,6 +30,7 @@ namespace UnityGameTranslator.MelonLoader
 
             TranslatorCore.Initialize(new MelonLoaderAdapter());
             TranslatorCore.OnTranslationComplete = TranslatorScanner.OnTranslationComplete;
+            TranslatorUI.Initialize();
 
             if (isIL2CPP)
             {
@@ -56,6 +57,8 @@ namespace UnityGameTranslator.MelonLoader
 
         public override void OnUpdate()
         {
+            TranslatorUI.CheckHotkey();
+
             float currentTime = Time.realtimeSinceStartup;
             TranslatorCore.OnUpdate(currentTime);
 
@@ -77,22 +80,7 @@ namespace UnityGameTranslator.MelonLoader
 
         public override void OnGUI()
         {
-            int queueCount = TranslatorCore.QueueCount;
-            bool isTranslating = TranslatorCore.IsTranslating;
-
-            if (queueCount > 0 || isTranslating)
-            {
-                string status = isTranslating
-                    ? $"Traduction... ({queueCount} en attente)"
-                    : $"En attente: {queueCount}";
-
-                float width = 250f;
-                float height = 25f;
-                float x = Screen.width - width - 10;
-                float y = 10;
-
-                GUI.Box(new Rect(x, y, width, height), status);
-            }
+            TranslatorUI.OnGUI();
         }
     }
 }

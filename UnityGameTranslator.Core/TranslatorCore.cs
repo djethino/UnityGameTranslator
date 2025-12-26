@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -36,6 +37,11 @@ namespace UnityGameTranslator.Core
         public static string ModFolder { get; private set; }
         public static bool DebugMode { get; private set; } = false;
         public static string FileUuid { get; private set; }
+        public static string ParentUuid { get; private set; }
+        public static TranslationSource Source { get; set; }
+        public static GameInfo CurrentGame { get; internal set; }
+        public static int LocalChangesCount { get; private set; } = 0;
+        public static Dictionary<string, string> AncestorCache { get; private set; } = new Dictionary<string, string>();
 
         private static float lastSaveTime = 0f;
         private static int translatedCount = 0;
@@ -69,7 +75,14 @@ namespace UnityGameTranslator.Core
         public static bool IsTranslating => isTranslating;
         public static string CurrentText => currentlyTranslating;
 
-        private static readonly Regex NumberPattern = new Regex(@"(?<!\[v)(-?\d+(?:[.,]\d+)?%?)", RegexOptions.Compiled);
+        // Security: Maximum text length for Ollama translation requests (prevents DoS)
+        private const int MaxOllamaTextLength = 5000;
+
+        // Security: Regex with timeout to prevent ReDoS attacks
+        private static readonly Regex NumberPattern = new Regex(
+            @"(?<!\[v)(-?\d+(?:[.,]\d+)?%?)",
+            RegexOptions.Compiled,
+            TimeSpan.FromMilliseconds(100));
 
         public class PatternEntry
         {
@@ -103,6 +116,13 @@ namespace UnityGameTranslator.Core
 
             httpClient = new HttpClient();
             httpClient.Timeout = TimeSpan.FromMinutes(5);
+
+            // Detect game
+            CurrentGame = GameDetector.DetectGame();
+            if (CurrentGame != null)
+            {
+                Adapter.LogInfo($"Detected game: {CurrentGame.name} (Steam: {CurrentGame.steam_id ?? "N/A"})");
+            }
 
             LoadCache();
             StartTranslationWorker();
@@ -170,11 +190,77 @@ namespace UnityGameTranslator.Core
             {
                 string json = File.ReadAllText(ConfigPath);
                 Config = JsonConvert.DeserializeObject<ModConfig>(json) ?? new ModConfig();
+
+                // Decrypt API token if present
+                if (!string.IsNullOrEmpty(Config.api_token))
+                {
+                    string decryptedToken = TokenProtection.DecryptToken(Config.api_token);
+                    if (decryptedToken != null)
+                    {
+                        // Check if token needs re-encryption (legacy plaintext)
+                        if (TokenProtection.NeedsReEncryption(Config.api_token))
+                        {
+                            Config.api_token = decryptedToken;
+                            SaveConfig(); // Will encrypt on save
+                            Adapter.LogInfo("Migrated legacy token to encrypted storage");
+                        }
+                        else
+                        {
+                            Config.api_token = decryptedToken;
+                        }
+                    }
+                    else
+                    {
+                        Adapter.LogWarning("Failed to decrypt API token - clearing it");
+                        Config.api_token = null;
+                    }
+                }
+
                 Adapter.LogInfo("Loaded config file");
             }
             catch (Exception e)
             {
                 Adapter.LogError($"Failed to load config: {e.Message}");
+            }
+        }
+
+        public static void SaveConfig()
+        {
+            try
+            {
+                // Create a copy for serialization with encrypted token
+                var configToSave = new ModConfig
+                {
+                    ollama_url = Config.ollama_url,
+                    model = Config.model,
+                    target_language = Config.target_language,
+                    source_language = Config.source_language,
+                    game_context = Config.game_context,
+                    timeout_ms = Config.timeout_ms,
+                    enable_ollama = Config.enable_ollama,
+                    cache_new_translations = Config.cache_new_translations,
+                    normalize_numbers = Config.normalize_numbers,
+                    debug_ollama = Config.debug_ollama,
+                    preload_model = Config.preload_model,
+                    first_run_completed = Config.first_run_completed,
+                    online_mode = Config.online_mode,
+                    enable_translations = Config.enable_translations,
+                    settings_hotkey = Config.settings_hotkey,
+                    api_user = Config.api_user,
+                    sync = Config.sync,
+                    // Encrypt token before saving
+                    api_token = !string.IsNullOrEmpty(Config.api_token)
+                        ? TokenProtection.EncryptToken(Config.api_token)
+                        : null
+                };
+
+                string json = JsonConvert.SerializeObject(configToSave, Formatting.Indented);
+                File.WriteAllText(ConfigPath, json);
+                Adapter?.LogInfo("Config saved");
+            }
+            catch (Exception e)
+            {
+                Adapter?.LogError($"Failed to save config: {e.Message}");
             }
         }
 
@@ -192,22 +278,81 @@ namespace UnityGameTranslator.Core
             try
             {
                 string json = File.ReadAllText(CachePath);
-                TranslationCache = JsonConvert.DeserializeObject<Dictionary<string, string>>(json)
-                    ?? new Dictionary<string, string>();
 
-                // Extract UUID from cache (special key)
-                if (TranslationCache.TryGetValue("_uuid", out string uuid))
+                // Parse as JObject to handle metadata
+                var parsed = JObject.Parse(json);
+                TranslationCache = new Dictionary<string, string>();
+
+                // Extract metadata and translations
+                foreach (var prop in parsed.Properties())
                 {
-                    FileUuid = uuid;
-                    TranslationCache.Remove("_uuid"); // Don't treat as translation
+                    if (prop.Name == "_uuid")
+                    {
+                        FileUuid = prop.Value.ToString();
+                    }
+                    else if (prop.Name == "_parent_uuid")
+                    {
+                        ParentUuid = prop.Value.ToString();
+                    }
+                    else if (prop.Name == "_source" && prop.Value is JObject sourceObj)
+                    {
+                        Source = new TranslationSource
+                        {
+                            site_id = sourceObj["site_id"]?.Value<int?>(),
+                            uploader = sourceObj["uploader"]?.Value<string>(),
+                            downloaded_at = sourceObj["downloaded_at"]?.Value<string>(),
+                            hash = sourceObj["hash"]?.Value<string>(),
+                            type = sourceObj["type"]?.Value<string>(),
+                            notes = sourceObj["notes"]?.Value<string>()
+                        };
+                    }
+                    else if (prop.Name == "_local_changes")
+                    {
+                        LocalChangesCount = prop.Value.Value<int>();
+                    }
+                    else if (!prop.Name.StartsWith("_") && prop.Value.Type == JTokenType.String)
+                    {
+                        TranslationCache[prop.Name] = prop.Value.ToString();
+                    }
                 }
-                else
+
+                // Generate UUID if not present
+                if (string.IsNullOrEmpty(FileUuid))
                 {
-                    // Legacy file without UUID - generate one
                     FileUuid = Guid.NewGuid().ToString();
-                    cacheModified = true; // Will save UUID on next save
+                    cacheModified = true;
                     Adapter.LogInfo($"Legacy cache file, generated UUID: {FileUuid}");
                 }
+
+                // Load ancestor cache if exists (for 3-way merge support)
+                string ancestorPath = CachePath + ".ancestor";
+                if (File.Exists(ancestorPath))
+                {
+                    try
+                    {
+                        string ancestorJson = File.ReadAllText(ancestorPath);
+                        var ancestorParsed = JObject.Parse(ancestorJson);
+                        AncestorCache = new Dictionary<string, string>();
+
+                        foreach (var prop in ancestorParsed.Properties())
+                        {
+                            if (!prop.Name.StartsWith("_") && prop.Value.Type == JTokenType.String)
+                            {
+                                AncestorCache[prop.Name] = prop.Value.ToString();
+                            }
+                        }
+
+                        Adapter.LogInfo($"Loaded {AncestorCache.Count} ancestor entries for merge support");
+                    }
+                    catch (Exception ae)
+                    {
+                        Adapter.LogWarning($"Failed to load ancestor cache: {ae.Message}");
+                        AncestorCache = new Dictionary<string, string>();
+                    }
+                }
+
+                // Recalculate LocalChangesCount based on actual differences (always, even if no ancestor)
+                RecalculateLocalChanges();
 
                 // Build reverse cache: all translated values
                 translatedTexts.Clear();
@@ -220,7 +365,8 @@ namespace UnityGameTranslator.Core
                 }
 
                 BuildPatternEntries();
-                Adapter.LogInfo($"Loaded {TranslationCache.Count} cached translations, {translatedTexts.Count} reverse entries, UUID: {FileUuid}");
+                string sourceInfo = Source?.uploader != null ? $", source: {Source.uploader}" : "";
+                Adapter.LogInfo($"Loaded {TranslationCache.Count} cached translations, {translatedTexts.Count} reverse entries, UUID: {FileUuid}{sourceInfo}");
             }
             catch (Exception e)
             {
@@ -230,10 +376,62 @@ namespace UnityGameTranslator.Core
             }
         }
 
+        /// <summary>
+        /// Save the current cache as ancestor (for 3-way merge)
+        /// Call this after downloading from website before any local changes
+        /// </summary>
+        public static void SaveAncestorCache()
+        {
+            try
+            {
+                string ancestorPath = CachePath + ".ancestor";
+                var data = TranslationCache.ToDictionary(kvp => kvp.Key, kvp => (object)kvp.Value);
+                string json = JsonConvert.SerializeObject(data, Formatting.Indented);
+                File.WriteAllText(ancestorPath, json);
+                AncestorCache = new Dictionary<string, string>(TranslationCache);
+                LocalChangesCount = 0;
+                Adapter.LogInfo($"Saved ancestor cache with {AncestorCache.Count} entries");
+            }
+            catch (Exception e)
+            {
+                Adapter.LogWarning($"Failed to save ancestor cache: {e.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Recalculate LocalChangesCount based on actual differences between TranslationCache and AncestorCache.
+        /// Call this after loading caches or after a merge.
+        /// </summary>
+        public static void RecalculateLocalChanges()
+        {
+            if (AncestorCache.Count == 0)
+            {
+                // No ancestor = all entries are local changes
+                LocalChangesCount = TranslationCache.Count;
+                return;
+            }
+
+            int changes = 0;
+            foreach (var kvp in TranslationCache)
+            {
+                // Skip metadata keys
+                if (kvp.Key.StartsWith("_")) continue;
+
+                // New key or different value = local change
+                if (!AncestorCache.TryGetValue(kvp.Key, out var ancestorValue) || ancestorValue != kvp.Value)
+                {
+                    changes++;
+                }
+            }
+
+            LocalChangesCount = changes;
+            Adapter?.LogInfo($"[LocalChanges] Recalculated: {changes} local changes");
+        }
+
         public static void BuildPatternEntries()
         {
             PatternEntries.Clear();
-            var placeholderRegex = new Regex(@"\[v(\d+)\]");
+            var placeholderRegex = new Regex(@"\[v(\d+)\]", RegexOptions.None, TimeSpan.FromMilliseconds(100));
 
             foreach (var kv in TranslationCache)
             {
@@ -259,7 +457,7 @@ namespace UnityGameTranslator.Core
                     {
                         OriginalPattern = kv.Key,
                         TranslatedPattern = kv.Value,
-                        MatchRegex = new Regex("^" + pattern + "$", RegexOptions.Compiled),
+                        MatchRegex = new Regex("^" + pattern + "$", RegexOptions.Compiled, TimeSpan.FromMilliseconds(100)),
                         PlaceholderIndices = placeholderIndices
                     });
                 }
@@ -270,13 +468,50 @@ namespace UnityGameTranslator.Core
                 Adapter?.LogInfo($"Built {PatternEntries.Count} pattern entries");
         }
 
+        private static bool workerRunning = false;
+
         private static void StartTranslationWorker()
         {
             if (!Config.enable_ollama) return;
+            if (workerRunning) return; // Already running
 
+            workerRunning = true;
             Thread workerThread = new Thread(TranslationWorkerLoop);
             workerThread.IsBackground = true;
             workerThread.Start();
+        }
+
+        /// <summary>
+        /// Start the translation worker if Ollama is enabled and worker isn't running.
+        /// Call this after enabling Ollama in settings.
+        /// </summary>
+        public static void EnsureWorkerRunning()
+        {
+            if (Config.enable_ollama && !workerRunning)
+            {
+                Adapter?.LogInfo("[TranslatorCore] Starting Ollama worker thread...");
+                StartTranslationWorker();
+            }
+        }
+
+        /// <summary>
+        /// Clear the translation queue. Called when Ollama is disabled.
+        /// </summary>
+        public static void ClearQueue()
+        {
+            lock (lockObj)
+            {
+                int count = translationQueue.Count;
+                translationQueue.Clear();
+                pendingTranslations.Clear();
+                pendingComponents.Clear();
+                isTranslating = false;
+                currentlyTranslating = null;
+                if (count > 0)
+                {
+                    Adapter?.LogInfo($"[TranslatorCore] Cleared {count} items from translation queue");
+                }
+            }
         }
 
         private static void PreloadModel()
@@ -310,6 +545,14 @@ namespace UnityGameTranslator.Core
 
             while (true)
             {
+                // Stop if Ollama was disabled
+                if (!Config.enable_ollama)
+                {
+                    Adapter?.LogInfo("[Worker] Ollama disabled, stopping worker thread");
+                    workerRunning = false;
+                    return;
+                }
+
                 string textToTranslate = null;
                 List<object> componentsToUpdate = null;
 
@@ -428,6 +671,14 @@ namespace UnityGameTranslator.Core
 
         private static string TranslateWithOllama(string textWithPlaceholders, List<string> extractedNumbers)
         {
+            // Security: Reject text that's too long (prevents DoS via large requests)
+            if (textWithPlaceholders.Length > MaxOllamaTextLength)
+            {
+                if (Config.debug_ollama)
+                    Adapter?.LogWarning($"[Ollama] Text too long ({textWithPlaceholders.Length} chars), skipping translation");
+                return null;
+            }
+
             try
             {
                 string textToTranslate = textWithPlaceholders;
@@ -556,6 +807,20 @@ namespace UnityGameTranslator.Core
 
                 TranslationCache[cacheKey] = cacheValue;
                 cacheModified = true;
+
+                // Track local changes (if different from ancestor or new)
+                if (AncestorCache.Count > 0)
+                {
+                    if (!AncestorCache.TryGetValue(cacheKey, out var ancestorValue) || ancestorValue != cacheValue)
+                    {
+                        LocalChangesCount++;
+                    }
+                }
+                else
+                {
+                    // No ancestor = all translations are local
+                    LocalChangesCount++;
+                }
 
                 // Add to reverse cache
                 if (cacheKey != cacheValue && !string.IsNullOrEmpty(cacheValue))
@@ -781,6 +1046,10 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static string TranslateTextWithTracking(string text, object component)
         {
+            // Check if translations are disabled
+            if (!Config.enable_translations)
+                return text;
+
             if (string.IsNullOrEmpty(text) || text.Length < 2)
                 return text;
 
@@ -970,10 +1239,45 @@ namespace UnityGameTranslator.Core
             {
                 try
                 {
-                    // Create ordered dictionary with UUID first, then sorted translations
-                    var output = new Dictionary<string, string>();
+                    // Create output with metadata first, then sorted translations
+                    var output = new Dictionary<string, object>();
+
+                    // Metadata
                     output["_uuid"] = FileUuid;
 
+                    if (CurrentGame != null)
+                    {
+                        output["_game"] = new Dictionary<string, string>
+                        {
+                            ["name"] = CurrentGame.name,
+                            ["steam_id"] = CurrentGame.steam_id
+                        };
+                    }
+
+                    if (Source != null)
+                    {
+                        output["_source"] = new Dictionary<string, object>
+                        {
+                            ["site_id"] = Source.site_id,
+                            ["uploader"] = Source.uploader,
+                            ["downloaded_at"] = Source.downloaded_at,
+                            ["hash"] = Source.hash,
+                            ["type"] = Source.type,
+                            ["notes"] = Source.notes
+                        };
+                    }
+
+                    if (!string.IsNullOrEmpty(ParentUuid))
+                    {
+                        output["_parent_uuid"] = ParentUuid;
+                    }
+
+                    if (LocalChangesCount > 0)
+                    {
+                        output["_local_changes"] = LocalChangesCount;
+                    }
+
+                    // Sorted translations
                     var sorted = new SortedDictionary<string, string>(TranslationCache);
                     foreach (var kv in sorted)
                     {
@@ -997,6 +1301,7 @@ namespace UnityGameTranslator.Core
 
     public class ModConfig
     {
+        // Ollama settings
         public string ollama_url { get; set; } = "http://localhost:11434";
         public string model { get; set; } = "qwen3:8b";
         public string target_language { get; set; } = "auto";
@@ -1009,12 +1314,20 @@ namespace UnityGameTranslator.Core
         public bool debug_ollama { get; set; } = false;
         public bool preload_model { get; set; } = true;
 
+        // Online mode and sync settings
+        public bool first_run_completed { get; set; } = false;
+        public bool online_mode { get; set; } = false;
+        public bool enable_translations { get; set; } = true;
+        public string settings_hotkey { get; set; } = "F10";
+        public string api_token { get; set; } = null;
+        public string api_user { get; set; } = null;
+        public SyncConfig sync { get; set; } = new SyncConfig();
+
         public string GetTargetLanguage()
         {
             if (string.IsNullOrEmpty(target_language) || target_language.ToLower() == "auto")
             {
-                var culture = System.Globalization.CultureInfo.CurrentUICulture;
-                return culture.EnglishName.Split('(')[0].Trim();
+                return LanguageHelper.GetSystemLanguageName();
             }
             return target_language;
         }
@@ -1027,5 +1340,37 @@ namespace UnityGameTranslator.Core
             }
             return source_language;
         }
+    }
+
+    public class SyncConfig
+    {
+        public bool check_update_on_start { get; set; } = true;
+        public bool auto_download { get; set; } = false;
+        public bool notify_updates { get; set; } = true;
+        public string merge_strategy { get; set; } = "ask";
+        public List<string> ignored_uuids { get; set; } = new List<string>();
+    }
+
+    /// <summary>
+    /// Translation source metadata (where the translations.json came from)
+    /// </summary>
+    public class TranslationSource
+    {
+        public int? site_id { get; set; }
+        public string uploader { get; set; }
+        public string downloaded_at { get; set; }
+        public string hash { get; set; }
+        public string type { get; set; }
+        public string notes { get; set; }
+    }
+
+    /// <summary>
+    /// Game identification info
+    /// </summary>
+    public class GameInfo
+    {
+        public string steam_id { get; set; }
+        public string name { get; set; }
+        public string folder_name { get; set; }
     }
 }

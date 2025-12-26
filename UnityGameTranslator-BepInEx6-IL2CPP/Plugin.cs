@@ -8,6 +8,7 @@ using HarmonyLib;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityGameTranslator.Core;
+using Il2CppInterop.Runtime;
 using Il2CppInterop.Runtime.Injection;
 
 namespace UnityGameTranslator.BepInEx6IL2CPP
@@ -23,17 +24,50 @@ namespace UnityGameTranslator.BepInEx6IL2CPP
         {
             private readonly ManualLogSource logger;
             private readonly string pluginPath;
+            private MethodInfo convertDelegateMethod;
+            private Type windowFunctionType;
 
             public BepInEx6IL2CPPAdapter(ManualLogSource logger)
             {
                 this.logger = logger;
                 this.pluginPath = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+
+                // Cache DelegateSupport.ConvertDelegate<T> method
+                var delegateSupportType = typeof(DelegateSupport);
+                foreach (var method in delegateSupportType.GetMethods(BindingFlags.Public | BindingFlags.Static))
+                {
+                    if (method.Name == "ConvertDelegate" && method.IsGenericMethod)
+                    {
+                        convertDelegateMethod = method;
+                        break;
+                    }
+                }
+
+                // Get the IL2CPP WindowFunction type
+                windowFunctionType = typeof(GUI).GetNestedType("WindowFunction");
             }
 
             public void LogInfo(string message) => logger.LogInfo(message);
             public void LogWarning(string message) => logger.LogWarning(message);
             public void LogError(string message) => logger.LogError(message);
             public string GetPluginFolder() => pluginPath;
+
+            public Rect DrawWindow(int id, Rect rect, Action<int> drawFunc, string title)
+            {
+                // IL2CPP requires delegate conversion via Il2CppInterop
+                if (convertDelegateMethod != null && windowFunctionType != null)
+                {
+                    var genericMethod = convertDelegateMethod.MakeGenericMethod(windowFunctionType);
+                    var il2cppDelegate = (GUI.WindowFunction)genericMethod.Invoke(null, new object[] { drawFunc });
+                    return GUI.Window(id, rect, il2cppDelegate, title);
+                }
+                else
+                {
+                    // Fallback (shouldn't happen)
+                    logger.LogError("[DrawWindow] Failed to initialize delegate conversion");
+                    return rect;
+                }
+            }
         }
 
         public override void Load()
@@ -72,7 +106,6 @@ namespace UnityGameTranslator.BepInEx6IL2CPP
 
             void Update()
             {
-                TranslatorUI.CheckHotkey();
                 Instance?.OnUpdate();
 
                 var activeScene = SceneManager.GetActiveScene();

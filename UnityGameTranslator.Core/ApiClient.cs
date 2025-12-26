@@ -161,7 +161,8 @@ namespace UnityGameTranslator.Core
         {
             try
             {
-                var request = new HttpRequestMessage(HttpMethod.Get, $"{DefaultBaseUrl}/translations/{translationId}/check?hash={Uri.EscapeDataString(currentHash ?? "")}");
+                // Add debug=1 to get hash comparison info from server
+                var request = new HttpRequestMessage(HttpMethod.Get, $"{DefaultBaseUrl}/translations/{translationId}/check?hash={Uri.EscapeDataString(currentHash ?? "")}&debug=1");
 
                 if (!string.IsNullOrEmpty(currentHash))
                 {
@@ -182,6 +183,18 @@ namespace UnityGameTranslator.Core
 
                 string json = await response.Content.ReadAsStringAsync();
                 var data = JObject.Parse(json);
+
+                // Log debug info if present
+                var debug = data["debug"];
+                if (debug != null)
+                {
+                    TranslatorCore.LogInfo($"[HashDebug] Client hash:   {debug["client_hash"]}");
+                    TranslatorCore.LogInfo($"[HashDebug] Stored hash:   {debug["stored_hash"]}");
+                    TranslatorCore.LogInfo($"[HashDebug] Computed hash: {debug["computed_hash"]}");
+                    TranslatorCore.LogInfo($"[HashDebug] Stored==Computed: {debug["stored_matches_computed"]}");
+                    TranslatorCore.LogInfo($"[HashDebug] Server JSON preview: {debug["json_preview"]?.ToString()?.Substring(0, Math.Min(100, debug["json_preview"]?.ToString()?.Length ?? 0))}...");
+                    TranslatorCore.LogInfo($"[HashDebug] Server entry count: {debug["entry_count"]}, length: {debug["json_length"]}");
+                }
 
                 return new TranslationCheckResult
                 {
@@ -307,6 +320,7 @@ namespace UnityGameTranslator.Core
                 }
 
                 string json = await response.Content.ReadAsStringAsync();
+                TranslatorCore.LogInfo($"[ApiClient] CheckUuid response: {json}");
                 var data = JObject.Parse(json);
 
                 var result = new UuidCheckResult
@@ -315,6 +329,7 @@ namespace UnityGameTranslator.Core
                     Exists = data["exists"]?.Value<bool>() ?? false,
                     IsOwner = data["is_owner"]?.Value<bool>() ?? false
                 };
+                TranslatorCore.LogInfo($"[ApiClient] Parsed: exists={result.Exists}, isOwner={result.IsOwner}");
 
                 // Parse translation info if UPDATE
                 if (result.Exists && result.IsOwner && data["translation"] != null)

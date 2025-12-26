@@ -31,10 +31,6 @@
       <HintPath>..\extlibs\Unity\UnityEngine.TextRenderingModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
-    <Reference Include="UnityEngine.InputLegacyModule">
-      <HintPath>..\extlibs\Unity\UnityEngine.InputLegacyModule.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
     <Reference Include="UnityEngine.UI">
       <HintPath>..\extlibs\Unity\UnityEngine.UI.dll</HintPath>
       <Private>false</Private>

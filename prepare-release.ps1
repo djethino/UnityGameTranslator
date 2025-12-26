@@ -63,6 +63,11 @@ Copy-Item "UnityGameTranslator-BepInEx5/bin/UnityGameTranslator.dll" $bepinex5Di
 Copy-Item "UnityGameTranslator-BepInEx5/bin/UnityGameTranslator.Core.dll" $bepinex5Dir
 Copy-Item "UnityGameTranslator-BepInEx5/bin/Newtonsoft.Json.dll" $bepinex5Dir
 Copy-Item "UnityGameTranslator-BepInEx5/bin/System.Security.Cryptography.ProtectedData.dll" $bepinex5Dir
+# Polyfills for netstandard2.0 cross-platform support
+Copy-Item "UnityGameTranslator-BepInEx5/bin/System.Buffers.dll" $bepinex5Dir
+Copy-Item "UnityGameTranslator-BepInEx5/bin/System.Memory.dll" $bepinex5Dir
+Copy-Item "UnityGameTranslator-BepInEx5/bin/System.Numerics.Vectors.dll" $bepinex5Dir
+Copy-Item "UnityGameTranslator-BepInEx5/bin/System.Runtime.CompilerServices.Unsafe.dll" $bepinex5Dir
 [System.IO.File]::WriteAllText("$bepinex5Dir/config.json", $configJson)
 Compress-Archive -Path "$bepinex5Dir/*" -DestinationPath "$releasesDir/UnityGameTranslator-BepInEx5-v$Version.zip"
 Write-Host "  Created UnityGameTranslator-BepInEx5-v$Version.zip" -ForegroundColor Gray

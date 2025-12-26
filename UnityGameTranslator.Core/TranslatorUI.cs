@@ -205,6 +205,9 @@ namespace UnityGameTranslator.Core
         // Wizard state
         private static bool wizardOnlineMode = false;
         private static string wizardHotkey = "F10";
+        private static bool wizardHotkeyCtrl = false;
+        private static bool wizardHotkeyAlt = false;
+        private static bool wizardHotkeyShift = false;
         private static bool waitingForHotkey = false;
         private static bool wizardEnableOllama = false;
         private static string wizardOllamaUrl = "http://localhost:11434";
@@ -277,9 +280,11 @@ namespace UnityGameTranslator.Core
         private static GameInfo detectedGame = null;
 
         // Update notification state
+        public enum UpdateDirection { None, Download, Upload }
         public static bool HasPendingUpdate { get; private set; } = false;
         public static TranslationCheckResult PendingUpdateInfo { get; private set; } = null;
-        private static bool showUpdateNotification = false;
+        public static UpdateDirection PendingUpdateDirection { get; private set; } = UpdateDirection.None;
+        private static bool notificationDismissed = false; // User dismissed the notification for this session
 
         // Merge dialog state
         private static bool showMergeDialog = false;
@@ -353,6 +358,8 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static void Initialize()
         {
+            TranslatorCore.LogInfo($"[UI] Initialize called, first_run_completed={TranslatorCore.Config.first_run_completed}");
+
             // Restore API token if saved from previous session
             if (!string.IsNullOrEmpty(TranslatorCore.Config.api_token))
             {
@@ -364,39 +371,103 @@ namespace UnityGameTranslator.Core
             {
                 ShowWizard = true;
                 CurrentStep = WizardStep.Welcome;
+                TranslatorCore.LogInfo("[UI] First run - showing wizard");
             }
             else
             {
-                // Trigger update check after a short delay (don't block startup)
-                TriggerUpdateCheck();
+                TranslatorCore.LogInfo("[UI] Not first run - fetching server state");
+                // Fetch server state and check for updates after a short delay
+                TriggerStartupTasks();
             }
         }
 
-        private static async void TriggerUpdateCheck()
+        private static async void TriggerStartupTasks()
         {
             // Wait a bit to let the game initialize
             await Task.Delay(3000);
+
+            // Fetch server state if online mode is enabled and we have a token
+            if (TranslatorCore.Config.online_mode && !string.IsNullOrEmpty(TranslatorCore.Config.api_token))
+            {
+                await FetchServerState();
+            }
+
+            // Then check for updates (only if we have server state with a site_id)
             CheckForUpdates();
         }
 
         /// <summary>
-        /// Check for hotkey press. Call from Update().
+        /// Fetch server state for current translation via check-uuid.
+        /// Only called if online_mode is enabled and user is authenticated.
         /// </summary>
-        public static void CheckHotkey()
+        private static async Task FetchServerState()
         {
-            if (ShowWizard) return; // Don't process hotkey during wizard
+            if (!TranslatorCore.Config.online_mode)
+            {
+                TranslatorCore.LogInfo("[UI] Online mode disabled, skipping server state fetch");
+                return;
+            }
+
+            if (string.IsNullOrEmpty(TranslatorCore.Config.api_token))
+            {
+                TranslatorCore.LogInfo("[UI] Not authenticated, skipping server state fetch");
+                return;
+            }
+
+            try
+            {
+                TranslatorCore.LogInfo($"[UI] Fetching server state for UUID: {TranslatorCore.FileUuid}");
+                var result = await ApiClient.CheckUuid(TranslatorCore.FileUuid);
+
+                if (!result.Success)
+                {
+                    TranslatorCore.LogWarning($"[UI] Server state fetch failed: {result.Error}");
+                    TranslatorCore.ServerState = new ServerTranslationState { Checked = true };
+                    return;
+                }
+
+                TranslatorCore.ServerState = new ServerTranslationState
+                {
+                    Checked = true,
+                    Exists = result.Exists,
+                    IsOwner = result.IsOwner,
+                    SiteId = result.ExistingTranslation?.Id ?? result.OriginalTranslation?.Id,
+                    Uploader = result.IsOwner ? TranslatorCore.Config.api_user : result.OriginalTranslation?.Uploader,
+                    Hash = result.ExistingTranslation?.FileHash,
+                    Type = result.ExistingTranslation?.Type ?? result.OriginalTranslation?.Type,
+                    Notes = result.ExistingTranslation?.Notes
+                };
+
+                TranslatorCore.LogInfo($"[UI] Server state: exists={result.Exists}, isOwner={result.IsOwner}, siteId={TranslatorCore.ServerState.SiteId}");
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogWarning($"[UI] Server state fetch error: {e.Message}");
+                TranslatorCore.ServerState = new ServerTranslationState { Checked = true };
+            }
+        }
+
+        /// <summary>
+        /// Check for hotkey press using Event.current.
+        /// Works with both Legacy Input and New Input System.
+        /// Called from OnGUI().
+        /// </summary>
+        private static void CheckHotkey()
+        {
+            if (ShowWizard) return;
+
+            Event e = Event.current;
+            if (e == null || e.type != EventType.KeyDown) return;
 
             string hotkey = TranslatorCore.Config.settings_hotkey;
             if (string.IsNullOrEmpty(hotkey)) return;
 
             try
             {
-                // Parse modifier requirements from hotkey string (e.g., "Ctrl+Alt+F10")
                 bool requireCtrl = hotkey.Contains("Ctrl+");
                 bool requireAlt = hotkey.Contains("Alt+");
                 bool requireShift = hotkey.Contains("Shift+");
 
-                // Extract the base key
                 string baseKey = hotkey
                     .Replace("Ctrl+", "")
                     .Replace("Alt+", "")
@@ -404,21 +475,17 @@ namespace UnityGameTranslator.Core
 
                 KeyCode keyCode = (KeyCode)Enum.Parse(typeof(KeyCode), baseKey, true);
 
-                // Check if base key is pressed
-                if (Input.GetKeyDown(keyCode))
+                if (e.keyCode == keyCode)
                 {
-                    // Verify modifier keys match exactly
-                    bool ctrlHeld = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
-                    bool altHeld = Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
-                    bool shiftHeld = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
-
-                    if (ctrlHeld == requireCtrl && altHeld == requireAlt && shiftHeld == requireShift)
+                    // Check modifiers match
+                    if (e.control == requireCtrl && e.alt == requireAlt && e.shift == requireShift)
                     {
                         ShowSettings = !ShowSettings;
                         if (ShowSettings)
                         {
                             InitializeSettingsValues();
                         }
+                        e.Use(); // Consume the event
                     }
                 }
             }
@@ -427,13 +494,24 @@ namespace UnityGameTranslator.Core
 
         // Dark overlay texture (created once)
         private static Texture2D darkOverlayTexture;
+        private static bool onGuiLoggedOnce = false;
 
         /// <summary>
         /// Main OnGUI entry point. Call from mod loader's OnGUI().
         /// </summary>
         public static void OnGUI()
         {
+            // Log once to confirm OnGUI is being called
+            if (!onGuiLoggedOnce)
+            {
+                TranslatorCore.LogInfo($"[UI] OnGUI called for first time, ShowWizard={ShowWizard}, ShowSettings={ShowSettings}");
+                onGuiLoggedOnce = true;
+            }
+
             InitStyles();
+
+            // Hotkey check using Event.current (works with both input systems)
+            CheckHotkey();
 
             // Check if any modal dialog is open
             bool showDarkOverlay = ShowWizard || showLoginDialog || showUploadDialog || showMergeDialog || ShowSettings || showLanguageDialog || showOptionsDialog;
@@ -447,19 +525,19 @@ namespace UnityGameTranslator.Core
             if (ShowWizard && !showLoginDialog)
             {
                 WindowHelper.CenterWindow(ref wizardRect, 500, GetWizardHeight());
-                wizardRect = GUI.Window(WIZARD_WINDOW_ID, wizardRect, DrawWizardWindow, "");
+                wizardRect = TranslatorCore.Adapter.DrawWindow(WIZARD_WINDOW_ID, wizardRect, DrawWizardWindow, "");
             }
             else if (showMergeDialog)
             {
                 WindowHelper.CenterWindow(ref mergeRect, 650, 500);
-                mergeRect = GUI.Window(MERGE_WINDOW_ID, mergeRect, DrawMergeWindow, "");
+                mergeRect = TranslatorCore.Adapter.DrawWindow(MERGE_WINDOW_ID, mergeRect, DrawMergeWindow, "");
             }
             else if (ShowSettings && !showLoginDialog && !showUploadDialog && !showOptionsDialog)
             {
                 float mainHeight = GetMainWindowHeight();
                 float maxHeight = WindowHelper.GetMaxHeight(mainHeight);
                 WindowHelper.CenterWindow(ref mainRect, 450, maxHeight);
-                mainRect = GUI.Window(MAIN_WINDOW_ID, mainRect, DrawMainWindow, "");
+                mainRect = TranslatorCore.Adapter.DrawWindow(MAIN_WINDOW_ID, mainRect, DrawMainWindow, "");
             }
             else if (!showLoginDialog && !showUploadDialog && ShowStatus)
             {
@@ -471,20 +549,20 @@ namespace UnityGameTranslator.Core
             {
                 float maxHeight = WindowHelper.GetMaxHeight(550);
                 WindowHelper.CenterWindow(ref optionsRect, 500, maxHeight);
-                optionsRect = GUI.Window(OPTIONS_WINDOW_ID, optionsRect, DrawOptionsWindow, "");
+                optionsRect = TranslatorCore.Adapter.DrawWindow(OPTIONS_WINDOW_ID, optionsRect, DrawOptionsWindow, "");
             }
 
             // Modal dialogs that can overlay wizard/main
             if (showLoginDialog)
             {
                 WindowHelper.CenterWindow(ref loginRect, 420, 340);
-                loginRect = GUI.Window(LOGIN_WINDOW_ID, loginRect, DrawLoginWindow, "");
+                loginRect = TranslatorCore.Adapter.DrawWindow(LOGIN_WINDOW_ID, loginRect, DrawLoginWindow, "");
             }
             else if (showUploadDialog)
             {
                 float maxHeight = WindowHelper.GetMaxHeight(450);
                 WindowHelper.CenterWindow(ref uploadRect, 450, maxHeight);
-                uploadRect = GUI.Window(UPLOAD_WINDOW_ID, uploadRect, DrawUploadWindow, "");
+                uploadRect = TranslatorCore.Adapter.DrawWindow(UPLOAD_WINDOW_ID, uploadRect, DrawUploadWindow, "");
             }
 
             // Language selection dialog (shown before upload for NEW translations)
@@ -492,7 +570,7 @@ namespace UnityGameTranslator.Core
             {
                 float dialogHeight = WindowHelper.GetMaxHeight(550, 0.85f);
                 WindowHelper.CenterWindow(ref languageRect, 500, dialogHeight);
-                languageRect = GUI.Window(LANGUAGE_WINDOW_ID, languageRect, DrawLanguageSelectionWindow, "");
+                languageRect = TranslatorCore.Adapter.DrawWindow(LANGUAGE_WINDOW_ID, languageRect, DrawLanguageSelectionWindow, "");
             }
         }
 
@@ -637,21 +715,29 @@ namespace UnityGameTranslator.Core
             WindowHelper.Label("Choose a key to open the settings menu:");
             GUILayout.Space(10);
 
+            // Modifier toggles
             GUILayout.BeginHorizontal();
             GUILayout.FlexibleSpace();
+            wizardHotkeyCtrl = GUILayout.Toggle(wizardHotkeyCtrl, "Ctrl", GUILayout.Width(50));
+            wizardHotkeyAlt = GUILayout.Toggle(wizardHotkeyAlt, "Alt", GUILayout.Width(45));
+            wizardHotkeyShift = GUILayout.Toggle(wizardHotkeyShift, "Shift", GUILayout.Width(50));
+            GUILayout.Label("+", GUILayout.Width(20));
 
             if (waitingForHotkey)
             {
-                GUILayout.Label("Press any key...", new GUIStyle(WindowHelper.LabelStyle)
+                GUILayout.Label("Press key...", new GUIStyle(WindowHelper.LabelStyle)
                 {
-                    fontSize = 20,
+                    fontSize = 16,
                     fontStyle = FontStyle.Bold,
                     alignment = TextAnchor.MiddleCenter
-                }, GUILayout.Width(200), GUILayout.Height(50));
+                }, GUILayout.Width(100), GUILayout.Height(30));
 
-                // Detect key press
+                // Detect key press (ignore modifier keys)
                 Event e = Event.current;
-                if (e.type == EventType.KeyDown && e.keyCode != KeyCode.None)
+                if (e.type == EventType.KeyDown && e.keyCode != KeyCode.None &&
+                    e.keyCode != KeyCode.LeftControl && e.keyCode != KeyCode.RightControl &&
+                    e.keyCode != KeyCode.LeftAlt && e.keyCode != KeyCode.RightAlt &&
+                    e.keyCode != KeyCode.LeftShift && e.keyCode != KeyCode.RightShift)
                 {
                     wizardHotkey = e.keyCode.ToString();
                     waitingForHotkey = false;
@@ -659,7 +745,7 @@ namespace UnityGameTranslator.Core
             }
             else
             {
-                if (WindowHelper.Button(wizardHotkey, height: 50, width: 100))
+                if (WindowHelper.Button(wizardHotkey, height: 30, width: 100))
                 {
                     waitingForHotkey = true;
                 }
@@ -668,28 +754,27 @@ namespace UnityGameTranslator.Core
             GUILayout.FlexibleSpace();
             GUILayout.EndHorizontal();
 
-            GUILayout.Space(15);
+            GUILayout.Space(10);
 
-            // Quick selection buttons
-            GUILayout.BeginHorizontal();
-            GUILayout.FlexibleSpace();
-            foreach (string key in new[] { "F9", "F10", "F11", "F12" })
-            {
-                if (WindowHelper.Button(key, width: 60))
-                {
-                    wizardHotkey = key;
-                    waitingForHotkey = false;
-                }
-            }
-            GUILayout.FlexibleSpace();
-            GUILayout.EndHorizontal();
+            // Show current hotkey preview
+            string hotkeyPreview = "";
+            if (wizardHotkeyCtrl) hotkeyPreview += "Ctrl+";
+            if (wizardHotkeyAlt) hotkeyPreview += "Alt+";
+            if (wizardHotkeyShift) hotkeyPreview += "Shift+";
+            hotkeyPreview += wizardHotkey;
+            WindowHelper.Label($"Current: {hotkeyPreview}", italic: true, fontSize: 12);
 
             GUILayout.FlexibleSpace();
 
             if (WindowHelper.Button("Continue", height: 40))
             {
-                // Save hotkey immediately
-                TranslatorCore.Config.settings_hotkey = wizardHotkey;
+                // Build and save hotkey with modifiers
+                string fullHotkey = "";
+                if (wizardHotkeyCtrl) fullHotkey += "Ctrl+";
+                if (wizardHotkeyAlt) fullHotkey += "Alt+";
+                if (wizardHotkeyShift) fullHotkey += "Shift+";
+                fullHotkey += wizardHotkey;
+                TranslatorCore.Config.settings_hotkey = fullHotkey;
 
                 if (wizardOnlineMode)
                 {
@@ -735,9 +820,10 @@ namespace UnityGameTranslator.Core
                 GUILayout.Space(8);
                 GUILayout.BeginVertical(GUI.skin.box);
                 WindowHelper.Label($"You already have {localCount} local translations", bold: true);
-                if (TranslatorCore.Source != null && !string.IsNullOrEmpty(TranslatorCore.Source.uploader))
+                var serverState = TranslatorCore.ServerState;
+                if (serverState != null && serverState.Exists && !string.IsNullOrEmpty(serverState.Uploader))
                 {
-                    WindowHelper.Label($"Source: {TranslatorCore.Source.uploader}", fontSize: 11);
+                    WindowHelper.Label($"Source: {serverState.Uploader}", fontSize: 11);
                 }
                 GUILayout.EndVertical();
             }
@@ -763,13 +849,11 @@ namespace UnityGameTranslator.Core
                 WindowHelper.Label($"Connected as @{currentUser}", italic: true, fontSize: 11);
 
                 // Check sync status if we have local translations
-                if (localCount > 0 && TranslatorCore.Source != null)
+                var wizardServerState = TranslatorCore.ServerState;
+                if (localCount > 0 && wizardServerState != null && wizardServerState.Exists)
                 {
-                    bool hasSiteId = TranslatorCore.Source.site_id.HasValue;
-                    bool isOwner = hasSiteId &&
-                        !string.IsNullOrEmpty(currentUser) &&
-                        !string.IsNullOrEmpty(TranslatorCore.Source.uploader) &&
-                        TranslatorCore.Source.uploader.Equals(currentUser, StringComparison.OrdinalIgnoreCase);
+                    bool hasSiteId = wizardServerState.SiteId.HasValue;
+                    bool isOwner = wizardServerState.IsOwner;
 
                     if (isOwner)
                     {
@@ -792,7 +876,7 @@ namespace UnityGameTranslator.Core
                     }
                     else if (hasSiteId)
                     {
-                        WindowHelper.Label($"Downloaded from @{TranslatorCore.Source.uploader} - can fork to upload", fontSize: 11);
+                        WindowHelper.Label($"Downloaded from @{wizardServerState.Uploader} - can fork to upload", fontSize: 11);
                     }
                 }
                 GUILayout.Space(5);
@@ -827,9 +911,11 @@ namespace UnityGameTranslator.Core
                         t.Uploader.Equals(TranslatorCore.Config.api_user, StringComparison.OrdinalIgnoreCase);
 
                     // Check if same as local source
-                    bool isSameAsLocal = TranslatorCore.Source != null &&
-                        !string.IsNullOrEmpty(TranslatorCore.Source.uploader) &&
-                        t.Uploader.Equals(TranslatorCore.Source.uploader, StringComparison.OrdinalIgnoreCase);
+                    var localServerState = TranslatorCore.ServerState;
+                    bool isSameAsLocal = localServerState != null &&
+                        localServerState.Exists &&
+                        !string.IsNullOrEmpty(localServerState.Uploader) &&
+                        t.Uploader.Equals(localServerState.Uploader, StringComparison.OrdinalIgnoreCase);
 
                     GUILayout.BeginHorizontal(GUI.skin.box);
                     if (GUILayout.Toggle(isSelected, "", GUILayout.Width(20)))
@@ -889,6 +975,7 @@ namespace UnityGameTranslator.Core
         private static async void SearchForTranslations()
         {
             if (isSearchingTranslations) return;
+            if (!TranslatorCore.Config.online_mode) return;
 
             isSearchingTranslations = true;
             searchStatus = "";
@@ -953,15 +1040,23 @@ namespace UnityGameTranslator.Core
                     // Save to translations.json
                     System.IO.File.WriteAllText(TranslatorCore.CachePath, result.Content);
 
-                    // Update source metadata
-                    TranslatorCore.Source = new TranslationSource
+                    // Reload cache to apply new content and UUID immediately
+                    TranslatorCore.ReloadCache();
+
+                    // Update in-memory server state (not persisted - will be re-fetched via check-uuid at startup)
+                    string currentUser = TranslatorCore.Config.api_user;
+                    bool isOwner = !string.IsNullOrEmpty(currentUser) &&
+                        selectedTranslation.Uploader.Equals(currentUser, StringComparison.OrdinalIgnoreCase);
+                    TranslatorCore.ServerState = new ServerTranslationState
                     {
-                        site_id = selectedTranslation.Id,
-                        uploader = selectedTranslation.Uploader,
-                        downloaded_at = DateTime.UtcNow.ToString("o"),
-                        hash = result.FileHash ?? selectedTranslation.FileHash,
-                        type = selectedTranslation.Type,
-                        notes = selectedTranslation.Notes
+                        Checked = true,
+                        Exists = true,
+                        IsOwner = isOwner,
+                        SiteId = selectedTranslation.Id,
+                        Uploader = selectedTranslation.Uploader,
+                        Hash = result.FileHash ?? selectedTranslation.FileHash,
+                        Type = selectedTranslation.Type,
+                        Notes = selectedTranslation.Notes
                     };
 
                     // Save as ancestor for future 3-way merges
@@ -1155,39 +1250,54 @@ namespace UnityGameTranslator.Core
 
             int entryCount = TranslatorCore.TranslationCache.Count;
             string targetLang = TranslatorCore.Config.GetTargetLanguage();
-            bool hasSiteId = TranslatorCore.Source != null && TranslatorCore.Source.site_id.HasValue;
-            bool hasAncestor = TranslatorCore.AncestorCache.Count > 0;
+            var serverState = TranslatorCore.ServerState;
+            bool existsOnServer = serverState != null && serverState.Exists && serverState.SiteId.HasValue;
 
             GUILayout.Label($"Entries: {entryCount}");
             GUILayout.Label($"Target: {targetLang}");
 
-            if (hasSiteId)
+            if (existsOnServer)
             {
-                GUILayout.Label($"Source: {TranslatorCore.Source.uploader ?? "Website"} (#{TranslatorCore.Source.site_id})");
+                GUILayout.Label($"Source: {serverState.Uploader ?? "Website"} (#{serverState.SiteId})");
 
-                // Local changes only make sense when we have a reference point
-                if (hasAncestor)
+                // SYNC STATUS - check LocalChangesCount directly for real-time updates
+                int localChanges = TranslatorCore.LocalChangesCount;
+
+                if (localChanges > 0)
                 {
-                    int localChanges = TranslatorCore.LocalChangesCount;
-                    if (localChanges > 0)
-                    {
-                        WindowHelper.Label($"Local changes: {localChanges} entries", italic: true);
-                    }
-                    else
-                    {
-                        WindowHelper.Label("No local changes", italic: true, fontSize: 11);
-                    }
+                    // Local has changes to push (real-time check)
+                    GUILayout.Label($"⚠ OUT OF SYNC - {localChanges} local changes to upload",
+                        new GUIStyle(GUI.skin.label) { normal = { textColor = Color.yellow } });
+                }
+                else if (HasPendingUpdate && PendingUpdateDirection == UpdateDirection.Download)
+                {
+                    // Server has newer version (from startup check)
+                    int serverLines = PendingUpdateInfo?.LineCount ?? 0;
+                    GUILayout.Label($"⚠ OUT OF SYNC - Server has update ({serverLines} lines)",
+                        new GUIStyle(GUI.skin.label) { normal = { textColor = Color.yellow } });
                 }
                 else
                 {
-                    // Downloaded but no ancestor = first sync, all entries are "synced"
-                    WindowHelper.Label("Synced with server", italic: true, fontSize: 11);
+                    GUILayout.Label("✓ SYNCED with server",
+                        new GUIStyle(GUI.skin.label) { normal = { textColor = Color.green } });
                 }
             }
             else
             {
-                GUILayout.Label("Source: Local only (not uploaded)");
-                WindowHelper.Label($"All {entryCount} entries are local", italic: true, fontSize: 11);
+                // Show different message based on whether we've checked with server
+                if (serverState != null && serverState.Checked)
+                {
+                    GUILayout.Label("Source: Local only (not on server)");
+                    WindowHelper.Label($"All {entryCount} entries are local", italic: true, fontSize: 11);
+                }
+                else if (!TranslatorCore.Config.online_mode)
+                {
+                    GUILayout.Label("Source: Local (offline mode)");
+                }
+                else
+                {
+                    GUILayout.Label("Source: Local (checking...)");
+                }
             }
 
             // Ollama status
@@ -1257,23 +1367,21 @@ namespace UnityGameTranslator.Core
             WindowHelper.Label("Actions", bold: true);
             GUILayout.BeginVertical(GUI.skin.box);
 
-            // Determine upload type based on current state
+            // Determine upload type based on server state
             string uploadAction;
             string uploadHint;
-            bool hasSiteId = TranslatorCore.Source != null && TranslatorCore.Source.site_id.HasValue;
-            bool isOwner = hasSiteId && !string.IsNullOrEmpty(currentUser) &&
-                           !string.IsNullOrEmpty(TranslatorCore.Source.uploader) &&
-                           TranslatorCore.Source.uploader.Equals(currentUser, StringComparison.OrdinalIgnoreCase);
+            var state = TranslatorCore.ServerState;
+            bool existsOnServer = state != null && state.Exists && state.SiteId.HasValue;
 
-            if (hasSiteId && isOwner)
+            if (existsOnServer && state.IsOwner)
             {
                 uploadAction = "Update Translation";
-                uploadHint = $"Update your translation #{TranslatorCore.Source.site_id}";
+                uploadHint = $"Update your translation #{state.SiteId}";
             }
-            else if (hasSiteId && !isOwner)
+            else if (existsOnServer && !state.IsOwner)
             {
                 uploadAction = "Fork Translation";
-                uploadHint = $"Create a fork from {TranslatorCore.Source.uploader}'s translation";
+                uploadHint = $"Create a fork from {state.Uploader}'s translation";
             }
             else
             {
@@ -1377,20 +1485,6 @@ namespace UnityGameTranslator.Core
                 }
             }
             GUILayout.EndHorizontal();
-
-            // Quick hotkey buttons
-            GUILayout.BeginHorizontal();
-            GUILayout.Label("Quick:", GUILayout.Width(45));
-            foreach (string key in new[] { "F9", "F10", "F11", "F12" })
-            {
-                if (GUILayout.Button(key, GUILayout.Width(40)))
-                {
-                    settingsHotkey = key;
-                    settingsHotkeyWaiting = false;
-                }
-            }
-            GUILayout.EndHorizontal();
-
             GUILayout.EndVertical();
 
             GUILayout.Space(10);
@@ -1504,10 +1598,19 @@ namespace UnityGameTranslator.Core
 
         private static void DrawStatusOverlay()
         {
-            // Show update notification if available
-            if (showUpdateNotification && HasPendingUpdate)
+            // Check if we should show notification:
+            // 1. Local changes to upload (real-time)
+            // 2. OR server update available (from startup check)
+            var serverState = TranslatorCore.ServerState;
+            bool existsOnServer = serverState != null && serverState.Exists && serverState.SiteId.HasValue;
+            bool hasLocalChanges = existsOnServer && TranslatorCore.LocalChangesCount > 0;
+            bool hasServerUpdate = HasPendingUpdate && PendingUpdateDirection == UpdateDirection.Download;
+
+            bool shouldShowNotification = (hasLocalChanges || hasServerUpdate) && !notificationDismissed;
+
+            if (shouldShowNotification)
             {
-                DrawUpdateNotification();
+                DrawUpdateNotification(hasLocalChanges);
             }
 
             // Only show queue if Ollama is enabled
@@ -1521,7 +1624,7 @@ namespace UnityGameTranslator.Core
             float width = 250;
             float height = 45;
             float x = Screen.width - width - 10;
-            float y = showUpdateNotification && HasPendingUpdate ? 80 : 10;
+            float y = shouldShowNotification ? 80 : 10;
 
             GUI.Box(new Rect(x, y, width, height), "");
 
@@ -1542,7 +1645,7 @@ namespace UnityGameTranslator.Core
             GUILayout.EndArea();
         }
 
-        private static void DrawUpdateNotification()
+        private static void DrawUpdateNotification(bool isLocalChanges)
         {
             float width = 320;
             float height = 65;
@@ -1554,17 +1657,32 @@ namespace UnityGameTranslator.Core
             GUILayout.BeginArea(new Rect(x + 10, y + 5, width - 20, height - 10));
             GUILayout.BeginVertical();
 
-            GUILayout.Label("Translation update available!", new GUIStyle(GUI.skin.label) { fontStyle = FontStyle.Bold });
+            // Show different message based on type
+            string message = isLocalChanges
+                ? $"You have {TranslatorCore.LocalChangesCount} local changes to upload!"
+                : "Server update available!";
+            GUILayout.Label(message, new GUIStyle(GUI.skin.label) { fontStyle = FontStyle.Bold });
 
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button("Update", GUILayout.Width(80)))
+
+            // Button action depends on type
+            string buttonText = isLocalChanges ? "Upload" : "Download";
+            if (GUILayout.Button(buttonText, GUILayout.Width(80)))
             {
-                ApplyPendingUpdate();
+                if (isLocalChanges)
+                {
+                    // Open upload dialog
+                    ShowUpload();
+                }
+                else
+                {
+                    // Download from server
+                    ApplyPendingUpdate();
+                }
             }
             if (GUILayout.Button("Ignore", GUILayout.Width(80)))
             {
-                showUpdateNotification = false;
-                HasPendingUpdate = false;
+                notificationDismissed = true;
             }
             if (GUILayout.Button("Settings", GUILayout.Width(80)))
             {
@@ -1599,10 +1717,11 @@ namespace UnityGameTranslator.Core
                 return;
             }
 
-            // Need a source to check for updates
-            if (TranslatorCore.Source?.site_id == null)
+            // Need server state with site_id to check for updates
+            var serverState = TranslatorCore.ServerState;
+            if (serverState?.SiteId == null)
             {
-                TranslatorCore.LogInfo("[UpdateCheck] Skipped - no source translation");
+                TranslatorCore.LogInfo("[UpdateCheck] Skipped - no server translation");
                 return;
             }
 
@@ -1610,25 +1729,33 @@ namespace UnityGameTranslator.Core
             {
                 TranslatorCore.LogInfo("[UpdateCheck] Checking for updates...");
 
+                // Compute local content hash to compare with server
+                string localHash = TranslatorCore.ComputeContentHash();
+                TranslatorCore.LogInfo($"[UpdateCheck] Local hash: {localHash?.Substring(0, 16)}...");
+
                 var result = await ApiClient.CheckUpdate(
-                    TranslatorCore.Source.site_id.Value,
-                    TranslatorCore.Source.hash
+                    serverState.SiteId.Value,
+                    localHash
                 );
+
+                TranslatorCore.LogInfo($"[UpdateCheck] Server response: HasUpdate={result.HasUpdate}, ServerHash={result.FileHash?.Substring(0, 16)}...");
 
                 if (result.Success && result.HasUpdate)
                 {
-                    TranslatorCore.LogInfo($"[UpdateCheck] Update available: {result.LineCount} lines, hash {result.FileHash?.Substring(0, 8)}...");
+                    // Determine direction: if we have local changes, we need to upload; otherwise download
+                    bool hasLocalChanges = TranslatorCore.LocalChangesCount > 0;
+                    PendingUpdateDirection = hasLocalChanges ? UpdateDirection.Upload : UpdateDirection.Download;
+
+                    TranslatorCore.LogInfo($"[UpdateCheck] Update available: {result.LineCount} lines, direction={PendingUpdateDirection}, localChanges={TranslatorCore.LocalChangesCount}");
 
                     HasPendingUpdate = true;
                     PendingUpdateInfo = result;
 
-                    if (TranslatorCore.Config.sync.notify_updates)
-                    {
-                        showUpdateNotification = true;
-                    }
+                    // Notification will show automatically via DrawStatusOverlay checking LocalChangesCount
 
-                    // Auto-download if enabled and no local changes
-                    if (TranslatorCore.Config.sync.auto_download && TranslatorCore.LocalChangesCount == 0)
+                    // Auto-download if enabled and no local changes (only for Download direction)
+                    if (PendingUpdateDirection == UpdateDirection.Download &&
+                        TranslatorCore.Config.sync.auto_download)
                     {
                         TranslatorCore.LogInfo("[UpdateCheck] Auto-downloading update...");
                         await DownloadUpdate();
@@ -1637,6 +1764,10 @@ namespace UnityGameTranslator.Core
                 else if (result.Success)
                 {
                     TranslatorCore.LogInfo("[UpdateCheck] Translation is up to date");
+                    // Ensure notification is cleared when synced
+                    HasPendingUpdate = false;
+                    PendingUpdateInfo = null;
+                    PendingUpdateDirection = UpdateDirection.None;
                 }
                 else
                 {
@@ -1651,8 +1782,6 @@ namespace UnityGameTranslator.Core
 
         private static async void ApplyPendingUpdate()
         {
-            showUpdateNotification = false;
-
             if (TranslatorCore.LocalChangesCount > 0)
             {
                 // Download remote first, then show merge dialog
@@ -1667,11 +1796,12 @@ namespace UnityGameTranslator.Core
 
         private static async Task DownloadForMerge()
         {
-            if (TranslatorCore.Source?.site_id == null) return;
+            var serverState = TranslatorCore.ServerState;
+            if (serverState?.SiteId == null) return;
 
             try
             {
-                var result = await ApiClient.Download(TranslatorCore.Source.site_id.Value);
+                var result = await ApiClient.Download(serverState.SiteId.Value);
 
                 if (result.Success && !string.IsNullOrEmpty(result.Content))
                 {
@@ -1726,11 +1856,12 @@ namespace UnityGameTranslator.Core
 
         private static async Task DownloadUpdate()
         {
-            if (TranslatorCore.Source?.site_id == null) return;
+            var serverState = TranslatorCore.ServerState;
+            if (serverState?.SiteId == null) return;
 
             try
             {
-                var result = await ApiClient.Download(TranslatorCore.Source.site_id.Value);
+                var result = await ApiClient.Download(serverState.SiteId.Value);
 
                 if (result.Success && !string.IsNullOrEmpty(result.Content))
                 {
@@ -1744,24 +1875,27 @@ namespace UnityGameTranslator.Core
                     // Write new content
                     System.IO.File.WriteAllText(TranslatorCore.CachePath, result.Content);
 
-                    // Update source metadata
-                    if (TranslatorCore.Source != null)
+                    // Reload cache to apply new content immediately
+                    TranslatorCore.ReloadCache();
+
+                    // Update server state hash in memory
+                    if (serverState != null)
                     {
-                        TranslatorCore.Source.downloaded_at = DateTime.UtcNow.ToString("o");
-                        TranslatorCore.Source.hash = result.FileHash;
+                        serverState.Hash = result.FileHash;
                     }
+
+                    // Save cache (updates metadata after reload)
+                    TranslatorCore.SaveCache();
 
                     // Save as ancestor for future 3-way merges
                     TranslatorCore.SaveAncestorCache();
 
+                    // Clear all pending update state
                     HasPendingUpdate = false;
                     PendingUpdateInfo = null;
+                    PendingUpdateDirection = UpdateDirection.None;
 
-                    TranslatorCore.LogInfo("[UpdateCheck] Translation updated successfully");
-
-                    // Reload cache (would need to add a method for this)
-                    // For now, log that a restart might be needed
-                    TranslatorCore.LogInfo("[UpdateCheck] Restart the game to apply new translations");
+                    TranslatorCore.LogInfo("[UpdateCheck] Translation updated and applied successfully");
                 }
                 else
                 {
@@ -1947,29 +2081,24 @@ namespace UnityGameTranslator.Core
                     finalData[kvp.Key] = kvp.Value;
                 }
 
-                // Add metadata
+                // Add metadata (no _source - server state is in memory only)
                 finalData["_uuid"] = TranslatorCore.FileUuid ?? Guid.NewGuid().ToString();
-                if (TranslatorCore.Source != null)
-                {
-                    finalData["_source"] = new Dictionary<string, object>
-                    {
-                        ["site_id"] = TranslatorCore.Source.site_id,
-                        ["uploader"] = TranslatorCore.Source.uploader,
-                        ["downloaded_at"] = DateTime.UtcNow.ToString("o"),
-                        ["hash"] = newHash
-                    };
-                }
 
                 // Write merged file
                 string json = Newtonsoft.Json.JsonConvert.SerializeObject(finalData, Newtonsoft.Json.Formatting.Indented);
                 System.IO.File.WriteAllText(TranslatorCore.CachePath, json);
 
-                // Update source metadata
-                if (TranslatorCore.Source != null)
+                // Reload cache to apply merged content immediately
+                TranslatorCore.ReloadCache();
+
+                // Update server state hash in memory
+                if (TranslatorCore.ServerState != null)
                 {
-                    TranslatorCore.Source.downloaded_at = DateTime.UtcNow.ToString("o");
-                    TranslatorCore.Source.hash = newHash;
+                    TranslatorCore.ServerState.Hash = newHash;
                 }
+
+                // Save cache (updates metadata after merge)
+                TranslatorCore.SaveCache();
 
                 // Save as ancestor for future merges
                 TranslatorCore.SaveAncestorCache();
@@ -1977,12 +2106,13 @@ namespace UnityGameTranslator.Core
                 // Reset state
                 HasPendingUpdate = false;
                 PendingUpdateInfo = null;
+                PendingUpdateDirection = UpdateDirection.None;
                 showMergeDialog = false;
                 pendingMergeResult = null;
                 remoteTranslations = null;
                 conflictResolutions.Clear();
 
-                TranslatorCore.LogInfo($"[Merge] Applied successfully. Restart the game to see changes.");
+                TranslatorCore.LogInfo($"[Merge] Applied successfully.");
             }
             catch (Exception e)
             {
@@ -2009,6 +2139,7 @@ namespace UnityGameTranslator.Core
             conflictResolutions.Clear();
             HasPendingUpdate = false;
             PendingUpdateInfo = null;
+            PendingUpdateDirection = UpdateDirection.None;
         }
 
         #endregion
@@ -2184,6 +2315,8 @@ namespace UnityGameTranslator.Core
             try
             {
                 TranslatorCore.LogInfo($"[Upload] Checking UUID: {TranslatorCore.FileUuid}");
+                TranslatorCore.LogInfo($"[Upload] Auth token set: {!string.IsNullOrEmpty(TranslatorCore.Config.api_token)}");
+                TranslatorCore.LogInfo($"[Upload] Current user: {TranslatorCore.Config.api_user ?? "null"}");
 
                 var result = await ApiClient.CheckUuid(TranslatorCore.FileUuid);
 
@@ -2206,14 +2339,17 @@ namespace UnityGameTranslator.Core
                     uploadType = result.ExistingTranslation?.Type ?? "ai";
                     uploadNotes = result.ExistingTranslation?.Notes ?? "";
 
-                    // Update local Source from server data
-                    TranslatorCore.Source = new TranslationSource
+                    // Update in-memory server state
+                    TranslatorCore.ServerState = new ServerTranslationState
                     {
-                        site_id = result.ExistingTranslation?.Id,
-                        uploader = TranslatorCore.Config.api_user,
-                        type = result.ExistingTranslation?.Type,
-                        notes = result.ExistingTranslation?.Notes,
-                        hash = result.ExistingTranslation?.FileHash
+                        Checked = true,
+                        Exists = true,
+                        IsOwner = true,
+                        SiteId = result.ExistingTranslation?.Id,
+                        Uploader = TranslatorCore.Config.api_user,
+                        Type = result.ExistingTranslation?.Type,
+                        Notes = result.ExistingTranslation?.Notes,
+                        Hash = result.ExistingTranslation?.FileHash
                     };
 
                     uploadStatus = "";
@@ -2228,12 +2364,15 @@ namespace UnityGameTranslator.Core
                     uploadType = result.OriginalTranslation?.Type ?? "ai";
                     uploadNotes = ""; // Fresh notes for fork
 
-                    // Update local Source from server data
-                    TranslatorCore.Source = new TranslationSource
+                    // Update in-memory server state
+                    TranslatorCore.ServerState = new ServerTranslationState
                     {
-                        site_id = result.OriginalTranslation?.Id,
-                        uploader = result.OriginalTranslation?.Uploader,
-                        type = result.OriginalTranslation?.Type
+                        Checked = true,
+                        Exists = true,
+                        IsOwner = false,
+                        SiteId = result.OriginalTranslation?.Id,
+                        Uploader = result.OriginalTranslation?.Uploader,
+                        Type = result.OriginalTranslation?.Type
                     };
 
                     uploadStatus = "";
@@ -2336,11 +2475,11 @@ namespace UnityGameTranslator.Core
             }
             if (isExistingTranslation)
             {
-                WindowHelper.Label($"Updating: ID #{TranslatorCore.Source.site_id}", italic: true);
+                WindowHelper.Label($"Updating: ID #{TranslatorCore.ServerState?.SiteId}", italic: true);
             }
             else if (isFork)
             {
-                WindowHelper.Label($"Forking from: {TranslatorCore.Source?.uploader ?? "unknown"}", italic: true);
+                WindowHelper.Label($"Forking from: {TranslatorCore.ServerState?.Uploader ?? "unknown"}", italic: true);
             }
             else
             {
@@ -2448,17 +2587,30 @@ namespace UnityGameTranslator.Core
                     string successMsg = isExistingTranslation ? "Updated" : (isFork ? "Forked" : "Uploaded");
                     uploadStatus = $"{successMsg}! ID: {result.TranslationId}";
 
-                    // Update source info
-                    TranslatorCore.Source = new TranslationSource
+                    // Update in-memory server state (not persisted - will be re-fetched via check-uuid at startup)
+                    TranslatorCore.LogInfo($"[Upload] Setting ServerState: site_id={result.TranslationId}, user={TranslatorCore.Config.api_user}");
+                    TranslatorCore.ServerState = new ServerTranslationState
                     {
-                        site_id = result.TranslationId,
-                        uploader = TranslatorCore.Config.api_user,
-                        downloaded_at = DateTime.UtcNow.ToString("o"),
-                        hash = result.FileHash,
-                        type = uploadType,
-                        notes = uploadNotes
+                        Checked = true,
+                        Exists = true,
+                        IsOwner = true,
+                        SiteId = result.TranslationId,
+                        Uploader = TranslatorCore.Config.api_user,
+                        Hash = result.FileHash,
+                        Type = uploadType,
+                        Notes = uploadNotes
                     };
-                    TranslatorCore.SaveCache();
+
+                    // Save as ancestor for future merge detection (our content is now the "base")
+                    TranslatorCore.SaveAncestorCache();
+
+                    // Clear pending update state - we just synced!
+                    HasPendingUpdate = false;
+                    PendingUpdateInfo = null;
+                    PendingUpdateDirection = UpdateDirection.None;
+                    notificationDismissed = false; // Reset so new local changes will show notification
+
+                    TranslatorCore.LogInfo($"[Upload] ServerState updated. SiteId={TranslatorCore.ServerState?.SiteId}, cleared pending update state");
 
                     await Task.Delay(2000);
                     showUploadDialog = false;

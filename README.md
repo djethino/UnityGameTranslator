@@ -68,7 +68,9 @@ The zip contains:
 - `UnityGameTranslator.dll` - main plugin
 - `UnityGameTranslator.Core.dll` - translation engine
 - `Newtonsoft.Json.dll` - JSON library
+- `System.Security.Cryptography.ProtectedData.dll` - token encryption
 - `config.json` - default configuration
+- (BepInEx 5 only) `System.Buffers.dll`, `System.Memory.dll`, etc. - .NET Standard polyfills
 
 ### 3. First Launch
 
@@ -248,7 +250,6 @@ extlibs/
     ├── UnityEngine.UI.dll
     ├── UnityEngine.IMGUIModule.dll
     ├── UnityEngine.TextRenderingModule.dll
-    ├── UnityEngine.InputLegacyModule.dll
     └── Unity.TextMeshPro.dll
 ```
 

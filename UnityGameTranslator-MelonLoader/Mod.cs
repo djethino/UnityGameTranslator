@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Reflection;
 using MelonLoader;
 using MelonLoader.Utils;
 using HarmonyLib;
@@ -18,17 +19,58 @@ namespace UnityGameTranslator.MelonLoader
 
         private class MelonLoaderAdapter : IModLoaderAdapter
         {
+            private readonly bool isIL2CPP;
+            private MethodInfo convertDelegateMethod;
+
+            public MelonLoaderAdapter(bool isIL2CPP)
+            {
+                this.isIL2CPP = isIL2CPP;
+
+                if (isIL2CPP)
+                {
+                    // Cache DelegateSupport.ConvertDelegate<T> method via reflection
+                    var delegateSupportType = Type.GetType("Il2CppInterop.Runtime.DelegateSupport, Il2CppInterop.Runtime");
+                    if (delegateSupportType != null)
+                    {
+                        foreach (var method in delegateSupportType.GetMethods(BindingFlags.Public | BindingFlags.Static))
+                        {
+                            if (method.Name == "ConvertDelegate" && method.IsGenericMethod)
+                            {
+                                convertDelegateMethod = method;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
             public void LogInfo(string message) => MelonLogger.Msg(message);
             public void LogWarning(string message) => MelonLogger.Warning(message);
             public void LogError(string message) => MelonLogger.Error(message);
             public string GetPluginFolder() => Path.Combine(MelonEnvironment.UserDataDirectory, "UnityGameTranslator");
+
+            public Rect DrawWindow(int id, Rect rect, Action<int> drawFunc, string title)
+            {
+                if (isIL2CPP && convertDelegateMethod != null)
+                {
+                    // IL2CPP: use DelegateSupport.ConvertDelegate<GUI.WindowFunction>
+                    var genericMethod = convertDelegateMethod.MakeGenericMethod(typeof(GUI.WindowFunction));
+                    var il2cppDelegate = (GUI.WindowFunction)genericMethod.Invoke(null, new object[] { drawFunc });
+                    return GUI.Window(id, rect, il2cppDelegate, title);
+                }
+                else
+                {
+                    // Mono: direct delegate creation
+                    return GUI.Window(id, rect, new GUI.WindowFunction(drawFunc), title);
+                }
+            }
         }
 
         public override void OnInitializeMelon()
         {
             isIL2CPP = MelonUtils.IsGameIl2Cpp();
 
-            TranslatorCore.Initialize(new MelonLoaderAdapter());
+            TranslatorCore.Initialize(new MelonLoaderAdapter(isIL2CPP));
             TranslatorCore.OnTranslationComplete = TranslatorScanner.OnTranslationComplete;
             TranslatorUI.Initialize();
 
@@ -57,8 +99,6 @@ namespace UnityGameTranslator.MelonLoader
 
         public override void OnUpdate()
         {
-            TranslatorUI.CheckHotkey();
-
             float currentTime = Time.realtimeSinceStartup;
             TranslatorCore.OnUpdate(currentTime);
 

@@ -31,6 +31,11 @@ namespace UnityGameTranslator.BepInEx5
             public void LogWarning(string message) => logger.LogWarning(message);
             public void LogError(string message) => logger.LogError(message);
             public string GetPluginFolder() => pluginPath;
+
+            public Rect DrawWindow(int id, Rect rect, Action<int> drawFunc, string title)
+            {
+                return GUI.Window(id, rect, new GUI.WindowFunction(drawFunc), title);
+            }
         }
 
         void Awake()
@@ -58,8 +63,6 @@ namespace UnityGameTranslator.BepInEx5
 
         void Update()
         {
-            TranslatorUI.CheckHotkey();
-
             float currentTime = Time.realtimeSinceStartup;
             TranslatorCore.OnUpdate(currentTime);
 

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -20,6 +21,16 @@ namespace UnityGameTranslator.Core
         void LogWarning(string message);
         void LogError(string message);
         string GetPluginFolder();
+
+        /// <summary>
+        /// Draw a GUI window. Required because IL2CPP needs special delegate handling.
+        /// </summary>
+        /// <param name="id">Window ID</param>
+        /// <param name="rect">Window rectangle</param>
+        /// <param name="drawFunc">Draw function (Action&lt;int&gt; where int is window ID)</param>
+        /// <param name="title">Window title</param>
+        /// <returns>Updated window rectangle (for dragging)</returns>
+        UnityEngine.Rect DrawWindow(int id, UnityEngine.Rect rect, System.Action<int> drawFunc, string title);
     }
 
     /// <summary>
@@ -37,9 +48,13 @@ namespace UnityGameTranslator.Core
         public static string ModFolder { get; private set; }
         public static bool DebugMode { get; private set; } = false;
         public static string FileUuid { get; private set; }
-        public static string ParentUuid { get; private set; }
-        public static TranslationSource Source { get; set; }
         public static GameInfo CurrentGame { get; internal set; }
+
+        /// <summary>
+        /// Server state for current translation (populated via check-uuid, not persisted)
+        /// </summary>
+        public static ServerTranslationState ServerState { get; set; }
+
         public static int LocalChangesCount { get; private set; } = 0;
         public static Dictionary<string, string> AncestorCache { get; private set; } = new Dictionary<string, string>();
 
@@ -266,6 +281,9 @@ namespace UnityGameTranslator.Core
 
         private static void LoadCache()
         {
+            // Reset server state (will be populated by check-uuid if online)
+            ServerState = null;
+
             if (!File.Exists(CachePath))
             {
                 // Generate UUID for new translation file
@@ -289,22 +307,6 @@ namespace UnityGameTranslator.Core
                     if (prop.Name == "_uuid")
                     {
                         FileUuid = prop.Value.ToString();
-                    }
-                    else if (prop.Name == "_parent_uuid")
-                    {
-                        ParentUuid = prop.Value.ToString();
-                    }
-                    else if (prop.Name == "_source" && prop.Value is JObject sourceObj)
-                    {
-                        Source = new TranslationSource
-                        {
-                            site_id = sourceObj["site_id"]?.Value<int?>(),
-                            uploader = sourceObj["uploader"]?.Value<string>(),
-                            downloaded_at = sourceObj["downloaded_at"]?.Value<string>(),
-                            hash = sourceObj["hash"]?.Value<string>(),
-                            type = sourceObj["type"]?.Value<string>(),
-                            notes = sourceObj["notes"]?.Value<string>()
-                        };
                     }
                     else if (prop.Name == "_local_changes")
                     {
@@ -365,8 +367,7 @@ namespace UnityGameTranslator.Core
                 }
 
                 BuildPatternEntries();
-                string sourceInfo = Source?.uploader != null ? $", source: {Source.uploader}" : "";
-                Adapter.LogInfo($"Loaded {TranslationCache.Count} cached translations, {translatedTexts.Count} reverse entries, UUID: {FileUuid}{sourceInfo}");
+                Adapter.LogInfo($"Loaded {TranslationCache.Count} cached translations, {translatedTexts.Count} reverse entries, UUID: {FileUuid}");
             }
             catch (Exception e)
             {
@@ -374,6 +375,16 @@ namespace UnityGameTranslator.Core
                 TranslationCache = new Dictionary<string, string>();
                 FileUuid = Guid.NewGuid().ToString();
             }
+        }
+
+        /// <summary>
+        /// Reload the cache from disk. Call this after downloading a translation
+        /// to apply it immediately without requiring a game restart.
+        /// </summary>
+        public static void ReloadCache()
+        {
+            Adapter?.LogInfo("[TranslatorCore] Reloading cache from disk...");
+            LoadCache();
         }
 
         /// <summary>
@@ -426,6 +437,50 @@ namespace UnityGameTranslator.Core
 
             LocalChangesCount = changes;
             Adapter?.LogInfo($"[LocalChanges] Recalculated: {changes} local changes");
+        }
+
+        /// <summary>
+        /// Compute SHA256 hash of the translation content (same format as upload).
+        /// Used to detect if local content differs from server version.
+        /// IMPORTANT: Must match PHP Translation::computeHash() exactly.
+        /// </summary>
+        public static string ComputeContentHash()
+        {
+            try
+            {
+                // Build content with sorted keys for deterministic hash
+                // Include only translations (non-underscore keys) + _uuid
+                // This must match PHP computeHash() which filters the same way
+                // Use Ordinal comparer to match PHP ksort() byte-by-byte sorting
+                var sortedDict = new SortedDictionary<string, object>(StringComparer.Ordinal);
+                foreach (var kvp in TranslationCache)
+                {
+                    // TranslationCache already contains only translation entries (no metadata)
+                    sortedDict[kvp.Key] = kvp.Value;
+                }
+                sortedDict["_uuid"] = FileUuid;
+
+                // Serialize with same settings as PHP json_encode(JSON_UNESCAPED_UNICODE)
+                // Newtonsoft.Json by default doesn't escape unicode, same as PHP
+                string content = JsonConvert.SerializeObject(sortedDict, Formatting.None);
+
+                // Always log for debugging hash issues
+                string preview = content.Length > 100 ? content.Substring(0, 100) + "..." : content;
+                Adapter?.LogInfo($"[HashDebug] Local JSON preview: {preview}");
+                Adapter?.LogInfo($"[HashDebug] Local entry count: {sortedDict.Count}, length: {content.Length}");
+
+                using (var sha256 = SHA256.Create())
+                {
+                    byte[] bytes = Encoding.UTF8.GetBytes(content);
+                    byte[] hash = sha256.ComputeHash(bytes);
+                    return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
+                }
+            }
+            catch (Exception e)
+            {
+                Adapter?.LogWarning($"[Hash] Failed to compute content hash: {e.Message}");
+                return null;
+            }
         }
 
         public static void BuildPatternEntries()
@@ -1254,23 +1309,8 @@ namespace UnityGameTranslator.Core
                         };
                     }
 
-                    if (Source != null)
-                    {
-                        output["_source"] = new Dictionary<string, object>
-                        {
-                            ["site_id"] = Source.site_id,
-                            ["uploader"] = Source.uploader,
-                            ["downloaded_at"] = Source.downloaded_at,
-                            ["hash"] = Source.hash,
-                            ["type"] = Source.type,
-                            ["notes"] = Source.notes
-                        };
-                    }
-
-                    if (!string.IsNullOrEmpty(ParentUuid))
-                    {
-                        output["_parent_uuid"] = ParentUuid;
-                    }
+                    // Note: _source is no longer persisted - server state is fetched via check-uuid at startup
+                    // Hash is computed on-demand via ComputeContentHash()
 
                     if (LocalChangesCount > 0)
                     {
@@ -1352,16 +1392,26 @@ namespace UnityGameTranslator.Core
     }
 
     /// <summary>
-    /// Translation source metadata (where the translations.json came from)
+    /// Server state for current translation (from check-uuid, not persisted to disk)
     /// </summary>
-    public class TranslationSource
+    public class ServerTranslationState
     {
-        public int? site_id { get; set; }
-        public string uploader { get; set; }
-        public string downloaded_at { get; set; }
-        public string hash { get; set; }
-        public string type { get; set; }
-        public string notes { get; set; }
+        /// <summary>True if we've checked with the server (even if translation doesn't exist)</summary>
+        public bool Checked { get; set; } = false;
+        /// <summary>True if translation exists on server</summary>
+        public bool Exists { get; set; } = false;
+        /// <summary>True if current user owns the translation</summary>
+        public bool IsOwner { get; set; } = false;
+        /// <summary>Translation ID on server</summary>
+        public int? SiteId { get; set; }
+        /// <summary>Username of uploader</summary>
+        public string Uploader { get; set; }
+        /// <summary>File hash on server</summary>
+        public string Hash { get; set; }
+        /// <summary>Translation type (ai, human, etc.)</summary>
+        public string Type { get; set; }
+        /// <summary>Translation notes</summary>
+        public string Notes { get; set; }
     }
 
     /// <summary>

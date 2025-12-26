@@ -58,6 +58,13 @@ namespace UnityGameTranslator.Core
         public static int LocalChangesCount { get; private set; } = 0;
         public static Dictionary<string, string> AncestorCache { get; private set; } = new Dictionary<string, string>();
 
+        /// <summary>
+        /// Hash of the translation at last sync (download or upload).
+        /// Used to detect if server has changed since our last sync.
+        /// Stored in translations.json as _source.hash
+        /// </summary>
+        public static string LastSyncedHash { get; set; } = null;
+
         private static float lastSaveTime = 0f;
         private static int translatedCount = 0;
         private static int ollamaCount = 0;
@@ -312,6 +319,12 @@ namespace UnityGameTranslator.Core
                     {
                         LocalChangesCount = prop.Value.Value<int>();
                     }
+                    else if (prop.Name == "_source" && prop.Value.Type == JTokenType.Object)
+                    {
+                        // Load source info for sync detection
+                        var source = prop.Value as JObject;
+                        LastSyncedHash = source?["hash"]?.Value<string>();
+                    }
                     else if (!prop.Name.StartsWith("_") && prop.Value.Type == JTokenType.String)
                     {
                         TranslationCache[prop.Name] = prop.Value.ToString();
@@ -406,6 +419,27 @@ namespace UnityGameTranslator.Core
             catch (Exception e)
             {
                 Adapter.LogWarning($"Failed to save ancestor cache: {e.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Save remote translations as ancestor (for use after merge).
+        /// This sets the ancestor to the server version, so LocalChangesCount reflects local additions.
+        /// </summary>
+        public static void SaveAncestorFromRemote(Dictionary<string, string> remoteTranslations)
+        {
+            try
+            {
+                string ancestorPath = CachePath + ".ancestor";
+                var data = remoteTranslations.ToDictionary(kvp => kvp.Key, kvp => (object)kvp.Value);
+                string json = JsonConvert.SerializeObject(data, Formatting.Indented);
+                File.WriteAllText(ancestorPath, json);
+                AncestorCache = new Dictionary<string, string>(remoteTranslations);
+                Adapter.LogInfo($"Saved ancestor from remote with {AncestorCache.Count} entries");
+            }
+            catch (Exception e)
+            {
+                Adapter.LogWarning($"Failed to save ancestor from remote: {e.Message}");
             }
         }
 
@@ -1309,8 +1343,14 @@ namespace UnityGameTranslator.Core
                         };
                     }
 
-                    // Note: _source is no longer persisted - server state is fetched via check-uuid at startup
-                    // Hash is computed on-demand via ComputeContentHash()
+                    // Save _source with hash for multi-device sync detection
+                    if (!string.IsNullOrEmpty(LastSyncedHash))
+                    {
+                        output["_source"] = new Dictionary<string, string>
+                        {
+                            ["hash"] = LastSyncedHash
+                        };
+                    }
 
                     if (LocalChangesCount > 0)
                     {

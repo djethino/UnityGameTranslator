@@ -280,7 +280,7 @@ namespace UnityGameTranslator.Core
         private static GameInfo detectedGame = null;
 
         // Update notification state
-        public enum UpdateDirection { None, Download, Upload }
+        public enum UpdateDirection { None, Download, Upload, Merge }
         public static bool HasPendingUpdate { get; private set; } = false;
         public static TranslationCheckResult PendingUpdateInfo { get; private set; } = null;
         public static UpdateDirection PendingUpdateDirection { get; private set; } = UpdateDirection.None;
@@ -1263,7 +1263,13 @@ namespace UnityGameTranslator.Core
                 // SYNC STATUS - check LocalChangesCount directly for real-time updates
                 int localChanges = TranslatorCore.LocalChangesCount;
 
-                if (localChanges > 0)
+                if (HasPendingUpdate && PendingUpdateDirection == UpdateDirection.Merge)
+                {
+                    // Both sides have changes - conflict!
+                    GUILayout.Label($"⚠ CONFLICT - Both local ({localChanges}) and server changed!",
+                        new GUIStyle(GUI.skin.label) { normal = { textColor = new Color(1f, 0.5f, 0f) } }); // Orange
+                }
+                else if (localChanges > 0)
                 {
                     // Local has changes to push (real-time check)
                     GUILayout.Label($"⚠ OUT OF SYNC - {localChanges} local changes to upload",
@@ -1601,16 +1607,18 @@ namespace UnityGameTranslator.Core
             // Check if we should show notification:
             // 1. Local changes to upload (real-time)
             // 2. OR server update available (from startup check)
+            // 3. OR merge needed (both sides changed)
             var serverState = TranslatorCore.ServerState;
             bool existsOnServer = serverState != null && serverState.Exists && serverState.SiteId.HasValue;
             bool hasLocalChanges = existsOnServer && TranslatorCore.LocalChangesCount > 0;
             bool hasServerUpdate = HasPendingUpdate && PendingUpdateDirection == UpdateDirection.Download;
+            bool needsMerge = HasPendingUpdate && PendingUpdateDirection == UpdateDirection.Merge;
 
-            bool shouldShowNotification = (hasLocalChanges || hasServerUpdate) && !notificationDismissed;
+            bool shouldShowNotification = (hasLocalChanges || hasServerUpdate || needsMerge) && !notificationDismissed;
 
             if (shouldShowNotification)
             {
-                DrawUpdateNotification(hasLocalChanges);
+                DrawUpdateNotification(PendingUpdateDirection);
             }
 
             // Only show queue if Ollama is enabled
@@ -1645,9 +1653,9 @@ namespace UnityGameTranslator.Core
             GUILayout.EndArea();
         }
 
-        private static void DrawUpdateNotification(bool isLocalChanges)
+        private static void DrawUpdateNotification(UpdateDirection direction)
         {
-            float width = 320;
+            float width = 340;
             float height = 65;
             float x = Screen.width - width - 10;
             float y = 10;
@@ -1657,27 +1665,49 @@ namespace UnityGameTranslator.Core
             GUILayout.BeginArea(new Rect(x + 10, y + 5, width - 20, height - 10));
             GUILayout.BeginVertical();
 
-            // Show different message based on type
-            string message = isLocalChanges
-                ? $"You have {TranslatorCore.LocalChangesCount} local changes to upload!"
-                : "Server update available!";
+            // Show different message based on direction
+            string message;
+            string buttonText;
+            switch (direction)
+            {
+                case UpdateDirection.Upload:
+                    message = $"You have {TranslatorCore.LocalChangesCount} local changes to upload!";
+                    buttonText = "Upload";
+                    break;
+                case UpdateDirection.Download:
+                    message = "Server update available!";
+                    buttonText = "Download";
+                    break;
+                case UpdateDirection.Merge:
+                    message = "⚠ Conflict: Both local and server changed!";
+                    buttonText = "Merge";
+                    break;
+                default:
+                    message = $"{TranslatorCore.LocalChangesCount} local changes";
+                    buttonText = "Upload";
+                    break;
+            }
             GUILayout.Label(message, new GUIStyle(GUI.skin.label) { fontStyle = FontStyle.Bold });
 
             GUILayout.BeginHorizontal();
 
-            // Button action depends on type
-            string buttonText = isLocalChanges ? "Upload" : "Download";
             if (GUILayout.Button(buttonText, GUILayout.Width(80)))
             {
-                if (isLocalChanges)
+                switch (direction)
                 {
-                    // Open upload dialog
-                    ShowUpload();
-                }
-                else
-                {
-                    // Download from server
-                    ApplyPendingUpdate();
+                    case UpdateDirection.Upload:
+                        ShowUpload();
+                        break;
+                    case UpdateDirection.Download:
+                        ApplyPendingUpdate();
+                        break;
+                    case UpdateDirection.Merge:
+                        // Start merge flow - download remote first
+                        ApplyPendingUpdate();
+                        break;
+                    default:
+                        ShowUpload();
+                        break;
                 }
             }
             if (GUILayout.Button("Ignore", GUILayout.Width(80)))
@@ -1742,18 +1772,50 @@ namespace UnityGameTranslator.Core
 
                 if (result.Success && result.HasUpdate)
                 {
-                    // Determine direction: if we have local changes, we need to upload; otherwise download
+                    // Determine sync direction based on what changed
                     bool hasLocalChanges = TranslatorCore.LocalChangesCount > 0;
-                    PendingUpdateDirection = hasLocalChanges ? UpdateDirection.Upload : UpdateDirection.Download;
 
-                    TranslatorCore.LogInfo($"[UpdateCheck] Update available: {result.LineCount} lines, direction={PendingUpdateDirection}, localChanges={TranslatorCore.LocalChangesCount}");
+                    // Check if server changed since our last sync
+                    // Server changed if: we have a LastSyncedHash AND server hash differs from it
+                    string lastSyncedHash = TranslatorCore.LastSyncedHash;
+                    bool serverChanged = !string.IsNullOrEmpty(lastSyncedHash) &&
+                                         result.FileHash != lastSyncedHash;
+
+                    // If no LastSyncedHash, we can't tell if server changed - assume it did if hash differs
+                    if (string.IsNullOrEmpty(lastSyncedHash))
+                    {
+                        // First sync or legacy file - if we have local changes, assume upload; else download
+                        serverChanged = !hasLocalChanges;
+                    }
+
+                    // Determine direction based on what changed
+                    if (hasLocalChanges && serverChanged)
+                    {
+                        // Both sides changed - need merge
+                        PendingUpdateDirection = UpdateDirection.Merge;
+                        TranslatorCore.LogInfo($"[UpdateCheck] CONFLICT: Both local ({TranslatorCore.LocalChangesCount} changes) and server changed - merge needed");
+                    }
+                    else if (hasLocalChanges)
+                    {
+                        // Only local changed - upload
+                        PendingUpdateDirection = UpdateDirection.Upload;
+                        TranslatorCore.LogInfo($"[UpdateCheck] Local has {TranslatorCore.LocalChangesCount} changes to upload");
+                    }
+                    else
+                    {
+                        // Only server changed (or we don't know) - download
+                        PendingUpdateDirection = UpdateDirection.Download;
+                        TranslatorCore.LogInfo($"[UpdateCheck] Server has update: {result.LineCount} lines");
+                    }
+
+                    TranslatorCore.LogInfo($"[UpdateCheck] Direction={PendingUpdateDirection}, LastSyncedHash={lastSyncedHash?.Substring(0, Math.Min(16, lastSyncedHash?.Length ?? 0))}..., ServerHash={result.FileHash?.Substring(0, 16)}...");
 
                     HasPendingUpdate = true;
                     PendingUpdateInfo = result;
 
                     // Notification will show automatically via DrawStatusOverlay checking LocalChangesCount
 
-                    // Auto-download if enabled and no local changes (only for Download direction)
+                    // Auto-download only if no local changes and no conflict
                     if (PendingUpdateDirection == UpdateDirection.Download &&
                         TranslatorCore.Config.sync.auto_download)
                     {
@@ -1884,7 +1946,10 @@ namespace UnityGameTranslator.Core
                         serverState.Hash = result.FileHash;
                     }
 
-                    // Save cache (updates metadata after reload)
+                    // Update LastSyncedHash for multi-device sync detection
+                    TranslatorCore.LastSyncedHash = result.FileHash;
+
+                    // Save cache (updates metadata including _source.hash after reload)
                     TranslatorCore.SaveCache();
 
                     // Save as ancestor for future 3-way merges
@@ -1895,7 +1960,7 @@ namespace UnityGameTranslator.Core
                     PendingUpdateInfo = null;
                     PendingUpdateDirection = UpdateDirection.None;
 
-                    TranslatorCore.LogInfo("[UpdateCheck] Translation updated and applied successfully");
+                    TranslatorCore.LogInfo($"[UpdateCheck] Translation updated and applied successfully, LastSyncedHash={result.FileHash?.Substring(0, 16)}...");
                 }
                 else
                 {
@@ -2097,22 +2162,33 @@ namespace UnityGameTranslator.Core
                     TranslatorCore.ServerState.Hash = newHash;
                 }
 
-                // Save cache (updates metadata after merge)
+                // Update LastSyncedHash - we've "seen" the server version
+                TranslatorCore.LastSyncedHash = newHash;
+
+                // Save REMOTE content as ancestor (not merged!)
+                // This way LocalChangesCount = our additions that need uploading
+                if (remoteTranslations != null)
+                {
+                    TranslatorCore.SaveAncestorFromRemote(remoteTranslations);
+                }
+
+                // Save cache (updates metadata including _source.hash)
                 TranslatorCore.SaveCache();
 
-                // Save as ancestor for future merges
-                TranslatorCore.SaveAncestorCache();
+                // Recalculate local changes (merged vs remote ancestor)
+                TranslatorCore.RecalculateLocalChanges();
 
-                // Reset state
-                HasPendingUpdate = false;
+                // Reset state - but DON'T clear HasPendingUpdate, we need to upload!
+                // Direction is now Upload (we have merged content to push)
+                HasPendingUpdate = TranslatorCore.LocalChangesCount > 0;
                 PendingUpdateInfo = null;
-                PendingUpdateDirection = UpdateDirection.None;
+                PendingUpdateDirection = HasPendingUpdate ? UpdateDirection.Upload : UpdateDirection.None;
                 showMergeDialog = false;
                 pendingMergeResult = null;
                 remoteTranslations = null;
                 conflictResolutions.Clear();
 
-                TranslatorCore.LogInfo($"[Merge] Applied successfully.");
+                TranslatorCore.LogInfo($"[Merge] Applied successfully. LocalChangesCount={TranslatorCore.LocalChangesCount}, direction={PendingUpdateDirection}");
             }
             catch (Exception e)
             {
@@ -2601,6 +2677,12 @@ namespace UnityGameTranslator.Core
                         Notes = uploadNotes
                     };
 
+                    // Update LastSyncedHash for multi-device sync detection
+                    TranslatorCore.LastSyncedHash = result.FileHash;
+
+                    // Save cache to persist _source.hash
+                    TranslatorCore.SaveCache();
+
                     // Save as ancestor for future merge detection (our content is now the "base")
                     TranslatorCore.SaveAncestorCache();
 
@@ -2610,7 +2692,7 @@ namespace UnityGameTranslator.Core
                     PendingUpdateDirection = UpdateDirection.None;
                     notificationDismissed = false; // Reset so new local changes will show notification
 
-                    TranslatorCore.LogInfo($"[Upload] ServerState updated. SiteId={TranslatorCore.ServerState?.SiteId}, cleared pending update state");
+                    TranslatorCore.LogInfo($"[Upload] ServerState updated. SiteId={TranslatorCore.ServerState?.SiteId}, LastSyncedHash={result.FileHash?.Substring(0, 16)}...");
 
                     await Task.Delay(2000);
                     showUploadDialog = false;

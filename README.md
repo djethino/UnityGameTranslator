@@ -353,4 +353,4 @@ This project is dual-licensed:
 - **Open Source:** [AGPL-3.0](LICENSE) - Free for open source use
 - **Commercial:** Contact us for proprietary/commercial use
 
-See [LICENSING.md](../LICENSING.md) for details.
+See [LICENSING.md](LICENSING.md) for details.

@@ -1,4 +1,3 @@
-using System;
 using System.IO;
 using System.Reflection;
 using BepInEx;
@@ -7,6 +6,7 @@ using HarmonyLib;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityGameTranslator.Core;
+using UnityGameTranslator.Core.UI;
 
 namespace UnityGameTranslator.BepInEx5
 {
@@ -32,18 +32,14 @@ namespace UnityGameTranslator.BepInEx5
             public void LogError(string message) => logger.LogError(message);
             public string GetPluginFolder() => pluginPath;
             public string ModLoaderType => "BepInEx5";
-
-            public Rect DrawWindow(int id, Rect rect, Action<int> drawFunc, string title)
-            {
-                return GUI.Window(id, rect, new GUI.WindowFunction(drawFunc), title);
-            }
+            public bool IsIL2CPP => false;
         }
 
         void Awake()
         {
             TranslatorCore.Initialize(new BepInExAdapter(Logger));
             TranslatorCore.OnTranslationComplete = TranslatorScanner.OnTranslationComplete;
-            TranslatorUI.Initialize();
+            TranslatorUIManager.Initialize();
 
             harmony = new Harmony("com.community.unitygametranslator");
             int patchCount = TranslatorPatches.ApplyAll((target, prefix, postfix) =>
@@ -77,11 +73,6 @@ namespace UnityGameTranslator.BepInEx5
         void OnApplicationQuit()
         {
             TranslatorCore.OnShutdown();
-        }
-
-        void OnGUI()
-        {
-            TranslatorUI.OnGUI();
         }
     }
 }

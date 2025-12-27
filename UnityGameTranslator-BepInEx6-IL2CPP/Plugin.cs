@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using BepInEx;
 using BepInEx.Logging;
 using BepInEx.Unity.IL2CPP;
@@ -8,7 +9,6 @@ using HarmonyLib;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityGameTranslator.Core;
-using Il2CppInterop.Runtime;
 using Il2CppInterop.Runtime.Injection;
 
 namespace UnityGameTranslator.BepInEx6IL2CPP
@@ -19,32 +19,17 @@ namespace UnityGameTranslator.BepInEx6IL2CPP
         private static Plugin Instance;
         private static Harmony harmony;
         private float lastScanTime = 0f;
+        private static Assembly _universeLibAssembly;
 
         private class BepInEx6IL2CPPAdapter : IModLoaderAdapter
         {
             private readonly ManualLogSource logger;
             private readonly string pluginPath;
-            private MethodInfo convertDelegateMethod;
-            private Type windowFunctionType;
 
             public BepInEx6IL2CPPAdapter(ManualLogSource logger)
             {
                 this.logger = logger;
                 this.pluginPath = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
-
-                // Cache DelegateSupport.ConvertDelegate<T> method
-                var delegateSupportType = typeof(DelegateSupport);
-                foreach (var method in delegateSupportType.GetMethods(BindingFlags.Public | BindingFlags.Static))
-                {
-                    if (method.Name == "ConvertDelegate" && method.IsGenericMethod)
-                    {
-                        convertDelegateMethod = method;
-                        break;
-                    }
-                }
-
-                // Get the IL2CPP WindowFunction type
-                windowFunctionType = typeof(GUI).GetNestedType("WindowFunction");
             }
 
             public void LogInfo(string message) => logger.LogInfo(message);
@@ -52,35 +37,38 @@ namespace UnityGameTranslator.BepInEx6IL2CPP
             public void LogError(string message) => logger.LogError(message);
             public string GetPluginFolder() => pluginPath;
             public string ModLoaderType => "BepInEx6-IL2CPP";
-
-            public Rect DrawWindow(int id, Rect rect, Action<int> drawFunc, string title)
-            {
-                // IL2CPP requires delegate conversion via Il2CppInterop
-                if (convertDelegateMethod != null && windowFunctionType != null)
-                {
-                    var genericMethod = convertDelegateMethod.MakeGenericMethod(windowFunctionType);
-                    var il2cppDelegate = (GUI.WindowFunction)genericMethod.Invoke(null, new object[] { drawFunc });
-                    return GUI.Window(id, rect, il2cppDelegate, title);
-                }
-                else
-                {
-                    // Fallback (shouldn't happen)
-                    logger.LogError("[DrawWindow] Failed to initialize delegate conversion");
-                    return rect;
-                }
-            }
+            public bool IsIL2CPP => true;
         }
 
         public override void Load()
         {
             Instance = this;
 
+            // Register assembly resolver for UniverseLib BEFORE any UniverseLib types are accessed
+            AppDomain.CurrentDomain.AssemblyResolve += OnAssemblyResolve;
+
+            // Pre-load the correct UniverseLib assembly
+            string pluginPath = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+            string universeLibPath = Path.Combine(pluginPath, "UniverseLib.BIE.IL2CPP.Interop.dll");
+            if (File.Exists(universeLibPath))
+            {
+                _universeLibAssembly = Assembly.LoadFrom(universeLibPath);
+                Log.LogInfo($"Pre-loaded UniverseLib from: {universeLibPath}");
+            }
+            else
+            {
+                Log.LogError($"UniverseLib not found at: {universeLibPath}");
+            }
+
             TranslatorCore.Initialize(new BepInEx6IL2CPPAdapter(Log));
             TranslatorCore.OnTranslationComplete = TranslatorScanner.OnTranslationComplete;
-            TranslatorUI.Initialize();
 
             // Initialize IL2CPP scanning support
             TranslatorScanner.InitializeIL2CPP();
+
+            // Initialize UI in a separate method to ensure AssemblyResolve is active
+            // before the JIT tries to resolve UniverseLib types
+            InitializeUI();
 
             harmony = new Harmony("com.community.unitygametranslator");
             int patchCount = TranslatorPatches.ApplyAll((target, prefix, postfix) =>
@@ -99,6 +87,16 @@ namespace UnityGameTranslator.BepInEx6IL2CPP
             go.AddComponent<TranslatorUpdateBehaviour>();
 
             Log.LogInfo("BepInEx 6 IL2CPP version loaded");
+        }
+
+        /// <summary>
+        /// Separate method to initialize UI after AssemblyResolve hook is active.
+        /// NoInlining ensures JIT doesn't try to resolve UniverseLib types until this method is called.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private void InitializeUI()
+        {
+            UnityGameTranslator.Core.UI.TranslatorUIManager.Initialize();
         }
 
         public class TranslatorUpdateBehaviour : MonoBehaviour
@@ -123,11 +121,6 @@ namespace UnityGameTranslator.BepInEx6IL2CPP
             {
                 TranslatorCore.OnShutdown();
             }
-
-            void OnGUI()
-            {
-                TranslatorUI.OnGUI();
-            }
         }
 
         private void OnUpdate()
@@ -140,6 +133,23 @@ namespace UnityGameTranslator.BepInEx6IL2CPP
                 lastScanTime = currentTime;
                 TranslatorScanner.ScanIL2CPP();
             }
+        }
+
+        /// <summary>
+        /// Resolve UniverseLib.Mono requests to the IL2CPP variant.
+        /// Core references UniverseLib.Mono at compile-time, but at runtime we use the IL2CPP variant.
+        /// </summary>
+        private static Assembly OnAssemblyResolve(object sender, ResolveEventArgs args)
+        {
+            var assemblyName = new AssemblyName(args.Name);
+
+            // Redirect UniverseLib.Mono to our pre-loaded IL2CPP variant
+            if (assemblyName.Name == "UniverseLib.Mono" && _universeLibAssembly != null)
+            {
+                return _universeLibAssembly;
+            }
+
+            return null;
         }
     }
 }

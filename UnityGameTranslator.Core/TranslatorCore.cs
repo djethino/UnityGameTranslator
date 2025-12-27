@@ -29,14 +29,10 @@ namespace UnityGameTranslator.Core
         string ModLoaderType { get; }
 
         /// <summary>
-        /// Draw a GUI window. Required because IL2CPP needs special delegate handling.
+        /// Whether this mod loader is running on IL2CPP (vs Mono).
+        /// Used to determine which UniverseLib variant to use and which scanning method to apply.
         /// </summary>
-        /// <param name="id">Window ID</param>
-        /// <param name="rect">Window rectangle</param>
-        /// <param name="drawFunc">Draw function (Action&lt;int&gt; where int is window ID)</param>
-        /// <param name="title">Window title</param>
-        /// <returns>Updated window rectangle (for dragging)</returns>
-        UnityEngine.Rect DrawWindow(int id, UnityEngine.Rect rect, System.Action<int> drawFunc, string title);
+        bool IsIL2CPP { get; }
     }
 
     /// <summary>
@@ -630,6 +626,25 @@ namespace UnityGameTranslator.Core
             catch (Exception e)
             {
                 Adapter.LogWarning($"Error preloading model: {e.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Test connection to Ollama server.
+        /// </summary>
+        /// <param name="url">The Ollama URL to test</param>
+        /// <returns>True if connection successful</returns>
+        public static async System.Threading.Tasks.Task<bool> TestOllamaConnection(string url)
+        {
+            try
+            {
+                var testUrl = url.TrimEnd('/') + "/api/tags";
+                var response = await httpClient.GetAsync(testUrl);
+                return response.IsSuccessStatusCode;
+            }
+            catch
+            {
+                return false;
             }
         }
 

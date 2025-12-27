@@ -38,20 +38,9 @@ foreach ($proj in $projects) {
 
 Write-Host "All builds successful!" -ForegroundColor Green
 
-# Create default config.json
-$configJson = @'
-{
-  "ollama_url": "http://localhost:11434",
-  "model": "qwen3:8b",
-  "target_language": "auto",
-  "source_language": "auto",
-  "game_context": "",
-  "enable_ollama": false,
-  "normalize_numbers": true,
-  "preload_model": true,
-  "debug_ollama": false
-}
-'@
+# NOTE: config.json is NOT included in releases
+# The mod creates it on first run with defaults
+# This prevents overwriting user settings during updates
 
 # Create zip for each mod loader
 Write-Host "`nCreating release zips..." -ForegroundColor Yellow
@@ -68,7 +57,8 @@ Copy-Item "UnityGameTranslator-BepInEx5/bin/System.Buffers.dll" $bepinex5Dir
 Copy-Item "UnityGameTranslator-BepInEx5/bin/System.Memory.dll" $bepinex5Dir
 Copy-Item "UnityGameTranslator-BepInEx5/bin/System.Numerics.Vectors.dll" $bepinex5Dir
 Copy-Item "UnityGameTranslator-BepInEx5/bin/System.Runtime.CompilerServices.Unsafe.dll" $bepinex5Dir
-[System.IO.File]::WriteAllText("$bepinex5Dir/config.json", $configJson)
+# UniverseLib for uGUI
+Copy-Item "UniverseLib/Release/NuGet_Mono/lib/net35/UniverseLib.Mono.dll" $bepinex5Dir
 Compress-Archive -Path "$bepinex5Dir/*" -DestinationPath "$releasesDir/UnityGameTranslator-BepInEx5-v$Version.zip"
 Write-Host "  Created UnityGameTranslator-BepInEx5-v$Version.zip" -ForegroundColor Gray
 
@@ -79,7 +69,8 @@ Copy-Item "UnityGameTranslator-BepInEx6-Mono/bin/UnityGameTranslator.dll" $bepin
 Copy-Item "UnityGameTranslator-BepInEx6-Mono/bin/UnityGameTranslator.Core.dll" $bepinex6MonoDir
 Copy-Item "UnityGameTranslator-BepInEx6-Mono/bin/Newtonsoft.Json.dll" $bepinex6MonoDir
 Copy-Item "UnityGameTranslator-BepInEx6-Mono/bin/System.Security.Cryptography.ProtectedData.dll" $bepinex6MonoDir
-[System.IO.File]::WriteAllText("$bepinex6MonoDir/config.json", $configJson)
+# UniverseLib for uGUI
+Copy-Item "UniverseLib/Release/UniverseLib.Mono/UniverseLib.Mono.dll" $bepinex6MonoDir
 Compress-Archive -Path "$bepinex6MonoDir/*" -DestinationPath "$releasesDir/UnityGameTranslator-BepInEx6-Mono-v$Version.zip"
 Write-Host "  Created UnityGameTranslator-BepInEx6-Mono-v$Version.zip" -ForegroundColor Gray
 
@@ -90,18 +81,21 @@ Copy-Item "UnityGameTranslator-BepInEx6-IL2CPP/bin/UnityGameTranslator.dll" $bep
 Copy-Item "UnityGameTranslator-BepInEx6-IL2CPP/bin/UnityGameTranslator.Core.dll" $bepinex6IL2CPPDir
 Copy-Item "UnityGameTranslator-BepInEx6-IL2CPP/bin/Newtonsoft.Json.dll" $bepinex6IL2CPPDir
 Copy-Item "UnityGameTranslator-BepInEx6-IL2CPP/bin/System.Security.Cryptography.ProtectedData.dll" $bepinex6IL2CPPDir
-[System.IO.File]::WriteAllText("$bepinex6IL2CPPDir/config.json", $configJson)
+# UniverseLib IL2CPP variant for BepInEx
+Copy-Item "UniverseLib/Release/NuGet_IL2CPP_Interop/lib/net6.0/UniverseLib.BIE.IL2CPP.Interop.dll" $bepinex6IL2CPPDir
 Compress-Archive -Path "$bepinex6IL2CPPDir/*" -DestinationPath "$releasesDir/UnityGameTranslator-BepInEx6-IL2CPP-v$Version.zip"
 Write-Host "  Created UnityGameTranslator-BepInEx6-IL2CPP-v$Version.zip" -ForegroundColor Gray
 
-# MelonLoader
+# MelonLoader (includes both Mono and IL2CPP variants)
 $melonDir = "$releasesDir/UnityGameTranslator-MelonLoader-v$Version"
 New-Item -ItemType Directory -Path $melonDir | Out-Null
 Copy-Item "UnityGameTranslator-MelonLoader/bin/UnityGameTranslator.dll" $melonDir
 Copy-Item "UnityGameTranslator-MelonLoader/bin/UnityGameTranslator.Core.dll" $melonDir
 Copy-Item "UnityGameTranslator-MelonLoader/bin/Newtonsoft.Json.dll" $melonDir
 Copy-Item "UnityGameTranslator-MelonLoader/bin/System.Security.Cryptography.ProtectedData.dll" $melonDir
-[System.IO.File]::WriteAllText("$melonDir/config.json", $configJson)
+# UniverseLib - both variants, mod detects and loads correct one
+Copy-Item "UniverseLib/Release/UniverseLib.Mono/UniverseLib.Mono.dll" $melonDir
+Copy-Item "UniverseLib/Release/NuGet_IL2CPP_Interop/lib/net6.0/UniverseLib.ML.IL2CPP.Interop.dll" $melonDir
 Compress-Archive -Path "$melonDir/*" -DestinationPath "$releasesDir/UnityGameTranslator-MelonLoader-v$Version.zip"
 Write-Host "  Created UnityGameTranslator-MelonLoader-v$Version.zip" -ForegroundColor Gray
 

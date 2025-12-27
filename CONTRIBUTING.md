@@ -43,4 +43,4 @@ This allows us to maintain the dual licensing model while keeping the project su
 
 ## Questions?
 
-Open an issue or contact: music.music88music@gmail.com
+Open an issue or contact: contact@asymptomatikgames.com

@@ -28,7 +28,7 @@ If you wish to:
 
 Please contact us for a commercial license agreement.
 
-**Contact:** music.music88music@gmail.com
+**Contact:** contact@asymptomatikgames.com
 
 ## Which License Do I Need?
 

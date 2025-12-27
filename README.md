@@ -68,9 +68,8 @@ Download the release matching your mod loader and extract to:
 The zip contains:
 - `UnityGameTranslator.dll` - main plugin
 - `UnityGameTranslator.Core.dll` - translation engine
+- `UniverseLib.*.dll` - UI framework (variant depends on mod loader)
 - `Newtonsoft.Json.dll` - JSON library
-- `System.Security.Cryptography.ProtectedData.dll` - token encryption
-- `config.json` - default configuration
 - (BepInEx 5 only) `System.Buffers.dll`, `System.Memory.dll`, etc. - .NET Standard polyfills
 
 ### 3. First Launch
@@ -232,29 +231,37 @@ Create `extlibs/` folder with required DLLs:
 
 ```
 extlibs/
+├── Unity/
+│   ├── UnityEngine.dll
+│   ├── UnityEngine.CoreModule.dll
+│   ├── UnityEngine.UI.dll
+│   ├── UnityEngine.IMGUIModule.dll
+│   ├── UnityEngine.TextRenderingModule.dll
+│   └── Unity.TextMeshPro.dll
+├── UniverseLib/
+│   └── UniverseLib.Mono.dll            # Compile-time reference for Core
 ├── BepInEx5/
 │   ├── BepInEx.dll
-│   └── 0Harmony.dll
+│   ├── 0Harmony.dll
+│   └── UniverseLib.Mono.dll
+├── BepInEx6-Mono/
+│   ├── BepInEx.Core.dll
+│   ├── BepInEx.Unity.Mono.dll
+│   ├── 0Harmony.dll
+│   └── UniverseLib.Mono.dll
 ├── BepInEx6-IL2CPP/
 │   ├── BepInEx.Core.dll
 │   ├── BepInEx.Unity.IL2CPP.dll
 │   ├── Il2CppInterop.Runtime.dll
-│   └── 0Harmony.dll
-├── BepInEx6-Mono/
-│   ├── BepInEx.Core.dll
-│   ├── BepInEx.Unity.Mono.dll
-│   └── 0Harmony.dll
-├── MelonLoader/
-│   ├── MelonLoader.dll
-│   └── 0Harmony.dll
-└── Unity/
-    ├── UnityEngine.dll
-    ├── UnityEngine.CoreModule.dll
-    ├── UnityEngine.UI.dll
-    ├── UnityEngine.IMGUIModule.dll
-    ├── UnityEngine.TextRenderingModule.dll
-    └── Unity.TextMeshPro.dll
+│   ├── 0Harmony.dll
+│   └── UniverseLib.BIE.IL2CPP.Interop.dll
+└── MelonLoader/
+    ├── MelonLoader.dll
+    ├── 0Harmony.dll
+    └── UniverseLib.ML.IL2CPP.Interop.dll
 ```
+
+> **UniverseLib:** Build from the `UniverseLib/` submodule or download pre-built DLLs from the [yukieiji fork releases](https://github.com/yukieiji/UniverseLib/releases).
 
 **Sources:**
 - BepInEx 5: [Releases](https://github.com/BepInEx/BepInEx/releases) → `BepInEx/core/`
@@ -292,22 +299,58 @@ UnityGameTranslator/
 │   ├── TranslatorCore.cs               # Main logic, config, Ollama API
 │   ├── TranslatorPatches.cs            # Harmony patches for text
 │   ├── TranslatorScanner.cs            # Scene scanning for UI
-│   ├── TranslatorUI.cs                 # IMGUI overlay system
+│   ├── UI/                             # UniverseLib uGUI overlay system
+│   │   ├── TranslatorUIManager.cs      # Panel manager, hotkey handling
+│   │   ├── UIStyles.cs                 # Centralized styles and colors
+│   │   └── Panels/                     # UI panels
+│   │       ├── WizardPanel.cs          # First-run setup wizard
+│   │       ├── MainPanel.cs            # Main settings panel
+│   │       ├── OptionsPanel.cs         # Configuration options
+│   │       ├── LoginPanel.cs           # Device flow authentication
+│   │       ├── UploadPanel.cs          # Upload translations
+│   │       ├── MergePanel.cs           # 3-way merge conflict resolution
+│   │       └── LanguagePanel.cs        # Language selection
 │   ├── ApiClient.cs                    # HTTP client for website API
 │   ├── GameDetector.cs                 # Game identification
 │   ├── GitHubUpdateChecker.cs          # GitHub releases update checker
-│   └── TranslationMerger.cs            # 3-way merge logic
+│   ├── TranslationMerger.cs            # 3-way merge logic
+│   └── TokenProtection.cs              # AES-256 token encryption
+├── UniverseLib/                        # Git submodule (yukieiji fork)
 ├── UnityGameTranslator-BepInEx5/       # BepInEx 5 adapter
 ├── UnityGameTranslator-BepInEx6-Mono/  # BepInEx 6 Mono adapter
 ├── UnityGameTranslator-BepInEx6-IL2CPP/# BepInEx 6 IL2CPP adapter
 ├── UnityGameTranslator-MelonLoader/    # MelonLoader adapter
-├── extlibs/                            # External DLLs
+├── extlibs/                            # External DLLs (Unity, BepInEx, UniverseLib)
 ├── releases/                           # Build output
 └── Directory.Build.props               # Shared version
 ```
+
+> **UI System:** The mod uses [UniverseLib](https://github.com/yukieiji/UniverseLib) (yukieiji fork) for its overlay UI. This provides a unified uGUI-based interface that works on both Mono and IL2CPP Unity games, avoiding IMGUI crashes on IL2CPP.
+
+---
+
+## Acknowledgments
+
+UnityGameTranslator is built on the shoulders of amazing open-source projects:
+
+- **[UniverseLib](https://github.com/yukieiji/UniverseLib)** by sinai-dev & yukieiji - UI framework for Unity mods
+- **[BepInEx](https://github.com/BepInEx/BepInEx)** - Unity plugin framework
+- **[MelonLoader](https://github.com/LavaGang/MelonLoader)** by LavaGang - Universal Unity mod loader
+- **[Harmony](https://github.com/pardeike/Harmony)** by Andreas Pardeike - Runtime method patching
+- **[Newtonsoft.Json](https://github.com/JamesNK/Newtonsoft.Json)** by James Newton-King - JSON framework
+- **[Ollama](https://ollama.ai/)** - Local AI inference engine
+
+Special thanks to the Unity modding community for documentation, tutorials, and support.
+
+See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for full license details.
 
 ---
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+This project is dual-licensed:
+
+- **Open Source:** [AGPL-3.0](LICENSE) - Free for open source use
+- **Commercial:** Contact us for proprietary/commercial use
+
+See [LICENSING.md](../LICENSING.md) for details.

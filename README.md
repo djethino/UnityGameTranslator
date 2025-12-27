@@ -1,4 +1,4 @@
-# Universal Unity Game Translator (Beta)
+# Universal Unity Game Translator (Alpha)
 
 https://unitygametranslator.asymptomatikgames.com/
 

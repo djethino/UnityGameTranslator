@@ -1590,6 +1590,54 @@ namespace UnityGameTranslator.Core
                 }
             }
         }
+
+        /// <summary>
+        /// Creates a new fork by generating a new UUID.
+        /// This effectively starts a new lineage separate from any existing server translation.
+        /// The current translations are preserved but will be treated as a new upload.
+        /// </summary>
+        public static void CreateFork()
+        {
+            string oldUuid = FileUuid;
+
+            // Generate new UUID for the fork
+            FileUuid = Guid.NewGuid().ToString();
+
+            // Reset server state - we're starting fresh
+            ServerState = new ServerTranslationState();
+
+            // Reset sync tracking - local changes will be counted from this point
+            LastSyncedHash = null;
+            LocalChangesCount = TranslationCache.Count; // All entries are now "local changes"
+
+            // Clear ancestor cache - no longer relevant for the new lineage
+            ClearAncestorCache();
+
+            // Save with new UUID
+            SaveCache();
+
+            Adapter?.LogInfo($"Created fork: old UUID {oldUuid} -> new UUID {FileUuid}");
+        }
+
+        /// <summary>
+        /// Clears the ancestor cache file.
+        /// </summary>
+        private static void ClearAncestorCache()
+        {
+            try
+            {
+                string ancestorPath = CachePath.Replace(".json", ".ancestor.json");
+                if (File.Exists(ancestorPath))
+                {
+                    File.Delete(ancestorPath);
+                    AncestorCache.Clear();
+                }
+            }
+            catch (Exception e)
+            {
+                Adapter?.LogWarning($"Failed to clear ancestor cache: {e.Message}");
+            }
+        }
     }
 
     public class ModConfig

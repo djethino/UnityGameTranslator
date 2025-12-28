@@ -222,6 +222,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                             Checked = true,
                             Exists = true,
                             IsOwner = true,
+                            Role = TranslationRole.Main,
+                            BranchesCount = result.BranchesCount,
                             SiteId = result.ExistingTranslation?.Id,
                             Uploader = TranslatorCore.Config.api_user,
                             Type = result.ExistingTranslation?.Type,
@@ -257,6 +259,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                             Checked = true,
                             Exists = true,
                             IsOwner = false,
+                            Role = TranslationRole.Branch,
+                            MainUsername = result.MainUsername,
                             SiteId = result.OriginalTranslation?.Id,
                             Uploader = result.OriginalTranslation?.Uploader,
                             Type = result.OriginalTranslation?.Type
@@ -377,12 +381,13 @@ namespace UnityGameTranslator.Core.UI.Panels
                     _statusLabel.text = $"{successMsg}! ID: {result.TranslationId}";
                     _statusLabel.color = UIStyles.StatusSuccess;
 
-                    // Update server state
+                    // Update server state - after upload, user is always the Main (owner)
                     TranslatorCore.ServerState = new ServerTranslationState
                     {
                         Checked = true,
                         Exists = true,
                         IsOwner = true,
+                        Role = TranslationRole.Main,
                         SiteId = result.TranslationId,
                         Uploader = TranslatorCore.Config.api_user,
                         Hash = result.FileHash,

@@ -27,6 +27,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private Text _entriesLabel;
         private Text _targetLabel;
         private Text _sourceLabel;
+        private Text _roleLabel;
         private Text _syncStatusLabel;
         private Text _ollamaStatusLabel;
 
@@ -123,6 +124,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             _sourceLabel = UIFactory.CreateLabel(infoBox, "SourceLabel", "Source: Local", TextAnchor.MiddleLeft);
             _sourceLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(_sourceLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
+
+            _roleLabel = UIFactory.CreateLabel(infoBox, "RoleLabel", "", TextAnchor.MiddleLeft);
+            _roleLabel.fontStyle = FontStyle.Bold;
+            UIFactory.SetLayoutElement(_roleLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
 
             _syncStatusLabel = UIFactory.CreateLabel(infoBox, "SyncStatusLabel", "", TextAnchor.MiddleLeft);
             _syncStatusLabel.fontStyle = FontStyle.Bold;
@@ -254,6 +259,29 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 _sourceLabel.text = $"Source: {serverState.Uploader ?? "Website"} (#{serverState.SiteId})";
 
+                // Role indicator
+                switch (serverState.Role)
+                {
+                    case TranslationRole.Main:
+                        if (serverState.BranchesCount > 0)
+                        {
+                            _roleLabel.text = $"[MAIN] {serverState.BranchesCount} branch(es) contributing";
+                        }
+                        else
+                        {
+                            _roleLabel.text = "[MAIN] You own this translation";
+                        }
+                        _roleLabel.color = UIStyles.StatusSuccess;
+                        break;
+                    case TranslationRole.Branch:
+                        _roleLabel.text = $"[BRANCH] Contributing to @{serverState.MainUsername ?? serverState.Uploader}";
+                        _roleLabel.color = UIStyles.StatusWarning;
+                        break;
+                    default:
+                        _roleLabel.text = "";
+                        break;
+                }
+
                 // Sync status
                 int localChanges = TranslatorCore.LocalChangesCount;
                 bool hasServerUpdate = TranslatorUIManager.HasPendingUpdate &&
@@ -285,6 +313,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
             else
             {
+                // Not on server - clear role label
+                _roleLabel.text = "";
+
                 if (serverState != null && serverState.Checked)
                 {
                     _sourceLabel.text = "Source: Local only (not on server)";

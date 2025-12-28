@@ -206,6 +206,9 @@ namespace UnityGameTranslator.Core.UI
                     Checked = true,
                     Exists = result.Exists,
                     IsOwner = result.IsOwner,
+                    Role = result.Role,
+                    MainUsername = result.MainUsername,
+                    BranchesCount = result.BranchesCount,
                     SiteId = result.ExistingTranslation?.Id ?? result.OriginalTranslation?.Id,
                     Uploader = result.IsOwner ? TranslatorCore.Config.api_user : result.OriginalTranslation?.Uploader,
                     Hash = result.ExistingTranslation?.FileHash,
@@ -213,7 +216,7 @@ namespace UnityGameTranslator.Core.UI
                     Notes = result.ExistingTranslation?.Notes
                 };
 
-                TranslatorCore.LogInfo($"[UIManager] Server state: exists={result.Exists}, isOwner={result.IsOwner}, siteId={TranslatorCore.ServerState.SiteId}");
+                TranslatorCore.LogInfo($"[UIManager] Server state: exists={result.Exists}, isOwner={result.IsOwner}, role={result.Role}, siteId={TranslatorCore.ServerState.SiteId}");
 
                 // Refresh MainPanel if visible to show updated server state
                 MainPanel?.RefreshUI();
@@ -601,6 +604,8 @@ namespace UnityGameTranslator.Core.UI
                         Checked = true,
                         Exists = true,
                         IsOwner = isOwner,
+                        Role = isOwner ? TranslationRole.Main : TranslationRole.Branch,
+                        MainUsername = isOwner ? null : translation.Uploader,
                         SiteId = translation.Id,
                         Uploader = translation.Uploader,
                         Hash = result.FileHash ?? translation.FileHash,
@@ -682,6 +687,8 @@ namespace UnityGameTranslator.Core.UI
                         Checked = true,
                         Exists = true,
                         IsOwner = isOwner,
+                        Role = isOwner ? TranslationRole.Main : TranslationRole.Branch,
+                        MainUsername = isOwner ? null : translation.Uploader,
                         SiteId = translation.Id,
                         Uploader = translation.Uploader,
                         Hash = result.FileHash ?? translation.FileHash,

@@ -28,6 +28,11 @@ namespace UnityGameTranslator.Core.UI.Panels
         // StatusOverlay should NOT dim the screen
         protected override bool UseBackdrop => false;
 
+        // StatusOverlay has fixed size (not dynamic) and no persistence
+        protected override int MinPanelHeight => 50;
+        protected override bool UseDynamicSizing => false;
+        protected override bool PersistWindowPreferences => false;
+
         // UI elements - Mod update notification
         private GameObject _modUpdateBox;
         private Text _modUpdateLabel;
@@ -85,8 +90,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void CreateModUpdateBox()
         {
             _modUpdateBox = UIFactory.CreateVerticalGroup(ContentRoot, "ModUpdateBox", false, false, true, true, 5);
-            UIFactory.SetLayoutElement(_modUpdateBox, minHeight: 55, flexibleWidth: 9999);
-            SetBackgroundColor(_modUpdateBox, new Color(0.15f, 0.35f, 0.15f, 0.95f));
+            UIFactory.SetLayoutElement(_modUpdateBox, minHeight: UIStyles.NotificationBoxHeight, flexibleWidth: 9999);
+            SetBackgroundColor(_modUpdateBox, UIStyles.NotificationSuccess);
 
             var padding = _modUpdateBox.GetComponent<VerticalLayoutGroup>();
             if (padding != null)
@@ -96,17 +101,16 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             _modUpdateLabel = UIFactory.CreateLabel(_modUpdateBox, "ModUpdateLabel", "Mod update available: v?.?.?", TextAnchor.MiddleLeft);
             _modUpdateLabel.fontStyle = FontStyle.Bold;
-            UIFactory.SetLayoutElement(_modUpdateLabel.gameObject, minHeight: 22);
+            UIFactory.SetLayoutElement(_modUpdateLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
 
-            var btnRow = UIFactory.CreateHorizontalGroup(_modUpdateBox, "ModBtnRow", false, false, true, true, 5);
-            UIFactory.SetLayoutElement(btnRow, minHeight: 25);
+            var btnRow = UIStyles.CreateFormRow(_modUpdateBox, "ModBtnRow", UIStyles.RowHeightMedium, 5);
 
             _modUpdateBtn = UIFactory.CreateButton(btnRow, "ModDownloadBtn", "Download");
-            UIFactory.SetLayoutElement(_modUpdateBtn.Component.gameObject, minWidth: 80, minHeight: 22);
+            UIFactory.SetLayoutElement(_modUpdateBtn.Component.gameObject, minWidth: 80, minHeight: UIStyles.RowHeightNormal);
             _modUpdateBtn.OnClick += OnModUpdateClicked;
 
             _modIgnoreBtn = UIFactory.CreateButton(btnRow, "ModIgnoreBtn", "Ignore");
-            UIFactory.SetLayoutElement(_modIgnoreBtn.Component.gameObject, minWidth: 60, minHeight: 22);
+            UIFactory.SetLayoutElement(_modIgnoreBtn.Component.gameObject, minWidth: 60, minHeight: UIStyles.RowHeightNormal);
             _modIgnoreBtn.OnClick += OnModIgnoreClicked;
 
             _modUpdateBox.SetActive(false);
@@ -115,8 +119,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void CreateSyncBox()
         {
             _syncBox = UIFactory.CreateVerticalGroup(ContentRoot, "SyncBox", false, false, true, true, 5);
-            UIFactory.SetLayoutElement(_syncBox, minHeight: 55, flexibleWidth: 9999);
-            SetBackgroundColor(_syncBox, new Color(0.35f, 0.25f, 0.1f, 0.95f));
+            UIFactory.SetLayoutElement(_syncBox, minHeight: UIStyles.NotificationBoxHeight, flexibleWidth: 9999);
+            SetBackgroundColor(_syncBox, UIStyles.NotificationWarning);
 
             var padding = _syncBox.GetComponent<VerticalLayoutGroup>();
             if (padding != null)
@@ -126,21 +130,20 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             _syncLabel = UIFactory.CreateLabel(_syncBox, "SyncLabel", "Sync status", TextAnchor.MiddleLeft);
             _syncLabel.fontStyle = FontStyle.Bold;
-            UIFactory.SetLayoutElement(_syncLabel.gameObject, minHeight: 22);
+            UIFactory.SetLayoutElement(_syncLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
 
-            var btnRow = UIFactory.CreateHorizontalGroup(_syncBox, "SyncBtnRow", false, false, true, true, 5);
-            UIFactory.SetLayoutElement(btnRow, minHeight: 25);
+            var syncBtnRow = UIStyles.CreateFormRow(_syncBox, "SyncBtnRow", UIStyles.RowHeightMedium, 5);
 
-            _syncActionBtn = UIFactory.CreateButton(btnRow, "SyncActionBtn", "Action");
-            UIFactory.SetLayoutElement(_syncActionBtn.Component.gameObject, minWidth: 80, minHeight: 22);
+            _syncActionBtn = UIFactory.CreateButton(syncBtnRow, "SyncActionBtn", "Action");
+            UIFactory.SetLayoutElement(_syncActionBtn.Component.gameObject, minWidth: 80, minHeight: UIStyles.RowHeightNormal);
             _syncActionBtn.OnClick += OnSyncActionClicked;
 
-            _syncIgnoreBtn = UIFactory.CreateButton(btnRow, "SyncIgnoreBtn", "Ignore");
-            UIFactory.SetLayoutElement(_syncIgnoreBtn.Component.gameObject, minWidth: 60, minHeight: 22);
+            _syncIgnoreBtn = UIFactory.CreateButton(syncBtnRow, "SyncIgnoreBtn", "Ignore");
+            UIFactory.SetLayoutElement(_syncIgnoreBtn.Component.gameObject, minWidth: 60, minHeight: UIStyles.RowHeightNormal);
             _syncIgnoreBtn.OnClick += OnSyncIgnoreClicked;
 
-            _syncSettingsBtn = UIFactory.CreateButton(btnRow, "SyncSettingsBtn", "Settings");
-            UIFactory.SetLayoutElement(_syncSettingsBtn.Component.gameObject, minWidth: 70, minHeight: 22);
+            _syncSettingsBtn = UIFactory.CreateButton(syncBtnRow, "SyncSettingsBtn", "Settings");
+            UIFactory.SetLayoutElement(_syncSettingsBtn.Component.gameObject, minWidth: 70, minHeight: UIStyles.RowHeightNormal);
             _syncSettingsBtn.OnClick += OnSyncSettingsClicked;
 
             _syncBox.SetActive(false);
@@ -149,8 +152,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void CreateOllamaBox()
         {
             _ollamaBox = UIFactory.CreateVerticalGroup(ContentRoot, "OllamaBox", false, false, true, true, 3);
-            UIFactory.SetLayoutElement(_ollamaBox, minHeight: 45, flexibleWidth: 9999);
-            SetBackgroundColor(_ollamaBox, new Color(0.1f, 0.1f, 0.1f, 0.9f));
+            UIFactory.SetLayoutElement(_ollamaBox, minHeight: UIStyles.MultiLineSmall, flexibleWidth: 9999);
+            SetBackgroundColor(_ollamaBox, UIStyles.NotificationInfo);
 
             var padding = _ollamaBox.GetComponent<VerticalLayoutGroup>();
             if (padding != null)
@@ -159,11 +162,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
 
             _ollamaStatusLabel = UIFactory.CreateLabel(_ollamaBox, "OllamaStatusLabel", "Translating...", TextAnchor.MiddleLeft);
-            UIFactory.SetLayoutElement(_ollamaStatusLabel.gameObject, minHeight: 18);
+            UIFactory.SetLayoutElement(_ollamaStatusLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
 
             _ollamaQueueLabel = UIFactory.CreateLabel(_ollamaBox, "OllamaQueueLabel", "Queue: 0 pending", TextAnchor.MiddleLeft);
-            _ollamaQueueLabel.fontSize = 12;
-            UIFactory.SetLayoutElement(_ollamaQueueLabel.gameObject, minHeight: 16);
+            _ollamaQueueLabel.fontSize = UIStyles.FontSizeSmall;
+            UIFactory.SetLayoutElement(_ollamaQueueLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
 
             _ollamaBox.SetActive(false);
         }
@@ -349,55 +352,16 @@ namespace UnityGameTranslator.Core.UI.Panels
                 return;
             }
 
-            try
+            // Use centralized methods
+            if (TranslatorCore.LocalChangesCount > 0)
             {
-                TranslatorCore.LogInfo($"[StatusOverlay] Downloading update from site #{serverState.SiteId}...");
-
-                var result = await ApiClient.Download(serverState.SiteId.Value);
-                if (result?.Success == true && !string.IsNullOrEmpty(result.Content))
-                {
-                    // Parse the content JSON
-                    var translations = Newtonsoft.Json.JsonConvert.DeserializeObject<System.Collections.Generic.Dictionary<string, string>>(result.Content);
-                    if (translations != null && translations.Count > 0)
-                    {
-                        // Check if we need to merge
-                        if (TranslatorCore.LocalChangesCount > 0)
-                        {
-                            // Need merge - show merge panel
-                            TranslatorUIManager.MergePanel?.SetActive(true);
-                        }
-                        else
-                        {
-                            // Simple replace - apply translations directly to cache
-                            int applied = 0;
-                            foreach (var kv in translations)
-                            {
-                                if (!kv.Key.StartsWith("_"))
-                                {
-                                    TranslatorCore.TranslationCache[kv.Key] = kv.Value;
-                                    applied++;
-                                }
-                            }
-
-                            // Update server state
-                            TranslatorCore.ServerState.Hash = result.FileHash;
-                            TranslatorCore.LastSyncedHash = result.FileHash;
-
-                            // Save the new translations
-                            TranslatorCore.SaveCache();
-                            TranslatorCore.SaveAncestorCache();
-
-                            // Clear pending update state
-                            TranslatorUIManager.HasPendingUpdate = false;
-                            TranslatorUIManager.PendingUpdateDirection = UpdateDirection.None;
-                            TranslatorCore.LogInfo($"[StatusOverlay] Applied {applied} translations");
-                        }
-                    }
-                }
+                // Need merge - use centralized merge flow
+                await TranslatorUIManager.DownloadForMerge();
             }
-            catch (System.Exception ex)
+            else
             {
-                TranslatorCore.LogError($"[StatusOverlay] Failed to download update: {ex.Message}");
+                // Simple download - use centralized download
+                await TranslatorUIManager.DownloadUpdate();
             }
 
             RefreshOverlay();

@@ -1,8 +1,8 @@
 using UnityEngine;
 using UnityEngine.UI;
-using UniverseLib;
 using UniverseLib.UI;
 using UniverseLib.UI.Models;
+using UnityGameTranslator.Core.UI.Components;
 
 namespace UnityGameTranslator.Core.UI.Panels
 {
@@ -13,9 +13,11 @@ namespace UnityGameTranslator.Core.UI.Panels
     {
         public override string Name => "Unity Game Translator";
         public override int MinWidth => 450;
-        public override int MinHeight => 460;
+        public override int MinHeight => 350;
         public override int PanelWidth => 450;
-        public override int PanelHeight => 460;
+        public override int PanelHeight => 600;
+
+        protected override int MinPanelHeight => 350;
 
         // UI references - Account section
         private Text _accountLabel;
@@ -32,17 +34,28 @@ namespace UnityGameTranslator.Core.UI.Panels
         private ButtonRef _uploadBtn;
         private Text _uploadHintLabel;
 
+        // UI references - Community Translations section
+        private GameObject _communitySection;
+        private Text _communityGameLabel;
+        private ButtonRef _searchBtn;
+        private TranslationList _translationList;
+        private ButtonRef _downloadBtn;
+
         public MainPanel(UIBase owner) : base(owner)
         {
+            // Note: Components initialized in ConstructPanelContent() - base constructor calls ConstructUI() first
         }
 
         protected override void ConstructPanelContent()
         {
-            // Use scrollable layout - content scrolls if needed, buttons stay fixed
-            CreateScrollablePanelLayout(out var scrollContent, out var buttonRow, 450);
+            // Initialize components (must be here, not in constructor - base calls ConstructUI first)
+            _translationList = new TranslationList();
 
-            // Main card - adaptive, sizes to content
-            var card = CreateAdaptiveCard(scrollContent, "MainCard", 450);
+            // Use scrollable layout - content scrolls if needed, buttons stay fixed
+            CreateScrollablePanelLayout(out var scrollContent, out var buttonRow, PanelWidth - 40);
+
+            // Main card - adaptive, sizes to content (PanelWidth - 2*PanelPadding)
+            var card = CreateAdaptiveCard(scrollContent, "MainCard", PanelWidth - 40);
 
             CreateTitle(card, "Title", "Unity Game Translator");
 
@@ -55,6 +68,11 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Current Translation Info Section
             CreateTranslationInfoSection(card);
+
+            UIStyles.CreateSpacer(card, 10);
+
+            // Community Translations Section (online mode only)
+            CreateCommunitySection(card);
 
             UIStyles.CreateSpacer(card, 10);
 
@@ -77,8 +95,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             var accountBox = CreateSection(parent, "AccountBox");
 
-            var accountRow = UIFactory.CreateHorizontalGroup(accountBox, "AccountRow", false, false, true, true, 10);
-            UIFactory.SetLayoutElement(accountRow, minHeight: 30, flexibleWidth: 9999);
+            var accountRow = UIStyles.CreateFormRow(accountBox, "AccountRow", UIStyles.RowHeightLarge);
 
             _accountLabel = UIFactory.CreateLabel(accountRow, "AccountLabel", "Not connected", TextAnchor.MiddleLeft);
             _accountLabel.fontStyle = FontStyle.Italic;
@@ -97,24 +114,21 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             _entriesLabel = UIFactory.CreateLabel(infoBox, "EntriesLabel", "Entries: 0", TextAnchor.MiddleLeft);
             _entriesLabel.color = UIStyles.TextPrimary;
-            UIFactory.SetLayoutElement(_entriesLabel.gameObject, minHeight: 22);
+            UIFactory.SetLayoutElement(_entriesLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
 
             _targetLabel = UIFactory.CreateLabel(infoBox, "TargetLabel", "Target: auto", TextAnchor.MiddleLeft);
             _targetLabel.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(_targetLabel.gameObject, minHeight: 22);
+            UIFactory.SetLayoutElement(_targetLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
 
             _sourceLabel = UIFactory.CreateLabel(infoBox, "SourceLabel", "Source: Local", TextAnchor.MiddleLeft);
             _sourceLabel.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(_sourceLabel.gameObject, minHeight: 22);
+            UIFactory.SetLayoutElement(_sourceLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
 
             _syncStatusLabel = UIFactory.CreateLabel(infoBox, "SyncStatusLabel", "", TextAnchor.MiddleLeft);
             _syncStatusLabel.fontStyle = FontStyle.Bold;
-            UIFactory.SetLayoutElement(_syncStatusLabel.gameObject, minHeight: 22);
+            UIFactory.SetLayoutElement(_syncStatusLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
 
-            _ollamaStatusLabel = UIFactory.CreateLabel(infoBox, "OllamaStatusLabel", "", TextAnchor.MiddleLeft);
-            _ollamaStatusLabel.fontSize = UIStyles.FontSizeSmall;
-            _ollamaStatusLabel.color = UIStyles.TextMuted;
-            UIFactory.SetLayoutElement(_ollamaStatusLabel.gameObject, minHeight: 20);
+            _ollamaStatusLabel = CreateSmallLabel(infoBox, "OllamaStatusLabel", "");
         }
 
         private void CreateActionsSection(GameObject parent)
@@ -130,6 +144,53 @@ namespace UnityGameTranslator.Core.UI.Panels
             _uploadHintLabel = UIStyles.CreateHint(actionsBox, "UploadHintLabel", "");
         }
 
+        private void CreateCommunitySection(GameObject parent)
+        {
+            // Wrap entire section to toggle visibility based on online mode
+            _communitySection = UIFactory.CreateVerticalGroup(parent, "CommunitySection", false, false, true, true, 0);
+            UIFactory.SetLayoutElement(_communitySection, flexibleWidth: 9999);
+
+            UIStyles.CreateSectionTitle(_communitySection, "CommunitySectionLabel", "Community Translations");
+
+            var communityBox = CreateSection(_communitySection, "CommunityBox");
+
+            // Game info and search row
+            var searchRow = UIStyles.CreateFormRow(communityBox, "SearchRow", UIStyles.RowHeightLarge);
+
+            _communityGameLabel = UIFactory.CreateLabel(searchRow, "GameLabel", "Game: Unknown", TextAnchor.MiddleLeft);
+            _communityGameLabel.color = UIStyles.TextSecondary;
+            UIFactory.SetLayoutElement(_communityGameLabel.gameObject, flexibleWidth: 9999);
+
+            _searchBtn = CreateSecondaryButton(searchRow, "SearchBtn", "Search", 80);
+            _searchBtn.OnClick += OnSearchCommunityClicked;
+
+            // Translation list - ensure initialized
+            if (_translationList == null)
+            {
+                TranslatorCore.LogWarning("[MainPanel] _translationList was null - reinitializing");
+                _translationList = new TranslationList();
+            }
+            _translationList.CreateUI(communityBox, 100, onSelectionChanged: (t) =>
+            {
+                if (_downloadBtn != null)
+                {
+                    _downloadBtn.Component.interactable = t != null;
+                }
+            });
+
+            UIStyles.CreateSpacer(communityBox, 5);
+
+            // Download button
+            var downloadRow = UIStyles.CreateFormRow(communityBox, "DownloadRow", UIStyles.RowHeightLarge, 0);
+            var layoutGroup = downloadRow.GetComponent<HorizontalLayoutGroup>();
+            if (layoutGroup != null) layoutGroup.childAlignment = TextAnchor.MiddleCenter; // Center the button
+
+            _downloadBtn = CreatePrimaryButton(downloadRow, "DownloadBtn", "Download Selected", 160);
+            UIStyles.SetBackground(_downloadBtn.Component.gameObject, UIStyles.ButtonSuccess);
+            _downloadBtn.OnClick += OnDownloadCommunityClicked;
+            _downloadBtn.Component.interactable = false;
+        }
+
         public override void SetActive(bool active)
         {
             base.SetActive(active);
@@ -143,6 +204,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             RefreshAccountSection();
             RefreshTranslationInfo();
+            RefreshCommunitySection();
             RefreshActionsSection();
         }
 
@@ -172,12 +234,18 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private void RefreshTranslationInfo()
         {
-            if (_entriesLabel == null) return;
+            if (_entriesLabel == null)
+            {
+                TranslatorCore.LogWarning("[MainPanel] RefreshTranslationInfo: _entriesLabel is null!");
+                return;
+            }
 
             int entryCount = TranslatorCore.TranslationCache.Count;
             string targetLang = TranslatorCore.Config.GetTargetLanguage();
             var serverState = TranslatorCore.ServerState;
             bool existsOnServer = serverState != null && serverState.Exists && serverState.SiteId.HasValue;
+
+            TranslatorCore.LogInfo($"[MainPanel] RefreshTranslationInfo: entries={entryCount}, target={targetLang}, serverState={(serverState == null ? "null" : $"checked={serverState.Checked}")}");
 
             _entriesLabel.text = $"Entries: {entryCount}";
             _targetLabel.text = $"Target: {targetLang}";
@@ -226,6 +294,12 @@ namespace UnityGameTranslator.Core.UI.Panels
                 else if (!TranslatorCore.Config.online_mode)
                 {
                     _sourceLabel.text = "Source: Local (offline mode)";
+                    _syncStatusLabel.text = "";
+                }
+                else if (string.IsNullOrEmpty(TranslatorCore.Config.api_token))
+                {
+                    // Online mode but not logged in - can't check server state
+                    _sourceLabel.text = "Source: Local (login to sync)";
                     _syncStatusLabel.text = "";
                 }
                 else
@@ -306,12 +380,21 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             if (isLoggedIn)
             {
-                // Logout
-                TranslatorCore.Config.api_token = null;
-                TranslatorCore.Config.api_user = null;
-                TranslatorCore.SaveConfig();
-                ApiClient.SetAuthToken(null);
-                RefreshUI();
+                // Show confirmation dialog before logout
+                TranslatorUIManager.ConfirmationPanel?.Show(
+                    "Logout",
+                    "Are you sure you want to disconnect?\nYou'll need to re-authenticate to sync translations.",
+                    "Logout",
+                    () =>
+                    {
+                        TranslatorCore.Config.api_token = null;
+                        TranslatorCore.Config.api_user = null;
+                        TranslatorCore.SaveConfig();
+                        ApiClient.SetAuthToken(null);
+                        RefreshUI();
+                    },
+                    isDanger: true
+                );
             }
             else
             {
@@ -323,6 +406,96 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void OnUploadClicked()
         {
             TranslatorUIManager.UploadPanel?.SetActive(true);
+        }
+
+        private void RefreshCommunitySection()
+        {
+            if (_communitySection == null) return;
+
+            // Hide section if offline mode
+            bool showSection = TranslatorCore.Config.online_mode;
+            _communitySection.SetActive(showSection);
+
+            if (!showSection) return;
+
+            // Update game label
+            var game = TranslatorCore.CurrentGame;
+            if (game != null && !string.IsNullOrEmpty(game.name))
+            {
+                _communityGameLabel.text = $"Game: {game.name}";
+                _searchBtn.Component.interactable = true;
+            }
+            else
+            {
+                _communityGameLabel.text = "Game: Not detected";
+                _searchBtn.Component.interactable = false;
+            }
+
+            // Refresh list display (e.g., after login status change)
+            _translationList?.Refresh();
+        }
+
+        private async void OnSearchCommunityClicked()
+        {
+            var game = TranslatorCore.CurrentGame;
+            if (game == null)
+            {
+                _translationList.SetStatus("No game detected", UIStyles.StatusWarning);
+                return;
+            }
+
+            if (_translationList.IsSearching) return;
+
+            string targetLang = TranslatorCore.Config.GetTargetLanguage();
+            await _translationList.SearchAsync(game.steam_id, game.name, targetLang);
+
+            // Enable download button if results found
+            _downloadBtn.Component.interactable = _translationList.SelectedTranslation != null;
+        }
+
+        private async void OnDownloadCommunityClicked()
+        {
+            var selectedTranslation = _translationList?.SelectedTranslation;
+            if (selectedTranslation == null) return;
+
+            // Check if user has local changes that would be lost
+            int localChanges = TranslatorCore.LocalChangesCount;
+            if (localChanges > 0)
+            {
+                TranslatorUIManager.ConfirmationPanel?.Show(
+                    "Replace Local Translation?",
+                    $"You have {localChanges} local change(s) that will be replaced.\n\nDownload '{selectedTranslation.TargetLanguage}' by {selectedTranslation.Uploader}?",
+                    "Replace",
+                    async () => await PerformDownload(selectedTranslation),
+                    isDanger: true
+                );
+            }
+            else
+            {
+                await PerformDownload(selectedTranslation);
+            }
+        }
+
+        private async System.Threading.Tasks.Task PerformDownload(TranslationInfo translation)
+        {
+            _downloadBtn.Component.interactable = false;
+            _translationList.SetStatus("Downloading...", UIStyles.StatusWarning);
+
+            await TranslatorUIManager.DownloadTranslation(translation, (success, message) =>
+            {
+                if (success)
+                {
+                    int count = TranslatorCore.TranslationCache.Count;
+                    _translationList.SetStatus($"Downloaded {count} entries!", UIStyles.StatusSuccess);
+                    RefreshUI();
+                }
+                else
+                {
+                    _translationList.SetStatus($"Error: {message}", UIStyles.StatusError);
+                }
+
+                _downloadBtn.Component.interactable = _translationList?.SelectedTranslation != null;
+            });
         }
     }
 }

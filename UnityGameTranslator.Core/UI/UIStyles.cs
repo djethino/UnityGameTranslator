@@ -2,6 +2,7 @@ using UnityEngine;
 using UnityEngine.UI;
 using UniverseLib.UI;
 using UniverseLib.UI.Models;
+using UnityGameTranslator.Core.UI.Components;
 
 namespace UnityGameTranslator.Core.UI
 {
@@ -97,6 +98,7 @@ namespace UnityGameTranslator.Core.UI
         public static readonly Color ButtonPrimary = new Color(0.22f, 0.52f, 0.72f);
         public static readonly Color ButtonSecondary = new Color(0.28f, 0.28f, 0.32f);
         public static readonly Color ButtonSuccess = new Color(0.2f, 0.6f, 0.35f);
+        public static readonly Color ButtonWarning = new Color(0.75f, 0.55f, 0.2f);
         public static readonly Color ButtonDanger = new Color(0.7f, 0.25f, 0.25f);
         public static readonly Color ButtonHover = new Color(0.35f, 0.35f, 0.4f);
 
@@ -105,6 +107,16 @@ namespace UnityGameTranslator.Core.UI
         public static readonly Color StatusWarning = new Color(1f, 0.8f, 0.3f);
         public static readonly Color StatusError = new Color(1f, 0.35f, 0.35f);
         public static readonly Color StatusInfo = new Color(0.4f, 0.75f, 1f);
+
+        // Item/List backgrounds (for lists, entries, selectable items)
+        public static readonly Color ItemBackground = new Color(0.15f, 0.15f, 0.15f, 0.8f);
+        public static readonly Color ItemBackgroundHover = new Color(0.2f, 0.2f, 0.22f, 0.85f);
+        public static readonly Color ItemBackgroundSelected = new Color(0.2f, 0.35f, 0.5f, 0.9f);
+
+        // Notification box colors (for status overlays, alerts)
+        public static readonly Color NotificationSuccess = new Color(0.15f, 0.35f, 0.15f, 0.95f);
+        public static readonly Color NotificationWarning = new Color(0.35f, 0.25f, 0.1f, 0.95f);
+        public static readonly Color NotificationInfo = new Color(0.1f, 0.1f, 0.1f, 0.9f);
 
         #endregion
 
@@ -133,6 +145,82 @@ namespace UnityGameTranslator.Core.UI
         public static readonly int FontSizeSmall = 12;
         public static readonly int FontSizeHint = 11;
 
+        // Row heights (standardized heights for list items, form rows, etc.)
+        public static readonly int RowHeightSmall = 18;     // hints, small labels
+        public static readonly int RowHeightNormal = 22;    // standard labels, info rows
+        public static readonly int RowHeightMedium = 25;    // toggles, buttons in rows
+        public static readonly int RowHeightLarge = 30;     // input rows, account rows
+        public static readonly int RowHeightXLarge = 35;    // special emphasis rows
+
+        // Multi-line content heights
+        public static readonly int MultiLineSmall = 45;     // 2-3 lines of text
+        public static readonly int MultiLineMedium = 80;    // descriptions, paragraphs
+        public static readonly int MultiLineLarge = 120;    // large text blocks
+
+        // Control widths
+        public static readonly int ToggleControlWidth = 25;
+        public static readonly int ModifierKeyWidth = 55;
+        public static readonly int SmallButtonWidth = 80;
+
+        // Code/special display
+        public static readonly int CodeDisplayFontSize = 28;
+        public static readonly int CodeDisplayHeight = 50;
+
+        // Notification boxes (StatusOverlay)
+        public static readonly int NotificationBoxHeight = 55;
+
+        // Screen margins for dynamic sizing
+        public static readonly int ScreenMarginTop = 40;
+        public static readonly int ScreenMarginBottom = 40;
+        public static readonly int ScreenMarginHorizontal = 30;
+        public static readonly int MinimumPanelHeight = 150;
+
+        #endregion
+
+        #region Dynamic Sizing Helpers
+
+        /// <summary>
+        /// Calculates the maximum panel height based on screen dimensions.
+        /// Respects top and bottom margins.
+        /// </summary>
+        public static int CalculateMaxPanelHeight(float screenHeight)
+        {
+            return Mathf.Max(MinimumPanelHeight, Mathf.FloorToInt(screenHeight - ScreenMarginTop - ScreenMarginBottom));
+        }
+
+        /// <summary>
+        /// Calculates the maximum panel width based on screen dimensions.
+        /// Respects horizontal margins.
+        /// </summary>
+        public static int CalculateMaxPanelWidth(float screenWidth)
+        {
+            return Mathf.Max(200, Mathf.FloorToInt(screenWidth - ScreenMarginHorizontal * 2));
+        }
+
+        /// <summary>
+        /// Calculates optimal panel height: min(contentHeight, maxScreenHeight).
+        /// Never larger than content (no empty space).
+        /// </summary>
+        public static int CalculateOptimalPanelHeight(float contentHeight, float screenHeight, int minHeight)
+        {
+            int maxHeight = CalculateMaxPanelHeight(screenHeight);
+            // Never larger than content (no void), never smaller than min, never larger than screen allows
+            return Mathf.Clamp(Mathf.CeilToInt(contentHeight), minHeight, maxHeight);
+        }
+
+        /// <summary>
+        /// Gets the safe area for panel placement (accounting for margins).
+        /// </summary>
+        public static Rect GetScreenSafeArea(Vector2 screenDimensions)
+        {
+            return new Rect(
+                ScreenMarginHorizontal,
+                ScreenMarginBottom,
+                screenDimensions.x - ScreenMarginHorizontal * 2,
+                screenDimensions.y - ScreenMarginTop - ScreenMarginBottom
+            );
+        }
+
         #endregion
 
         #region Helper Methods
@@ -146,6 +234,22 @@ namespace UnityGameTranslator.Core.UI
             if (image != null)
             {
                 image.color = color;
+            }
+        }
+
+        /// <summary>
+        /// Configures a UniverseLib scroll view to auto-hide scrollbar and expand viewport.
+        /// Adds a DynamicScrollbarHider component that monitors content size and toggles scrollbar visibility.
+        /// </summary>
+        public static void ConfigureScrollViewNoScrollbar(GameObject scrollObj)
+        {
+            if (scrollObj == null) return;
+
+            // Add our dynamic scrollbar hider component
+            var hider = scrollObj.GetComponent<DynamicScrollbarHider>();
+            if (hider == null)
+            {
+                hider = scrollObj.AddComponent<DynamicScrollbarHider>();
             }
         }
 
@@ -212,6 +316,11 @@ namespace UnityGameTranslator.Core.UI
             if (layout != null)
             {
                 layout.padding = new RectOffset(SectionPadding, SectionPadding, SectionPadding, SectionPadding);
+                layout.childAlignment = TextAnchor.UpperLeft;
+                layout.childControlWidth = true;
+                layout.childControlHeight = true;
+                layout.childForceExpandWidth = true;
+                layout.childForceExpandHeight = false;
             }
 
             return section;
@@ -331,16 +440,6 @@ namespace UnityGameTranslator.Core.UI
         }
 
         /// <summary>
-        /// Creates a horizontal row for form elements
-        /// </summary>
-        public static GameObject CreateFormRow(GameObject parent, string name, int minHeight = 0)
-        {
-            var row = UIFactory.CreateHorizontalGroup(parent, name, false, false, true, true, ElementSpacing);
-            UIFactory.SetLayoutElement(row, minHeight: minHeight > 0 ? minHeight : InputHeight, flexibleWidth: 9999);
-            return row;
-        }
-
-        /// <summary>
         /// Creates a styled modifier container (for hotkey modifiers, etc.)
         /// </summary>
         public static GameObject CreateModifierContainer(GameObject parent, string name)
@@ -440,13 +539,8 @@ namespace UnityGameTranslator.Core.UI
             var scrollObj = UIFactory.CreateScrollView(contentRoot, "PanelScroll", out scrollContent, out _);
             UIFactory.SetLayoutElement(scrollObj, flexibleHeight: 9999, flexibleWidth: 9999);
 
-            // Configure scroll rect to auto-hide scrollbar when content fits
-            var scrollRect = scrollObj.GetComponent<ScrollRect>();
-            if (scrollRect != null)
-            {
-                scrollRect.verticalScrollbarVisibility = ScrollRect.ScrollbarVisibility.AutoHideAndExpandViewport;
-                scrollRect.horizontalScrollbarVisibility = ScrollRect.ScrollbarVisibility.AutoHideAndExpandViewport;
-            }
+            // Hide UniverseLib's fixed 28px scrollbar zone and extend viewport
+            ConfigureScrollViewNoScrollbar(scrollObj);
 
             // Configure scroll content layout
             var scrollLayout = scrollContent.GetComponent<VerticalLayoutGroup>();
@@ -521,5 +615,234 @@ namespace UnityGameTranslator.Core.UI
         }
 
         #endregion
+
+        #region High-Level Helpers
+
+        /// <summary>
+        /// Creates a styled info label (secondary color, normal font size).
+        /// Use for descriptions and informational text.
+        /// </summary>
+        public static Text CreateInfoLabel(GameObject parent, string name, string text)
+        {
+            var label = UIFactory.CreateLabel(parent, name, text, TextAnchor.MiddleLeft);
+            label.color = TextSecondary;
+            label.fontSize = FontSizeNormal;
+            UIFactory.SetLayoutElement(label.gameObject, minHeight: RowHeightNormal);
+            return label;
+        }
+
+        /// <summary>
+        /// Creates a small styled label (muted color, small font).
+        /// Use for hints, captions, and secondary information.
+        /// </summary>
+        public static Text CreateSmallLabel(GameObject parent, string name, string text)
+        {
+            var label = UIFactory.CreateLabel(parent, name, text, TextAnchor.MiddleLeft);
+            label.color = TextMuted;
+            label.fontSize = FontSizeSmall;
+            UIFactory.SetLayoutElement(label.gameObject, minHeight: RowHeightSmall);
+            return label;
+        }
+
+        /// <summary>
+        /// Creates a centered status label for displaying status messages.
+        /// </summary>
+        public static Text CreateStatusLabel(GameObject parent, string name)
+        {
+            var label = UIFactory.CreateLabel(parent, name, "", TextAnchor.MiddleCenter);
+            label.fontSize = FontSizeNormal;
+            UIFactory.SetLayoutElement(label.gameObject, minHeight: RowHeightMedium);
+            return label;
+        }
+
+        /// <summary>
+        /// Creates a styled input field with proper background and sizing.
+        /// </summary>
+        public static InputFieldRef CreateStyledInputField(
+            GameObject parent, string name, string placeholder, int minHeight = 0)
+        {
+            var input = UIFactory.CreateInputField(parent, name, placeholder);
+            UIFactory.SetLayoutElement(input.Component.gameObject,
+                flexibleWidth: 9999,
+                minHeight: minHeight > 0 ? minHeight : InputHeight);
+            SetBackground(input.Component.gameObject, InputBackground);
+            return input;
+        }
+
+        /// <summary>
+        /// Creates a horizontal row for form elements (toggles, labels, inputs).
+        /// Items are vertically centered within the row with proper padding.
+        /// </summary>
+        public static GameObject CreateFormRow(GameObject parent, string name, int minHeight = 0, int spacing = 10)
+        {
+            var row = UIFactory.CreateHorizontalGroup(parent, name, false, false, true, true, spacing);
+            UIFactory.SetLayoutElement(row, minHeight: minHeight > 0 ? minHeight : RowHeightMedium, flexibleWidth: 9999);
+
+            var layout = row.GetComponent<HorizontalLayoutGroup>();
+            if (layout != null)
+            {
+                layout.padding = new RectOffset(10, 10, 5, 5); // Left, Right, Top, Bottom padding
+                layout.childAlignment = TextAnchor.MiddleLeft;
+                layout.childForceExpandWidth = false;
+                layout.childForceExpandHeight = false;
+            }
+
+            return row;
+        }
+
+        /// <summary>
+        /// Creates a list item row with consistent styling and hover support.
+        /// Use for entries in scrollable lists.
+        /// </summary>
+        public static GameObject CreateListItem(GameObject parent, string name, int minHeight = 0, bool selected = false)
+        {
+            var item = UIFactory.CreateHorizontalGroup(parent, name, false, false, true, true, SmallSpacing);
+            UIFactory.SetLayoutElement(item,
+                minHeight: minHeight > 0 ? minHeight : RowHeightMedium,
+                flexibleWidth: 9999);
+            SetBackground(item, selected ? ItemBackgroundSelected : ItemBackground);
+
+            var layout = item.GetComponent<HorizontalLayoutGroup>();
+            if (layout != null)
+            {
+                layout.padding = new RectOffset(10, 10, 5, 5);
+                layout.childAlignment = TextAnchor.MiddleLeft;
+                layout.childControlWidth = true;
+                layout.childControlHeight = true;
+                layout.childForceExpandWidth = false; // Don't expand children - they have their own widths
+                layout.childForceExpandHeight = false;
+            }
+
+            return item;
+        }
+
+        /// <summary>
+        /// Creates an inline language selector with search and scrollable list.
+        /// </summary>
+        /// <param name="parent">Parent container</param>
+        /// <param name="name">Base name for UI elements</param>
+        /// <param name="languages">Array of language names</param>
+        /// <param name="listHeight">Height of the scrollable list</param>
+        /// <returns>Tuple with (container, searchInput, listContent, selectedLabel)</returns>
+        public static (GameObject container, InputFieldRef searchInput, GameObject listContent, Text selectedLabel)
+            CreateLanguageSelector(GameObject parent, string name, int listHeight = 120)
+        {
+            var container = UIFactory.CreateVerticalGroup(parent, name + "Container", false, false, true, true, SmallSpacing);
+            UIFactory.SetLayoutElement(container, flexibleWidth: 9999);
+
+            // Selected language display
+            var selectedRow = UIFactory.CreateHorizontalGroup(container, name + "SelectedRow", false, false, true, true, SmallSpacing);
+            UIFactory.SetLayoutElement(selectedRow, minHeight: RowHeightMedium);
+
+            var selectedLabelPrefix = UIFactory.CreateLabel(selectedRow, name + "Prefix", "Selected: ", TextAnchor.MiddleLeft);
+            selectedLabelPrefix.color = TextSecondary;
+            selectedLabelPrefix.fontSize = FontSizeSmall;
+            UIFactory.SetLayoutElement(selectedLabelPrefix.gameObject, minWidth: 60);
+
+            var selectedLabel = UIFactory.CreateLabel(selectedRow, name + "Selected", "", TextAnchor.MiddleLeft);
+            selectedLabel.color = TextAccent;
+            selectedLabel.fontStyle = FontStyle.Bold;
+            selectedLabel.fontSize = FontSizeNormal;
+            UIFactory.SetLayoutElement(selectedLabel.gameObject, flexibleWidth: 9999);
+
+            // Search input
+            var searchInput = CreateStyledInputField(container, name + "Search", "Search languages...", RowHeightLarge);
+
+            // Scrollable list
+            var scrollObj = UIFactory.CreateScrollView(container, name + "Scroll", out var listContent, out _);
+            UIFactory.SetLayoutElement(scrollObj, minHeight: listHeight, flexibleWidth: 9999);
+            UIFactory.SetLayoutGroup<VerticalLayoutGroup>(listContent, false, false, true, true, 2, 5, 5, 5, 5);
+            SetBackground(scrollObj, InputBackground);
+            ConfigureScrollViewNoScrollbar(scrollObj);
+
+            return (container, searchInput, listContent, selectedLabel);
+        }
+
+        /// <summary>
+        /// Populates a language list with clickable items.
+        /// Call this to refresh the list when search changes or selection changes.
+        /// </summary>
+        /// <param name="listContent">The list content from CreateLanguageSelector</param>
+        /// <param name="languages">All available languages</param>
+        /// <param name="searchFilter">Current search text (empty = show all)</param>
+        /// <param name="selectedLanguage">Currently selected language</param>
+        /// <param name="onSelect">Callback when a language is clicked</param>
+        public static void PopulateLanguageList(
+            GameObject listContent,
+            string[] languages,
+            string searchFilter,
+            string selectedLanguage,
+            System.Action<string> onSelect)
+        {
+            if (listContent == null) return;
+
+            // Clear existing items
+            foreach (Transform child in listContent.transform)
+            {
+                Object.Destroy(child.gameObject);
+            }
+
+            string filter = searchFilter?.ToLower() ?? "";
+
+            foreach (var lang in languages)
+            {
+                if (!string.IsNullOrEmpty(filter) && !lang.ToLower().Contains(filter))
+                    continue;
+
+                bool isSelected = lang == selectedLanguage;
+                var item = CreateListItem(listContent, $"Lang_{lang}", RowHeightMedium, isSelected);
+
+                var label = UIFactory.CreateLabel(item, "Label", lang, TextAnchor.MiddleLeft);
+                label.color = isSelected ? TextPrimary : TextSecondary;
+                label.fontSize = FontSizeNormal;
+                UIFactory.SetLayoutElement(label.gameObject, flexibleWidth: 9999);
+
+                // Make clickable
+                var btn = item.AddComponent<Button>();
+                var langCapture = lang; // Capture for closure
+                btn.onClick.AddListener(() => onSelect?.Invoke(langCapture));
+
+                // Add hover effect
+                var hoverHandler = item.AddComponent<LanguageItemHoverHandler>();
+                hoverHandler.Initialize(item, isSelected);
+            }
+        }
+
+        #endregion
+    }
+
+    /// <summary>
+    /// Simple hover handler for language list items.
+    /// </summary>
+    public class LanguageItemHoverHandler : MonoBehaviour,
+        UnityEngine.EventSystems.IPointerEnterHandler,
+        UnityEngine.EventSystems.IPointerExitHandler
+    {
+        private GameObject _item;
+        private bool _isSelected;
+        private Image _image;
+
+        public void Initialize(GameObject item, bool isSelected)
+        {
+            _item = item;
+            _isSelected = isSelected;
+            _image = item.GetComponent<Image>();
+        }
+
+        public void OnPointerEnter(UnityEngine.EventSystems.PointerEventData eventData)
+        {
+            if (_image != null && !_isSelected)
+            {
+                _image.color = UIStyles.ItemBackgroundHover;
+            }
+        }
+
+        public void OnPointerExit(UnityEngine.EventSystems.PointerEventData eventData)
+        {
+            if (_image != null && !_isSelected)
+            {
+                _image.color = UIStyles.ItemBackground;
+            }
+        }
     }
 }

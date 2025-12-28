@@ -4,6 +4,7 @@ using UnityEngine.UI;
 using UniverseLib;
 using UniverseLib.UI;
 using UniverseLib.UI.Models;
+using UnityGameTranslator.Core.UI.Components;
 
 namespace UnityGameTranslator.Core.UI.Panels
 {
@@ -15,27 +16,19 @@ namespace UnityGameTranslator.Core.UI.Panels
     {
         public override string Name => "Options";
         public override int MinWidth => 500;
-        public override int MinHeight => 580;
+        public override int MinHeight => 400;
         public override int PanelWidth => 500;
         public override int PanelHeight => 580;
 
+        protected override int MinPanelHeight => 400;
+
         // General section
         private Toggle _enableTranslationsToggle;
-        private Text _targetLanguageLabel;
-        private int _targetLanguageIndex;
-        private string[] _targetLanguageOptions;
+        private LanguageSelector _languageSelector;
+        private string[] _languages;
 
-        // Hotkey section
-        private Text _hotkeyLabel;
-        private ButtonRef _hotkeyBtn;
-        private Toggle _hotkeyCtrlToggle;
-        private Toggle _hotkeyAltToggle;
-        private Toggle _hotkeyShiftToggle;
-        private string _hotkey;
-        private bool _hotkeyCtrl;
-        private bool _hotkeyAlt;
-        private bool _hotkeyShift;
-        private bool _isCapturingHotkey;
+        // Hotkey section (reusable component)
+        private HotkeyCapture _hotkeyCapture;
 
         // Online section
         private Toggle _onlineModeToggle;
@@ -53,69 +46,39 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         public OptionsPanel(UIBase owner) : base(owner)
         {
-            InitTargetLanguageOptions();
-        }
-
-        private void InitTargetLanguageOptions()
-        {
-            var langs = LanguageHelper.GetLanguageNames();
-            _targetLanguageOptions = new string[langs.Length + 1];
-            _targetLanguageOptions[0] = "auto (System)";
-            for (int i = 0; i < langs.Length; i++)
-            {
-                _targetLanguageOptions[i + 1] = langs[i];
-            }
-        }
-
-        private int GetTargetLanguageIndex(string lang)
-        {
-            if (string.IsNullOrEmpty(lang) || lang == "auto")
-                return 0;
-            for (int i = 1; i < _targetLanguageOptions.Length; i++)
-            {
-                if (_targetLanguageOptions[i] == lang)
-                    return i;
-            }
-            return 0;
-        }
-
-        private string GetTargetLanguageFromIndex(int index)
-        {
-            if (index <= 0 || index >= _targetLanguageOptions.Length)
-                return "auto";
-            return _targetLanguageOptions[index];
+            // Note: Components initialized in ConstructPanelContent() - base constructor calls ConstructUI() first
         }
 
         protected override void ConstructPanelContent()
         {
-            UIStyles.ConfigurePanelContent(ContentRoot, true);
+            // Initialize components (must be here, not in constructor - base calls ConstructUI first)
+            var langs = LanguageHelper.GetLanguageNames();
+            _languages = new string[langs.Length + 1];
+            _languages[0] = "auto (System)";
+            for (int i = 0; i < langs.Length; i++)
+            {
+                _languages[i + 1] = langs[i];
+            }
+            _languageSelector = new LanguageSelector("TargetLang", _languages, "auto (System)", 100);
+            _hotkeyCapture = new HotkeyCapture("F10");
 
-            CreateFlexSpacer(ContentRoot, "TopSpacer");
+            // Use scrollable layout - content scrolls if needed, buttons stay fixed
+            CreateScrollablePanelLayout(out var scrollContent, out var buttonRow, PanelWidth - 40);
 
-            // Main card with scroll view for options
-            var card = CreateCard(ContentRoot, "OptionsCard", 480);
+            // Adaptive card for options - sizes to content
+            var card = CreateAdaptiveCard(scrollContent, "OptionsCard", PanelWidth - 40);
 
             CreateTitle(card, "Title", "Options");
 
             UIStyles.CreateSpacer(card, 5);
 
-            // Create scroll view inside card for sections
-            var scrollObj = UIFactory.CreateScrollView(card, "OptionsScroll", out var scrollContent, out _);
-            UIFactory.SetLayoutElement(scrollObj, flexibleHeight: 9999, flexibleWidth: 9999);
-            UIFactory.SetLayoutGroup<VerticalLayoutGroup>(scrollContent, false, false, true, true, 10, 5, 5, 5, 5);
-            UIStyles.SetBackground(scrollObj, UIStyles.InputBackground);
+            // Sections (card is inside scroll view from CreateScrollablePanelLayout)
+            CreateGeneralSection(card);
+            CreateHotkeySection(card);
+            CreateOnlineModeSection(card);
+            CreateOllamaSection(card);
 
-            // Sections
-            CreateGeneralSection(scrollContent);
-            CreateHotkeySection(scrollContent);
-            CreateOnlineModeSection(scrollContent);
-            CreateOllamaSection(scrollContent);
-
-            CreateFlexSpacer(ContentRoot, "BottomSpacer");
-
-            // Buttons row
-            var buttonRow = CreateButtonRow(ContentRoot);
-
+            // Buttons - in fixed footer (outside scroll)
             var cancelBtn = CreateSecondaryButton(buttonRow, "CancelBtn", "Cancel");
             cancelBtn.OnClick += () => SetActive(false);
 
@@ -133,38 +96,17 @@ namespace UnityGameTranslator.Core.UI.Panels
             var transToggleObj = UIFactory.CreateToggle(generalBox, "EnableTranslationsToggle", out _enableTranslationsToggle, out var transLabel);
             transLabel.text = " Enable Translations";
             transLabel.color = UIStyles.TextPrimary;
-            UIFactory.SetLayoutElement(transToggleObj, minHeight: 25);
+            UIFactory.SetLayoutElement(transToggleObj, minHeight: UIStyles.RowHeightMedium);
 
             UIStyles.CreateSpacer(generalBox, 5);
 
-            // Target Language
-            var langRow = UIFactory.CreateHorizontalGroup(generalBox, "LanguageRow", false, false, true, true, 10);
-            UIFactory.SetLayoutElement(langRow, minHeight: 30);
-
-            var langLabel = UIFactory.CreateLabel(langRow, "LangLabel", "Target Language:", TextAnchor.MiddleLeft);
+            // Target Language label
+            var langLabel = UIFactory.CreateLabel(generalBox, "LangLabel", "Target Language:", TextAnchor.MiddleLeft);
             langLabel.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(langLabel.gameObject, minWidth: 120);
+            UIFactory.SetLayoutElement(langLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
 
-            var prevBtn = CreateSecondaryButton(langRow, "PrevLangBtn", "<", 35);
-            prevBtn.OnClick += () =>
-            {
-                _targetLanguageIndex = (_targetLanguageIndex - 1 + _targetLanguageOptions.Length) % _targetLanguageOptions.Length;
-                UpdateTargetLanguageDisplay();
-            };
-
-            _targetLanguageLabel = UIFactory.CreateLabel(langRow, "TargetLangLabel", "auto (System)", TextAnchor.MiddleCenter);
-            _targetLanguageLabel.color = UIStyles.TextAccent;
-            _targetLanguageLabel.fontStyle = FontStyle.Bold;
-            UIFactory.SetLayoutElement(_targetLanguageLabel.gameObject, minWidth: 150);
-
-            var nextBtn = CreateSecondaryButton(langRow, "NextLangBtn", ">", 35);
-            nextBtn.OnClick += () =>
-            {
-                _targetLanguageIndex = (_targetLanguageIndex + 1) % _targetLanguageOptions.Length;
-                UpdateTargetLanguageDisplay();
-            };
-
-            UIStyles.CreateHint(generalBox, "LangHint", "Click arrows to change. First option uses system language.");
+            // Language selector (reusable component)
+            _languageSelector.CreateUI(generalBox);
         }
 
         private void CreateHotkeySection(GameObject parent)
@@ -173,33 +115,8 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             var hotkeyBox = CreateSection(parent, "HotkeyBox");
 
-            // Modifier toggles in styled container
-            var modContainer = UIStyles.CreateModifierContainer(hotkeyBox, "ModContainer");
-
-            var ctrlObj = UIFactory.CreateToggle(modContainer, "CtrlToggle", out _hotkeyCtrlToggle, out var ctrlLabel);
-            ctrlLabel.text = "Ctrl";
-            ctrlLabel.fontSize = UIStyles.FontSizeNormal;
-            UIFactory.SetLayoutElement(ctrlObj, minWidth: 55);
-
-            var altObj = UIFactory.CreateToggle(modContainer, "AltToggle", out _hotkeyAltToggle, out var altLabel);
-            altLabel.text = "Alt";
-            altLabel.fontSize = UIStyles.FontSizeNormal;
-            UIFactory.SetLayoutElement(altObj, minWidth: 50);
-
-            var shiftObj = UIFactory.CreateToggle(modContainer, "ShiftToggle", out _hotkeyShiftToggle, out var shiftLabel);
-            shiftLabel.text = "Shift";
-            shiftLabel.fontSize = UIStyles.FontSizeNormal;
-            UIFactory.SetLayoutElement(shiftObj, minWidth: 55);
-
-            var plusLabel = UIFactory.CreateLabel(modContainer, "PlusLabel", "+", TextAnchor.MiddleCenter);
-            plusLabel.fontSize = 16;
-            plusLabel.color = UIStyles.TextMuted;
-            UIFactory.SetLayoutElement(plusLabel.gameObject, minWidth: 25);
-
-            _hotkeyBtn = CreateSecondaryButton(modContainer, "HotkeyBtn", "F10", 80);
-            _hotkeyBtn.OnClick += OnHotkeyButtonClicked;
-
-            _hotkeyLabel = UIStyles.CreateHint(hotkeyBox, "HotkeyHint", "Click button and press a key to change");
+            // Hotkey capture (reusable component)
+            _hotkeyCapture.CreateUI(hotkeyBox);
         }
 
         private void CreateOnlineModeSection(GameObject parent)
@@ -212,29 +129,29 @@ namespace UnityGameTranslator.Core.UI.Panels
             onlineLabel.text = " Enable Online Mode";
             onlineLabel.color = UIStyles.TextPrimary;
             _onlineModeToggle.onValueChanged.AddListener(OnOnlineModeChanged);
-            UIFactory.SetLayoutElement(onlineToggleObj, minHeight: 25);
+            UIFactory.SetLayoutElement(onlineToggleObj, minHeight: UIStyles.RowHeightMedium);
 
             UIStyles.CreateSpacer(onlineBox, 5);
 
             var checkUpdatesObj = UIFactory.CreateToggle(onlineBox, "CheckUpdatesToggle", out _checkUpdatesToggle, out var checkLabel);
             checkLabel.text = " Check for translation updates on start";
             checkLabel.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(checkUpdatesObj, minHeight: 22);
+            UIFactory.SetLayoutElement(checkUpdatesObj, minHeight: UIStyles.RowHeightNormal);
 
             var notifyObj = UIFactory.CreateToggle(onlineBox, "NotifyToggle", out _notifyUpdatesToggle, out var notifyLabel);
             notifyLabel.text = " Notify when updates available";
             notifyLabel.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(notifyObj, minHeight: 22);
+            UIFactory.SetLayoutElement(notifyObj, minHeight: UIStyles.RowHeightNormal);
 
             var autoDownloadObj = UIFactory.CreateToggle(onlineBox, "AutoDownloadToggle", out _autoDownloadToggle, out var autoLabel);
             autoLabel.text = " Auto-download updates (no conflicts)";
             autoLabel.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(autoDownloadObj, minHeight: 22);
+            UIFactory.SetLayoutElement(autoDownloadObj, minHeight: UIStyles.RowHeightNormal);
 
             var modUpdatesObj = UIFactory.CreateToggle(onlineBox, "ModUpdatesToggle", out _checkModUpdatesToggle, out var modLabel);
             modLabel.text = " Check for mod updates on GitHub";
             modLabel.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(modUpdatesObj, minHeight: 22);
+            UIFactory.SetLayoutElement(modUpdatesObj, minHeight: UIStyles.RowHeightNormal);
         }
 
         private void CreateOllamaSection(GameObject parent)
@@ -247,13 +164,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             enableLabel.text = " Enable Ollama";
             enableLabel.color = UIStyles.TextPrimary;
             _enableOllamaToggle.onValueChanged.AddListener(OnOllamaToggleChanged);
-            UIFactory.SetLayoutElement(enableOllamaObj, minHeight: 25);
+            UIFactory.SetLayoutElement(enableOllamaObj, minHeight: UIStyles.RowHeightMedium);
 
             UIStyles.CreateSpacer(ollamaBox, 5);
 
             // URL row
-            var urlRow = UIFactory.CreateHorizontalGroup(ollamaBox, "UrlRow", false, false, true, true, 5);
-            UIFactory.SetLayoutElement(urlRow, minHeight: UIStyles.InputHeight);
+            var urlRow = UIStyles.CreateFormRow(ollamaBox, "UrlRow", UIStyles.InputHeight, 5);
 
             var urlLabel = UIFactory.CreateLabel(urlRow, "UrlLabel", "URL:", TextAnchor.MiddleLeft);
             urlLabel.color = UIStyles.TextSecondary;
@@ -268,11 +184,10 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             _ollamaTestStatusLabel = UIFactory.CreateLabel(ollamaBox, "TestStatus", "", TextAnchor.MiddleLeft);
             _ollamaTestStatusLabel.fontSize = UIStyles.FontSizeSmall;
-            UIFactory.SetLayoutElement(_ollamaTestStatusLabel.gameObject, minHeight: 18);
+            UIFactory.SetLayoutElement(_ollamaTestStatusLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
 
             // Model row
-            var modelRow = UIFactory.CreateHorizontalGroup(ollamaBox, "ModelRow", false, false, true, true, 5);
-            UIFactory.SetLayoutElement(modelRow, minHeight: UIStyles.InputHeight);
+            var modelRow = UIStyles.CreateFormRow(ollamaBox, "ModelRow", UIStyles.InputHeight, 5);
 
             var modelLabel = UIFactory.CreateLabel(modelRow, "ModelLabel", "Model:", TextAnchor.MiddleLeft);
             modelLabel.color = UIStyles.TextSecondary;
@@ -289,7 +204,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Game context
             var contextLabel = UIFactory.CreateLabel(ollamaBox, "ContextLabel", "Game Context (optional):", TextAnchor.MiddleLeft);
             contextLabel.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(contextLabel.gameObject, minHeight: 18);
+            UIFactory.SetLayoutElement(contextLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
 
             _gameContextInput = UIFactory.CreateInputField(ollamaBox, "ContextInput", "");
             UIFactory.SetLayoutElement(_gameContextInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
@@ -309,53 +224,28 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             base.Update();
 
-            // Capture hotkey when in capture mode
-            if (_isCapturingHotkey)
-            {
-                CaptureHotkeyInput();
-            }
-        }
-
-        private void CaptureHotkeyInput()
-        {
-            foreach (KeyCode key in Enum.GetValues(typeof(KeyCode)))
-            {
-                // Skip modifier keys and mouse buttons
-                if (key == KeyCode.None ||
-                    key == KeyCode.LeftControl || key == KeyCode.RightControl ||
-                    key == KeyCode.LeftAlt || key == KeyCode.RightAlt ||
-                    key == KeyCode.LeftShift || key == KeyCode.RightShift ||
-                    key == KeyCode.LeftCommand || key == KeyCode.RightCommand ||
-                    key == KeyCode.LeftWindows || key == KeyCode.RightWindows ||
-                    (key >= KeyCode.Mouse0 && key <= KeyCode.Mouse6))
-                {
-                    continue;
-                }
-
-                if (UniverseLib.Input.InputManager.GetKeyDown(key))
-                {
-                    _hotkey = key.ToString();
-                    _isCapturingHotkey = false;
-                    _hotkeyBtn.ButtonText.text = _hotkey;
-                    _hotkeyLabel.text = "Click button and press a key to change";
-                    return;
-                }
-            }
+            // Update hotkey capture component
+            _hotkeyCapture?.Update();
         }
 
         private void LoadCurrentSettings()
         {
             // General
             _enableTranslationsToggle.isOn = TranslatorCore.Config.enable_translations;
-            _targetLanguageIndex = GetTargetLanguageIndex(TranslatorCore.Config.target_language);
-            UpdateTargetLanguageDisplay();
 
-            // Hotkey
-            ParseHotkey(TranslatorCore.Config.settings_hotkey);
-            _hotkeyCtrlToggle.isOn = _hotkeyCtrl;
-            _hotkeyAltToggle.isOn = _hotkeyAlt;
-            _hotkeyShiftToggle.isOn = _hotkeyShift;
-            _hotkeyBtn.ButtonText.text = _hotkey;
+            // Load target language via component
+            string configLang = TranslatorCore.Config.target_language;
+            if (string.IsNullOrEmpty(configLang) || configLang == "auto")
+            {
+                _languageSelector.SelectedLanguage = "auto (System)";
+            }
+            else
+            {
+                _languageSelector.SelectedLanguage = configLang;
+            }
+
+            // Load hotkey via component
+            _hotkeyCapture.SetHotkey(TranslatorCore.Config.settings_hotkey ?? "F10");
 
             // Online mode
             _onlineModeToggle.isOn = TranslatorCore.Config.online_mode;
@@ -372,44 +262,6 @@ namespace UnityGameTranslator.Core.UI.Panels
             _gameContextInput.Text = TranslatorCore.Config.game_context ?? "";
             _ollamaTestStatusLabel.text = "";
             OnOllamaToggleChanged(_enableOllamaToggle.isOn);
-        }
-
-        private void ParseHotkey(string hotkeyString)
-        {
-            if (string.IsNullOrEmpty(hotkeyString))
-            {
-                _hotkeyCtrl = false;
-                _hotkeyAlt = false;
-                _hotkeyShift = false;
-                _hotkey = "F10";
-                return;
-            }
-
-            _hotkeyCtrl = hotkeyString.Contains("Ctrl+");
-            _hotkeyAlt = hotkeyString.Contains("Alt+");
-            _hotkeyShift = hotkeyString.Contains("Shift+");
-            _hotkey = hotkeyString
-                .Replace("Ctrl+", "")
-                .Replace("Alt+", "")
-                .Replace("Shift+", "");
-        }
-
-        private void UpdateTargetLanguageDisplay()
-        {
-            if (_targetLanguageLabel != null && _targetLanguageIndex >= 0 && _targetLanguageIndex < _targetLanguageOptions.Length)
-            {
-                _targetLanguageLabel.text = _targetLanguageOptions[_targetLanguageIndex];
-            }
-        }
-
-        private void OnHotkeyButtonClicked()
-        {
-            _isCapturingHotkey = true;
-            _hotkeyBtn.ButtonText.text = "Press key...";
-            _hotkeyLabel.text = "Waiting for key press...";
-
-            // Unfocus the button to allow keyboard capture
-            UnityEngine.EventSystems.EventSystem.current?.SetSelectedGameObject(null);
         }
 
         private void OnOnlineModeChanged(bool enabled)
@@ -457,15 +309,20 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             // General
             TranslatorCore.Config.enable_translations = _enableTranslationsToggle.isOn;
-            TranslatorCore.Config.target_language = GetTargetLanguageFromIndex(_targetLanguageIndex);
 
-            // Hotkey - combine with modifiers
-            string hotkeyString = "";
-            if (_hotkeyCtrlToggle.isOn) hotkeyString += "Ctrl+";
-            if (_hotkeyAltToggle.isOn) hotkeyString += "Alt+";
-            if (_hotkeyShiftToggle.isOn) hotkeyString += "Shift+";
-            hotkeyString += _hotkey;
-            TranslatorCore.Config.settings_hotkey = hotkeyString;
+            // Save target language (convert "auto (System)" back to "auto")
+            string selectedLang = _languageSelector.SelectedLanguage;
+            if (selectedLang == "auto (System)")
+            {
+                TranslatorCore.Config.target_language = "auto";
+            }
+            else
+            {
+                TranslatorCore.Config.target_language = selectedLang;
+            }
+
+            // Save hotkey from component
+            TranslatorCore.Config.settings_hotkey = _hotkeyCapture.HotkeyString;
 
             // Online mode
             TranslatorCore.Config.online_mode = _onlineModeToggle.isOn;

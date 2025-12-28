@@ -13,9 +13,11 @@ namespace UnityGameTranslator.Core.UI.Panels
     {
         public override string Name => "Login";
         public override int MinWidth => 420;
-        public override int MinHeight => 420;
+        public override int MinHeight => 300;
         public override int PanelWidth => 420;
         public override int PanelHeight => 420;
+
+        protected override int MinPanelHeight => 300;
 
         private Text _instructionLabel;
         private Text _codeLabel;
@@ -34,10 +36,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         protected override void ConstructPanelContent()
         {
             // Use scrollable layout - content scrolls if needed, buttons stay fixed
-            CreateScrollablePanelLayout(out var scrollContent, out var buttonRow);
+            CreateScrollablePanelLayout(out var scrollContent, out var buttonRow, PanelWidth - 40);
 
-            // Adaptive card - no fixed minHeight, sizes to content
-            var card = CreateAdaptiveCard(scrollContent, "LoginCard");
+            // Adaptive card - sizes to content
+            var card = CreateAdaptiveCard(scrollContent, "LoginCard", PanelWidth - 40);
 
             CreateTitle(card, "Title", "Connect Account");
 
@@ -50,16 +52,16 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TextAnchor.MiddleCenter);
             _instructionLabel.fontSize = UIStyles.FontSizeNormal;
             _instructionLabel.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(_instructionLabel.gameObject, minHeight: 50);
+            UIFactory.SetLayoutElement(_instructionLabel.gameObject, minHeight: UIStyles.MultiLineSmall);
 
             UIStyles.CreateSpacer(card, 10);
 
             // Code display (initially hidden)
             _codeLabel = UIFactory.CreateLabel(card, "CodeLabel", "", TextAnchor.MiddleCenter);
-            _codeLabel.fontSize = 28;
+            _codeLabel.fontSize = UIStyles.CodeDisplayFontSize;
             _codeLabel.fontStyle = FontStyle.Bold;
             _codeLabel.color = UIStyles.TextAccent;
-            UIFactory.SetLayoutElement(_codeLabel.gameObject, minHeight: 50);
+            UIFactory.SetLayoutElement(_codeLabel.gameObject, minHeight: UIStyles.CodeDisplayHeight);
             _codeLabel.gameObject.SetActive(false);
 
             // Open website button (initially hidden)
@@ -69,9 +71,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _openWebsiteBtn.Component.gameObject.SetActive(false);
 
             // Status label
-            _statusLabel = UIFactory.CreateLabel(card, "Status", "", TextAnchor.MiddleCenter);
-            _statusLabel.fontSize = UIStyles.FontSizeNormal;
-            UIFactory.SetLayoutElement(_statusLabel.gameObject, minHeight: 30);
+            _statusLabel = CreateStatusLabel(card, "Status");
 
             // Start login button
             _startLoginBtn = CreatePrimaryButton(card, "StartLoginBtn", "Start Login", 200);

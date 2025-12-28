@@ -272,6 +272,7 @@ namespace UnityGameTranslator.Core
                     settings_hotkey = Config.settings_hotkey,
                     api_user = Config.api_user,
                     sync = Config.sync,
+                    window_preferences = Config.window_preferences,
                     // Encrypt token before saving
                     api_token = !string.IsNullOrEmpty(Config.api_token)
                         ? TokenProtection.EncryptToken(Config.api_token)
@@ -1423,6 +1424,7 @@ namespace UnityGameTranslator.Core
         public string api_token { get; set; } = null;
         public string api_user { get; set; } = null;
         public SyncConfig sync { get; set; } = new SyncConfig();
+        public WindowPreferences window_preferences { get; set; } = new WindowPreferences();
 
         public string GetTargetLanguage()
         {
@@ -1461,6 +1463,35 @@ namespace UnityGameTranslator.Core
         /// Last known mod version (to avoid notifying about same version again)
         /// </summary>
         public string last_seen_mod_version { get; set; } = null;
+    }
+
+    /// <summary>
+    /// Per-panel window preferences for persistence across sessions.
+    /// </summary>
+    public class WindowPreference
+    {
+        /// <summary>Panel X position (anchored position, center-relative)</summary>
+        public float x { get; set; }
+        /// <summary>Panel Y position (anchored position, center-relative)</summary>
+        public float y { get; set; }
+        /// <summary>Panel width in pixels</summary>
+        public float width { get; set; }
+        /// <summary>Panel height in pixels</summary>
+        public float height { get; set; }
+        /// <summary>True if user manually resized (don't auto-adjust)</summary>
+        public bool userResized { get; set; }
+        /// <summary>Screen width when preference was saved (for resolution change handling)</summary>
+        public int screenWidth { get; set; }
+        /// <summary>Screen height when preference was saved (for resolution change handling)</summary>
+        public int screenHeight { get; set; }
+    }
+
+    /// <summary>
+    /// Collection of window preferences keyed by panel name.
+    /// </summary>
+    public class WindowPreferences
+    {
+        public Dictionary<string, WindowPreference> panels { get; set; } = new Dictionary<string, WindowPreference>();
     }
 
     /// <summary>

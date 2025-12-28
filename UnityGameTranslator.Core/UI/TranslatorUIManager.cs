@@ -46,9 +46,11 @@ namespace UnityGameTranslator.Core.UI
         public static Panels.OptionsPanel OptionsPanel { get; private set; }
         public static Panels.LoginPanel LoginPanel { get; private set; }
         public static Panels.UploadPanel UploadPanel { get; private set; }
+        public static Panels.UploadSetupPanel UploadSetupPanel { get; private set; }
         public static Panels.MergePanel MergePanel { get; private set; }
         public static Panels.LanguagePanel LanguagePanel { get; private set; }
         public static Panels.StatusOverlay StatusOverlay { get; private set; }
+        public static Panels.ConfirmationPanel ConfirmationPanel { get; private set; }
 
         /// <summary>
         /// Whether any main panel is visible (not including status overlay).
@@ -104,9 +106,11 @@ namespace UnityGameTranslator.Core.UI
             OptionsPanel = new Panels.OptionsPanel(UiBase);
             LoginPanel = new Panels.LoginPanel(UiBase);
             UploadPanel = new Panels.UploadPanel(UiBase);
+            UploadSetupPanel = new Panels.UploadSetupPanel(UiBase);
             MergePanel = new Panels.MergePanel(UiBase);
             LanguagePanel = new Panels.LanguagePanel(UiBase);
             StatusOverlay = new Panels.StatusOverlay(UiBase);
+            ConfirmationPanel = new Panels.ConfirmationPanel(UiBase);
 
             // Hide all panels initially
             WizardPanel.SetActive(false);
@@ -114,9 +118,11 @@ namespace UnityGameTranslator.Core.UI
             OptionsPanel.SetActive(false);
             LoginPanel.SetActive(false);
             UploadPanel.SetActive(false);
+            UploadSetupPanel.SetActive(false);
             MergePanel.SetActive(false);
             LanguagePanel.SetActive(false);
             StatusOverlay.SetActive(false);
+            ConfirmationPanel.SetActive(false);
         }
 
         private static void InitializeUIState()
@@ -208,11 +214,17 @@ namespace UnityGameTranslator.Core.UI
                 };
 
                 TranslatorCore.LogInfo($"[UIManager] Server state: exists={result.Exists}, isOwner={result.IsOwner}, siteId={TranslatorCore.ServerState.SiteId}");
+
+                // Refresh MainPanel if visible to show updated server state
+                MainPanel?.RefreshUI();
             }
             catch (Exception e)
             {
                 TranslatorCore.LogWarning($"[UIManager] Server state fetch error: {e.Message}");
                 TranslatorCore.ServerState = new ServerTranslationState { Checked = true };
+
+                // Refresh MainPanel even on error to update "checking..." status
+                MainPanel?.RefreshUI();
             }
         }
 
@@ -312,10 +324,16 @@ namespace UnityGameTranslator.Core.UI
                 {
                     TranslatorCore.LogWarning($"[UpdateCheck] Failed: {result.Error}");
                 }
+
+                // Refresh MainPanel to show updated sync status
+                MainPanel?.RefreshUI();
             }
             catch (Exception e)
             {
                 TranslatorCore.LogWarning($"[UpdateCheck] Error: {e.Message}");
+
+                // Refresh MainPanel even on error
+                MainPanel?.RefreshUI();
             }
         }
 
@@ -416,6 +434,9 @@ namespace UnityGameTranslator.Core.UI
                     PendingUpdateDirection = UpdateDirection.None;
 
                     TranslatorCore.LogInfo($"[UpdateCheck] Translation updated successfully");
+
+                    // Refresh MainPanel to show new translation count
+                    MainPanel?.RefreshUI();
                 }
                 else
                 {
@@ -426,6 +447,9 @@ namespace UnityGameTranslator.Core.UI
             {
                 TranslatorCore.LogWarning($"[UpdateCheck] Download error: {e.Message}");
             }
+
+            // Refresh MainPanel in all cases to update status
+            MainPanel?.RefreshUI();
         }
 
         /// <summary>
@@ -531,6 +555,158 @@ namespace UnityGameTranslator.Core.UI
             PendingUpdateDirection = HasPendingUpdate ? UpdateDirection.Upload : UpdateDirection.None;
 
             TranslatorCore.LogInfo($"[Merge] Applied successfully. LocalChangesCount={TranslatorCore.LocalChangesCount}, direction={PendingUpdateDirection}");
+
+            // Refresh MainPanel to show updated translation count and sync status
+            MainPanel?.RefreshUI();
+        }
+
+        /// <summary>
+        /// Download and apply a translation from a TranslationInfo (selected from list).
+        /// Used by Wizard and MainPanel community translations.
+        /// </summary>
+        /// <param name="translation">The translation to download</param>
+        /// <param name="onComplete">Callback with (success, message)</param>
+        public static async Task DownloadTranslation(TranslationInfo translation, Action<bool, string> onComplete = null)
+        {
+            if (translation == null)
+            {
+                onComplete?.Invoke(false, "No translation selected");
+                return;
+            }
+
+            try
+            {
+                var result = await ApiClient.Download(translation.Id);
+
+                if (result.Success && !string.IsNullOrEmpty(result.Content))
+                {
+                    // Write content to file
+                    System.IO.File.WriteAllText(TranslatorCore.CachePath, result.Content);
+                    TranslatorCore.ReloadCache();
+
+                    // Check if current user owns this translation
+                    string currentUser = TranslatorCore.Config.api_user;
+                    bool isOwner = !string.IsNullOrEmpty(currentUser) &&
+                        translation.Uploader.Equals(currentUser, StringComparison.OrdinalIgnoreCase);
+
+                    // Update server state
+                    TranslatorCore.ServerState = new ServerTranslationState
+                    {
+                        Checked = true,
+                        Exists = true,
+                        IsOwner = isOwner,
+                        SiteId = translation.Id,
+                        Uploader = translation.Uploader,
+                        Hash = result.FileHash ?? translation.FileHash,
+                        Type = translation.Type,
+                        Notes = translation.Notes
+                    };
+
+                    // Save as ancestor for sync tracking
+                    TranslatorCore.SaveAncestorCache();
+
+                    // Update sync state
+                    TranslatorCore.LastSyncedHash = result.FileHash ?? translation.FileHash;
+                    HasPendingUpdate = false;
+                    PendingUpdateDirection = UpdateDirection.None;
+
+                    TranslatorCore.LogInfo($"[Download] Downloaded translation #{translation.Id} from @{translation.Uploader}");
+
+                    MainPanel?.RefreshUI();
+                    onComplete?.Invoke(true, "Downloaded successfully!");
+                }
+                else
+                {
+                    onComplete?.Invoke(false, result.Error ?? "Download failed");
+                }
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogWarning($"[Download] Error: {e.Message}");
+                onComplete?.Invoke(false, e.Message);
+            }
+        }
+
+        /// <summary>
+        /// Download a translation and merge with local changes.
+        /// Shows MergePanel if conflicts exist.
+        /// </summary>
+        /// <param name="translation">The translation to merge with</param>
+        /// <param name="onComplete">Callback with (success, message) - only called if no conflicts</param>
+        public static async Task DownloadAndMerge(TranslationInfo translation, Action<bool, string> onComplete = null)
+        {
+            if (translation == null)
+            {
+                onComplete?.Invoke(false, "No translation selected");
+                return;
+            }
+
+            try
+            {
+                var result = await ApiClient.Download(translation.Id);
+
+                if (result.Success && !string.IsNullOrEmpty(result.Content))
+                {
+                    // Parse remote translations
+                    var parsed = Newtonsoft.Json.JsonConvert.DeserializeObject<Dictionary<string, object>>(result.Content);
+                    var remoteTranslations = new Dictionary<string, string>();
+
+                    foreach (var kvp in parsed)
+                    {
+                        if (!kvp.Key.StartsWith("_") && kvp.Value is string strValue)
+                        {
+                            remoteTranslations[kvp.Key] = strValue;
+                        }
+                    }
+
+                    // Perform 3-way merge
+                    var local = TranslatorCore.TranslationCache;
+                    var ancestor = TranslatorCore.AncestorCache;
+                    var mergeResult = TranslationMerger.Merge(local, remoteTranslations, ancestor);
+
+                    TranslatorCore.LogInfo($"[Merge] Result: {mergeResult.Statistics.GetSummary()}");
+
+                    // Update server state to track this translation
+                    string currentUser = TranslatorCore.Config.api_user;
+                    bool isOwner = !string.IsNullOrEmpty(currentUser) &&
+                        translation.Uploader.Equals(currentUser, StringComparison.OrdinalIgnoreCase);
+
+                    TranslatorCore.ServerState = new ServerTranslationState
+                    {
+                        Checked = true,
+                        Exists = true,
+                        IsOwner = isOwner,
+                        SiteId = translation.Id,
+                        Uploader = translation.Uploader,
+                        Hash = result.FileHash ?? translation.FileHash,
+                        Type = translation.Type,
+                        Notes = translation.Notes
+                    };
+
+                    if (mergeResult.ConflictCount > 0)
+                    {
+                        // Show merge panel for user to resolve conflicts
+                        MergePanel?.SetMergeData(mergeResult, remoteTranslations, result.FileHash);
+                        MergePanel?.SetActive(true);
+                        // Don't call onComplete - MergePanel handles the rest
+                    }
+                    else
+                    {
+                        // No conflicts - apply merge directly
+                        ApplyMerge(mergeResult, result.FileHash, remoteTranslations);
+                        onComplete?.Invoke(true, "Merged successfully!");
+                    }
+                }
+                else
+                {
+                    onComplete?.Invoke(false, result.Error ?? "Download failed");
+                }
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogWarning($"[Merge] Error: {e.Message}");
+                onComplete?.Invoke(false, e.Message);
+            }
         }
 
         #endregion
@@ -540,6 +716,8 @@ namespace UnityGameTranslator.Core.UI
         /// </summary>
         public static void ShowWizard()
         {
+            if (WizardPanel == null || MainPanel == null) return;
+
             ShowUI = true;
             WizardPanel.SetActive(true);
             MainPanel.SetActive(false);
@@ -550,6 +728,8 @@ namespace UnityGameTranslator.Core.UI
         /// </summary>
         public static void ShowMain()
         {
+            if (WizardPanel == null || MainPanel == null) return;
+
             ShowUI = true;
             WizardPanel.SetActive(false);
             MainPanel.SetActive(true);
@@ -560,6 +740,8 @@ namespace UnityGameTranslator.Core.UI
         /// </summary>
         public static void ToggleMain()
         {
+            if (MainPanel == null) return;
+
             if (MainPanel.Enabled)
             {
                 MainPanel.SetActive(false);
@@ -605,8 +787,8 @@ namespace UnityGameTranslator.Core.UI
         private static bool AnyPanelVisible()
         {
             return WizardPanel.Enabled || MainPanel.Enabled || OptionsPanel.Enabled ||
-                   LoginPanel.Enabled || UploadPanel.Enabled || MergePanel.Enabled ||
-                   LanguagePanel.Enabled;
+                   LoginPanel.Enabled || UploadPanel.Enabled || UploadSetupPanel.Enabled ||
+                   MergePanel.Enabled || LanguagePanel.Enabled;
         }
 
         private static float _overlayRefreshTimer = 0f;
@@ -614,6 +796,9 @@ namespace UnityGameTranslator.Core.UI
 
         private static void UpdateUI()
         {
+            // Don't do anything until fully initialized
+            if (!_initialized) return;
+
             // Called every frame when UI is active
             // Can be used for hotkey detection, etc.
             CheckHotkey();

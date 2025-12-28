@@ -14,9 +14,11 @@ namespace UnityGameTranslator.Core.UI.Panels
     {
         public override string Name => "Merge Translations";
         public override int MinWidth => 650;
-        public override int MinHeight => 500;
+        public override int MinHeight => 400;
         public override int PanelWidth => 650;
         public override int PanelHeight => 500;
+
+        protected override int MinPanelHeight => 400;
 
         private MergeResult _pendingMerge;
         private Dictionary<string, ConflictResolution> _resolutions = new Dictionary<string, ConflictResolution>();
@@ -48,10 +50,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         protected override void ConstructPanelContent()
         {
             // Use scrollable layout - content scrolls if needed, buttons stay fixed
-            CreateScrollablePanelLayout(out var scrollContent, out var buttonRow, 600);
+            CreateScrollablePanelLayout(out var scrollContent, out var buttonRow, PanelWidth - 40);
 
-            // Adaptive card for merge conflicts - sizes to content
-            var card = CreateAdaptiveCard(scrollContent, "MergeCard", 600);
+            // Adaptive card for merge conflicts - sizes to content (PanelWidth - 2*PanelPadding)
+            var card = CreateAdaptiveCard(scrollContent, "MergeCard", PanelWidth - 40);
 
             CreateTitle(card, "Title", "Merge Conflicts");
 
@@ -61,21 +63,21 @@ namespace UnityGameTranslator.Core.UI.Panels
             _summaryLabel = UIFactory.CreateLabel(card, "Summary", "Conflicts to resolve:", TextAnchor.MiddleLeft);
             _summaryLabel.fontSize = UIStyles.FontSizeNormal;
             _summaryLabel.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(_summaryLabel.gameObject, minHeight: 25);
+            UIFactory.SetLayoutElement(_summaryLabel.gameObject, minHeight: UIStyles.RowHeightMedium);
 
             // Conflict list scroll view
             var scrollObj = UIFactory.CreateScrollView(card, "ConflictScroll", out _conflictListContent, out _);
             UIFactory.SetLayoutElement(scrollObj, flexibleHeight: 9999, flexibleWidth: 9999);
             UIFactory.SetLayoutGroup<VerticalLayoutGroup>(_conflictListContent, false, false, true, true, 5, 5, 5, 5, 5);
             UIStyles.SetBackground(scrollObj, UIStyles.InputBackground);
+            UIStyles.ConfigureScrollViewNoScrollbar(scrollObj);
 
             UIStyles.CreateSpacer(card, 10);
 
             // Bulk action row
-            var bulkRow = UIFactory.CreateHorizontalGroup(card, "BulkRow", false, false, true, true, 10);
-            UIFactory.SetLayoutElement(bulkRow, minHeight: 35);
+            var bulkRow = UIStyles.CreateFormRow(card, "BulkRow", UIStyles.RowHeightXLarge);
             var bulkLayout = bulkRow.GetComponent<HorizontalLayoutGroup>();
-            if (bulkLayout != null) bulkLayout.childAlignment = TextAnchor.MiddleCenter;
+            if (bulkLayout != null) bulkLayout.childAlignment = TextAnchor.MiddleCenter; // Center the buttons
 
             var useAllLocalBtn = CreateSecondaryButton(bulkRow, "UseAllLocalBtn", "Use All Local", 110);
             useAllLocalBtn.OnClick += UseAllLocal;
@@ -118,38 +120,38 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void CreateConflictRow(MergeConflict conflict)
         {
             var row = UIFactory.CreateVerticalGroup(_conflictListContent, $"Conflict_{conflict.Key}", false, false, true, true, 3);
-            UIFactory.SetLayoutElement(row, minHeight: 80, flexibleWidth: 9999);
+            UIFactory.SetLayoutElement(row, minHeight: UIStyles.MultiLineMedium, flexibleWidth: 9999);
 
             // Key label
             var keyLabel = UIFactory.CreateLabel(row, "Key", $"Key: {conflict.Key}", TextAnchor.MiddleLeft);
             keyLabel.fontStyle = FontStyle.Bold;
-            UIFactory.SetLayoutElement(keyLabel.gameObject, minHeight: 20);
+            UIFactory.SetLayoutElement(keyLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
 
             // Values row
             var valuesRow = UIFactory.CreateHorizontalGroup(row, "Values", false, false, true, true, 10);
-            UIFactory.SetLayoutElement(valuesRow, minHeight: 50);
+            UIFactory.SetLayoutElement(valuesRow, minHeight: UIStyles.CodeDisplayHeight);
 
             // Local value
             var localGroup = UIFactory.CreateVerticalGroup(valuesRow, "Local", false, false, true, true, 2);
             UIFactory.SetLayoutElement(localGroup, flexibleWidth: 9999);
             var localLabel = UIFactory.CreateLabel(localGroup, "LocalLabel", "Local:", TextAnchor.MiddleLeft);
-            localLabel.fontSize = 12;
+            localLabel.fontSize = UIStyles.FontSizeSmall;
             var localValue = UIFactory.CreateLabel(localGroup, "LocalValue", conflict.LocalValue ?? "(none)", TextAnchor.MiddleLeft);
-            localValue.fontSize = 12;
+            localValue.fontSize = UIStyles.FontSizeSmall;
             localValue.color = UIStyles.TextAccent;
 
             // Remote value
             var remoteGroup = UIFactory.CreateVerticalGroup(valuesRow, "Remote", false, false, true, true, 2);
             UIFactory.SetLayoutElement(remoteGroup, flexibleWidth: 9999);
             var remoteLabel = UIFactory.CreateLabel(remoteGroup, "RemoteLabel", "Remote:", TextAnchor.MiddleLeft);
-            remoteLabel.fontSize = 12;
+            remoteLabel.fontSize = UIStyles.FontSizeSmall;
             var remoteValue = UIFactory.CreateLabel(remoteGroup, "RemoteValue", conflict.RemoteValue ?? "(none)", TextAnchor.MiddleLeft);
-            remoteValue.fontSize = 12;
+            remoteValue.fontSize = UIStyles.FontSizeSmall;
             remoteValue.color = UIStyles.StatusSuccess;
 
             // Choice toggles
             var choiceRow = UIFactory.CreateHorizontalGroup(row, "Choices", false, false, true, true, 20);
-            UIFactory.SetLayoutElement(choiceRow, minHeight: 25);
+            UIFactory.SetLayoutElement(choiceRow, minHeight: UIStyles.RowHeightMedium);
 
             var key = conflict.Key;
             var localToggleObj = UIFactory.CreateToggle(choiceRow, "LocalToggle", out var localToggle, out var localToggleLabel);
@@ -213,16 +215,30 @@ namespace UnityGameTranslator.Core.UI.Panels
             SetActive(false);
         }
 
-        private async void ReplaceWithRemote()
+        private void ReplaceWithRemote()
         {
-            // Clear pending merge state
-            _pendingMerge = null;
-            _resolutions.Clear();
+            int localChanges = TranslatorCore.LocalChangesCount;
+            string message = localChanges > 0
+                ? $"This will discard {localChanges} local change(s) and replace with the server version.\n\nThis action cannot be undone."
+                : "This will replace your local translations with the server version.\n\nThis action cannot be undone.";
 
-            // Download and apply remote directly (discards local changes)
-            await TranslatorUIManager.DownloadUpdate();
+            TranslatorUIManager.ConfirmationPanel?.Show(
+                "Replace with Remote",
+                message,
+                "Replace",
+                async () =>
+                {
+                    // Clear pending merge state
+                    _pendingMerge = null;
+                    _resolutions.Clear();
 
-            SetActive(false);
+                    // Download and apply remote directly (discards local changes)
+                    await TranslatorUIManager.DownloadUpdate();
+
+                    SetActive(false);
+                },
+                isDanger: true
+            );
         }
 
         private void CancelMerge()

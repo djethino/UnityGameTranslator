@@ -1,200 +1,124 @@
 using System;
-using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using UniverseLib.UI;
 using UniverseLib.UI.Models;
+using UnityGameTranslator.Core.UI.Components;
 
 namespace UnityGameTranslator.Core.UI.Panels
 {
     /// <summary>
     /// Language selection panel for choosing source and target languages.
+    /// Uses reusable LanguageSelector components.
     /// </summary>
     public class LanguagePanel : TranslatorPanelBase
     {
         public override string Name => "Select Languages";
         public override int MinWidth => 500;
-        public override int MinHeight => 500;
+        public override int MinHeight => 300;
         public override int PanelWidth => 500;
-        public override int PanelHeight => 500;
+        public override int PanelHeight => 550;
 
-        // Initialize languages early as ConstructPanelContent() is called during base constructor
-        private string[] _languages = LanguageHelper.GetLanguageNames();
-        private string _selectedSourceLanguage = "English";
-        private string _selectedTargetLanguage = "";
-        private InputFieldRef _searchInput;
-        private GameObject _languageListContent;
-        private Text _selectedLabel;
+        protected override int MinPanelHeight => 300;
+
+        // Language selectors (reusable components)
+        private LanguageSelector _sourceSelector;
+        private LanguageSelector _targetSelector;
+
+        // Summary display
+        private Text _summaryLabel;
+
+        // Callback
         private Action<string, string> _onLanguagesSelected;
 
         public LanguagePanel(UIBase owner) : base(owner)
         {
+            // Note: Components initialized in ConstructPanelContent() - base constructor calls ConstructUI() first
         }
 
         public void ShowForSelection(Action<string, string> onSelected)
         {
             _onLanguagesSelected = onSelected;
-            RefreshLanguageList();
+            UpdateSummary();
             SetActive(true);
         }
 
         protected override void ConstructPanelContent()
         {
-            UIFactory.SetLayoutGroup<VerticalLayoutGroup>(ContentRoot, false, false, true, true, 10, 15, 15, 15, 15);
+            // Initialize components (must be here, not in constructor - base calls ConstructUI first)
+            var languages = LanguageHelper.GetLanguageNames();
+            _sourceSelector = new LanguageSelector("Source", languages, "English", 100);
+            _targetSelector = new LanguageSelector("Target", languages, "", 120);
 
-            // Source language selection
-            var sourceLabel = UIFactory.CreateLabel(ContentRoot, "SourceLabel", "Source Language (original game language):", TextAnchor.MiddleLeft);
-            UIFactory.SetLayoutElement(sourceLabel.gameObject, minHeight: 20);
+            // Use scrollable layout for the content
+            CreateScrollablePanelLayout(out var scrollContent, out var buttonRow, PanelWidth - 40);
 
-            var sourceDropdown = CreateLanguageDropdown(ContentRoot, "SourceDropdown", _selectedSourceLanguage, (lang) =>
-            {
-                _selectedSourceLanguage = lang;
-                UpdateSelectedLabel();
-            });
+            var card = CreateAdaptiveCard(scrollContent, "LanguageCard", PanelWidth - 40);
 
-            // Target language selection
-            var targetLabel = UIFactory.CreateLabel(ContentRoot, "TargetLabel", "Target Language (translation language):", TextAnchor.MiddleLeft);
-            UIFactory.SetLayoutElement(targetLabel.gameObject, minHeight: 20);
+            CreateTitle(card, "Title", "Select Languages");
 
-            // Search filter
-            _searchInput = UIFactory.CreateInputField(ContentRoot, "SearchInput", "Search languages...");
-            UIFactory.SetLayoutElement(_searchInput.Component.gameObject, minHeight: 30, flexibleWidth: 9999);
-            _searchInput.OnValueChanged += (val) => RefreshLanguageList();
+            UIStyles.CreateSpacer(card, 5);
 
-            // Language list scroll view
-            var scrollObj = UIFactory.CreateScrollView(ContentRoot, "LanguageScroll", out _languageListContent, out _);
-            UIFactory.SetLayoutElement(scrollObj, flexibleHeight: 9999, flexibleWidth: 9999, minHeight: 200);
-            UIFactory.SetLayoutGroup<VerticalLayoutGroup>(_languageListContent, false, false, true, true, 2, 5, 5, 5, 5);
+            // Source language section
+            UIStyles.CreateSectionTitle(card, "SourceTitle", "Source Language (original game language)");
+            _sourceSelector.CreateUI(card, (lang) => UpdateSummary());
 
-            // Selected languages display
-            _selectedLabel = UIFactory.CreateLabel(ContentRoot, "SelectedLabel", "", TextAnchor.MiddleCenter);
-            _selectedLabel.fontSize = 14;
-            _selectedLabel.fontStyle = FontStyle.Bold;
-            UIFactory.SetLayoutElement(_selectedLabel.gameObject, minHeight: 30);
+            UIStyles.CreateSpacer(card, 10);
 
-            UpdateSelectedLabel();
+            // Target language section
+            UIStyles.CreateSectionTitle(card, "TargetTitle", "Target Language (translation language)");
+            _targetSelector.CreateUI(card, (lang) => UpdateSummary());
 
-            // Buttons
-            var buttonRow = UIFactory.CreateHorizontalGroup(ContentRoot, "ButtonRow", false, false, true, true, 10);
-            UIFactory.SetLayoutElement(buttonRow, minHeight: 40);
-            UIFactory.SetLayoutGroup<HorizontalLayoutGroup>(buttonRow, false, false, true, true, 10, childAlignment: TextAnchor.MiddleCenter);
+            UIStyles.CreateSpacer(card, 10);
 
-            var confirmBtn = UIFactory.CreateButton(buttonRow, "ConfirmBtn", "Confirm");
-            UIFactory.SetLayoutElement(confirmBtn.Component.gameObject, minWidth: 100, minHeight: 35);
-            confirmBtn.OnClick += ConfirmSelection;
+            // Summary display
+            _summaryLabel = UIFactory.CreateLabel(card, "Summary", "", TextAnchor.MiddleCenter);
+            _summaryLabel.fontSize = UIStyles.FontSizeNormal + 2;
+            _summaryLabel.fontStyle = FontStyle.Bold;
+            UIFactory.SetLayoutElement(_summaryLabel.gameObject, minHeight: UIStyles.RowHeightXLarge);
 
-            var cancelBtn = UIFactory.CreateButton(buttonRow, "CancelBtn", "Cancel");
-            UIFactory.SetLayoutElement(cancelBtn.Component.gameObject, minWidth: 100, minHeight: 35);
+            UpdateSummary();
+
+            // Buttons - in fixed footer
+            var cancelBtn = CreateSecondaryButton(buttonRow, "CancelBtn", "Cancel");
             cancelBtn.OnClick += () => SetActive(false);
 
-            RefreshLanguageList();
+            var confirmBtn = CreatePrimaryButton(buttonRow, "ConfirmBtn", "Confirm");
+            UIStyles.SetBackground(confirmBtn.Component.gameObject, UIStyles.ButtonSuccess);
+            confirmBtn.OnClick += ConfirmSelection;
         }
 
-        private GameObject CreateLanguageDropdown(GameObject parent, string name, string defaultValue, Action<string> onChanged)
+        private void UpdateSummary()
         {
-            var row = UIFactory.CreateHorizontalGroup(parent, $"{name}Row", false, false, true, true, 5);
-            UIFactory.SetLayoutElement(row, minHeight: 30);
+            if (_summaryLabel == null) return;
 
-            // For simplicity, use buttons to cycle through languages
-            // In a full implementation, you'd use a proper dropdown
-            var prevBtn = UIFactory.CreateButton(row, "PrevBtn", "<");
-            UIFactory.SetLayoutElement(prevBtn.Component.gameObject, minWidth: 30, minHeight: 25);
+            string target = _targetSelector?.SelectedLanguage;
+            string source = _sourceSelector?.SelectedLanguage ?? "English";
 
-            var valueLabel = UIFactory.CreateLabel(row, "Value", defaultValue, TextAnchor.MiddleCenter);
-            UIFactory.SetLayoutElement(valueLabel.gameObject, minWidth: 150, minHeight: 25);
-
-            var nextBtn = UIFactory.CreateButton(row, "NextBtn", ">");
-            UIFactory.SetLayoutElement(nextBtn.Component.gameObject, minWidth: 30, minHeight: 25);
-
-            int currentIndex = Array.IndexOf(_languages, defaultValue);
-            if (currentIndex < 0) currentIndex = 0;
-
-            prevBtn.OnClick += () =>
+            if (!string.IsNullOrEmpty(target))
             {
-                currentIndex = (currentIndex - 1 + _languages.Length) % _languages.Length;
-                valueLabel.text = _languages[currentIndex];
-                onChanged?.Invoke(_languages[currentIndex]);
-            };
-
-            nextBtn.OnClick += () =>
-            {
-                currentIndex = (currentIndex + 1) % _languages.Length;
-                valueLabel.text = _languages[currentIndex];
-                onChanged?.Invoke(_languages[currentIndex]);
-            };
-
-            return row;
-        }
-
-        private void RefreshLanguageList()
-        {
-            if (_languageListContent == null) return;
-
-            // Clear existing items
-            foreach (Transform child in _languageListContent.transform)
-            {
-                UnityEngine.Object.Destroy(child.gameObject);
-            }
-
-            string search = _searchInput?.Text?.ToLower() ?? "";
-
-            foreach (var lang in _languages)
-            {
-                if (!string.IsNullOrEmpty(search) && !lang.ToLower().Contains(search))
-                    continue;
-
-                CreateLanguageRow(lang);
-            }
-        }
-
-        private void CreateLanguageRow(string language)
-        {
-            var row = UIFactory.CreateHorizontalGroup(_languageListContent, $"Lang_{language}", false, false, true, true, 5);
-            UIFactory.SetLayoutElement(row, minHeight: 30, flexibleWidth: 9999);
-
-            var btn = UIFactory.CreateButton(row, "SelectBtn", language);
-            UIFactory.SetLayoutElement(btn.Component.gameObject, flexibleWidth: 9999, minHeight: 28);
-
-            // Highlight if selected
-            if (language == _selectedTargetLanguage)
-            {
-                btn.Component.GetComponent<Image>().color = new Color(0.3f, 0.5f, 0.3f);
-            }
-
-            btn.OnClick += () =>
-            {
-                _selectedTargetLanguage = language;
-                UpdateSelectedLabel();
-                RefreshLanguageList();
-            };
-        }
-
-        private void UpdateSelectedLabel()
-        {
-            if (_selectedLabel == null) return;
-
-            if (!string.IsNullOrEmpty(_selectedTargetLanguage))
-            {
-                _selectedLabel.text = $"{_selectedSourceLanguage} → {_selectedTargetLanguage}";
-                _selectedLabel.color = Color.green;
+                _summaryLabel.text = $"{source} → {target}";
+                _summaryLabel.color = UIStyles.StatusSuccess;
             }
             else
             {
-                _selectedLabel.text = "Select a target language";
-                _selectedLabel.color = Color.gray;
+                _summaryLabel.text = "Select a target language";
+                _summaryLabel.color = UIStyles.TextMuted;
             }
         }
 
         private void ConfirmSelection()
         {
-            if (string.IsNullOrEmpty(_selectedTargetLanguage))
+            string target = _targetSelector?.SelectedLanguage;
+
+            if (string.IsNullOrEmpty(target))
             {
-                _selectedLabel.text = "Please select a target language!";
-                _selectedLabel.color = Color.red;
+                _summaryLabel.text = "Please select a target language!";
+                _summaryLabel.color = UIStyles.StatusError;
                 return;
             }
 
-            _onLanguagesSelected?.Invoke(_selectedSourceLanguage, _selectedTargetLanguage);
+            _onLanguagesSelected?.Invoke(_sourceSelector.SelectedLanguage, target);
             SetActive(false);
         }
     }

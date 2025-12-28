@@ -17,14 +17,17 @@ namespace UnityGameTranslator.Core.UI.Panels
     /// <summary>
     /// Upload panel for sharing translations to the server.
     /// Handles new uploads, updates (owner), and forks (non-owner).
+    /// For NEW uploads, redirects to UploadSetupPanel for language/game selection first.
     /// </summary>
     public class UploadPanel : TranslatorPanelBase
     {
         public override string Name => "Upload Translation";
         public override int MinWidth => 450;
-        public override int MinHeight => 420;
+        public override int MinHeight => 300;
         public override int PanelWidth => 450;
         public override int PanelHeight => 420;
+
+        protected override int MinPanelHeight => 300;
 
         // UI elements
         private Text _titleLabel;
@@ -44,6 +47,11 @@ namespace UnityGameTranslator.Core.UI.Panels
         private UploadMode _uploadMode;
         private string _uploadType = "ai";
 
+        // For NEW uploads - selected from UploadSetupPanel
+        private string _selectedSourceLanguage;
+        private string _selectedTargetLanguage;
+        private bool _setupComplete = false;
+
         public UploadPanel(UIBase owner) : base(owner)
         {
         }
@@ -51,10 +59,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         protected override void ConstructPanelContent()
         {
             // Use scrollable layout - content scrolls if needed, buttons stay fixed
-            CreateScrollablePanelLayout(out var scrollContent, out var buttonRow, 450);
+            CreateScrollablePanelLayout(out var scrollContent, out var buttonRow, PanelWidth - 40);
 
-            // Adaptive card - sizes to content
-            var card = CreateAdaptiveCard(scrollContent, "UploadCard", 450);
+            // Adaptive card - sizes to content (PanelWidth - 2*PanelPadding)
+            var card = CreateAdaptiveCard(scrollContent, "UploadCard", PanelWidth - 40);
 
             // Title
             _titleLabel = CreateTitle(card, "TitleLabel", "Upload Translation");
@@ -66,17 +74,17 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             _entriesLabel = UIFactory.CreateLabel(infoBox, "EntriesLabel", "Entries: 0", TextAnchor.MiddleLeft);
             _entriesLabel.color = UIStyles.TextPrimary;
-            UIFactory.SetLayoutElement(_entriesLabel.gameObject, minHeight: 22);
+            UIFactory.SetLayoutElement(_entriesLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
 
             _gameLabel = UIFactory.CreateLabel(infoBox, "GameLabel", "Game: Unknown", TextAnchor.MiddleLeft);
             _gameLabel.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(_gameLabel.gameObject, minHeight: 22);
+            UIFactory.SetLayoutElement(_gameLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
 
             _modeInfoLabel = UIFactory.CreateLabel(infoBox, "ModeInfoLabel", "", TextAnchor.MiddleLeft);
             _modeInfoLabel.fontStyle = FontStyle.Italic;
             _modeInfoLabel.fontSize = UIStyles.FontSizeSmall;
             _modeInfoLabel.color = UIStyles.TextMuted;
-            UIFactory.SetLayoutElement(_modeInfoLabel.gameObject, minHeight: 20);
+            UIFactory.SetLayoutElement(_modeInfoLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
 
             UIStyles.CreateSpacer(card, 10);
 
@@ -99,7 +107,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     _manualToggle.isOn = false;
                 }
             });
-            UIFactory.SetLayoutElement(aiObj, minHeight: 22);
+            UIFactory.SetLayoutElement(aiObj, minHeight: UIStyles.RowHeightNormal);
 
             // AI Corrected toggle
             var aiCorrectedObj = UIFactory.CreateToggle(typeBox, "AICorrectedToggle", out _aiCorrectedToggle, out var aiCorrectedLabel);
@@ -115,7 +123,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     _manualToggle.isOn = false;
                 }
             });
-            UIFactory.SetLayoutElement(aiCorrectedObj, minHeight: 22);
+            UIFactory.SetLayoutElement(aiCorrectedObj, minHeight: UIStyles.RowHeightNormal);
 
             // Manual toggle
             var manualObj = UIFactory.CreateToggle(typeBox, "ManualToggle", out _manualToggle, out var manualLabel);
@@ -131,23 +139,17 @@ namespace UnityGameTranslator.Core.UI.Panels
                     _aiCorrectedToggle.isOn = false;
                 }
             });
-            UIFactory.SetLayoutElement(manualObj, minHeight: 22);
+            UIFactory.SetLayoutElement(manualObj, minHeight: UIStyles.RowHeightNormal);
 
             UIStyles.CreateSpacer(card, 10);
 
             // Notes
-            var notesLabel = UIFactory.CreateLabel(card, "NotesLabel", "Notes (optional):", TextAnchor.MiddleLeft);
-            notesLabel.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(notesLabel.gameObject, minHeight: 18);
+            var notesLabel = CreateSmallLabel(card, "NotesLabel", "Notes (optional):");
 
-            _notesInput = UIFactory.CreateInputField(card, "NotesInput", "Add any notes about this translation...");
-            UIFactory.SetLayoutElement(_notesInput.Component.gameObject, minHeight: 45, flexibleWidth: 9999);
-            UIStyles.SetBackground(_notesInput.Component.gameObject, UIStyles.InputBackground);
+            _notesInput = CreateStyledInputField(card, "NotesInput", "Add any notes about this translation...", UIStyles.MultiLineSmall);
 
             // Status
-            _statusLabel = UIFactory.CreateLabel(card, "Status", "", TextAnchor.MiddleCenter);
-            _statusLabel.fontSize = UIStyles.FontSizeNormal;
-            UIFactory.SetLayoutElement(_statusLabel.gameObject, minHeight: 25);
+            _statusLabel = CreateStatusLabel(card, "Status");
 
             // Buttons - in fixed footer (outside scroll)
             var cancelBtn = CreateSecondaryButton(buttonRow, "CancelBtn", "Cancel");
@@ -162,8 +164,34 @@ namespace UnityGameTranslator.Core.UI.Panels
             base.SetActive(active);
             if (active)
             {
+                // Reset setup state when opening fresh
+                _setupComplete = false;
+                _selectedSourceLanguage = null;
+                _selectedTargetLanguage = null;
                 CheckUploadMode();
             }
+        }
+
+        /// <summary>
+        /// Called by UploadSetupPanel when user completes setup for NEW upload.
+        /// </summary>
+        public void ContinueAfterSetup(GameInfo game, string sourceLanguage, string targetLanguage)
+        {
+            _selectedSourceLanguage = sourceLanguage;
+            _selectedTargetLanguage = targetLanguage;
+            _setupComplete = true;
+
+            // Update display
+            _uploadMode = UploadMode.New;
+            _titleLabel.text = "Upload Translation";
+            _modeInfoLabel.text = $"Languages: {sourceLanguage} -> {targetLanguage}";
+            _uploadBtn.ButtonText.text = "Upload";
+            _statusLabel.text = "";
+
+            RefreshInfo();
+
+            // Show the upload panel
+            SetActive(true);
         }
 
         private async void CheckUploadMode()
@@ -187,7 +215,21 @@ namespace UnityGameTranslator.Core.UI.Panels
                         // UPDATE mode
                         _uploadMode = UploadMode.Update;
                         _titleLabel.text = "Update Translation";
-                        _modeInfoLabel.text = $"Updating: ID #{TranslatorCore.ServerState?.SiteId}";
+
+                        // Update ServerState from API response
+                        TranslatorCore.ServerState = new ServerTranslationState
+                        {
+                            Checked = true,
+                            Exists = true,
+                            IsOwner = true,
+                            SiteId = result.ExistingTranslation?.Id,
+                            Uploader = TranslatorCore.Config.api_user,
+                            Type = result.ExistingTranslation?.Type,
+                            Notes = result.ExistingTranslation?.Notes,
+                            Hash = result.ExistingTranslation?.FileHash
+                        };
+
+                        _modeInfoLabel.text = $"Updating: ID #{TranslatorCore.ServerState.SiteId}";
                         _uploadBtn.ButtonText.text = "Update";
 
                         // Restore existing type if available
@@ -195,26 +237,56 @@ namespace UnityGameTranslator.Core.UI.Panels
                         {
                             SetUploadType(result.ExistingTranslation.Type);
                         }
+
+                        // Restore existing notes
+                        _notesInput.Text = result.ExistingTranslation?.Notes ?? "";
+
+                        _statusLabel.text = "";
+                        _isChecking = false;
+                        _uploadBtn.Component.interactable = true;
                     }
                     else
                     {
                         // FORK mode
                         _uploadMode = UploadMode.Fork;
                         _titleLabel.text = "Fork Translation";
-                        _modeInfoLabel.text = $"Forking from: {TranslatorCore.ServerState?.Uploader ?? "unknown"}";
-                        _uploadBtn.ButtonText.text = "Fork";
-                    }
 
-                    _statusLabel.text = "";
+                        // Update ServerState from API response
+                        TranslatorCore.ServerState = new ServerTranslationState
+                        {
+                            Checked = true,
+                            Exists = true,
+                            IsOwner = false,
+                            SiteId = result.OriginalTranslation?.Id,
+                            Uploader = result.OriginalTranslation?.Uploader,
+                            Type = result.OriginalTranslation?.Type
+                        };
+
+                        _modeInfoLabel.text = $"Forking from: {TranslatorCore.ServerState.Uploader ?? "unknown"}";
+                        _uploadBtn.ButtonText.text = "Fork";
+
+                        // Restore type from original translation
+                        SetUploadType(result.OriginalTranslation?.Type ?? "ai");
+
+                        _statusLabel.text = "";
+                        _isChecking = false;
+                        _uploadBtn.Component.interactable = true;
+                    }
                 }
                 else
                 {
-                    // NEW mode - show language selection
+                    // NEW mode - redirect to UploadSetupPanel for game/language selection
                     _uploadMode = UploadMode.New;
-                    _titleLabel.text = "Upload Translation";
-                    _modeInfoLabel.text = $"Languages: {TranslatorCore.Config.GetSourceLanguage() ?? "auto"} → {TranslatorCore.Config.GetTargetLanguage()}";
-                    _uploadBtn.ButtonText.text = "Upload";
-                    _statusLabel.text = "";
+                    _isChecking = false;
+
+                    // Close this panel and open UploadSetupPanel
+                    SetActive(false);
+
+                    TranslatorUIManager.UploadSetupPanel.ShowForSetup((game, srcLang, tgtLang) =>
+                    {
+                        // This is called when user completes setup
+                        ContinueAfterSetup(game, srcLang, tgtLang);
+                    });
                 }
             }
             catch (Exception e)
@@ -222,9 +294,6 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TranslatorCore.LogWarning($"[Upload] UUID check error: {e.Message}");
                 _statusLabel.text = $"Error: {e.Message}";
                 _statusLabel.color = UIStyles.StatusError;
-            }
-            finally
-            {
                 _isChecking = false;
                 _uploadBtn.Component.interactable = true;
             }
@@ -271,9 +340,20 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 string notes = _notesInput.Text;
 
-                // Determine languages
-                string srcLang = TranslatorCore.Config.GetSourceLanguage() ?? "English";
-                string tgtLang = TranslatorCore.Config.GetTargetLanguage();
+                // Determine languages based on mode
+                string srcLang, tgtLang;
+                if (_uploadMode == UploadMode.New && _setupComplete)
+                {
+                    // NEW: Use selected languages from UploadSetupPanel
+                    srcLang = _selectedSourceLanguage;
+                    tgtLang = _selectedTargetLanguage;
+                }
+                else
+                {
+                    // UPDATE or FORK: Server will use existing languages (we send these but server ignores)
+                    srcLang = TranslatorCore.Config.GetSourceLanguage() ?? "English";
+                    tgtLang = TranslatorCore.Config.GetTargetLanguage();
+                }
 
                 // Build upload request
                 var request = new UploadRequest

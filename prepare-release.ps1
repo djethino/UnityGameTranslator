@@ -51,7 +51,6 @@ New-Item -ItemType Directory -Path $bepinex5Dir | Out-Null
 Copy-Item "UnityGameTranslator-BepInEx5/bin/UnityGameTranslator.dll" $bepinex5Dir
 Copy-Item "UnityGameTranslator-BepInEx5/bin/UnityGameTranslator.Core.dll" $bepinex5Dir
 Copy-Item "UnityGameTranslator-BepInEx5/bin/Newtonsoft.Json.dll" $bepinex5Dir
-Copy-Item "UnityGameTranslator-BepInEx5/bin/System.Security.Cryptography.ProtectedData.dll" $bepinex5Dir
 # Polyfills for netstandard2.0 cross-platform support
 Copy-Item "UnityGameTranslator-BepInEx5/bin/System.Buffers.dll" $bepinex5Dir
 Copy-Item "UnityGameTranslator-BepInEx5/bin/System.Memory.dll" $bepinex5Dir
@@ -68,7 +67,6 @@ New-Item -ItemType Directory -Path $bepinex6MonoDir | Out-Null
 Copy-Item "UnityGameTranslator-BepInEx6-Mono/bin/UnityGameTranslator.dll" $bepinex6MonoDir
 Copy-Item "UnityGameTranslator-BepInEx6-Mono/bin/UnityGameTranslator.Core.dll" $bepinex6MonoDir
 Copy-Item "UnityGameTranslator-BepInEx6-Mono/bin/Newtonsoft.Json.dll" $bepinex6MonoDir
-Copy-Item "UnityGameTranslator-BepInEx6-Mono/bin/System.Security.Cryptography.ProtectedData.dll" $bepinex6MonoDir
 # UniverseLib for uGUI
 Copy-Item "UniverseLib/Release/UniverseLib.Mono/UniverseLib.Mono.dll" $bepinex6MonoDir
 Compress-Archive -Path "$bepinex6MonoDir/*" -DestinationPath "$releasesDir/UnityGameTranslator-BepInEx6-Mono-v$Version.zip"
@@ -80,7 +78,6 @@ New-Item -ItemType Directory -Path $bepinex6IL2CPPDir | Out-Null
 Copy-Item "UnityGameTranslator-BepInEx6-IL2CPP/bin/UnityGameTranslator.dll" $bepinex6IL2CPPDir
 Copy-Item "UnityGameTranslator-BepInEx6-IL2CPP/bin/UnityGameTranslator.Core.dll" $bepinex6IL2CPPDir
 Copy-Item "UnityGameTranslator-BepInEx6-IL2CPP/bin/Newtonsoft.Json.dll" $bepinex6IL2CPPDir
-Copy-Item "UnityGameTranslator-BepInEx6-IL2CPP/bin/System.Security.Cryptography.ProtectedData.dll" $bepinex6IL2CPPDir
 # UniverseLib IL2CPP variant for BepInEx
 Copy-Item "UniverseLib/Release/NuGet_IL2CPP_Interop/lib/net6.0/UniverseLib.BIE.IL2CPP.Interop.dll" $bepinex6IL2CPPDir
 Compress-Archive -Path "$bepinex6IL2CPPDir/*" -DestinationPath "$releasesDir/UnityGameTranslator-BepInEx6-IL2CPP-v$Version.zip"
@@ -92,7 +89,6 @@ New-Item -ItemType Directory -Path $melonDir | Out-Null
 Copy-Item "UnityGameTranslator-MelonLoader/bin/UnityGameTranslator.dll" $melonDir
 Copy-Item "UnityGameTranslator-MelonLoader/bin/UnityGameTranslator.Core.dll" $melonDir
 Copy-Item "UnityGameTranslator-MelonLoader/bin/Newtonsoft.Json.dll" $melonDir
-Copy-Item "UnityGameTranslator-MelonLoader/bin/System.Security.Cryptography.ProtectedData.dll" $melonDir
 # UniverseLib - both variants, mod detects and loads correct one
 Copy-Item "UniverseLib/Release/UniverseLib.Mono/UniverseLib.Mono.dll" $melonDir
 Copy-Item "UniverseLib/Release/NuGet_IL2CPP_Interop/lib/net6.0/UniverseLib.ML.IL2CPP.Interop.dll" $melonDir

@@ -1,18 +1,20 @@
 using System;
-using System.Collections.Generic;
 using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.UI;
-using UniverseLib;
 using UniverseLib.UI;
 using UniverseLib.UI.Models;
 using UnityGameTranslator.Core.UI;
+using UnityGameTranslator.Core.UI.Components;
 
 namespace UnityGameTranslator.Core.UI.Panels
 {
     /// <summary>
     /// First-run wizard panel. Guides user through initial setup.
     /// Steps: Welcome -> OnlineMode -> Hotkey -> TranslationChoice -> OllamaConfig -> Complete
+    ///
+    /// Uses CreateScrollablePanelLayout like all other panels.
+    /// Each step is a simple container inside scrollContent.
     /// </summary>
     public class WizardPanel : TranslatorPanelBase
     {
@@ -28,12 +30,18 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         public override string Name => "Unity Game Translator - Setup";
         public override int MinWidth => 520;
-        public override int MinHeight => 500;
+        public override int MinHeight => 400;
         public override int PanelWidth => 520;
         public override int PanelHeight => 500;
 
+        protected override int MinPanelHeight => 400;
+        protected override bool PersistWindowPreferences => false;
+
         // Current step
         private WizardStep _currentStep = WizardStep.Welcome;
+
+        // Scroll content reference
+        private GameObject _scrollContent;
 
         // Step containers
         private GameObject _welcomeStep;
@@ -43,42 +51,39 @@ namespace UnityGameTranslator.Core.UI.Panels
         private GameObject _ollamaConfigStep;
         private GameObject _completeStep;
 
-        // State variables
-        private bool _onlineMode = true;
-        private string _hotkey = "F10";
-        private bool _hotkeyCtrl = false;
-        private bool _hotkeyAlt = false;
-        private bool _hotkeyShift = false;
-        private bool _enableOllama = false;
-        private string _ollamaUrl = "http://localhost:11434";
+        // State variables - initialized from config in ConstructPanelContent
+        private bool _onlineMode;
+        private bool _enableOllama;
+        private string _ollamaUrl;
+        private string _model;
+        private string _gameContext;
+
+        // Hotkey capture (reusable component)
+        private HotkeyCapture _hotkeyCapture;
+        private Text _hotkeyDisplayLabel;
 
         // UI references
-        private Text _hotkeyLabel;
         private InputFieldRef _ollamaUrlInput;
+        private InputFieldRef _modelInput;
+        private InputFieldRef _gameContextInput;
         private Text _ollamaStatusLabel;
-
-        // Hotkey capture state
-        private bool _isCapturingHotkey;
-        private ButtonRef _setHotkeyBtn;
 
         // TranslationChoice step state
         private GameInfo _detectedGame;
-        private bool _isSearchingTranslations;
-        private string _searchStatus = "";
-        private List<TranslationInfo> _availableTranslations = new List<TranslationInfo>();
-        private TranslationInfo _selectedTranslation;
         private bool _isDownloading;
-        private string _downloadStatus = "";
 
         // TranslationChoice UI references
         private Text _gameLabel;
         private Text _localTranslationsLabel;
         private Text _accountStatusLabel;
         private ButtonRef _loginBtn;
-        private Text _searchStatusLabel;
-        private GameObject _translationListContent;
+        private TranslationList _translationList;
         private Text _downloadStatusLabel;
+        private Text _comparisonLabel;
         private ButtonRef _downloadBtn;
+        private ButtonRef _uploadBtn;
+        private ButtonRef _mergeBtn;
+        private GameObject _actionButtonsRow;
 
         public WizardPanel(UIBase owner) : base(owner)
         {
@@ -88,62 +93,45 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             base.Update();
 
-            // Capture hotkey when in capture mode - try multiple input methods
-            if (_isCapturingHotkey && _currentStep == WizardStep.Hotkey)
+            // Update hotkey capture component when on hotkey step
+            if (_currentStep == WizardStep.Hotkey)
             {
-                CaptureHotkeyInput();
-            }
-        }
+                _hotkeyCapture?.Update();
 
-        private void CaptureHotkeyInput()
-        {
-            // Try to detect any key press using multiple methods
-            foreach (KeyCode key in Enum.GetValues(typeof(KeyCode)))
-            {
-                // Skip modifier keys, mouse buttons, and invalid keys
-                if (key == KeyCode.None ||
-                    key == KeyCode.LeftControl || key == KeyCode.RightControl ||
-                    key == KeyCode.LeftAlt || key == KeyCode.RightAlt ||
-                    key == KeyCode.LeftShift || key == KeyCode.RightShift ||
-                    key == KeyCode.LeftCommand || key == KeyCode.RightCommand ||
-                    key == KeyCode.LeftWindows || key == KeyCode.RightWindows ||
-                    key == KeyCode.AltGr || key == KeyCode.CapsLock ||
-                    key == KeyCode.Numlock || key == KeyCode.Menu ||
-                    (key >= KeyCode.Mouse0 && key <= KeyCode.Mouse6) ||
-                    (int)key >= 330) // Skip joystick buttons
+                // Update display label when hotkey changes
+                if (_hotkeyDisplayLabel != null && !_hotkeyCapture.IsCapturing)
                 {
-                    continue;
-                }
-
-                // Use UniverseLib InputManager
-                bool keyPressed = false;
-                try
-                {
-                    keyPressed = UniverseLib.Input.InputManager.GetKeyDown(key);
-                }
-                catch { }
-
-                if (keyPressed)
-                {
-                    _hotkey = key.ToString();
-                    _isCapturingHotkey = false;
-                    UpdateHotkeyDisplay();
-
-                    if (_setHotkeyBtn != null)
-                        _setHotkeyBtn.ButtonText.text = "Change";
-
-                    TranslatorCore.LogInfo($"[Wizard] Captured hotkey: {_hotkey}");
-                    return;
+                    string newHotkey = _hotkeyCapture.HotkeyString;
+                    if (_hotkeyDisplayLabel.text != newHotkey)
+                    {
+                        _hotkeyDisplayLabel.text = newHotkey;
+                        _hotkeyDisplayLabel.color = UIStyles.TextAccent;
+                    }
                 }
             }
         }
 
         protected override void ConstructPanelContent()
         {
-            // Use centralized styling for panel content
-            UIStyles.ConfigurePanelContent(ContentRoot, false);
+            // Initialize state from existing config (for re-running wizard)
+            _onlineMode = TranslatorCore.Config.online_mode;
+            _enableOllama = TranslatorCore.Config.enable_ollama;
+            _ollamaUrl = TranslatorCore.Config.ollama_url ?? "http://localhost:11434";
+            _model = TranslatorCore.Config.model ?? "qwen3:8b";
+            _gameContext = TranslatorCore.Config.game_context ?? "";
 
-            // Create all step containers
+            // Initialize components
+            string existingHotkey = TranslatorCore.Config.settings_hotkey ?? "F10";
+            _hotkeyCapture = new HotkeyCapture(existingHotkey);
+            _translationList = new TranslationList();
+
+            // Use centralized scroll layout - ONE scroll for the entire panel
+            CreateScrollablePanelLayout(out _scrollContent, out var sharedButtonRow, PanelWidth - 40);
+
+            // Hide the shared button row - wizard has per-step buttons
+            sharedButtonRow.SetActive(false);
+
+            // Create all step containers inside scroll content
             CreateWelcomeStep();
             CreateOnlineModeStep();
             CreateHotkeyStep();
@@ -156,14 +144,10 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private void CreateWelcomeStep()
         {
-            _welcomeStep = UIFactory.CreateVerticalGroup(ContentRoot, "WelcomeStep", true, false, true, true, 0);
-            UIFactory.SetLayoutElement(_welcomeStep, flexibleWidth: 9999, flexibleHeight: 9999);
-            var stepLayout = _welcomeStep.GetComponent<VerticalLayoutGroup>();
-            if (stepLayout != null) stepLayout.childAlignment = TextAnchor.MiddleCenter;
+            _welcomeStep = UIFactory.CreateVerticalGroup(_scrollContent, "WelcomeStep", false, false, true, true, UIStyles.ElementSpacing);
+            UIFactory.SetLayoutElement(_welcomeStep, flexibleWidth: 9999);
 
-            CreateFlexSpacer(_welcomeStep, "TopSpacer");
-
-            var card = CreateCard(_welcomeStep, "Card", 280);
+            var card = CreateAdaptiveCard(_welcomeStep, "Card", 420);
 
             CreateTitle(card, "Title", "Welcome to Unity Game Translator!");
 
@@ -176,9 +160,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TextAnchor.MiddleCenter);
             desc.fontSize = UIStyles.FontSizeNormal;
             desc.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(desc.gameObject, minHeight: 140);
-
-            CreateFlexSpacer(_welcomeStep, "BottomSpacer");
+            UIFactory.SetLayoutElement(desc.gameObject, minHeight: UIStyles.MultiLineLarge + 20);
 
             var buttonRow = CreateButtonRow(_welcomeStep);
             var nextBtn = CreatePrimaryButton(buttonRow, "NextBtn", "Get Started →", 160);
@@ -187,14 +169,10 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private void CreateOnlineModeStep()
         {
-            _onlineModeStep = UIFactory.CreateVerticalGroup(ContentRoot, "OnlineModeStep", true, false, true, true, 0);
-            UIFactory.SetLayoutElement(_onlineModeStep, flexibleWidth: 9999, flexibleHeight: 9999);
-            var stepLayout = _onlineModeStep.GetComponent<VerticalLayoutGroup>();
-            if (stepLayout != null) stepLayout.childAlignment = TextAnchor.MiddleCenter;
+            _onlineModeStep = UIFactory.CreateVerticalGroup(_scrollContent, "OnlineModeStep", false, false, true, true, UIStyles.ElementSpacing);
+            UIFactory.SetLayoutElement(_onlineModeStep, flexibleWidth: 9999);
 
-            CreateFlexSpacer(_onlineModeStep, "TopSpacer");
-
-            var card = CreateCard(_onlineModeStep, "Card", 320);
+            var card = CreateAdaptiveCard(_onlineModeStep, "Card", 420);
 
             CreateTitle(card, "Title", "Online Mode");
             CreateDescription(card, "Description", "Do you want to enable online features?");
@@ -202,15 +180,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIStyles.CreateSpacer(card, 10);
 
             // Online mode option
-            var onlineBox = CreateSection(card, "OnlineBox", 90);
-            var onlineRow = UIFactory.CreateHorizontalGroup(onlineBox, "OnlineRow", false, false, true, true, 10);
-            UIFactory.SetLayoutElement(onlineRow, minHeight: 28);
+            var onlineBox = CreateSection(card, "OnlineBox");
+            var onlineRow = UIStyles.CreateFormRow(onlineBox, "OnlineRow", UIStyles.RowHeightLarge);
 
             var onlineToggleObj = UIFactory.CreateToggle(onlineRow, "OnlineToggle", out var onlineToggle, out var onlineLabel);
             onlineToggle.isOn = _onlineMode;
             onlineLabel.text = "";
             onlineToggle.onValueChanged.AddListener((val) => _onlineMode = val);
-            UIFactory.SetLayoutElement(onlineToggleObj, minWidth: 25);
+            UIFactory.SetLayoutElement(onlineToggleObj, minWidth: UIStyles.ToggleControlWidth);
 
             var onlineTextLabel = UIFactory.CreateLabel(onlineRow, "OnlineTextLabel", "Enable Online Mode", TextAnchor.MiddleLeft);
             onlineTextLabel.fontStyle = FontStyle.Bold;
@@ -222,21 +199,20 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TextAnchor.MiddleLeft);
             onlineDesc.fontSize = UIStyles.FontSizeSmall;
             onlineDesc.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(onlineDesc.gameObject, minHeight: 45);
+            UIFactory.SetLayoutElement(onlineDesc.gameObject, minHeight: UIStyles.MultiLineSmall);
 
             UIStyles.CreateSpacer(card, 5);
 
             // Offline mode option
-            var offlineBox = CreateSection(card, "OfflineBox", 90);
-            var offlineRow = UIFactory.CreateHorizontalGroup(offlineBox, "OfflineRow", false, false, true, true, 10);
-            UIFactory.SetLayoutElement(offlineRow, minHeight: 28);
+            var offlineBox = CreateSection(card, "OfflineBox");
+            var offlineRow = UIStyles.CreateFormRow(offlineBox, "OfflineRow", UIStyles.RowHeightLarge);
 
             var offlineToggleObj = UIFactory.CreateToggle(offlineRow, "OfflineToggle", out var offlineToggle, out var offlineLabel);
             offlineToggle.isOn = !_onlineMode;
             offlineLabel.text = "";
             offlineToggle.onValueChanged.AddListener((val) => { if (val) _onlineMode = false; onlineToggle.isOn = !val; });
             onlineToggle.onValueChanged.AddListener((val) => offlineToggle.isOn = !val);
-            UIFactory.SetLayoutElement(offlineToggleObj, minWidth: 25);
+            UIFactory.SetLayoutElement(offlineToggleObj, minWidth: UIStyles.ToggleControlWidth);
 
             var offlineTextLabel = UIFactory.CreateLabel(offlineRow, "OfflineTextLabel", "Stay Offline", TextAnchor.MiddleLeft);
             offlineTextLabel.fontStyle = FontStyle.Bold;
@@ -248,9 +224,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TextAnchor.MiddleLeft);
             offlineDesc.fontSize = UIStyles.FontSizeSmall;
             offlineDesc.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(offlineDesc.gameObject, minHeight: 45);
-
-            CreateFlexSpacer(_onlineModeStep, "BottomSpacer");
+            UIFactory.SetLayoutElement(offlineDesc.gameObject, minHeight: UIStyles.MultiLineSmall);
 
             var buttonRow = CreateButtonRow(_onlineModeStep);
             var backBtn = CreateSecondaryButton(buttonRow, "BackBtn", "← Back");
@@ -262,77 +236,35 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private void CreateHotkeyStep()
         {
-            // Create step container - forceExpandWidth=true so children fill the width
-            _hotkeyStep = UIFactory.CreateVerticalGroup(ContentRoot, "HotkeyStep", true, false, true, true, 0);
-            UIFactory.SetLayoutElement(_hotkeyStep, flexibleWidth: 9999, flexibleHeight: 9999);
-            var stepLayout = _hotkeyStep.GetComponent<VerticalLayoutGroup>();
-            if (stepLayout != null)
-            {
-                stepLayout.childAlignment = TextAnchor.MiddleCenter;
-            }
+            _hotkeyStep = UIFactory.CreateVerticalGroup(_scrollContent, "HotkeyStep", false, false, true, true, UIStyles.ElementSpacing);
+            UIFactory.SetLayoutElement(_hotkeyStep, flexibleWidth: 9999);
 
-            // Top spacer for vertical centering
-            CreateFlexSpacer(_hotkeyStep, "TopSpacer");
+            var card = CreateAdaptiveCard(_hotkeyStep, "Card", 420);
 
-            // Main content card using centralized styling
-            var card = CreateCard(_hotkeyStep, "Card", 220);
-
-            // Title
             CreateTitle(card, "Title", "Settings Hotkey");
-
-            // Description
             CreateDescription(card, "Description", "Choose a keyboard shortcut to open the translator menu");
 
-            // Spacer
             UIStyles.CreateSpacer(card, 15);
 
-            // Modifier toggles in a styled container
-            var modContainer = UIStyles.CreateModifierContainer(card, "ModContainer");
+            // Hotkey capture (reusable component)
+            _hotkeyCapture.CreateUI(card, onHotkeyChanged: (hotkey) =>
+            {
+                if (_hotkeyDisplayLabel != null)
+                {
+                    _hotkeyDisplayLabel.text = hotkey;
+                    _hotkeyDisplayLabel.color = UIStyles.TextAccent;
+                }
+            }, includeDisplayLabel: false);
 
-            var ctrlObj = UIFactory.CreateToggle(modContainer, "CtrlToggle", out var ctrlToggle, out var ctrlLabel);
-            ctrlLabel.text = "Ctrl";
-            ctrlLabel.fontSize = UIStyles.FontSizeNormal;
-            ctrlToggle.isOn = _hotkeyCtrl;
-            ctrlToggle.onValueChanged.AddListener((val) => { _hotkeyCtrl = val; UpdateHotkeyDisplay(); });
-            UIFactory.SetLayoutElement(ctrlObj, minWidth: 55);
-
-            var altObj = UIFactory.CreateToggle(modContainer, "AltToggle", out var altToggle, out var altLabel);
-            altLabel.text = "Alt";
-            altLabel.fontSize = UIStyles.FontSizeNormal;
-            altToggle.isOn = _hotkeyAlt;
-            altToggle.onValueChanged.AddListener((val) => { _hotkeyAlt = val; UpdateHotkeyDisplay(); });
-            UIFactory.SetLayoutElement(altObj, minWidth: 50);
-
-            var shiftObj = UIFactory.CreateToggle(modContainer, "ShiftToggle", out var shiftToggle, out var shiftLabel);
-            shiftLabel.text = "Shift";
-            shiftLabel.fontSize = UIStyles.FontSizeNormal;
-            shiftToggle.isOn = _hotkeyShift;
-            shiftToggle.onValueChanged.AddListener((val) => { _hotkeyShift = val; UpdateHotkeyDisplay(); });
-            UIFactory.SetLayoutElement(shiftObj, minWidth: 55);
-
-            var plusLabel = UIFactory.CreateLabel(modContainer, "PlusLabel", "+", TextAnchor.MiddleCenter);
-            plusLabel.fontSize = 16;
-            plusLabel.color = UIStyles.TextMuted;
-            UIFactory.SetLayoutElement(plusLabel.gameObject, minWidth: 25);
-
-            _setHotkeyBtn = UIFactory.CreateButton(modContainer, "SetHotkeyBtn", _hotkey ?? "F10");
-            UIFactory.SetLayoutElement(_setHotkeyBtn.Component.gameObject, minWidth: 80, minHeight: UIStyles.SmallButtonHeight);
-            _setHotkeyBtn.OnClick += OnSetHotkeyClicked;
-
-            // Spacer
             UIStyles.CreateSpacer(card, 15);
 
             // Current hotkey display
-            _hotkeyLabel = UIFactory.CreateLabel(card, "HotkeyLabel", GetHotkeyDisplayString(), TextAnchor.MiddleCenter);
-            _hotkeyLabel.fontSize = 18;
-            _hotkeyLabel.fontStyle = FontStyle.Bold;
-            _hotkeyLabel.color = UIStyles.TextAccent;
-            UIFactory.SetLayoutElement(_hotkeyLabel.gameObject, minHeight: 35);
+            _hotkeyDisplayLabel = UIFactory.CreateLabel(card, "HotkeyLabel", _hotkeyCapture.HotkeyString, TextAnchor.MiddleCenter);
+            _hotkeyDisplayLabel.fontSize = UIStyles.FontSizeSectionTitle + 2;
+            _hotkeyDisplayLabel.fontStyle = FontStyle.Bold;
+            _hotkeyDisplayLabel.color = UIStyles.TextAccent;
+            UIFactory.SetLayoutElement(_hotkeyDisplayLabel.gameObject, minHeight: UIStyles.RowHeightXLarge);
 
-            // Bottom spacer for vertical centering
-            CreateFlexSpacer(_hotkeyStep, "BottomSpacer");
-
-            // Navigation buttons at bottom using centralized styling
             var buttonRow = CreateButtonRow(_hotkeyStep);
 
             var backBtn = CreateSecondaryButton(buttonRow, "BackBtn", "← Back");
@@ -350,15 +282,10 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private void CreateTranslationChoiceStep()
         {
-            _translationChoiceStep = UIFactory.CreateVerticalGroup(ContentRoot, "TranslationChoiceStep", true, false, true, true, 0);
-            UIFactory.SetLayoutElement(_translationChoiceStep, flexibleWidth: 9999, flexibleHeight: 9999);
-            var stepLayout = _translationChoiceStep.GetComponent<VerticalLayoutGroup>();
-            if (stepLayout != null) stepLayout.childAlignment = TextAnchor.MiddleCenter;
+            _translationChoiceStep = UIFactory.CreateVerticalGroup(_scrollContent, "TranslationChoiceStep", false, false, true, true, UIStyles.ElementSpacing);
+            UIFactory.SetLayoutElement(_translationChoiceStep, flexibleWidth: 9999);
 
-            CreateFlexSpacer(_translationChoiceStep, "TopSpacer");
-
-            // Main card for this step - larger to accommodate scroll view
-            var card = CreateCard(_translationChoiceStep, "Card", 350);
+            var card = CreateAdaptiveCard(_translationChoiceStep, "Card", 460);
 
             CreateTitle(card, "Title", "Community Translations");
 
@@ -368,16 +295,15 @@ namespace UnityGameTranslator.Core.UI.Panels
             _gameLabel = UIFactory.CreateLabel(gameSection, "GameLabel", "Game: Detecting...", TextAnchor.MiddleLeft);
             _gameLabel.fontStyle = FontStyle.Bold;
             _gameLabel.color = UIStyles.TextPrimary;
-            UIFactory.SetLayoutElement(_gameLabel.gameObject, minHeight: 22);
+            UIFactory.SetLayoutElement(_gameLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
 
             _localTranslationsLabel = UIFactory.CreateLabel(gameSection, "LocalLabel", "", TextAnchor.MiddleLeft);
             _localTranslationsLabel.fontSize = UIStyles.FontSizeSmall;
             _localTranslationsLabel.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(_localTranslationsLabel.gameObject, minHeight: 18);
+            UIFactory.SetLayoutElement(_localTranslationsLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
 
             // Account status row
-            var accountRow = UIFactory.CreateHorizontalGroup(gameSection, "AccountRow", false, false, true, true, 10);
-            UIFactory.SetLayoutElement(accountRow, minHeight: 25);
+            var accountRow = UIStyles.CreateFormRow(gameSection, "AccountRow", UIStyles.RowHeightMedium);
 
             _accountStatusLabel = UIFactory.CreateLabel(accountRow, "AccountStatus", "Want to sync your translations?", TextAnchor.MiddleLeft);
             _accountStatusLabel.fontSize = UIStyles.FontSizeHint;
@@ -385,34 +311,48 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.SetLayoutElement(_accountStatusLabel.gameObject, flexibleWidth: 9999);
 
             _loginBtn = UIFactory.CreateButton(accountRow, "LoginBtn", "Connect (optional)");
-            UIFactory.SetLayoutElement(_loginBtn.Component.gameObject, minWidth: 130, minHeight: 22);
+            UIFactory.SetLayoutElement(_loginBtn.Component.gameObject, minWidth: 130, minHeight: UIStyles.RowHeightNormal);
             _loginBtn.OnClick += OnLoginClicked;
 
             UIStyles.CreateSpacer(card, 10);
 
-            // Search status
-            _searchStatusLabel = UIFactory.CreateLabel(card, "SearchStatus", "", TextAnchor.MiddleLeft);
-            _searchStatusLabel.fontSize = UIStyles.FontSizeSmall;
-            _searchStatusLabel.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(_searchStatusLabel.gameObject, minHeight: 20);
+            // Translation list (reusable component)
+            _translationList.CreateUI(card, 100, onSelectionChanged: (t) =>
+            {
+                UpdateActionButtons();
+            });
 
-            // Translation list (scroll view)
-            var scrollObj = UIFactory.CreateScrollView(card, "TranslationScroll", out _translationListContent, out _);
-            UIFactory.SetLayoutElement(scrollObj, minHeight: 100, flexibleHeight: 9999);
-            UIFactory.SetLayoutGroup<VerticalLayoutGroup>(_translationListContent, false, false, true, true, 5, 5, 5, 5, 5);
-            UIStyles.SetBackground(scrollObj, UIStyles.InputBackground);
+            // Comparison info (shows diff between local and selected remote)
+            _comparisonLabel = UIFactory.CreateLabel(card, "ComparisonLabel", "", TextAnchor.MiddleCenter);
+            _comparisonLabel.fontSize = UIStyles.FontSizeSmall;
+            UIFactory.SetLayoutElement(_comparisonLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
 
-            // Download status
+            // Status label
             _downloadStatusLabel = UIFactory.CreateLabel(card, "DownloadStatus", "", TextAnchor.MiddleCenter);
             _downloadStatusLabel.fontSize = UIStyles.FontSizeSmall;
-            UIFactory.SetLayoutElement(_downloadStatusLabel.gameObject, minHeight: 20);
+            UIFactory.SetLayoutElement(_downloadStatusLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
 
-            // Download button
-            _downloadBtn = CreatePrimaryButton(card, "DownloadBtn", "Download Selected", 200);
+            // Action buttons row (Download / Upload / Merge)
+            _actionButtonsRow = UIStyles.CreateFormRow(card, "ActionBtnsRow", UIStyles.RowHeightLarge);
+            var actionLayout = _actionButtonsRow.GetComponent<HorizontalLayoutGroup>();
+            if (actionLayout != null) actionLayout.childAlignment = TextAnchor.MiddleCenter; // Override to center buttons
+
+            _downloadBtn = UIFactory.CreateButton(_actionButtonsRow, "DownloadBtn", "Download");
+            UIFactory.SetLayoutElement(_downloadBtn.Component.gameObject, minWidth: 100, minHeight: UIStyles.RowHeightNormal);
+            UIStyles.SetBackground(_downloadBtn.Component.gameObject, UIStyles.ButtonPrimary);
             _downloadBtn.OnClick += OnDownloadClicked;
-            _downloadBtn.Component.gameObject.SetActive(false);
 
-            CreateFlexSpacer(_translationChoiceStep, "BottomSpacer");
+            _uploadBtn = UIFactory.CreateButton(_actionButtonsRow, "UploadBtn", "Upload");
+            UIFactory.SetLayoutElement(_uploadBtn.Component.gameObject, minWidth: 100, minHeight: UIStyles.RowHeightNormal);
+            UIStyles.SetBackground(_uploadBtn.Component.gameObject, UIStyles.ButtonSuccess);
+            _uploadBtn.OnClick += OnUploadClicked;
+
+            _mergeBtn = UIFactory.CreateButton(_actionButtonsRow, "MergeBtn", "Merge");
+            UIFactory.SetLayoutElement(_mergeBtn.Component.gameObject, minWidth: 100, minHeight: UIStyles.RowHeightNormal);
+            UIStyles.SetBackground(_mergeBtn.Component.gameObject, UIStyles.ButtonWarning);
+            _mergeBtn.OnClick += OnMergeClicked;
+
+            _actionButtonsRow.SetActive(false);
 
             // Navigation buttons
             var buttonRow = CreateButtonRow(_translationChoiceStep);
@@ -427,7 +367,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             skipBtn.OnClick += () => ShowStep(WizardStep.Complete);
         }
 
-        private void OnTranslationChoiceEnter()
+        private async void OnTranslationChoiceEnter()
         {
             // Detect game if not already done
             if (_detectedGame == null)
@@ -436,9 +376,15 @@ namespace UnityGameTranslator.Core.UI.Panels
                 if (_detectedGame != null)
                 {
                     _gameLabel.text = $"Game: {_detectedGame.name}";
-                    if (_onlineMode && !_isSearchingTranslations)
+                    if (_onlineMode && !_translationList.IsSearching)
                     {
-                        SearchForTranslations();
+                        string targetLang = LanguageHelper.GetSystemLanguageName();
+                        await _translationList.SearchAsync(_detectedGame.steam_id, _detectedGame.name, targetLang);
+
+                        UpdateActionButtons();
+
+                        // Translations loaded, recalculate panel size
+                        RecalculateSize();
                     }
                 }
                 else
@@ -455,7 +401,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 var serverState = TranslatorCore.ServerState;
                 if (serverState != null && serverState.Exists && !string.IsNullOrEmpty(serverState.Uploader))
                 {
-                    _localTranslationsLabel.text += $" (from {serverState.Uploader})";
+                    _localTranslationsLabel.text += $" (synced with @{serverState.Uploader})";
                 }
             }
             else
@@ -463,13 +409,176 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _localTranslationsLabel.text = "";
             }
 
-            // Update account status
             UpdateAccountStatus();
+            UpdateActionButtons();
         }
 
         /// <summary>
-        /// Updates the account status display. Call after login/logout.
+        /// Updates action buttons based on local/remote comparison.
+        /// Shows Download, Upload, or Merge depending on the situation.
         /// </summary>
+        private void UpdateActionButtons()
+        {
+            var selected = _translationList?.SelectedTranslation;
+            int localCount = TranslatorCore.TranslationCache.Count;
+            bool isLoggedIn = !string.IsNullOrEmpty(TranslatorCore.Config.api_token);
+            string currentUser = TranslatorCore.Config.api_user;
+
+            // Default: hide all
+            _downloadBtn.Component.gameObject.SetActive(false);
+            _uploadBtn.Component.gameObject.SetActive(false);
+            _mergeBtn.Component.gameObject.SetActive(false);
+            _comparisonLabel.text = "";
+            _actionButtonsRow.SetActive(false);
+
+            if (selected == null && localCount == 0)
+            {
+                // No local, no remote selected
+                _comparisonLabel.text = "No translation found for your language";
+                _comparisonLabel.color = UIStyles.TextMuted;
+                return;
+            }
+
+            _actionButtonsRow.SetActive(true);
+
+            // Check if selected remote is owned by current user
+            bool isOwnRemote = isLoggedIn && selected != null &&
+                !string.IsNullOrEmpty(currentUser) &&
+                selected.Uploader.Equals(currentUser, StringComparison.OrdinalIgnoreCase);
+
+            int remoteCount = selected?.LineCount ?? 0;
+
+            if (selected == null && localCount > 0)
+            {
+                // Local only, no remote
+                if (isLoggedIn)
+                {
+                    _comparisonLabel.text = $"You have {localCount} local translations (not uploaded yet)";
+                    _comparisonLabel.color = UIStyles.StatusSuccess;
+                    _uploadBtn.Component.gameObject.SetActive(true);
+                }
+                else
+                {
+                    // Not logged in - hide button row entirely, only show message
+                    _actionButtonsRow.SetActive(false);
+                    _comparisonLabel.text = $"You have {localCount} local translations. Login to upload!";
+                    _comparisonLabel.color = UIStyles.TextSecondary;
+                }
+                return;
+            }
+
+            if (localCount == 0 && selected != null)
+            {
+                // Remote only, no local
+                _comparisonLabel.text = $"Remote: {remoteCount} lines by @{selected.Uploader}";
+                _comparisonLabel.color = UIStyles.TextPrimary;
+                _downloadBtn.Component.gameObject.SetActive(true);
+                return;
+            }
+
+            // Both local and remote exist - compare
+            int diff = localCount - remoteCount;
+            string diffText = diff > 0 ? $"+{diff}" : diff.ToString();
+
+            if (isOwnRemote)
+            {
+                // Same owner - sync scenario
+                _comparisonLabel.text = $"Local: {localCount} | Remote (yours): {remoteCount} ({diffText})";
+
+                if (localCount > remoteCount)
+                {
+                    // Local is more complete - suggest upload
+                    _comparisonLabel.color = UIStyles.StatusSuccess;
+                    _uploadBtn.Component.gameObject.SetActive(true);
+                    _downloadBtn.Component.gameObject.SetActive(true);
+                    _mergeBtn.Component.gameObject.SetActive(true);
+                }
+                else if (localCount < remoteCount)
+                {
+                    // Remote is more complete - suggest download
+                    _comparisonLabel.color = UIStyles.StatusWarning;
+                    _downloadBtn.Component.gameObject.SetActive(true);
+                    _mergeBtn.Component.gameObject.SetActive(true);
+                }
+                else
+                {
+                    // Same count - might still have differences
+                    _comparisonLabel.color = UIStyles.TextPrimary;
+                    _downloadBtn.Component.gameObject.SetActive(true);
+                    _uploadBtn.Component.gameObject.SetActive(true);
+                    _mergeBtn.Component.gameObject.SetActive(true);
+                }
+            }
+            else
+            {
+                // Different owner - download or merge
+                _comparisonLabel.text = $"Local: {localCount} | Remote (@{selected.Uploader}): {remoteCount}";
+                _comparisonLabel.color = UIStyles.TextPrimary;
+
+                _downloadBtn.Component.gameObject.SetActive(true);
+                if (localCount > 0)
+                {
+                    _mergeBtn.Component.gameObject.SetActive(true);
+                }
+            }
+        }
+
+        private void OnUploadClicked()
+        {
+            // Open upload panel
+            SetActive(false);
+            TranslatorUIManager.UploadSetupPanel?.ShowForSetup((game, source, target) =>
+            {
+                TranslatorUIManager.UploadPanel?.SetActive(true);
+            });
+        }
+
+        private async void OnMergeClicked()
+        {
+            var selected = _translationList?.SelectedTranslation;
+            if (selected == null) return;
+
+            _downloadStatusLabel.text = "Downloading for merge...";
+            _downloadStatusLabel.color = UIStyles.StatusWarning;
+            SetButtonsInteractable(false);
+
+            await TranslatorUIManager.DownloadAndMerge(selected, (success, message) =>
+            {
+                if (success)
+                {
+                    _downloadStatusLabel.text = message;
+                    _downloadStatusLabel.color = UIStyles.StatusSuccess;
+                    // Auto-advance to complete after successful merge
+                    UniverseLib.RuntimeHelper.StartCoroutine(DelayedShowComplete());
+                }
+                else
+                {
+                    _downloadStatusLabel.text = message;
+                    _downloadStatusLabel.color = UIStyles.StatusError;
+                    SetButtonsInteractable(true);
+                }
+            });
+
+            // If MergePanel opened (conflicts), close wizard
+            if (TranslatorUIManager.MergePanel != null && TranslatorUIManager.MergePanel.Enabled)
+            {
+                SetActive(false);
+            }
+        }
+
+        private void SetButtonsInteractable(bool interactable)
+        {
+            _downloadBtn.Component.interactable = interactable;
+            _uploadBtn.Component.interactable = interactable;
+            _mergeBtn.Component.interactable = interactable;
+        }
+
+        private System.Collections.IEnumerator DelayedShowComplete()
+        {
+            yield return new WaitForSeconds(1.5f);
+            ShowStep(WizardStep.Complete);
+        }
+
         public void UpdateAccountStatus()
         {
             bool isLoggedIn = !string.IsNullOrEmpty(TranslatorCore.Config.api_token);
@@ -486,162 +595,11 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _accountStatusLabel.text = "Want to sync your translations?";
                 _loginBtn.Component.gameObject.SetActive(true);
             }
-        }
 
-        private async void SearchForTranslations()
-        {
-            if (_isSearchingTranslations) return;
-            if (!_onlineMode) return;
+            _translationList?.Refresh();
 
-            _isSearchingTranslations = true;
-            _searchStatusLabel.text = "Searching online...";
-            _searchStatusLabel.color = Color.yellow;
-            _availableTranslations.Clear();
-            _selectedTranslation = null;
-            ClearTranslationList();
-
-            try
-            {
-                string targetLang = LanguageHelper.GetSystemLanguageName();
-                TranslationSearchResult result = null;
-
-                // Try Steam ID first
-                if (!string.IsNullOrEmpty(_detectedGame?.steam_id))
-                {
-                    result = await ApiClient.SearchBysteamId(_detectedGame.steam_id, targetLang);
-                }
-
-                // Fallback to game name
-                if ((result == null || !result.Success || result.Count == 0) && !string.IsNullOrEmpty(_detectedGame?.name))
-                {
-                    result = await ApiClient.SearchByGameName(_detectedGame.name, targetLang);
-                }
-
-                if (result != null && result.Success)
-                {
-                    _availableTranslations = result.Translations ?? new List<TranslationInfo>();
-                    if (_availableTranslations.Count == 0)
-                    {
-                        _searchStatusLabel.text = "No translations found for your language";
-                        _searchStatusLabel.color = Color.gray;
-                    }
-                    else
-                    {
-                        _searchStatusLabel.text = $"Found {_availableTranslations.Count} translation(s):";
-                        _searchStatusLabel.color = Color.white;
-                        PopulateTranslationList();
-                        _downloadBtn.Component.gameObject.SetActive(true);
-                    }
-                }
-                else
-                {
-                    _searchStatusLabel.text = result?.Error ?? "Search failed";
-                    _searchStatusLabel.color = Color.red;
-                }
-            }
-            catch (Exception e)
-            {
-                _searchStatusLabel.text = $"Error: {e.Message}";
-                _searchStatusLabel.color = Color.red;
-                TranslatorCore.LogWarning($"[Wizard] Search error: {e.Message}");
-            }
-            finally
-            {
-                _isSearchingTranslations = false;
-            }
-        }
-
-        private void ClearTranslationList()
-        {
-            if (_translationListContent == null) return;
-
-            foreach (Transform child in _translationListContent.transform)
-            {
-                GameObject.Destroy(child.gameObject);
-            }
-        }
-
-        private void PopulateTranslationList()
-        {
-            ClearTranslationList();
-
-            bool isLoggedIn = !string.IsNullOrEmpty(TranslatorCore.Config.api_token);
-            string currentUser = TranslatorCore.Config.api_user;
-
-            int displayCount = Math.Min(5, _availableTranslations.Count);
-            for (int i = 0; i < displayCount; i++)
-            {
-                var t = _availableTranslations[i];
-                CreateTranslationListItem(t, isLoggedIn, currentUser);
-            }
-
-            // Auto-select first if none selected
-            if (_selectedTranslation == null && _availableTranslations.Count > 0)
-            {
-                _selectedTranslation = _availableTranslations[0];
-            }
-        }
-
-        private void CreateTranslationListItem(TranslationInfo translation, bool isLoggedIn, string currentUser)
-        {
-            var itemRow = UIFactory.CreateHorizontalGroup(_translationListContent, $"Item_{translation.Id}", false, false, true, true, 10);
-            UIFactory.SetLayoutElement(itemRow, minHeight: 50, flexibleWidth: 9999);
-            SetBackgroundColor(itemRow, new Color(0.15f, 0.15f, 0.15f, 0.8f));
-
-            // Selection toggle
-            var toggleObj = UIFactory.CreateToggle(itemRow, "SelectToggle", out var toggle, out var _);
-            toggle.isOn = _selectedTranslation == translation;
-            toggle.onValueChanged.AddListener((val) =>
-            {
-                if (val)
-                {
-                    _selectedTranslation = translation;
-                    RefreshTranslationListSelection();
-                }
-            });
-            UIFactory.SetLayoutElement(toggleObj, minWidth: 25);
-
-            // Info column
-            var infoCol = UIFactory.CreateVerticalGroup(itemRow, "InfoCol", false, false, true, true, 2);
-            UIFactory.SetLayoutElement(infoCol, flexibleWidth: 9999);
-
-            // Title row
-            string label = $"{translation.TargetLanguage} by {translation.Uploader}";
-            bool isOwnTranslation = isLoggedIn && !string.IsNullOrEmpty(currentUser) &&
-                translation.Uploader.Equals(currentUser, StringComparison.OrdinalIgnoreCase);
-            if (isOwnTranslation) label += " (you)";
-
-            var titleLabel = UIFactory.CreateLabel(infoCol, "Title", label, TextAnchor.MiddleLeft);
-            titleLabel.fontStyle = FontStyle.Bold;
-            UIFactory.SetLayoutElement(titleLabel.gameObject, minHeight: 20);
-
-            // Details row
-            var detailsLabel = UIFactory.CreateLabel(infoCol, "Details",
-                $"{translation.LineCount} lines | +{translation.VoteCount} votes | {translation.Type}",
-                TextAnchor.MiddleLeft);
-            detailsLabel.fontSize = 11;
-            detailsLabel.color = Color.gray;
-            UIFactory.SetLayoutElement(detailsLabel.gameObject, minHeight: 18);
-        }
-
-        private void RefreshTranslationListSelection()
-        {
-            // Update all toggles to reflect current selection
-            if (_translationListContent == null) return;
-
-            foreach (Transform child in _translationListContent.transform)
-            {
-                var toggle = child.GetComponentInChildren<Toggle>();
-                if (toggle != null)
-                {
-                    string itemName = child.name;
-                    int id = 0;
-                    if (itemName.StartsWith("Item_") && int.TryParse(itemName.Substring(5), out id))
-                    {
-                        toggle.isOn = _selectedTranslation != null && _selectedTranslation.Id == id;
-                    }
-                }
-            }
+            // Content changed, recalculate panel size
+            RecalculateSize();
         }
 
         private void OnLoginClicked()
@@ -651,78 +609,38 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private async void OnDownloadClicked()
         {
-            if (_selectedTranslation == null || _isDownloading) return;
+            var selected = _translationList?.SelectedTranslation;
+            if (selected == null || _isDownloading) return;
 
             _isDownloading = true;
             _downloadStatusLabel.text = "Downloading...";
-            _downloadStatusLabel.color = Color.yellow;
-            _downloadBtn.Component.interactable = false;
+            _downloadStatusLabel.color = UIStyles.StatusWarning;
+            SetButtonsInteractable(false);
 
-            try
+            await TranslatorUIManager.DownloadTranslation(selected, (success, message) =>
             {
-                var result = await ApiClient.Download(_selectedTranslation.Id);
+                _downloadStatusLabel.text = message;
+                _downloadStatusLabel.color = success ? UIStyles.StatusSuccess : UIStyles.StatusError;
 
-                if (result.Success && !string.IsNullOrEmpty(result.Content))
+                if (success)
                 {
-                    // Save to translations.json
-                    System.IO.File.WriteAllText(TranslatorCore.CachePath, result.Content);
-                    TranslatorCore.ReloadCache();
-
-                    // Update server state
-                    string currentUser = TranslatorCore.Config.api_user;
-                    bool isOwner = !string.IsNullOrEmpty(currentUser) &&
-                        _selectedTranslation.Uploader.Equals(currentUser, StringComparison.OrdinalIgnoreCase);
-
-                    TranslatorCore.ServerState = new ServerTranslationState
-                    {
-                        Checked = true,
-                        Exists = true,
-                        IsOwner = isOwner,
-                        SiteId = _selectedTranslation.Id,
-                        Uploader = _selectedTranslation.Uploader,
-                        Hash = result.FileHash ?? _selectedTranslation.FileHash,
-                        Type = _selectedTranslation.Type,
-                        Notes = _selectedTranslation.Notes
-                    };
-
-                    TranslatorCore.SaveAncestorCache();
-
-                    _downloadStatusLabel.text = "Downloaded successfully!";
-                    _downloadStatusLabel.color = Color.green;
-                    TranslatorCore.LogInfo($"[Wizard] Downloaded translation from {_selectedTranslation.Uploader}");
-
-                    await Task.Delay(1500);
-                    ShowStep(WizardStep.Complete);
+                    // Auto-advance to complete after successful download
+                    UniverseLib.RuntimeHelper.StartCoroutine(DelayedShowComplete());
                 }
                 else
                 {
-                    _downloadStatusLabel.text = $"Download failed: {result.Error}";
-                    _downloadStatusLabel.color = Color.red;
+                    _isDownloading = false;
+                    SetButtonsInteractable(true);
                 }
-            }
-            catch (Exception e)
-            {
-                _downloadStatusLabel.text = $"Error: {e.Message}";
-                _downloadStatusLabel.color = Color.red;
-                TranslatorCore.LogWarning($"[Wizard] Download error: {e.Message}");
-            }
-            finally
-            {
-                _isDownloading = false;
-                _downloadBtn.Component.interactable = true;
-            }
+            });
         }
 
         private void CreateOllamaConfigStep()
         {
-            _ollamaConfigStep = UIFactory.CreateVerticalGroup(ContentRoot, "OllamaConfigStep", true, false, true, true, 0);
-            UIFactory.SetLayoutElement(_ollamaConfigStep, flexibleWidth: 9999, flexibleHeight: 9999);
-            var stepLayout = _ollamaConfigStep.GetComponent<VerticalLayoutGroup>();
-            if (stepLayout != null) stepLayout.childAlignment = TextAnchor.MiddleCenter;
+            _ollamaConfigStep = UIFactory.CreateVerticalGroup(_scrollContent, "OllamaConfigStep", false, false, true, true, UIStyles.ElementSpacing);
+            UIFactory.SetLayoutElement(_ollamaConfigStep, flexibleWidth: 9999);
 
-            CreateFlexSpacer(_ollamaConfigStep, "TopSpacer");
-
-            var card = CreateCard(_ollamaConfigStep, "Card", 300);
+            var card = CreateAdaptiveCard(_ollamaConfigStep, "Card", 420);
 
             CreateTitle(card, "Title", "Ollama Configuration");
             CreateDescription(card, "Description", "Configure local AI for offline translation");
@@ -731,14 +649,13 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Enable toggle section
             var enableSection = CreateSection(card, "EnableSection");
-            var enableRow = UIFactory.CreateHorizontalGroup(enableSection, "EnableRow", false, false, true, true, 10);
-            UIFactory.SetLayoutElement(enableRow, minHeight: 28);
+            var enableRow = UIStyles.CreateFormRow(enableSection, "EnableRow", UIStyles.RowHeightLarge);
 
             var enableObj = UIFactory.CreateToggle(enableRow, "EnableToggle", out var enableToggle, out var enableLabel);
             enableToggle.isOn = _enableOllama;
             enableLabel.text = "";
             enableToggle.onValueChanged.AddListener((val) => _enableOllama = val);
-            UIFactory.SetLayoutElement(enableObj, minWidth: 25);
+            UIFactory.SetLayoutElement(enableObj, minWidth: UIStyles.ToggleControlWidth);
 
             var enableTextLabel = UIFactory.CreateLabel(enableRow, "EnableTextLabel", "Enable Ollama (local AI)", TextAnchor.MiddleLeft);
             enableTextLabel.fontStyle = FontStyle.Bold;
@@ -753,10 +670,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             var urlLabel = UIFactory.CreateLabel(urlSection, "UrlLabel", "Ollama URL:", TextAnchor.MiddleLeft);
             urlLabel.color = UIStyles.TextSecondary;
             urlLabel.fontSize = UIStyles.FontSizeSmall;
-            UIFactory.SetLayoutElement(urlLabel.gameObject, minHeight: 18);
+            UIFactory.SetLayoutElement(urlLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
 
-            var urlRow = UIFactory.CreateHorizontalGroup(urlSection, "UrlRow", false, false, true, true, 5);
-            UIFactory.SetLayoutElement(urlRow, minHeight: 32);
+            var urlRow = UIStyles.CreateFormRow(urlSection, "UrlRow", UIStyles.RowHeightLarge, 5);
 
             _ollamaUrlInput = UIFactory.CreateInputField(urlRow, "OllamaUrl", "http://localhost:11434");
             _ollamaUrlInput.Text = _ollamaUrl;
@@ -769,17 +685,45 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             _ollamaStatusLabel = UIFactory.CreateLabel(urlSection, "StatusLabel", "", TextAnchor.MiddleCenter);
             _ollamaStatusLabel.fontSize = UIStyles.FontSizeSmall;
-            UIFactory.SetLayoutElement(_ollamaStatusLabel.gameObject, minHeight: 22);
+            UIFactory.SetLayoutElement(_ollamaStatusLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
 
             UIStyles.CreateSpacer(card, 10);
 
-            // Info hint
-            var infoHint = UIStyles.CreateHint(card, "InfoHint",
-                "Recommended model: qwen3:8b\nInstall: ollama pull qwen3:8b\nRequires ~6-8 GB VRAM");
-            UIFactory.SetLayoutElement(infoHint.gameObject, minHeight: 50);
+            // Model input section
+            var modelSection = CreateSection(card, "ModelSection");
 
-            CreateFlexSpacer(_ollamaConfigStep, "BottomSpacer");
+            var modelLabel = UIFactory.CreateLabel(modelSection, "ModelLabel", "Model:", TextAnchor.MiddleLeft);
+            modelLabel.color = UIStyles.TextSecondary;
+            modelLabel.fontSize = UIStyles.FontSizeSmall;
+            UIFactory.SetLayoutElement(modelLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
 
+            _modelInput = UIFactory.CreateInputField(modelSection, "ModelInput", "qwen3:8b");
+            _modelInput.Text = _model;
+            _modelInput.OnValueChanged += (val) => _model = val;
+            UIFactory.SetLayoutElement(_modelInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
+            UIStyles.SetBackground(_modelInput.Component.gameObject, UIStyles.InputBackground);
+
+            UIStyles.CreateHint(modelSection, "ModelHint", "Recommended: qwen3:8b • Install: ollama pull qwen3:8b");
+
+            UIStyles.CreateSpacer(card, 10);
+
+            // Game context section
+            var contextSection = CreateSection(card, "ContextSection");
+
+            var contextLabel = UIFactory.CreateLabel(contextSection, "ContextLabel", "Game Context (optional):", TextAnchor.MiddleLeft);
+            contextLabel.color = UIStyles.TextSecondary;
+            contextLabel.fontSize = UIStyles.FontSizeSmall;
+            UIFactory.SetLayoutElement(contextLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+
+            _gameContextInput = UIFactory.CreateInputField(contextSection, "ContextInput", "e.g., RPG game, fantasy setting");
+            _gameContextInput.Text = _gameContext;
+            _gameContextInput.OnValueChanged += (val) => _gameContext = val;
+            UIFactory.SetLayoutElement(_gameContextInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
+            UIStyles.SetBackground(_gameContextInput.Component.gameObject, UIStyles.InputBackground);
+
+            UIStyles.CreateHint(contextSection, "ContextHint", "Helps the AI understand game-specific terms");
+
+            // Navigation buttons
             var buttonRow = CreateButtonRow(_ollamaConfigStep);
 
             var backBtn = CreateSecondaryButton(buttonRow, "BackBtn", "← Back");
@@ -797,14 +741,10 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private void CreateCompleteStep()
         {
-            _completeStep = UIFactory.CreateVerticalGroup(ContentRoot, "CompleteStep", true, false, true, true, 0);
-            UIFactory.SetLayoutElement(_completeStep, flexibleWidth: 9999, flexibleHeight: 9999);
-            var stepLayout = _completeStep.GetComponent<VerticalLayoutGroup>();
-            if (stepLayout != null) stepLayout.childAlignment = TextAnchor.MiddleCenter;
+            _completeStep = UIFactory.CreateVerticalGroup(_scrollContent, "CompleteStep", false, false, true, true, UIStyles.ElementSpacing);
+            UIFactory.SetLayoutElement(_completeStep, flexibleWidth: 9999);
 
-            CreateFlexSpacer(_completeStep, "TopSpacer");
-
-            var card = CreateCard(_completeStep, "Card", 280);
+            var card = CreateAdaptiveCard(_completeStep, "Card", 420);
 
             // Success title with accent color
             var title = UIFactory.CreateLabel(card, "Title", "Setup Complete!", TextAnchor.MiddleCenter);
@@ -817,28 +757,26 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             var desc = UIFactory.CreateLabel(card, "Description",
                 "You're all set!\n\n" +
-                $"Press {GetHotkeyDisplayString()} to open settings at any time.\n\n" +
+                $"Press {_hotkeyCapture.HotkeyString} to open settings at any time.\n\n" +
                 "The translator will automatically detect text in the game\nand translate it to your language.",
                 TextAnchor.MiddleCenter);
             desc.fontSize = UIStyles.FontSizeNormal;
             desc.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(desc.gameObject, minHeight: 120);
+            UIFactory.SetLayoutElement(desc.gameObject, minHeight: UIStyles.MultiLineLarge);
 
             UIStyles.CreateSpacer(card, 20);
 
             // Centered finish button inside card
             var finishBtn = CreatePrimaryButton(card, "FinishBtn", "Start Translating!", 200);
             finishBtn.OnClick += FinishWizard;
-            // Style with success color
             UIStyles.SetBackground(finishBtn.Component.gameObject, UIStyles.ButtonSuccess);
-
-            CreateFlexSpacer(_completeStep, "BottomSpacer");
         }
 
         private void ShowStep(WizardStep step)
         {
             _currentStep = step;
 
+            // Hide all steps
             _welcomeStep?.SetActive(false);
             _onlineModeStep?.SetActive(false);
             _hotkeyStep?.SetActive(false);
@@ -846,6 +784,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _ollamaConfigStep?.SetActive(false);
             _completeStep?.SetActive(false);
 
+            // Show current step
             switch (step)
             {
                 case WizardStep.Welcome:
@@ -868,44 +807,17 @@ namespace UnityGameTranslator.Core.UI.Panels
                     _completeStep?.SetActive(true);
                     break;
             }
+
+            // Recalculate panel size for new step content
+            // Delay to let layout update after SetActive changes
+            UniverseLib.RuntimeHelper.StartCoroutine(DelayedResize());
         }
 
-        private string GetHotkeyDisplayString()
+        private System.Collections.IEnumerator DelayedResize()
         {
-            string result = "";
-            if (_hotkeyCtrl) result += "Ctrl+";
-            if (_hotkeyAlt) result += "Alt+";
-            if (_hotkeyShift) result += "Shift+";
-            result += _hotkey;
-            return result;
-        }
-
-        private void UpdateHotkeyDisplay()
-        {
-            if (_hotkeyLabel != null)
-            {
-                _hotkeyLabel.text = GetHotkeyDisplayString();
-                _hotkeyLabel.color = UIStyles.TextAccent;
-            }
-            if (_setHotkeyBtn != null)
-                _setHotkeyBtn.ButtonText.text = _hotkey ?? "F10";
-        }
-
-        private void OnSetHotkeyClicked()
-        {
-            _isCapturingHotkey = true;
-            if (_hotkeyLabel != null)
-            {
-                _hotkeyLabel.text = "Press any key...";
-                _hotkeyLabel.color = UIStyles.StatusWarning;
-            }
-            if (_setHotkeyBtn != null)
-                _setHotkeyBtn.ButtonText.text = "...";
-
-            // Unfocus the button to allow keyboard capture
-            UnityEngine.EventSystems.EventSystem.current?.SetSelectedGameObject(null);
-
-            TranslatorCore.LogInfo("[Wizard] Hotkey capture started - waiting for key press");
+            // Wait one frame for layout to update
+            yield return null;
+            CalculateAndApplyOptimalSize();
         }
 
         private async void TestOllamaConnection()
@@ -913,7 +825,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_ollamaStatusLabel == null) return;
 
             _ollamaStatusLabel.text = "Testing...";
-            _ollamaStatusLabel.color = Color.yellow;
+            _ollamaStatusLabel.color = UIStyles.StatusWarning;
 
             try
             {
@@ -921,29 +833,38 @@ namespace UnityGameTranslator.Core.UI.Panels
                 if (success)
                 {
                     _ollamaStatusLabel.text = "Connection successful!";
-                    _ollamaStatusLabel.color = Color.green;
+                    _ollamaStatusLabel.color = UIStyles.StatusSuccess;
                 }
                 else
                 {
                     _ollamaStatusLabel.text = "Connection failed";
-                    _ollamaStatusLabel.color = Color.red;
+                    _ollamaStatusLabel.color = UIStyles.StatusError;
                 }
             }
             catch (Exception e)
             {
                 _ollamaStatusLabel.text = $"Error: {e.Message}";
-                _ollamaStatusLabel.color = Color.red;
+                _ollamaStatusLabel.color = UIStyles.StatusError;
             }
         }
 
         private void FinishWizard()
         {
+            // Save all settings
             TranslatorCore.Config.online_mode = _onlineMode;
-            TranslatorCore.Config.settings_hotkey = GetHotkeyDisplayString();
+            TranslatorCore.Config.settings_hotkey = _hotkeyCapture.HotkeyString;
             TranslatorCore.Config.enable_ollama = _enableOllama;
             TranslatorCore.Config.ollama_url = _ollamaUrl;
+            TranslatorCore.Config.model = _model;
+            TranslatorCore.Config.game_context = _gameContext;
             TranslatorCore.Config.first_run_completed = true;
             TranslatorCore.SaveConfig();
+
+            // Start Ollama worker if enabled
+            if (_enableOllama)
+            {
+                TranslatorCore.EnsureWorkerRunning();
+            }
 
             SetActive(false);
             TranslatorUIManager.ShowMain();
@@ -952,7 +873,6 @@ namespace UnityGameTranslator.Core.UI.Panels
         protected override void OnClosePanelClicked()
         {
             // Don't allow closing wizard with X button during first run
-            // User must complete the wizard
         }
     }
 }

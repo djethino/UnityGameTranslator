@@ -478,9 +478,9 @@ namespace UnityGameTranslator.Core.UI
                         }
                     }
 
-                    // Perform 3-way merge
-                    var local = TranslatorCore.TranslationCache;
-                    var ancestor = TranslatorCore.AncestorCache;
+                    // Perform 3-way merge (using string dictionaries for legacy merge support)
+                    var local = TranslatorCore.GetCacheAsStrings();
+                    var ancestor = TranslatorCore.GetAncestorAsStrings();
 
                     var mergeResult = TranslationMerger.Merge(local, remoteTranslations, ancestor);
 
@@ -517,10 +517,16 @@ namespace UnityGameTranslator.Core.UI
         /// <param name="remoteTranslations">The remote translations to save as ancestor (null = use merged)</param>
         public static void ApplyMerge(MergeResult mergeResult, string serverHash, Dictionary<string, string> remoteTranslations = null)
         {
-            // Apply the merged translations
+            // Apply the merged translations (convert to TranslationEntry with AI tag for legacy merge)
             foreach (var kvp in mergeResult.Merged)
             {
-                TranslatorCore.TranslationCache[kvp.Key] = kvp.Value;
+                // For now, merged values get AI tag by default
+                // Full tag support will be added when TranslationMerger is updated
+                TranslatorCore.TranslationCache[kvp.Key] = new TranslationEntry
+                {
+                    Value = kvp.Value,
+                    Tag = "A"  // TODO: Preserve original tags when merger is updated
+                };
             }
 
             // Update server state
@@ -659,9 +665,9 @@ namespace UnityGameTranslator.Core.UI
                         }
                     }
 
-                    // Perform 3-way merge
-                    var local = TranslatorCore.TranslationCache;
-                    var ancestor = TranslatorCore.AncestorCache;
+                    // Perform 3-way merge (using string dictionaries for legacy merge support)
+                    var local = TranslatorCore.GetCacheAsStrings();
+                    var ancestor = TranslatorCore.GetAncestorAsStrings();
                     var mergeResult = TranslationMerger.Merge(local, remoteTranslations, ancestor);
 
                     TranslatorCore.LogInfo($"[Merge] Result: {mergeResult.Statistics.GetSummary()}");

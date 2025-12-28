@@ -43,7 +43,7 @@ namespace UnityGameTranslator.Core
         public static TranslatorCore Instance { get; private set; }
         public static IModLoaderAdapter Adapter { get; private set; }
         public static ModConfig Config { get; private set; } = new ModConfig();
-        public static Dictionary<string, string> TranslationCache { get; private set; } = new Dictionary<string, string>();
+        public static Dictionary<string, TranslationEntry> TranslationCache { get; private set; } = new Dictionary<string, TranslationEntry>();
         public static List<PatternEntry> PatternEntries { get; private set; } = new List<PatternEntry>();
         public static string CachePath { get; private set; }
         public static string ConfigPath { get; private set; }
@@ -58,7 +58,7 @@ namespace UnityGameTranslator.Core
         public static ServerTranslationState ServerState { get; set; }
 
         public static int LocalChangesCount { get; private set; } = 0;
-        public static Dictionary<string, string> AncestorCache { get; private set; } = new Dictionary<string, string>();
+        public static Dictionary<string, TranslationEntry> AncestorCache { get; private set; } = new Dictionary<string, TranslationEntry>();
 
         /// <summary>
         /// Hash of the translation at last sync (download or upload).
@@ -309,7 +309,7 @@ namespace UnityGameTranslator.Core
 
                 // Parse as JObject to handle metadata
                 var parsed = JObject.Parse(json);
-                TranslationCache = new Dictionary<string, string>();
+                TranslationCache = new Dictionary<string, TranslationEntry>();
 
                 // Extract metadata and translations
                 foreach (var prop in parsed.Properties())
@@ -328,9 +328,29 @@ namespace UnityGameTranslator.Core
                         var source = prop.Value as JObject;
                         LastSyncedHash = source?["hash"]?.Value<string>();
                     }
-                    else if (!prop.Name.StartsWith("_") && prop.Value.Type == JTokenType.String)
+                    else if (!prop.Name.StartsWith("_"))
                     {
-                        TranslationCache[prop.Name] = prop.Value.ToString();
+                        // Handle both new format (object with v/t) and legacy format (string)
+                        if (prop.Value.Type == JTokenType.Object)
+                        {
+                            // New format: {"v": "value", "t": "A"}
+                            var obj = prop.Value as JObject;
+                            TranslationCache[prop.Name] = new TranslationEntry
+                            {
+                                Value = obj?["v"]?.ToString() ?? "",
+                                Tag = obj?["t"]?.ToString() ?? "A"
+                            };
+                        }
+                        else if (prop.Value.Type == JTokenType.String)
+                        {
+                            // Legacy format: string value - convert to AI tag
+                            TranslationCache[prop.Name] = new TranslationEntry
+                            {
+                                Value = prop.Value.ToString(),
+                                Tag = "A"  // Default to AI for legacy data
+                            };
+                            cacheModified = true;  // Will save in new format
+                        }
                     }
                 }
 
@@ -343,31 +363,7 @@ namespace UnityGameTranslator.Core
                 }
 
                 // Load ancestor cache if exists (for 3-way merge support)
-                string ancestorPath = CachePath + ".ancestor";
-                if (File.Exists(ancestorPath))
-                {
-                    try
-                    {
-                        string ancestorJson = File.ReadAllText(ancestorPath);
-                        var ancestorParsed = JObject.Parse(ancestorJson);
-                        AncestorCache = new Dictionary<string, string>();
-
-                        foreach (var prop in ancestorParsed.Properties())
-                        {
-                            if (!prop.Name.StartsWith("_") && prop.Value.Type == JTokenType.String)
-                            {
-                                AncestorCache[prop.Name] = prop.Value.ToString();
-                            }
-                        }
-
-                        Adapter.LogInfo($"Loaded {AncestorCache.Count} ancestor entries for merge support");
-                    }
-                    catch (Exception ae)
-                    {
-                        Adapter.LogWarning($"Failed to load ancestor cache: {ae.Message}");
-                        AncestorCache = new Dictionary<string, string>();
-                    }
-                }
+                LoadAncestorCache();
 
                 // Recalculate LocalChangesCount based on actual differences (always, even if no ancestor)
                 RecalculateLocalChanges();
@@ -376,9 +372,9 @@ namespace UnityGameTranslator.Core
                 translatedTexts.Clear();
                 foreach (var kv in TranslationCache)
                 {
-                    if (kv.Key != kv.Value && !string.IsNullOrEmpty(kv.Value))
+                    if (kv.Key != kv.Value.Value && !string.IsNullOrEmpty(kv.Value.Value))
                     {
-                        translatedTexts.Add(kv.Value);
+                        translatedTexts.Add(kv.Value.Value);
                     }
                 }
 
@@ -388,8 +384,58 @@ namespace UnityGameTranslator.Core
             catch (Exception e)
             {
                 Adapter.LogError($"Failed to load cache: {e.Message}");
-                TranslationCache = new Dictionary<string, string>();
+                TranslationCache = new Dictionary<string, TranslationEntry>();
                 FileUuid = Guid.NewGuid().ToString();
+            }
+        }
+
+        private static void LoadAncestorCache()
+        {
+            string ancestorPath = CachePath + ".ancestor";
+            if (!File.Exists(ancestorPath))
+            {
+                AncestorCache = new Dictionary<string, TranslationEntry>();
+                return;
+            }
+
+            try
+            {
+                string ancestorJson = File.ReadAllText(ancestorPath);
+                var ancestorParsed = JObject.Parse(ancestorJson);
+                AncestorCache = new Dictionary<string, TranslationEntry>();
+
+                foreach (var prop in ancestorParsed.Properties())
+                {
+                    if (!prop.Name.StartsWith("_"))
+                    {
+                        if (prop.Value.Type == JTokenType.Object)
+                        {
+                            // New format
+                            var obj = prop.Value as JObject;
+                            AncestorCache[prop.Name] = new TranslationEntry
+                            {
+                                Value = obj?["v"]?.ToString() ?? "",
+                                Tag = obj?["t"]?.ToString() ?? "A"
+                            };
+                        }
+                        else if (prop.Value.Type == JTokenType.String)
+                        {
+                            // Legacy format
+                            AncestorCache[prop.Name] = new TranslationEntry
+                            {
+                                Value = prop.Value.ToString(),
+                                Tag = "A"
+                            };
+                        }
+                    }
+                }
+
+                Adapter.LogInfo($"Loaded {AncestorCache.Count} ancestor entries for merge support");
+            }
+            catch (Exception ae)
+            {
+                Adapter.LogWarning($"Failed to load ancestor cache: {ae.Message}");
+                AncestorCache = new Dictionary<string, TranslationEntry>();
             }
         }
 
@@ -412,10 +458,31 @@ namespace UnityGameTranslator.Core
             try
             {
                 string ancestorPath = CachePath + ".ancestor";
-                var data = TranslationCache.ToDictionary(kvp => kvp.Key, kvp => (object)kvp.Value);
-                string json = JsonConvert.SerializeObject(data, Formatting.Indented);
+                var output = new JObject();
+
+                foreach (var kvp in TranslationCache)
+                {
+                    output[kvp.Key] = new JObject
+                    {
+                        ["v"] = kvp.Value.Value,
+                        ["t"] = kvp.Value.Tag ?? "A"
+                    };
+                }
+
+                string json = output.ToString(Formatting.Indented);
                 File.WriteAllText(ancestorPath, json);
-                AncestorCache = new Dictionary<string, string>(TranslationCache);
+
+                // Copy to AncestorCache
+                AncestorCache = new Dictionary<string, TranslationEntry>();
+                foreach (var kvp in TranslationCache)
+                {
+                    AncestorCache[kvp.Key] = new TranslationEntry
+                    {
+                        Value = kvp.Value.Value,
+                        Tag = kvp.Value.Tag
+                    };
+                }
+
                 LocalChangesCount = 0;
                 Adapter.LogInfo($"Saved ancestor cache with {AncestorCache.Count} entries");
             }
@@ -429,15 +496,82 @@ namespace UnityGameTranslator.Core
         /// Save remote translations as ancestor (for use after merge).
         /// This sets the ancestor to the server version, so LocalChangesCount reflects local additions.
         /// </summary>
+        /// <param name="remoteTranslations">Remote translations (legacy string format, will be converted to entries with AI tag)</param>
         public static void SaveAncestorFromRemote(Dictionary<string, string> remoteTranslations)
         {
             try
             {
                 string ancestorPath = CachePath + ".ancestor";
-                var data = remoteTranslations.ToDictionary(kvp => kvp.Key, kvp => (object)kvp.Value);
-                string json = JsonConvert.SerializeObject(data, Formatting.Indented);
+                var output = new JObject();
+
+                foreach (var kvp in remoteTranslations)
+                {
+                    if (kvp.Key.StartsWith("_")) continue;
+                    output[kvp.Key] = new JObject
+                    {
+                        ["v"] = kvp.Value,
+                        ["t"] = "A"  // Default to AI for legacy format
+                    };
+                }
+
+                string json = output.ToString(Formatting.Indented);
                 File.WriteAllText(ancestorPath, json);
-                AncestorCache = new Dictionary<string, string>(remoteTranslations);
+
+                // Convert to AncestorCache
+                AncestorCache = new Dictionary<string, TranslationEntry>();
+                foreach (var kvp in remoteTranslations)
+                {
+                    if (kvp.Key.StartsWith("_")) continue;
+                    AncestorCache[kvp.Key] = new TranslationEntry
+                    {
+                        Value = kvp.Value,
+                        Tag = "A"
+                    };
+                }
+
+                Adapter.LogInfo($"Saved ancestor from remote with {AncestorCache.Count} entries");
+            }
+            catch (Exception e)
+            {
+                Adapter.LogWarning($"Failed to save ancestor from remote: {e.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Save remote translations as ancestor (new format with tags).
+        /// </summary>
+        public static void SaveAncestorFromRemote(Dictionary<string, TranslationEntry> remoteTranslations)
+        {
+            try
+            {
+                string ancestorPath = CachePath + ".ancestor";
+                var output = new JObject();
+
+                foreach (var kvp in remoteTranslations)
+                {
+                    if (kvp.Key.StartsWith("_")) continue;
+                    output[kvp.Key] = new JObject
+                    {
+                        ["v"] = kvp.Value.Value,
+                        ["t"] = kvp.Value.Tag ?? "A"
+                    };
+                }
+
+                string json = output.ToString(Formatting.Indented);
+                File.WriteAllText(ancestorPath, json);
+
+                // Copy to AncestorCache
+                AncestorCache = new Dictionary<string, TranslationEntry>();
+                foreach (var kvp in remoteTranslations)
+                {
+                    if (kvp.Key.StartsWith("_")) continue;
+                    AncestorCache[kvp.Key] = new TranslationEntry
+                    {
+                        Value = kvp.Value.Value,
+                        Tag = kvp.Value.Tag
+                    };
+                }
+
                 Adapter.LogInfo($"Saved ancestor from remote with {AncestorCache.Count} entries");
             }
             catch (Exception e)
@@ -465,8 +599,10 @@ namespace UnityGameTranslator.Core
                 // Skip metadata keys
                 if (kvp.Key.StartsWith("_")) continue;
 
-                // New key or different value = local change
-                if (!AncestorCache.TryGetValue(kvp.Key, out var ancestorValue) || ancestorValue != kvp.Value)
+                // New key or different value/tag = local change
+                if (!AncestorCache.TryGetValue(kvp.Key, out var ancestorEntry) ||
+                    ancestorEntry.Value != kvp.Value.Value ||
+                    ancestorEntry.Tag != kvp.Value.Tag)
                 {
                     changes++;
                 }
@@ -474,6 +610,33 @@ namespace UnityGameTranslator.Core
 
             LocalChangesCount = changes;
             Adapter?.LogInfo($"[LocalChanges] Recalculated: {changes} local changes");
+        }
+
+        /// <summary>
+        /// Convert TranslationCache to a simple string dictionary (for legacy merge support).
+        /// Values are extracted without tags.
+        /// </summary>
+        public static Dictionary<string, string> GetCacheAsStrings()
+        {
+            var result = new Dictionary<string, string>();
+            foreach (var kvp in TranslationCache)
+            {
+                result[kvp.Key] = kvp.Value.Value;
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// Convert AncestorCache to a simple string dictionary (for legacy merge support).
+        /// </summary>
+        public static Dictionary<string, string> GetAncestorAsStrings()
+        {
+            var result = new Dictionary<string, string>();
+            foreach (var kvp in AncestorCache)
+            {
+                result[kvp.Key] = kvp.Value.Value;
+            }
+            return result;
         }
 
         /// <summary>
@@ -492,8 +655,13 @@ namespace UnityGameTranslator.Core
                 var sortedDict = new SortedDictionary<string, object>(StringComparer.Ordinal);
                 foreach (var kvp in TranslationCache)
                 {
-                    // TranslationCache already contains only translation entries (no metadata)
-                    sortedDict[kvp.Key] = kvp.Value;
+                    // TranslationCache now contains TranslationEntry objects
+                    // Serialize with new format: {"v": "value", "t": "tag"}
+                    sortedDict[kvp.Key] = new Dictionary<string, string>
+                    {
+                        ["v"] = kvp.Value.Value,
+                        ["t"] = kvp.Value.Tag ?? "A"
+                    };
                 }
                 sortedDict["_uuid"] = FileUuid;
 
@@ -527,7 +695,8 @@ namespace UnityGameTranslator.Core
 
             foreach (var kv in TranslationCache)
             {
-                if (kv.Key == kv.Value) continue;
+                // Skip if key equals value (no translation)
+                if (kv.Key == kv.Value.Value) continue;
 
                 var matches = placeholderRegex.Matches(kv.Key);
                 if (matches.Count == 0) continue;
@@ -548,7 +717,7 @@ namespace UnityGameTranslator.Core
                     PatternEntries.Add(new PatternEntry
                     {
                         OriginalPattern = kv.Key,
-                        TranslatedPattern = kv.Value,
+                        TranslatedPattern = kv.Value.Value,
                         MatchRegex = new Regex("^" + pattern + "$", RegexOptions.Compiled, TimeSpan.FromMilliseconds(100)),
                         PlaceholderIndices = placeholderIndices
                     });
@@ -715,11 +884,11 @@ namespace UnityGameTranslator.Core
 
                         // Check cache first (another request might have already translated this)
                         string translation = null;
-                        if (TranslationCache.TryGetValue(normalizedOriginal, out string alreadyCached))
+                        if (TranslationCache.TryGetValue(normalizedOriginal, out var cachedEntry))
                         {
-                            if (alreadyCached != normalizedOriginal)
+                            if (cachedEntry.Value != normalizedOriginal)
                             {
-                                translation = alreadyCached;
+                                translation = cachedEntry.Value;
                                 if (Config.debug_ollama)
                                     Adapter?.LogInfo($"[Worker] Cache hit for normalized text, skipping Ollama");
                             }
@@ -903,26 +1072,43 @@ namespace UnityGameTranslator.Core
             return text.Trim();
         }
 
-        public static void AddToCache(string original, string translated)
+        /// <summary>
+        /// Add a translation to the cache with an optional tag.
+        /// </summary>
+        /// <param name="original">Original text (key)</param>
+        /// <param name="translated">Translated text (value)</param>
+        /// <param name="tag">Tag: A=AI, H=Human, V=Validated (default: A)</param>
+        public static void AddToCache(string original, string translated, string tag = "A")
         {
-            if (string.IsNullOrEmpty(original) || string.IsNullOrEmpty(translated))
+            if (string.IsNullOrEmpty(original))
+                return;
+
+            // Allow empty translated value for capture-only mode (H tag with empty value)
+            if (string.IsNullOrEmpty(translated) && tag != "H")
                 return;
 
             lock (lockObj)
             {
                 string cacheKey = original;
-                string cacheValue = translated;
 
                 if (TranslationCache.ContainsKey(cacheKey))
                     return;
 
-                TranslationCache[cacheKey] = cacheValue;
+                var entry = new TranslationEntry
+                {
+                    Value = translated ?? "",
+                    Tag = tag ?? "A"
+                };
+
+                TranslationCache[cacheKey] = entry;
                 cacheModified = true;
 
                 // Track local changes (if different from ancestor or new)
                 if (AncestorCache.Count > 0)
                 {
-                    if (!AncestorCache.TryGetValue(cacheKey, out var ancestorValue) || ancestorValue != cacheValue)
+                    if (!AncestorCache.TryGetValue(cacheKey, out var ancestorEntry) ||
+                        ancestorEntry.Value != entry.Value ||
+                        ancestorEntry.Tag != entry.Tag)
                     {
                         LocalChangesCount++;
                     }
@@ -933,10 +1119,10 @@ namespace UnityGameTranslator.Core
                     LocalChangesCount++;
                 }
 
-                // Add to reverse cache
-                if (cacheKey != cacheValue && !string.IsNullOrEmpty(cacheValue))
+                // Add to reverse cache (only if value is non-empty and different from key)
+                if (cacheKey != entry.Value && !string.IsNullOrEmpty(entry.Value))
                 {
-                    translatedTexts.Add(cacheValue);
+                    translatedTexts.Add(entry.Value);
                 }
 
                 // Note: No longer clearing lastSeenText here.
@@ -949,7 +1135,7 @@ namespace UnityGameTranslator.Core
                 }
 
                 if (DebugMode)
-                    Adapter?.LogInfo($"[Cache+] {cacheKey.Substring(0, Math.Min(40, cacheKey.Length))}...");
+                    Adapter?.LogInfo($"[Cache+] {cacheKey.Substring(0, Math.Min(40, cacheKey.Length))}... [{tag}]");
             }
         }
 
@@ -1087,31 +1273,31 @@ namespace UnityGameTranslator.Core
 
             // Check cache with NORMALIZED key
             bool foundInCache = false;
-            if (TranslationCache.TryGetValue(normalizedText, out string cached))
+            if (TranslationCache.TryGetValue(normalizedText, out var cachedEntry))
             {
                 foundInCache = true;
-                if (cached != normalizedText)
+                if (cachedEntry.Value != normalizedText)
                 {
                     cacheHitCount++;
                     translatedCount++;
                     return (extractedNumbers != null && extractedNumbers.Count > 0)
-                        ? RestoreNumbersFromPlaceholders(cached, extractedNumbers)
-                        : cached;
+                        ? RestoreNumbersFromPlaceholders(cachedEntry.Value, extractedNumbers)
+                        : cachedEntry.Value;
                 }
                 // If cached == normalizedText, it means "no translation needed", still a cache hit
             }
 
             // Try trimmed normalized
             string trimmed = normalizedText.Trim();
-            if (trimmed != normalizedText && TranslationCache.TryGetValue(trimmed, out string cachedTrimmed))
+            if (trimmed != normalizedText && TranslationCache.TryGetValue(trimmed, out var cachedTrimmedEntry))
             {
                 foundInCache = true;
-                if (cachedTrimmed != trimmed)
+                if (cachedTrimmedEntry.Value != trimmed)
                 {
                     cacheHitCount++;
                     return (extractedNumbers != null && extractedNumbers.Count > 0)
-                        ? RestoreNumbersFromPlaceholders(cachedTrimmed, extractedNumbers)
-                        : cachedTrimmed;
+                        ? RestoreNumbersFromPlaceholders(cachedTrimmedEntry.Value, extractedNumbers)
+                        : cachedTrimmedEntry.Value;
                 }
             }
 
@@ -1194,17 +1380,17 @@ namespace UnityGameTranslator.Core
 
             // Check cache with NORMALIZED key
             bool foundInCache = false;
-            if (TranslationCache.TryGetValue(normalizedText, out string cached))
+            if (TranslationCache.TryGetValue(normalizedText, out var cachedEntry))
             {
                 foundInCache = true;
-                if (cached != normalizedText)
+                if (cachedEntry.Value != normalizedText)
                 {
                     cacheHitCount++;
                     translatedCount++;
                     // Restore numbers in the translation
                     translation = (extractedNumbers != null && extractedNumbers.Count > 0)
-                        ? RestoreNumbersFromPlaceholders(cached, extractedNumbers)
-                        : cached;
+                        ? RestoreNumbersFromPlaceholders(cachedEntry.Value, extractedNumbers)
+                        : cachedEntry.Value;
                 }
                 // If cached == normalizedText, it means "no translation needed", still a cache hit
             }
@@ -1213,15 +1399,15 @@ namespace UnityGameTranslator.Core
             if (translation == null && !foundInCache)
             {
                 string trimmed = normalizedText.Trim();
-                if (trimmed != normalizedText && TranslationCache.TryGetValue(trimmed, out string cachedTrimmed))
+                if (trimmed != normalizedText && TranslationCache.TryGetValue(trimmed, out var cachedTrimmedEntry))
                 {
                     foundInCache = true;
-                    if (cachedTrimmed != trimmed)
+                    if (cachedTrimmedEntry.Value != trimmed)
                     {
                         cacheHitCount++;
                         translation = (extractedNumbers != null && extractedNumbers.Count > 0)
-                            ? RestoreNumbersFromPlaceholders(cachedTrimmed, extractedNumbers)
-                            : cachedTrimmed;
+                            ? RestoreNumbersFromPlaceholders(cachedTrimmedEntry.Value, extractedNumbers)
+                            : cachedTrimmedEntry.Value;
                     }
                 }
             }
@@ -1351,14 +1537,14 @@ namespace UnityGameTranslator.Core
                 try
                 {
                     // Create output with metadata first, then sorted translations
-                    var output = new Dictionary<string, object>();
+                    var output = new JObject();
 
                     // Metadata
                     output["_uuid"] = FileUuid;
 
                     if (CurrentGame != null)
                     {
-                        output["_game"] = new Dictionary<string, string>
+                        output["_game"] = new JObject
                         {
                             ["name"] = CurrentGame.name,
                             ["steam_id"] = CurrentGame.steam_id
@@ -1368,7 +1554,7 @@ namespace UnityGameTranslator.Core
                     // Save _source with hash for multi-device sync detection
                     if (!string.IsNullOrEmpty(LastSyncedHash))
                     {
-                        output["_source"] = new Dictionary<string, string>
+                        output["_source"] = new JObject
                         {
                             ["hash"] = LastSyncedHash
                         };
@@ -1379,19 +1565,24 @@ namespace UnityGameTranslator.Core
                         output["_local_changes"] = LocalChangesCount;
                     }
 
-                    // Sorted translations
-                    var sorted = new SortedDictionary<string, string>(TranslationCache);
-                    foreach (var kv in sorted)
+                    // Sorted translations with new format {"v": "value", "t": "tag"}
+                    var sortedKeys = TranslationCache.Keys.OrderBy(k => k).ToList();
+                    foreach (var key in sortedKeys)
                     {
-                        output[kv.Key] = kv.Value;
+                        var entry = TranslationCache[key];
+                        output[key] = new JObject
+                        {
+                            ["v"] = entry.Value,
+                            ["t"] = entry.Tag ?? "A"
+                        };
                     }
 
-                    string json = JsonConvert.SerializeObject(output, Formatting.Indented);
+                    string json = output.ToString(Formatting.Indented);
                     File.WriteAllText(CachePath, json);
                     cacheModified = false;
 
                     if (DebugMode)
-                        Adapter?.LogInfo($"Saved {sorted.Count} cache entries with UUID: {FileUuid}");
+                        Adapter?.LogInfo($"Saved {sortedKeys.Count} cache entries with UUID: {FileUuid}");
                 }
                 catch (Exception e)
                 {
@@ -1515,6 +1706,90 @@ namespace UnityGameTranslator.Core
         public string Type { get; set; }
         /// <summary>Translation notes</summary>
         public string Notes { get; set; }
+
+        /// <summary>User's role for this translation</summary>
+        public TranslationRole Role { get; set; } = TranslationRole.None;
+
+        /// <summary>If Branch, the username of the Main owner</summary>
+        public string MainUsername { get; set; }
+
+        /// <summary>If Main, the number of branches</summary>
+        public int BranchesCount { get; set; }
+    }
+
+    /// <summary>
+    /// User role relative to a translation on the server.
+    /// Determined by comparing UUID and user identity.
+    /// </summary>
+    public enum TranslationRole
+    {
+        /// <summary>Not yet uploaded / UUID unknown on server</summary>
+        None,
+        /// <summary>Owner of this translation (same UUID + same user)</summary>
+        Main,
+        /// <summary>Contributor to someone else's translation (same UUID + different user)</summary>
+        Branch
+    }
+
+    /// <summary>
+    /// A translation entry with value and tag.
+    /// JSON format: {"v": "value", "t": "A/H/V"}
+    /// </summary>
+    public class TranslationEntry
+    {
+        /// <summary>The translated value</summary>
+        public string Value { get; set; } = "";
+
+        /// <summary>
+        /// Tag indicating the source of this translation.
+        /// A = AI generated, H = Human, V = AI Validated by human.
+        /// Null defaults to A.
+        /// </summary>
+        public string Tag { get; set; } = "A";
+
+        /// <summary>True if Value is null or empty</summary>
+        public bool IsEmpty => string.IsNullOrEmpty(Value);
+
+        /// <summary>True if this is a Human-tagged empty entry (capture-only placeholder)</summary>
+        public bool IsHumanEmpty => Tag == "H" && IsEmpty;
+
+        /// <summary>
+        /// Get the priority of this entry for merge conflict resolution.
+        /// Higher priority wins: H empty (0) < A (1) < V (2) < H with value (3)
+        /// </summary>
+        public int Priority
+        {
+            get
+            {
+                if (IsHumanEmpty) return 0;  // H empty = lowest priority
+                switch (Tag)
+                {
+                    case "A": return 1;  // AI
+                    case "V": return 2;  // Validated
+                    case "H": return 3;  // Human with value
+                    default: return 1;   // Default = AI
+                }
+            }
+        }
+
+        /// <summary>
+        /// Create a new TranslationEntry from a string value (defaults to AI tag).
+        /// </summary>
+        public static TranslationEntry FromValue(string value, string tag = "A")
+        {
+            return new TranslationEntry { Value = value ?? "", Tag = tag ?? "A" };
+        }
+
+        /// <summary>
+        /// Check if this entry can replace another entry based on tag hierarchy.
+        /// </summary>
+        public bool CanReplace(TranslationEntry other)
+        {
+            if (other == null) return true;
+            return Priority > other.Priority;
+        }
+
+        public override string ToString() => $"{Value} [{Tag}]";
     }
 
     /// <summary>

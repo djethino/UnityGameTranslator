@@ -327,9 +327,27 @@ namespace UnityGameTranslator.Core
                 {
                     Success = true,
                     Exists = data["exists"]?.Value<bool>() ?? false,
-                    IsOwner = data["is_owner"]?.Value<bool>() ?? false
+                    IsOwner = data["is_owner"]?.Value<bool>() ?? false,
+                    MainUsername = data["main_user"]?.Value<string>(),
+                    BranchesCount = data["branches_count"]?.Value<int>() ?? 0
                 };
-                TranslatorCore.LogInfo($"[ApiClient] Parsed: exists={result.Exists}, isOwner={result.IsOwner}");
+
+                // Parse role with .NET Standard 2.0 compatible switch
+                string roleStr = data["role"]?.Value<string>();
+                switch (roleStr)
+                {
+                    case "main":
+                        result.Role = TranslationRole.Main;
+                        break;
+                    case "branch":
+                        result.Role = TranslationRole.Branch;
+                        break;
+                    default:
+                        result.Role = TranslationRole.None;
+                        break;
+                }
+
+                TranslatorCore.LogInfo($"[ApiClient] Parsed: exists={result.Exists}, isOwner={result.IsOwner}, role={result.Role}");
 
                 // Parse translation info if UPDATE
                 if (result.Exists && result.IsOwner && data["translation"] != null)
@@ -370,6 +388,67 @@ namespace UnityGameTranslator.Core
             {
                 TranslatorCore.LogWarning($"[ApiClient] UUID check error: {e.Message}");
                 return new UuidCheckResult { Success = false, Error = e.Message };
+            }
+        }
+
+        #endregion
+
+        #region Branches
+
+        /// <summary>
+        /// Get list of branches contributing to a UUID.
+        /// Requires authentication.
+        /// </summary>
+        public static async Task<BranchListResult> GetBranches(string uuid)
+        {
+            try
+            {
+                string url = $"{DefaultBaseUrl}/translations/{Uri.EscapeDataString(uuid)}/branches";
+                var response = await client.GetAsync(url);
+
+                if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+                {
+                    return new BranchListResult { Success = false, Error = "Not authenticated" };
+                }
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    return new BranchListResult { Success = false, Error = $"HTTP {response.StatusCode}" };
+                }
+
+                string json = await response.Content.ReadAsStringAsync();
+                var data = JObject.Parse(json);
+
+                var result = new BranchListResult
+                {
+                    Success = true,
+                    Branches = new List<BranchInfo>()
+                };
+
+                var branches = data["branches"] as JArray;
+                if (branches != null)
+                {
+                    foreach (var b in branches)
+                    {
+                        result.Branches.Add(new BranchInfo
+                        {
+                            Id = b["id"]?.Value<int>() ?? 0,
+                            Username = b["username"]?.Value<string>(),
+                            LineCount = b["line_count"]?.Value<int>() ?? 0,
+                            HumanCount = b["human_count"]?.Value<int>() ?? 0,
+                            AiCount = b["ai_count"]?.Value<int>() ?? 0,
+                            ValidatedCount = b["validated_count"]?.Value<int>() ?? 0,
+                            UpdatedAt = b["updated_at"]?.Value<string>()
+                        });
+                    }
+                }
+
+                return result;
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogWarning($"[ApiClient] GetBranches error: {e.Message}");
+                return new BranchListResult { Success = false, Error = e.Message };
             }
         }
 
@@ -431,17 +510,45 @@ namespace UnityGameTranslator.Core
                     return false;
                 }
 
-                // Validate all non-metadata entries are string:string
+                // Validate all non-metadata entries are valid translation values
                 foreach (var prop in parsed.Properties())
                 {
                     // Skip metadata fields
                     if (prop.Name.StartsWith("_"))
                         continue;
 
-                    // Each translation entry must be a string value
-                    if (prop.Value.Type != JTokenType.String)
+                    // Each translation entry can be:
+                    // - A string (old format): "key": "value"
+                    // - An object (new format): "key": {"v": "value", "t": "A/H/V"}
+                    if (prop.Value.Type == JTokenType.String)
                     {
-                        error = $"Invalid value type for key '{prop.Name}' (expected string)";
+                        // Old format - valid
+                        continue;
+                    }
+                    else if (prop.Value.Type == JTokenType.Object)
+                    {
+                        // New format - validate structure
+                        var entry = prop.Value as JObject;
+                        if (entry == null || !entry.ContainsKey("v"))
+                        {
+                            error = $"Invalid entry format for key '{prop.Name}' (missing 'v' field)";
+                            return false;
+                        }
+                        // "v" must be string, "t" is optional but must be string if present
+                        if (entry["v"]?.Type != JTokenType.String)
+                        {
+                            error = $"Invalid 'v' type for key '{prop.Name}' (expected string)";
+                            return false;
+                        }
+                        if (entry.ContainsKey("t") && entry["t"]?.Type != JTokenType.String)
+                        {
+                            error = $"Invalid 't' type for key '{prop.Name}' (expected string)";
+                            return false;
+                        }
+                    }
+                    else
+                    {
+                        error = $"Invalid value type for key '{prop.Name}' (expected string or object)";
                         return false;
                     }
                 }
@@ -894,6 +1001,12 @@ namespace UnityGameTranslator.Core
         public string Error { get; set; }
         public bool Exists { get; set; }
         public bool IsOwner { get; set; }
+        /// <summary>Detected role: Main (owner), Branch (contributor), or None (new)</summary>
+        public TranslationRole Role { get; set; } = TranslationRole.None;
+        /// <summary>Username of the Main translation owner (if this is a Branch)</summary>
+        public string MainUsername { get; set; }
+        /// <summary>Number of branches contributing to this UUID (if this is Main)</summary>
+        public int BranchesCount { get; set; }
         public UuidCheckTranslationInfo ExistingTranslation { get; set; } // For UPDATE
         public UuidCheckTranslationInfo OriginalTranslation { get; set; } // For FORK
     }
@@ -908,6 +1021,30 @@ namespace UnityGameTranslator.Core
         public string Notes { get; set; }
         public int LineCount { get; set; }
         public string FileHash { get; set; }
+        public string UpdatedAt { get; set; }
+    }
+
+    public class BranchListResult
+    {
+        public bool Success { get; set; }
+        public string Error { get; set; }
+        public List<BranchInfo> Branches { get; set; }
+    }
+
+    /// <summary>
+    /// Information about a branch (contributor) to a translation
+    /// </summary>
+    public class BranchInfo
+    {
+        public int Id { get; set; }
+        public string Username { get; set; }
+        public int LineCount { get; set; }
+        /// <summary>Number of human-translated entries (tag H)</summary>
+        public int HumanCount { get; set; }
+        /// <summary>Number of AI-translated entries (tag A)</summary>
+        public int AiCount { get; set; }
+        /// <summary>Number of validated entries (tag V)</summary>
+        public int ValidatedCount { get; set; }
         public string UpdatedAt { get; set; }
     }
 

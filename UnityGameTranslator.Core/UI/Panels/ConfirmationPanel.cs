@@ -68,27 +68,31 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             var card = CreateAdaptiveCard(scrollContent, "ConfirmCard", 360);
 
-            // Title
+            // Title - dynamically set, use UI-specific translation
             _titleLabel = UIFactory.CreateLabel(card, "Title", "Confirm", TextAnchor.MiddleCenter);
             _titleLabel.fontSize = UIStyles.FontSizeTitle;
             _titleLabel.fontStyle = FontStyle.Bold;
             _titleLabel.color = UIStyles.TextPrimary;
             UIFactory.SetLayoutElement(_titleLabel.gameObject, minHeight: UIStyles.TitleHeight);
+            RegisterUIText(_titleLabel);
 
             UIStyles.CreateSpacer(card, 10);
 
-            // Message
+            // Message - dynamically set, use UI-specific translation
             _messageLabel = UIFactory.CreateLabel(card, "Message", "", TextAnchor.MiddleCenter);
             _messageLabel.fontSize = UIStyles.FontSizeNormal;
             _messageLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(_messageLabel.gameObject, minHeight: UIStyles.MultiLineSmall);
+            RegisterUIText(_messageLabel);
 
             // Buttons in fixed footer
             _cancelBtn = CreateSecondaryButton(buttonRow, "CancelBtn", "Cancel");
             _cancelBtn.OnClick += OnCancelClicked;
+            RegisterUIText(_cancelBtn.ButtonText);
 
             _confirmBtn = CreatePrimaryButton(buttonRow, "ConfirmBtn", "Confirm");
             _confirmBtn.OnClick += OnConfirmClicked;
+            RegisterUIText(_confirmBtn.ButtonText);
         }
 
         private void OnConfirmClicked()

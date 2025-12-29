@@ -100,6 +100,7 @@ namespace UnityGameTranslator.Core.UI
         public static readonly Color ButtonSuccess = new Color(0.2f, 0.6f, 0.35f);
         public static readonly Color ButtonWarning = new Color(0.75f, 0.55f, 0.2f);
         public static readonly Color ButtonDanger = new Color(0.7f, 0.25f, 0.25f);
+        public static readonly Color ButtonLink = new Color(0.11f, 0.63f, 0.89f);  // Light blue for links (#1ba1e2)
         public static readonly Color ButtonHover = new Color(0.35f, 0.35f, 0.4f);
 
         // Status colors

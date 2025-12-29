@@ -34,6 +34,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         // UI references - Actions section
         private ButtonRef _uploadBtn;
         private Text _uploadHintLabel;
+        private ButtonRef _reviewOnWebsiteBtn;
+        private ButtonRef _forkBtn;
 
         // UI references - Community Translations section
         private GameObject _communitySection;
@@ -58,7 +60,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Main card - adaptive, sizes to content (PanelWidth - 2*PanelPadding)
             var card = CreateAdaptiveCard(scrollContent, "MainCard", PanelWidth - 40);
 
-            CreateTitle(card, "Title", "Unity Game Translator");
+            var title = CreateTitle(card, "Title", "Unity Game Translator");
+            RegisterExcluded(title); // Mod name - never translate
 
             UIStyles.CreateSpacer(card, 5);
 
@@ -83,16 +86,19 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Bottom buttons - in fixed footer (outside scroll)
             var optionsBtn = CreateSecondaryButton(buttonRow, "OptionsBtn", "Options");
             optionsBtn.OnClick += () => TranslatorUIManager.OptionsPanel?.SetActive(true);
+            RegisterUIText(optionsBtn.ButtonText);
 
             var closeBtn = CreatePrimaryButton(buttonRow, "CloseBtn", "Close");
             closeBtn.OnClick += () => SetActive(false);
+            RegisterUIText(closeBtn.ButtonText);
 
             RefreshUI();
         }
 
         private void CreateAccountSection(GameObject parent)
         {
-            UIStyles.CreateSectionTitle(parent, "AccountSectionLabel", "Account");
+            var sectionTitle = UIStyles.CreateSectionTitle(parent, "AccountSectionLabel", "Account");
+            RegisterUIText(sectionTitle);
 
             var accountBox = CreateSection(parent, "AccountBox");
 
@@ -102,51 +108,80 @@ namespace UnityGameTranslator.Core.UI.Panels
             _accountLabel.fontStyle = FontStyle.Italic;
             _accountLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(_accountLabel.gameObject, flexibleWidth: 9999);
+            RegisterUIText(_accountLabel);
 
             _loginLogoutBtn = CreateSecondaryButton(accountRow, "LoginLogoutBtn", "Login", 80);
             _loginLogoutBtn.OnClick += OnLoginLogoutClicked;
+            RegisterUIText(_loginLogoutBtn.ButtonText);
         }
 
         private void CreateTranslationInfoSection(GameObject parent)
         {
-            UIStyles.CreateSectionTitle(parent, "TranslationSectionLabel", "Current Translation");
+            var sectionTitle = UIStyles.CreateSectionTitle(parent, "TranslationSectionLabel", "Current Translation");
+            RegisterUIText(sectionTitle);
 
             var infoBox = CreateSection(parent, "TranslationBox");
 
             _entriesLabel = UIFactory.CreateLabel(infoBox, "EntriesLabel", "Entries: 0", TextAnchor.MiddleLeft);
             _entriesLabel.color = UIStyles.TextPrimary;
             UIFactory.SetLayoutElement(_entriesLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
+            RegisterUIText(_entriesLabel);
 
             _targetLabel = UIFactory.CreateLabel(infoBox, "TargetLabel", "Target: auto", TextAnchor.MiddleLeft);
             _targetLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(_targetLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
+            RegisterUIText(_targetLabel);
 
             _sourceLabel = UIFactory.CreateLabel(infoBox, "SourceLabel", "Source: Local", TextAnchor.MiddleLeft);
             _sourceLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(_sourceLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
+            RegisterUIText(_sourceLabel);
 
             _roleLabel = UIFactory.CreateLabel(infoBox, "RoleLabel", "", TextAnchor.MiddleLeft);
             _roleLabel.fontStyle = FontStyle.Bold;
             UIFactory.SetLayoutElement(_roleLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
+            RegisterUIText(_roleLabel);
 
             _syncStatusLabel = UIFactory.CreateLabel(infoBox, "SyncStatusLabel", "", TextAnchor.MiddleLeft);
             _syncStatusLabel.fontStyle = FontStyle.Bold;
             UIFactory.SetLayoutElement(_syncStatusLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
+            RegisterUIText(_syncStatusLabel);
 
             _ollamaStatusLabel = CreateSmallLabel(infoBox, "OllamaStatusLabel", "");
+            RegisterUIText(_ollamaStatusLabel);
         }
 
         private void CreateActionsSection(GameObject parent)
         {
-            UIStyles.CreateSectionTitle(parent, "ActionsSectionLabel", "Actions");
+            var sectionTitle = UIStyles.CreateSectionTitle(parent, "ActionsSectionLabel", "Actions");
+            RegisterUIText(sectionTitle);
 
             var actionsBox = CreateSection(parent, "ActionsBox");
 
             _uploadBtn = CreatePrimaryButton(actionsBox, "UploadBtn", "Upload Translation", 200);
             UIFactory.SetLayoutElement(_uploadBtn.Component.gameObject, flexibleWidth: 9999);
             _uploadBtn.OnClick += OnUploadClicked;
+            RegisterUIText(_uploadBtn.ButtonText);
 
             _uploadHintLabel = UIStyles.CreateHint(actionsBox, "UploadHintLabel", "");
+            RegisterUIText(_uploadHintLabel);
+
+            // Role-specific action buttons row
+            var roleActionsRow = UIStyles.CreateFormRow(actionsBox, "RoleActionsRow", UIStyles.RowHeightLarge);
+            var rowLayout = roleActionsRow.GetComponent<HorizontalLayoutGroup>();
+            if (rowLayout != null) rowLayout.childAlignment = TextAnchor.MiddleCenter;
+
+            // Review on Website button (Main only) - opens merge review page
+            _reviewOnWebsiteBtn = CreateSecondaryButton(roleActionsRow, "ReviewBtn", "Review on Website", 150);
+            UIStyles.SetBackground(_reviewOnWebsiteBtn.Component.gameObject, UIStyles.ButtonLink);
+            _reviewOnWebsiteBtn.OnClick += OnReviewOnWebsiteClicked;
+            RegisterUIText(_reviewOnWebsiteBtn.ButtonText);
+
+            // Fork button (Branch only) - creates independent fork
+            _forkBtn = CreateSecondaryButton(roleActionsRow, "ForkBtn", "Fork", 80);
+            UIStyles.SetBackground(_forkBtn.Component.gameObject, UIStyles.ButtonDanger);
+            _forkBtn.OnClick += OnForkClicked;
+            RegisterUIText(_forkBtn.ButtonText);
         }
 
         private void CreateCommunitySection(GameObject parent)
@@ -155,7 +190,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             _communitySection = UIFactory.CreateVerticalGroup(parent, "CommunitySection", false, false, true, true, 0);
             UIFactory.SetLayoutElement(_communitySection, flexibleWidth: 9999);
 
-            UIStyles.CreateSectionTitle(_communitySection, "CommunitySectionLabel", "Community Translations");
+            var sectionTitle = UIStyles.CreateSectionTitle(_communitySection, "CommunitySectionLabel", "Community Translations");
+            RegisterUIText(sectionTitle);
 
             var communityBox = CreateSection(_communitySection, "CommunityBox");
 
@@ -165,9 +201,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             _communityGameLabel = UIFactory.CreateLabel(searchRow, "GameLabel", "Game: Unknown", TextAnchor.MiddleLeft);
             _communityGameLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(_communityGameLabel.gameObject, flexibleWidth: 9999);
+            RegisterUIText(_communityGameLabel);
 
             _searchBtn = CreateSecondaryButton(searchRow, "SearchBtn", "Search", 80);
             _searchBtn.OnClick += OnSearchCommunityClicked;
+            RegisterUIText(_searchBtn.ButtonText);
 
             // Translation list - ensure initialized
             if (_translationList == null)
@@ -194,6 +232,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIStyles.SetBackground(_downloadBtn.Component.gameObject, UIStyles.ButtonSuccess);
             _downloadBtn.OnClick += OnDownloadCommunityClicked;
             _downloadBtn.Component.interactable = false;
+            RegisterUIText(_downloadBtn.ButtonText);
         }
 
         public override void SetActive(bool active)
@@ -359,15 +398,29 @@ namespace UnityGameTranslator.Core.UI.Panels
             bool isLoggedIn = !string.IsNullOrEmpty(TranslatorCore.Config.api_token);
             var state = TranslatorCore.ServerState;
             bool existsOnServer = state != null && state.Exists && state.SiteId.HasValue;
+            bool hasLocalChanges = TranslatorCore.LocalChangesCount > 0;
+
+            // Check if we're in sync (no local changes and hash matches)
+            bool isInSync = existsOnServer && state.IsOwner && !hasLocalChanges &&
+                           !string.IsNullOrEmpty(state.Hash) &&
+                           state.Hash == TranslatorCore.LastSyncedHash;
 
             // Determine upload action text
             string uploadAction;
             string uploadHint;
 
-            if (existsOnServer && state.IsOwner)
+            if (isInSync)
+            {
+                // In sync - no need to show upload button
+                uploadAction = "Up to date";
+                uploadHint = "Your translation is synchronized with the server";
+            }
+            else if (existsOnServer && state.IsOwner)
             {
                 uploadAction = "Update Translation";
-                uploadHint = $"Update your translation #{state.SiteId}";
+                uploadHint = hasLocalChanges
+                    ? $"Update #{state.SiteId} ({TranslatorCore.LocalChangesCount} local changes)"
+                    : $"Update your translation #{state.SiteId}";
             }
             else if (existsOnServer && !state.IsOwner)
             {
@@ -383,7 +436,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             _uploadBtn.ButtonText.text = uploadAction;
 
             // Enable/disable based on conditions
-            bool canUpload = isLoggedIn && TranslatorCore.Config.online_mode && TranslatorCore.TranslationCache.Count > 0;
+            // Disable if in sync (nothing to upload) or other conditions not met
+            bool canUpload = isLoggedIn && TranslatorCore.Config.online_mode &&
+                            TranslatorCore.TranslationCache.Count > 0 && !isInSync;
             _uploadBtn.Component.interactable = canUpload;
 
             // Update hint
@@ -402,6 +457,25 @@ namespace UnityGameTranslator.Core.UI.Panels
             else
             {
                 _uploadHintLabel.text = uploadHint;
+            }
+
+            // Role-specific buttons visibility
+            if (_reviewOnWebsiteBtn != null && _forkBtn != null)
+            {
+                bool isMain = existsOnServer && state.Role == TranslationRole.Main;
+                bool isBranch = existsOnServer && state.Role == TranslationRole.Branch;
+
+                // Review on Website - only for Main role
+                _reviewOnWebsiteBtn.Component.gameObject.SetActive(isMain);
+
+                // Fork button - only for Branch role
+                _forkBtn.Component.gameObject.SetActive(isBranch);
+
+                // Fork button enabled only when logged in
+                if (isBranch)
+                {
+                    _forkBtn.Component.interactable = isLoggedIn;
+                }
             }
         }
 
@@ -437,6 +511,43 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void OnUploadClicked()
         {
             TranslatorUIManager.UploadPanel?.SetActive(true);
+        }
+
+        private void OnReviewOnWebsiteClicked()
+        {
+            // Open the merge review page on the website (Main only)
+            string uuid = TranslatorCore.FileUuid;
+            if (string.IsNullOrEmpty(uuid))
+            {
+                TranslatorCore.LogWarning("[MainPanel] Cannot open review page: no UUID");
+                return;
+            }
+
+            string url = ApiClient.GetMergeReviewUrl(uuid);
+            TranslatorCore.LogInfo($"[MainPanel] Opening review page: {url}");
+            Application.OpenURL(url);
+        }
+
+        private void OnForkClicked()
+        {
+            // Show confirmation dialog before forking
+            TranslatorUIManager.ConfirmationPanel?.Show(
+                "Fork Translation",
+                "This will create an independent copy of your translation with a new UUID.\n\n" +
+                "You will become the Main owner of this new translation.\n\n" +
+                "This action cannot be undone. The link to the original Main will be lost.",
+                "Fork",
+                () =>
+                {
+                    // Create fork: generate new UUID and reset server state
+                    TranslatorCore.CreateFork();
+                    RefreshUI();
+
+                    // Open upload panel to push the forked translation
+                    TranslatorUIManager.UploadPanel?.SetActive(true);
+                },
+                isDanger: true
+            );
         }
 
         private void RefreshCommunitySection()

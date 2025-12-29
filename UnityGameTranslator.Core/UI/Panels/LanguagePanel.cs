@@ -55,37 +55,43 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             var card = CreateAdaptiveCard(scrollContent, "LanguageCard", PanelWidth - 40);
 
-            CreateTitle(card, "Title", "Select Languages");
+            var title = CreateTitle(card, "Title", "Select Languages");
+            RegisterUIText(title);
 
             UIStyles.CreateSpacer(card, 5);
 
             // Source language section
-            UIStyles.CreateSectionTitle(card, "SourceTitle", "Source Language (original game language)");
+            var sourceTitle = UIStyles.CreateSectionTitle(card, "SourceTitle", "Source Language (original game language)");
+            RegisterUIText(sourceTitle);
             _sourceSelector.CreateUI(card, (lang) => UpdateSummary());
 
             UIStyles.CreateSpacer(card, 10);
 
             // Target language section
-            UIStyles.CreateSectionTitle(card, "TargetTitle", "Target Language (translation language)");
+            var targetTitle = UIStyles.CreateSectionTitle(card, "TargetTitle", "Target Language (translation language)");
+            RegisterUIText(targetTitle);
             _targetSelector.CreateUI(card, (lang) => UpdateSummary());
 
             UIStyles.CreateSpacer(card, 10);
 
-            // Summary display
+            // Summary display - shows language codes, exclude from translation
             _summaryLabel = UIFactory.CreateLabel(card, "Summary", "", TextAnchor.MiddleCenter);
             _summaryLabel.fontSize = UIStyles.FontSizeNormal + 2;
             _summaryLabel.fontStyle = FontStyle.Bold;
             UIFactory.SetLayoutElement(_summaryLabel.gameObject, minHeight: UIStyles.RowHeightXLarge);
+            RegisterExcluded(_summaryLabel); // Contains language names in original form
 
             UpdateSummary();
 
             // Buttons - in fixed footer
             var cancelBtn = CreateSecondaryButton(buttonRow, "CancelBtn", "Cancel");
             cancelBtn.OnClick += () => SetActive(false);
+            RegisterUIText(cancelBtn.ButtonText);
 
             var confirmBtn = CreatePrimaryButton(buttonRow, "ConfirmBtn", "Confirm");
             UIStyles.SetBackground(confirmBtn.Component.gameObject, UIStyles.ButtonSuccess);
             confirmBtn.OnClick += ConfirmSelection;
+            RegisterUIText(confirmBtn.ButtonText);
         }
 
         private void UpdateSummary()

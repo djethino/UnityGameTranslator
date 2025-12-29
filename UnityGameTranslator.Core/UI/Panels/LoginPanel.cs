@@ -41,7 +41,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Adaptive card - sizes to content
             var card = CreateAdaptiveCard(scrollContent, "LoginCard", PanelWidth - 40);
 
-            CreateTitle(card, "Title", "Connect Account");
+            var title = CreateTitle(card, "Title", "Connect Account");
+            RegisterUIText(title);
 
             UIStyles.CreateSpacer(card, 10);
 
@@ -53,34 +54,40 @@ namespace UnityGameTranslator.Core.UI.Panels
             _instructionLabel.fontSize = UIStyles.FontSizeNormal;
             _instructionLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(_instructionLabel.gameObject, minHeight: UIStyles.MultiLineSmall);
+            RegisterUIText(_instructionLabel);
 
             UIStyles.CreateSpacer(card, 10);
 
-            // Code display (initially hidden)
+            // Code display (initially hidden) - Excluded: device code, not translatable
             _codeLabel = UIFactory.CreateLabel(card, "CodeLabel", "", TextAnchor.MiddleCenter);
             _codeLabel.fontSize = UIStyles.CodeDisplayFontSize;
             _codeLabel.fontStyle = FontStyle.Bold;
             _codeLabel.color = UIStyles.TextAccent;
             UIFactory.SetLayoutElement(_codeLabel.gameObject, minHeight: UIStyles.CodeDisplayHeight);
             _codeLabel.gameObject.SetActive(false);
+            RegisterExcluded(_codeLabel);
 
             // Open website button (initially hidden)
             _openWebsiteBtn = CreatePrimaryButton(card, "OpenWebsiteBtn", "Open Website", 200);
             UIFactory.SetLayoutElement(_openWebsiteBtn.Component.gameObject, flexibleWidth: 9999);
             _openWebsiteBtn.OnClick += OpenVerificationUrl;
             _openWebsiteBtn.Component.gameObject.SetActive(false);
+            RegisterUIText(_openWebsiteBtn.ButtonText);
 
             // Status label
             _statusLabel = CreateStatusLabel(card, "Status");
+            RegisterUIText(_statusLabel);
 
             // Start login button
             _startLoginBtn = CreatePrimaryButton(card, "StartLoginBtn", "Start Login", 200);
             UIFactory.SetLayoutElement(_startLoginBtn.Component.gameObject, flexibleWidth: 9999);
             _startLoginBtn.OnClick += StartLogin;
+            RegisterUIText(_startLoginBtn.ButtonText);
 
             // Cancel button - in fixed footer (outside scroll)
             var cancelBtn = CreateSecondaryButton(buttonRow, "CancelBtn", "Cancel");
             cancelBtn.OnClick += CancelLogin;
+            RegisterUIText(cancelBtn.ButtonText);
         }
 
         private async void StartLogin()

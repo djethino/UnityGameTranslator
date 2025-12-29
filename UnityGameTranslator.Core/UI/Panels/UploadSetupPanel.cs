@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 using UnityEngine.UI;
 using UniverseLib.UI;
@@ -52,14 +53,93 @@ namespace UnityGameTranslator.Core.UI.Panels
         }
 
         /// <summary>
+        /// Calculate confidence score for a game search result.
+        /// Higher score = more likely to be the correct game.
+        /// </summary>
+        private int CalculateConfidence(GameApiInfo game)
+        {
+            int score = 0;
+            var currentGame = TranslatorCore.CurrentGame;
+
+            // steam_id match with detected game: +50 points
+            if (!string.IsNullOrEmpty(game.SteamId) &&
+                currentGame != null &&
+                !string.IsNullOrEmpty(currentGame.steam_id) &&
+                game.SteamId == currentGame.steam_id)
+            {
+                score += 50;
+            }
+
+            // source == "local" (has translations): +30 points
+            if (game.Source == "local")
+            {
+                score += 30;
+            }
+            // source == "steam": +20 points
+            else if (game.Source == "steam")
+            {
+                score += 20;
+            }
+
+            // Name matching
+            if (currentGame != null && !string.IsNullOrEmpty(currentGame.name))
+            {
+                string detectedName = currentGame.name.ToLowerInvariant();
+                string resultName = game.Name?.ToLowerInvariant() ?? "";
+
+                // Exact name match: +20 points
+                if (detectedName == resultName)
+                {
+                    score += 20;
+                }
+                // Partial name match (contains): +5 points
+                else if (resultName.Contains(detectedName) || detectedName.Contains(resultName))
+                {
+                    score += 5;
+                }
+            }
+
+            return score;
+        }
+
+        /// <summary>
+        /// Get background color based on confidence score.
+        /// </summary>
+        private Color GetConfidenceColor(int score)
+        {
+            if (score >= 50)
+                return UIStyles.StatusSuccess; // Green - high confidence
+            else if (score >= 20)
+                return UIStyles.StatusWarning; // Yellow - medium confidence
+            else
+                return UIStyles.ItemBackground; // Default - low confidence
+        }
+
+        /// <summary>
+        /// Get user-friendly display name for source.
+        /// </summary>
+        private string GetSourceDisplayName(string source)
+        {
+            switch (source?.ToLowerInvariant())
+            {
+                case "local": return "catalog"; // Already in our database with translations
+                case "steam": return "steam";
+                case "igdb": return "igdb";
+                case "rawg": return "rawg";
+                default: return source ?? "";
+            }
+        }
+
+        /// <summary>
         /// Show the panel for new upload setup.
         /// </summary>
         public void ShowForSetup(Action<GameInfo, string, string> onComplete)
         {
             _onSetupComplete = onComplete;
 
-            // Initialize with current game or null
-            _selectedGame = TranslatorCore.CurrentGame;
+            // For NEW uploads, game MUST be confirmed by user
+            // Clear any previous selection - user must select from search results
+            _selectedGame = null;
 
             // Initialize with system language as target
             string systemLang = LanguageHelper.GetSystemLanguageName();
@@ -67,32 +147,46 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Reset search state
             _gameSearchResults = null;
+            ClearGameResults();
 
             RefreshGameDisplay();
             UpdateValidation();
 
             SetActive(true);
+
+            // Pre-search with detected game name to help user confirm the correct game
+            var currentGame = TranslatorCore.CurrentGame;
+            if (currentGame != null && !string.IsNullOrEmpty(currentGame.name) && _gameSearchInput != null)
+            {
+                _gameSearchInput.Text = currentGame.name;
+                // Trigger search automatically
+                PerformGameSearch();
+            }
         }
 
         protected override void ConstructPanelContent()
         {
             // Initialize components (must be here, not in constructor - base calls ConstructUI first)
             var languages = LanguageHelper.GetLanguageNames();
-            _sourceSelector = new LanguageSelector("Source", languages, "English", 100);
+            // No default for source - must be explicitly selected (required field)
+            _sourceSelector = new LanguageSelector("Source", languages, "", 100);
             _targetSelector = new LanguageSelector("Target", languages, "", 120);
 
             CreateScrollablePanelLayout(out var scrollContent, out var buttonRow, PanelWidth - 40);
 
             var card = CreateAdaptiveCard(scrollContent, "SetupCard", PanelWidth - 40);
 
-            CreateTitle(card, "Title", "New Upload Setup");
+            var title = CreateTitle(card, "Title", "New Upload Setup");
+            RegisterUIText(title);
 
-            CreateSmallLabel(card, "Instructions", "Configure your translation before uploading:");
+            var instructions = CreateSmallLabel(card, "Instructions", "Configure your translation before uploading:");
+            RegisterUIText(instructions);
 
             UIStyles.CreateSpacer(card, 10);
 
             // === GAME SECTION ===
-            UIStyles.CreateSectionTitle(card, "GameTitle", "1. Game");
+            var gameTitle = UIStyles.CreateSectionTitle(card, "GameTitle", "1. Game");
+            RegisterUIText(gameTitle);
 
             var gameBox = CreateSection(card, "GameBox");
 
@@ -103,12 +197,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             _gameDisplayLabel.fontStyle = FontStyle.Bold;
             _gameDisplayLabel.color = UIStyles.TextPrimary;
             UIFactory.SetLayoutElement(_gameDisplayLabel.gameObject, flexibleWidth: 9999);
+            RegisterExcluded(_gameDisplayLabel); // Game names should not be translated
 
             _gameSourceLabel = UIFactory.CreateLabel(gameRow, "GameSource", "(auto-detected)", TextAnchor.MiddleRight);
             _gameSourceLabel.fontStyle = FontStyle.Italic;
             _gameSourceLabel.fontSize = UIStyles.FontSizeSmall;
             _gameSourceLabel.color = UIStyles.TextMuted;
             UIFactory.SetLayoutElement(_gameSourceLabel.gameObject, minWidth: 100);
+            RegisterUIText(_gameSourceLabel);
 
             // Game search row
             var searchRow = UIStyles.CreateFormRow(gameBox, "SearchRow", UIStyles.RowHeightLarge, 5);
@@ -120,12 +216,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             _gameSearchBtn = UIFactory.CreateButton(searchRow, "SearchBtn", "Search");
             UIFactory.SetLayoutElement(_gameSearchBtn.Component.gameObject, minWidth: 70, minHeight: UIStyles.InputHeight);
             _gameSearchBtn.OnClick += PerformGameSearch;
+            RegisterUIText(_gameSearchBtn.ButtonText);
 
             // Search status
             _gameSearchStatus = UIFactory.CreateLabel(gameBox, "SearchStatus", "", TextAnchor.MiddleLeft);
             _gameSearchStatus.fontSize = UIStyles.FontSizeSmall;
             _gameSearchStatus.color = UIStyles.TextMuted;
             UIFactory.SetLayoutElement(_gameSearchStatus.gameObject, minHeight: UIStyles.RowHeightSmall);
+            RegisterUIText(_gameSearchStatus);
 
             // Search results scroll
             var resultsScroll = UIFactory.CreateScrollView(gameBox, "ResultsScroll", out _gameResultsContent, out _);
@@ -151,13 +249,15 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIStyles.CreateSpacer(card, 10);
 
             // === SOURCE LANGUAGE SECTION ===
-            UIStyles.CreateSectionTitle(card, "SourceTitle", "2. Source Language (original game language)");
+            var sourceTitle = UIStyles.CreateSectionTitle(card, "SourceTitle", "2. Source Language (original game language)");
+            RegisterUIText(sourceTitle);
             _sourceSelector.CreateUI(card, (lang) => UpdateValidation());
 
             UIStyles.CreateSpacer(card, 10);
 
             // === TARGET LANGUAGE SECTION ===
-            UIStyles.CreateSectionTitle(card, "TargetTitle", "3. Target Language (your translation)");
+            var targetTitle = UIStyles.CreateSectionTitle(card, "TargetTitle", "3. Target Language (your translation)");
+            RegisterUIText(targetTitle);
             _targetSelector.CreateUI(card, (lang) => UpdateValidation());
 
             UIStyles.CreateSpacer(card, 10);
@@ -167,14 +267,17 @@ namespace UnityGameTranslator.Core.UI.Panels
             _validationLabel.fontSize = UIStyles.FontSizeNormal;
             _validationLabel.fontStyle = FontStyle.Bold;
             UIFactory.SetLayoutElement(_validationLabel.gameObject, minHeight: UIStyles.RowHeightLarge);
+            RegisterExcluded(_validationLabel); // Contains game/language names
 
             // === BUTTONS ===
             var cancelBtn = CreateSecondaryButton(buttonRow, "CancelBtn", "Cancel");
             cancelBtn.OnClick += () => SetActive(false);
+            RegisterUIText(cancelBtn.ButtonText);
 
             _continueBtn = CreatePrimaryButton(buttonRow, "ContinueBtn", "Continue to Upload");
             UIStyles.SetBackground(_continueBtn.Component.gameObject, UIStyles.ButtonSuccess);
             _continueBtn.OnClick += OnContinue;
+            RegisterUIText(_continueBtn.ButtonText);
 
             // Initial population
             RefreshGameDisplay();
@@ -185,27 +288,32 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (_gameDisplayLabel == null) return;
 
-            var game = _selectedGame ?? TranslatorCore.CurrentGame;
-
-            if (game != null && !string.IsNullOrEmpty(game.name))
+            if (_selectedGame != null && !string.IsNullOrEmpty(_selectedGame.name))
             {
-                _gameDisplayLabel.text = game.name;
-                _gameDisplayLabel.color = UIStyles.TextPrimary;
-
-                if (_selectedGame != null)
-                {
-                    _gameSourceLabel.text = "(selected)";
-                }
-                else
-                {
-                    _gameSourceLabel.text = "(auto-detected)";
-                }
+                // Game confirmed by user selection
+                _gameDisplayLabel.text = _selectedGame.name;
+                _gameDisplayLabel.color = UIStyles.StatusSuccess;
+                _gameSourceLabel.text = "✓ confirmed";
+                _gameSourceLabel.color = UIStyles.StatusSuccess;
             }
             else
             {
-                _gameDisplayLabel.text = "No game detected";
-                _gameDisplayLabel.color = UIStyles.StatusWarning;
-                _gameSourceLabel.text = "- please search";
+                // Show detected game but require confirmation
+                var detected = TranslatorCore.CurrentGame;
+                if (detected != null && !string.IsNullOrEmpty(detected.name))
+                {
+                    _gameDisplayLabel.text = detected.name;
+                    _gameDisplayLabel.color = UIStyles.StatusWarning;
+                    _gameSourceLabel.text = "⚠ confirm below";
+                    _gameSourceLabel.color = UIStyles.StatusWarning;
+                }
+                else
+                {
+                    _gameDisplayLabel.text = "No game detected";
+                    _gameDisplayLabel.color = UIStyles.StatusWarning;
+                    _gameSourceLabel.text = "- please search";
+                    _gameSourceLabel.color = UIStyles.TextMuted;
+                }
             }
 
             UpdateValidation();
@@ -279,17 +387,39 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             if (_gameSearchResults == null || _gameResultsContent == null) return;
 
-            foreach (var game in _gameSearchResults)
+            // Calculate confidence for each result and sort by confidence (highest first)
+            var sortedResults = _gameSearchResults
+                .Select(g => new { Game = g, Confidence = CalculateConfidence(g) })
+                .OrderByDescending(x => x.Confidence)
+                .ToList();
+
+            foreach (var item in sortedResults)
             {
+                var game = item.Game;
+                int confidence = item.Confidence;
+
                 var btn = UIFactory.CreateButton(_gameResultsContent, $"Game_{game.Id}", game.Name);
                 UIFactory.SetLayoutElement(btn.Component.gameObject, minHeight: UIStyles.RowHeightNormal, flexibleWidth: 9999);
-                UIStyles.SetBackground(btn.Component.gameObject, UIStyles.ItemBackground);
 
-                // Add source tag if available
+                // Use confidence-based background color
+                Color bgColor = GetConfidenceColor(confidence);
+                UIStyles.SetBackground(btn.Component.gameObject, bgColor);
+
+                // Build display text with source and confidence indicator
+                string displayText = game.Name;
                 if (!string.IsNullOrEmpty(game.Source))
                 {
-                    btn.ButtonText.text = $"{game.Name} [{game.Source}]";
+                    string sourceDisplay = GetSourceDisplayName(game.Source);
+                    displayText += $" [{sourceDisplay}]";
                 }
+
+                // Add confidence indicator
+                if (confidence >= 50)
+                    displayText += " ★"; // High confidence
+                else if (confidence >= 20)
+                    displayText += " ☆"; // Medium confidence
+
+                btn.ButtonText.text = displayText;
 
                 // Capture game in closure
                 var capturedGame = game;
@@ -318,12 +448,18 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (_validationLabel == null || _continueBtn == null) return;
 
-            var game = _selectedGame ?? TranslatorCore.CurrentGame;
+            // For NEW uploads, game MUST be confirmed by selecting from search results
+            // No fallback to auto-detected game
+            var game = _selectedGame;
             bool hasGame = game != null && !string.IsNullOrEmpty(game.name);
+
+            // Use IsValidSelection() to ensure language is from the list, not just non-empty
+            bool hasValidSource = _sourceSelector?.IsValidSelection() ?? false;
+            bool hasValidTarget = _targetSelector?.IsValidSelection() ?? false;
+
             string source = _sourceSelector?.SelectedLanguage;
             string target = _targetSelector?.SelectedLanguage;
-            bool hasTarget = !string.IsNullOrEmpty(target);
-            bool differentLangs = source != target;
+            bool differentLangs = hasValidSource && hasValidTarget && source != target;
 
             if (!hasGame)
             {
@@ -331,7 +467,13 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _validationLabel.color = UIStyles.StatusWarning;
                 _continueBtn.Component.interactable = false;
             }
-            else if (!hasTarget)
+            else if (!hasValidSource)
+            {
+                _validationLabel.text = "Please select a source language (original game language)";
+                _validationLabel.color = UIStyles.StatusWarning;
+                _continueBtn.Component.interactable = false;
+            }
+            else if (!hasValidTarget)
             {
                 _validationLabel.text = "Please select a target language";
                 _validationLabel.color = UIStyles.StatusWarning;
@@ -353,15 +495,17 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private void OnContinue()
         {
-            var game = _selectedGame ?? TranslatorCore.CurrentGame;
-
-            // Update CurrentGame if user selected a different one
-            if (_selectedGame != null)
+            // For NEW uploads, game MUST be confirmed via _selectedGame
+            if (_selectedGame == null)
             {
-                TranslatorCore.CurrentGame = _selectedGame;
+                TranslatorCore.LogWarning("[UploadSetup] OnContinue called without selected game");
+                return;
             }
 
-            _onSetupComplete?.Invoke(game, _sourceSelector.SelectedLanguage, _targetSelector.SelectedLanguage);
+            // Update CurrentGame with user's confirmed selection
+            TranslatorCore.CurrentGame = _selectedGame;
+
+            _onSetupComplete?.Invoke(_selectedGame, _sourceSelector.SelectedLanguage, _targetSelector.SelectedLanguage);
             SetActive(false);
         }
     }

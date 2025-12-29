@@ -39,6 +39,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private Toggle _aiToggle;
         private Toggle _aiCorrectedToggle;
         private Toggle _manualToggle;
+        private ButtonRef _backBtn;
         private ButtonRef _uploadBtn;
 
         // State
@@ -66,6 +67,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Title
             _titleLabel = CreateTitle(card, "TitleLabel", "Upload Translation");
+            RegisterUIText(_titleLabel);
 
             UIStyles.CreateSpacer(card, 5);
 
@@ -75,21 +77,25 @@ namespace UnityGameTranslator.Core.UI.Panels
             _entriesLabel = UIFactory.CreateLabel(infoBox, "EntriesLabel", "Entries: 0", TextAnchor.MiddleLeft);
             _entriesLabel.color = UIStyles.TextPrimary;
             UIFactory.SetLayoutElement(_entriesLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
+            RegisterUIText(_entriesLabel);
 
             _gameLabel = UIFactory.CreateLabel(infoBox, "GameLabel", "Game: Unknown", TextAnchor.MiddleLeft);
             _gameLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(_gameLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
+            RegisterUIText(_gameLabel);
 
             _modeInfoLabel = UIFactory.CreateLabel(infoBox, "ModeInfoLabel", "", TextAnchor.MiddleLeft);
             _modeInfoLabel.fontStyle = FontStyle.Italic;
             _modeInfoLabel.fontSize = UIStyles.FontSizeSmall;
             _modeInfoLabel.color = UIStyles.TextMuted;
             UIFactory.SetLayoutElement(_modeInfoLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+            RegisterUIText(_modeInfoLabel);
 
             UIStyles.CreateSpacer(card, 10);
 
             // Translation type section
-            UIStyles.CreateSectionTitle(card, "TypeLabel", "Translation Type");
+            var typeTitle = UIStyles.CreateSectionTitle(card, "TypeLabel", "Translation Type");
+            RegisterUIText(typeTitle);
 
             var typeBox = CreateSection(card, "TypeBox");
 
@@ -108,6 +114,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
             });
             UIFactory.SetLayoutElement(aiObj, minHeight: UIStyles.RowHeightNormal);
+            RegisterExcluded(aiLabel); // "Ollama" is a brand name
 
             // AI Corrected toggle
             var aiCorrectedObj = UIFactory.CreateToggle(typeBox, "AICorrectedToggle", out _aiCorrectedToggle, out var aiCorrectedLabel);
@@ -124,6 +131,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
             });
             UIFactory.SetLayoutElement(aiCorrectedObj, minHeight: UIStyles.RowHeightNormal);
+            RegisterUIText(aiCorrectedLabel);
 
             // Manual toggle
             var manualObj = UIFactory.CreateToggle(typeBox, "ManualToggle", out _manualToggle, out var manualLabel);
@@ -140,29 +148,56 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
             });
             UIFactory.SetLayoutElement(manualObj, minHeight: UIStyles.RowHeightNormal);
+            RegisterUIText(manualLabel);
 
             UIStyles.CreateSpacer(card, 10);
 
             // Notes
             var notesLabel = CreateSmallLabel(card, "NotesLabel", "Notes (optional):");
+            RegisterUIText(notesLabel);
 
             _notesInput = CreateStyledInputField(card, "NotesInput", "Add any notes about this translation...", UIStyles.MultiLineSmall);
 
             // Status
             _statusLabel = CreateStatusLabel(card, "Status");
+            RegisterUIText(_statusLabel);
 
             // Buttons - in fixed footer (outside scroll)
             var cancelBtn = CreateSecondaryButton(buttonRow, "CancelBtn", "Cancel");
             cancelBtn.OnClick += () => SetActive(false);
+            RegisterUIText(cancelBtn.ButtonText);
+
+            // Back button - only visible for NEW mode to go back to setup
+            _backBtn = CreateSecondaryButton(buttonRow, "BackBtn", "← Back");
+            _backBtn.OnClick += OnBackToSetup;
+            _backBtn.Component.gameObject.SetActive(false); // Hidden by default
+            RegisterUIText(_backBtn.ButtonText);
 
             _uploadBtn = CreatePrimaryButton(buttonRow, "UploadBtn", "Upload");
             _uploadBtn.OnClick += DoUpload;
+            RegisterUIText(_uploadBtn.ButtonText);
+        }
+
+        private void OnBackToSetup()
+        {
+            // Close this panel and reopen UploadSetupPanel
+            SetActive(false);
+
+            // Reopen setup panel - it will pre-populate with detected game
+            TranslatorUIManager.UploadSetupPanel.ShowForSetup((game, srcLang, tgtLang) =>
+            {
+                ContinueAfterSetup(game, srcLang, tgtLang);
+            });
         }
 
         public override void SetActive(bool active)
         {
+            // Skip reset if setup was just completed (ContinueAfterSetup sets _setupComplete = true before calling SetActive)
+            bool skipReset = active && _setupComplete;
+
             base.SetActive(active);
-            if (active)
+
+            if (active && !skipReset)
             {
                 // Reset setup state when opening fresh
                 _setupComplete = false;
@@ -188,6 +223,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             _uploadBtn.ButtonText.text = "Upload";
             _statusLabel.text = "";
 
+            // Enable upload button (we're ready to upload after setup)
+            _isChecking = false;
+            _uploadBtn.Component.interactable = true;
+
+            // Show back button for NEW mode (user can go back to change game/languages)
+            _backBtn.Component.gameObject.SetActive(true);
+
             RefreshInfo();
 
             // Show the upload panel
@@ -201,6 +243,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             _statusLabel.color = UIStyles.StatusWarning;
             _uploadBtn.Component.interactable = false;
 
+            // Hide back button (only shown for NEW mode after setup)
+            _backBtn.Component.gameObject.SetActive(false);
+
             RefreshInfo();
 
             try
@@ -208,7 +253,17 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // Check UUID to determine mode
                 var result = await ApiClient.CheckUuid(TranslatorCore.FileUuid);
 
-                if (result.Success && result.Exists)
+                // Handle API errors separately from UUID not existing
+                if (!result.Success)
+                {
+                    _statusLabel.text = $"Error: {result.Error}";
+                    _statusLabel.color = UIStyles.StatusError;
+                    _isChecking = false;
+                    _uploadBtn.Component.interactable = false;
+                    return;
+                }
+
+                if (result.Exists)
                 {
                     if (result.IsOwner)
                     {
@@ -217,12 +272,13 @@ namespace UnityGameTranslator.Core.UI.Panels
                         _titleLabel.text = "Update Translation";
 
                         // Update ServerState from API response
+                        // Role comes from API (Main if owner, Branch if contributor)
                         TranslatorCore.ServerState = new ServerTranslationState
                         {
                             Checked = true,
                             Exists = true,
                             IsOwner = true,
-                            Role = TranslationRole.Main,
+                            Role = result.Role,
                             BranchesCount = result.BranchesCount,
                             SiteId = result.ExistingTranslation?.Id,
                             Uploader = TranslatorCore.Config.api_user,
@@ -381,13 +437,13 @@ namespace UnityGameTranslator.Core.UI.Panels
                     _statusLabel.text = $"{successMsg}! ID: {result.TranslationId}";
                     _statusLabel.color = UIStyles.StatusSuccess;
 
-                    // Update server state - after upload, user is always the Main (owner)
+                    // Update server state with role from API response
                     TranslatorCore.ServerState = new ServerTranslationState
                     {
                         Checked = true,
                         Exists = true,
                         IsOwner = true,
-                        Role = TranslationRole.Main,
+                        Role = result.Role,
                         SiteId = result.TranslationId,
                         Uploader = TranslatorCore.Config.api_user,
                         Hash = result.FileHash,
@@ -448,9 +504,14 @@ namespace UnityGameTranslator.Core.UI.Panels
                 };
             }
 
+            // Use same format as SaveCache: {"v": "value", "t": "tag"}
             foreach (var kv in TranslatorCore.TranslationCache)
             {
-                output[kv.Key] = kv.Value;
+                output[kv.Key] = new System.Collections.Generic.Dictionary<string, string>
+                {
+                    ["v"] = kv.Value.Value,
+                    ["t"] = kv.Value.Tag ?? "A"
+                };
             }
 
             return Newtonsoft.Json.JsonConvert.SerializeObject(output, Newtonsoft.Json.Formatting.None);

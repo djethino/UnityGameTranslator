@@ -9,6 +9,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 {
     /// <summary>
     /// Merge panel for resolving conflicts between local and remote translations.
+    /// Supports both legacy (string) and new (TranslationEntry with tags) merge results.
     /// </summary>
     public class MergePanel : TranslatorPanelBase
     {
@@ -20,9 +21,16 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         protected override int MinPanelHeight => 400;
 
+        // Legacy merge (string-based)
         private MergeResult _pendingMerge;
-        private Dictionary<string, ConflictResolution> _resolutions = new Dictionary<string, ConflictResolution>();
         private Dictionary<string, string> _remoteTranslations;
+
+        // Tag-aware merge (TranslationEntry-based)
+        private MergeResultWithTags _pendingMergeWithTags;
+        private Dictionary<string, TranslationEntry> _remoteTranslationsWithTags;
+        private bool _useTagAwareMerge = false;
+
+        private Dictionary<string, ConflictResolution> _resolutions = new Dictionary<string, ConflictResolution>();
         private string _serverHash;
         private GameObject _conflictListContent;
         private Text _summaryLabel;
@@ -31,10 +39,38 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
         }
 
+        /// <summary>
+        /// Set merge data (legacy string-based merge).
+        /// </summary>
         public void SetMergeData(MergeResult mergeResult, Dictionary<string, string> remoteTranslations, string serverHash = null)
         {
+            _useTagAwareMerge = false;
             _pendingMerge = mergeResult;
             _remoteTranslations = remoteTranslations;
+            _pendingMergeWithTags = null;
+            _remoteTranslationsWithTags = null;
+            _serverHash = serverHash ?? TranslatorCore.ServerState?.Hash;
+            _resolutions.Clear();
+
+            // Initialize resolutions to use remote by default
+            foreach (var conflict in mergeResult.Conflicts)
+            {
+                _resolutions[conflict.Key] = ConflictResolution.TakeRemote;
+            }
+
+            RefreshConflictList();
+        }
+
+        /// <summary>
+        /// Set merge data with tags (tag-aware merge).
+        /// </summary>
+        public void SetMergeDataWithTags(MergeResultWithTags mergeResult, Dictionary<string, TranslationEntry> remoteTranslations, string serverHash = null)
+        {
+            _useTagAwareMerge = true;
+            _pendingMergeWithTags = mergeResult;
+            _remoteTranslationsWithTags = remoteTranslations;
+            _pendingMerge = null;
+            _remoteTranslations = null;
             _serverHash = serverHash ?? TranslatorCore.ServerState?.Hash;
             _resolutions.Clear();
 
@@ -55,7 +91,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Adaptive card for merge conflicts - sizes to content (PanelWidth - 2*PanelPadding)
             var card = CreateAdaptiveCard(scrollContent, "MergeCard", PanelWidth - 40);
 
-            CreateTitle(card, "Title", "Merge Conflicts");
+            var title = CreateTitle(card, "Title", "Merge Conflicts");
+            RegisterUIText(title);
 
             UIStyles.CreateSpacer(card, 5);
 
@@ -64,6 +101,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _summaryLabel.fontSize = UIStyles.FontSizeNormal;
             _summaryLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(_summaryLabel.gameObject, minHeight: UIStyles.RowHeightMedium);
+            RegisterUIText(_summaryLabel);
 
             // Conflict list scroll view
             var scrollObj = UIFactory.CreateScrollView(card, "ConflictScroll", out _conflictListContent, out _);
@@ -81,26 +119,39 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             var useAllLocalBtn = CreateSecondaryButton(bulkRow, "UseAllLocalBtn", "Use All Local", 110);
             useAllLocalBtn.OnClick += UseAllLocal;
+            RegisterUIText(useAllLocalBtn.ButtonText);
 
             var useAllRemoteBtn = CreateSecondaryButton(bulkRow, "UseAllRemoteBtn", "Use All Remote", 115);
             useAllRemoteBtn.OnClick += UseAllRemote;
+            RegisterUIText(useAllRemoteBtn.ButtonText);
+
+            // Review on website button (Main only - useful for comparing branches)
+            var reviewBtn = CreateSecondaryButton(bulkRow, "ReviewBtn", "Review on Website", 140);
+            UIStyles.SetBackground(reviewBtn.Component.gameObject, UIStyles.ButtonLink);
+            reviewBtn.OnClick += OpenReviewPage;
+            RegisterUIText(reviewBtn.ButtonText);
 
             // Bottom buttons - in fixed footer (outside scroll)
             var cancelBtn = CreateSecondaryButton(buttonRow, "CancelBtn", "Cancel");
             cancelBtn.OnClick += CancelMerge;
+            RegisterUIText(cancelBtn.ButtonText);
 
             var replaceBtn = CreateSecondaryButton(buttonRow, "ReplaceBtn", "Replace with Remote", 155);
             UIStyles.SetBackground(replaceBtn.Component.gameObject, UIStyles.ButtonDanger);
             replaceBtn.OnClick += ReplaceWithRemote;
+            RegisterUIText(replaceBtn.ButtonText);
 
             var applyBtn = CreatePrimaryButton(buttonRow, "ApplyBtn", "Apply Merge");
             UIStyles.SetBackground(applyBtn.Component.gameObject, UIStyles.ButtonSuccess);
             applyBtn.OnClick += ApplyMerge;
+            RegisterUIText(applyBtn.ButtonText);
         }
 
         private void RefreshConflictList()
         {
-            if (_conflictListContent == null || _pendingMerge == null) return;
+            if (_conflictListContent == null) return;
+            if (!_useTagAwareMerge && _pendingMerge == null) return;
+            if (_useTagAwareMerge && _pendingMergeWithTags == null) return;
 
             // Clear existing items
             foreach (Transform child in _conflictListContent.transform)
@@ -108,22 +159,72 @@ namespace UnityGameTranslator.Core.UI.Panels
                 UnityEngine.Object.Destroy(child.gameObject);
             }
 
-            int count = _pendingMerge.Conflicts.Count;
-            _summaryLabel.text = $"{count} conflict(s) to resolve:";
-
-            foreach (var conflict in _pendingMerge.Conflicts)
+            if (_useTagAwareMerge)
             {
-                CreateConflictRow(conflict);
+                int count = _pendingMergeWithTags.Conflicts.Count;
+                _summaryLabel.text = $"{count} conflict(s) to resolve:";
+
+                foreach (var conflict in _pendingMergeWithTags.Conflicts)
+                {
+                    CreateConflictRowWithTags(conflict);
+                }
+            }
+            else
+            {
+                int count = _pendingMerge.Conflicts.Count;
+                _summaryLabel.text = $"{count} conflict(s) to resolve:";
+
+                foreach (var conflict in _pendingMerge.Conflicts)
+                {
+                    CreateConflictRow(conflict);
+                }
             }
         }
 
         private void CreateConflictRow(MergeConflict conflict)
         {
-            var row = UIFactory.CreateVerticalGroup(_conflictListContent, $"Conflict_{conflict.Key}", false, false, true, true, 3);
+            CreateConflictRowInternal(conflict.Key, conflict.LocalValue ?? "(none)", null, conflict.RemoteValue ?? "(none)", null);
+        }
+
+        private void CreateConflictRowWithTags(MergeConflictWithTags conflict)
+        {
+            string localValue = conflict.Local?.Value ?? "(none)";
+            string localTag = conflict.Local?.Tag;
+            string remoteValue = conflict.Remote?.Value ?? "(none)";
+            string remoteTag = conflict.Remote?.Tag;
+
+            CreateConflictRowInternal(conflict.Key, localValue, localTag, remoteValue, remoteTag);
+        }
+
+        private string GetTagDisplayName(string tag)
+        {
+            switch (tag)
+            {
+                case "A": return "[AI]";
+                case "H": return "[Human]";
+                case "V": return "[Validated]";
+                default: return "";
+            }
+        }
+
+        private Color GetTagColor(string tag)
+        {
+            switch (tag)
+            {
+                case "A": return UIStyles.StatusWarning;  // Yellow for AI
+                case "H": return UIStyles.StatusSuccess;  // Green for Human
+                case "V": return UIStyles.TextAccent;     // Blue for Validated
+                default: return UIStyles.TextMuted;
+            }
+        }
+
+        private void CreateConflictRowInternal(string key, string localValue, string localTag, string remoteValue, string remoteTag)
+        {
+            var row = UIFactory.CreateVerticalGroup(_conflictListContent, $"Conflict_{key}", false, false, true, true, 3);
             UIFactory.SetLayoutElement(row, minHeight: UIStyles.MultiLineMedium, flexibleWidth: 9999);
 
             // Key label
-            var keyLabel = UIFactory.CreateLabel(row, "Key", $"Key: {conflict.Key}", TextAnchor.MiddleLeft);
+            var keyLabel = UIFactory.CreateLabel(row, "Key", $"Key: {key}", TextAnchor.MiddleLeft);
             keyLabel.fontStyle = FontStyle.Bold;
             UIFactory.SetLayoutElement(keyLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
 
@@ -134,26 +235,35 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Local value
             var localGroup = UIFactory.CreateVerticalGroup(valuesRow, "Local", false, false, true, true, 2);
             UIFactory.SetLayoutElement(localGroup, flexibleWidth: 9999);
-            var localLabel = UIFactory.CreateLabel(localGroup, "LocalLabel", "Local:", TextAnchor.MiddleLeft);
-            localLabel.fontSize = UIStyles.FontSizeSmall;
-            var localValue = UIFactory.CreateLabel(localGroup, "LocalValue", conflict.LocalValue ?? "(none)", TextAnchor.MiddleLeft);
-            localValue.fontSize = UIStyles.FontSizeSmall;
-            localValue.color = UIStyles.TextAccent;
+
+            // Local label with tag if available
+            string localLabelText = localTag != null ? $"Local {GetTagDisplayName(localTag)}:" : "Local:";
+            var localLbl = UIFactory.CreateLabel(localGroup, "LocalLabel", localLabelText, TextAnchor.MiddleLeft);
+            localLbl.fontSize = UIStyles.FontSizeSmall;
+            if (localTag != null) localLbl.color = GetTagColor(localTag);
+
+            var localValueLbl = UIFactory.CreateLabel(localGroup, "LocalValue", localValue, TextAnchor.MiddleLeft);
+            localValueLbl.fontSize = UIStyles.FontSizeSmall;
+            localValueLbl.color = UIStyles.TextAccent;
 
             // Remote value
             var remoteGroup = UIFactory.CreateVerticalGroup(valuesRow, "Remote", false, false, true, true, 2);
             UIFactory.SetLayoutElement(remoteGroup, flexibleWidth: 9999);
-            var remoteLabel = UIFactory.CreateLabel(remoteGroup, "RemoteLabel", "Remote:", TextAnchor.MiddleLeft);
-            remoteLabel.fontSize = UIStyles.FontSizeSmall;
-            var remoteValue = UIFactory.CreateLabel(remoteGroup, "RemoteValue", conflict.RemoteValue ?? "(none)", TextAnchor.MiddleLeft);
-            remoteValue.fontSize = UIStyles.FontSizeSmall;
-            remoteValue.color = UIStyles.StatusSuccess;
+
+            // Remote label with tag if available
+            string remoteLabelText = remoteTag != null ? $"Remote {GetTagDisplayName(remoteTag)}:" : "Remote:";
+            var remoteLbl = UIFactory.CreateLabel(remoteGroup, "RemoteLabel", remoteLabelText, TextAnchor.MiddleLeft);
+            remoteLbl.fontSize = UIStyles.FontSizeSmall;
+            if (remoteTag != null) remoteLbl.color = GetTagColor(remoteTag);
+
+            var remoteValueLbl = UIFactory.CreateLabel(remoteGroup, "RemoteValue", remoteValue, TextAnchor.MiddleLeft);
+            remoteValueLbl.fontSize = UIStyles.FontSizeSmall;
+            remoteValueLbl.color = UIStyles.StatusSuccess;
 
             // Choice toggles
             var choiceRow = UIFactory.CreateHorizontalGroup(row, "Choices", false, false, true, true, 20);
             UIFactory.SetLayoutElement(choiceRow, minHeight: UIStyles.RowHeightMedium);
 
-            var key = conflict.Key;
             var localToggleObj = UIFactory.CreateToggle(choiceRow, "LocalToggle", out var localToggle, out var localToggleLabel);
             localToggleLabel.text = "Use Local";
             localToggle.isOn = _resolutions.TryGetValue(key, out var res) && res == ConflictResolution.KeepLocal;
@@ -185,34 +295,111 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private void UseAllLocal()
         {
-            foreach (var conflict in _pendingMerge.Conflicts)
+            if (_useTagAwareMerge)
             {
-                _resolutions[conflict.Key] = ConflictResolution.KeepLocal;
+                foreach (var conflict in _pendingMergeWithTags.Conflicts)
+                {
+                    _resolutions[conflict.Key] = ConflictResolution.KeepLocal;
+                }
+            }
+            else
+            {
+                foreach (var conflict in _pendingMerge.Conflicts)
+                {
+                    _resolutions[conflict.Key] = ConflictResolution.KeepLocal;
+                }
             }
             RefreshConflictList();
         }
 
         private void UseAllRemote()
         {
-            foreach (var conflict in _pendingMerge.Conflicts)
+            if (_useTagAwareMerge)
             {
-                _resolutions[conflict.Key] = ConflictResolution.TakeRemote;
+                foreach (var conflict in _pendingMergeWithTags.Conflicts)
+                {
+                    _resolutions[conflict.Key] = ConflictResolution.TakeRemote;
+                }
+            }
+            else
+            {
+                foreach (var conflict in _pendingMerge.Conflicts)
+                {
+                    _resolutions[conflict.Key] = ConflictResolution.TakeRemote;
+                }
             }
             RefreshConflictList();
         }
 
         private void ApplyMerge()
         {
-            if (_pendingMerge == null) return;
+            if (_useTagAwareMerge)
+            {
+                if (_pendingMergeWithTags == null) return;
 
-            // Apply resolutions to get final merged result
-            TranslationMerger.ApplyResolutions(_pendingMerge, _resolutions);
+                // Apply resolutions to get final merged result
+                ApplyResolutionsWithTags(_pendingMergeWithTags, _resolutions);
 
-            // Use TranslatorUIManager.ApplyMerge to handle hash updates
-            // Pass remoteTranslations so it's saved as ancestor for correct LocalChangesCount
-            TranslatorUIManager.ApplyMerge(_pendingMerge, _serverHash, _remoteTranslations);
+                // Use TranslatorUIManager.ApplyMergeWithTags to preserve tags
+                TranslatorUIManager.ApplyMergeWithTags(_pendingMergeWithTags, _serverHash, _remoteTranslationsWithTags);
+            }
+            else
+            {
+                if (_pendingMerge == null) return;
+
+                // Apply resolutions to get final merged result
+                TranslationMerger.ApplyResolutions(_pendingMerge, _resolutions);
+
+                // Use TranslatorUIManager.ApplyMerge to handle hash updates
+                TranslatorUIManager.ApplyMerge(_pendingMerge, _serverHash, _remoteTranslations);
+            }
 
             SetActive(false);
+        }
+
+        /// <summary>
+        /// Apply conflict resolutions to tag-aware merge result
+        /// </summary>
+        private void ApplyResolutionsWithTags(MergeResultWithTags result, Dictionary<string, ConflictResolution> resolutions)
+        {
+            var conflictsToRemove = new List<MergeConflictWithTags>();
+
+            foreach (var conflict in result.Conflicts)
+            {
+                if (resolutions.TryGetValue(conflict.Key, out var resolution))
+                {
+                    switch (resolution)
+                    {
+                        case ConflictResolution.KeepLocal:
+                            if (conflict.Local != null)
+                                result.Merged[conflict.Key] = conflict.Local;
+                            else
+                                result.Merged.Remove(conflict.Key);
+                            break;
+
+                        case ConflictResolution.TakeRemote:
+                            if (conflict.Remote != null)
+                                result.Merged[conflict.Key] = conflict.Remote;
+                            else
+                                result.Merged.Remove(conflict.Key);
+                            break;
+
+                        case ConflictResolution.KeepBoth:
+                            // For "keep both", use local
+                            if (conflict.Local != null)
+                                result.Merged[conflict.Key] = conflict.Local;
+                            break;
+                    }
+
+                    conflictsToRemove.Add(conflict);
+                    result.Statistics.ResolvedCount++;
+                }
+            }
+
+            foreach (var conflict in conflictsToRemove)
+            {
+                result.Conflicts.Remove(conflict);
+            }
         }
 
         private void ReplaceWithRemote()
@@ -239,6 +426,21 @@ namespace UnityGameTranslator.Core.UI.Panels
                 },
                 isDanger: true
             );
+        }
+
+        private void OpenReviewPage()
+        {
+            // Open the website merge review page for this translation
+            string uuid = TranslatorCore.FileUuid;
+            if (string.IsNullOrEmpty(uuid))
+            {
+                TranslatorCore.LogWarning("[MergePanel] Cannot open review page: no UUID");
+                return;
+            }
+
+            string url = ApiClient.GetMergeReviewUrl(uuid);
+            TranslatorCore.LogInfo($"[MergePanel] Opening review page: {url}");
+            Application.OpenURL(url);
         }
 
         private void CancelMerge()

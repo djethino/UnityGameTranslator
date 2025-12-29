@@ -57,6 +57,12 @@ namespace UnityGameTranslator.Core
         // Key: instanceId, Value: last processed text hash
         private static Dictionary<int, int> processedTextHashes = new Dictionary<int, int>();
 
+        // Track InputField text components (user input, not placeholder) - never translate these
+        private static HashSet<int> inputFieldTextIds = new HashSet<int>();
+
+        // Track components that are part of our own UI (UniverseLib/UnityGameTranslator) - never translate
+        private static HashSet<int> ownUIComponentIds = new HashSet<int>();
+
         #endregion
 
         // Logging flags (one-time)
@@ -93,8 +99,10 @@ namespace UnityGameTranslator.Core
             scanCycleComplete = true;
             cacheRefreshPending = false;
             processedTextHashes.Clear();
+            inputFieldTextIds.Clear();
             scanLoggedTMP = false;
             scanLoggedUI = false;
+            inputFieldDebugLogCount = 0;
 
             // Clear pending updates (components from old scene are invalid)
             lock (pendingUpdatesLock)
@@ -465,10 +473,28 @@ namespace UnityGameTranslator.Core
         {
             try
             {
+                int instanceId = tmp.GetInstanceID();
+
+                // Skip if own UI and should not be translated (uses hierarchy check)
+                if (TranslatorCore.ShouldSkipTranslation(tmp))
+                    return;
+
+                // Skip if already identified as InputField user text (not placeholder)
+                if (inputFieldTextIds.Contains(instanceId))
+                    return;
+
+                // First-time check: is this the textComponent of a TMP_InputField? (exclude user input, not placeholder)
+                var tmpInputField = tmp.GetComponentInParent<TMPro.TMP_InputField>();
+                if (tmpInputField != null && tmpInputField.textComponent == tmp)
+                {
+                    inputFieldTextIds.Add(instanceId);
+                    TranslatorCore.LogInfo($"[Scanner] Excluded TMP_InputField textComponent: {tmp.gameObject.name} (parent: {tmpInputField.gameObject.name})");
+                    return;
+                }
+
                 string currentText = tmp.text;
                 if (string.IsNullOrEmpty(currentText) || currentText.Length < 2) return;
 
-                int instanceId = tmp.GetInstanceID();
                 int textHash = currentText.GetHashCode();
 
                 // Quick skip: already processed with same text
@@ -482,7 +508,9 @@ namespace UnityGameTranslator.Core
                     return;
                 }
 
-                string translated = TranslatorCore.TranslateTextWithTracking(currentText, tmp);
+                // Check if own UI (use UI-specific prompt) - uses hierarchy check
+                bool isOwnUI = TranslatorCore.IsOwnUITranslatable(tmp);
+                string translated = TranslatorCore.TranslateTextWithTracking(currentText, tmp, isOwnUI);
                 if (translated != currentText)
                 {
                     tmp.text = translated;
@@ -499,14 +527,44 @@ namespace UnityGameTranslator.Core
             catch { }
         }
 
+        // Debug: track how many times we've logged for InputField detection
+        private static int inputFieldDebugLogCount = 0;
+        private const int MAX_INPUTFIELD_DEBUG_LOGS = 50;
+
         private static void ProcessUITextComponent(Text ui)
         {
             try
             {
+                int instanceId = ui.GetInstanceID();
+
+                // Skip if own UI and should not be translated (uses hierarchy check)
+                if (TranslatorCore.ShouldSkipTranslation(ui))
+                    return;
+
+                // Skip if already identified as InputField user text (not placeholder)
+                if (inputFieldTextIds.Contains(instanceId))
+                    return;
+
+                // First-time check: is this the textComponent of an InputField? (exclude user input, not placeholder)
+                var inputField = ui.GetComponentInParent<InputField>();
+                if (inputField != null && inputField.textComponent == ui)
+                {
+                    inputFieldTextIds.Add(instanceId);
+                    TranslatorCore.LogInfo($"[Scanner] Excluded InputField textComponent: {ui.gameObject.name} (parent: {inputField.gameObject.name})");
+                    return;
+                }
+
+                // Debug: log first few Text components that are NOT detected as InputField children
+                if (inputFieldDebugLogCount < MAX_INPUTFIELD_DEBUG_LOGS && !string.IsNullOrEmpty(ui.text) && ui.text.Length > 2)
+                {
+                    var parentNames = GetParentHierarchy(ui.gameObject, 5);
+                    TranslatorCore.LogInfo($"[Scanner] Text NOT in InputField: '{ui.gameObject.name}' hierarchy: {parentNames}");
+                    inputFieldDebugLogCount++;
+                }
+
                 string currentText = ui.text;
                 if (string.IsNullOrEmpty(currentText) || currentText.Length < 2) return;
 
-                int instanceId = ui.GetInstanceID();
                 int textHash = currentText.GetHashCode();
 
                 // Quick skip: already processed with same text
@@ -520,7 +578,9 @@ namespace UnityGameTranslator.Core
                     return;
                 }
 
-                string translated = TranslatorCore.TranslateTextWithTracking(currentText, ui);
+                // Check if own UI (use UI-specific prompt) - uses hierarchy check
+                bool isOwnUI = TranslatorCore.IsOwnUITranslatable(ui);
+                string translated = TranslatorCore.TranslateTextWithTracking(currentText, ui, isOwnUI);
                 if (translated != currentText)
                 {
                     ui.text = translated;
@@ -637,6 +697,31 @@ namespace UnityGameTranslator.Core
                 }
                 catch { }
             }
+        }
+
+        #endregion
+
+        #region Debug Helpers
+
+        /// <summary>
+        /// Get parent hierarchy as a string for debugging (child -> parent -> grandparent...)
+        /// </summary>
+        private static string GetParentHierarchy(GameObject obj, int maxDepth)
+        {
+            var names = new List<string>();
+            var current = obj.transform;
+            int depth = 0;
+
+            while (current != null && depth < maxDepth)
+            {
+                // Also check if this object has InputField component
+                var hasInputField = current.GetComponent<InputField>() != null;
+                names.Add(hasInputField ? $"{current.name}[IF]" : current.name);
+                current = current.parent;
+                depth++;
+            }
+
+            return string.Join(" -> ", names);
         }
 
         #endregion

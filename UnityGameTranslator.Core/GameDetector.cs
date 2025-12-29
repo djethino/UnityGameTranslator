@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Text.RegularExpressions;
 using UnityEngine;
 
 namespace UnityGameTranslator.Core
@@ -7,8 +8,9 @@ namespace UnityGameTranslator.Core
     /// <summary>
     /// Detects the current game using various methods:
     /// 1. steam_appid.txt in game folder
-    /// 2. Unity Application.productName
-    /// 3. Folder name as fallback
+    /// 2. Steam appmanifest files (scan steamapps folder)
+    /// 3. Unity Application.productName
+    /// 4. Folder name as fallback
     /// </summary>
     public static class GameDetector
     {
@@ -69,6 +71,7 @@ namespace UnityGameTranslator.Core
                         if (!string.IsNullOrEmpty(content) && long.TryParse(content, out _))
                         {
                             info.steam_id = content;
+                            info.detection_method = "steam_appid.txt";
                             TranslatorCore.LogInfo($"[GameDetector] Found steam_appid.txt: {content}");
                         }
                     }
@@ -79,7 +82,19 @@ namespace UnityGameTranslator.Core
                 }
             }
 
-            // Method 2: Application.productName
+            // Method 2: Try Steam appmanifest files (if no steam_appid.txt found)
+            if (string.IsNullOrEmpty(info.steam_id) && !string.IsNullOrEmpty(gameFolderPath))
+            {
+                string steamId = TryGetSteamIdFromAppManifest(gameFolderPath);
+                if (!string.IsNullOrEmpty(steamId))
+                {
+                    info.steam_id = steamId;
+                    info.detection_method = "appmanifest";
+                    TranslatorCore.LogInfo($"[GameDetector] Found Steam ID from appmanifest: {steamId}");
+                }
+            }
+
+            // Method 3: Application.productName
             try
             {
                 string productName = Application.productName;
@@ -136,6 +151,99 @@ namespace UnityGameTranslator.Core
                 return $"https://store.steampowered.com/app/{game.steam_id}";
             }
             return null;
+        }
+
+        /// <summary>
+        /// Try to find Steam ID by scanning appmanifest files in the steamapps folder.
+        /// Works by going up from the game folder to find steamapps, then scanning manifests.
+        /// </summary>
+        private static string TryGetSteamIdFromAppManifest(string gameFolderPath)
+        {
+            try
+            {
+                // Resolve any symlinks/junctions
+                gameFolderPath = Path.GetFullPath(gameFolderPath);
+                string gameFolderName = Path.GetFileName(gameFolderPath);
+
+                // Check if parent folder is "common" (Steam structure: steamapps/common/GameFolder)
+                string commonFolder = Path.GetDirectoryName(gameFolderPath);
+                if (string.IsNullOrEmpty(commonFolder))
+                    return null;
+
+                string commonFolderName = Path.GetFileName(commonFolder);
+                if (!string.Equals(commonFolderName, "common", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Not in a Steam library structure
+                    return null;
+                }
+
+                // Get steamapps folder (parent of common)
+                string steamappsFolder = Path.GetDirectoryName(commonFolder);
+                if (string.IsNullOrEmpty(steamappsFolder) || !Directory.Exists(steamappsFolder))
+                    return null;
+
+                TranslatorCore.LogInfo($"[GameDetector] Scanning appmanifest files in: {steamappsFolder}");
+
+                // Scan appmanifest_*.acf files
+                string[] manifestFiles;
+                try
+                {
+                    manifestFiles = Directory.GetFiles(steamappsFolder, "appmanifest_*.acf");
+                }
+                catch (Exception e)
+                {
+                    TranslatorCore.LogWarning($"[GameDetector] Cannot access steamapps folder: {e.Message}");
+                    return null;
+                }
+
+                // Regex to extract installdir and appid from Valve KeyValues format
+                // Format: "key"		"value" (with tabs between)
+                var installdirRegex = new Regex("\"installdir\"\\s+\"([^\"]+)\"", RegexOptions.IgnoreCase);
+                var appidRegex = new Regex("\"appid\"\\s+\"([^\"]+)\"", RegexOptions.IgnoreCase);
+
+                foreach (string manifestPath in manifestFiles)
+                {
+                    try
+                    {
+                        string content = File.ReadAllText(manifestPath);
+
+                        // Check if installdir matches our game folder name
+                        var installdirMatch = installdirRegex.Match(content);
+                        if (!installdirMatch.Success)
+                            continue;
+
+                        string installdir = installdirMatch.Groups[1].Value;
+                        if (!string.Equals(installdir, gameFolderName, StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        // Found matching manifest - extract appid
+                        var appidMatch = appidRegex.Match(content);
+                        if (appidMatch.Success)
+                        {
+                            string appid = appidMatch.Groups[1].Value;
+                            // Validate it's a number
+                            if (long.TryParse(appid, out _))
+                            {
+                                TranslatorCore.LogInfo($"[GameDetector] Matched appmanifest: {Path.GetFileName(manifestPath)} -> appid {appid}");
+                                return appid;
+                            }
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        // Skip unreadable manifest files
+                        TranslatorCore.LogWarning($"[GameDetector] Error reading {Path.GetFileName(manifestPath)}: {e.Message}");
+                    }
+                }
+
+                TranslatorCore.LogInfo($"[GameDetector] No matching appmanifest found for folder: {gameFolderName}");
+                return null;
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogWarning($"[GameDetector] Error scanning appmanifest files: {e.Message}");
+                return null;
+            }
         }
     }
 }

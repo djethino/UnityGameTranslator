@@ -1,6 +1,6 @@
 # Universal Unity Game Translator (Alpha)
 
-https://unitygametranslator.asymptomatikgames.com/
+**Website:** [unitygametranslator.asymptomatikgames.com](https://unitygametranslator.asymptomatikgames.com)
 
 A universal translation mod for Unity games with local AI (Ollama) and online community translations.
 
@@ -308,8 +308,11 @@ UnityGameTranslator/
 │   │       ├── OptionsPanel.cs         # Configuration options
 │   │       ├── LoginPanel.cs           # Device flow authentication
 │   │       ├── UploadPanel.cs          # Upload translations
+│   │       ├── UploadSetupPanel.cs     # Upload configuration (game, languages)
 │   │       ├── MergePanel.cs           # 3-way merge conflict resolution
-│   │       └── LanguagePanel.cs        # Language selection
+│   │       ├── LanguagePanel.cs        # Language selection
+│   │       ├── ConfirmationPanel.cs    # User confirmations
+│   │       └── StatusOverlay.cs        # Corner notifications (updates, sync)
 │   ├── ApiClient.cs                    # HTTP client for website API
 │   ├── GameDetector.cs                 # Game identification
 │   ├── GitHubUpdateChecker.cs          # GitHub releases update checker

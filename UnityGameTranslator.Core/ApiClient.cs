@@ -18,6 +18,23 @@ namespace UnityGameTranslator.Core
     {
         private static readonly HttpClient client;
         private const string DefaultBaseUrl = "https://unitygametranslator.asymptomatikgames.com/api/v1";
+        public const string WebsiteBaseUrl = "https://unitygametranslator.asymptomatikgames.com";
+
+        /// <summary>
+        /// Get the merge review page URL for a translation UUID
+        /// </summary>
+        public static string GetMergeReviewUrl(string uuid)
+        {
+            return $"{WebsiteBaseUrl}/translations/{uuid}/merge";
+        }
+
+        /// <summary>
+        /// Get the translation detail page URL
+        /// </summary>
+        public static string GetTranslationUrl(int translationId)
+        {
+            return $"{WebsiteBaseUrl}/translations/{translationId}";
+        }
 
         static ApiClient()
         {
@@ -323,29 +340,33 @@ namespace UnityGameTranslator.Core
                 TranslatorCore.LogInfo($"[ApiClient] CheckUuid response: {json}");
                 var data = JObject.Parse(json);
 
+                // Parse role first to derive IsOwner
+                string roleStr = data["role"]?.Value<string>();
+                TranslationRole role;
+                switch (roleStr)
+                {
+                    case "main":
+                        role = TranslationRole.Main;
+                        break;
+                    case "branch":
+                        role = TranslationRole.Branch;
+                        break;
+                    default:
+                        role = TranslationRole.None;
+                        break;
+                }
+
                 var result = new UuidCheckResult
                 {
                     Success = true,
                     Exists = data["exists"]?.Value<bool>() ?? false,
-                    IsOwner = data["is_owner"]?.Value<bool>() ?? false,
-                    MainUsername = data["main_user"]?.Value<string>(),
+                    // IsOwner = user has a translation (role is main or branch)
+                    IsOwner = role == TranslationRole.Main || role == TranslationRole.Branch,
+                    Role = role,
+                    // MainUsername is in main.uploader when role is none and main exists
+                    MainUsername = data["main"]?["uploader"]?.Value<string>(),
                     BranchesCount = data["branches_count"]?.Value<int>() ?? 0
                 };
-
-                // Parse role with .NET Standard 2.0 compatible switch
-                string roleStr = data["role"]?.Value<string>();
-                switch (roleStr)
-                {
-                    case "main":
-                        result.Role = TranslationRole.Main;
-                        break;
-                    case "branch":
-                        result.Role = TranslationRole.Branch;
-                        break;
-                    default:
-                        result.Role = TranslationRole.None;
-                        break;
-                }
 
                 TranslatorCore.LogInfo($"[ApiClient] Parsed: exists={result.Exists}, isOwner={result.IsOwner}, role={result.Role}");
 
@@ -366,19 +387,20 @@ namespace UnityGameTranslator.Core
                     };
                 }
 
-                // Parse original info if FORK
-                if (result.Exists && !result.IsOwner && data["original"] != null)
+                // Parse main info if FORK (user doesn't own but main exists)
+                // API returns "main" object, not "original"
+                if (result.Exists && !result.IsOwner && data["main"] != null)
                 {
-                    var o = data["original"];
+                    var m = data["main"];
                     result.OriginalTranslation = new UuidCheckTranslationInfo
                     {
-                        Id = o["id"]?.Value<int>() ?? 0,
-                        Uploader = o["uploader"]?.Value<string>(),
-                        SourceLanguage = o["source_language"]?.Value<string>(),
-                        TargetLanguage = o["target_language"]?.Value<string>(),
-                        Type = o["type"]?.Value<string>(),
-                        LineCount = o["line_count"]?.Value<int>() ?? 0,
-                        UpdatedAt = o["updated_at"]?.Value<string>()
+                        Id = m["id"]?.Value<int>() ?? 0,
+                        Uploader = m["uploader"]?.Value<string>(),
+                        SourceLanguage = m["source_language"]?.Value<string>(),
+                        TargetLanguage = m["target_language"]?.Value<string>(),
+                        Type = m["type"]?.Value<string>(),
+                        LineCount = m["line_count"]?.Value<int>() ?? 0,
+                        UpdatedAt = m["updated_at"]?.Value<string>()
                     };
                 }
 
@@ -433,7 +455,8 @@ namespace UnityGameTranslator.Core
                         result.Branches.Add(new BranchInfo
                         {
                             Id = b["id"]?.Value<int>() ?? 0,
-                            Username = b["username"]?.Value<string>(),
+                            // API returns user.name (nested object)
+                            Username = b["user"]?["name"]?.Value<string>(),
                             LineCount = b["line_count"]?.Value<int>() ?? 0,
                             HumanCount = b["human_count"]?.Value<int>() ?? 0,
                             AiCount = b["ai_count"]?.Value<int>() ?? 0,
@@ -855,13 +878,30 @@ namespace UnityGameTranslator.Core
                 }
 
                 var translation = data["translation"];
+
+                // Parse role from API response
+                string roleStr = translation?["role"]?.Value<string>();
+                TranslationRole role;
+                switch (roleStr)
+                {
+                    case "main":
+                        role = TranslationRole.Main;
+                        break;
+                    case "branch":
+                        role = TranslationRole.Branch;
+                        break;
+                    default:
+                        role = TranslationRole.None;
+                        break;
+                }
+
                 return new UploadResult
                 {
                     Success = true,
                     TranslationId = translation?["id"]?.Value<int>() ?? 0,
                     FileHash = translation?["file_hash"]?.Value<string>(),
                     LineCount = translation?["line_count"]?.Value<int>() ?? 0,
-                    IsFork = translation?["is_fork"]?.Value<bool>() ?? false,
+                    Role = role,
                     WebUrl = translation?["web_url"]?.Value<string>()
                 };
             }
@@ -909,7 +949,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public string GetWebUrl()
         {
-            return $"https://unitygametranslator.asymptomatikgames.com/games/{GameSlug}";
+            return $"{ApiClient.WebsiteBaseUrl}/games/{GameSlug}";
         }
     }
 
@@ -991,7 +1031,8 @@ namespace UnityGameTranslator.Core
         public int TranslationId { get; set; }
         public string FileHash { get; set; }
         public int LineCount { get; set; }
-        public bool IsFork { get; set; }
+        /// <summary>Role assigned by the server (Main for public, Branch for contributor)</summary>
+        public TranslationRole Role { get; set; } = TranslationRole.None;
         public string WebUrl { get; set; }
     }
 

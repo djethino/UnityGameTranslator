@@ -95,8 +95,26 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         protected GameObject CreateScrollablePanelLayout(out GameObject scrollContent, out GameObject buttonRow, int cardWidth = 420)
         {
+            // Register panel root EARLY for hierarchy-based own UI detection
+            // This must happen before any child components are created
+            EnsurePanelRootRegistered();
             return UIStyles.CreateScrollablePanelLayout(ContentRoot, out scrollContent, out buttonRow, cardWidth);
         }
+
+        /// <summary>
+        /// Ensures this panel's root is registered for hierarchy-based own UI detection.
+        /// Call this before creating any child components if not using CreateScrollablePanelLayout.
+        /// </summary>
+        protected void EnsurePanelRootRegistered()
+        {
+            if (UIRoot != null && !_panelRootRegistered)
+            {
+                TranslatorCore.RegisterPanelRoot(UIRoot);
+                _panelRootRegistered = true;
+            }
+        }
+
+        private bool _panelRootRegistered = false;
 
         /// <summary>
         /// Creates an adaptive card that sizes to its content (no fixed minHeight).
@@ -150,6 +168,46 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         #endregion
 
+        #region Own UI Registration Helpers
+
+        /// <summary>
+        /// Registers a Text component as excluded from translation.
+        /// Use for: mod title, language codes, config values, technical labels.
+        /// </summary>
+        protected void RegisterExcluded(Text text)
+        {
+            TranslatorCore.RegisterExcluded(text);
+        }
+
+        /// <summary>
+        /// Registers a Text component for UI-specific translation.
+        /// Use for: buttons, labels, descriptions that should be translated with the UI prompt.
+        /// </summary>
+        protected void RegisterUIText(Text text)
+        {
+            TranslatorCore.RegisterUIText(text);
+        }
+
+        /// <summary>
+        /// Registers a TMPro text component as excluded from translation.
+        /// Use for: mod title, language codes, config values, technical labels.
+        /// </summary>
+        protected void RegisterExcluded(TMPro.TMP_Text text)
+        {
+            TranslatorCore.RegisterExcluded(text);
+        }
+
+        /// <summary>
+        /// Registers a TMPro text component for UI-specific translation.
+        /// Use for: buttons, labels, descriptions that should be translated with the UI prompt.
+        /// </summary>
+        protected void RegisterUIText(TMPro.TMP_Text text)
+        {
+            TranslatorCore.RegisterUIText(text);
+        }
+
+        #endregion
+
         /// <summary>
         /// Desired width of the panel in pixels.
         /// </summary>
@@ -184,12 +242,49 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         protected virtual bool PersistWindowPreferences => true;
 
+        /// <summary>
+        /// Whether this panel uses center anchors for positioning.
+        /// Override to false for panels like StatusOverlay that use corner anchors.
+        /// </summary>
+        protected virtual bool UsesCenterAnchors => true;
+
         // Track if we've shown the backdrop for this panel
         private bool _backdropShown = false;
+
+        // Track previous position/size for change detection
+        private Vector2 _lastSavedPosition;
+        private Vector2 _lastSavedSize;
+        private bool _hasLastSavedValues;
+
+        // Track if initial sizing is complete (don't save during construction)
+        private bool _initialSizingComplete;
+
+        // Track if we need to do sizing on first show (deferred from init to when panel is visible)
+        private bool _needsFirstShowSizing = true;
+
+        // Track the dynamically calculated size (to preserve across SetDefaultSizeAndPosition calls)
+        private Vector2 _dynamicSize;
+        private bool _hasDynamicSize;
 
         // Content measurement cache
         private float _measuredContentHeight;
         private bool _contentMeasured;
+
+        // Flag to ignore OnPanelResized during programmatic resizes
+        private bool _isProgrammaticResize;
+
+        /// <summary>
+        /// Updates the dragger's resize cache without triggering the user resize save.
+        /// Use this for programmatic size changes.
+        /// </summary>
+        private void UpdateDraggerCache()
+        {
+            if (Dragger != null)
+            {
+                _isProgrammaticResize = true;
+                Dragger.OnEndResize();
+            }
+        }
 
         // Use center anchor
         public override Vector2 DefaultAnchorMin => new(0.5f, 0.5f);
@@ -214,6 +309,47 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
         }
 
+        /// <summary>
+        /// Override ConstructUI to use construction mode.
+        /// This ensures all text created during panel construction is skipped from translation,
+        /// preventing race conditions where texts are queued before we can register them.
+        /// </summary>
+        public override void ConstructUI()
+        {
+            // Enter construction mode BEFORE any UI is created
+            // This makes ShouldSkipTranslation return true for all components during construction
+            TranslatorCore.EnterConstructionMode();
+
+            try
+            {
+                // Call base which creates title bar, content root, etc.
+                base.ConstructUI();
+
+                // Title bar and close button text are created by base.ConstructUI()
+                // Register them as excluded so they're never translated even after construction mode ends
+                if (TitleBar != null)
+                {
+                    var titleText = TitleBar.GetComponentInChildren<UnityEngine.UI.Text>();
+                    if (titleText != null)
+                        TranslatorCore.RegisterExcluded(titleText);
+
+                    // Also exclude close button text
+                    var buttons = TitleBar.GetComponentsInChildren<UnityEngine.UI.Button>();
+                    foreach (var btn in buttons)
+                    {
+                        var btnText = btn.GetComponentInChildren<UnityEngine.UI.Text>();
+                        if (btnText != null)
+                            TranslatorCore.RegisterExcluded(btnText);
+                    }
+                }
+            }
+            finally
+            {
+                // Always exit construction mode, even if an exception occurs
+                TranslatorCore.ExitConstructionMode();
+            }
+        }
+
         public override void SetActive(bool active)
         {
             // Handle backdrop
@@ -232,53 +368,104 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
 
             base.SetActive(active);
+
+            // Dynamic sizing on FIRST SHOW - this is when Unity's layout is actually calculated
+            if (active && _needsFirstShowSizing && UseDynamicSizing)
+            {
+                _needsFirstShowSizing = false;
+                UniverseLib.RuntimeHelper.StartCoroutine(DelayedFirstShowSizing());
+            }
+        }
+
+        /// <summary>
+        /// Calculates and applies optimal size on first show, when Unity's layout is properly calculated.
+        /// </summary>
+        private System.Collections.IEnumerator DelayedFirstShowSizing()
+        {
+            // Wait for Unity's layout system to fully calculate (panel is now active)
+            yield return null;
+            yield return null;
+
+            // Force layout rebuild now that panel is visible
+            if (ContentRoot != null)
+            {
+                LayoutRebuilder.ForceRebuildLayoutImmediate(ContentRoot.GetComponent<RectTransform>());
+            }
+
+            yield return null;
+
+            // Now measure and apply optimal size
+            _contentMeasured = false;
+            CalculateAndApplyOptimalSize();
+            EnsureValidPosition();
+
+            // Update tracking values
+            _lastSavedPosition = Rect.anchoredPosition;
+            _lastSavedSize = new Vector2(Rect.rect.width, Rect.rect.height);
+            _hasLastSavedValues = true;
+            _initialSizingComplete = true;
+
+            UpdateDraggerCache();
         }
 
         #region Dynamic Sizing
 
         /// <summary>
-        /// Override to properly center the panel with dynamic or fixed dimensions.
+        /// Override to properly center the panel.
+        /// Preserves dynamically calculated size if already set.
         /// </summary>
         public override void SetDefaultSizeAndPosition()
         {
-            // Set anchors to center
-            Rect.anchorMin = new Vector2(0.5f, 0.5f);
-            Rect.anchorMax = new Vector2(0.5f, 0.5f);
-
-            // Set pivot to center for proper centering
-            Rect.pivot = new Vector2(0.5f, 0.5f);
-
-            // Try to load saved preference first
-            if (!LoadWindowPreference())
+            // Set anchors to center (for center-anchored panels)
+            if (UsesCenterAnchors)
             {
-                // No saved preference - calculate optimal size
-                if (UseDynamicSizing)
-                {
-                    CalculateAndApplyOptimalSize();
-                }
-                else
-                {
-                    // Fixed size panels just use their declared dimensions
-                    Rect.sizeDelta = new Vector2(PanelWidth, PanelHeight);
-                }
+                Rect.anchorMin = new Vector2(0.5f, 0.5f);
+                Rect.anchorMax = new Vector2(0.5f, 0.5f);
+                Rect.pivot = new Vector2(0.5f, 0.5f);
+            }
 
-                // Position at center (0,0 with center anchor = screen center)
+            // Use dynamically calculated size if available, otherwise use declared size
+            var screenDim = new Vector2(Screen.width, Screen.height);
+            if (_hasDynamicSize)
+            {
+                // Preserve dynamic size (already calculated)
+                Rect.sizeDelta = _dynamicSize;
+            }
+            else
+            {
+                // Initial size before dynamic sizing runs
+                Rect.sizeDelta = new Vector2(
+                    Mathf.Min(PanelWidth, UIStyles.CalculateMaxPanelWidth(screenDim.x)),
+                    Mathf.Min(PanelHeight, UIStyles.CalculateMaxPanelHeight(screenDim.y))
+                );
+            }
+
+            if (UsesCenterAnchors)
+            {
                 Rect.anchoredPosition = Vector2.zero;
             }
 
-            // Ensure within screen bounds
             EnsureValidPosition();
 
-            if (Dragger != null)
-                Dragger.OnEndResize();
+            UpdateDraggerCache();
         }
 
         protected override void LateConstructUI()
         {
-            // Re-apply sizing after layout is done
-            SetDefaultSizeAndPosition();
+            // Ensure panel root is registered (backup in case CreateScrollablePanelLayout wasn't used)
+            EnsurePanelRootRegistered();
 
-            // Hook into dragger events for resize constraints (always) and persistence (if enabled)
+            // Apply anchors based on panel type
+            if (UsesCenterAnchors)
+            {
+                // Center-anchored panels (most panels)
+                Rect.anchorMin = new Vector2(0.5f, 0.5f);
+                Rect.anchorMax = new Vector2(0.5f, 0.5f);
+                Rect.pivot = new Vector2(0.5f, 0.5f);
+            }
+            // For non-center panels (e.g., StatusOverlay), keep the anchors set in SetDefaultSizeAndPosition()
+
+            // Hook into dragger events for persistence
             if (Dragger != null)
             {
                 Dragger.OnFinishResize += OnPanelResized;
@@ -287,20 +474,104 @@ namespace UnityGameTranslator.Core.UI.Panels
                     Dragger.OnFinishDrag += OnPanelDragged;
                 }
             }
+
+            // For non-center-anchored panels, skip preference loading (they have fixed positions)
+            if (!UsesCenterAnchors)
+            {
+                _needsFirstShowSizing = false; // Non-centered panels don't use dynamic sizing
+                _initialSizingComplete = true;
+                return;
+            }
+
+            // Try to load saved preferences (position only - size will be calculated on first show)
+            WindowPreference pref = null;
+            var prefs = TranslatorCore.Config.window_preferences;
+            bool hasValidPreference = PersistWindowPreferences &&
+                prefs.panels.TryGetValue(Name, out pref) &&
+                pref.width > 0 && pref.height > 0 && prefs.screenWidth > 0;
+
+            if (hasValidPreference)
+            {
+                // Apply saved position (scaled if resolution changed)
+                var screenDim = new Vector2(Screen.width, Screen.height);
+                float widthRatio = screenDim.x / prefs.screenWidth;
+                float heightRatio = screenDim.y / prefs.screenHeight;
+                bool resolutionChanged = Math.Abs(widthRatio - 1) > 0.1f || Math.Abs(heightRatio - 1) > 0.1f;
+
+                // Check if saved position would be out of bounds with new resolution
+                float newX = resolutionChanged ? pref.x * widthRatio : pref.x;
+                float newY = resolutionChanged ? pref.y * heightRatio : pref.y;
+                float halfWidth = (resolutionChanged ? PanelWidth : pref.width) / 2f;
+                float halfHeight = (resolutionChanged ? PanelHeight : pref.height) / 2f;
+
+                // Calculate screen bounds (panel is center-anchored, so position is relative to center)
+                bool positionOutOfBounds = Math.Abs(newX) + halfWidth > screenDim.x / 2f ||
+                                           Math.Abs(newY) + halfHeight > screenDim.y / 2f;
+
+                if (positionOutOfBounds)
+                {
+                    // Invalidate saved preference - window would be outside screen
+                    Rect.anchoredPosition = Vector2.zero;
+                    pref.userResized = false;
+                }
+                else
+                {
+                    Rect.anchoredPosition = new Vector2(newX, newY);
+                }
+
+                // If user manually resized AND resolution didn't change, use saved size and skip dynamic sizing
+                if (pref.userResized && !resolutionChanged && !positionOutOfBounds)
+                {
+                    Rect.sizeDelta = new Vector2(pref.width, pref.height);
+                    _needsFirstShowSizing = false; // User already resized, don't override
+                    _initialSizingComplete = true;
+                }
+                // Otherwise, keep _needsFirstShowSizing = true to calculate on first show
+            }
+            else
+            {
+                // No preference - center position, size will be calculated on first show
+                Rect.anchoredPosition = Vector2.zero;
+            }
+
+            // Initialize tracking values
+            _lastSavedPosition = Rect.anchoredPosition;
+            _lastSavedSize = new Vector2(Rect.rect.width, Rect.rect.height);
+            _hasLastSavedValues = true;
+
+            // For non-dynamic sizing panels, set the fixed size now
+            if (!UseDynamicSizing)
+            {
+                Rect.sizeDelta = new Vector2(PanelWidth, PanelHeight);
+                _needsFirstShowSizing = false;
+                _initialSizingComplete = true;
+                EnsureValidPosition();
+                UpdateDraggerCache();
+            }
         }
 
         /// <summary>
         /// Called when user finishes resizing the panel.
         /// Max/min are now enforced during resize by UniverseLib via MaxHeight property.
-        /// This just invalidates content cache and saves preferences.
+        /// This just invalidates content cache and saves preferences if size actually changed.
         /// </summary>
         private void OnPanelResized()
         {
             // Invalidate content measurement cache since size changed
             _contentMeasured = false;
 
-            // Save preference (user manually resized) - only if persistence enabled
-            if (PersistWindowPreferences)
+            // Ignore programmatic resizes (dynamic sizing, etc.)
+            if (_isProgrammaticResize)
+            {
+                _isProgrammaticResize = false;
+                return;
+            }
+
+            // Don't save during initial construction - only after user interaction
+            if (!_initialSizingComplete) return;
+
+            // Save preference (user manually resized) - only if persistence enabled and size actually changed
+            if (PersistWindowPreferences && HasSizeChanged())
             {
                 SaveWindowPreference(userResized: true);
             }
@@ -308,49 +579,262 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         /// <summary>
         /// Called when user finishes dragging the panel.
-        /// Saves position preference.
+        /// Saves position preference only if position actually changed.
         /// </summary>
         private void OnPanelDragged()
         {
-            SaveWindowPreference(userResized: false);
+            // Don't save during initial construction - only after user interaction
+            if (!_initialSizingComplete) return;
+
+            if (HasPositionChanged())
+            {
+                SaveWindowPreference(userResized: false);
+            }
+        }
+
+        /// <summary>
+        /// Checks if the panel position has changed since last save.
+        /// </summary>
+        private bool HasPositionChanged()
+        {
+            if (!_hasLastSavedValues) return true;
+            const float tolerance = 1f;
+            return Math.Abs(Rect.anchoredPosition.x - _lastSavedPosition.x) > tolerance ||
+                   Math.Abs(Rect.anchoredPosition.y - _lastSavedPosition.y) > tolerance;
+        }
+
+        /// <summary>
+        /// Checks if the panel size has changed since last save.
+        /// Uses Rect.rect (actual rendered size) because UniverseLib resizes via anchors, not sizeDelta.
+        /// </summary>
+        private bool HasSizeChanged()
+        {
+            if (!_hasLastSavedValues) return true;
+            const float tolerance = 1f;
+            // Use rect.width/height instead of sizeDelta because UniverseLib changes anchors when resizing
+            return Math.Abs(Rect.rect.width - _lastSavedSize.x) > tolerance ||
+                   Math.Abs(Rect.rect.height - _lastSavedSize.y) > tolerance;
         }
 
         /// <summary>
         /// Measures the preferred content height using layout system.
-        /// Finds the scrollContent (with ContentSizeFitter) to measure actual content,
-        /// not the ScrollView which has flexibleHeight.
+        /// Recursively measures child elements to handle nested layouts.
         /// </summary>
         protected float MeasureContentHeight()
         {
-            if (ContentRoot == null) return PanelHeight;
+            if (ContentRoot == null)
+            {
+                return PanelHeight;
+            }
 
-            // Force layout rebuild to get accurate measurements
+            // Force complete layout rebuild first
             LayoutRebuilder.ForceRebuildLayoutImmediate(ContentRoot.GetComponent<RectTransform>());
 
-            float preferredHeight = 0;
+            float contentHeight = 0;
 
-            // Find the scrollContent (has ContentSizeFitter) to measure actual content size
-            // The scroll view itself has flexibleHeight:9999 which would give wrong measurement
+            // Find the scrollContent (has ContentSizeFitter) - this is where our cards are
             var sizeFitter = ContentRoot.GetComponentInChildren<ContentSizeFitter>();
             if (sizeFitter != null)
             {
-                var sizeFitterRect = sizeFitter.GetComponent<RectTransform>();
-                LayoutRebuilder.ForceRebuildLayoutImmediate(sizeFitterRect);
-                preferredHeight = LayoutUtility.GetPreferredHeight(sizeFitterRect);
+                var scrollContent = sizeFitter.gameObject;
+                var scrollContentRect = scrollContent.GetComponent<RectTransform>();
+                LayoutRebuilder.ForceRebuildLayoutImmediate(scrollContentRect);
+
+                // Method 1: Use Unity's preferred height (most accurate when layout is calculated)
+                float unityPreferredHeight = LayoutUtility.GetPreferredHeight(scrollContentRect);
+
+                // Method 2: Measure recursively (fallback when Unity returns 0)
+                float childrenHeight = MeasureChildrenRecursive(scrollContent.transform);
+
+                // Add spacing between direct children (from VerticalLayoutGroup)
+                var layoutGroup = scrollContent.GetComponent<VerticalLayoutGroup>();
+                if (layoutGroup != null)
+                {
+                    int activeChildren = 0;
+                    foreach (Transform child in scrollContent.transform)
+                    {
+                        if (child.gameObject.activeSelf) activeChildren++;
+                    }
+                    if (activeChildren > 1)
+                    {
+                        childrenHeight += layoutGroup.spacing * (activeChildren - 1);
+                    }
+                    // Add padding
+                    childrenHeight += layoutGroup.padding.top + layoutGroup.padding.bottom;
+                }
+
+                // Use the MAXIMUM of both methods - Unity's calculation is more accurate when available
+                contentHeight = Mathf.Max(unityPreferredHeight, childrenHeight);
             }
             else
             {
                 // Fallback: measure ContentRoot directly (for panels without scroll)
-                preferredHeight = LayoutUtility.GetPreferredHeight(ContentRoot.GetComponent<RectTransform>());
+                contentHeight = LayoutUtility.GetPreferredHeight(ContentRoot.GetComponent<RectTransform>());
+                if (contentHeight <= 0)
+                {
+                    contentHeight = MeasureChildrenRecursive(ContentRoot.transform);
+                }
             }
 
-            // Add chrome: title bar (~25px) + button row (~45px) + padding
-            var chromeHeight = 25 + 45 + UIStyles.PanelPadding * 2;
+            // Measure chrome dynamically instead of hardcoding
+            float chromeHeight = MeasureChromeHeight();
 
-            _measuredContentHeight = preferredHeight + chromeHeight;
+            _measuredContentHeight = contentHeight + chromeHeight;
             _contentMeasured = true;
 
             return _measuredContentHeight;
+        }
+
+        /// <summary>
+        /// Measures the chrome height (non-scrollable parts: title bar, button row, padding, spacing).
+        /// Dynamically finds and measures actual UI elements instead of using hardcoded values.
+        /// </summary>
+        private float MeasureChromeHeight()
+        {
+            if (ContentRoot == null)
+            {
+                return UIStyles.PanelPadding * 2;
+            }
+
+            float chromeHeight = 0;
+
+            // Measure ContentRoot's layout group padding (if any)
+            var contentVlg = ContentRoot.GetComponent<VerticalLayoutGroup>();
+            if (contentVlg != null)
+            {
+                chromeHeight += contentVlg.padding.top + contentVlg.padding.bottom;
+            }
+            else
+            {
+                // Fallback to UIStyles constant
+                chromeHeight += UIStyles.PanelPadding * 2;
+            }
+
+            // Find and measure title bar
+            var titleBar = ContentRoot.transform.Find("TitleBar");
+            if (titleBar != null && titleBar.gameObject.activeSelf)
+            {
+                var titleRect = titleBar.GetComponent<RectTransform>();
+                if (titleRect != null)
+                {
+                    LayoutRebuilder.ForceRebuildLayoutImmediate(titleRect);
+                    float titleHeight = LayoutUtility.GetPreferredHeight(titleRect);
+                    if (titleHeight <= 0)
+                    {
+                        var titleLayout = titleBar.GetComponent<LayoutElement>();
+                        titleHeight = titleLayout != null ? titleLayout.minHeight : titleRect.rect.height;
+                    }
+                    chromeHeight += titleHeight;
+                }
+            }
+
+            // Find and measure button row (can be "ButtonRow" or "FooterButtons")
+            Transform buttonRow = ContentRoot.transform.Find("ButtonRow") ?? ContentRoot.transform.Find("FooterButtons");
+            if (buttonRow != null && buttonRow.gameObject.activeSelf)
+            {
+                var buttonRect = buttonRow.GetComponent<RectTransform>();
+                if (buttonRect != null)
+                {
+                    LayoutRebuilder.ForceRebuildLayoutImmediate(buttonRect);
+                    float buttonHeight = LayoutUtility.GetPreferredHeight(buttonRect);
+                    if (buttonHeight <= 0)
+                    {
+                        var buttonLayout = buttonRow.GetComponent<LayoutElement>();
+                        buttonHeight = buttonLayout != null ? buttonLayout.minHeight : buttonRect.rect.height;
+                    }
+                    chromeHeight += buttonHeight;
+                }
+            }
+
+            // Add spacing between elements
+            if (contentVlg != null)
+            {
+                // Count visible direct children to calculate spacing
+                int visibleChildren = 0;
+                foreach (Transform child in ContentRoot.transform)
+                {
+                    if (child.gameObject.activeSelf) visibleChildren++;
+                }
+                if (visibleChildren > 1)
+                {
+                    chromeHeight += contentVlg.spacing * (visibleChildren - 1);
+                }
+            }
+            else
+            {
+                // Fallback: assume 2 gaps with default spacing
+                chromeHeight += UIStyles.ElementSpacing * 2;
+            }
+
+            return chromeHeight;
+        }
+
+        /// <summary>
+        /// Recursively measures children heights, going up to maxDepth levels deep.
+        /// </summary>
+        private float MeasureChildrenRecursive(Transform parent, int depth = 0, int maxDepth = 10)
+        {
+            if (depth > maxDepth) return 0;
+
+            float totalHeight = 0;
+            int childCount = 0;
+
+            foreach (Transform child in parent)
+            {
+                if (!child.gameObject.activeSelf) continue;
+
+                var childRect = child.GetComponent<RectTransform>();
+                if (childRect == null) continue;
+
+                LayoutRebuilder.ForceRebuildLayoutImmediate(childRect);
+
+                // Try to get preferred height first
+                float childHeight = LayoutUtility.GetPreferredHeight(childRect);
+
+                // If preferred is 0, check LayoutElement.minHeight
+                if (childHeight <= 0)
+                {
+                    var layoutElement = child.GetComponent<LayoutElement>();
+                    if (layoutElement != null && layoutElement.minHeight > 0)
+                    {
+                        childHeight = layoutElement.minHeight;
+                    }
+                }
+
+                // If still 0, try rect height
+                if (childHeight <= 0)
+                {
+                    childHeight = childRect.rect.height;
+                }
+
+                // If still 0 and has children, measure children recursively
+                if (childHeight <= 0 && child.childCount > 0)
+                {
+                    childHeight = MeasureChildrenRecursive(child, depth + 1, maxDepth);
+
+                    // Add layout group padding/spacing if present
+                    var vlg = child.GetComponent<VerticalLayoutGroup>();
+                    if (vlg != null)
+                    {
+                        childHeight += vlg.padding.top + vlg.padding.bottom;
+                    }
+                }
+
+                if (childHeight > 0)
+                {
+                    totalHeight += childHeight;
+                    childCount++;
+                }
+            }
+
+            // Add spacing between children
+            var parentVlg = parent.GetComponent<VerticalLayoutGroup>();
+            if (parentVlg != null && childCount > 1)
+            {
+                totalHeight += parentVlg.spacing * (childCount - 1);
+            }
+
+            return totalHeight;
         }
 
         /// <summary>
@@ -390,7 +874,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (!UseDynamicSizing)
             {
                 Rect.sizeDelta = new Vector2(PanelWidth, PanelHeight);
-                Dragger?.OnEndResize(); // Update resize cache
+                UpdateDraggerCache();
                 return;
             }
 
@@ -409,10 +893,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Width stays at declared PanelWidth (or screen-bounded if too wide)
             int optimalWidth = Mathf.Min(PanelWidth, UIStyles.CalculateMaxPanelWidth(screenDim.x));
 
-            Rect.sizeDelta = new Vector2(optimalWidth, optimalHeight);
+            // Store and apply dynamic size
+            _dynamicSize = new Vector2(optimalWidth, optimalHeight);
+            _hasDynamicSize = true;
+            Rect.sizeDelta = _dynamicSize;
 
             // Update resize cache so cursor appears correctly
-            Dragger?.OnEndResize();
+            UpdateDraggerCache();
         }
 
         #endregion
@@ -427,20 +914,20 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (!PersistWindowPreferences) return;
 
             var screenDim = new Vector2(Screen.width, Screen.height);
+            var prefs = TranslatorCore.Config.window_preferences;
 
             // Get or create preference
-            if (!TranslatorCore.Config.window_preferences.panels.TryGetValue(Name, out var pref))
+            if (!prefs.panels.TryGetValue(Name, out var pref))
             {
                 pref = new WindowPreference();
             }
 
-            // Update with current values
+            // Update per-panel values
+            // Use Rect.rect for size because UniverseLib resizes via anchors, not sizeDelta
             pref.x = Rect.anchoredPosition.x;
             pref.y = Rect.anchoredPosition.y;
-            pref.width = Rect.sizeDelta.x;
-            pref.height = Rect.sizeDelta.y;
-            pref.screenWidth = Mathf.RoundToInt(screenDim.x);
-            pref.screenHeight = Mathf.RoundToInt(screenDim.y);
+            pref.width = Rect.rect.width;
+            pref.height = Rect.rect.height;
 
             // Only set userResized to true if explicitly requested (don't reset to false)
             if (userResized)
@@ -448,60 +935,19 @@ namespace UnityGameTranslator.Core.UI.Panels
                 pref.userResized = true;
             }
 
-            TranslatorCore.Config.window_preferences.panels[Name] = pref;
+            prefs.panels[Name] = pref;
+
+            // Update global screen dimensions
+            prefs.screenWidth = Mathf.RoundToInt(screenDim.x);
+            prefs.screenHeight = Mathf.RoundToInt(screenDim.y);
+
+            // Update tracking values
+            _lastSavedPosition = Rect.anchoredPosition;
+            _lastSavedSize = new Vector2(Rect.rect.width, Rect.rect.height);
+            _hasLastSavedValues = true;
 
             // Save config (debounced by TranslatorCore)
             TranslatorCore.SaveConfig();
-        }
-
-        /// <summary>
-        /// Loads and applies saved window preference if available.
-        /// Returns true if preference was applied, false if using defaults.
-        /// </summary>
-        protected bool LoadWindowPreference()
-        {
-            if (!PersistWindowPreferences) return false;
-
-            if (!TranslatorCore.Config.window_preferences.panels.TryGetValue(Name, out var pref))
-                return false;
-
-            // Validate saved preference has reasonable values
-            if (pref.width <= 0 || pref.height <= 0 || pref.screenWidth <= 0 || pref.screenHeight <= 0)
-                return false;
-
-            var screenDim = new Vector2(Screen.width, Screen.height);
-
-            // Handle resolution changes gracefully
-            float widthRatio = screenDim.x / pref.screenWidth;
-            float heightRatio = screenDim.y / pref.screenHeight;
-            bool resolutionChanged = Math.Abs(widthRatio - 1) > 0.1f || Math.Abs(heightRatio - 1) > 0.1f;
-
-            if (resolutionChanged)
-            {
-                // Scale position proportionally
-                Rect.anchoredPosition = new Vector2(
-                    pref.x * widthRatio,
-                    pref.y * heightRatio
-                );
-
-                // Recalculate optimal size for new resolution
-                if (UseDynamicSizing)
-                {
-                    CalculateAndApplyOptimalSize();
-                }
-                else
-                {
-                    Rect.sizeDelta = new Vector2(PanelWidth, PanelHeight);
-                }
-            }
-            else
-            {
-                // Apply saved dimensions directly
-                Rect.anchoredPosition = new Vector2(pref.x, pref.y);
-                Rect.sizeDelta = new Vector2(pref.width, pref.height);
-            }
-
-            return true;
         }
 
         #endregion

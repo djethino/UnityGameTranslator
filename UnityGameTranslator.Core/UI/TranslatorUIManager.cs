@@ -457,6 +457,7 @@ namespace UnityGameTranslator.Core.UI
 
         /// <summary>
         /// Download remote translations and start merge process.
+        /// Uses tag-aware merge to preserve scoring (A/H/V tags).
         /// </summary>
         public static async Task DownloadForMerge()
         {
@@ -469,36 +470,27 @@ namespace UnityGameTranslator.Core.UI
 
                 if (result.Success && !string.IsNullOrEmpty(result.Content))
                 {
-                    // Parse remote translations
-                    var parsed = Newtonsoft.Json.JsonConvert.DeserializeObject<Dictionary<string, object>>(result.Content);
-                    var remoteTranslations = new Dictionary<string, string>();
+                    // Parse remote translations with tags support
+                    var remoteTranslations = TranslatorCore.ParseTranslationsFromJson(result.Content);
 
-                    foreach (var kvp in parsed)
-                    {
-                        if (!kvp.Key.StartsWith("_") && kvp.Value is string strValue)
-                        {
-                            remoteTranslations[kvp.Key] = strValue;
-                        }
-                    }
+                    // Perform 3-way merge with tag preservation
+                    var local = TranslatorCore.TranslationCache;
+                    var ancestor = TranslatorCore.AncestorCache;
 
-                    // Perform 3-way merge (using string dictionaries for legacy merge support)
-                    var local = TranslatorCore.GetCacheAsStrings();
-                    var ancestor = TranslatorCore.GetAncestorAsStrings();
-
-                    var mergeResult = TranslationMerger.Merge(local, remoteTranslations, ancestor);
+                    var mergeResult = TranslationMerger.MergeWithTags(local, remoteTranslations, ancestor);
 
                     TranslatorCore.LogInfo($"[Merge] Result: {mergeResult.Statistics.GetSummary()}");
 
                     if (mergeResult.ConflictCount > 0)
                     {
                         // Show merge panel for user to resolve conflicts
-                        MergePanel?.SetMergeData(mergeResult, remoteTranslations, result.FileHash);
+                        MergePanel?.SetMergeDataWithTags(mergeResult, remoteTranslations, result.FileHash);
                         MergePanel?.SetActive(true);
                     }
                     else
                     {
                         // No conflicts - apply merge directly
-                        ApplyMerge(mergeResult, result.FileHash, remoteTranslations);
+                        ApplyMergeWithTags(mergeResult, result.FileHash, remoteTranslations);
                     }
                 }
                 else
@@ -564,6 +556,59 @@ namespace UnityGameTranslator.Core.UI
             PendingUpdateDirection = HasPendingUpdate ? UpdateDirection.Upload : UpdateDirection.None;
 
             TranslatorCore.LogInfo($"[Merge] Applied successfully. LocalChangesCount={TranslatorCore.LocalChangesCount}, direction={PendingUpdateDirection}");
+
+            // Refresh MainPanel to show updated translation count and sync status
+            MainPanel?.RefreshUI();
+        }
+
+        /// <summary>
+        /// Apply a merge result with tags and update sync state.
+        /// This version preserves tags from the merge result (critical for scoring system).
+        /// </summary>
+        /// <param name="mergeResult">The merge result containing resolved translations with tags</param>
+        /// <param name="serverHash">The server hash for sync tracking</param>
+        /// <param name="remoteTranslations">The remote translations to save as ancestor</param>
+        public static void ApplyMergeWithTags(MergeResultWithTags mergeResult, string serverHash, Dictionary<string, TranslationEntry> remoteTranslations = null)
+        {
+            // Apply the merged translations with their tags preserved
+            TranslatorCore.TranslationCache.Clear();
+            foreach (var kvp in mergeResult.Merged)
+            {
+                TranslatorCore.TranslationCache[kvp.Key] = kvp.Value;
+            }
+
+            // Update server state
+            var serverState = TranslatorCore.ServerState;
+            if (serverState != null)
+            {
+                serverState.Hash = serverHash;
+            }
+            TranslatorCore.LastSyncedHash = serverHash;
+
+            // Save cache
+            TranslatorCore.SaveCache();
+
+            // Save REMOTE content as ancestor (not merged!)
+            // This way LocalChangesCount = our additions that need uploading
+            if (remoteTranslations != null)
+            {
+                TranslatorCore.SaveAncestorFromRemote(remoteTranslations);
+            }
+            else
+            {
+                TranslatorCore.SaveAncestorCache();
+            }
+
+            // Recalculate local changes (merged vs remote ancestor)
+            TranslatorCore.RecalculateLocalChanges();
+
+            // Set pending update state based on local changes
+            // After merge, if we have local additions/changes, we need to upload
+            HasPendingUpdate = TranslatorCore.LocalChangesCount > 0;
+            PendingUpdateInfo = null;
+            PendingUpdateDirection = HasPendingUpdate ? UpdateDirection.Upload : UpdateDirection.None;
+
+            TranslatorCore.LogInfo($"[Merge] Applied with tags. LocalChangesCount={TranslatorCore.LocalChangesCount}, direction={PendingUpdateDirection}");
 
             // Refresh MainPanel to show updated translation count and sync status
             MainPanel?.RefreshUI();
@@ -824,8 +869,13 @@ namespace UnityGameTranslator.Core.UI
         {
             if (StatusOverlay == null) return;
 
-            // Status overlay is visible when no main panels are open and first_run is completed
-            bool shouldShow = !AnyPanelVisible() && TranslatorCore.Config.first_run_completed;
+            // Status overlay is visible when:
+            // 1. No main panels are open
+            // 2. First run is completed
+            // 3. There's actually content to display (queue active, notifications, etc.)
+            bool shouldShow = !AnyPanelVisible() &&
+                              TranslatorCore.Config.first_run_completed &&
+                              StatusOverlay.HasContentToShow();
 
             if (shouldShow)
             {

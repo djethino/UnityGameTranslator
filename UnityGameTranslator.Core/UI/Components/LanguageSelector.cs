@@ -116,8 +116,45 @@ namespace UnityGameTranslator.Core.UI.Components
             }
         }
 
+        /// <summary>
+        /// Check if the current selection is a valid language from the list.
+        /// </summary>
+        public bool IsValidSelection()
+        {
+            if (string.IsNullOrEmpty(_selectedLanguage) || _languages == null)
+                return false;
+
+            foreach (var lang in _languages)
+            {
+                if (lang == _selectedLanguage)
+                    return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Enable or disable the language selector.
+        /// When disabled, search is hidden and list items are not clickable.
+        /// </summary>
+        public void SetInteractable(bool interactable)
+        {
+            if (_searchInput != null)
+            {
+                _searchInput.Component.interactable = interactable;
+                // Hide search when disabled (read-only mode)
+                _searchInput.GameObject.SetActive(interactable);
+            }
+            _isInteractable = interactable;
+            Refresh(); // Refresh to update item clickability
+        }
+
+        private bool _isInteractable = true;
+
         private void OnLanguageSelected(string language)
         {
+            // Don't allow selection when disabled
+            if (!_isInteractable) return;
+
             _selectedLanguage = language;
             UpdateSelectedLabel();
             Refresh();

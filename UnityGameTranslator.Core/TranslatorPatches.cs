@@ -131,6 +131,51 @@ namespace UnityGameTranslator.Core
 
         #region Patch Methods
 
+        // Cache for InputField textComponent exclusion (avoids repeated GetComponentInParent calls)
+        // Key: instanceId, Value: true if this is an InputField's textComponent (should be excluded)
+        private static readonly System.Collections.Generic.Dictionary<int, bool> inputFieldTextCache =
+            new System.Collections.Generic.Dictionary<int, bool>();
+
+        /// <summary>
+        /// Check if a Text component is the textComponent of an InputField (should not be translated).
+        /// Caches the result for performance.
+        /// </summary>
+        private static bool IsInputFieldTextComponent(Text text)
+        {
+            int id = text.GetInstanceID();
+            if (inputFieldTextCache.TryGetValue(id, out bool isInputFieldText))
+                return isInputFieldText;
+
+            var inputField = text.GetComponentInParent<InputField>();
+            bool result = inputField != null && inputField.textComponent == text;
+            inputFieldTextCache[id] = result;
+            return result;
+        }
+
+        /// <summary>
+        /// Check if a TMP_Text component is the textComponent of a TMP_InputField (should not be translated).
+        /// Caches the result for performance.
+        /// </summary>
+        private static bool IsTMPInputFieldTextComponent(TMP_Text text)
+        {
+            int id = text.GetInstanceID();
+            if (inputFieldTextCache.TryGetValue(id, out bool isInputFieldText))
+                return isInputFieldText;
+
+            var inputField = text.GetComponentInParent<TMPro.TMP_InputField>();
+            bool result = inputField != null && inputField.textComponent == text;
+            inputFieldTextCache[id] = result;
+            return result;
+        }
+
+        /// <summary>
+        /// Clear the InputField cache (call on scene change).
+        /// </summary>
+        public static void ClearCache()
+        {
+            inputFieldTextCache.Clear();
+        }
+
         public static void StringTableEntry_Postfix(object __instance, ref string __result)
         {
             // Disabled: sync translation here causes issues when the game builds strings
@@ -142,19 +187,55 @@ namespace UnityGameTranslator.Core
         public static void TMPText_SetText_Prefix(TMP_Text __instance, ref string value)
         {
             if (string.IsNullOrEmpty(value)) return;
-            try { value = TranslatorCore.TranslateTextWithTracking(value, __instance); } catch { }
+            try
+            {
+                // Skip if part of our own UI and should not be translated (uses hierarchy check)
+                if (TranslatorCore.ShouldSkipTranslation(__instance)) return;
+
+                // Don't translate InputField textComponent (user's typed text)
+                if (IsTMPInputFieldTextComponent(__instance)) return;
+
+                // Check if own UI (use UI-specific prompt) - uses hierarchy check
+                bool isOwnUI = TranslatorCore.IsOwnUITranslatable(__instance);
+                value = TranslatorCore.TranslateTextWithTracking(value, __instance, isOwnUI);
+            }
+            catch { }
         }
 
         public static void TMPText_SetTextMethod_Prefix(TMP_Text __instance, ref string __0)
         {
             if (string.IsNullOrEmpty(__0)) return;
-            try { __0 = TranslatorCore.TranslateTextWithTracking(__0, __instance); } catch { }
+            try
+            {
+                // Skip if part of our own UI and should not be translated (uses hierarchy check)
+                if (TranslatorCore.ShouldSkipTranslation(__instance)) return;
+
+                // Don't translate InputField textComponent (user's typed text)
+                if (IsTMPInputFieldTextComponent(__instance)) return;
+
+                // Check if own UI (use UI-specific prompt) - uses hierarchy check
+                bool isOwnUI = TranslatorCore.IsOwnUITranslatable(__instance);
+                __0 = TranslatorCore.TranslateTextWithTracking(__0, __instance, isOwnUI);
+            }
+            catch { }
         }
 
         public static void UIText_SetText_Prefix(Text __instance, ref string value)
         {
             if (string.IsNullOrEmpty(value)) return;
-            try { value = TranslatorCore.TranslateTextWithTracking(value, __instance); } catch { }
+            try
+            {
+                // Skip if part of our own UI and should not be translated (uses hierarchy check)
+                if (TranslatorCore.ShouldSkipTranslation(__instance)) return;
+
+                // Don't translate InputField textComponent (user's typed text)
+                if (IsInputFieldTextComponent(__instance)) return;
+
+                // Check if own UI (use UI-specific prompt) - uses hierarchy check
+                bool isOwnUI = TranslatorCore.IsOwnUITranslatable(__instance);
+                value = TranslatorCore.TranslateTextWithTracking(value, __instance, isOwnUI);
+            }
+            catch { }
         }
 
         #endregion

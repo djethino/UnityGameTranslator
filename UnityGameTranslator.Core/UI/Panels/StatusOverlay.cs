@@ -33,6 +33,9 @@ namespace UnityGameTranslator.Core.UI.Panels
         protected override bool UseDynamicSizing => false;
         protected override bool PersistWindowPreferences => false;
 
+        // StatusOverlay uses top-right corner anchors, not center
+        protected override bool UsesCenterAnchors => false;
+
         // UI elements - Mod update notification
         private GameObject _modUpdateBox;
         private Text _modUpdateLabel;
@@ -102,16 +105,19 @@ namespace UnityGameTranslator.Core.UI.Panels
             _modUpdateLabel = UIFactory.CreateLabel(_modUpdateBox, "ModUpdateLabel", "Mod update available: v?.?.?", TextAnchor.MiddleLeft);
             _modUpdateLabel.fontStyle = FontStyle.Bold;
             UIFactory.SetLayoutElement(_modUpdateLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
+            RegisterUIText(_modUpdateLabel);
 
             var btnRow = UIStyles.CreateFormRow(_modUpdateBox, "ModBtnRow", UIStyles.RowHeightMedium, 5);
 
             _modUpdateBtn = UIFactory.CreateButton(btnRow, "ModDownloadBtn", "Download");
             UIFactory.SetLayoutElement(_modUpdateBtn.Component.gameObject, minWidth: 80, minHeight: UIStyles.RowHeightNormal);
             _modUpdateBtn.OnClick += OnModUpdateClicked;
+            RegisterUIText(_modUpdateBtn.ButtonText);
 
             _modIgnoreBtn = UIFactory.CreateButton(btnRow, "ModIgnoreBtn", "Ignore");
             UIFactory.SetLayoutElement(_modIgnoreBtn.Component.gameObject, minWidth: 60, minHeight: UIStyles.RowHeightNormal);
             _modIgnoreBtn.OnClick += OnModIgnoreClicked;
+            RegisterUIText(_modIgnoreBtn.ButtonText);
 
             _modUpdateBox.SetActive(false);
         }
@@ -131,20 +137,24 @@ namespace UnityGameTranslator.Core.UI.Panels
             _syncLabel = UIFactory.CreateLabel(_syncBox, "SyncLabel", "Sync status", TextAnchor.MiddleLeft);
             _syncLabel.fontStyle = FontStyle.Bold;
             UIFactory.SetLayoutElement(_syncLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
+            RegisterUIText(_syncLabel);
 
             var syncBtnRow = UIStyles.CreateFormRow(_syncBox, "SyncBtnRow", UIStyles.RowHeightMedium, 5);
 
             _syncActionBtn = UIFactory.CreateButton(syncBtnRow, "SyncActionBtn", "Action");
             UIFactory.SetLayoutElement(_syncActionBtn.Component.gameObject, minWidth: 80, minHeight: UIStyles.RowHeightNormal);
             _syncActionBtn.OnClick += OnSyncActionClicked;
+            RegisterUIText(_syncActionBtn.ButtonText);
 
             _syncIgnoreBtn = UIFactory.CreateButton(syncBtnRow, "SyncIgnoreBtn", "Ignore");
             UIFactory.SetLayoutElement(_syncIgnoreBtn.Component.gameObject, minWidth: 60, minHeight: UIStyles.RowHeightNormal);
             _syncIgnoreBtn.OnClick += OnSyncIgnoreClicked;
+            RegisterUIText(_syncIgnoreBtn.ButtonText);
 
             _syncSettingsBtn = UIFactory.CreateButton(syncBtnRow, "SyncSettingsBtn", "Settings");
             UIFactory.SetLayoutElement(_syncSettingsBtn.Component.gameObject, minWidth: 70, minHeight: UIStyles.RowHeightNormal);
             _syncSettingsBtn.OnClick += OnSyncSettingsClicked;
+            RegisterUIText(_syncSettingsBtn.ButtonText);
 
             _syncBox.SetActive(false);
         }
@@ -167,8 +177,40 @@ namespace UnityGameTranslator.Core.UI.Panels
             _ollamaQueueLabel = UIFactory.CreateLabel(_ollamaBox, "OllamaQueueLabel", "Queue: 0 pending", TextAnchor.MiddleLeft);
             _ollamaQueueLabel.fontSize = UIStyles.FontSizeSmall;
             UIFactory.SetLayoutElement(_ollamaQueueLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+            // Exclude dynamic status labels from translation (they contain truncated game text!)
+            RegisterExcluded(_ollamaStatusLabel);
+            RegisterExcluded(_ollamaQueueLabel);
 
             _ollamaBox.SetActive(false);
+        }
+
+        /// <summary>
+        /// Returns true if the overlay has any content to display.
+        /// Used by TranslatorUIManager to decide whether to show the overlay.
+        /// </summary>
+        public bool HasContentToShow()
+        {
+            // 1. Mod update notification
+            bool showModUpdate = TranslatorUIManager.HasModUpdate && !TranslatorUIManager.ModUpdateDismissed;
+
+            // 2. Translation sync notification
+            var serverState = TranslatorCore.ServerState;
+            bool existsOnServer = serverState != null && serverState.Exists && serverState.SiteId.HasValue;
+            bool hasLocalChanges = existsOnServer && TranslatorCore.LocalChangesCount > 0;
+            bool hasServerUpdate = TranslatorUIManager.HasPendingUpdate &&
+                TranslatorUIManager.PendingUpdateDirection == UpdateDirection.Download;
+            bool needsMerge = TranslatorUIManager.HasPendingUpdate &&
+                TranslatorUIManager.PendingUpdateDirection == UpdateDirection.Merge;
+            bool showSyncNotification = (hasLocalChanges || hasServerUpdate || needsMerge) &&
+                !TranslatorUIManager.NotificationDismissed;
+
+            // 3. Ollama queue status
+            bool ollamaEnabled = TranslatorCore.Config.enable_ollama;
+            int queueCount = TranslatorCore.QueueCount;
+            bool isTranslating = TranslatorCore.IsTranslating;
+            bool showOllama = ollamaEnabled && (queueCount > 0 || isTranslating);
+
+            return showModUpdate || showSyncNotification || showOllama;
         }
 
         /// <summary>
@@ -214,6 +256,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 string buttonText;
                 var direction = TranslatorUIManager.PendingUpdateDirection;
 
+                // Get role for role-specific messages (use serverState from outer scope)
+                bool isBranch = serverState?.Role == TranslationRole.Branch;
+
                 if (needsMerge)
                 {
                     message = "Conflict: Both local and server changed!";
@@ -221,7 +266,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
                 else if (hasServerUpdate)
                 {
-                    message = "Server update available!";
+                    // Role-aware message: Branch sees "Parent" update, Main sees "Server" update
+                    message = isBranch ? "Parent translation update available!" : "Server update available!";
                     buttonText = "Download";
                 }
                 else if (hasLocalChanges)

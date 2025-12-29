@@ -9,6 +9,7 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using UnityEngine;
 
 namespace UnityGameTranslator.Core
 {
@@ -67,6 +68,12 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static string LastSyncedHash { get; set; } = null;
 
+        /// <summary>
+        /// Returns true if source/target languages are locked (translation exists on server).
+        /// Once a translation is uploaded, languages cannot be changed to maintain consistency.
+        /// </summary>
+        public static bool AreLanguagesLocked => ServerState != null && ServerState.Exists;
+
         private static float lastSaveTime = 0f;
         private static int translatedCount = 0;
         private static int ollamaCount = 0;
@@ -74,6 +81,8 @@ namespace UnityGameTranslator.Core
         private static Dictionary<int, string> lastSeenText = new Dictionary<int, string>();
         private static HashSet<string> pendingTranslations = new HashSet<string>();
         private static Queue<string> translationQueue = new Queue<string>();
+        // Note: Own UI detection now happens at processing time using IsOwnUITranslatable(component)
+        // instead of string-based tracking which caused false positives when game text matched mod UI text
         private static object lockObj = new object();
         private static bool cacheModified = false;
         private static HttpClient httpClient;
@@ -99,8 +108,188 @@ namespace UnityGameTranslator.Core
         public static bool IsTranslating => isTranslating;
         public static string CurrentText => currentlyTranslating;
 
+        // Own UI component tracking (mod interface)
+        private static HashSet<int> ownUIExcluded = new HashSet<int>();      // Never translate (title, lang codes, config values)
+        private static HashSet<int> ownUITranslatable = new HashSet<int>();  // Translate with UI-specific prompt
+        private static HashSet<int> ownUIPanelRoots = new HashSet<int>();    // Root GameObjects of our panels (for hierarchy check)
+
+        // Panel construction mode: when true, all translations are skipped
+        // This prevents texts created during panel construction from being queued before we can register them
+        private static int _constructionModeCount = 0;
+        private static object _constructionModeLock = new object();
+
+        /// <summary>
+        /// Enter panel construction mode. While active, all translations are skipped.
+        /// Call this before creating panel UI elements. Supports nested calls (reference counted).
+        /// </summary>
+        public static void EnterConstructionMode()
+        {
+            lock (_constructionModeLock)
+            {
+                _constructionModeCount++;
+            }
+        }
+
+        /// <summary>
+        /// Exit panel construction mode. Decrements the reference count.
+        /// </summary>
+        public static void ExitConstructionMode()
+        {
+            lock (_constructionModeLock)
+            {
+                if (_constructionModeCount > 0)
+                    _constructionModeCount--;
+            }
+        }
+
+        /// <summary>
+        /// Returns true if we're currently in panel construction mode.
+        /// </summary>
+        public static bool IsInConstructionMode
+        {
+            get
+            {
+                lock (_constructionModeLock)
+                {
+                    return _constructionModeCount > 0;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Register a component to be excluded from translation (mod title, language codes, config values).
+        /// </summary>
+        public static void RegisterExcluded(UnityEngine.Object component)
+        {
+            if (component != null)
+                ownUIExcluded.Add(component.GetInstanceID());
+        }
+
+        /// <summary>
+        /// Register a component to be translated with UI-specific prompt (labels, buttons).
+        /// </summary>
+        public static void RegisterUIText(UnityEngine.Object component)
+        {
+            if (component != null)
+                ownUITranslatable.Add(component.GetInstanceID());
+        }
+
+        /// <summary>
+        /// Register a panel root GameObject. All children will be identified as own UI via hierarchy check.
+        /// Call this BEFORE creating any child components.
+        /// </summary>
+        public static void RegisterPanelRoot(GameObject panelRoot)
+        {
+            if (panelRoot != null)
+                ownUIPanelRoots.Add(panelRoot.GetInstanceID());
+        }
+
+        /// <summary>
+        /// Check if a component is part of our UI by traversing up the hierarchy.
+        /// Returns true if any parent is a registered panel root.
+        /// </summary>
+        public static bool IsOwnUIByHierarchy(Component component)
+        {
+            if (component == null) return false;
+            Transform current = component.transform;
+            while (current != null)
+            {
+                if (ownUIPanelRoots.Contains(current.gameObject.GetInstanceID()))
+                    return true;
+                current = current.parent;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Check if a component is excluded from translation (mod title, language codes, config values).
+        /// </summary>
+        public static bool IsOwnUIExcluded(int instanceId) => ownUIExcluded.Contains(instanceId);
+
+        /// <summary>
+        /// Check if a component is part of our own UI (registered or in panel hierarchy).
+        /// </summary>
+        public static bool IsOwnUI(int instanceId) => ownUIExcluded.Contains(instanceId) || ownUITranslatable.Contains(instanceId);
+
+        /// <summary>
+        /// Check if a component is part of our own UI (by instance ID or hierarchy).
+        /// </summary>
+        public static bool IsOwnUI(Component component)
+        {
+            if (component == null) return false;
+            int instanceId = component.GetInstanceID();
+            return IsOwnUI(instanceId) || IsOwnUIByHierarchy(component);
+        }
+
+        /// <summary>
+        /// Check if a component should use UI-specific prompt (own UI).
+        /// Returns false if translate_mod_ui is disabled in config.
+        /// Uses hierarchy check if not explicitly registered.
+        /// </summary>
+        public static bool IsOwnUITranslatable(int instanceId) => Config.translate_mod_ui && ownUITranslatable.Contains(instanceId);
+
+        /// <summary>
+        /// Check if a component should use UI-specific prompt (own UI).
+        /// Uses hierarchy check to identify own UI even before individual registration.
+        /// </summary>
+        public static bool IsOwnUITranslatable(Component component)
+        {
+            if (!Config.translate_mod_ui) return false;
+            if (component == null) return false;
+            int instanceId = component.GetInstanceID();
+            // Check explicit registration first, then hierarchy
+            if (ownUITranslatable.Contains(instanceId)) return true;
+            // If in hierarchy and NOT explicitly excluded, it's translatable
+            if (IsOwnUIByHierarchy(component) && !ownUIExcluded.Contains(instanceId)) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// Check if a component should be skipped for translation entirely.
+        /// True if: (1) in construction mode, (2) explicitly excluded, OR (3) own UI but translate_mod_ui is disabled.
+        /// Uses hierarchy check to identify own UI even before individual registration.
+        /// </summary>
+        public static bool ShouldSkipTranslation(int instanceId)
+        {
+            // Skip all translations during panel construction
+            if (IsInConstructionMode)
+                return true;
+            if (ownUIExcluded.Contains(instanceId))
+                return true;
+            if (ownUITranslatable.Contains(instanceId) && !Config.translate_mod_ui)
+                return true;
+            return false;
+        }
+
+        /// <summary>
+        /// Check if a component should be skipped for translation entirely.
+        /// True if: (1) in construction mode, (2) explicitly excluded, OR (3) own UI but translate_mod_ui is disabled.
+        /// Uses hierarchy check to identify own UI even before individual registration.
+        /// </summary>
+        public static bool ShouldSkipTranslation(Component component)
+        {
+            // Skip all translations during panel construction
+            if (IsInConstructionMode)
+                return true;
+            if (component == null) return false;
+            int instanceId = component.GetInstanceID();
+            // Explicitly excluded - always skip
+            if (ownUIExcluded.Contains(instanceId))
+                return true;
+            // Explicitly translatable - skip only if translate_mod_ui is disabled
+            if (ownUITranslatable.Contains(instanceId))
+                return !Config.translate_mod_ui;
+            // Check hierarchy - if part of our UI, skip if translate_mod_ui is disabled
+            if (IsOwnUIByHierarchy(component))
+                return !Config.translate_mod_ui;
+            return false;
+        }
+
         // Security: Maximum text length for Ollama translation requests (prevents DoS)
         private const int MaxOllamaTextLength = 5000;
+
+        // Marker for skipped translations (text not in expected source language)
+        private const string SkipTranslationMarker = "AxNoTranslateXa";
 
         // Security: Regex with timeout to prevent ReDoS attacks
         private static readonly Regex NumberPattern = new Regex(
@@ -167,6 +356,8 @@ namespace UnityGameTranslator.Core
         public static void OnSceneChanged(string sceneName)
         {
             lastSeenText.Clear();
+            TranslatorScanner.OnSceneChange();
+            TranslatorPatches.ClearCache();
 
             if (DebugMode)
                 Adapter?.LogInfo($"Scene: {sceneName}");
@@ -255,10 +446,12 @@ namespace UnityGameTranslator.Core
                 // Create a copy for serialization with encrypted token
                 var configToSave = new ModConfig
                 {
+                    // Ollama settings
                     ollama_url = Config.ollama_url,
                     model = Config.model,
                     target_language = Config.target_language,
                     source_language = Config.source_language,
+                    strict_source_language = Config.strict_source_language,
                     game_context = Config.game_context,
                     timeout_ms = Config.timeout_ms,
                     enable_ollama = Config.enable_ollama,
@@ -266,10 +459,16 @@ namespace UnityGameTranslator.Core
                     normalize_numbers = Config.normalize_numbers,
                     debug_ollama = Config.debug_ollama,
                     preload_model = Config.preload_model,
+
+                    // General settings
+                    capture_keys_only = Config.capture_keys_only,
+                    translate_mod_ui = Config.translate_mod_ui,
                     first_run_completed = Config.first_run_completed,
                     online_mode = Config.online_mode,
                     enable_translations = Config.enable_translations,
                     settings_hotkey = Config.settings_hotkey,
+
+                    // Auth & sync
                     api_user = Config.api_user,
                     sync = Config.sync,
                     window_preferences = Config.window_preferences,
@@ -311,6 +510,9 @@ namespace UnityGameTranslator.Core
                 var parsed = JObject.Parse(json);
                 TranslationCache = new Dictionary<string, TranslationEntry>();
 
+                // Track saved _game.steam_id to compare with current detection
+                string savedSteamId = null;
+
                 // Extract metadata and translations
                 foreach (var prop in parsed.Properties())
                 {
@@ -327,6 +529,12 @@ namespace UnityGameTranslator.Core
                         // Load source info for sync detection
                         var source = prop.Value as JObject;
                         LastSyncedHash = source?["hash"]?.Value<string>();
+                    }
+                    else if (prop.Name == "_game" && prop.Value.Type == JTokenType.Object)
+                    {
+                        // Load saved steam_id for comparison with current detection
+                        var game = prop.Value as JObject;
+                        savedSteamId = game?["steam_id"]?.Value<string>();
                     }
                     else if (!prop.Name.StartsWith("_"))
                     {
@@ -360,6 +568,16 @@ namespace UnityGameTranslator.Core
                     FileUuid = Guid.NewGuid().ToString();
                     cacheModified = true;
                     Adapter.LogInfo($"Legacy cache file, generated UUID: {FileUuid}");
+                }
+
+                // Update _game.steam_id if we detected one but file didn't have it
+                if (CurrentGame != null && !string.IsNullOrEmpty(CurrentGame.steam_id))
+                {
+                    if (string.IsNullOrEmpty(savedSteamId) || savedSteamId != CurrentGame.steam_id)
+                    {
+                        cacheModified = true;
+                        Adapter.LogInfo($"[LoadCache] Detected steam_id ({CurrentGame.steam_id}) differs from saved ({savedSteamId ?? "null"}), will update file");
+                    }
                 }
 
                 // Load ancestor cache if exists (for 3-way merge support)
@@ -640,6 +858,54 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Parse JSON content into Dictionary of TranslationEntry.
+        /// Handles both new format ({"v": "value", "t": "tag"}) and legacy format (string).
+        /// </summary>
+        /// <param name="jsonContent">Raw JSON string from file or API</param>
+        /// <returns>Dictionary with translation entries including tags</returns>
+        public static Dictionary<string, TranslationEntry> ParseTranslationsFromJson(string jsonContent)
+        {
+            var result = new Dictionary<string, TranslationEntry>();
+
+            try
+            {
+                var parsed = JObject.Parse(jsonContent);
+
+                foreach (var prop in parsed.Properties())
+                {
+                    // Skip metadata keys
+                    if (prop.Name.StartsWith("_")) continue;
+
+                    if (prop.Value.Type == JTokenType.Object)
+                    {
+                        // New format: {"v": "value", "t": "A"}
+                        var obj = prop.Value as JObject;
+                        result[prop.Name] = new TranslationEntry
+                        {
+                            Value = obj?["v"]?.ToString() ?? "",
+                            Tag = obj?["t"]?.ToString() ?? "A"
+                        };
+                    }
+                    else if (prop.Value.Type == JTokenType.String)
+                    {
+                        // Legacy format: string value - default to AI tag
+                        result[prop.Name] = new TranslationEntry
+                        {
+                            Value = prop.Value.ToString(),
+                            Tag = "A"
+                        };
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                Adapter?.LogWarning($"Failed to parse translations from JSON: {e.Message}");
+            }
+
+            return result;
+        }
+
+        /// <summary>
         /// Compute SHA256 hash of the translation content (same format as upload).
         /// Used to detect if local content differs from server version.
         /// IMPORTANT: Must match PHP Translation::computeHash() exactly.
@@ -869,10 +1135,27 @@ namespace UnityGameTranslator.Core
                     string originalText = textToTranslate;
                     isTranslating = true;
                     currentlyTranslating = textToTranslate.Length > 50 ? textToTranslate.Substring(0, 50) + "..." : textToTranslate;
+
+                    // Check if this text is from our own UI by examining the pending components
+                    // Use IsOwnUI (not IsOwnUITranslatable) for tagging - it doesn't depend on translate_mod_ui config
+                    // This is more accurate than string-based tracking which caused false positives
+                    bool isOwnUI = false;
+                    if (componentsToUpdate != null && componentsToUpdate.Count > 0)
+                    {
+                        foreach (var comp in componentsToUpdate)
+                        {
+                            if (comp is Component component && IsOwnUI(component))
+                            {
+                                isOwnUI = true;
+                                break;
+                            }
+                        }
+                    }
+
                     try
                     {
                         if (Config.debug_ollama)
-                            Adapter?.LogInfo($"[Worker] Calling Ollama...");
+                            Adapter?.LogInfo($"[Worker] Calling Ollama...{(isOwnUI ? " (UI prompt)" : "")}");
 
                         // Extract numbers BEFORE sending to Ollama
                         string normalizedOriginal = textToTranslate;
@@ -894,37 +1177,54 @@ namespace UnityGameTranslator.Core
                             }
                         }
 
-                        // Only call Ollama if not in cache
-                        if (translation == null)
+                        // Capture keys only mode: store H+empty without calling Ollama
+                        if (Config.capture_keys_only)
                         {
-                            translation = TranslateWithOllama(normalizedOriginal, extractedNumbers);
+                            AddToCache(normalizedOriginal, "", "H");
+                            if (Config.debug_ollama)
+                                Adapter?.LogInfo($"[Worker] Captured key (no translation): {normalizedOriginal.Substring(0, Math.Min(30, normalizedOriginal.Length))}...");
                         }
-                        if (Config.debug_ollama)
-                            Adapter?.LogInfo($"[Worker] Ollama returned: {translation?.Substring(0, Math.Min(30, translation?.Length ?? 0))}...");
-
-                        if (!string.IsNullOrEmpty(translation))
+                        // Only call Ollama if not in cache
+                        else if (translation == null)
                         {
-                            // Always cache (even if unchanged) to avoid re-queuing the same text
-                            AddToCache(normalizedOriginal, translation);
+                            translation = TranslateWithOllama(normalizedOriginal, extractedNumbers, isOwnUI);
 
-                            if (translation != normalizedOriginal)
+                            if (Config.debug_ollama)
+                                Adapter?.LogInfo($"[Worker] Ollama returned: {translation?.Substring(0, Math.Min(30, translation?.Length ?? 0))}...");
+
+                            if (!string.IsNullOrEmpty(translation))
                             {
-                                ollamaCount++;
+                                // Check if Ollama returned the skip marker (text not in expected source language)
+                                bool isSkipped = translation.Contains(SkipTranslationMarker);
 
-                                // For updating components, restore actual numbers
-                                string translationWithNumbers = translation;
-                                if (extractedNumbers != null)
+                                // Cache with appropriate tag: S=Skipped, M=Mod UI, A=AI-translated
+                                string tag = isSkipped ? "S" : (isOwnUI ? "M" : "A");
+                                AddToCache(normalizedOriginal, isSkipped ? normalizedOriginal : translation, tag);
+
+                                if (!isSkipped && translation != normalizedOriginal)
                                 {
-                                    translationWithNumbers = RestoreNumbersFromPlaceholders(translation, extractedNumbers);
+                                    ollamaCount++;
+
+                                    // For updating components, restore actual numbers
+                                    string translationWithNumbers = translation;
+                                    if (extractedNumbers != null)
+                                    {
+                                        translationWithNumbers = RestoreNumbersFromPlaceholders(translation, extractedNumbers);
+                                    }
+
+                                    // Notify mod loader to update components
+                                    OnTranslationComplete?.Invoke(originalText, translationWithNumbers, componentsToUpdate);
+
+                                    if (DebugMode || Config.debug_ollama)
+                                    {
+                                        string preview = originalText.Length > 30 ? originalText.Substring(0, 30) + "..." : originalText;
+                                        Adapter?.LogInfo($"[Ollama] {preview}");
+                                    }
                                 }
-
-                                // Notify mod loader to update components
-                                OnTranslationComplete?.Invoke(originalText, translationWithNumbers, componentsToUpdate);
-
-                                if (DebugMode || Config.debug_ollama)
+                                else if (isSkipped && Config.debug_ollama)
                                 {
                                     string preview = originalText.Length > 30 ? originalText.Substring(0, 30) + "..." : originalText;
-                                    Adapter?.LogInfo($"[Ollama] {preview}");
+                                    Adapter?.LogInfo($"[Ollama] Skipped (not in source language): {preview}");
                                 }
                             }
                         }
@@ -949,7 +1249,44 @@ namespace UnityGameTranslator.Core
             }
         }
 
-        private static string TranslateWithOllama(string textWithPlaceholders, List<string> extractedNumbers)
+        /// <summary>
+        /// Detects the type of text for prompt optimization.
+        /// </summary>
+        private static TextType DetectTextType(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+                return TextType.SingleWord;
+
+            // Paragraph: has newlines
+            if (text.Contains('\n'))
+                return TextType.Paragraph;
+
+            // Check if text uses a scriptio continua writing system (no spaces between words)
+            bool isScriptioContinua = text.Any(c =>
+                (c >= 0x4E00 && c <= 0x9FFF) ||   // Chinese (CJK Unified Ideographs)
+                (c >= 0x3040 && c <= 0x30FF) ||   // Japanese Hiragana/Katakana
+                (c >= 0xAC00 && c <= 0xD7AF) ||   // Korean Hangul
+                (c >= 0x0E00 && c <= 0x0E7F) ||   // Thai
+                (c >= 0x0E80 && c <= 0x0EFF) ||   // Lao
+                (c >= 0x1780 && c <= 0x17FF) ||   // Khmer (Cambodian)
+                (c >= 0x1000 && c <= 0x109F) ||   // Myanmar (Burmese)
+                (c >= 0x0F00 && c <= 0x0FFF));    // Tibetan
+
+            if (isScriptioContinua)
+            {
+                // No-space scripts: use character count as proxy
+                if (text.Length <= 4) return TextType.SingleWord;
+                return TextType.Phrase;
+            }
+            else
+            {
+                // Space-based scripts (Latin, Arabic, Hebrew, Devanagari, etc.)
+                if (!text.Contains(' ')) return TextType.SingleWord;
+                return TextType.Phrase;
+            }
+        }
+
+        private static string TranslateWithOllama(string textWithPlaceholders, List<string> extractedNumbers, bool isOwnUI = false)
         {
             // Security: Reject text that's too long (prevents DoS via large requests)
             if (textWithPlaceholders.Length > MaxOllamaTextLength)
@@ -962,30 +1299,70 @@ namespace UnityGameTranslator.Core
             try
             {
                 string textToTranslate = textWithPlaceholders;
+                TextType textType = DetectTextType(textToTranslate);
 
-                // Build system prompt
+                // Build system prompt based on text type
                 var promptBuilder = new StringBuilder();
                 string targetLang = Config.GetTargetLanguage();
                 string sourceLang = Config.GetSourceLanguage();
 
-                if (sourceLang != null)
-                    promptBuilder.Append($"You are a video game UI translator from {sourceLang} to {targetLang}. ");
-                else
-                    promptBuilder.Append($"You are a video game UI translator to {targetLang}. ");
-
-                promptBuilder.Append("Output ONLY the translation, nothing else. ");
-                promptBuilder.Append("Keep it concise for UI. Preserve the original tone and style. ");
-                promptBuilder.Append("Preserve formatting tags and special characters. ");
-                if (extractedNumbers != null && extractedNumbers.Count > 0)
+                if (isOwnUI)
                 {
-                    promptBuilder.Append("IMPORTANT: Keep [v0], [v1], etc. placeholders exactly as-is (they represent numbers). ");
+                    // UI-specific prompt for mod interface (technical terms)
+                    promptBuilder.Append($"You are translating a game translation tool interface from english to {targetLang}. ");
+                    promptBuilder.Append("Output ONLY the translation, nothing else. ");
+                    promptBuilder.Append("This is a technical UI with terms like: Ollama, cache, merge, sync, upload, download, API, hotkey, config, JSON key. ");
+                    promptBuilder.Append("The translation must be understandable and and structurally correct in the target language. ");
+                    promptBuilder.Append("Keep technical terms unchanged: Ollama, API, URL, UUID, JSON, AI. ");
+                    promptBuilder.Append("Keep keyboard shortcuts as-is: Ctrl, Alt, Shift, F1-F12, Tab, Esc. ");
                 }
-                promptBuilder.Append("For single words: translate if it's game content (items, actions, stats). ");
-                promptBuilder.Append("Keep unchanged: language names (English, French...), keyboard keys (Tab, Esc, Space...), technical settings (VSync, Auto as setting value). ");
-
-                if (!string.IsNullOrEmpty(Config.game_context))
+                else
                 {
-                    promptBuilder.Append($"Game context: {Config.game_context}.");
+                    // Game context prompt
+                    string gameCtx = !string.IsNullOrEmpty(Config.game_context) ? $" ({Config.game_context})" : "";
+                    if (sourceLang != null)
+                    {
+                        promptBuilder.Append($"You are a translator for a video game{gameCtx} from {sourceLang} to {targetLang}. ");
+                        // Strict source language: reject text not in the expected source language
+                        if (Config.strict_source_language)
+                        {
+                            promptBuilder.Append($" You ONLY translate from {sourceLang} language if it's another source language, NEVER translate and ONLY REPLY exactly this to bypass the translation: {SkipTranslationMarker}, otherwise ");
+                        }
+                    }
+                    else
+                    {
+                        promptBuilder.Append($"You are a translator for a video game{gameCtx} to {targetLang}. ");
+                    }
+
+                    promptBuilder.Append("Output ONLY the translation, nothing else. ");
+
+                    if (textType == TextType.SingleWord)
+                    {
+                        // SingleWord: rules then "Translate this word:" with colon
+                        promptBuilder.Append("Keep unchanged: keyboard keys (Tab, Esc, Space...), technical settings (VSync, Auto). ");
+                        promptBuilder.Append("The translation must be understandable and structurally correct in the target language, taking into account the context of the game. ");
+                        promptBuilder.Append("Now, translate this word:");
+                    }
+                    else
+                    {
+                        // Phrase/Paragraph: full instructions (game context already in role)
+                        promptBuilder.Append("Keep it concise for UI. Preserve the original tone and style. ");
+                        promptBuilder.Append("The translation must be understandable and and structurally correct in the target language, taking into account the context of the game. ");
+                        promptBuilder.Append("Preserve formatting tags and special characters. ");
+                        if (extractedNumbers != null && extractedNumbers.Count > 0)
+                        {
+                            promptBuilder.Append("IMPORTANT: Keep [v0], [v1], etc. placeholders exactly as-is (they represent numbers). ");
+                        }
+                        promptBuilder.Append("Keep unchanged: keyboard keys (Tab, Esc, Space...), technical settings (VSync, Auto as setting value). ");
+                    }
+                }
+
+                string systemPrompt = promptBuilder.ToString();
+
+                // Debug: log the full system prompt being sent
+                if (Config.debug_ollama)
+                {
+                    Adapter?.LogInfo($"[Ollama] System prompt:\n{systemPrompt}");
                 }
 
                 var requestBody = new
@@ -993,7 +1370,7 @@ namespace UnityGameTranslator.Core
                     model = Config.model,
                     messages = new object[]
                     {
-                        new { role = "system", content = promptBuilder.ToString() },
+                        new { role = "system", content = systemPrompt },
                         new { role = "user", content = textToTranslate + " /no_think" },
                         new { role = "assistant", content = "<think>\n\n</think>\n\n" }
                     },
@@ -1209,7 +1586,7 @@ namespace UnityGameTranslator.Core
             return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
         }
 
-        public static void QueueForTranslation(string text, object component = null)
+        public static void QueueForTranslation(string text, object component = null, bool isOwnUI = false)
         {
             if (!Config.enable_ollama) return;
             if (string.IsNullOrEmpty(text) || text.Length < 3) return;
@@ -1223,6 +1600,9 @@ namespace UnityGameTranslator.Core
                     pendingComponents[text].Add(component);
                 }
 
+                // Note: isOwnUI is determined at processing time by checking pendingComponents
+                // This avoids false positives when game text matches mod UI text
+
                 if (pendingTranslations.Contains(text)) return;
 
                 pendingTranslations.Add(text);
@@ -1231,7 +1611,7 @@ namespace UnityGameTranslator.Core
                 if (Config.debug_ollama)
                 {
                     string preview = text.Length > 40 ? text.Substring(0, 40) + "..." : text;
-                    Adapter?.LogInfo($"[Queue] {preview}");
+                    Adapter?.LogInfo($"[Queue] {preview}{(isOwnUI ? " (UI)" : "")}");
                 }
             }
         }
@@ -1276,6 +1656,12 @@ namespace UnityGameTranslator.Core
             if (TranslationCache.TryGetValue(normalizedText, out var cachedEntry))
             {
                 foundInCache = true;
+                // H+empty (capture-only) or S (skipped): return original text
+                if (cachedEntry.IsHumanEmpty || cachedEntry.Tag == "S")
+                {
+                    cacheHitCount++;
+                    return text;
+                }
                 if (cachedEntry.Value != normalizedText)
                 {
                     cacheHitCount++;
@@ -1292,6 +1678,12 @@ namespace UnityGameTranslator.Core
             if (trimmed != normalizedText && TranslationCache.TryGetValue(trimmed, out var cachedTrimmedEntry))
             {
                 foundInCache = true;
+                // H+empty (capture-only) or S (skipped): return original text
+                if (cachedTrimmedEntry.IsHumanEmpty || cachedTrimmedEntry.Tag == "S")
+                {
+                    cacheHitCount++;
+                    return text;
+                }
                 if (cachedTrimmedEntry.Value != trimmed)
                 {
                     cacheHitCount++;
@@ -1341,7 +1733,8 @@ namespace UnityGameTranslator.Core
         /// Translate with component tracking for async updates.
         /// Treats multiline text as a single unit to ensure proper component tracking.
         /// </summary>
-        public static string TranslateTextWithTracking(string text, object component)
+        /// <param name="isOwnUI">If true, use UI-specific prompt for mod interface translation.</param>
+        public static string TranslateTextWithTracking(string text, object component, bool isOwnUI = false)
         {
             // Check if translations are disabled
             if (!Config.enable_translations)
@@ -1354,13 +1747,13 @@ namespace UnityGameTranslator.Core
                 return text;
 
             // Don't split multiline - treat as single unit for proper component tracking
-            string result = TranslateSingleTextWithTracking(text, component);
+            string result = TranslateSingleTextWithTracking(text, component, isOwnUI);
             if (result != text)
                 translatedCount++;
             return result;
         }
 
-        private static string TranslateSingleTextWithTracking(string text, object component)
+        private static string TranslateSingleTextWithTracking(string text, object component, bool isOwnUI = false)
         {
             if (string.IsNullOrEmpty(text) || text.Length < 2)
                 return text;
@@ -1383,6 +1776,12 @@ namespace UnityGameTranslator.Core
             if (TranslationCache.TryGetValue(normalizedText, out var cachedEntry))
             {
                 foundInCache = true;
+                // H+empty (capture-only) or S (skipped): return original text
+                if (cachedEntry.IsHumanEmpty || cachedEntry.Tag == "S")
+                {
+                    cacheHitCount++;
+                    return text;
+                }
                 if (cachedEntry.Value != normalizedText)
                 {
                     cacheHitCount++;
@@ -1402,6 +1801,12 @@ namespace UnityGameTranslator.Core
                 if (trimmed != normalizedText && TranslationCache.TryGetValue(trimmed, out var cachedTrimmedEntry))
                 {
                     foundInCache = true;
+                    // H+empty (capture-only) or S (skipped): return original text
+                    if (cachedTrimmedEntry.IsHumanEmpty || cachedTrimmedEntry.Tag == "S")
+                    {
+                        cacheHitCount++;
+                        return text;
+                    }
                     if (cachedTrimmedEntry.Value != trimmed)
                     {
                         cacheHitCount++;
@@ -1449,7 +1854,7 @@ namespace UnityGameTranslator.Core
 
                 if (!IsTargetLanguage(text))
                 {
-                    QueueForTranslation(text, component);
+                    QueueForTranslation(text, component, isOwnUI);
                 }
                 else
                 {
@@ -1647,6 +2052,7 @@ namespace UnityGameTranslator.Core
         public string model { get; set; } = "qwen3:8b";
         public string target_language { get; set; } = "auto";
         public string source_language { get; set; } = "auto";
+        public bool strict_source_language { get; set; } = false;
         public string game_context { get; set; } = "";
         public int timeout_ms { get; set; } = 30000;
         public bool enable_ollama { get; set; } = false;
@@ -1654,6 +2060,10 @@ namespace UnityGameTranslator.Core
         public bool normalize_numbers { get; set; } = true;
         public bool debug_ollama { get; set; } = false;
         public bool preload_model { get; set; } = true;
+
+        // General settings
+        public bool capture_keys_only { get; set; } = false;
+        public bool translate_mod_ui { get; set; } = false; // Translate the mod's own interface
 
         // Online mode and sync settings
         public bool first_run_completed { get; set; } = false;
@@ -1719,17 +2129,19 @@ namespace UnityGameTranslator.Core
         public float height { get; set; }
         /// <summary>True if user manually resized (don't auto-adjust)</summary>
         public bool userResized { get; set; }
-        /// <summary>Screen width when preference was saved (for resolution change handling)</summary>
-        public int screenWidth { get; set; }
-        /// <summary>Screen height when preference was saved (for resolution change handling)</summary>
-        public int screenHeight { get; set; }
     }
 
     /// <summary>
     /// Collection of window preferences keyed by panel name.
+    /// Screen dimensions are stored globally since all panels share the same screen.
     /// </summary>
     public class WindowPreferences
     {
+        /// <summary>Screen width when preferences were last saved</summary>
+        public int screenWidth { get; set; }
+        /// <summary>Screen height when preferences were last saved</summary>
+        public int screenHeight { get; set; }
+        /// <summary>Per-panel position and size preferences</summary>
         public Dictionary<string, WindowPreference> panels { get; set; } = new Dictionary<string, WindowPreference>();
     }
 
@@ -1780,6 +2192,19 @@ namespace UnityGameTranslator.Core
     }
 
     /// <summary>
+    /// Type of text being translated, used to optimize prompts.
+    /// </summary>
+    public enum TextType
+    {
+        /// <summary>Single word (no spaces for Latin, ≤4 chars for CJK)</summary>
+        SingleWord,
+        /// <summary>Short phrase or sentence</summary>
+        Phrase,
+        /// <summary>Multiple lines or long text</summary>
+        Paragraph
+    }
+
+    /// <summary>
     /// A translation entry with value and tag.
     /// JSON format: {"v": "value", "t": "A/H/V"}
     /// </summary>
@@ -1790,10 +2215,14 @@ namespace UnityGameTranslator.Core
 
         /// <summary>
         /// Tag indicating the source of this translation.
-        /// A = AI generated, H = Human, V = AI Validated by human.
+        /// A = AI generated, H = Human, V = AI Validated by human,
+        /// S = Skipped (wrong source language), M = Mod UI.
         /// Null defaults to A.
         /// </summary>
         public string Tag { get; set; } = "A";
+
+        /// <summary>True if this is a Skipped or Mod UI entry (immutable tags)</summary>
+        public bool IsImmutableTag => Tag == "S" || Tag == "M";
 
         /// <summary>True if Value is null or empty</summary>
         public bool IsEmpty => string.IsNullOrEmpty(Value);
@@ -1803,12 +2232,15 @@ namespace UnityGameTranslator.Core
 
         /// <summary>
         /// Get the priority of this entry for merge conflict resolution.
-        /// Higher priority wins: H empty (0) < A (1) < V (2) < H with value (3)
+        /// Higher priority wins: H empty (0) < A (1) < V (2) < H with value (3) < S/M (99)
+        /// S and M are immutable and should never be replaced.
         /// </summary>
         public int Priority
         {
             get
             {
+                // Immutable tags (S/M) have highest priority - never replace
+                if (IsImmutableTag) return 99;
                 if (IsHumanEmpty) return 0;  // H empty = lowest priority
                 switch (Tag)
                 {
@@ -1830,10 +2262,13 @@ namespace UnityGameTranslator.Core
 
         /// <summary>
         /// Check if this entry can replace another entry based on tag hierarchy.
+        /// S and M tags are immutable and cannot be replaced.
         /// </summary>
         public bool CanReplace(TranslationEntry other)
         {
             if (other == null) return true;
+            // Cannot replace immutable tags (S/M) regardless of priority
+            if (other.IsImmutableTag) return false;
             return Priority > other.Priority;
         }
 
@@ -1848,5 +2283,9 @@ namespace UnityGameTranslator.Core
         public string steam_id { get; set; }
         public string name { get; set; }
         public string folder_name { get; set; }
+        /// <summary>
+        /// How the steam_id was detected: "steam_appid.txt", "appmanifest", or null if not detected
+        /// </summary>
+        public string detection_method { get; set; }
     }
 }

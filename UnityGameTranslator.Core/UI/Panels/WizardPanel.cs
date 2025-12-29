@@ -149,7 +149,8 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             var card = CreateAdaptiveCard(_welcomeStep, "Card", 420);
 
-            CreateTitle(card, "Title", "Welcome to Unity Game Translator!");
+            var title = CreateTitle(card, "Title", "Welcome to Unity Game Translator!");
+            RegisterExcluded(title); // Mod name - never translate
 
             var desc = UIFactory.CreateLabel(card, "Description",
                 "This mod automatically translates Unity games using AI.\n\n" +
@@ -161,10 +162,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             desc.fontSize = UIStyles.FontSizeNormal;
             desc.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(desc.gameObject, minHeight: UIStyles.MultiLineLarge + 20);
+            RegisterExcluded(desc); // Contains "Ollama" brand name
 
             var buttonRow = CreateButtonRow(_welcomeStep);
             var nextBtn = CreatePrimaryButton(buttonRow, "NextBtn", "Get Started →", 160);
             nextBtn.OnClick += () => ShowStep(WizardStep.OnlineMode);
+            RegisterUIText(nextBtn.ButtonText);
         }
 
         private void CreateOnlineModeStep()
@@ -174,8 +177,10 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             var card = CreateAdaptiveCard(_onlineModeStep, "Card", 420);
 
-            CreateTitle(card, "Title", "Online Mode");
-            CreateDescription(card, "Description", "Do you want to enable online features?");
+            var onlineModeTitle = CreateTitle(card, "Title", "Online Mode");
+            RegisterUIText(onlineModeTitle);
+            var onlineModeDesc = CreateDescription(card, "Description", "Do you want to enable online features?");
+            RegisterUIText(onlineModeDesc);
 
             UIStyles.CreateSpacer(card, 10);
 
@@ -193,13 +198,15 @@ namespace UnityGameTranslator.Core.UI.Panels
             onlineTextLabel.fontStyle = FontStyle.Bold;
             onlineTextLabel.color = UIStyles.TextPrimary;
             UIFactory.SetLayoutElement(onlineTextLabel.gameObject, flexibleWidth: 9999);
+            RegisterUIText(onlineTextLabel);
 
-            var onlineDesc = UIFactory.CreateLabel(onlineBox, "OnlineDesc",
+            var onlineDescLabel = UIFactory.CreateLabel(onlineBox, "OnlineDesc",
                 "• Download community translations\n• Share your translations\n• Check for updates",
                 TextAnchor.MiddleLeft);
-            onlineDesc.fontSize = UIStyles.FontSizeSmall;
-            onlineDesc.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(onlineDesc.gameObject, minHeight: UIStyles.MultiLineSmall);
+            onlineDescLabel.fontSize = UIStyles.FontSizeSmall;
+            onlineDescLabel.color = UIStyles.TextSecondary;
+            UIFactory.SetLayoutElement(onlineDescLabel.gameObject, minHeight: UIStyles.MultiLineSmall);
+            RegisterUIText(onlineDescLabel);
 
             UIStyles.CreateSpacer(card, 5);
 
@@ -218,20 +225,24 @@ namespace UnityGameTranslator.Core.UI.Panels
             offlineTextLabel.fontStyle = FontStyle.Bold;
             offlineTextLabel.color = UIStyles.TextPrimary;
             UIFactory.SetLayoutElement(offlineTextLabel.gameObject, flexibleWidth: 9999);
+            RegisterUIText(offlineTextLabel);
 
-            var offlineDesc = UIFactory.CreateLabel(offlineBox, "OfflineDesc",
+            var offlineDescLabel = UIFactory.CreateLabel(offlineBox, "OfflineDesc",
                 "• Use only local Ollama AI\n• No internet connection\n• Full privacy",
                 TextAnchor.MiddleLeft);
-            offlineDesc.fontSize = UIStyles.FontSizeSmall;
-            offlineDesc.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(offlineDesc.gameObject, minHeight: UIStyles.MultiLineSmall);
+            offlineDescLabel.fontSize = UIStyles.FontSizeSmall;
+            offlineDescLabel.color = UIStyles.TextSecondary;
+            UIFactory.SetLayoutElement(offlineDescLabel.gameObject, minHeight: UIStyles.MultiLineSmall);
+            RegisterExcluded(offlineDescLabel); // Contains "Ollama" brand name
 
             var buttonRow = CreateButtonRow(_onlineModeStep);
             var backBtn = CreateSecondaryButton(buttonRow, "BackBtn", "← Back");
             backBtn.OnClick += () => ShowStep(WizardStep.Welcome);
+            RegisterUIText(backBtn.ButtonText);
 
             var nextBtn = CreatePrimaryButton(buttonRow, "NextBtn", "Continue →");
             nextBtn.OnClick += () => ShowStep(WizardStep.Hotkey);
+            RegisterUIText(nextBtn.ButtonText);
         }
 
         private void CreateHotkeyStep()
@@ -241,8 +252,10 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             var card = CreateAdaptiveCard(_hotkeyStep, "Card", 420);
 
-            CreateTitle(card, "Title", "Settings Hotkey");
-            CreateDescription(card, "Description", "Choose a keyboard shortcut to open the translator menu");
+            var hotkeyTitle = CreateTitle(card, "Title", "Settings Hotkey");
+            RegisterUIText(hotkeyTitle);
+            var hotkeyDesc = CreateDescription(card, "Description", "Choose a keyboard shortcut to open the translator menu");
+            RegisterUIText(hotkeyDesc);
 
             UIStyles.CreateSpacer(card, 15);
 
@@ -258,17 +271,19 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             UIStyles.CreateSpacer(card, 15);
 
-            // Current hotkey display
+            // Current hotkey display - Contains key names like Ctrl+F10
             _hotkeyDisplayLabel = UIFactory.CreateLabel(card, "HotkeyLabel", _hotkeyCapture.HotkeyString, TextAnchor.MiddleCenter);
             _hotkeyDisplayLabel.fontSize = UIStyles.FontSizeSectionTitle + 2;
             _hotkeyDisplayLabel.fontStyle = FontStyle.Bold;
             _hotkeyDisplayLabel.color = UIStyles.TextAccent;
             UIFactory.SetLayoutElement(_hotkeyDisplayLabel.gameObject, minHeight: UIStyles.RowHeightXLarge);
+            RegisterExcluded(_hotkeyDisplayLabel); // Keyboard key names should not be translated
 
             var buttonRow = CreateButtonRow(_hotkeyStep);
 
             var backBtn = CreateSecondaryButton(buttonRow, "BackBtn", "← Back");
             backBtn.OnClick += () => ShowStep(WizardStep.OnlineMode);
+            RegisterUIText(backBtn.ButtonText);
 
             var nextBtn = CreatePrimaryButton(buttonRow, "NextBtn", "Continue →");
             nextBtn.OnClick += () =>
@@ -278,6 +293,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 else
                     ShowStep(WizardStep.OllamaConfig);
             };
+            RegisterUIText(nextBtn.ButtonText);
         }
 
         private void CreateTranslationChoiceStep()
@@ -287,7 +303,8 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             var card = CreateAdaptiveCard(_translationChoiceStep, "Card", 460);
 
-            CreateTitle(card, "Title", "Community Translations");
+            var translationTitle = CreateTitle(card, "Title", "Community Translations");
+            RegisterUIText(translationTitle);
 
             // Game info section
             var gameSection = CreateSection(card, "GameSection");
@@ -296,11 +313,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             _gameLabel.fontStyle = FontStyle.Bold;
             _gameLabel.color = UIStyles.TextPrimary;
             UIFactory.SetLayoutElement(_gameLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
+            RegisterExcluded(_gameLabel); // Contains game name
 
             _localTranslationsLabel = UIFactory.CreateLabel(gameSection, "LocalLabel", "", TextAnchor.MiddleLeft);
             _localTranslationsLabel.fontSize = UIStyles.FontSizeSmall;
             _localTranslationsLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(_localTranslationsLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+            RegisterExcluded(_localTranslationsLabel); // Dynamic content with numbers/usernames
 
             // Account status row
             var accountRow = UIStyles.CreateFormRow(gameSection, "AccountRow", UIStyles.RowHeightMedium);
@@ -309,10 +328,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             _accountStatusLabel.fontSize = UIStyles.FontSizeHint;
             _accountStatusLabel.color = UIStyles.TextMuted;
             UIFactory.SetLayoutElement(_accountStatusLabel.gameObject, flexibleWidth: 9999);
+            RegisterExcluded(_accountStatusLabel); // Contains username
 
             _loginBtn = UIFactory.CreateButton(accountRow, "LoginBtn", "Connect (optional)");
             UIFactory.SetLayoutElement(_loginBtn.Component.gameObject, minWidth: 130, minHeight: UIStyles.RowHeightNormal);
             _loginBtn.OnClick += OnLoginClicked;
+            RegisterUIText(_loginBtn.ButtonText);
 
             UIStyles.CreateSpacer(card, 10);
 
@@ -326,11 +347,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             _comparisonLabel = UIFactory.CreateLabel(card, "ComparisonLabel", "", TextAnchor.MiddleCenter);
             _comparisonLabel.fontSize = UIStyles.FontSizeSmall;
             UIFactory.SetLayoutElement(_comparisonLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
+            RegisterExcluded(_comparisonLabel); // Contains numbers/usernames
 
             // Status label
             _downloadStatusLabel = UIFactory.CreateLabel(card, "DownloadStatus", "", TextAnchor.MiddleCenter);
             _downloadStatusLabel.fontSize = UIStyles.FontSizeSmall;
             UIFactory.SetLayoutElement(_downloadStatusLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+            RegisterUIText(_downloadStatusLabel);
 
             // Action buttons row (Download / Upload / Merge)
             _actionButtonsRow = UIStyles.CreateFormRow(card, "ActionBtnsRow", UIStyles.RowHeightLarge);
@@ -341,16 +364,19 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.SetLayoutElement(_downloadBtn.Component.gameObject, minWidth: 100, minHeight: UIStyles.RowHeightNormal);
             UIStyles.SetBackground(_downloadBtn.Component.gameObject, UIStyles.ButtonPrimary);
             _downloadBtn.OnClick += OnDownloadClicked;
+            RegisterUIText(_downloadBtn.ButtonText);
 
             _uploadBtn = UIFactory.CreateButton(_actionButtonsRow, "UploadBtn", "Upload");
             UIFactory.SetLayoutElement(_uploadBtn.Component.gameObject, minWidth: 100, minHeight: UIStyles.RowHeightNormal);
             UIStyles.SetBackground(_uploadBtn.Component.gameObject, UIStyles.ButtonSuccess);
             _uploadBtn.OnClick += OnUploadClicked;
+            RegisterUIText(_uploadBtn.ButtonText);
 
             _mergeBtn = UIFactory.CreateButton(_actionButtonsRow, "MergeBtn", "Merge");
             UIFactory.SetLayoutElement(_mergeBtn.Component.gameObject, minWidth: 100, minHeight: UIStyles.RowHeightNormal);
             UIStyles.SetBackground(_mergeBtn.Component.gameObject, UIStyles.ButtonWarning);
             _mergeBtn.OnClick += OnMergeClicked;
+            RegisterUIText(_mergeBtn.ButtonText);
 
             _actionButtonsRow.SetActive(false);
 
@@ -359,12 +385,15 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             var backBtn = CreateSecondaryButton(buttonRow, "BackBtn", "← Back");
             backBtn.OnClick += () => ShowStep(WizardStep.Hotkey);
+            RegisterUIText(backBtn.ButtonText);
 
             var ollamaBtn = CreateSecondaryButton(buttonRow, "OllamaBtn", "Configure Ollama");
             ollamaBtn.OnClick += () => ShowStep(WizardStep.OllamaConfig);
+            RegisterExcluded(ollamaBtn.ButtonText); // Contains "Ollama" brand name
 
             var skipBtn = CreatePrimaryButton(buttonRow, "SkipBtn", "Skip →");
             skipBtn.OnClick += () => ShowStep(WizardStep.Complete);
+            RegisterUIText(skipBtn.ButtonText);
         }
 
         private async void OnTranslationChoiceEnter()
@@ -642,8 +671,10 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             var card = CreateAdaptiveCard(_ollamaConfigStep, "Card", 420);
 
-            CreateTitle(card, "Title", "Ollama Configuration");
-            CreateDescription(card, "Description", "Configure local AI for offline translation");
+            var ollamaTitle = CreateTitle(card, "Title", "Ollama Configuration");
+            RegisterExcluded(ollamaTitle); // Contains "Ollama" brand name
+            var ollamaDesc = CreateDescription(card, "Description", "Configure local AI for offline translation");
+            RegisterUIText(ollamaDesc);
 
             UIStyles.CreateSpacer(card, 10);
 
@@ -661,6 +692,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             enableTextLabel.fontStyle = FontStyle.Bold;
             enableTextLabel.color = UIStyles.TextPrimary;
             UIFactory.SetLayoutElement(enableTextLabel.gameObject, flexibleWidth: 9999);
+            RegisterExcluded(enableTextLabel); // Contains "Ollama" brand name
 
             UIStyles.CreateSpacer(card, 10);
 
@@ -671,6 +703,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             urlLabel.color = UIStyles.TextSecondary;
             urlLabel.fontSize = UIStyles.FontSizeSmall;
             UIFactory.SetLayoutElement(urlLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+            RegisterExcluded(urlLabel); // Contains "Ollama" and "URL" - technical terms
 
             var urlRow = UIStyles.CreateFormRow(urlSection, "UrlRow", UIStyles.RowHeightLarge, 5);
 
@@ -682,10 +715,12 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             var testBtn = CreateSecondaryButton(urlRow, "TestBtn", "Test", 70);
             testBtn.OnClick += TestOllamaConnection;
+            RegisterUIText(testBtn.ButtonText);
 
             _ollamaStatusLabel = UIFactory.CreateLabel(urlSection, "StatusLabel", "", TextAnchor.MiddleCenter);
             _ollamaStatusLabel.fontSize = UIStyles.FontSizeSmall;
             UIFactory.SetLayoutElement(_ollamaStatusLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
+            RegisterUIText(_ollamaStatusLabel);
 
             UIStyles.CreateSpacer(card, 10);
 
@@ -696,6 +731,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             modelLabel.color = UIStyles.TextSecondary;
             modelLabel.fontSize = UIStyles.FontSizeSmall;
             UIFactory.SetLayoutElement(modelLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+            RegisterUIText(modelLabel);
 
             _modelInput = UIFactory.CreateInputField(modelSection, "ModelInput", "qwen3:8b");
             _modelInput.Text = _model;
@@ -703,7 +739,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.SetLayoutElement(_modelInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
             UIStyles.SetBackground(_modelInput.Component.gameObject, UIStyles.InputBackground);
 
-            UIStyles.CreateHint(modelSection, "ModelHint", "Recommended: qwen3:8b • Install: ollama pull qwen3:8b");
+            var modelHint = UIStyles.CreateHint(modelSection, "ModelHint", "Recommended: qwen3:8b • Install: ollama pull qwen3:8b");
+            RegisterExcluded(modelHint); // Contains technical model name and command
 
             UIStyles.CreateSpacer(card, 10);
 
@@ -714,14 +751,17 @@ namespace UnityGameTranslator.Core.UI.Panels
             contextLabel.color = UIStyles.TextSecondary;
             contextLabel.fontSize = UIStyles.FontSizeSmall;
             UIFactory.SetLayoutElement(contextLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+            RegisterUIText(contextLabel);
 
             _gameContextInput = UIFactory.CreateInputField(contextSection, "ContextInput", "e.g., RPG game, fantasy setting");
+            _gameContextInput.Component.lineType = UnityEngine.UI.InputField.LineType.MultiLineNewline;
             _gameContextInput.Text = _gameContext;
             _gameContextInput.OnValueChanged += (val) => _gameContext = val;
-            UIFactory.SetLayoutElement(_gameContextInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
+            UIFactory.SetLayoutElement(_gameContextInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.MultiLineMedium);
             UIStyles.SetBackground(_gameContextInput.Component.gameObject, UIStyles.InputBackground);
 
-            UIStyles.CreateHint(contextSection, "ContextHint", "Helps the AI understand game-specific terms");
+            var contextHint = UIStyles.CreateHint(contextSection, "ContextHint", "Helps the AI understand game-specific terms");
+            RegisterUIText(contextHint);
 
             // Navigation buttons
             var buttonRow = CreateButtonRow(_ollamaConfigStep);
@@ -734,9 +774,11 @@ namespace UnityGameTranslator.Core.UI.Panels
                 else
                     ShowStep(WizardStep.Hotkey);
             };
+            RegisterUIText(backBtn.ButtonText);
 
             var finishBtn = CreatePrimaryButton(buttonRow, "FinishBtn", "Finish Setup →");
             finishBtn.OnClick += () => ShowStep(WizardStep.Complete);
+            RegisterUIText(finishBtn.ButtonText);
         }
 
         private void CreateCompleteStep()
@@ -752,6 +794,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             title.fontStyle = FontStyle.Bold;
             title.color = UIStyles.StatusSuccess;
             UIFactory.SetLayoutElement(title.gameObject, minHeight: UIStyles.TitleHeight);
+            RegisterUIText(title);
 
             UIStyles.CreateSpacer(card, 15);
 
@@ -763,6 +806,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             desc.fontSize = UIStyles.FontSizeNormal;
             desc.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(desc.gameObject, minHeight: UIStyles.MultiLineLarge);
+            RegisterExcluded(desc); // Contains hotkey string
 
             UIStyles.CreateSpacer(card, 20);
 
@@ -770,6 +814,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             var finishBtn = CreatePrimaryButton(card, "FinishBtn", "Start Translating!", 200);
             finishBtn.OnClick += FinishWizard;
             UIStyles.SetBackground(finishBtn.Component.gameObject, UIStyles.ButtonSuccess);
+            RegisterUIText(finishBtn.ButtonText);
         }
 
         private void ShowStep(WizardStep step)

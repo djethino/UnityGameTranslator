@@ -1308,13 +1308,16 @@ namespace UnityGameTranslator.Core
 
                 if (isOwnUI)
                 {
-                    // UI-specific prompt for mod interface (technical terms)
-                    promptBuilder.Append($"You are translating a game translation tool interface from english to {targetLang}. ");
-                    promptBuilder.Append("Output ONLY the translation, nothing else. ");
-                    promptBuilder.Append("This is a technical UI with terms like: Ollama, cache, merge, sync, upload, download, API, hotkey, config, JSON key. ");
-                    promptBuilder.Append("The translation must be understandable and and structurally correct in the target language. ");
-                    promptBuilder.Append("Keep technical terms unchanged: Ollama, API, URL, UUID, JSON, AI. ");
-                    promptBuilder.Append("Keep keyboard shortcuts as-is: Ctrl, Alt, Shift, F1-F12, Tab, Esc. ");
+                    // UI-specific prompt for mod interface (source is always English)
+                    promptBuilder.AppendLine("=== CONTEXT ===");
+                    promptBuilder.AppendLine($"Translating a game translation tool interface from English to {targetLang}.");
+                    promptBuilder.AppendLine("Technical UI with terms: Ollama, cache, merge, sync, upload, download, API, hotkey, config, JSON.");
+                    promptBuilder.AppendLine();
+                    promptBuilder.AppendLine("=== TRANSLATION RULES ===");
+                    promptBuilder.AppendLine("- Output the translation only, no explanation");
+                    promptBuilder.AppendLine("- Translation must be understandable and correct in target language");
+                    promptBuilder.AppendLine("- Keep technical terms unchanged: Ollama, API, URL, UUID, JSON, AI");
+                    promptBuilder.AppendLine("- Keep keyboard shortcuts as-is: Ctrl, Alt, Shift, F1-F12, Tab, Esc");
                 }
                 else
                 {
@@ -1352,6 +1355,8 @@ namespace UnityGameTranslator.Core
                         {
                             promptBuilder.AppendLine("- Keep unchanged: keyboard keys, technical settings (VSync, Auto)");
                             promptBuilder.AppendLine("- Translation must be correct in target language");
+                            promptBuilder.AppendLine();
+                            promptBuilder.Append("Now, translate this word:");
                         }
                         else
                         {

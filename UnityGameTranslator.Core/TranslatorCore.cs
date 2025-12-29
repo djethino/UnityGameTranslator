@@ -1319,41 +1319,73 @@ namespace UnityGameTranslator.Core
                 else
                 {
                     // Game context prompt
-                    string gameCtx = !string.IsNullOrEmpty(Config.game_context) ? $" ({Config.game_context})" : "";
-                    if (sourceLang != null)
+                    string gameCtx = !string.IsNullOrEmpty(Config.game_context) ? $"({Config.game_context})" : "";
+
+                    // Strict source language: put critical rule FIRST with clear structure
+                    if (Config.strict_source_language && sourceLang != null)
                     {
-                        promptBuilder.Append($"You are a translator for a video game{gameCtx} from {sourceLang} to {targetLang}. ");
-                        // Strict source language: reject text not in the expected source language
-                        if (Config.strict_source_language)
+                        promptBuilder.AppendLine("=== CRITICAL RULE ===");
+                        promptBuilder.AppendLine($"Source language: {sourceLang}");
+                        promptBuilder.AppendLine($"- If text is NOT in {sourceLang}: reply ONLY with exactly: {SkipTranslationMarker}");
+                        promptBuilder.AppendLine($"- If text IS in {sourceLang}: translate to {targetLang}");
+                        promptBuilder.AppendLine();
+                        promptBuilder.AppendLine("=== CONTEXT ===");
+                        if (!string.IsNullOrEmpty(gameCtx))
+                            promptBuilder.AppendLine($"Video game: {gameCtx}");
+                        promptBuilder.AppendLine();
+                        promptBuilder.AppendLine("=== TRANSLATION RULES ===");
+                    }
+                    else if (sourceLang != null)
+                    {
+                        promptBuilder.Append($"You are a translator for a video game {gameCtx} from {sourceLang} to {targetLang}. ");
+                    }
+                    else
+                    {
+                        promptBuilder.Append($"You are a translator for a video game {gameCtx} to {targetLang}. ");
+                    }
+
+                    if (Config.strict_source_language && sourceLang != null)
+                    {
+                        // Structured format for strict mode
+                        promptBuilder.AppendLine("- Output the translation only, no explanation");
+                        if (textType == TextType.SingleWord)
                         {
-                            promptBuilder.Append($" You ONLY translate from {sourceLang} language if it's another source language, NEVER translate and ONLY REPLY exactly this to bypass the translation: {SkipTranslationMarker}, otherwise ");
+                            promptBuilder.AppendLine("- Keep unchanged: keyboard keys, technical settings (VSync, Auto)");
+                            promptBuilder.AppendLine("- Translation must be correct in target language");
+                        }
+                        else
+                        {
+                            promptBuilder.AppendLine("- Keep it concise for UI, preserve tone and style");
+                            promptBuilder.AppendLine("- Preserve formatting tags and special characters");
+                            if (extractedNumbers != null && extractedNumbers.Count > 0)
+                            {
+                                promptBuilder.AppendLine("- IMPORTANT: Keep [v0], [v1], etc. placeholders exactly as-is");
+                            }
+                            promptBuilder.AppendLine("- Keep unchanged: keyboard keys, technical settings (VSync, Auto)");
                         }
                     }
                     else
                     {
-                        promptBuilder.Append($"You are a translator for a video game{gameCtx} to {targetLang}. ");
-                    }
+                        // Original format for non-strict mode
+                        promptBuilder.Append("Output ONLY the translation, nothing else. ");
 
-                    promptBuilder.Append("Output ONLY the translation, nothing else. ");
-
-                    if (textType == TextType.SingleWord)
-                    {
-                        // SingleWord: rules then "Translate this word:" with colon
-                        promptBuilder.Append("Keep unchanged: keyboard keys (Tab, Esc, Space...), technical settings (VSync, Auto). ");
-                        promptBuilder.Append("The translation must be understandable and structurally correct in the target language, taking into account the context of the game. ");
-                        promptBuilder.Append("Now, translate this word:");
-                    }
-                    else
-                    {
-                        // Phrase/Paragraph: full instructions (game context already in role)
-                        promptBuilder.Append("Keep it concise for UI. Preserve the original tone and style. ");
-                        promptBuilder.Append("The translation must be understandable and and structurally correct in the target language, taking into account the context of the game. ");
-                        promptBuilder.Append("Preserve formatting tags and special characters. ");
-                        if (extractedNumbers != null && extractedNumbers.Count > 0)
+                        if (textType == TextType.SingleWord)
                         {
-                            promptBuilder.Append("IMPORTANT: Keep [v0], [v1], etc. placeholders exactly as-is (they represent numbers). ");
+                            promptBuilder.Append("Keep unchanged: keyboard keys (Tab, Esc, Space...), technical settings (VSync, Auto). ");
+                            promptBuilder.Append("The translation must be understandable and structurally correct in the target language, taking into account the context of the game. ");
+                            promptBuilder.Append("Now, translate this word:");
                         }
-                        promptBuilder.Append("Keep unchanged: keyboard keys (Tab, Esc, Space...), technical settings (VSync, Auto as setting value). ");
+                        else
+                        {
+                            promptBuilder.Append("Keep it concise for UI. Preserve the original tone and style. ");
+                            promptBuilder.Append("The translation must be understandable and structurally correct in the target language, taking into account the context of the game. ");
+                            promptBuilder.Append("Preserve formatting tags and special characters. ");
+                            if (extractedNumbers != null && extractedNumbers.Count > 0)
+                            {
+                                promptBuilder.Append("IMPORTANT: Keep [v0], [v1], etc. placeholders exactly as-is (they represent numbers). ");
+                            }
+                            promptBuilder.Append("Keep unchanged: keyboard keys (Tab, Esc, Space...), technical settings (VSync, Auto as setting value). ");
+                        }
                     }
                 }
 

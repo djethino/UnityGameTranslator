@@ -1316,23 +1316,22 @@ namespace UnityGameTranslator.Core
                     promptBuilder.AppendLine("=== TRANSLATION RULES ===");
                     promptBuilder.AppendLine("- Output the translation only, no explanation");
                     promptBuilder.AppendLine("- Translation must be understandable and correct in target language");
+                    promptBuilder.AppendLine("- Keep it concise for UI (e.g. 'Start' → 'Démarrer', not 'Commencer la partie')");
+                    promptBuilder.AppendLine("- Keep technical terms unchanged: Ollama, API, URL, UUID, JSON, AI");
+                    promptBuilder.AppendLine("- Keep keyboard shortcuts as-is: Ctrl, Alt, Shift, F1-F12, Tab, Esc");
+
                     if (textType == TextType.SingleWord)
                     {
-                        promptBuilder.AppendLine("- Keep technical terms unchanged: Ollama, API, URL, UUID, JSON, AI");
-                        promptBuilder.AppendLine("- Keep keyboard shortcuts as-is: Ctrl, Alt, Shift, F1-F12, Tab, Esc");
                         promptBuilder.AppendLine();
                         promptBuilder.Append("Now, translate this word:");
                     }
                     else
                     {
-                        promptBuilder.AppendLine("- Keep it concise for UI, preserve tone and style");
                         promptBuilder.AppendLine("- Preserve formatting tags and special characters");
                         if (extractedNumbers != null && extractedNumbers.Count > 0)
                         {
                             promptBuilder.AppendLine("- IMPORTANT: Keep [v0], [v1], etc. placeholders exactly as-is");
                         }
-                        promptBuilder.AppendLine("- Keep technical terms unchanged: Ollama, API, URL, UUID, JSON, AI");
-                        promptBuilder.AppendLine("- Keep keyboard shortcuts as-is: Ctrl, Alt, Shift, F1-F12, Tab, Esc");
                     }
                 }
                 else
@@ -1364,22 +1363,21 @@ namespace UnityGameTranslator.Core
                     promptBuilder.AppendLine("=== TRANSLATION RULES ===");
                     promptBuilder.AppendLine("- Output the translation only, no explanation");
                     promptBuilder.AppendLine("- Translation must be correct in target language");
+                    promptBuilder.AppendLine("- Keep it concise for UI (e.g. 'Start' → 'Démarrer', not 'Commencer la partie')");
+                    promptBuilder.AppendLine("- Keep unchanged: keyboard keys (Tab, Esc, Space...), technical settings (VSync, Auto)");
 
                     if (textType == TextType.SingleWord)
                     {
-                        promptBuilder.AppendLine("- Keep unchanged: keyboard keys (Tab, Esc, Space...), technical settings (VSync, Auto)");
                         promptBuilder.AppendLine();
                         promptBuilder.Append("Now, translate this word:");
                     }
                     else
                     {
-                        promptBuilder.AppendLine("- Keep it concise for UI, preserve tone and style");
                         promptBuilder.AppendLine("- Preserve formatting tags and special characters");
                         if (extractedNumbers != null && extractedNumbers.Count > 0)
                         {
                             promptBuilder.AppendLine("- IMPORTANT: Keep [v0], [v1], etc. placeholders exactly as-is");
                         }
-                        promptBuilder.AppendLine("- Keep unchanged: keyboard keys (Tab, Esc, Space...), technical settings (VSync, Auto)");
                     }
                 }
 

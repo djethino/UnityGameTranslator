@@ -1378,6 +1378,7 @@ namespace UnityGameTranslator.Core
                         else
                         {
                             promptBuilder.AppendLine("- Keep it concise for UI, preserve tone and style");
+                            promptBuilder.AppendLine("- Translation must be correct in target language");
                             promptBuilder.AppendLine("- Preserve formatting tags and special characters");
                             if (extractedNumbers != null && extractedNumbers.Count > 0)
                             {

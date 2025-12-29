@@ -141,9 +141,26 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Clear any previous selection - user must select from search results
             _selectedGame = null;
 
-            // Initialize with system language as target
-            string systemLang = LanguageHelper.GetSystemLanguageName();
-            _targetSelector.SelectedLanguage = systemLang;
+            // Pre-select languages from Options if already configured (not "auto")
+            string configSource = TranslatorCore.Config.source_language;
+            string configTarget = TranslatorCore.Config.target_language;
+
+            // Source: use config if not auto, otherwise leave empty for user to select
+            if (!string.IsNullOrEmpty(configSource) && configSource.ToLower() != "auto")
+            {
+                _sourceSelector.SelectedLanguage = configSource;
+            }
+
+            // Target: use config if not auto, otherwise fall back to system language
+            if (!string.IsNullOrEmpty(configTarget) && configTarget.ToLower() != "auto")
+            {
+                _targetSelector.SelectedLanguage = configTarget;
+            }
+            else
+            {
+                string systemLang = LanguageHelper.GetSystemLanguageName();
+                _targetSelector.SelectedLanguage = systemLang;
+            }
 
             // Reset search state
             _gameSearchResults = null;

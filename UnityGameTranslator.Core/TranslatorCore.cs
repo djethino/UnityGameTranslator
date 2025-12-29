@@ -1342,7 +1342,7 @@ namespace UnityGameTranslator.Core
                         ? Config.game_context
                         : "video game UI, menus and dialogues";
 
-                    // Strict source language: put critical rule FIRST with clear structure
+                    // Strict source language filter: add CRITICAL RULE section first
                     if (Config.strict_source_language && sourceLang != null)
                     {
                         promptBuilder.AppendLine("=== CRITICAL RULE ===");
@@ -1350,65 +1350,36 @@ namespace UnityGameTranslator.Core
                         promptBuilder.AppendLine($"- If text is NOT in {sourceLang}: reply ONLY with exactly: {SkipTranslationMarker}");
                         promptBuilder.AppendLine($"- If text IS in {sourceLang}: translate to {targetLang}");
                         promptBuilder.AppendLine();
-                        promptBuilder.AppendLine("=== CONTEXT ===");
-                        promptBuilder.AppendLine($"Translating: {gameCtx}");
+                    }
+
+                    // Context section
+                    promptBuilder.AppendLine("=== CONTEXT ===");
+                    if (sourceLang != null)
+                        promptBuilder.AppendLine($"Translating video game ({gameCtx}) from {sourceLang} to {targetLang}.");
+                    else
+                        promptBuilder.AppendLine($"Translating video game ({gameCtx}) to {targetLang}.");
+                    promptBuilder.AppendLine();
+
+                    // Translation rules section
+                    promptBuilder.AppendLine("=== TRANSLATION RULES ===");
+                    promptBuilder.AppendLine("- Output the translation only, no explanation");
+                    promptBuilder.AppendLine("- Translation must be correct in target language");
+
+                    if (textType == TextType.SingleWord)
+                    {
+                        promptBuilder.AppendLine("- Keep unchanged: keyboard keys (Tab, Esc, Space...), technical settings (VSync, Auto)");
                         promptBuilder.AppendLine();
-                        promptBuilder.AppendLine("=== TRANSLATION RULES ===");
-                    }
-                    else if (sourceLang != null)
-                    {
-                        promptBuilder.Append($"You are a translator for a video game ({gameCtx}) from {sourceLang} to {targetLang}. ");
+                        promptBuilder.Append("Now, translate this word:");
                     }
                     else
                     {
-                        promptBuilder.Append($"You are a translator for a video game ({gameCtx}) to {targetLang}. ");
-                    }
-
-                    if (Config.strict_source_language && sourceLang != null)
-                    {
-                        // Structured format for strict mode
-                        promptBuilder.AppendLine("- Output the translation only, no explanation");
-                        if (textType == TextType.SingleWord)
+                        promptBuilder.AppendLine("- Keep it concise for UI, preserve tone and style");
+                        promptBuilder.AppendLine("- Preserve formatting tags and special characters");
+                        if (extractedNumbers != null && extractedNumbers.Count > 0)
                         {
-                            promptBuilder.AppendLine("- Keep unchanged: keyboard keys, technical settings (VSync, Auto)");
-                            promptBuilder.AppendLine("- Translation must be correct in target language");
-                            promptBuilder.AppendLine();
-                            promptBuilder.Append("Now, translate this word:");
+                            promptBuilder.AppendLine("- IMPORTANT: Keep [v0], [v1], etc. placeholders exactly as-is");
                         }
-                        else
-                        {
-                            promptBuilder.AppendLine("- Keep it concise for UI, preserve tone and style");
-                            promptBuilder.AppendLine("- Translation must be correct in target language");
-                            promptBuilder.AppendLine("- Preserve formatting tags and special characters");
-                            if (extractedNumbers != null && extractedNumbers.Count > 0)
-                            {
-                                promptBuilder.AppendLine("- IMPORTANT: Keep [v0], [v1], etc. placeholders exactly as-is");
-                            }
-                            promptBuilder.AppendLine("- Keep unchanged: keyboard keys, technical settings (VSync, Auto)");
-                        }
-                    }
-                    else
-                    {
-                        // Original format for non-strict mode
-                        promptBuilder.Append("Output ONLY the translation, nothing else. ");
-
-                        if (textType == TextType.SingleWord)
-                        {
-                            promptBuilder.Append("Keep unchanged: keyboard keys (Tab, Esc, Space...), technical settings (VSync, Auto). ");
-                            promptBuilder.Append("The translation must be understandable and structurally correct in the target language, taking into account the context of the game. ");
-                            promptBuilder.Append("Now, translate this word:");
-                        }
-                        else
-                        {
-                            promptBuilder.Append("Keep it concise for UI. Preserve the original tone and style. ");
-                            promptBuilder.Append("The translation must be understandable and structurally correct in the target language, taking into account the context of the game. ");
-                            promptBuilder.Append("Preserve formatting tags and special characters. ");
-                            if (extractedNumbers != null && extractedNumbers.Count > 0)
-                            {
-                                promptBuilder.Append("IMPORTANT: Keep [v0], [v1], etc. placeholders exactly as-is (they represent numbers). ");
-                            }
-                            promptBuilder.Append("Keep unchanged: keyboard keys (Tab, Esc, Space...), technical settings (VSync, Auto as setting value). ");
-                        }
+                        promptBuilder.AppendLine("- Keep unchanged: keyboard keys (Tab, Esc, Space...), technical settings (VSync, Auto)");
                     }
                 }
 

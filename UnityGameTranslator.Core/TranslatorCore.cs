@@ -1337,8 +1337,10 @@ namespace UnityGameTranslator.Core
                 }
                 else
                 {
-                    // Game context prompt
-                    string gameCtx = !string.IsNullOrEmpty(Config.game_context) ? $"({Config.game_context})" : "";
+                    // Game context prompt - default to generic game context if not specified
+                    string gameCtx = !string.IsNullOrEmpty(Config.game_context)
+                        ? Config.game_context
+                        : "video game UI, menus and dialogues";
 
                     // Strict source language: put critical rule FIRST with clear structure
                     if (Config.strict_source_language && sourceLang != null)
@@ -1349,18 +1351,17 @@ namespace UnityGameTranslator.Core
                         promptBuilder.AppendLine($"- If text IS in {sourceLang}: translate to {targetLang}");
                         promptBuilder.AppendLine();
                         promptBuilder.AppendLine("=== CONTEXT ===");
-                        if (!string.IsNullOrEmpty(gameCtx))
-                            promptBuilder.AppendLine($"Video game: {gameCtx}");
+                        promptBuilder.AppendLine($"Translating: {gameCtx}");
                         promptBuilder.AppendLine();
                         promptBuilder.AppendLine("=== TRANSLATION RULES ===");
                     }
                     else if (sourceLang != null)
                     {
-                        promptBuilder.Append($"You are a translator for a video game {gameCtx} from {sourceLang} to {targetLang}. ");
+                        promptBuilder.Append($"You are a translator for a video game ({gameCtx}) from {sourceLang} to {targetLang}. ");
                     }
                     else
                     {
-                        promptBuilder.Append($"You are a translator for a video game {gameCtx} to {targetLang}. ");
+                        promptBuilder.Append($"You are a translator for a video game ({gameCtx}) to {targetLang}. ");
                     }
 
                     if (Config.strict_source_language && sourceLang != null)

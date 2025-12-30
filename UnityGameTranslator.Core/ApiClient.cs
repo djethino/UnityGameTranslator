@@ -38,7 +38,12 @@ namespace UnityGameTranslator.Core
 
         static ApiClient()
         {
-            client = new HttpClient();
+            // Disable automatic redirects to prevent token leakage via malicious redirects
+            var handler = new HttpClientHandler
+            {
+                AllowAutoRedirect = false
+            };
+            client = new HttpClient(handler);
             client.Timeout = TimeSpan.FromSeconds(30);
             client.DefaultRequestHeaders.Add("User-Agent", "UnityGameTranslator/1.0");
             client.DefaultRequestHeaders.Add("Accept", "application/json");

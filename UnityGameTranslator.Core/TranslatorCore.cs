@@ -505,6 +505,8 @@ namespace UnityGameTranslator.Core
             try
             {
                 string json = File.ReadAllText(CachePath);
+                // Normalize line endings to prevent key mismatches (Windows editors may add \r\n)
+                json = json.Replace("\r\n", "\n");
 
                 // Parse as JObject to handle metadata
                 var parsed = JObject.Parse(json);
@@ -619,6 +621,8 @@ namespace UnityGameTranslator.Core
             try
             {
                 string ancestorJson = File.ReadAllText(ancestorPath);
+                // Normalize line endings (consistency with main cache)
+                ancestorJson = ancestorJson.Replace("\r\n", "\n");
                 var ancestorParsed = JObject.Parse(ancestorJson);
                 AncestorCache = new Dictionary<string, TranslationEntry>();
 
@@ -869,6 +873,8 @@ namespace UnityGameTranslator.Core
 
             try
             {
+                // Normalize line endings for consistent key handling
+                jsonContent = jsonContent.Replace("\r\n", "\n");
                 var parsed = JObject.Parse(jsonContent);
 
                 foreach (var prop in parsed.Properties())

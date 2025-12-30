@@ -272,13 +272,24 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
                 else if (hasLocalChanges)
                 {
-                    message = $"You have {TranslatorCore.LocalChangesCount} local changes to upload!";
-                    buttonText = "Upload";
+                    // Use same terminology as MainPanel: Update for owner, Fork for non-owner
+                    bool isOwner = serverState?.IsOwner == true;
+                    if (isOwner)
+                    {
+                        message = $"You have {TranslatorCore.LocalChangesCount} local changes to update!";
+                        buttonText = "Update";
+                    }
+                    else
+                    {
+                        message = $"You have {TranslatorCore.LocalChangesCount} local changes to fork!";
+                        buttonText = "Fork";
+                    }
                 }
                 else
                 {
+                    // Fallback for edge case (shouldn't happen with current logic)
                     message = $"{TranslatorCore.LocalChangesCount} local changes";
-                    buttonText = "Upload";
+                    buttonText = "Sync";
                 }
 
                 _syncLabel.text = message;

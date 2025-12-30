@@ -35,6 +35,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private ButtonRef _uploadBtn;
         private Text _uploadHintLabel;
         private ButtonRef _reviewOnWebsiteBtn;
+        private ButtonRef _compareWithServerBtn;
         private ButtonRef _forkBtn;
 
         // UI references - Community Translations section
@@ -171,11 +172,17 @@ namespace UnityGameTranslator.Core.UI.Panels
             var rowLayout = roleActionsRow.GetComponent<HorizontalLayoutGroup>();
             if (rowLayout != null) rowLayout.childAlignment = TextAnchor.MiddleCenter;
 
-            // Review on Website button (Main only) - opens merge review page
-            _reviewOnWebsiteBtn = CreateSecondaryButton(roleActionsRow, "ReviewBtn", "Review on Website", 150);
+            // Review on Website button (Main only) - opens page to review branches
+            _reviewOnWebsiteBtn = CreateSecondaryButton(roleActionsRow, "ReviewBtn", "Review Branches", 130);
             UIStyles.SetBackground(_reviewOnWebsiteBtn.Component.gameObject, UIStyles.ButtonLink);
             _reviewOnWebsiteBtn.OnClick += OnReviewOnWebsiteClicked;
             RegisterUIText(_reviewOnWebsiteBtn.ButtonText);
+
+            // Compare with Server button (Main and Branch) - opens diff view
+            _compareWithServerBtn = CreateSecondaryButton(roleActionsRow, "CompareBtn", "Compare", 100);
+            UIStyles.SetBackground(_compareWithServerBtn.Component.gameObject, UIStyles.ButtonSecondary);
+            _compareWithServerBtn.OnClick += OnCompareWithServerClicked;
+            RegisterUIText(_compareWithServerBtn.ButtonText);
 
             // Fork button (Branch only) - creates independent fork
             _forkBtn = CreateSecondaryButton(roleActionsRow, "ForkBtn", "Fork", 80);
@@ -237,8 +244,11 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         public override void SetActive(bool active)
         {
+            // Only refresh when transitioning from inactive to active
+            // (PanelDragger calls SetActive(true) every frame when mouse is in drag/resize area)
+            bool wasActive = Enabled;
             base.SetActive(active);
-            if (active)
+            if (active && !wasActive)
             {
                 RefreshUI();
             }
@@ -409,7 +419,17 @@ namespace UnityGameTranslator.Core.UI.Panels
             string uploadAction;
             string uploadHint;
 
-            if (isInSync)
+            // Check for merge conflict first (highest priority action)
+            bool needsMerge = TranslatorUIManager.HasPendingUpdate &&
+                TranslatorUIManager.PendingUpdateDirection == UpdateDirection.Merge;
+
+            if (needsMerge)
+            {
+                // Merge needed - show merge button with clear explanation
+                uploadAction = "Merge Translation";
+                uploadHint = $"Conflict detected! You have {TranslatorCore.LocalChangesCount} local changes AND server was updated. Click to resolve.";
+            }
+            else if (isInSync)
             {
                 // In sync - no need to show upload button
                 uploadAction = "Up to date";
@@ -460,13 +480,22 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
 
             // Role-specific buttons visibility
-            if (_reviewOnWebsiteBtn != null && _forkBtn != null)
+            if (_reviewOnWebsiteBtn != null && _compareWithServerBtn != null && _forkBtn != null)
             {
                 bool isMain = existsOnServer && state.Role == TranslationRole.Main;
                 bool isBranch = existsOnServer && state.Role == TranslationRole.Branch;
+                bool hasBranches = state != null && state.BranchesCount > 0;
 
-                // Review on Website - only for Main role
-                _reviewOnWebsiteBtn.Component.gameObject.SetActive(isMain);
+                // Review Branches - only for Main role when there are branches to review
+                _reviewOnWebsiteBtn.Component.gameObject.SetActive(isMain && hasBranches);
+
+                // Compare with Server - for Main or Branch when there are local changes
+                _compareWithServerBtn.Component.gameObject.SetActive(existsOnServer && hasLocalChanges);
+                // Compare button enabled only when logged in
+                if (existsOnServer && hasLocalChanges)
+                {
+                    _compareWithServerBtn.Component.interactable = isLoggedIn;
+                }
 
                 // Fork button - only for Branch role
                 _forkBtn.Component.gameObject.SetActive(isBranch);
@@ -508,9 +537,19 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
         }
 
-        private void OnUploadClicked()
+        private async void OnUploadClicked()
         {
-            TranslatorUIManager.UploadPanel?.SetActive(true);
+            // Check if merge is needed - open MergePanel instead of UploadPanel
+            if (TranslatorUIManager.HasPendingUpdate &&
+                TranslatorUIManager.PendingUpdateDirection == UpdateDirection.Merge)
+            {
+                // Start merge flow - download remote and show merge panel
+                await TranslatorUIManager.DownloadForMerge();
+            }
+            else
+            {
+                TranslatorUIManager.UploadPanel?.SetActive(true);
+            }
         }
 
         private void OnReviewOnWebsiteClicked()
@@ -548,6 +587,58 @@ namespace UnityGameTranslator.Core.UI.Panels
                 },
                 isDanger: true
             );
+        }
+
+        private async void OnCompareWithServerClicked()
+        {
+            // Compare local changes with server version (Main or Branch)
+            var serverState = TranslatorCore.ServerState;
+            if (serverState?.SiteId == null)
+            {
+                TranslatorCore.LogWarning("[MainPanel] Cannot compare: no server translation");
+                return;
+            }
+
+            // Disable button while loading
+            if (_compareWithServerBtn != null)
+            {
+                _compareWithServerBtn.Component.interactable = false;
+                _compareWithServerBtn.ButtonText.text = "Loading...";
+            }
+
+            try
+            {
+                // Call API to init merge preview with local content
+                var result = await ApiClient.InitMergePreview(
+                    serverState.SiteId.Value,
+                    TranslatorCore.TranslationCache
+                );
+
+                if (result.Success && !string.IsNullOrEmpty(result.Url))
+                {
+                    string fullUrl = ApiClient.GetMergePreviewFullUrl(result.Url);
+                    TranslatorCore.LogInfo($"[MainPanel] Opening compare page: {fullUrl}");
+                    Application.OpenURL(fullUrl);
+                }
+                else
+                {
+                    TranslatorCore.LogWarning($"[MainPanel] Failed to init merge preview: {result.Error}");
+                    // Could show a toast/notification here
+                }
+            }
+            catch (System.Exception e)
+            {
+                TranslatorCore.LogWarning($"[MainPanel] Compare error: {e.Message}");
+            }
+            finally
+            {
+                // Re-enable button
+                if (_compareWithServerBtn != null)
+                {
+                    _compareWithServerBtn.Component.interactable = true;
+                    _compareWithServerBtn.ButtonText.text = "Compare";
+                }
+            }
         }
 
         private void RefreshCommunitySection()

@@ -174,7 +174,18 @@ namespace UnityGameTranslator.Core.UI.Panels
             RegisterUIText(_backBtn.ButtonText);
 
             _uploadBtn = CreatePrimaryButton(buttonRow, "UploadBtn", "Upload");
-            _uploadBtn.OnClick += DoUpload;
+            _uploadBtn.OnClick += () =>
+            {
+                try
+                {
+                    TranslatorCore.LogInfo("[UploadPanel] Upload button clicked!");
+                    DoUpload();
+                }
+                catch (Exception e)
+                {
+                    TranslatorCore.LogError($"[UploadPanel] Exception in click handler: {e}");
+                }
+            };
             RegisterUIText(_uploadBtn.ButtonText);
         }
 
@@ -192,12 +203,17 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         public override void SetActive(bool active)
         {
+            // Only trigger logic when transitioning from inactive to active
+            // (PanelDragger calls SetActive(true) every frame when mouse is in drag/resize area)
+            bool wasActive = Enabled;
+
             // Skip reset if setup was just completed (ContinueAfterSetup sets _setupComplete = true before calling SetActive)
             bool skipReset = active && _setupComplete;
 
             base.SetActive(active);
 
-            if (active && !skipReset)
+            // Only run on first activation, not repeated SetActive(true) calls
+            if (active && !wasActive && !skipReset)
             {
                 // Reset setup state when opening fresh
                 _setupComplete = false;
@@ -238,6 +254,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private async void CheckUploadMode()
         {
+            TranslatorCore.LogInfo("[UploadPanel] CheckUploadMode started");
             _isChecking = true;
             _statusLabel.text = "Checking...";
             _statusLabel.color = UIStyles.StatusWarning;
@@ -263,6 +280,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                     return;
                 }
 
+                TranslatorCore.LogInfo($"[UploadPanel] CheckUuid result: Exists={result.Exists}, IsOwner={result.IsOwner}, Success={result.Success}");
+
                 if (result.Exists)
                 {
                     if (result.IsOwner)
@@ -270,6 +289,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                         // UPDATE mode
                         _uploadMode = UploadMode.Update;
                         _titleLabel.text = "Update Translation";
+                        TranslatorCore.LogInfo("[UploadPanel] Mode set to UPDATE");
 
                         // Update ServerState from API response
                         // Role comes from API (Main if owner, Branch if contributor)
@@ -302,6 +322,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                         _statusLabel.text = "";
                         _isChecking = false;
                         _uploadBtn.Component.interactable = true;
+                        TranslatorCore.LogInfo($"[UploadPanel] UPDATE mode ready - button interactable={_uploadBtn.Component.interactable}, isChecking={_isChecking}");
                     }
                     else
                     {
@@ -379,10 +400,17 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private async void DoUpload()
         {
-            if (_isUploading || _isChecking) return;
+            TranslatorCore.LogInfo($"[UploadPanel] DoUpload called - isUploading={_isUploading}, isChecking={_isChecking}, mode={_uploadMode}");
+
+            if (_isUploading || _isChecking)
+            {
+                TranslatorCore.LogWarning("[UploadPanel] DoUpload blocked - already uploading or checking");
+                return;
+            }
 
             if (string.IsNullOrEmpty(TranslatorCore.Config.api_token))
             {
+                TranslatorCore.LogWarning("[UploadPanel] DoUpload blocked - no API token");
                 _statusLabel.text = "Please login first";
                 _statusLabel.color = UIStyles.StatusError;
                 return;
@@ -428,7 +456,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                     Notes = notes
                 };
 
+                TranslatorCore.LogInfo($"[UploadPanel] Calling ApiClient.UploadTranslation...");
                 var result = await ApiClient.UploadTranslation(request);
+                TranslatorCore.LogInfo($"[UploadPanel] Upload result: Success={result.Success}, Id={result.TranslationId}, Error={result.Error}");
 
                 if (result.Success)
                 {

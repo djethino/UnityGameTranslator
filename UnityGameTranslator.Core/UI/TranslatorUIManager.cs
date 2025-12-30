@@ -282,10 +282,12 @@ namespace UnityGameTranslator.Core.UI
                     bool serverChanged = !string.IsNullOrEmpty(lastSyncedHash) &&
                                          result.FileHash != lastSyncedHash;
 
-                    // If no LastSyncedHash, we can't tell if server changed - assume it did if hash differs
+                    // If no LastSyncedHash, we can't tell definitively what changed
+                    // If we have local changes AND server hash differs, assume potential conflict to be safe
+                    // This ensures merge dialog is shown rather than accidentally overwriting server changes
                     if (string.IsNullOrEmpty(lastSyncedHash))
                     {
-                        serverChanged = !hasLocalChanges;
+                        serverChanged = hasLocalChanges;
                     }
 
                     // Determine direction based on what changed

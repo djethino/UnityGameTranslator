@@ -96,6 +96,17 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             UIStyles.CreateSpacer(card, 5);
 
+            // Explanation
+            var explanationLabel = UIFactory.CreateLabel(card, "Explanation",
+                "Both you and the server made changes. Choose which version to keep for each conflict:",
+                TextAnchor.MiddleLeft);
+            explanationLabel.fontSize = UIStyles.FontSizeSmall;
+            explanationLabel.color = UIStyles.TextMuted;
+            UIFactory.SetLayoutElement(explanationLabel.gameObject, minHeight: UIStyles.RowHeightMedium);
+            RegisterUIText(explanationLabel);
+
+            UIStyles.CreateSpacer(card, 3);
+
             // Summary
             _summaryLabel = UIFactory.CreateLabel(card, "Summary", "Conflicts to resolve:", TextAnchor.MiddleLeft);
             _summaryLabel.fontSize = UIStyles.FontSizeNormal;
@@ -117,11 +128,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             var bulkLayout = bulkRow.GetComponent<HorizontalLayoutGroup>();
             if (bulkLayout != null) bulkLayout.childAlignment = TextAnchor.MiddleCenter; // Center the buttons
 
-            var useAllLocalBtn = CreateSecondaryButton(bulkRow, "UseAllLocalBtn", "Use All Local", 110);
+            var useAllLocalBtn = CreateSecondaryButton(bulkRow, "UseAllLocalBtn", "Keep My Changes", 120);
             useAllLocalBtn.OnClick += UseAllLocal;
             RegisterUIText(useAllLocalBtn.ButtonText);
 
-            var useAllRemoteBtn = CreateSecondaryButton(bulkRow, "UseAllRemoteBtn", "Use All Remote", 115);
+            var useAllRemoteBtn = CreateSecondaryButton(bulkRow, "UseAllRemoteBtn", "Take Server", 100);
             useAllRemoteBtn.OnClick += UseAllRemote;
             RegisterUIText(useAllRemoteBtn.ButtonText);
 

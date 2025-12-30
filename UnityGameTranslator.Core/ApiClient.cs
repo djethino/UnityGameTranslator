@@ -819,6 +819,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static async Task<UploadResult> UploadTranslation(UploadRequest request)
         {
+            TranslatorCore.LogInfo($"[ApiClient] UploadTranslation called - game={request.GameName}, type={request.Type}");
             try
             {
                 var payload = new
@@ -839,7 +840,9 @@ namespace UnityGameTranslator.Core
                     "application/json"
                 );
 
+                TranslatorCore.LogInfo($"[ApiClient] POSTing to {DefaultBaseUrl}/translations...");
                 var response = await client.PostAsync($"{DefaultBaseUrl}/translations", content);
+                TranslatorCore.LogInfo($"[ApiClient] Response: {(int)response.StatusCode} {response.StatusCode}");
 
                 string json = await response.Content.ReadAsStringAsync();
                 var data = JObject.Parse(json);
@@ -910,6 +913,91 @@ namespace UnityGameTranslator.Core
                 TranslatorCore.LogWarning($"[ApiClient] Upload error: {e.Message}");
                 return new UploadResult { Success = false, Error = e.Message };
             }
+        }
+
+        #endregion
+
+        #region Merge Preview
+
+        /// <summary>
+        /// Initialize a merge preview session.
+        /// Sends local content to server and returns a URL to open in browser.
+        /// Requires authentication.
+        /// </summary>
+        public static async Task<MergePreviewInitResult> InitMergePreview(int translationId, Dictionary<string, TranslationEntry> localContent)
+        {
+            try
+            {
+                // Convert TranslationEntry to simple format for API
+                var contentForApi = new Dictionary<string, object>();
+                foreach (var kvp in localContent)
+                {
+                    if (kvp.Key.StartsWith("_")) continue; // Skip metadata
+
+                    contentForApi[kvp.Key] = new
+                    {
+                        v = kvp.Value.Value,
+                        t = kvp.Value.Tag
+                    };
+                }
+
+                var payload = new
+                {
+                    translation_id = translationId,
+                    local_content = contentForApi
+                };
+
+                var content = new StringContent(
+                    JsonConvert.SerializeObject(payload),
+                    Encoding.UTF8,
+                    "application/json"
+                );
+
+                TranslatorCore.LogInfo($"[ApiClient] Initiating merge preview for translation #{translationId}...");
+                var response = await client.PostAsync($"{DefaultBaseUrl}/merge-preview/init", content);
+
+                string json = await response.Content.ReadAsStringAsync();
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    var errorData = JObject.Parse(json);
+                    string errorMsg = errorData["error"]?.Value<string>()
+                        ?? errorData["message"]?.Value<string>()
+                        ?? $"HTTP {response.StatusCode}";
+
+                    TranslatorCore.LogWarning($"[ApiClient] Merge preview init failed: {errorMsg}");
+                    return new MergePreviewInitResult { Success = false, Error = errorMsg };
+                }
+
+                var data = JObject.Parse(json);
+
+                return new MergePreviewInitResult
+                {
+                    Success = true,
+                    Token = data["token"]?.Value<string>(),
+                    Url = data["url"]?.Value<string>(),
+                    ExpiresAt = data["expires_at"]?.Value<string>()
+                };
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogWarning($"[ApiClient] Merge preview init error: {e.Message}");
+                return new MergePreviewInitResult { Success = false, Error = e.Message };
+            }
+        }
+
+        /// <summary>
+        /// Get the full URL for a merge preview result
+        /// </summary>
+        public static string GetMergePreviewFullUrl(string relativeUrl)
+        {
+            if (string.IsNullOrEmpty(relativeUrl)) return null;
+            // URL from API may be relative, make it absolute
+            if (relativeUrl.StartsWith("/"))
+            {
+                return $"{WebsiteBaseUrl}{relativeUrl}";
+            }
+            return relativeUrl;
         }
 
         #endregion
@@ -1087,6 +1175,18 @@ namespace UnityGameTranslator.Core
         /// <summary>Number of validated entries (tag V)</summary>
         public int ValidatedCount { get; set; }
         public string UpdatedAt { get; set; }
+    }
+
+    public class MergePreviewInitResult
+    {
+        public bool Success { get; set; }
+        public string Error { get; set; }
+        /// <summary>Token for the merge preview session</summary>
+        public string Token { get; set; }
+        /// <summary>URL to open in browser (may be relative)</summary>
+        public string Url { get; set; }
+        /// <summary>ISO8601 expiration timestamp</summary>
+        public string ExpiresAt { get; set; }
     }
 
     #endregion

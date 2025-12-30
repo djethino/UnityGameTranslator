@@ -119,6 +119,7 @@ namespace UnityGameTranslator.Core.UI
         public static readonly Color ItemBackground = new Color(0.15f, 0.15f, 0.15f, 0.8f);
         public static readonly Color ItemBackgroundHover = new Color(0.2f, 0.2f, 0.22f, 0.85f);
         public static readonly Color ItemBackgroundSelected = new Color(0.2f, 0.35f, 0.5f, 0.9f);
+        public static readonly Color ItemBackgroundLineage = new Color(0.15f, 0.25f, 0.2f, 0.85f);  // Subtle teal for "your lineage"
 
         // Notification box colors (for status overlays, alerts)
         public static readonly Color NotificationSuccess = new Color(0.15f, 0.35f, 0.15f, 0.95f);
@@ -869,6 +870,74 @@ namespace UnityGameTranslator.Core.UI
             {
                 TranslatorCore.Adapter?.LogWarning($"[UIStyles] Failed to add hover effect: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// Creates a collapsible section with clickable header and content container.
+        /// Use SetCollapsibleState to toggle visibility.
+        /// </summary>
+        /// <param name="parent">Parent container</param>
+        /// <param name="name">Base name for UI elements</param>
+        /// <param name="title">Section title text</param>
+        /// <param name="initiallyExpanded">Whether the section starts expanded</param>
+        /// <returns>Tuple with (container, header, iconLabel, titleLabel, content)</returns>
+        public static (GameObject container, GameObject header, Text iconLabel, Text titleLabel, GameObject content)
+            CreateCollapsibleSection(GameObject parent, string name, string title, bool initiallyExpanded = true)
+        {
+            // Main container
+            var container = UIFactory.CreateVerticalGroup(parent, name + "Section", false, false, true, true, 0);
+            UIFactory.SetLayoutElement(container, flexibleWidth: 9999);
+
+            // Clickable header row
+            var header = UIFactory.CreateHorizontalGroup(container, name + "Header", false, false, true, true, SmallSpacing);
+            UIFactory.SetLayoutElement(header, minHeight: RowHeightMedium, flexibleWidth: 9999);
+            SetBackground(header, SectionBackground);
+
+            var headerLayout = header.GetComponent<HorizontalLayoutGroup>();
+            if (headerLayout != null)
+            {
+                headerLayout.padding = new RectOffset(10, 10, 5, 5);
+                headerLayout.childAlignment = TextAnchor.MiddleLeft;
+            }
+
+            // Collapse/expand icon
+            var iconLabel = UIFactory.CreateLabel(header, name + "Icon", initiallyExpanded ? "▼" : "►", TextAnchor.MiddleCenter);
+            iconLabel.color = TextSecondary;
+            iconLabel.fontSize = FontSizeSmall;
+            UIFactory.SetLayoutElement(iconLabel.gameObject, minWidth: 20);
+
+            // Title label
+            var titleLabel = UIFactory.CreateLabel(header, name + "Title", title, TextAnchor.MiddleLeft);
+            titleLabel.color = TextSecondary;
+            titleLabel.fontStyle = FontStyle.Bold;
+            titleLabel.fontSize = FontSizeNormal;
+            UIFactory.SetLayoutElement(titleLabel.gameObject, flexibleWidth: 9999);
+
+            // Make header clickable (button will be added by caller to wire up toggle)
+            var headerBtn = header.AddComponent<Button>();
+            headerBtn.targetGraphic = header.GetComponent<Image>();
+
+            // Content container
+            var content = UIFactory.CreateVerticalGroup(container, name + "Content", false, false, true, true, SmallSpacing);
+            UIFactory.SetLayoutElement(content, flexibleWidth: 9999);
+            content.SetActive(initiallyExpanded);
+
+            var contentLayout = content.GetComponent<VerticalLayoutGroup>();
+            if (contentLayout != null)
+            {
+                contentLayout.padding = new RectOffset(10, 10, 10, 10);
+            }
+
+            return (container, header, iconLabel, titleLabel, content);
+        }
+
+        /// <summary>
+        /// Updates the visual state of a collapsible section.
+        /// </summary>
+        public static void SetCollapsibleState(Text iconLabel, GameObject content, bool expanded)
+        {
+            if (iconLabel != null) iconLabel.text = expanded ? "▼" : "►";
+            if (content != null) content.SetActive(expanded);
         }
 
         #endregion

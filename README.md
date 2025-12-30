@@ -255,9 +255,14 @@ extlibs/
 │   ├── Il2CppInterop.Runtime.dll
 │   ├── 0Harmony.dll
 │   └── UniverseLib.BIE.IL2CPP.Interop.dll
-└── MelonLoader/
+├── MelonLoader-Mono/
+│   ├── MelonLoader.dll
+│   ├── 0Harmony.dll
+│   └── UniverseLib.Mono.dll
+└── MelonLoader-IL2CPP/
     ├── MelonLoader.dll
     ├── 0Harmony.dll
+    ├── Il2CppInterop.Runtime.dll
     └── UniverseLib.ML.IL2CPP.Interop.dll
 ```
 
@@ -282,7 +287,8 @@ Or build individually:
 dotnet build UnityGameTranslator-BepInEx5/UnityGameTranslator.BepInEx5.csproj -c Release
 dotnet build UnityGameTranslator-BepInEx6-Mono/UnityGameTranslator.BepInEx6Mono.csproj -c Release
 dotnet build UnityGameTranslator-BepInEx6-IL2CPP/UnityGameTranslator.BepInEx6IL2CPP.csproj -c Release
-dotnet build UnityGameTranslator-MelonLoader/UnityGameTranslator.MelonLoader.csproj -c Release
+dotnet build UnityGameTranslator-MelonLoader-Mono/UnityGameTranslator.MelonLoaderMono.csproj -c Release
+dotnet build UnityGameTranslator-MelonLoader-IL2CPP/UnityGameTranslator.MelonLoaderIL2CPP.csproj -c Release
 ```
 
 Output DLLs are in each project's `bin/` folder.
@@ -322,7 +328,8 @@ UnityGameTranslator/
 ├── UnityGameTranslator-BepInEx5/       # BepInEx 5 adapter
 ├── UnityGameTranslator-BepInEx6-Mono/  # BepInEx 6 Mono adapter
 ├── UnityGameTranslator-BepInEx6-IL2CPP/# BepInEx 6 IL2CPP adapter
-├── UnityGameTranslator-MelonLoader/    # MelonLoader adapter
+├── UnityGameTranslator-MelonLoader-Mono/   # MelonLoader Mono adapter
+├── UnityGameTranslator-MelonLoader-IL2CPP/ # MelonLoader IL2CPP adapter
 ├── extlibs/                            # External DLLs (Unity, BepInEx, UniverseLib)
 ├── releases/                           # Build output
 └── Directory.Build.props               # Shared version

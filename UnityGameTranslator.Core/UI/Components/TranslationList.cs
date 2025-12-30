@@ -207,9 +207,14 @@ namespace UnityGameTranslator.Core.UI.Components
 
         private void CreateListItem(TranslationInfo translation, bool isLoggedIn, string currentUser)
         {
+            // Check if this translation is from the same lineage (UUID match)
+            bool isLineageMatch = TranslatorCore.IsUuidMatch(translation.FileUuid);
+
             var itemRow = UIFactory.CreateHorizontalGroup(_listContent, $"Item_{translation.Id}", false, false, true, true, 10);
             UIFactory.SetLayoutElement(itemRow, minHeight: UIStyles.CodeDisplayHeight, flexibleWidth: 9999);
-            UIStyles.SetBackground(itemRow, UIStyles.ItemBackground);
+
+            // Use highlight background for lineage match
+            UIStyles.SetBackground(itemRow, isLineageMatch ? UIStyles.ItemBackgroundLineage : UIStyles.ItemBackground);
 
             // Configure layout with padding and alignment
             var layout = itemRow.GetComponent<HorizontalLayoutGroup>();
@@ -244,14 +249,16 @@ namespace UnityGameTranslator.Core.UI.Components
                 infoLayout.childAlignment = TextAnchor.MiddleLeft;
             }
 
-            // Title row
+            // Title row with badges
             string label = $"{translation.TargetLanguage} by {translation.Uploader}";
             bool isOwnTranslation = isLoggedIn && !string.IsNullOrEmpty(currentUser) &&
                 translation.Uploader.Equals(currentUser, StringComparison.OrdinalIgnoreCase);
             if (isOwnTranslation) label += " (you)";
+            if (isLineageMatch && !isOwnTranslation) label += " [YOUR]";  // Badge for same lineage (not your upload)
 
             var titleLabel = UIFactory.CreateLabel(infoCol, "Title", label, TextAnchor.MiddleLeft);
             titleLabel.fontStyle = FontStyle.Bold;
+            if (isLineageMatch) titleLabel.color = UIStyles.StatusInfo;  // Highlight text color
             UIFactory.SetLayoutElement(titleLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
 
             // Details row

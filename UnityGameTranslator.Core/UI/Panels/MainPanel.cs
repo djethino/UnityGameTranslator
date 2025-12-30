@@ -7,7 +7,21 @@ using UnityGameTranslator.Core.UI.Components;
 namespace UnityGameTranslator.Core.UI.Panels
 {
     /// <summary>
+    /// Layout states for context-aware UI display.
+    /// </summary>
+    public enum LayoutState
+    {
+        NotLogged,           // Show login CTA + community list prominent
+        NoLocal,             // Show download prominent
+        OwnerMain,           // Status + Update + Review Branches
+        OwnerBranch,         // Status + Upload + Fork option
+        ContributorSameUuid, // Contribute/Download/Fork choice (3 buttons)
+        VisitorDiffUuid      // Download with lineage warning
+    }
+
+    /// <summary>
     /// Main settings panel. Shows translation status, account info, sync status, and action buttons.
+    /// Context-aware layout adapts to user state.
     /// </summary>
     public class MainPanel : TranslatorPanelBase
     {
@@ -23,7 +37,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         private Text _accountLabel;
         private ButtonRef _loginLogoutBtn;
 
-        // UI references - Translation info section
+        // UI references - Translation info section (legacy, hidden when StatusCard is shown)
+        private GameObject _translationInfoSection;
         private Text _entriesLabel;
         private Text _targetLabel;
         private Text _sourceLabel;
@@ -44,6 +59,18 @@ namespace UnityGameTranslator.Core.UI.Panels
         private ButtonRef _searchBtn;
         private TranslationList _translationList;
         private ButtonRef _downloadBtn;
+
+        // UI references - Context-aware sections
+        private StatusCard _statusCard;
+        private GameObject _loginCTASection;
+        private ButtonRef _loginCTABtn;
+        private GameObject _statusSection;
+        private Text _communityCollapseIcon;
+        private GameObject _communityContent;
+        private bool _isCommunityExpanded = true;
+
+        // Current layout state (cached for efficiency)
+        private LayoutState _currentLayoutState = LayoutState.NotLogged;
 
         public MainPanel(UIBase owner) : base(owner)
         {
@@ -66,22 +93,30 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             UIStyles.CreateSpacer(card, 5);
 
-            // Account Section
+            // Account Section (always visible, compact)
             CreateAccountSection(card);
 
             UIStyles.CreateSpacer(card, 10);
 
-            // Current Translation Info Section
+            // Login CTA Section (only visible when not logged in)
+            CreateLoginCTASection(card);
+
+            // Status Section with StatusCard (visible when logged in + has local)
+            CreateStatusSection(card);
+
+            UIStyles.CreateSpacer(card, 5);
+
+            // Legacy Translation Info Section (kept for backward compatibility, will be hidden when StatusCard is shown)
             CreateTranslationInfoSection(card);
 
             UIStyles.CreateSpacer(card, 10);
 
-            // Community Translations Section (online mode only)
+            // Community Translations Section (collapsible, online mode only)
             CreateCommunitySection(card);
 
             UIStyles.CreateSpacer(card, 10);
 
-            // Actions Section
+            // Actions Section (context-dependent)
             CreateActionsSection(card);
 
             // Bottom buttons - in fixed footer (outside scroll)
@@ -116,12 +151,66 @@ namespace UnityGameTranslator.Core.UI.Panels
             RegisterUIText(_loginLogoutBtn.ButtonText);
         }
 
-        private void CreateTranslationInfoSection(GameObject parent)
+        private void CreateLoginCTASection(GameObject parent)
         {
-            var sectionTitle = UIStyles.CreateSectionTitle(parent, "TranslationSectionLabel", "Current Translation");
+            // Login CTA - prominent call-to-action for not logged in users
+            _loginCTASection = UIFactory.CreateVerticalGroup(parent, "LoginCTASection", false, false, true, true, UIStyles.SmallSpacing);
+            UIFactory.SetLayoutElement(_loginCTASection, flexibleWidth: 9999);
+
+            var ctaCard = UIStyles.CreateAdaptiveCard(_loginCTASection, "CTACard", PanelWidth - 60);
+            UIStyles.SetBackground(ctaCard, UIStyles.SectionBackground);
+
+            var ctaTitle = UIFactory.CreateLabel(ctaCard, "CTATitle", "Login to sync your translations", TextAnchor.MiddleCenter);
+            ctaTitle.fontStyle = FontStyle.Bold;
+            ctaTitle.fontSize = UIStyles.FontSizeNormal;
+            ctaTitle.color = UIStyles.TextPrimary;
+            UIFactory.SetLayoutElement(ctaTitle.gameObject, minHeight: UIStyles.RowHeightMedium);
+            RegisterUIText(ctaTitle);
+
+            var ctaDesc = UIFactory.CreateLabel(ctaCard, "CTADesc",
+                "Sync your work across devices and contribute to community translations.",
+                TextAnchor.MiddleCenter);
+            ctaDesc.fontSize = UIStyles.FontSizeSmall;
+            ctaDesc.color = UIStyles.TextSecondary;
+            UIFactory.SetLayoutElement(ctaDesc.gameObject, minHeight: UIStyles.RowHeightMedium);
+            RegisterUIText(ctaDesc);
+
+            UIStyles.CreateSpacer(ctaCard, 5);
+
+            var ctaBtnRow = UIStyles.CreateFormRow(ctaCard, "CTABtnRow", UIStyles.RowHeightLarge, 0);
+            var rowLayout = ctaBtnRow.GetComponent<HorizontalLayoutGroup>();
+            if (rowLayout != null) rowLayout.childAlignment = TextAnchor.MiddleCenter;
+
+            _loginCTABtn = CreatePrimaryButton(ctaBtnRow, "CTALoginBtn", "Create Account / Login", 200);
+            UIStyles.SetBackground(_loginCTABtn.Component.gameObject, UIStyles.ButtonSuccess);
+            _loginCTABtn.OnClick += () => TranslatorUIManager.LoginPanel?.SetActive(true);
+            RegisterUIText(_loginCTABtn.ButtonText);
+        }
+
+        private void CreateStatusSection(GameObject parent)
+        {
+            // Status section - shows sync status using StatusCard widget
+            _statusSection = UIFactory.CreateVerticalGroup(parent, "StatusSection", false, false, true, true, 0);
+            UIFactory.SetLayoutElement(_statusSection, flexibleWidth: 9999);
+
+            var sectionTitle = UIStyles.CreateSectionTitle(_statusSection, "StatusSectionLabel", "Current Translation");
             RegisterUIText(sectionTitle);
 
-            var infoBox = CreateSection(parent, "TranslationBox");
+            // Create StatusCard widget
+            _statusCard = new StatusCard();
+            _statusCard.CreateUI(_statusSection);
+        }
+
+        private void CreateTranslationInfoSection(GameObject parent)
+        {
+            // Wrap in container for visibility control (legacy section, hidden when StatusCard is shown)
+            _translationInfoSection = UIFactory.CreateVerticalGroup(parent, "TranslationInfoSection", false, false, true, true, 0);
+            UIFactory.SetLayoutElement(_translationInfoSection, flexibleWidth: 9999);
+
+            var sectionTitle = UIStyles.CreateSectionTitle(_translationInfoSection, "TranslationSectionLabel", "Current Translation");
+            RegisterUIText(sectionTitle);
+
+            var infoBox = CreateSection(_translationInfoSection, "TranslationBox");
 
             _entriesLabel = UIFactory.CreateLabel(infoBox, "EntriesLabel", "Entries: 0", TextAnchor.MiddleLeft);
             _entriesLabel.color = UIStyles.TextPrimary;
@@ -193,17 +282,25 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private void CreateCommunitySection(GameObject parent)
         {
-            // Wrap entire section to toggle visibility based on online mode
-            _communitySection = UIFactory.CreateVerticalGroup(parent, "CommunitySection", false, false, true, true, 0);
-            UIFactory.SetLayoutElement(_communitySection, flexibleWidth: 9999);
+            // Use collapsible section for community translations
+            var (container, header, iconLabel, titleLabel, content) = UIStyles.CreateCollapsibleSection(
+                parent, "Community", "Community Translations", initiallyExpanded: true);
 
-            var sectionTitle = UIStyles.CreateSectionTitle(_communitySection, "CommunitySectionLabel", "Community Translations");
-            RegisterUIText(sectionTitle);
+            _communitySection = container;
+            _communityCollapseIcon = iconLabel;
+            _communityContent = content;
 
-            var communityBox = CreateSection(_communitySection, "CommunityBox");
+            RegisterUIText(titleLabel);
+
+            // Wire up header click to toggle collapse (using UIHelpers for IL2CPP compatibility)
+            var headerBtn = header.GetComponent<Button>();
+            if (headerBtn != null)
+            {
+                UIHelpers.AddButtonListener(headerBtn, OnCommunityHeaderClicked);
+            }
 
             // Game info and search row
-            var searchRow = UIStyles.CreateFormRow(communityBox, "SearchRow", UIStyles.RowHeightLarge);
+            var searchRow = UIStyles.CreateFormRow(content, "SearchRow", UIStyles.RowHeightLarge);
 
             _communityGameLabel = UIFactory.CreateLabel(searchRow, "GameLabel", "Game: Unknown", TextAnchor.MiddleLeft);
             _communityGameLabel.color = UIStyles.TextSecondary;
@@ -220,7 +317,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TranslatorCore.LogWarning("[MainPanel] _translationList was null - reinitializing");
                 _translationList = new TranslationList();
             }
-            _translationList.CreateUI(communityBox, 100, onSelectionChanged: (t) =>
+            _translationList.CreateUI(content, 100, onSelectionChanged: (t) =>
             {
                 if (_downloadBtn != null)
                 {
@@ -228,10 +325,10 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
             });
 
-            UIStyles.CreateSpacer(communityBox, 5);
+            UIStyles.CreateSpacer(content, 5);
 
             // Download button
-            var downloadRow = UIStyles.CreateFormRow(communityBox, "DownloadRow", UIStyles.RowHeightLarge, 0);
+            var downloadRow = UIStyles.CreateFormRow(content, "DownloadRow", UIStyles.RowHeightLarge, 0);
             var layoutGroup = downloadRow.GetComponent<HorizontalLayoutGroup>();
             if (layoutGroup != null) layoutGroup.childAlignment = TextAnchor.MiddleCenter; // Center the button
 
@@ -240,6 +337,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             _downloadBtn.OnClick += OnDownloadCommunityClicked;
             _downloadBtn.Component.interactable = false;
             RegisterUIText(_downloadBtn.ButtonText);
+        }
+
+        private void OnCommunityHeaderClicked()
+        {
+            _isCommunityExpanded = !_isCommunityExpanded;
+            UIStyles.SetCollapsibleState(_communityCollapseIcon, _communityContent, _isCommunityExpanded);
+            RecalculateSize();
         }
 
         public override void SetActive(bool active)
@@ -254,12 +358,181 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
         }
 
+        /// <summary>
+        /// Detects the current layout state based on login, local translations, and server state.
+        /// </summary>
+        private LayoutState DetectCurrentState()
+        {
+            bool isLoggedIn = !string.IsNullOrEmpty(TranslatorCore.Config.api_token);
+            int localCount = TranslatorCore.TranslationCache.Count;
+            var serverState = TranslatorCore.ServerState;
+            bool existsOnServer = serverState != null && serverState.Exists && serverState.SiteId.HasValue;
+
+            // Not logged in
+            if (!isLoggedIn)
+            {
+                return LayoutState.NotLogged;
+            }
+
+            // No local translation
+            if (localCount == 0)
+            {
+                return LayoutState.NoLocal;
+            }
+
+            // Has local translation - check server state
+            if (existsOnServer)
+            {
+                if (serverState.IsOwner)
+                {
+                    // User owns this translation
+                    return serverState.Role == TranslationRole.Main
+                        ? LayoutState.OwnerMain
+                        : LayoutState.OwnerBranch;
+                }
+                else
+                {
+                    // User doesn't own - check if same UUID (same lineage)
+                    // ServerState.Exists means the UUID exists on server
+                    // We're working with the same UUID but not the owner
+                    return LayoutState.ContributorSameUuid;
+                }
+            }
+            else
+            {
+                // Not on server but has local - check if UUID exists but owned by someone else
+                if (serverState != null && serverState.Checked)
+                {
+                    if (serverState.Exists && !serverState.IsOwner)
+                    {
+                        // UUID exists on server but we don't own it
+                        return LayoutState.ContributorSameUuid;
+                    }
+                }
+                // Local only - treat as potential new upload or visitor
+                return LayoutState.VisitorDiffUuid;
+            }
+        }
+
         public void RefreshUI()
         {
+            // Detect and cache current state
+            _currentLayoutState = DetectCurrentState();
+
+            // Refresh all sections
             RefreshAccountSection();
             RefreshTranslationInfo();
             RefreshCommunitySection();
             RefreshActionsSection();
+            RefreshLayoutVisibility();
+        }
+
+        /// <summary>
+        /// Updates section visibility based on current layout state.
+        /// </summary>
+        private void RefreshLayoutVisibility()
+        {
+            // Login CTA - only show when not logged in
+            if (_loginCTASection != null)
+            {
+                _loginCTASection.SetActive(_currentLayoutState == LayoutState.NotLogged);
+            }
+
+            // Determine if we should show StatusCard vs legacy TranslationInfo
+            bool showStatusCard = _currentLayoutState != LayoutState.NotLogged &&
+                                  _currentLayoutState != LayoutState.NoLocal;
+
+            // Status section with StatusCard - show when logged in and has local content
+            if (_statusSection != null)
+            {
+                _statusSection.SetActive(showStatusCard);
+                if (showStatusCard)
+                {
+                    RefreshStatusCard();
+                }
+            }
+
+            // Legacy TranslationInfo section - hide when StatusCard is shown
+            if (_translationInfoSection != null)
+            {
+                _translationInfoSection.SetActive(!showStatusCard);
+            }
+
+            // Recalculate panel size after visibility changes
+            RecalculateSize();
+        }
+
+        /// <summary>
+        /// Updates the StatusCard with current translation state.
+        /// </summary>
+        private void RefreshStatusCard()
+        {
+            if (_statusCard == null) return;
+
+            var serverState = TranslatorCore.ServerState;
+            int entryCount = TranslatorCore.TranslationCache.Count;
+            string targetLang = TranslatorCore.Config.GetTargetLanguage();
+            int localChanges = TranslatorCore.LocalChangesCount;
+
+            // Determine sync status
+            SyncStatusType syncStatus;
+            bool needsMerge = TranslatorUIManager.HasPendingUpdate &&
+                TranslatorUIManager.PendingUpdateDirection == UpdateDirection.Merge;
+            bool hasServerUpdate = TranslatorUIManager.HasPendingUpdate &&
+                TranslatorUIManager.PendingUpdateDirection == UpdateDirection.Download;
+
+            if (needsMerge)
+            {
+                syncStatus = SyncStatusType.Conflict;
+            }
+            else if (localChanges > 0 || hasServerUpdate)
+            {
+                syncStatus = SyncStatusType.OutOfSync;
+            }
+            else if (serverState != null && serverState.Exists)
+            {
+                syncStatus = SyncStatusType.Synced;
+            }
+            else
+            {
+                syncStatus = SyncStatusType.LocalOnly;
+            }
+
+            // Configure card based on layout state
+            switch (_currentLayoutState)
+            {
+                case LayoutState.OwnerMain:
+                    _statusCard.ConfigureAsMainOwner(
+                        syncStatus,
+                        entryCount,
+                        targetLang,
+                        serverState?.BranchesCount ?? 0);
+                    break;
+
+                case LayoutState.OwnerBranch:
+                    _statusCard.ConfigureAsBranchOwner(
+                        syncStatus,
+                        entryCount,
+                        targetLang,
+                        serverState?.MainUsername ?? serverState?.Uploader);
+                    break;
+
+                case LayoutState.ContributorSameUuid:
+                    _statusCard.ConfigureAsContributor(
+                        syncStatus,
+                        entryCount,
+                        targetLang,
+                        serverState?.Uploader);
+                    break;
+
+                case LayoutState.VisitorDiffUuid:
+                    _statusCard.ConfigureAsLocalOnly(entryCount, targetLang);
+                    break;
+
+                default:
+                    _statusCard.ConfigureAsNoLocal();
+                    break;
+            }
         }
 
         private void RefreshAccountSection()

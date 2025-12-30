@@ -1030,6 +1030,7 @@ namespace UnityGameTranslator.Core
         public int VoteCount { get; set; }
         public int DownloadCount { get; set; }
         public string FileHash { get; set; }
+        public string FileUuid { get; set; }
         public string UpdatedAt { get; set; }
 
         /// <summary>

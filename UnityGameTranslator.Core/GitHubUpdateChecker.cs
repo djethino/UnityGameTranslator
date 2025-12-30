@@ -175,8 +175,10 @@ namespace UnityGameTranslator.Core
                     return "BepInEx6-Mono";
                 case "BepInEx6-IL2CPP":
                     return "BepInEx6-IL2CPP";
-                case "MelonLoader":
-                    return "MelonLoader";
+                case "MelonLoader-Mono":
+                    return "MelonLoader-Mono";
+                case "MelonLoader-IL2CPP":
+                    return "MelonLoader-IL2CPP";
                 default:
                     return modLoaderType;
             }

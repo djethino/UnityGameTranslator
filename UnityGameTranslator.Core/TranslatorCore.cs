@@ -25,7 +25,7 @@ namespace UnityGameTranslator.Core
 
         /// <summary>
         /// Mod loader type identifier for GitHub release asset selection.
-        /// Values: "BepInEx5", "BepInEx6-Mono", "BepInEx6-IL2CPP", "MelonLoader"
+        /// Values: "BepInEx5", "BepInEx6-Mono", "BepInEx6-IL2CPP", "MelonLoader-Mono", "MelonLoader-IL2CPP"
         /// </summary>
         string ModLoaderType { get; }
 
@@ -73,6 +73,17 @@ namespace UnityGameTranslator.Core
         /// Once a translation is uploaded, languages cannot be changed to maintain consistency.
         /// </summary>
         public static bool AreLanguagesLocked => ServerState != null && ServerState.Exists;
+
+        /// <summary>
+        /// Returns true if a remote translation's UUID matches our local FileUuid.
+        /// Used to highlight translations from the same lineage in the community list.
+        /// </summary>
+        public static bool IsUuidMatch(string remoteUuid)
+        {
+            return !string.IsNullOrEmpty(remoteUuid) &&
+                   !string.IsNullOrEmpty(FileUuid) &&
+                   remoteUuid == FileUuid;
+        }
 
         private static float lastSaveTime = 0f;
         private static int translatedCount = 0;

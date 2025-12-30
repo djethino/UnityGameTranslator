@@ -2,6 +2,7 @@ using UnityEngine;
 using UnityEngine.UI;
 using UniverseLib.UI;
 using UniverseLib.UI.Models;
+using UnityGameTranslator.Core;
 using UnityGameTranslator.Core.UI.Components;
 
 namespace UnityGameTranslator.Core.UI.Panels
@@ -69,6 +70,16 @@ namespace UnityGameTranslator.Core.UI.Panels
         private GameObject _communityContent;
         private bool _isCommunityExpanded = true;
 
+        // UI references - Contributor choice section (GAP 8: 3 guided buttons)
+        private GameObject _contributorChoiceSection;
+        private ButtonRef _contributeAsBranchBtn;
+        private ButtonRef _downloadLatestBtn;
+        private ButtonRef _createIndependentBtn;
+
+        // UI references - Guidance messages (GAP 9)
+        private GameObject _guidanceSection;
+        private Text _guidanceLabel;
+
         // Current layout state (cached for efficiency)
         private LayoutState _currentLayoutState = LayoutState.NotLogged;
 
@@ -118,6 +129,12 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Actions Section (context-dependent)
             CreateActionsSection(card);
+
+            // Contributor Choice Section (GAP 8: 3 guided buttons for ContributorSameUuid state)
+            CreateContributorChoiceSection(card);
+
+            // Guidance Section (GAP 9: contextual messages)
+            CreateGuidanceSection(card);
 
             // Bottom buttons - in fixed footer (outside scroll)
             var optionsBtn = CreateSecondaryButton(buttonRow, "OptionsBtn", "Options");
@@ -278,6 +295,91 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIStyles.SetBackground(_forkBtn.Component.gameObject, UIStyles.ButtonDanger);
             _forkBtn.OnClick += OnForkClicked;
             RegisterUIText(_forkBtn.ButtonText);
+        }
+
+        /// <summary>
+        /// Creates the contributor choice section with 3 guided buttons (GAP 8).
+        /// Shown only for ContributorSameUuid state.
+        /// </summary>
+        private void CreateContributorChoiceSection(GameObject parent)
+        {
+            _contributorChoiceSection = UIFactory.CreateVerticalGroup(parent, "ContributorChoiceSection", false, false, true, true, UIStyles.SmallSpacing);
+            UIFactory.SetLayoutElement(_contributorChoiceSection, flexibleWidth: 9999);
+
+            var sectionTitle = UIStyles.CreateSectionTitle(_contributorChoiceSection, "ChoiceSectionLabel", "What would you like to do?");
+            RegisterUIText(sectionTitle);
+
+            var choiceBox = CreateSection(_contributorChoiceSection, "ChoiceBox");
+
+            // Button 1: Contribute as Branch
+            var branchRow = UIFactory.CreateVerticalGroup(choiceBox, "BranchRow", false, false, true, true, 2);
+            UIFactory.SetLayoutElement(branchRow, flexibleWidth: 9999, minHeight: UIStyles.RowHeightLarge + UIStyles.RowHeightNormal);
+
+            _contributeAsBranchBtn = CreatePrimaryButton(branchRow, "ContributeBtn", "Contribute as Branch", 250);
+            UIStyles.SetBackground(_contributeAsBranchBtn.Component.gameObject, UIStyles.ButtonSuccess);
+            UIFactory.SetLayoutElement(_contributeAsBranchBtn.Component.gameObject, flexibleWidth: 9999);
+            _contributeAsBranchBtn.OnClick += OnContributeAsBranchClicked;
+            RegisterUIText(_contributeAsBranchBtn.ButtonText);
+
+            var branchDesc = UIFactory.CreateLabel(branchRow, "BranchDesc", "Your changes will help improve the main translation", TextAnchor.MiddleCenter);
+            branchDesc.fontSize = UIStyles.FontSizeSmall;
+            branchDesc.color = UIStyles.TextSecondary;
+            UIFactory.SetLayoutElement(branchDesc.gameObject, flexibleWidth: 9999, minHeight: UIStyles.RowHeightNormal);
+            RegisterUIText(branchDesc);
+
+            UIStyles.CreateSpacer(choiceBox, 8);
+
+            // Button 2: Download Latest
+            var downloadRow = UIFactory.CreateVerticalGroup(choiceBox, "DownloadRow", false, false, true, true, 2);
+            UIFactory.SetLayoutElement(downloadRow, flexibleWidth: 9999, minHeight: UIStyles.RowHeightLarge + UIStyles.RowHeightNormal);
+
+            _downloadLatestBtn = CreateSecondaryButton(downloadRow, "DownloadLatestBtn", "Download Latest", 250);
+            UIStyles.SetBackground(_downloadLatestBtn.Component.gameObject, UIStyles.ButtonPrimary);
+            UIFactory.SetLayoutElement(_downloadLatestBtn.Component.gameObject, flexibleWidth: 9999);
+            _downloadLatestBtn.OnClick += OnDownloadLatestClicked;
+            RegisterUIText(_downloadLatestBtn.ButtonText);
+
+            var downloadDesc = UIFactory.CreateLabel(downloadRow, "DownloadDesc", "Get the owner's latest version (replaces your local)", TextAnchor.MiddleCenter);
+            downloadDesc.fontSize = UIStyles.FontSizeSmall;
+            downloadDesc.color = UIStyles.TextSecondary;
+            UIFactory.SetLayoutElement(downloadDesc.gameObject, flexibleWidth: 9999, minHeight: UIStyles.RowHeightNormal);
+            RegisterUIText(downloadDesc);
+
+            UIStyles.CreateSpacer(choiceBox, 8);
+
+            // Button 3: Create Independent (Fork)
+            var forkRow = UIFactory.CreateVerticalGroup(choiceBox, "ForkRow", false, false, true, true, 2);
+            UIFactory.SetLayoutElement(forkRow, flexibleWidth: 9999, minHeight: UIStyles.RowHeightLarge + UIStyles.RowHeightNormal);
+
+            _createIndependentBtn = CreateSecondaryButton(forkRow, "CreateIndependentBtn", "Create Independent", 250);
+            UIStyles.SetBackground(_createIndependentBtn.Component.gameObject, UIStyles.ButtonDanger);
+            UIFactory.SetLayoutElement(_createIndependentBtn.Component.gameObject, flexibleWidth: 9999);
+            _createIndependentBtn.OnClick += OnCreateIndependentClicked;
+            RegisterUIText(_createIndependentBtn.ButtonText);
+
+            var forkDesc = UIFactory.CreateLabel(forkRow, "ForkDesc", "Fork into your own translation (new lineage)", TextAnchor.MiddleCenter);
+            forkDesc.fontSize = UIStyles.FontSizeSmall;
+            forkDesc.color = UIStyles.TextSecondary;
+            UIFactory.SetLayoutElement(forkDesc.gameObject, flexibleWidth: 9999, minHeight: UIStyles.RowHeightNormal);
+            RegisterUIText(forkDesc);
+        }
+
+        /// <summary>
+        /// Creates the guidance section for contextual messages (GAP 9).
+        /// </summary>
+        private void CreateGuidanceSection(GameObject parent)
+        {
+            _guidanceSection = UIFactory.CreateVerticalGroup(parent, "GuidanceSection", false, false, true, true, UIStyles.SmallSpacing);
+            UIFactory.SetLayoutElement(_guidanceSection, flexibleWidth: 9999);
+
+            var guidanceBox = UIStyles.CreateAdaptiveCard(_guidanceSection, "GuidanceBox", PanelWidth - 60);
+            UIStyles.SetBackground(guidanceBox, new Color(0.15f, 0.2f, 0.25f, 0.9f));
+
+            _guidanceLabel = UIFactory.CreateLabel(guidanceBox, "GuidanceLabel", "", TextAnchor.MiddleCenter);
+            _guidanceLabel.fontSize = UIStyles.FontSizeNormal;
+            _guidanceLabel.color = UIStyles.StatusInfo;
+            UIFactory.SetLayoutElement(_guidanceLabel.gameObject, flexibleWidth: 9999, minHeight: UIStyles.RowHeightLarge);
+            RegisterUIText(_guidanceLabel);
         }
 
         private void CreateCommunitySection(GameObject parent)
@@ -458,8 +560,80 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _translationInfoSection.SetActive(!showStatusCard);
             }
 
+            // Contributor choice section (GAP 8) - only for ContributorSameUuid state
+            if (_contributorChoiceSection != null)
+            {
+                _contributorChoiceSection.SetActive(_currentLayoutState == LayoutState.ContributorSameUuid);
+            }
+
+            // Guidance section (GAP 9) - show contextual messages
+            RefreshGuidanceSection();
+
             // Recalculate panel size after visibility changes
             RecalculateSize();
+        }
+
+        /// <summary>
+        /// Refreshes the guidance section with contextual messages (GAP 9).
+        /// </summary>
+        private void RefreshGuidanceSection()
+        {
+            if (_guidanceSection == null || _guidanceLabel == null) return;
+
+            string message = null;
+            var serverState = TranslatorCore.ServerState;
+            int localCount = TranslatorCore.TranslationCache.Count;
+
+            switch (_currentLayoutState)
+            {
+                case LayoutState.NotLogged:
+                    if (localCount > 0)
+                    {
+                        // Has local but not logged - encourage account creation
+                        message = "Create an account to sync your translations and contribute to the community.";
+                    }
+                    break;
+
+                case LayoutState.NoLocal:
+                    // No local translation - guide user
+                    if (TranslatorCore.Config.enable_ollama)
+                    {
+                        message = "Use Ollama to translate captured text, or download a community translation.";
+                    }
+                    else
+                    {
+                        message = "Enable Ollama for AI translation, or download a community translation to get started.";
+                    }
+                    break;
+
+                case LayoutState.ContributorSameUuid:
+                    // Same UUID but not owner - show info about parent
+                    if (serverState != null)
+                    {
+                        int localChanges = TranslatorCore.LocalChangesCount;
+                        if (localChanges > 0)
+                        {
+                            message = $"You have {localChanges} changes compared to @{serverState.Uploader}'s translation.";
+                        }
+                    }
+                    break;
+
+                case LayoutState.VisitorDiffUuid:
+                    // Different UUID - local only
+                    if (serverState != null && serverState.Checked && !serverState.Exists)
+                    {
+                        message = "Your translation is local only. Upload it to share with the community!";
+                    }
+                    break;
+            }
+
+            // Show or hide guidance section based on message
+            bool hasMessage = !string.IsNullOrEmpty(message);
+            _guidanceSection.SetActive(hasMessage);
+            if (hasMessage)
+            {
+                _guidanceLabel.text = message;
+            }
         }
 
         /// <summary>
@@ -862,6 +1036,130 @@ namespace UnityGameTranslator.Core.UI.Panels
             );
         }
 
+        /// <summary>
+        /// Handler for "Contribute as Branch" button (GAP 8).
+        /// Opens the upload panel to contribute changes as a branch.
+        /// </summary>
+        private void OnContributeAsBranchClicked()
+        {
+            // Open upload panel - it will detect that we're contributing to an existing translation
+            TranslatorUIManager.UploadPanel?.SetActive(true);
+        }
+
+        /// <summary>
+        /// Handler for "Download Latest" button (GAP 8).
+        /// Downloads the owner's latest version, replacing local changes.
+        /// </summary>
+        private async void OnDownloadLatestClicked()
+        {
+            var serverState = TranslatorCore.ServerState;
+            if (serverState == null || !serverState.SiteId.HasValue)
+            {
+                TranslatorCore.LogWarning("[MainPanel] Cannot download: no server translation");
+                return;
+            }
+
+            int localChanges = TranslatorCore.LocalChangesCount;
+
+            // GAP 10: Warning for replacing local changes
+            if (localChanges > 0)
+            {
+                TranslatorUIManager.ConfirmationPanel?.Show(
+                    "Download Latest Version?",
+                    $"This will replace your {localChanges} local change(s) with @{serverState.Uploader}'s latest version.\n\n" +
+                    "Your local changes will be lost. This cannot be undone.",
+                    "Replace",
+                    async () => await PerformDownloadLatest(serverState),
+                    isDanger: true
+                );
+            }
+            else
+            {
+                await PerformDownloadLatest(serverState);
+            }
+        }
+
+        private async System.Threading.Tasks.Task PerformDownloadLatest(ServerTranslationState serverState)
+        {
+            // Disable buttons while downloading
+            if (_downloadLatestBtn != null)
+            {
+                _downloadLatestBtn.Component.interactable = false;
+                _downloadLatestBtn.ButtonText.text = "Downloading...";
+            }
+
+            try
+            {
+                // Create a TranslationInfo from ServerState to use the existing download flow
+                var translationInfo = new TranslationInfo
+                {
+                    Id = serverState.SiteId.Value,
+                    Uploader = serverState.Uploader,
+                    TargetLanguage = TranslatorCore.Config.GetTargetLanguage(),
+                    FileUuid = TranslatorCore.FileUuid
+                };
+
+                await TranslatorUIManager.DownloadTranslation(translationInfo, (success, message) =>
+                {
+                    if (success)
+                    {
+                        TranslatorCore.LogInfo("[MainPanel] Downloaded latest version successfully");
+                        RefreshUI();
+                    }
+                    else
+                    {
+                        TranslatorCore.LogWarning($"[MainPanel] Download failed: {message}");
+                    }
+
+                    // Re-enable button
+                    if (_downloadLatestBtn != null)
+                    {
+                        _downloadLatestBtn.Component.interactable = true;
+                        _downloadLatestBtn.ButtonText.text = "Download Latest";
+                    }
+                });
+            }
+            catch (System.Exception e)
+            {
+                TranslatorCore.LogWarning($"[MainPanel] Download error: {e.Message}");
+                if (_downloadLatestBtn != null)
+                {
+                    _downloadLatestBtn.Component.interactable = true;
+                    _downloadLatestBtn.ButtonText.text = "Download Latest";
+                }
+            }
+        }
+
+        /// <summary>
+        /// Handler for "Create Independent" button (GAP 8).
+        /// Creates a fork with new UUID, making the user the Main owner of a new lineage.
+        /// </summary>
+        private void OnCreateIndependentClicked()
+        {
+            var serverState = TranslatorCore.ServerState;
+            string ownerName = serverState?.Uploader ?? "the original owner";
+
+            // GAP 10: Warning for creating independent fork
+            TranslatorUIManager.ConfirmationPanel?.Show(
+                "Create Independent Translation?",
+                $"This will create a new independent translation with a new lineage.\n\n" +
+                $"You will become the Main owner of this new translation.\n\n" +
+                $"You will no longer be able to merge changes with @{ownerName}'s translation.\n\n" +
+                "This action cannot be undone.",
+                "Create Independent",
+                () =>
+                {
+                    // Create fork: generate new UUID and reset server state
+                    TranslatorCore.CreateFork();
+                    RefreshUI();
+
+                    // Open upload panel to push the new independent translation
+                    TranslatorUIManager.UploadPanel?.SetActive(true);
+                },
+                isDanger: true
+            );
+        }
+
         private async void OnCompareWithServerClicked()
         {
             // Compare local changes with server version (Main or Branch)
@@ -964,10 +1262,31 @@ namespace UnityGameTranslator.Core.UI.Panels
             var selectedTranslation = _translationList?.SelectedTranslation;
             if (selectedTranslation == null) return;
 
-            // Check if user has local changes that would be lost
             int localChanges = TranslatorCore.LocalChangesCount;
-            if (localChanges > 0)
+            int localCount = TranslatorCore.TranslationCache.Count;
+
+            // GAP 10: Check if downloading a different lineage (different UUID)
+            bool isDifferentLineage = !string.IsNullOrEmpty(TranslatorCore.FileUuid) &&
+                                      !string.IsNullOrEmpty(selectedTranslation.FileUuid) &&
+                                      selectedTranslation.FileUuid != TranslatorCore.FileUuid;
+
+            if (isDifferentLineage && localCount > 0)
             {
+                // WARNING: Different lineage - this is a major change
+                TranslatorUIManager.ConfirmationPanel?.Show(
+                    "Switch to Different Translation?",
+                    $"You are about to download a different translation lineage.\n\n" +
+                    $"Your current translation ({localCount} entries) will be replaced with @{selectedTranslation.Uploader}'s translation.\n\n" +
+                    "This is a different lineage - you will lose your current translation history.\n\n" +
+                    "This cannot be undone.",
+                    "Switch Translation",
+                    async () => await PerformDownload(selectedTranslation),
+                    isDanger: true
+                );
+            }
+            else if (localChanges > 0)
+            {
+                // WARNING: Local changes will be lost
                 TranslatorUIManager.ConfirmationPanel?.Show(
                     "Replace Local Translation?",
                     $"You have {localChanges} local change(s) that will be replaced.\n\nDownload '{selectedTranslation.TargetLanguage}' by {selectedTranslation.Uploader}?",

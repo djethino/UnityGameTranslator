@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net6.0</TargetFramework>
+    <TargetFramework>net472</TargetFramework>
     <AssemblyName>UnityGameTranslator</AssemblyName>
     <RootNamespace>UnityGameTranslator.MelonLoader</RootNamespace>
     <LangVersion>latest</LangVersion>
@@ -14,13 +14,13 @@
     <!-- Core library -->
     <ProjectReference Include="..\UnityGameTranslator.Core\UnityGameTranslator.Core.csproj" />
 
-    <!-- MelonLoader -->
+    <!-- MelonLoader (Mono version - net35 compatible) -->
     <Reference Include="MelonLoader">
-      <HintPath>..\extlibs\MelonLoader\MelonLoader.dll</HintPath>
+      <HintPath>..\extlibs\MelonLoader-Mono\MelonLoader.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="0Harmony">
-      <HintPath>..\extlibs\MelonLoader\0Harmony.dll</HintPath>
+      <HintPath>..\extlibs\MelonLoader-Mono\0Harmony.dll</HintPath>
       <Private>false</Private>
     </Reference>
 

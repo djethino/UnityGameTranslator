@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net6.0</TargetFramework>
+    <TargetFramework>net472</TargetFramework>
     <AssemblyName>UnityGameTranslator</AssemblyName>
     <RootNamespace>UnityGameTranslator.BepInEx6Mono</RootNamespace>
     <LangVersion>latest</LangVersion>

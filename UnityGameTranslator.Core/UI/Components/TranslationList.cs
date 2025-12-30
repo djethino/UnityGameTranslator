@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using UniverseLib.UI;
+using UnityGameTranslator.Core.UI;
 
 namespace UnityGameTranslator.Core.UI.Components
 {
@@ -182,9 +183,10 @@ namespace UnityGameTranslator.Core.UI.Components
         {
             if (_listContent == null) return;
 
-            foreach (Transform child in _listContent.transform)
+            // Manual iteration for IL2CPP compatibility (foreach on Transform doesn't work)
+            for (int i = _listContent.transform.childCount - 1; i >= 0; i--)
             {
-                GameObject.Destroy(child.gameObject);
+                GameObject.Destroy(_listContent.transform.GetChild(i).gameObject);
             }
         }
 
@@ -220,7 +222,7 @@ namespace UnityGameTranslator.Core.UI.Components
             // Selection toggle
             var toggleObj = UIFactory.CreateToggle(itemRow, "SelectToggle", out var toggle, out var _);
             toggle.isOn = _selectedTranslation == translation;
-            toggle.onValueChanged.AddListener((val) =>
+            UIHelpers.AddToggleListener(toggle, (val) =>
             {
                 if (val)
                 {
@@ -265,9 +267,12 @@ namespace UnityGameTranslator.Core.UI.Components
         {
             if (_listContent == null) return;
 
-            foreach (Transform child in _listContent.transform)
+            // Manual iteration for IL2CPP compatibility (foreach on Transform doesn't work)
+            for (int i = 0; i < _listContent.transform.childCount; i++)
             {
-                var toggle = child.GetComponentInChildren<Toggle>();
+                Transform child = _listContent.transform.GetChild(i);
+                // Use non-generic GetComponentInChildren for IL2CPP compatibility
+                var toggle = child.GetComponentInChildren(typeof(Toggle)) as Toggle;
                 if (toggle != null)
                 {
                     string itemName = child.name;

@@ -125,7 +125,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             var captureObj = UIFactory.CreateToggle(generalBox, "CaptureKeysToggle", out _captureKeysOnlyToggle, out var captureLabel);
             captureLabel.text = " Capture keys only (no translation)";
             captureLabel.color = UIStyles.TextSecondary;
-            _captureKeysOnlyToggle.onValueChanged.AddListener(OnCaptureKeysOnlyChanged);
+            UIHelpers.AddToggleListener(_captureKeysOnlyToggle, OnCaptureKeysOnlyChanged);
             UIFactory.SetLayoutElement(captureObj, minHeight: UIStyles.RowHeightNormal);
             RegisterUIText(captureLabel);
 
@@ -205,7 +205,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             var onlineToggleObj = UIFactory.CreateToggle(onlineBox, "OnlineModeToggle", out _onlineModeToggle, out var onlineLabel);
             onlineLabel.text = " Enable Online Mode";
             onlineLabel.color = UIStyles.TextPrimary;
-            _onlineModeToggle.onValueChanged.AddListener(OnOnlineModeChanged);
+            UIHelpers.AddToggleListener(_onlineModeToggle, OnOnlineModeChanged);
             UIFactory.SetLayoutElement(onlineToggleObj, minHeight: UIStyles.RowHeightMedium);
             RegisterUIText(onlineLabel);
 
@@ -262,7 +262,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             var enableOllamaObj = UIFactory.CreateToggle(ollamaBox, "EnableOllamaToggle", out _enableOllamaToggle, out var enableLabel);
             enableLabel.text = " Enable Ollama";
             enableLabel.color = UIStyles.TextPrimary;
-            _enableOllamaToggle.onValueChanged.AddListener(OnOllamaToggleChanged);
+            UIHelpers.AddToggleListener(_enableOllamaToggle, OnOllamaToggleChanged);
             UIFactory.SetLayoutElement(enableOllamaObj, minHeight: UIStyles.RowHeightMedium);
             RegisterExcluded(enableLabel); // "Ollama" is a brand name
 

@@ -1,5 +1,8 @@
+using System;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
+using UnityEngine.EventSystems;
 using UniverseLib.UI;
 using UniverseLib.UI.Models;
 using UnityGameTranslator.Core.UI.Components;
@@ -12,6 +15,9 @@ namespace UnityGameTranslator.Core.UI
     /// </summary>
     public static class UIStyles
     {
+        // Track DynamicScrollbarHider instances separately to avoid IL2CPP GetComponent issues
+        private static readonly Dictionary<int, DynamicScrollbarHider> _scrollbarHiders = new Dictionary<int, DynamicScrollbarHider>();
+
         #region Backdrop System
 
         private static GameObject _backdrop;
@@ -241,17 +247,23 @@ namespace UnityGameTranslator.Core.UI
         /// <summary>
         /// Configures a UniverseLib scroll view to auto-hide scrollbar and expand viewport.
         /// Adds a DynamicScrollbarHider component that monitors content size and toggles scrollbar visibility.
+        /// Uses instance tracking to avoid IL2CPP GetComponent issues with managed types.
         /// </summary>
         public static void ConfigureScrollViewNoScrollbar(GameObject scrollObj)
         {
             if (scrollObj == null) return;
 
-            // Add our dynamic scrollbar hider component
-            var hider = scrollObj.GetComponent<DynamicScrollbarHider>();
-            if (hider == null)
+            int instanceId = scrollObj.GetInstanceID();
+
+            // Check if we already have a hider for this object (avoid IL2CPP GetComponent issues)
+            if (_scrollbarHiders.TryGetValue(instanceId, out var existingHider) && existingHider != null)
             {
-                hider = scrollObj.AddComponent<DynamicScrollbarHider>();
+                return; // Already configured
             }
+
+            // Add our dynamic scrollbar hider component
+            var hider = scrollObj.AddComponent<DynamicScrollbarHider>();
+            _scrollbarHiders[instanceId] = hider;
         }
 
         /// <summary>
@@ -777,10 +789,10 @@ namespace UnityGameTranslator.Core.UI
         {
             if (listContent == null) return;
 
-            // Clear existing items
-            foreach (Transform child in listContent.transform)
+            // Clear existing items (iterate backwards for safe destruction)
+            for (int i = listContent.transform.childCount - 1; i >= 0; i--)
             {
-                Object.Destroy(child.gameObject);
+                UnityEngine.Object.Destroy(listContent.transform.GetChild(i).gameObject);
             }
 
             string filter = searchFilter?.ToLower() ?? "";
@@ -798,52 +810,67 @@ namespace UnityGameTranslator.Core.UI
                 label.fontSize = FontSizeNormal;
                 UIFactory.SetLayoutElement(label.gameObject, flexibleWidth: 9999);
 
-                // Make clickable
+                // Make clickable (use helper for IL2CPP compatibility)
                 var btn = item.AddComponent<Button>();
                 var langCapture = lang; // Capture for closure
-                btn.onClick.AddListener(() => onSelect?.Invoke(langCapture));
+                UIHelpers.AddButtonListener(btn, () => onSelect?.Invoke(langCapture));
 
-                // Add hover effect
-                var hoverHandler = item.AddComponent<LanguageItemHoverHandler>();
-                hoverHandler.Initialize(item, isSelected);
+                // Add hover effect using EventTrigger (works on both Mono and IL2CPP)
+                if (!isSelected)
+                {
+                    AddHoverEffect(item, ItemBackground, ItemBackgroundHover);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Adds hover effect to an item using EventTrigger.
+        /// Note: Disabled on IL2CPP due to EventTrigger.Entry field access issues.
+        /// </summary>
+        public static void AddHoverEffect(GameObject item, Color normalColor, Color hoverColor)
+        {
+            // Skip hover effect on IL2CPP - EventTrigger.Entry fields are not accessible
+            // This is a visual enhancement only, not core functionality
+            if (TranslatorCore.Adapter?.IsIL2CPP == true)
+                return;
+
+            AddHoverEffectMono(item, normalColor, hoverColor);
+        }
+
+        /// <summary>
+        /// Mono-only hover effect implementation.
+        /// </summary>
+        private static void AddHoverEffectMono(GameObject item, Color normalColor, Color hoverColor)
+        {
+            try
+            {
+                var image = item.GetComponent<Image>();
+                if (image == null) return;
+
+                var trigger = item.GetComponent<EventTrigger>();
+                if (trigger == null)
+                {
+                    trigger = item.AddComponent<EventTrigger>();
+                }
+
+                // Create event entries
+                var enterEntry = new EventTrigger.Entry();
+                enterEntry.eventID = EventTriggerType.PointerEnter;
+                enterEntry.callback.AddListener((data) => { image.color = hoverColor; });
+
+                var exitEntry = new EventTrigger.Entry();
+                exitEntry.eventID = EventTriggerType.PointerExit;
+                exitEntry.callback.AddListener((data) => { image.color = normalColor; });
+
+                trigger.triggers.Add(enterEntry);
+                trigger.triggers.Add(exitEntry);
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.Adapter?.LogWarning($"[UIStyles] Failed to add hover effect: {ex.Message}");
             }
         }
 
         #endregion
-    }
-
-    /// <summary>
-    /// Simple hover handler for language list items.
-    /// </summary>
-    public class LanguageItemHoverHandler : MonoBehaviour,
-        UnityEngine.EventSystems.IPointerEnterHandler,
-        UnityEngine.EventSystems.IPointerExitHandler
-    {
-        private GameObject _item;
-        private bool _isSelected;
-        private Image _image;
-
-        public void Initialize(GameObject item, bool isSelected)
-        {
-            _item = item;
-            _isSelected = isSelected;
-            _image = item.GetComponent<Image>();
-        }
-
-        public void OnPointerEnter(UnityEngine.EventSystems.PointerEventData eventData)
-        {
-            if (_image != null && !_isSelected)
-            {
-                _image.color = UIStyles.ItemBackgroundHover;
-            }
-        }
-
-        public void OnPointerExit(UnityEngine.EventSystems.PointerEventData eventData)
-        {
-            if (_image != null && !_isSelected)
-            {
-                _image.color = UIStyles.ItemBackground;
-            }
-        }
     }
 }

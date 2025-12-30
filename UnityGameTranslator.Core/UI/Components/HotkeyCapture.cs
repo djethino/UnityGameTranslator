@@ -3,6 +3,7 @@ using UnityEngine;
 using UnityEngine.UI;
 using UniverseLib.UI;
 using UniverseLib.UI.Models;
+using UnityGameTranslator.Core.UI;
 
 namespace UnityGameTranslator.Core.UI.Components
 {
@@ -76,21 +77,21 @@ namespace UnityGameTranslator.Core.UI.Components
             ctrlLabel.text = "Ctrl";
             ctrlLabel.fontSize = UIStyles.FontSizeNormal;
             _ctrlToggle.isOn = _ctrl;
-            _ctrlToggle.onValueChanged.AddListener((val) => { _ctrl = val; NotifyChange(); });
+            UIHelpers.AddToggleListener(_ctrlToggle, (val) => { _ctrl = val; NotifyChange(); });
             UIFactory.SetLayoutElement(ctrlObj, minWidth: UIStyles.ModifierKeyWidth);
 
             var altObj = UIFactory.CreateToggle(modContainer, "AltToggle", out _altToggle, out var altLabel);
             altLabel.text = "Alt";
             altLabel.fontSize = UIStyles.FontSizeNormal;
             _altToggle.isOn = _alt;
-            _altToggle.onValueChanged.AddListener((val) => { _alt = val; NotifyChange(); });
+            UIHelpers.AddToggleListener(_altToggle, (val) => { _alt = val; NotifyChange(); });
             UIFactory.SetLayoutElement(altObj, minWidth: UIStyles.ModifierKeyWidth - 5);
 
             var shiftObj = UIFactory.CreateToggle(modContainer, "ShiftToggle", out _shiftToggle, out var shiftLabel);
             shiftLabel.text = "Shift";
             shiftLabel.fontSize = UIStyles.FontSizeNormal;
             _shiftToggle.isOn = _shift;
-            _shiftToggle.onValueChanged.AddListener((val) => { _shift = val; NotifyChange(); });
+            UIHelpers.AddToggleListener(_shiftToggle, (val) => { _shift = val; NotifyChange(); });
             UIFactory.SetLayoutElement(shiftObj, minWidth: UIStyles.ModifierKeyWidth);
 
             var plusLabel = UIFactory.CreateLabel(modContainer, "PlusLabel", "+", TextAnchor.MiddleCenter);

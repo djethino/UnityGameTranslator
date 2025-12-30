@@ -2,7 +2,7 @@
   <PropertyGroup>
     <TargetFramework>net472</TargetFramework>
     <AssemblyName>UnityGameTranslator</AssemblyName>
-    <RootNamespace>UnityGameTranslator.MelonLoader</RootNamespace>
+    <RootNamespace>UnityGameTranslator.MelonLoaderMono</RootNamespace>
     <LangVersion>latest</LangVersion>
     <OutputPath>bin\</OutputPath>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>

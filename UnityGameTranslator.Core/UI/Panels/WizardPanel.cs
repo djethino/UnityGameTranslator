@@ -191,7 +191,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             var onlineToggleObj = UIFactory.CreateToggle(onlineRow, "OnlineToggle", out var onlineToggle, out var onlineLabel);
             onlineToggle.isOn = _onlineMode;
             onlineLabel.text = "";
-            onlineToggle.onValueChanged.AddListener((val) => _onlineMode = val);
+            UIHelpers.AddToggleListener(onlineToggle, (val) => _onlineMode = val);
             UIFactory.SetLayoutElement(onlineToggleObj, minWidth: UIStyles.ToggleControlWidth);
 
             var onlineTextLabel = UIFactory.CreateLabel(onlineRow, "OnlineTextLabel", "Enable Online Mode", TextAnchor.MiddleLeft);
@@ -217,8 +217,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             var offlineToggleObj = UIFactory.CreateToggle(offlineRow, "OfflineToggle", out var offlineToggle, out var offlineLabel);
             offlineToggle.isOn = !_onlineMode;
             offlineLabel.text = "";
-            offlineToggle.onValueChanged.AddListener((val) => { if (val) _onlineMode = false; onlineToggle.isOn = !val; });
-            onlineToggle.onValueChanged.AddListener((val) => offlineToggle.isOn = !val);
+            UIHelpers.AddToggleListener(offlineToggle, (val) => { if (val) _onlineMode = false; onlineToggle.isOn = !val; });
+            UIHelpers.AddToggleListener(onlineToggle, (val) => offlineToggle.isOn = !val);
             UIFactory.SetLayoutElement(offlineToggleObj, minWidth: UIStyles.ToggleControlWidth);
 
             var offlineTextLabel = UIFactory.CreateLabel(offlineRow, "OfflineTextLabel", "Stay Offline", TextAnchor.MiddleLeft);
@@ -685,7 +685,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             var enableObj = UIFactory.CreateToggle(enableRow, "EnableToggle", out var enableToggle, out var enableLabel);
             enableToggle.isOn = _enableOllama;
             enableLabel.text = "";
-            enableToggle.onValueChanged.AddListener((val) => _enableOllama = val);
+            UIHelpers.AddToggleListener(enableToggle, (val) => _enableOllama = val);
             UIFactory.SetLayoutElement(enableObj, minWidth: UIStyles.ToggleControlWidth);
 
             var enableTextLabel = UIFactory.CreateLabel(enableRow, "EnableTextLabel", "Enable Ollama (local AI)", TextAnchor.MiddleLeft);

@@ -164,10 +164,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (!_useTagAwareMerge && _pendingMerge == null) return;
             if (_useTagAwareMerge && _pendingMergeWithTags == null) return;
 
-            // Clear existing items
-            foreach (Transform child in _conflictListContent.transform)
+            // Clear existing items (manual iteration for IL2CPP compatibility)
+            for (int i = _conflictListContent.transform.childCount - 1; i >= 0; i--)
             {
-                UnityEngine.Object.Destroy(child.gameObject);
+                UnityEngine.Object.Destroy(_conflictListContent.transform.GetChild(i).gameObject);
             }
 
             if (_useTagAwareMerge)
@@ -285,7 +285,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             remoteToggle.isOn = !localToggle.isOn;
             UIFactory.SetLayoutElement(remoteToggleObj, minWidth: 100);
 
-            localToggle.onValueChanged.AddListener((val) =>
+            UIHelpers.AddToggleListener(localToggle, (val) =>
             {
                 if (val)
                 {
@@ -294,7 +294,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
             });
 
-            remoteToggle.onValueChanged.AddListener((val) =>
+            UIHelpers.AddToggleListener(remoteToggle, (val) =>
             {
                 if (val)
                 {

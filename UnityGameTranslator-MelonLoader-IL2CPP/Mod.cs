@@ -6,65 +6,54 @@ using MelonLoader.Utils;
 using HarmonyLib;
 using UnityEngine;
 using UnityGameTranslator.Core;
+using UnityGameTranslator.Core.UI.Components;
+using Il2CppInterop.Runtime.Injection;
 
-[assembly: MelonInfo(typeof(UnityGameTranslator.MelonLoader.TranslatorMod), "UnityGameTranslator", UnityGameTranslator.PluginInfo.Version, "Community")]
+[assembly: MelonInfo(typeof(UnityGameTranslator.MelonLoaderIL2CPP.TranslatorMod), "UnityGameTranslator", UnityGameTranslator.PluginInfo.Version, "Community")]
 [assembly: MelonGame(null, null)]
 
-namespace UnityGameTranslator.MelonLoader
+namespace UnityGameTranslator.MelonLoaderIL2CPP
 {
     public class TranslatorMod : MelonMod
     {
         private float lastScanTime = 0f;
-        private bool isIL2CPP = false;
         private static Assembly _universeLibAssembly;
 
         private class MelonLoaderAdapter : IModLoaderAdapter
         {
-            private readonly bool _isIL2CPP;
-
-            public MelonLoaderAdapter(bool isIL2CPP)
-            {
-                _isIL2CPP = isIL2CPP;
-            }
-
             public void LogInfo(string message) => MelonLogger.Msg(message);
             public void LogWarning(string message) => MelonLogger.Warning(message);
             public void LogError(string message) => MelonLogger.Error(message);
             public string GetPluginFolder() => Path.Combine(MelonEnvironment.UserDataDirectory, "UnityGameTranslator");
             public string ModLoaderType => "MelonLoader";
-            public bool IsIL2CPP => _isIL2CPP;
+            public bool IsIL2CPP => true;
         }
 
         public override void OnInitializeMelon()
         {
-            isIL2CPP = MelonUtils.IsGameIl2Cpp();
+            // Register assembly resolver BEFORE any UniverseLib types are accessed
+            System.AppDomain.CurrentDomain.AssemblyResolve += OnAssemblyResolve;
 
-            // For IL2CPP: Register assembly resolver BEFORE any UniverseLib types are accessed
-            if (isIL2CPP)
+            // Pre-load the correct UniverseLib assembly
+            string pluginPath = Path.Combine(MelonEnvironment.UserDataDirectory, "UnityGameTranslator");
+            string universeLibPath = Path.Combine(pluginPath, "UniverseLib.ML.IL2CPP.Interop.dll");
+            if (File.Exists(universeLibPath))
             {
-                System.AppDomain.CurrentDomain.AssemblyResolve += OnAssemblyResolve;
-
-                // Pre-load the correct UniverseLib assembly
-                string pluginPath = Path.Combine(MelonEnvironment.UserDataDirectory, "UnityGameTranslator");
-                string universeLibPath = Path.Combine(pluginPath, "UniverseLib.ML.IL2CPP.Interop.dll");
-                if (File.Exists(universeLibPath))
-                {
-                    _universeLibAssembly = Assembly.LoadFrom(universeLibPath);
-                    MelonLogger.Msg($"Pre-loaded UniverseLib from: {universeLibPath}");
-                }
-                else
-                {
-                    MelonLogger.Error($"UniverseLib not found at: {universeLibPath}");
-                }
+                _universeLibAssembly = Assembly.LoadFrom(universeLibPath);
+                MelonLogger.Msg($"Pre-loaded UniverseLib from: {universeLibPath}");
+            }
+            else
+            {
+                MelonLogger.Error($"UniverseLib not found at: {universeLibPath}");
             }
 
-            TranslatorCore.Initialize(new MelonLoaderAdapter(isIL2CPP));
+            TranslatorCore.Initialize(new MelonLoaderAdapter());
             TranslatorCore.OnTranslationComplete = TranslatorScanner.OnTranslationComplete;
 
-            if (isIL2CPP)
-            {
-                TranslatorScanner.InitializeIL2CPP();
-            }
+            TranslatorScanner.InitializeIL2CPP();
+
+            // Register Core's MonoBehaviour types for IL2CPP before UI initialization
+            RegisterCoreTypes();
 
             // Initialize UI in a separate method to ensure AssemblyResolve is active
             InitializeUI();
@@ -77,7 +66,7 @@ namespace UnityGameTranslator.MelonLoader
             });
             MelonLogger.Msg($"Applied {patchCount} Harmony patches");
 
-            MelonLogger.Msg($"MelonLoader version loaded ({(isIL2CPP ? "IL2CPP" : "Mono")})");
+            MelonLogger.Msg("MelonLoader IL2CPP version loaded");
         }
 
         public override void OnSceneWasLoaded(int buildIndex, string sceneName)
@@ -95,17 +84,26 @@ namespace UnityGameTranslator.MelonLoader
             if (currentTime - lastScanTime > 0.2f)
             {
                 lastScanTime = currentTime;
-
-                if (isIL2CPP)
-                    TranslatorScanner.ScanIL2CPP();
-                else
-                    TranslatorScanner.ScanMono();
+                TranslatorScanner.ScanIL2CPP();
             }
         }
 
         public override void OnApplicationQuit()
         {
             TranslatorCore.OnShutdown();
+        }
+
+        /// <summary>
+        /// Registers Core's MonoBehaviour types with IL2CPP injector.
+        /// Must be called before any of these types are used.
+        /// NoInlining prevents JIT from loading these types before registration.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private void RegisterCoreTypes()
+        {
+            // Register UI component types from Core that are used with AddComponent
+            ClassInjector.RegisterTypeInIl2Cpp<DynamicScrollbarHider>();
+            MelonLogger.Msg("Registered Core MonoBehaviour types for IL2CPP");
         }
 
         /// <summary>

@@ -24,7 +24,8 @@ $projects = @(
     @{ Name = "BepInEx5"; Path = "UnityGameTranslator-BepInEx5/UnityGameTranslator.BepInEx5.csproj" },
     @{ Name = "BepInEx6-Mono"; Path = "UnityGameTranslator-BepInEx6-Mono/UnityGameTranslator.BepInEx6Mono.csproj" },
     @{ Name = "BepInEx6-IL2CPP"; Path = "UnityGameTranslator-BepInEx6-IL2CPP/UnityGameTranslator.BepInEx6IL2CPP.csproj" },
-    @{ Name = "MelonLoader"; Path = "UnityGameTranslator-MelonLoader/UnityGameTranslator.MelonLoader.csproj" }
+    @{ Name = "MelonLoader-Mono"; Path = "UnityGameTranslator-MelonLoader-Mono/UnityGameTranslator.MelonLoaderMono.csproj" },
+    @{ Name = "MelonLoader-IL2CPP"; Path = "UnityGameTranslator-MelonLoader-IL2CPP/UnityGameTranslator.MelonLoaderIL2CPP.csproj" }
 )
 
 foreach ($proj in $projects) {
@@ -78,23 +79,34 @@ Copy-Item "UniverseLib/Release/NuGet_IL2CPP_Interop/lib/net6.0/UniverseLib.BIE.I
 Compress-Archive -Path "$bepinex6IL2CPPDir/*" -DestinationPath "$releasesDir/UnityGameTranslator-BepInEx6-IL2CPP-v$Version.zip"
 Write-Host "  Created UnityGameTranslator-BepInEx6-IL2CPP-v$Version.zip" -ForegroundColor Gray
 
-# MelonLoader (includes both Mono and IL2CPP variants)
-$melonDir = "$releasesDir/UnityGameTranslator-MelonLoader-v$Version"
-New-Item -ItemType Directory -Path $melonDir | Out-Null
-Copy-Item "UnityGameTranslator-MelonLoader/bin/UnityGameTranslator.dll" $melonDir
-Copy-Item "UnityGameTranslator-MelonLoader/bin/UnityGameTranslator.Core.dll" $melonDir
-Copy-Item "UnityGameTranslator-MelonLoader/bin/Newtonsoft.Json.dll" $melonDir
-# UniverseLib - both variants, mod detects and loads correct one
-Copy-Item "UniverseLib/Release/UniverseLib.Mono/UniverseLib.Mono.dll" $melonDir
-Copy-Item "UniverseLib/Release/NuGet_IL2CPP_Interop/lib/net6.0/UniverseLib.ML.IL2CPP.Interop.dll" $melonDir
-Compress-Archive -Path "$melonDir/*" -DestinationPath "$releasesDir/UnityGameTranslator-MelonLoader-v$Version.zip"
-Write-Host "  Created UnityGameTranslator-MelonLoader-v$Version.zip" -ForegroundColor Gray
+# MelonLoader Mono
+$melonMonoDir = "$releasesDir/UnityGameTranslator-MelonLoader-Mono-v$Version"
+New-Item -ItemType Directory -Path $melonMonoDir | Out-Null
+Copy-Item "UnityGameTranslator-MelonLoader-Mono/bin/UnityGameTranslator.dll" $melonMonoDir
+Copy-Item "UnityGameTranslator-MelonLoader-Mono/bin/UnityGameTranslator.Core.dll" $melonMonoDir
+Copy-Item "UnityGameTranslator-MelonLoader-Mono/bin/Newtonsoft.Json.dll" $melonMonoDir
+# UniverseLib Mono variant
+Copy-Item "UniverseLib/Release/UniverseLib.Mono/UniverseLib.Mono.dll" $melonMonoDir
+Compress-Archive -Path "$melonMonoDir/*" -DestinationPath "$releasesDir/UnityGameTranslator-MelonLoader-Mono-v$Version.zip"
+Write-Host "  Created UnityGameTranslator-MelonLoader-Mono-v$Version.zip" -ForegroundColor Gray
+
+# MelonLoader IL2CPP
+$melonIL2CPPDir = "$releasesDir/UnityGameTranslator-MelonLoader-IL2CPP-v$Version"
+New-Item -ItemType Directory -Path $melonIL2CPPDir | Out-Null
+Copy-Item "UnityGameTranslator-MelonLoader-IL2CPP/bin/UnityGameTranslator.dll" $melonIL2CPPDir
+Copy-Item "UnityGameTranslator-MelonLoader-IL2CPP/bin/UnityGameTranslator.Core.dll" $melonIL2CPPDir
+Copy-Item "UnityGameTranslator-MelonLoader-IL2CPP/bin/Newtonsoft.Json.dll" $melonIL2CPPDir
+# UniverseLib IL2CPP variant for MelonLoader
+Copy-Item "UniverseLib/Release/NuGet_IL2CPP_Interop/lib/net6.0/UniverseLib.ML.IL2CPP.Interop.dll" $melonIL2CPPDir
+Compress-Archive -Path "$melonIL2CPPDir/*" -DestinationPath "$releasesDir/UnityGameTranslator-MelonLoader-IL2CPP-v$Version.zip"
+Write-Host "  Created UnityGameTranslator-MelonLoader-IL2CPP-v$Version.zip" -ForegroundColor Gray
 
 # Cleanup temp directories
 Remove-Item -Recurse -Force $bepinex5Dir
 Remove-Item -Recurse -Force $bepinex6MonoDir
 Remove-Item -Recurse -Force $bepinex6IL2CPPDir
-Remove-Item -Recurse -Force $melonDir
+Remove-Item -Recurse -Force $melonMonoDir
+Remove-Item -Recurse -Force $melonIL2CPPDir
 
 Write-Host "`n=== Release packages ready in ./releases/ ===" -ForegroundColor Green
 Get-ChildItem $releasesDir -Filter "*.zip" | ForEach-Object {

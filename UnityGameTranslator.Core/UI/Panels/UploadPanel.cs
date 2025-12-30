@@ -104,7 +104,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             aiLabel.text = "AI (Ollama-generated)";
             aiLabel.color = UIStyles.TextSecondary;
             _aiToggle.isOn = true;
-            _aiToggle.onValueChanged.AddListener((val) =>
+            UIHelpers.AddToggleListener(_aiToggle, (val) =>
             {
                 if (val)
                 {
@@ -121,7 +121,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             aiCorrectedLabel.text = "AI Corrected (reviewed & fixed)";
             aiCorrectedLabel.color = UIStyles.TextSecondary;
             _aiCorrectedToggle.isOn = false;
-            _aiCorrectedToggle.onValueChanged.AddListener((val) =>
+            UIHelpers.AddToggleListener(_aiCorrectedToggle, (val) =>
             {
                 if (val)
                 {
@@ -138,7 +138,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             manualLabel.text = "Human (manually translated)";
             manualLabel.color = UIStyles.TextSecondary;
             _manualToggle.isOn = false;
-            _manualToggle.onValueChanged.AddListener((val) =>
+            UIHelpers.AddToggleListener(_manualToggle, (val) =>
             {
                 if (val)
                 {

@@ -327,26 +327,36 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 // Title bar and close button text are created by base.ConstructUI()
                 // Register them as excluded so they're never translated even after construction mode ends
+                // Note: We iterate manually to avoid IL2CPP issues with generic GetComponentsInChildren<T>
                 if (TitleBar != null)
                 {
-                    var titleText = TitleBar.GetComponentInChildren<UnityEngine.UI.Text>();
-                    if (titleText != null)
-                        TranslatorCore.RegisterExcluded(titleText);
-
-                    // Also exclude close button text
-                    var buttons = TitleBar.GetComponentsInChildren<UnityEngine.UI.Button>();
-                    foreach (var btn in buttons)
-                    {
-                        var btnText = btn.GetComponentInChildren<UnityEngine.UI.Text>();
-                        if (btnText != null)
-                            TranslatorCore.RegisterExcluded(btnText);
-                    }
+                    ExcludeAllTextComponents(TitleBar.transform);
                 }
             }
             finally
             {
                 // Always exit construction mode, even if an exception occurs
                 TranslatorCore.ExitConstructionMode();
+            }
+        }
+
+        /// <summary>
+        /// Recursively excludes all Text components from translation.
+        /// Uses manual iteration to avoid IL2CPP issues with generic GetComponentsInChildren.
+        /// </summary>
+        private void ExcludeAllTextComponents(Transform parent)
+        {
+            if (parent == null) return;
+
+            // Check this object for Text component
+            var text = parent.GetComponent<UnityEngine.UI.Text>();
+            if (text != null)
+                TranslatorCore.RegisterExcluded(text);
+
+            // Recursively check all children
+            for (int i = 0; i < parent.childCount; i++)
+            {
+                ExcludeAllTextComponents(parent.GetChild(i));
             }
         }
 
@@ -650,11 +660,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 var layoutGroup = scrollContent.GetComponent<VerticalLayoutGroup>();
                 if (layoutGroup != null)
                 {
-                    int activeChildren = 0;
-                    foreach (Transform child in scrollContent.transform)
-                    {
-                        if (child.gameObject.activeSelf) activeChildren++;
-                    }
+                    // Use helper for IL2CPP compatibility (foreach on Transform doesn't work in IL2CPP)
+                    int activeChildren = UIHelpers.CountActiveChildren(scrollContent.transform);
                     if (activeChildren > 1)
                     {
                         childrenHeight += layoutGroup.spacing * (activeChildren - 1);
@@ -750,11 +757,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (contentVlg != null)
             {
                 // Count visible direct children to calculate spacing
-                int visibleChildren = 0;
-                foreach (Transform child in ContentRoot.transform)
-                {
-                    if (child.gameObject.activeSelf) visibleChildren++;
-                }
+                // Use helper for IL2CPP compatibility (foreach on Transform doesn't work in IL2CPP)
+                int visibleChildren = UIHelpers.CountActiveChildren(ContentRoot.transform);
                 if (visibleChildren > 1)
                 {
                     chromeHeight += contentVlg.spacing * (visibleChildren - 1);
@@ -771,6 +775,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         /// <summary>
         /// Recursively measures children heights, going up to maxDepth levels deep.
+        /// Uses manual iteration for IL2CPP compatibility (foreach on Transform doesn't work in IL2CPP).
         /// </summary>
         private float MeasureChildrenRecursive(Transform parent, int depth = 0, int maxDepth = 10)
         {
@@ -779,8 +784,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             float totalHeight = 0;
             int childCount = 0;
 
-            foreach (Transform child in parent)
+            // Manual iteration for IL2CPP compatibility
+            for (int i = 0; i < parent.childCount; i++)
             {
+                Transform child = parent.GetChild(i);
                 if (!child.gameObject.activeSelf) continue;
 
                 var childRect = child.GetComponent<RectTransform>();

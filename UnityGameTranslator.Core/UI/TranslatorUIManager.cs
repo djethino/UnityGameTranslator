@@ -559,6 +559,9 @@ namespace UnityGameTranslator.Core.UI
 
             TranslatorCore.LogInfo($"[Merge] Applied successfully. LocalChangesCount={TranslatorCore.LocalChangesCount}, direction={PendingUpdateDirection}");
 
+            // Clear processing caches so scanner re-evaluates all text with merged translations
+            TranslatorCore.ClearProcessingCaches();
+
             // Refresh MainPanel to show updated translation count and sync status
             MainPanel?.RefreshUI();
         }
@@ -611,6 +614,9 @@ namespace UnityGameTranslator.Core.UI
             PendingUpdateDirection = HasPendingUpdate ? UpdateDirection.Upload : UpdateDirection.None;
 
             TranslatorCore.LogInfo($"[Merge] Applied with tags. LocalChangesCount={TranslatorCore.LocalChangesCount}, direction={PendingUpdateDirection}");
+
+            // Clear processing caches so scanner re-evaluates all text with merged translations
+            TranslatorCore.ClearProcessingCaches();
 
             // Refresh MainPanel to show updated translation count and sync status
             MainPanel?.RefreshUI();
@@ -713,7 +719,10 @@ namespace UnityGameTranslator.Core.UI
                     {
                         if (!kvp.Key.StartsWith("_") && kvp.Value is string strValue)
                         {
-                            remoteTranslations[kvp.Key] = strValue;
+                            // Normalize line endings for cross-platform consistency
+                            string normalizedKey = TranslatorCore.NormalizeLineEndings(kvp.Key);
+                            string normalizedValue = TranslatorCore.NormalizeLineEndings(strValue);
+                            remoteTranslations[normalizedKey] = normalizedValue;
                         }
                     }
 

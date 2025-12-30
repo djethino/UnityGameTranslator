@@ -112,6 +112,44 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Clear the processed text cache. Call when settings change to force re-evaluation.
+        /// </summary>
+        public static void ClearProcessedCache()
+        {
+            processedTextHashes.Clear();
+            // Reset batch indices to start fresh
+            currentBatchIndexTMP = 0;
+            currentBatchIndexUI = 0;
+            scanCycleComplete = true;
+        }
+
+        /// <summary>
+        /// Check if scanning should be skipped (no useful work to do).
+        /// Returns true if scanning can be skipped.
+        /// </summary>
+        private static bool ShouldSkipScanning()
+        {
+            // If translations are disabled, no point scanning
+            if (!TranslatorCore.Config.enable_translations)
+                return true;
+
+            // If we have cached translations to serve, keep scanning
+            if (TranslatorCore.TranslationCache.Count > 0)
+                return false;
+
+            // If Ollama is enabled, we need to scan to queue new translations
+            if (TranslatorCore.Config.enable_ollama)
+                return false;
+
+            // If capture mode is enabled, we need to scan to capture keys
+            if (TranslatorCore.Config.capture_keys_only)
+                return false;
+
+            // No cache, no Ollama, no capture mode - nothing useful to do
+            return true;
+        }
+
+        /// <summary>
         /// Initialize IL2CPP methods via reflection. Call once at startup for IL2CPP games.
         /// </summary>
         public static void InitializeIL2CPP()
@@ -228,8 +266,12 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static void ScanMono()
         {
-            // Apply any pending translations from Ollama (main thread)
+            // Apply any pending translations from Ollama (main thread) - always do this
             ProcessPendingUpdates();
+
+            // Skip scanning if there's no useful work to do
+            if (ShouldSkipScanning())
+                return;
 
             float currentTime = Time.realtimeSinceStartup;
 
@@ -338,11 +380,15 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static void ScanIL2CPP()
         {
-            // Apply any pending translations from Ollama (main thread)
+            // Apply any pending translations from Ollama (main thread) - always do this
             ProcessPendingUpdates();
 
             if (!il2cppMethodsInitialized) InitializeIL2CPP();
             if (!il2cppScanAvailable) return;
+
+            // Skip scanning if there's no useful work to do
+            if (ShouldSkipScanning())
+                return;
 
             float currentTime = Time.realtimeSinceStartup;
 

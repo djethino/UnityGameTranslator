@@ -444,8 +444,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
             else if (existsOnServer && !state.IsOwner)
             {
-                uploadAction = "Fork Translation";
-                uploadHint = $"Create a fork from {state.Uploader}'s translation";
+                uploadAction = "Contribute";
+                uploadHint = $"Contribute as a branch to @{state.Uploader}'s translation";
             }
             else
             {

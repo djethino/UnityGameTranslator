@@ -535,6 +535,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TranslatorCore.SaveConfig();
                 TranslatorCore.LogInfo("[Options] Settings saved successfully");
 
+                // Clear processing caches to force re-evaluation with new settings
+                TranslatorCore.ClearProcessingCaches();
+
                 // Start Ollama worker if just enabled
                 if (_enableOllamaToggle.isOn)
                 {

@@ -11,12 +11,12 @@ namespace UnityGameTranslator.Core.UI.Panels
     {
         New,
         Update,
-        Fork
+        Branch  // Contributing to existing Main (same UUID, becomes Branch)
     }
 
     /// <summary>
     /// Upload panel for sharing translations to the server.
-    /// Handles new uploads, updates (owner), and forks (non-owner).
+    /// Handles new uploads, updates (owner), and branches (non-owner contributing).
     /// For NEW uploads, redirects to UploadSetupPanel for language/game selection first.
     /// </summary>
     public class UploadPanel : TranslatorPanelBase
@@ -326,9 +326,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                     }
                     else
                     {
-                        // FORK mode
-                        _uploadMode = UploadMode.Fork;
-                        _titleLabel.text = "Fork Translation";
+                        // BRANCH mode - contributing to existing Main
+                        _uploadMode = UploadMode.Branch;
+                        _titleLabel.text = "Contribute as Branch";
 
                         // Update ServerState from API response
                         TranslatorCore.ServerState = new ServerTranslationState
@@ -343,8 +343,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                             Type = result.OriginalTranslation?.Type
                         };
 
-                        _modeInfoLabel.text = $"Forking from: {TranslatorCore.ServerState.Uploader ?? "unknown"}";
-                        _uploadBtn.ButtonText.text = "Fork";
+                        _modeInfoLabel.text = $"Contributing to: @{TranslatorCore.ServerState.Uploader ?? "unknown"}";
+                        _uploadBtn.ButtonText.text = "Contribute";
 
                         // Restore type from original translation
                         SetUploadType(result.OriginalTranslation?.Type ?? "ai");
@@ -420,7 +420,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _uploadBtn.Component.interactable = false;
 
             string actionText = _uploadMode == UploadMode.Update ? "Updating..." :
-                               (_uploadMode == UploadMode.Fork ? "Forking..." : "Uploading...");
+                               (_uploadMode == UploadMode.Branch ? "Contributing..." : "Uploading...");
             _statusLabel.text = actionText;
             _statusLabel.color = UIStyles.StatusWarning;
 
@@ -463,7 +463,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 if (result.Success)
                 {
                     string successMsg = _uploadMode == UploadMode.Update ? "Updated" :
-                                       (_uploadMode == UploadMode.Fork ? "Forked" : "Uploaded");
+                                       (_uploadMode == UploadMode.Branch ? "Contributed" : "Uploaded");
                     _statusLabel.text = $"{successMsg}! ID: {result.TranslationId}";
                     _statusLabel.color = UIStyles.StatusSuccess;
 

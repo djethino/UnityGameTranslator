@@ -540,26 +540,59 @@ namespace UnityGameTranslator.Core
                     }
                     else if (!prop.Name.StartsWith("_"))
                     {
+                        // Normalize key line endings for cross-platform consistency
+                        string normalizedKey = NormalizeLineEndings(prop.Name);
+
                         // Handle both new format (object with v/t) and legacy format (string)
+                        TranslationEntry newEntry;
                         if (prop.Value.Type == JTokenType.Object)
                         {
                             // New format: {"v": "value", "t": "A"}
                             var obj = prop.Value as JObject;
-                            TranslationCache[prop.Name] = new TranslationEntry
+                            newEntry = new TranslationEntry
                             {
-                                Value = obj?["v"]?.ToString() ?? "",
+                                // Normalize value line endings too
+                                Value = NormalizeLineEndings(obj?["v"]?.ToString() ?? ""),
                                 Tag = obj?["t"]?.ToString() ?? "A"
                             };
                         }
                         else if (prop.Value.Type == JTokenType.String)
                         {
                             // Legacy format: string value - convert to AI tag
-                            TranslationCache[prop.Name] = new TranslationEntry
+                            newEntry = new TranslationEntry
                             {
-                                Value = prop.Value.ToString(),
+                                Value = NormalizeLineEndings(prop.Value.ToString()),
                                 Tag = "A"  // Default to AI for legacy data
                             };
                             cacheModified = true;  // Will save in new format
+                        }
+                        else
+                        {
+                            continue;
+                        }
+
+                        // Handle duplicates after normalization (e.g., "LB\r\n" and "LB\n" become same key)
+                        if (TranslationCache.TryGetValue(normalizedKey, out var existingEntry))
+                        {
+                            // Tag priority: H > V > A (Human > Validated > AI)
+                            int GetPriority(string tag) => tag == "H" ? 3 : tag == "V" ? 2 : 1;
+
+                            if (GetPriority(newEntry.Tag) > GetPriority(existingEntry.Tag))
+                            {
+                                TranslationCache[normalizedKey] = newEntry;
+                                cacheModified = true;
+                            }
+                            // Otherwise keep existing (higher or same priority)
+                        }
+                        else
+                        {
+                            TranslationCache[normalizedKey] = newEntry;
+                        }
+
+                        // Mark modified if key was normalized
+                        if (normalizedKey != prop.Name)
+                        {
+                            cacheModified = true;
                         }
                     }
                 }
@@ -630,22 +663,25 @@ namespace UnityGameTranslator.Core
                 {
                     if (!prop.Name.StartsWith("_"))
                     {
+                        // Normalize key line endings for cross-platform consistency
+                        string normalizedKey = NormalizeLineEndings(prop.Name);
+
                         if (prop.Value.Type == JTokenType.Object)
                         {
                             // New format
                             var obj = prop.Value as JObject;
-                            AncestorCache[prop.Name] = new TranslationEntry
+                            AncestorCache[normalizedKey] = new TranslationEntry
                             {
-                                Value = obj?["v"]?.ToString() ?? "",
+                                Value = NormalizeLineEndings(obj?["v"]?.ToString() ?? ""),
                                 Tag = obj?["t"]?.ToString() ?? "A"
                             };
                         }
                         else if (prop.Value.Type == JTokenType.String)
                         {
                             // Legacy format
-                            AncestorCache[prop.Name] = new TranslationEntry
+                            AncestorCache[normalizedKey] = new TranslationEntry
                             {
-                                Value = prop.Value.ToString(),
+                                Value = NormalizeLineEndings(prop.Value.ToString()),
                                 Tag = "A"
                             };
                         }
@@ -669,6 +705,9 @@ namespace UnityGameTranslator.Core
         {
             Adapter?.LogInfo("[TranslatorCore] Reloading cache from disk...");
             LoadCache();
+
+            // Clear processing caches so scanner re-evaluates all text with new translations
+            ClearProcessingCaches();
         }
 
         /// <summary>
@@ -1474,6 +1513,21 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Normalize line endings to Unix format (\n).
+        /// Converts \r\n (Windows) and \r (old Mac) to \n.
+        /// This ensures consistent keys across platforms.
+        /// </summary>
+        public static string NormalizeLineEndings(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+                return text;
+
+            // Order is important: first \r\n, then \r
+            // Otherwise \r\n would become \n\n
+            return text.Replace("\r\n", "\n").Replace("\r", "\n");
+        }
+
+        /// <summary>
         /// Add a translation to the cache with an optional tag.
         /// </summary>
         /// <param name="original">Original text (key)</param>
@@ -1488,26 +1542,28 @@ namespace UnityGameTranslator.Core
             if (string.IsNullOrEmpty(translated) && tag != "H")
                 return;
 
+            // Normalize line endings for cross-platform consistency
+            string normalizedKey = NormalizeLineEndings(original);
+            string normalizedValue = NormalizeLineEndings(translated ?? "");
+
             lock (lockObj)
             {
-                string cacheKey = original;
-
-                if (TranslationCache.ContainsKey(cacheKey))
+                if (TranslationCache.ContainsKey(normalizedKey))
                     return;
 
                 var entry = new TranslationEntry
                 {
-                    Value = translated ?? "",
+                    Value = normalizedValue,
                     Tag = tag ?? "A"
                 };
 
-                TranslationCache[cacheKey] = entry;
+                TranslationCache[normalizedKey] = entry;
                 cacheModified = true;
 
                 // Track local changes (if different from ancestor or new)
                 if (AncestorCache.Count > 0)
                 {
-                    if (!AncestorCache.TryGetValue(cacheKey, out var ancestorEntry) ||
+                    if (!AncestorCache.TryGetValue(normalizedKey, out var ancestorEntry) ||
                         ancestorEntry.Value != entry.Value ||
                         ancestorEntry.Tag != entry.Tag)
                     {
@@ -1521,7 +1577,7 @@ namespace UnityGameTranslator.Core
                 }
 
                 // Add to reverse cache (only if value is non-empty and different from key)
-                if (cacheKey != entry.Value && !string.IsNullOrEmpty(entry.Value))
+                if (normalizedKey != entry.Value && !string.IsNullOrEmpty(entry.Value))
                 {
                     translatedTexts.Add(entry.Value);
                 }
@@ -1530,13 +1586,13 @@ namespace UnityGameTranslator.Core
                 // OnTranslationComplete updates tracked components directly.
                 // New components will be translated on their next scan cycle.
 
-                if (cacheKey.Contains("[v"))
+                if (normalizedKey.Contains("[v"))
                 {
                     BuildPatternEntries();
                 }
 
                 if (DebugMode)
-                    Adapter?.LogInfo($"[Cache+] {cacheKey.Substring(0, Math.Min(40, cacheKey.Length))}... [{tag}]");
+                    Adapter?.LogInfo($"[Cache+] {normalizedKey.Substring(0, Math.Min(40, normalizedKey.Length))}... [{tag}]");
             }
         }
 
@@ -1667,12 +1723,16 @@ namespace UnityGameTranslator.Core
             if (IsNumericOrSymbol(text))
                 return text;
 
-            // Normalize FIRST (extract numbers to placeholders)
-            string normalizedText = text;
+            // Normalize line endings FIRST (for cross-platform consistency)
+            // Cache keys are stored with normalized line endings (\n only)
+            string lineNormalized = NormalizeLineEndings(text);
+
+            // Then extract numbers to placeholders (if enabled)
+            string normalizedText = lineNormalized;
             List<string> extractedNumbers = null;
             if (Config.normalize_numbers)
             {
-                normalizedText = ExtractNumbersToPlaceholders(text, out extractedNumbers);
+                normalizedText = ExtractNumbersToPlaceholders(lineNormalized, out extractedNumbers);
             }
 
             // Check cache with NORMALIZED key
@@ -1785,12 +1845,16 @@ namespace UnityGameTranslator.Core
             if (IsNumericOrSymbol(text))
                 return text;
 
-            // Normalize FIRST (extract numbers to placeholders)
-            string normalizedText = text;
+            // Normalize line endings FIRST (for cross-platform consistency)
+            // Cache keys are stored with normalized line endings (\n only)
+            string lineNormalized = NormalizeLineEndings(text);
+
+            // Then extract numbers to placeholders (if enabled)
+            string normalizedText = lineNormalized;
             List<string> extractedNumbers = null;
             if (Config.normalize_numbers)
             {
-                normalizedText = ExtractNumbersToPlaceholders(text, out extractedNumbers);
+                normalizedText = ExtractNumbersToPlaceholders(lineNormalized, out extractedNumbers);
             }
 
             string translation = null;
@@ -1947,6 +2011,28 @@ namespace UnityGameTranslator.Core
         public static void ClearLastSeenText()
         {
             lastSeenText.Clear();
+        }
+
+        /// <summary>
+        /// Clear all processing state caches to force re-evaluation of text.
+        /// Call this when settings change (enable_translations, enable_ollama, etc.)
+        /// Does NOT clear the translation cache itself.
+        /// </summary>
+        public static void ClearProcessingCaches()
+        {
+            // Clear text tracking
+            lastSeenText.Clear();
+
+            // Clear Harmony patch cache
+            TranslatorPatches.ClearCache();
+
+            // Clear scanner processed cache
+            TranslatorScanner.ClearProcessedCache();
+
+            // Clear pattern match failure cache (in case patterns changed)
+            patternMatchFailures.Clear();
+
+            Adapter?.LogInfo("[TranslatorCore] Processing caches cleared - text will be re-evaluated");
         }
 
         public static bool HasSeenText(int id, string text, out string lastText)

@@ -189,6 +189,39 @@ Config file location:
 3. Enter the displayed code at the website
 4. Once logged in, click "Upload" to share your translation
 
+### Collaboration System (Main/Branch)
+
+UnityGameTranslator uses a **Main/Branch** model for collaborative translation:
+
+#### Roles
+
+| Role | Description |
+|------|-------------|
+| **Main** | You created this translation. You're the owner and can merge contributions. |
+| **Branch** | You forked someone else's translation to contribute improvements. |
+| **None** | You haven't uploaded yet. Your local file will become Main or Branch on upload. |
+
+#### How it works
+
+1. **First upload** → Your translation becomes the **Main** for that UUID
+2. **Download + modify + upload** → You create a **Branch** (fork) linked to the original
+3. **Main owner** can view branches on the website and merge contributions
+4. **Languages are locked** after first upload - source/target cannot be changed
+
+#### Upload behavior
+
+| Situation | Result |
+|-----------|--------|
+| UUID doesn't exist on server | Creates **new Main** translation |
+| UUID exists, you're the owner | **Updates** your Main translation |
+| UUID exists, owned by someone else | Creates a **Branch** (your fork) |
+
+#### In the mod
+
+- Your role is shown in the main panel: "Main translation" or "Branch of @username"
+- Branch count is displayed if you're the Main owner
+- Languages become read-only in Options after your first upload
+
 ### Merging Updates
 
 When a translation you downloaded has updates:

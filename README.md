@@ -239,7 +239,7 @@ When a translation you downloaded has updates:
 
 The mod uses 3-way merge logic to intelligently combine changes.
 
-### Translation Quality System (H/V/A/C Tags)
+### Translation Quality System (H/V/A Tags)
 
 Each translation entry has a **quality tag** indicating how it was created:
 
@@ -248,7 +248,8 @@ Each translation entry has a **quality tag** indicating how it was created:
 | **H** | Human | Manually written by a human | 3 points |
 | **V** | Validated | AI translation reviewed and approved by human | 2 points |
 | **A** | AI | Automatically translated by Ollama | 1 point |
-| **C** | Capture | Text captured but not yet translated | 0 points |
+
+> **Note:** Entries with tag `H` but empty value are displayed as "C" (Capture) in stats and count as 0 points until translated.
 
 #### Quality Score (0-3 scale)
 

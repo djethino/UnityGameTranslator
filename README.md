@@ -239,6 +239,46 @@ When a translation you downloaded has updates:
 
 The mod uses 3-way merge logic to intelligently combine changes.
 
+### Translation Quality System (H/V/A/C Tags)
+
+Each translation entry has a **quality tag** indicating how it was created:
+
+| Tag | Name | Description | Score Weight |
+|-----|------|-------------|--------------|
+| **H** | Human | Manually written by a human | 3 points |
+| **V** | Validated | AI translation reviewed and approved by human | 2 points |
+| **A** | AI | Automatically translated by Ollama | 1 point |
+| **C** | Capture | Text captured but not yet translated | 0 points |
+
+#### Quality Score (0-3 scale)
+
+The quality score is calculated from the H/V/A distribution:
+
+```
+Score = (H×3 + V×2 + A×1) / (H + V + A)
+```
+
+| Score | Label | Meaning |
+|-------|-------|---------|
+| 2.5 - 3.0 | **Excellent** | Mostly human translations |
+| 2.0 - 2.5 | **Good** | Mix of human and validated |
+| 1.5 - 2.0 | **Fair** | Balanced mix |
+| 1.0 - 1.5 | **Basic** | Mostly AI with some review |
+| 0.0 - 1.0 | **Raw AI** | Unreviewed AI translations |
+
+#### How tags are assigned
+
+- **Capture mode** (no Ollama): Text saved with tag `H` but empty value (becomes `C` in stats)
+- **AI translation**: Ollama translates → tag `A`
+- **Manual edit**: User edits a translation → tag `H`
+- **Validation**: User approves AI translation on website → tag `V`
+
+#### In the mod UI
+
+- Translation list shows: `H:150 V:50 A:300 (Fair)`
+- Status card shows visual H/V/A bar with colors
+- Quality score displayed as `1.8/3 (Fair)`
+
 ### Manual Sharing
 
 Translation caches are stored in `translations.json` in the plugin folder:

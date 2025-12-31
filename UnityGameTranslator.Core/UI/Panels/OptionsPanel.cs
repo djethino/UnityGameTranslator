@@ -30,7 +30,12 @@ namespace UnityGameTranslator.Core.UI.Panels
         private LanguageSelector _targetLanguageSelector;
         private string[] _languages;
         private string[] _sourceLanguages; // Includes "auto (Detect)"
-        private GameObject _languagesLockedHint; // Shown when languages can't be changed
+
+        // Language section containers for conditional display
+        private GameObject _languagesEditableSection; // Shown when languages can be changed
+        private GameObject _languagesLockedSection;   // Shown when languages are locked
+        private Text _lockedSourceLangValue;
+        private Text _lockedTargetLangValue;
 
         // Hotkey section (reusable component)
         private HotkeyCapture _hotkeyCapture;
@@ -148,31 +153,65 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             UIStyles.CreateSpacer(generalBox, 5);
 
+            // === EDITABLE LANGUAGES SECTION (shown when not locked) ===
+            _languagesEditableSection = UIFactory.CreateVerticalGroup(generalBox, "LanguagesEditableSection", false, false, true, true, 0);
+            UIFactory.SetLayoutElement(_languagesEditableSection, flexibleWidth: 9999);
+
             // Source Language label
-            var sourceLangLabel = UIFactory.CreateLabel(generalBox, "SourceLangLabel", "Source Language:", TextAnchor.MiddleLeft);
+            var sourceLangLabel = UIFactory.CreateLabel(_languagesEditableSection, "SourceLangLabel", "Source Language:", TextAnchor.MiddleLeft);
             sourceLangLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(sourceLangLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
             RegisterUIText(sourceLangLabel);
 
             // Source Language selector
-            _sourceLanguageSelector.CreateUI(generalBox, OnSourceLanguageChanged);
+            _sourceLanguageSelector.CreateUI(_languagesEditableSection, OnSourceLanguageChanged);
 
-            UIStyles.CreateSpacer(generalBox, 5);
+            UIStyles.CreateSpacer(_languagesEditableSection, 5);
 
             // Target Language label
-            var targetLangLabel = UIFactory.CreateLabel(generalBox, "TargetLangLabel", "Target Language:", TextAnchor.MiddleLeft);
+            var targetLangLabel = UIFactory.CreateLabel(_languagesEditableSection, "TargetLangLabel", "Target Language:", TextAnchor.MiddleLeft);
             targetLangLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(targetLangLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
             RegisterUIText(targetLangLabel);
 
             // Target Language selector
-            _targetLanguageSelector.CreateUI(generalBox);
+            _targetLanguageSelector.CreateUI(_languagesEditableSection);
 
-            // Languages locked hint (hidden by default, shown when languages can't be changed)
-            var lockedHint = UIStyles.CreateHint(generalBox, "LanguagesLockedHint", "Languages locked: translation already uploaded");
-            lockedHint.color = UIStyles.StatusWarning;
-            _languagesLockedHint = lockedHint.gameObject;
-            _languagesLockedHint.SetActive(false);
+            // === LOCKED LANGUAGES SECTION (shown when locked) ===
+            _languagesLockedSection = UIFactory.CreateVerticalGroup(generalBox, "LanguagesLockedSection", false, false, true, true, 0);
+            UIFactory.SetLayoutElement(_languagesLockedSection, flexibleWidth: 9999);
+
+            // Locked header with warning
+            var lockedHeader = UIFactory.CreateLabel(_languagesLockedSection, "LockedHeader", "Languages (locked - translation uploaded):", TextAnchor.MiddleLeft);
+            lockedHeader.color = UIStyles.StatusWarning;
+            lockedHeader.fontSize = UIStyles.FontSizeSmall;
+            UIFactory.SetLayoutElement(lockedHeader.gameObject, minHeight: UIStyles.RowHeightSmall);
+            RegisterUIText(lockedHeader);
+
+            // Source language row (read-only)
+            var sourceRow = UIStyles.CreateFormRow(_languagesLockedSection, "SourceRow", UIStyles.RowHeightNormal, 5);
+            var sourceLabel = UIFactory.CreateLabel(sourceRow, "SourceLabel", "Source:", TextAnchor.MiddleLeft);
+            sourceLabel.color = UIStyles.TextSecondary;
+            UIFactory.SetLayoutElement(sourceLabel.gameObject, minWidth: 60);
+            RegisterUIText(sourceLabel);
+
+            _lockedSourceLangValue = UIFactory.CreateLabel(sourceRow, "SourceValue", "-", TextAnchor.MiddleLeft);
+            _lockedSourceLangValue.color = UIStyles.TextPrimary;
+            UIFactory.SetLayoutElement(_lockedSourceLangValue.gameObject, flexibleWidth: 9999);
+
+            // Target language row (read-only)
+            var targetRow = UIStyles.CreateFormRow(_languagesLockedSection, "TargetRow", UIStyles.RowHeightNormal, 5);
+            var targetLabel2 = UIFactory.CreateLabel(targetRow, "TargetLabel", "Target:", TextAnchor.MiddleLeft);
+            targetLabel2.color = UIStyles.TextSecondary;
+            UIFactory.SetLayoutElement(targetLabel2.gameObject, minWidth: 60);
+            RegisterUIText(targetLabel2);
+
+            _lockedTargetLangValue = UIFactory.CreateLabel(targetRow, "TargetValue", "-", TextAnchor.MiddleLeft);
+            _lockedTargetLangValue.color = UIStyles.TextPrimary;
+            UIFactory.SetLayoutElement(_lockedTargetLangValue.gameObject, flexibleWidth: 9999);
+
+            // Initially hide locked section (UpdateLanguagesLocked will show the right one)
+            _languagesLockedSection.SetActive(false);
         }
 
         private void OnSourceLanguageChanged(string newSource)
@@ -425,12 +464,30 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             bool locked = TranslatorCore.AreLanguagesLocked;
 
-            _sourceLanguageSelector.SetInteractable(!locked);
-            _targetLanguageSelector.SetInteractable(!locked);
-
-            if (_languagesLockedHint != null)
+            // Toggle visibility of editable vs locked sections
+            if (_languagesEditableSection != null)
             {
-                _languagesLockedHint.SetActive(locked);
+                _languagesEditableSection.SetActive(!locked);
+            }
+
+            if (_languagesLockedSection != null)
+            {
+                _languagesLockedSection.SetActive(locked);
+
+                // Update locked values display
+                if (locked && _lockedSourceLangValue != null && _lockedTargetLangValue != null)
+                {
+                    string sourceLang = TranslatorCore.Config.source_language;
+                    string targetLang = TranslatorCore.Config.target_language;
+
+                    _lockedSourceLangValue.text = string.IsNullOrEmpty(sourceLang) || sourceLang == "auto"
+                        ? "Auto (Detect)"
+                        : sourceLang;
+
+                    _lockedTargetLangValue.text = string.IsNullOrEmpty(targetLang) || targetLang == "auto"
+                        ? "Auto (System)"
+                        : targetLang;
+                }
             }
         }
 

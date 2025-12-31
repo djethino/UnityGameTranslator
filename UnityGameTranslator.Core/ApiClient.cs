@@ -824,8 +824,30 @@ namespace UnityGameTranslator.Core
         #region Upload
 
         /// <summary>
+        /// Compress JSON string using gzip for upload bandwidth optimization.
+        /// Reduces upload size by ~70% for typical translation files.
+        /// </summary>
+        private static ByteArrayContent CompressJson(string json)
+        {
+            var bytes = Encoding.UTF8.GetBytes(json);
+            using (var memoryStream = new MemoryStream())
+            {
+                using (var gzipStream = new GZipStream(memoryStream, CompressionLevel.Optimal))
+                {
+                    gzipStream.Write(bytes, 0, bytes.Length);
+                }
+                var compressed = memoryStream.ToArray();
+                var content = new ByteArrayContent(compressed);
+                content.Headers.Add("Content-Encoding", "gzip");
+                content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
+                return content;
+            }
+        }
+
+        /// <summary>
         /// Upload a translation to the website.
         /// Requires authentication (SetAuthToken must be called first).
+        /// Uses gzip compression to reduce upload bandwidth (~70% reduction).
         /// </summary>
         public static async Task<UploadResult> UploadTranslation(UploadRequest request)
         {
@@ -844,13 +866,10 @@ namespace UnityGameTranslator.Core
                     notes = request.Notes
                 };
 
-                var content = new StringContent(
-                    JsonConvert.SerializeObject(payload),
-                    Encoding.UTF8,
-                    "application/json"
-                );
+                var jsonPayload = JsonConvert.SerializeObject(payload);
+                var content = CompressJson(jsonPayload);
 
-                TranslatorCore.LogInfo($"[ApiClient] POSTing to {DefaultBaseUrl}/translations...");
+                TranslatorCore.LogInfo($"[ApiClient] POSTing to {DefaultBaseUrl}/translations (gzip: {jsonPayload.Length} -> {content.Headers.ContentLength ?? 0} bytes)...");
                 var response = await client.PostAsync($"{DefaultBaseUrl}/translations", content);
                 TranslatorCore.LogInfo($"[ApiClient] Response: {(int)response.StatusCode} {response.StatusCode}");
 
@@ -957,13 +976,10 @@ namespace UnityGameTranslator.Core
                     local_content = contentForApi
                 };
 
-                var content = new StringContent(
-                    JsonConvert.SerializeObject(payload),
-                    Encoding.UTF8,
-                    "application/json"
-                );
+                var jsonPayload = JsonConvert.SerializeObject(payload);
+                var content = CompressJson(jsonPayload);
 
-                TranslatorCore.LogInfo($"[ApiClient] Initiating merge preview for translation #{translationId}...");
+                TranslatorCore.LogInfo($"[ApiClient] Initiating merge preview for translation #{translationId} (gzip: {jsonPayload.Length} -> {content.Headers.ContentLength ?? 0} bytes)...");
                 var response = await client.PostAsync($"{DefaultBaseUrl}/merge-preview/init", content);
 
                 string json = await response.Content.ReadAsStringAsync();

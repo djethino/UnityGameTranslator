@@ -268,10 +268,25 @@ Score = (H×3 + V×2 + A×1) / (H + V + A)
 
 #### How tags are assigned
 
-- **Capture mode** (no Ollama): Text saved with tag `H` but empty value (becomes `C` in stats)
+- **Capture mode**: Text saved with empty value, tag `H` (shows as `C` in stats until translated)
 - **AI translation**: Ollama translates → tag `A`
 - **Manual edit**: User edits a translation in-game or on website → tag `H`
 - **Validation**: User approves AI translation on website → tag `V`
+
+#### Capture Keys Only Mode (100% Human Translation)
+
+For translators who want full control without AI:
+
+1. Open Settings (F10) → enable **"Capture keys only"**
+2. Play through the game - all text is captured but NOT translated
+3. Upload the captured file to the website
+4. Edit translations manually on the website → all entries become `H` (Human)
+5. Result: 100% human translation with **Excellent** quality score
+
+This workflow is ideal for:
+- Professional translators who don't want AI interference
+- Languages not well supported by AI
+- Games requiring specific terminology or style
 
 #### Editing on the website
 

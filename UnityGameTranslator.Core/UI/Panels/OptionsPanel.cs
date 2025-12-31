@@ -41,6 +41,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         private Toggle _notifyUpdatesToggle;
         private Toggle _autoDownloadToggle;
         private Toggle _checkModUpdatesToggle;
+        private ButtonRef _checkModUpdatesNowBtn;
+        private Text _checkModUpdatesStatusLabel;
 
         // Ollama section
         private Toggle _enableOllamaToggle;
@@ -245,11 +247,21 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.SetLayoutElement(modSyncLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
             RegisterUIText(modSyncLabel);
 
-            var modUpdatesObj = UIFactory.CreateToggle(onlineBox, "ModUpdatesToggle", out _checkModUpdatesToggle, out var modLabel);
-            modLabel.text = " Check for mod updates on GitHub";
+            var modUpdatesRow = UIStyles.CreateFormRow(onlineBox, "ModUpdatesRow", UIStyles.RowHeightNormal, 5);
+
+            var modUpdatesObj = UIFactory.CreateToggle(modUpdatesRow, "ModUpdatesToggle", out _checkModUpdatesToggle, out var modLabel);
+            modLabel.text = " Check on startup";
             modLabel.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(modUpdatesObj, minHeight: UIStyles.RowHeightNormal);
+            UIFactory.SetLayoutElement(modUpdatesObj, flexibleWidth: 9999);
             RegisterUIText(modLabel);
+
+            _checkModUpdatesNowBtn = CreateSecondaryButton(modUpdatesRow, "CheckNowBtn", "Check Now", 90);
+            _checkModUpdatesNowBtn.OnClick += OnCheckModUpdatesNowClicked;
+            RegisterUIText(_checkModUpdatesNowBtn.ButtonText);
+
+            _checkModUpdatesStatusLabel = UIFactory.CreateLabel(onlineBox, "ModUpdateStatus", "", TextAnchor.MiddleLeft);
+            _checkModUpdatesStatusLabel.fontSize = UIStyles.FontSizeSmall;
+            UIFactory.SetLayoutElement(_checkModUpdatesStatusLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
         }
 
         private void CreateOllamaSection(GameObject parent)
@@ -428,6 +440,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _notifyUpdatesToggle.interactable = enabled;
             _autoDownloadToggle.interactable = enabled;
             _checkModUpdatesToggle.interactable = enabled;
+            _checkModUpdatesNowBtn.Component.interactable = enabled;
         }
 
         private void OnCaptureKeysOnlyChanged(bool captureOnly)
@@ -455,6 +468,60 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // The enable toggle itself is disabled when capture mode is on
             _enableOllamaToggle.interactable = !_captureKeysOnlyToggle.isOn;
+        }
+
+        private async void OnCheckModUpdatesNowClicked()
+        {
+            if (!TranslatorCore.Config.online_mode)
+            {
+                _checkModUpdatesStatusLabel.text = "Enable online mode first";
+                _checkModUpdatesStatusLabel.color = UIStyles.StatusWarning;
+                return;
+            }
+
+            _checkModUpdatesNowBtn.Component.interactable = false;
+            _checkModUpdatesStatusLabel.text = "Checking...";
+            _checkModUpdatesStatusLabel.color = UIStyles.TextSecondary;
+
+            try
+            {
+                string currentVersion = PluginInfo.Version;
+                string modLoaderType = TranslatorCore.Adapter?.ModLoaderType ?? "Unknown";
+
+                var result = await GitHubUpdateChecker.CheckForUpdatesAsync(currentVersion, modLoaderType);
+
+                if (result.Success && result.HasUpdate)
+                {
+                    TranslatorUIManager.HasModUpdate = true;
+                    TranslatorUIManager.ModUpdateInfo = result;
+                    TranslatorUIManager.ModUpdateDismissed = false;
+
+                    _checkModUpdatesStatusLabel.text = $"Update available: v{result.LatestVersion}";
+                    _checkModUpdatesStatusLabel.color = UIStyles.StatusSuccess;
+
+                    // Refresh MainPanel if open
+                    TranslatorUIManager.MainPanel?.RefreshUI();
+                }
+                else if (result.Success)
+                {
+                    _checkModUpdatesStatusLabel.text = $"Up to date (v{currentVersion})";
+                    _checkModUpdatesStatusLabel.color = UIStyles.StatusSuccess;
+                }
+                else
+                {
+                    _checkModUpdatesStatusLabel.text = $"Error: {result.Error}";
+                    _checkModUpdatesStatusLabel.color = UIStyles.StatusError;
+                }
+            }
+            catch (System.Exception e)
+            {
+                _checkModUpdatesStatusLabel.text = $"Error: {e.Message}";
+                _checkModUpdatesStatusLabel.color = UIStyles.StatusError;
+            }
+            finally
+            {
+                _checkModUpdatesNowBtn.Component.interactable = true;
+            }
         }
 
         private async void TestOllamaConnection()

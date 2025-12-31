@@ -368,22 +368,53 @@ namespace UnityGameTranslator.Core.UI
 
                 if (result.Success && result.HasUpdate)
                 {
-                    if (TranslatorCore.Config.sync.last_seen_mod_version == result.LatestVersion)
+                    // Format published_at for comparison (ISO 8601 string)
+                    string publishedAt = result.PublishedAt?.ToString("o");
+
+                    // Only skip notification if we've already seen this EXACT release
+                    // Check: same version + same current version + same published_at (handles re-releases)
+                    bool alreadyNotified = TranslatorCore.Config.sync.last_seen_mod_version == result.LatestVersion &&
+                                           TranslatorCore.Config.sync.last_seen_from_version == currentVersion &&
+                                           TranslatorCore.Config.sync.last_seen_published_at == publishedAt;
+
+                    if (alreadyNotified)
                     {
-                        TranslatorCore.LogInfo($"[ModUpdate] Already notified about v{result.LatestVersion}");
+                        TranslatorCore.LogInfo($"[ModUpdate] Already notified about v{result.LatestVersion} from v{currentVersion}");
                         return;
                     }
 
                     HasModUpdate = true;
                     ModUpdateInfo = result;
-                    TranslatorCore.LogInfo($"[ModUpdate] New version available: v{result.LatestVersion} (current: v{currentVersion})");
 
+                    // Log re-release detection if same version but different published_at
+                    if (TranslatorCore.Config.sync.last_seen_mod_version == result.LatestVersion &&
+                        TranslatorCore.Config.sync.last_seen_published_at != publishedAt)
+                    {
+                        TranslatorCore.LogInfo($"[ModUpdate] Re-release detected for v{result.LatestVersion} (new publish date)");
+                    }
+                    else
+                    {
+                        TranslatorCore.LogInfo($"[ModUpdate] New version available: v{result.LatestVersion} (current: v{currentVersion})");
+                    }
+
+                    // Save the seen version, current version, and published timestamp
                     TranslatorCore.Config.sync.last_seen_mod_version = result.LatestVersion;
+                    TranslatorCore.Config.sync.last_seen_from_version = currentVersion;
+                    TranslatorCore.Config.sync.last_seen_published_at = publishedAt;
                     TranslatorCore.SaveConfig();
                 }
                 else if (result.Success)
                 {
                     TranslatorCore.LogInfo($"[ModUpdate] Mod is up to date (v{currentVersion})");
+
+                    // Clear old notification tracking since we're up to date
+                    if (TranslatorCore.Config.sync.last_seen_mod_version != null)
+                    {
+                        TranslatorCore.Config.sync.last_seen_mod_version = null;
+                        TranslatorCore.Config.sync.last_seen_from_version = null;
+                        TranslatorCore.Config.sync.last_seen_published_at = null;
+                        TranslatorCore.SaveConfig();
+                    }
                 }
                 else
                 {
@@ -880,16 +911,25 @@ namespace UnityGameTranslator.Core.UI
         {
             if (StatusOverlay == null) return;
 
-            // Status overlay is visible when:
-            // 1. No main panels are open
-            // 2. First run is completed
-            // 3. There's actually content to display (queue active, notifications, etc.)
-            bool shouldShow = !AnyPanelVisible() &&
-                              TranslatorCore.Config.first_run_completed &&
-                              StatusOverlay.HasContentToShow();
+            // Determine what should be shown
+            bool panelsOpen = AnyPanelVisible();
+            bool firstRunDone = TranslatorCore.Config.first_run_completed;
+
+            // Ollama queue is ALWAYS visible when translating (even with panels open)
+            bool ollamaActive = TranslatorCore.Config.enable_ollama &&
+                               (TranslatorCore.QueueCount > 0 || TranslatorCore.IsTranslating);
+
+            // Other notifications only show when no panels are open
+            // (mod update and sync are now shown in MainPanel)
+            bool hasOtherContent = !panelsOpen && StatusOverlay.HasNotificationContent();
+
+            bool shouldShow = firstRunDone && (ollamaActive || hasOtherContent);
 
             if (shouldShow)
             {
+                // Tell overlay which mode to use
+                StatusOverlay.SetPanelsOpenMode(panelsOpen);
+
                 // Show and refresh periodically
                 if (!StatusOverlay.Enabled)
                 {

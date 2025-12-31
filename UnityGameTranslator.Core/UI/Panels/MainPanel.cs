@@ -80,6 +80,11 @@ namespace UnityGameTranslator.Core.UI.Panels
         private GameObject _guidanceSection;
         private Text _guidanceLabel;
 
+        // UI references - Mod update banner
+        private GameObject _modUpdateBanner;
+        private Text _modUpdateLabel;
+        private ButtonRef _modUpdateBtn;
+
         // Current layout state (cached for efficiency)
         private LayoutState _currentLayoutState = LayoutState.NotLogged;
 
@@ -98,6 +103,9 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Main card - adaptive, sizes to content (PanelWidth - 2*PanelPadding)
             var card = CreateAdaptiveCard(scrollContent, "MainCard", PanelWidth - 40);
+
+            // Mod Update Banner (at very top, visible only when update available)
+            CreateModUpdateBanner(card);
 
             var title = CreateTitle(card, "Title", "Unity Game Translator");
             RegisterExcluded(title); // Mod name - never translate
@@ -166,6 +174,45 @@ namespace UnityGameTranslator.Core.UI.Panels
             _loginLogoutBtn = CreateSecondaryButton(accountRow, "LoginLogoutBtn", "Login", 80);
             _loginLogoutBtn.OnClick += OnLoginLogoutClicked;
             RegisterUIText(_loginLogoutBtn.ButtonText);
+        }
+
+        private void CreateModUpdateBanner(GameObject parent)
+        {
+            // Mod update banner - colored box at top when update available
+            _modUpdateBanner = UIFactory.CreateHorizontalGroup(parent, "ModUpdateBanner", false, false, true, true, 8);
+            UIFactory.SetLayoutElement(_modUpdateBanner, minHeight: UIStyles.RowHeightLarge, flexibleWidth: 9999);
+            UIStyles.SetBackground(_modUpdateBanner, UIStyles.NotificationSuccess);
+
+            var padding = _modUpdateBanner.GetComponent<HorizontalLayoutGroup>();
+            if (padding != null)
+            {
+                padding.padding = new RectOffset(10, 10, 5, 5);
+                padding.childAlignment = TextAnchor.MiddleLeft;
+            }
+
+            _modUpdateLabel = UIFactory.CreateLabel(_modUpdateBanner, "ModUpdateLabel", "Update available: v?.?.?", TextAnchor.MiddleLeft);
+            _modUpdateLabel.fontStyle = FontStyle.Bold;
+            _modUpdateLabel.color = Color.white;
+            UIFactory.SetLayoutElement(_modUpdateLabel.gameObject, flexibleWidth: 9999);
+            RegisterUIText(_modUpdateLabel);
+
+            _modUpdateBtn = UIFactory.CreateButton(_modUpdateBanner, "ModUpdateBtn", "Download");
+            UIFactory.SetLayoutElement(_modUpdateBtn.Component.gameObject, minWidth: 90, minHeight: UIStyles.RowHeightNormal);
+            _modUpdateBtn.OnClick += OnModUpdateClicked;
+            RegisterUIText(_modUpdateBtn.ButtonText);
+
+            // Start hidden
+            _modUpdateBanner.SetActive(false);
+        }
+
+        private void OnModUpdateClicked()
+        {
+            var info = TranslatorUIManager.ModUpdateInfo;
+            string url = info?.DownloadUrl ?? info?.ReleaseUrl;
+            if (!string.IsNullOrEmpty(url))
+            {
+                Application.OpenURL(url);
+            }
         }
 
         private void CreateLoginCTASection(GameObject parent)
@@ -522,11 +569,30 @@ namespace UnityGameTranslator.Core.UI.Panels
             _currentLayoutState = DetectCurrentState();
 
             // Refresh all sections
+            RefreshModUpdateBanner();
             RefreshAccountSection();
             RefreshTranslationInfo();
             RefreshCommunitySection();
             RefreshActionsSection();
             RefreshLayoutVisibility();
+        }
+
+        private void RefreshModUpdateBanner()
+        {
+            if (_modUpdateBanner == null) return;
+
+            bool showBanner = TranslatorUIManager.HasModUpdate && !TranslatorUIManager.ModUpdateDismissed;
+            _modUpdateBanner.SetActive(showBanner);
+
+            if (showBanner)
+            {
+                var info = TranslatorUIManager.ModUpdateInfo;
+                _modUpdateLabel.text = $"Mod update available: v{info?.LatestVersion ?? "?"}";
+
+                // Show appropriate button text
+                bool hasDirectDownload = !string.IsNullOrEmpty(info?.DownloadUrl);
+                _modUpdateBtn.ButtonText.text = hasDirectDownload ? "Download" : "View Release";
+            }
         }
 
         /// <summary>

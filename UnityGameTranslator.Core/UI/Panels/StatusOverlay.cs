@@ -54,8 +54,42 @@ namespace UnityGameTranslator.Core.UI.Panels
         private Text _ollamaStatusLabel;
         private Text _ollamaQueueLabel;
 
+        // State - whether main panels are open (affects which boxes are shown)
+        private bool _panelsOpenMode = false;
+
         public StatusOverlay(UIBase owner) : base(owner)
         {
+        }
+
+        /// <summary>
+        /// Set whether panels are currently open. When true, only Ollama queue is shown.
+        /// </summary>
+        public void SetPanelsOpenMode(bool panelsOpen)
+        {
+            _panelsOpenMode = panelsOpen;
+        }
+
+        /// <summary>
+        /// Returns true if there's notification content (mod update or sync) to display.
+        /// Does NOT include Ollama queue (which is handled separately).
+        /// </summary>
+        public bool HasNotificationContent()
+        {
+            // Mod update notification
+            bool showModUpdate = TranslatorUIManager.HasModUpdate && !TranslatorUIManager.ModUpdateDismissed;
+
+            // Translation sync notification
+            var serverState = TranslatorCore.ServerState;
+            bool existsOnServer = serverState != null && serverState.Exists && serverState.SiteId.HasValue;
+            bool hasLocalChanges = existsOnServer && TranslatorCore.LocalChangesCount > 0;
+            bool hasServerUpdate = TranslatorUIManager.HasPendingUpdate &&
+                TranslatorUIManager.PendingUpdateDirection == UpdateDirection.Download;
+            bool needsMerge = TranslatorUIManager.HasPendingUpdate &&
+                TranslatorUIManager.PendingUpdateDirection == UpdateDirection.Merge;
+            bool showSyncNotification = (hasLocalChanges || hasServerUpdate || needsMerge) &&
+                !TranslatorUIManager.NotificationDismissed;
+
+            return showModUpdate || showSyncNotification;
         }
 
         public override void SetDefaultSizeAndPosition()
@@ -218,8 +252,13 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         public void RefreshOverlay()
         {
-            // 1. Mod update notification
-            bool showModUpdate = TranslatorUIManager.HasModUpdate && !TranslatorUIManager.ModUpdateDismissed;
+            // When panels are open, only show Ollama queue (mod update & sync are in MainPanel)
+            // When panels are closed, show all notifications
+
+            // 1. Mod update notification (hidden when panels open - shown in MainPanel instead)
+            bool showModUpdate = !_panelsOpenMode &&
+                                 TranslatorUIManager.HasModUpdate &&
+                                 !TranslatorUIManager.ModUpdateDismissed;
             if (showModUpdate && _modUpdateBox != null)
             {
                 _modUpdateBox.SetActive(true);
@@ -235,7 +274,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _modUpdateBox?.SetActive(false);
             }
 
-            // 2. Translation sync notification
+            // 2. Translation sync notification (hidden when panels open - shown in MainPanel instead)
             var serverState = TranslatorCore.ServerState;
             bool existsOnServer = serverState != null && serverState.Exists && serverState.SiteId.HasValue;
             bool hasLocalChanges = existsOnServer && TranslatorCore.LocalChangesCount > 0;
@@ -244,8 +283,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             bool needsMerge = TranslatorUIManager.HasPendingUpdate &&
                 TranslatorUIManager.PendingUpdateDirection == UpdateDirection.Merge;
 
-            bool showSyncNotification = (hasLocalChanges || hasServerUpdate || needsMerge) &&
-                !TranslatorUIManager.NotificationDismissed;
+            bool showSyncNotification = !_panelsOpenMode &&
+                                        (hasLocalChanges || hasServerUpdate || needsMerge) &&
+                                        !TranslatorUIManager.NotificationDismissed;
 
             if (showSyncNotification && _syncBox != null)
             {

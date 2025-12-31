@@ -2233,6 +2233,18 @@ namespace UnityGameTranslator.Core
         /// Last known mod version (to avoid notifying about same version again)
         /// </summary>
         public string last_seen_mod_version { get; set; } = null;
+
+        /// <summary>
+        /// The mod version we were running when we saw last_seen_mod_version.
+        /// Used to re-notify if user upgrades from an old version.
+        /// </summary>
+        public string last_seen_from_version { get; set; } = null;
+
+        /// <summary>
+        /// The published_at timestamp of the last seen release.
+        /// Used to detect re-releases with the same version number.
+        /// </summary>
+        public string last_seen_published_at { get; set; } = null;
     }
 
     /// <summary>

@@ -1,15 +1,22 @@
 <Project>
   <PropertyGroup>
     <Version>0.9.43</Version>
+    <!-- API Configuration - Change these URLs to use your own instance -->
+    <ApiBaseUrl>https://unitygametranslator.asymptomatikgames.com/api/v1</ApiBaseUrl>
+    <WebsiteBaseUrl>https://unitygametranslator.asymptomatikgames.com</WebsiteBaseUrl>
   </PropertyGroup>
 
-  <!-- Generate PluginVersion.g.cs with version constant before build -->
+  <!-- Generate PluginInfo.g.cs with version and API constants before build -->
   <Target Name="GenerateVersionFile" BeforeTargets="CoreCompile">
     <PropertyGroup>
       <VersionFileContent>
 namespace UnityGameTranslator {
     internal static class PluginInfo {
         public const string Version = "$(Version)"%3B
+        /// &lt;summary&gt;Base URL for API calls (e.g., https://example.com/api/v1)&lt;/summary&gt;
+        public const string ApiBaseUrl = "$(ApiBaseUrl)"%3B
+        /// &lt;summary&gt;Base URL for website links (e.g., https://example.com)&lt;/summary&gt;
+        public const string WebsiteBaseUrl = "$(WebsiteBaseUrl)"%3B
     }
 }
       </VersionFileContent>

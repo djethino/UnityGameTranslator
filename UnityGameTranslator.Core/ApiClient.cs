@@ -17,8 +17,11 @@ namespace UnityGameTranslator.Core
     public static class ApiClient
     {
         private static readonly HttpClient client;
-        private const string DefaultBaseUrl = "https://unitygametranslator.asymptomatikgames.com/api/v1";
-        public const string WebsiteBaseUrl = "https://unitygametranslator.asymptomatikgames.com";
+
+        // URLs are defined in Directory.Build.props and generated in PluginInfo.g.cs
+        // To use your own instance, modify ApiBaseUrl and WebsiteBaseUrl in Directory.Build.props
+        private static string DefaultBaseUrl => PluginInfo.ApiBaseUrl;
+        public static string WebsiteBaseUrl => PluginInfo.WebsiteBaseUrl;
 
         /// <summary>
         /// Get the merge review page URL for a translation UUID

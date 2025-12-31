@@ -404,9 +404,20 @@ dotnet build UnityGameTranslator-MelonLoader-IL2CPP/UnityGameTranslator.MelonLoa
 
 Output DLLs are in each project's `bin/` folder.
 
-### Versioning
+### Versioning & Self-Hosting
 
-The version is centralized in `Directory.Build.props`. Update the `<Version>` tag before release—all projects inherit it automatically.
+Configuration is centralized in `Directory.Build.props`:
+
+```xml
+<PropertyGroup>
+  <Version>0.9.43</Version>
+  <!-- Change these URLs to use your own instance (AGPL compliance) -->
+  <ApiBaseUrl>https://unitygametranslator.asymptomatikgames.com/api/v1</ApiBaseUrl>
+  <WebsiteBaseUrl>https://unitygametranslator.asymptomatikgames.com</WebsiteBaseUrl>
+</PropertyGroup>
+```
+
+**To self-host:** Deploy your own [website instance](../website/README.md), then update `ApiBaseUrl` and `WebsiteBaseUrl` before building.
 
 ### Project Structure
 
@@ -443,7 +454,7 @@ UnityGameTranslator/
 ├── UnityGameTranslator-MelonLoader-IL2CPP/ # MelonLoader IL2CPP adapter
 ├── extlibs/                            # External DLLs (Unity, BepInEx, UniverseLib)
 ├── releases/                           # Build output
-└── Directory.Build.props               # Shared version
+└── Directory.Build.props               # Shared version + API URLs
 ```
 
 > **UI System:** The mod uses [UniverseLib](https://github.com/yukieiji/UniverseLib) (yukieiji fork) for its overlay UI. This provides a unified uGUI-based interface that works on both Mono and IL2CPP Unity games, avoiding IMGUI crashes on IL2CPP.

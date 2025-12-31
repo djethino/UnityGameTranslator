@@ -189,23 +189,31 @@ Config file location:
 3. Enter the displayed code at the website
 4. Once logged in, click "Upload" to share your translation
 
-### Collaboration System (Main/Branch)
+### Collaboration System (Main/Branch/Fork)
 
 UnityGameTranslator uses a **Main/Branch** model for collaborative translation:
+
+#### Terminology
+
+| Term | Description |
+|------|-------------|
+| **Main** | The original translation. First uploader becomes the Main owner. |
+| **Branch** | A contributor's version, linked to the Main. Each contributor has one Branch per UUID. |
+| **Fork** | The action of copying a translation to create your own Branch. |
 
 #### Roles
 
 | Role | Description |
 |------|-------------|
-| **Main** | You created this translation. You're the owner and can merge contributions. |
-| **Branch** | You forked someone else's translation to contribute improvements. |
-| **None** | You haven't uploaded yet. Your local file will become Main or Branch on upload. |
+| **Main owner** | You created this translation. You can update it and merge contributions from Branches. |
+| **Branch contributor** | You downloaded a translation, improved it, and uploaded your changes as a Branch. |
+| **None** | You haven't uploaded yet. Your first upload will create a Main or Branch. |
 
 #### How it works
 
 1. **First upload** → Your translation becomes the **Main** for that UUID
-2. **Download + modify + upload** → You create a **Branch** (fork) linked to the original
-3. **Main owner** can view branches on the website and merge contributions
+2. **Download + modify + upload** → You **fork** the translation, creating your **Branch**
+3. **Main owner** can view all Branches on the website and merge contributions
 4. **Languages are locked** after first upload - source/target cannot be changed
 
 #### Upload behavior
@@ -213,8 +221,8 @@ UnityGameTranslator uses a **Main/Branch** model for collaborative translation:
 | Situation | Result |
 |-----------|--------|
 | UUID doesn't exist on server | Creates **new Main** translation |
-| UUID exists, you're the owner | **Updates** your Main translation |
-| UUID exists, owned by someone else | Creates a **Branch** (your fork) |
+| UUID exists, you're the Main owner | **Updates** your Main translation |
+| UUID exists, owned by someone else | **Forks** it → creates your **Branch** |
 
 #### In the mod
 

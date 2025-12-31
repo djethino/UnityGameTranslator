@@ -22,6 +22,9 @@ namespace UnityGameTranslator.Core.UI.Components
         private TranslationInfo _selectedTranslation;
         private bool _isSearching;
 
+        // Vote buttons storage (keyed by translation ID)
+        private Dictionary<int, VoteButtons> _voteButtons = new Dictionary<int, VoteButtons>();
+
         // Callbacks
         private Action<TranslationInfo> _onSelectionChanged;
         private Func<string> _getCurrentUser;
@@ -109,6 +112,7 @@ namespace UnityGameTranslator.Core.UI.Components
         {
             _translations.Clear();
             _selectedTranslation = null;
+            _voteButtons.Clear();
             ClearUI();
         }
 
@@ -119,6 +123,7 @@ namespace UnityGameTranslator.Core.UI.Components
         {
             if (_translations.Count > 0)
             {
+                _voteButtons.Clear();
                 Populate();
             }
         }
@@ -261,13 +266,60 @@ namespace UnityGameTranslator.Core.UI.Components
             if (isLineageMatch) titleLabel.color = UIStyles.StatusInfo;  // Highlight text color
             UIFactory.SetLayoutElement(titleLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
 
-            // Details row
+            // Details row with quality stats (vote count is now in vote buttons)
+            string qualityText = FormatQualityStats(translation);
             var detailsLabel = UIFactory.CreateLabel(infoCol, "Details",
-                $"{translation.LineCount} lines | +{translation.VoteCount} votes | {translation.Type}",
+                $"{translation.LineCount} lines | {qualityText}",
                 TextAnchor.MiddleLeft);
             detailsLabel.fontSize = UIStyles.FontSizeHint;
             detailsLabel.color = UIStyles.TextMuted;
             UIFactory.SetLayoutElement(detailsLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+
+            // Vote buttons (right side)
+            var voteButtons = new VoteButtons();
+            voteButtons.Create(itemRow, translation.Id, translation.VoteCount, OnVoteChanged);
+            voteButtons.SetLoggedIn(isLoggedIn);
+            _voteButtons[translation.Id] = voteButtons;
+        }
+
+        /// <summary>
+        /// Callback when a vote changes - update the translation info.
+        /// </summary>
+        private void OnVoteChanged(int translationId, int newVoteCount)
+        {
+            // Find the translation and update its vote count
+            for (int i = 0; i < _translations.Count; i++)
+            {
+                if (_translations[i].Id == translationId)
+                {
+                    _translations[i].VoteCount = newVoteCount;
+                    break;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Format quality stats for display (H/V/A counts + score)
+        /// </summary>
+        private string FormatQualityStats(TranslationInfo translation)
+        {
+            int total = translation.HumanCount + translation.ValidatedCount + translation.AiCount;
+            if (total == 0)
+            {
+                // Fallback to old Type field if no H/V/A data
+                return translation.Type ?? "unknown";
+            }
+
+            // Show quality score with label
+            float score = translation.QualityScore;
+            string label;
+            if (score >= 2.5f) label = "Excellent";
+            else if (score >= 2.0f) label = "Good";
+            else if (score >= 1.5f) label = "Fair";
+            else if (score >= 1.0f) label = "Basic";
+            else label = "Raw AI";
+
+            return $"H:{translation.HumanCount} V:{translation.ValidatedCount} A:{translation.AiCount} ({label})";
         }
 
         private void RefreshSelection()

@@ -167,7 +167,12 @@ namespace UnityGameTranslator.Core
                 Notes = t["notes"]?.Value<string>(),
                 VoteCount = t["vote_count"]?.Value<int>() ?? 0,
                 DownloadCount = t["download_count"]?.Value<int>() ?? 0,
+                HumanCount = t["human_count"]?.Value<int>() ?? 0,
+                ValidatedCount = t["validated_count"]?.Value<int>() ?? 0,
+                AiCount = t["ai_count"]?.Value<int>() ?? 0,
+                CaptureCount = t["capture_count"]?.Value<int>() ?? 0,
                 FileHash = t["file_hash"]?.Value<string>(),
+                FileUuid = t["file_uuid"]?.Value<string>(),
                 UpdatedAt = t["updated_at"]?.Value<string>()
             };
         }
@@ -1006,6 +1011,68 @@ namespace UnityGameTranslator.Core
         }
 
         #endregion
+
+        #region Voting
+
+        /// <summary>
+        /// Vote on a translation (upvote or downvote).
+        /// Requires authentication.
+        /// </summary>
+        /// <param name="translationId">ID of the translation to vote on</param>
+        /// <param name="value">1 for upvote, -1 for downvote</param>
+        public static async Task<VoteResult> Vote(int translationId, int value)
+        {
+            try
+            {
+                if (value != 1 && value != -1)
+                {
+                    return new VoteResult { Success = false, Error = "Vote value must be 1 or -1" };
+                }
+
+                var token = TranslatorCore.Config?.api_token;
+                if (string.IsNullOrEmpty(token))
+                {
+                    return new VoteResult { Success = false, Error = "Not authenticated" };
+                }
+
+                var payload = new { value };
+                var content = new StringContent(
+                    JsonConvert.SerializeObject(payload),
+                    Encoding.UTF8,
+                    "application/json"
+                );
+
+                var request = new HttpRequestMessage(HttpMethod.Post, $"{DefaultBaseUrl}/translations/{translationId}/vote")
+                {
+                    Content = content
+                };
+                request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+
+                var response = await client.SendAsync(request);
+                string json = await response.Content.ReadAsStringAsync();
+                var data = JObject.Parse(json);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    var error = data["error"]?.Value<string>() ?? data["message"]?.Value<string>() ?? $"HTTP {response.StatusCode}";
+                    return new VoteResult { Success = false, Error = error };
+                }
+
+                return new VoteResult
+                {
+                    Success = true,
+                    VoteCount = data["vote_count"]?.Value<int>() ?? 0,
+                    UserVote = data["user_vote"]?.Value<int?>()
+                };
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogWarning($"[ApiClient] Vote error: {e.Message}");
+                return new VoteResult { Success = false, Error = e.Message };
+            }
+        }
+
+        #endregion
     }
 
     #region Result Classes
@@ -1034,9 +1101,27 @@ namespace UnityGameTranslator.Core
         public string Notes { get; set; }
         public int VoteCount { get; set; }
         public int DownloadCount { get; set; }
+        public int HumanCount { get; set; }
+        public int ValidatedCount { get; set; }
+        public int AiCount { get; set; }
+        public int CaptureCount { get; set; }
         public string FileHash { get; set; }
         public string FileUuid { get; set; }
         public string UpdatedAt { get; set; }
+
+        /// <summary>
+        /// Quality score (0-3 scale): H=3pts, V=2pts, A=1pt
+        /// </summary>
+        public float QualityScore
+        {
+            get
+            {
+                int effectiveLines = HumanCount + ValidatedCount + AiCount;
+                if (effectiveLines == 0) return 0f;
+                float weightedSum = (HumanCount * 3) + (ValidatedCount * 2) + (AiCount * 1);
+                return weightedSum / effectiveLines;
+            }
+        }
 
         /// <summary>
         /// Get website URL for this translation
@@ -1104,6 +1189,15 @@ namespace UnityGameTranslator.Core
         public string Error { get; set; }
         public string AccessToken { get; set; }
         public string UserName { get; set; }
+    }
+
+    public class VoteResult
+    {
+        public bool Success { get; set; }
+        public string Error { get; set; }
+        public int VoteCount { get; set; }
+        /// <summary>User's current vote: 1 (upvote), -1 (downvote), or null (no vote)</summary>
+        public int? UserVote { get; set; }
     }
 
     public class UploadRequest

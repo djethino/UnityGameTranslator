@@ -251,6 +251,13 @@ Each translation entry has a **quality tag** indicating how it was created:
 
 > **Note:** Entries with tag `H` but empty value are displayed as "C" (Capture) in stats and count as 0 points until translated.
 
+**Additional tags (excluded from quality score):**
+
+| Tag | Name | Description |
+|-----|------|-------------|
+| **S** | Skip | Text intentionally not translated (e.g., alien language, Klingon, foreign text meant to stay foreign). AI decides when to skip. *Experimental.* |
+| **M** | Mod | Mod UI translations (settings panel, buttons). *Optional, internal use.* |
+
 #### Quality Score (0-3 scale)
 
 The quality score is calculated from the H/V/A distribution:

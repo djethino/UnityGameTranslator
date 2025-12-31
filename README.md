@@ -419,6 +419,17 @@ Configuration is centralized in `Directory.Build.props`:
 
 **To self-host:** Deploy your own [website instance](../website/README.md), then update `ApiBaseUrl` and `WebsiteBaseUrl` before building.
 
+**Runtime override (advanced):** Users can also override URLs without recompiling by editing `config.json`:
+
+```json
+{
+  "api_base_url": "https://my-server.com/api/v1",
+  "website_base_url": "https://my-server.com"
+}
+```
+
+> ⚠️ **Security note:** Your API token will be sent to the configured server. Only use trusted instances.
+
 ### Project Structure
 
 ```

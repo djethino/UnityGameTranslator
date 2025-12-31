@@ -17,11 +17,46 @@ namespace UnityGameTranslator.Core
     public static class ApiClient
     {
         private static readonly HttpClient client;
+        private static bool _urlOverrideLogged = false;
 
-        // URLs are defined in Directory.Build.props and generated in PluginInfo.g.cs
-        // To use your own instance, modify ApiBaseUrl and WebsiteBaseUrl in Directory.Build.props
-        private static string DefaultBaseUrl => PluginInfo.ApiBaseUrl;
-        public static string WebsiteBaseUrl => PluginInfo.WebsiteBaseUrl;
+        // URLs can be overridden in config.json (api_base_url, website_base_url)
+        // Default values come from Directory.Build.props via PluginInfo.g.cs
+        private static string DefaultBaseUrl
+        {
+            get
+            {
+                var config = TranslatorCore.Config;
+                if (config != null && !string.IsNullOrEmpty(config.api_base_url))
+                {
+                    LogUrlOverrideOnce();
+                    return config.api_base_url.TrimEnd('/');
+                }
+                return PluginInfo.ApiBaseUrl;
+            }
+        }
+
+        public static string WebsiteBaseUrl
+        {
+            get
+            {
+                var config = TranslatorCore.Config;
+                if (config != null && !string.IsNullOrEmpty(config.website_base_url))
+                {
+                    LogUrlOverrideOnce();
+                    return config.website_base_url.TrimEnd('/');
+                }
+                return PluginInfo.WebsiteBaseUrl;
+            }
+        }
+
+        private static void LogUrlOverrideOnce()
+        {
+            if (!_urlOverrideLogged)
+            {
+                _urlOverrideLogged = true;
+                TranslatorCore.LogWarning("[ApiClient] Using custom API URLs from config.json - tokens will be sent to this server!");
+            }
+        }
 
         /// <summary>
         /// Get the merge review page URL for a translation UUID

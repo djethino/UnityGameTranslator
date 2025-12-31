@@ -2193,6 +2193,12 @@ namespace UnityGameTranslator.Core
         public string settings_hotkey { get; set; } = "F10";
         public string api_token { get; set; } = null;
         public string api_user { get; set; } = null;
+
+        // Advanced: Override API URLs (null = use compiled default from Directory.Build.props)
+        // For self-hosting or testing. Edit config.json manually to use.
+        public string api_base_url { get; set; } = null;
+        public string website_base_url { get; set; } = null;
+
         public SyncConfig sync { get; set; } = new SyncConfig();
         public WindowPreferences window_preferences { get; set; } = new WindowPreferences();
 

@@ -1,6 +1,6 @@
 <Project>
   <PropertyGroup>
-    <Version>0.9.42</Version>
+    <Version>0.9.43</Version>
   </PropertyGroup>
 
   <!-- Generate PluginVersion.g.cs with version constant before build -->

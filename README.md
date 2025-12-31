@@ -270,8 +270,15 @@ Score = (H×3 + V×2 + A×1) / (H + V + A)
 
 - **Capture mode** (no Ollama): Text saved with tag `H` but empty value (becomes `C` in stats)
 - **AI translation**: Ollama translates → tag `A`
-- **Manual edit**: User edits a translation → tag `H`
+- **Manual edit**: User edits a translation in-game or on website → tag `H`
 - **Validation**: User approves AI translation on website → tag `V`
+
+#### Editing on the website
+
+Translation owners can edit their translations directly on the website:
+- **Edit** any entry → changes tag to `H` (Human)
+- **Validate** AI entries → changes tag to `V` (Validated)
+- Changes sync back to the mod on next download/update check
 
 #### In the mod UI
 

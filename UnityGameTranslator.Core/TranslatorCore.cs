@@ -434,6 +434,18 @@ namespace UnityGameTranslator.Core
                         {
                             Config.api_token = decryptedToken;
                         }
+
+                        // Security: Invalidate token if API URL changed (prevent token replay attacks)
+                        string currentApiUrl = Config.api_base_url ?? PluginInfo.ApiBaseUrl;
+                        if (!string.IsNullOrEmpty(Config.api_token_server) &&
+                            Config.api_token_server != currentApiUrl)
+                        {
+                            Adapter.LogWarning($"[Security] API URL changed from {Config.api_token_server} to {currentApiUrl} - invalidating token to prevent replay attacks");
+                            Config.api_token = null;
+                            Config.api_user = null;
+                            Config.api_token_server = null;
+                            SaveConfig();
+                        }
                     }
                     else
                     {
@@ -481,6 +493,9 @@ namespace UnityGameTranslator.Core
 
                     // Auth & sync
                     api_user = Config.api_user,
+                    api_token_server = Config.api_token_server,
+                    api_base_url = Config.api_base_url,
+                    website_base_url = Config.website_base_url,
                     sync = Config.sync,
                     window_preferences = Config.window_preferences,
                     // Encrypt token before saving
@@ -2193,6 +2208,8 @@ namespace UnityGameTranslator.Core
         public string settings_hotkey { get; set; } = "F10";
         public string api_token { get; set; } = null;
         public string api_user { get; set; } = null;
+        // Server URL where the token was issued (for security: invalidate if URL changes)
+        public string api_token_server { get; set; } = null;
 
         // Advanced: Override API URLs (null = use compiled default from Directory.Build.props)
         // For self-hosting or testing. Edit config.json manually to use.

@@ -150,9 +150,10 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                     if (result.Success)
                     {
-                        // Save token
+                        // Save token and the server it was issued from (for security)
                         TranslatorCore.Config.api_token = result.AccessToken;
                         TranslatorCore.Config.api_user = result.UserName;
+                        TranslatorCore.Config.api_token_server = TranslatorCore.Config.api_base_url ?? PluginInfo.ApiBaseUrl;
                         TranslatorCore.SaveConfig();
                         ApiClient.SetAuthToken(result.AccessToken);
 

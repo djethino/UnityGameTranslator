@@ -1036,6 +1036,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     {
                         TranslatorCore.Config.api_token = null;
                         TranslatorCore.Config.api_user = null;
+                        TranslatorCore.Config.api_token_server = null;
                         TranslatorCore.SaveConfig();
                         ApiClient.SetAuthToken(null);
                         RefreshUI();

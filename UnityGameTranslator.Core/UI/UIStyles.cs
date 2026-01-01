@@ -15,8 +15,6 @@ namespace UnityGameTranslator.Core.UI
     /// </summary>
     public static class UIStyles
     {
-        // Track DynamicScrollbarHider instances separately to avoid IL2CPP GetComponent issues
-        private static readonly Dictionary<int, DynamicScrollbarHider> _scrollbarHiders = new Dictionary<int, DynamicScrollbarHider>();
 
         #region Backdrop System
 
@@ -247,24 +245,14 @@ namespace UnityGameTranslator.Core.UI
 
         /// <summary>
         /// Configures a UniverseLib scroll view to auto-hide scrollbar and expand viewport.
-        /// Adds a DynamicScrollbarHider component that monitors content size and toggles scrollbar visibility.
-        /// Uses instance tracking to avoid IL2CPP GetComponent issues with managed types.
+        /// Uses UniverseLib's built-in DynamicScrollbar component.
         /// </summary>
         public static void ConfigureScrollViewNoScrollbar(GameObject scrollObj)
         {
             if (scrollObj == null) return;
 
-            int instanceId = scrollObj.GetInstanceID();
-
-            // Check if we already have a hider for this object (avoid IL2CPP GetComponent issues)
-            if (_scrollbarHiders.TryGetValue(instanceId, out var existingHider) && existingHider != null)
-            {
-                return; // Already configured
-            }
-
-            // Add our dynamic scrollbar hider component
-            var hider = scrollObj.AddComponent<DynamicScrollbarHider>();
-            _scrollbarHiders[instanceId] = hider;
+            // Use UniverseLib's built-in auto-hide scrollbar
+            UIFactory.ConfigureAutoHideScrollbar(scrollObj);
         }
 
         /// <summary>
@@ -816,7 +804,7 @@ namespace UnityGameTranslator.Core.UI
                 var langCapture = lang; // Capture for closure
                 UIHelpers.AddButtonListener(btn, () => onSelect?.Invoke(langCapture));
 
-                // Add hover effect using EventTrigger (works on both Mono and IL2CPP)
+                // Add hover effect (works on both Mono and IL2CPP via UniverseLib)
                 if (!isSelected)
                 {
                     AddHoverEffect(item, ItemBackground, ItemBackgroundHover);
@@ -825,51 +813,13 @@ namespace UnityGameTranslator.Core.UI
         }
 
         /// <summary>
-        /// Adds hover effect to an item using EventTrigger.
-        /// Note: Disabled on IL2CPP due to EventTrigger.Entry field access issues.
+        /// Adds hover effect to an item. Works on both Mono and IL2CPP.
+        /// Uses UniverseLib's built-in HoverEffect component with IPointerEnterHandler/IPointerExitHandler.
         /// </summary>
         public static void AddHoverEffect(GameObject item, Color normalColor, Color hoverColor)
         {
-            // Skip hover effect on IL2CPP - EventTrigger.Entry fields are not accessible
-            // This is a visual enhancement only, not core functionality
-            if (TranslatorCore.Adapter?.IsIL2CPP == true)
-                return;
-
-            AddHoverEffectMono(item, normalColor, hoverColor);
-        }
-
-        /// <summary>
-        /// Mono-only hover effect implementation.
-        /// </summary>
-        private static void AddHoverEffectMono(GameObject item, Color normalColor, Color hoverColor)
-        {
-            try
-            {
-                var image = item.GetComponent<Image>();
-                if (image == null) return;
-
-                var trigger = item.GetComponent<EventTrigger>();
-                if (trigger == null)
-                {
-                    trigger = item.AddComponent<EventTrigger>();
-                }
-
-                // Create event entries
-                var enterEntry = new EventTrigger.Entry();
-                enterEntry.eventID = EventTriggerType.PointerEnter;
-                enterEntry.callback.AddListener((data) => { image.color = hoverColor; });
-
-                var exitEntry = new EventTrigger.Entry();
-                exitEntry.eventID = EventTriggerType.PointerExit;
-                exitEntry.callback.AddListener((data) => { image.color = normalColor; });
-
-                trigger.triggers.Add(enterEntry);
-                trigger.triggers.Add(exitEntry);
-            }
-            catch (Exception ex)
-            {
-                TranslatorCore.Adapter?.LogWarning($"[UIStyles] Failed to add hover effect: {ex.Message}");
-            }
+            // Use UniverseLib's IL2CPP-compatible hover effect
+            UIFactory.AddHoverEffect(item, normalColor, hoverColor);
         }
 
         /// <summary>

@@ -94,6 +94,28 @@ namespace UnityGameTranslator.Core.UI
         }
 
         /// <summary>
+        /// Run an action after a delay (in seconds).
+        /// </summary>
+        public static void RunDelayed(float seconds, Action action)
+        {
+            if (action == null) return;
+            RuntimeHelper.StartCoroutine(RunDelayedCoroutine(seconds, action));
+        }
+
+        private static IEnumerator RunDelayedCoroutine(float seconds, Action action)
+        {
+            yield return new WaitForSeconds(seconds);
+            try
+            {
+                action();
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogError($"[UIManager] RunDelayed error: {e.Message}");
+            }
+        }
+
+        /// <summary>
         /// Initialize the UI system. Called from TranslatorCore after UniverseLib is ready.
         /// </summary>
         public static void Initialize()

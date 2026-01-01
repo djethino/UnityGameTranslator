@@ -24,6 +24,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         private Text _statusLabel;
         private ButtonRef _startLoginBtn;
         private ButtonRef _openWebsiteBtn;
+        private ButtonRef _copyCodeBtn;
+        private GameObject _codeRow;
         private string _verificationUri;
         private bool _isPolling;
         private string _deviceCode;
@@ -58,14 +60,23 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             UIStyles.CreateSpacer(card, 10);
 
-            // Code display (initially hidden) - Excluded: device code, not translatable
-            _codeLabel = UIFactory.CreateLabel(card, "CodeLabel", "", TextAnchor.MiddleCenter);
+            // Code display row (initially hidden) - Excluded: device code, not translatable
+            _codeRow = UIFactory.CreateHorizontalGroup(card, "CodeRow", false, false, true, true, 8,
+                new Vector4(0, 0, 0, 0), Color.clear, TextAnchor.MiddleCenter);
+            UIFactory.SetLayoutElement(_codeRow, minHeight: UIStyles.CodeDisplayHeight);
+            _codeRow.SetActive(false);
+
+            _codeLabel = UIFactory.CreateLabel(_codeRow, "CodeLabel", "", TextAnchor.MiddleCenter);
             _codeLabel.fontSize = UIStyles.CodeDisplayFontSize;
             _codeLabel.fontStyle = FontStyle.Bold;
             _codeLabel.color = UIStyles.TextAccent;
-            UIFactory.SetLayoutElement(_codeLabel.gameObject, minHeight: UIStyles.CodeDisplayHeight);
-            _codeLabel.gameObject.SetActive(false);
+            UIFactory.SetLayoutElement(_codeLabel.gameObject, flexibleWidth: 1);
             RegisterExcluded(_codeLabel);
+
+            // Copy button
+            _copyCodeBtn = CreateSecondaryButton(_codeRow, "CopyCodeBtn", "Copy", 60);
+            _copyCodeBtn.OnClick += CopyCodeToClipboard;
+            RegisterUIText(_copyCodeBtn.ButtonText);
 
             // Open website button (initially hidden)
             _openWebsiteBtn = CreatePrimaryButton(card, "OpenWebsiteBtn", "Open Website", 200);
@@ -119,7 +130,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                         _verificationUri = verificationUri;
 
                         _codeLabel.text = _userCode;
-                        _codeLabel.gameObject.SetActive(true);
+                        _codeRow.SetActive(true);
 
                         _openWebsiteBtn.Component.gameObject.SetActive(true);
                         _startLoginBtn.Component.gameObject.SetActive(false);
@@ -232,12 +243,29 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
         }
 
+        private void CopyCodeToClipboard()
+        {
+            if (!string.IsNullOrEmpty(_userCode))
+            {
+                GUIUtility.systemCopyBuffer = _userCode;
+                _copyCodeBtn.ButtonText.text = "Copied!";
+
+                // Reset button text after 2 seconds
+                TranslatorUIManager.RunDelayed(2f, () =>
+                {
+                    if (_copyCodeBtn?.ButtonText != null)
+                        _copyCodeBtn.ButtonText.text = "Copy";
+                });
+            }
+        }
+
         private void ResetUI()
         {
             _startLoginBtn.Component.interactable = true;
             _startLoginBtn.Component.gameObject.SetActive(true);
             _openWebsiteBtn.Component.gameObject.SetActive(false);
-            _codeLabel.gameObject.SetActive(false);
+            _codeRow.SetActive(false);
+            _copyCodeBtn.ButtonText.text = "Copy";
             _instructionLabel.text = "Click the button below to start the login process.\n" +
                                       "You will receive a code to enter on the website.";
             _statusLabel.text = "";

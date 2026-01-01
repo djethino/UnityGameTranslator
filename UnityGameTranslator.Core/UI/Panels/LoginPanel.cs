@@ -102,37 +102,52 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 var result = await ApiClient.InitiateDeviceFlow();
 
-                if (result.Success)
+                // After await, we may be on a background thread (IL2CPP issue)
+                // Capture values for closure
+                var deviceCode = result.DeviceCode;
+                var userCode = result.UserCode;
+                var verificationUri = result.VerificationUri;
+                var success = result.Success;
+                var error = result.Error;
+
+                TranslatorUIManager.RunOnMainThread(() =>
                 {
-                    _deviceCode = result.DeviceCode;
-                    _userCode = result.UserCode;
-                    _verificationUri = result.VerificationUri;
+                    if (success)
+                    {
+                        _deviceCode = deviceCode;
+                        _userCode = userCode;
+                        _verificationUri = verificationUri;
 
-                    _codeLabel.text = _userCode;
-                    _codeLabel.gameObject.SetActive(true);
+                        _codeLabel.text = _userCode;
+                        _codeLabel.gameObject.SetActive(true);
 
-                    _openWebsiteBtn.Component.gameObject.SetActive(true);
-                    _startLoginBtn.Component.gameObject.SetActive(false);
+                        _openWebsiteBtn.Component.gameObject.SetActive(true);
+                        _startLoginBtn.Component.gameObject.SetActive(false);
 
-                    _instructionLabel.text = "Click the button below to open the website,\nthen enter this code:";
-                    _statusLabel.text = "Waiting for authorization...";
-                    _statusLabel.color = UIStyles.StatusInfo;
+                        _instructionLabel.text = "Click the button below to open the website,\nthen enter this code:";
+                        _statusLabel.text = "Waiting for authorization...";
+                        _statusLabel.color = UIStyles.StatusInfo;
 
-                    _isPolling = true;
-                    PollForAuth();
-                }
-                else
-                {
-                    _statusLabel.text = $"Error: {result.Error}";
-                    _statusLabel.color = UIStyles.StatusError;
-                    _startLoginBtn.Component.interactable = true;
-                }
+                        _isPolling = true;
+                        PollForAuth();
+                    }
+                    else
+                    {
+                        _statusLabel.text = $"Error: {error}";
+                        _statusLabel.color = UIStyles.StatusError;
+                        _startLoginBtn.Component.interactable = true;
+                    }
+                });
             }
             catch (Exception e)
             {
-                _statusLabel.text = $"Error: {e.Message}";
-                _statusLabel.color = UIStyles.StatusError;
-                _startLoginBtn.Component.interactable = true;
+                var errorMsg = e.Message;
+                TranslatorUIManager.RunOnMainThread(() =>
+                {
+                    _statusLabel.text = $"Error: {errorMsg}";
+                    _statusLabel.color = UIStyles.StatusError;
+                    _startLoginBtn.Component.interactable = true;
+                });
             }
         }
 
@@ -148,35 +163,49 @@ namespace UnityGameTranslator.Core.UI.Panels
                 {
                     var result = await ApiClient.PollDeviceFlow(_deviceCode);
 
+                    // After await, we may be on a background thread (IL2CPP issue)
                     if (result.Success)
                     {
-                        // Save token and the server it was issued from (for security)
+                        // Save config (thread-safe)
                         TranslatorCore.Config.api_token = result.AccessToken;
                         TranslatorCore.Config.api_user = result.UserName;
                         TranslatorCore.Config.api_token_server = TranslatorCore.Config.api_base_url ?? PluginInfo.ApiBaseUrl;
                         TranslatorCore.SaveConfig();
                         ApiClient.SetAuthToken(result.AccessToken);
 
-                        _statusLabel.text = $"Logged in as {result.UserName}!";
-                        _statusLabel.color = UIStyles.StatusSuccess;
-
+                        var userName = result.UserName;
                         _isPolling = false;
 
-                        // Refresh panels that show login status
-                        TranslatorUIManager.WizardPanel?.UpdateAccountStatus();
-                        TranslatorUIManager.MainPanel?.RefreshUI();
+                        TranslatorUIManager.RunOnMainThread(() =>
+                        {
+                            _statusLabel.text = $"Logged in as {userName}!";
+                            _statusLabel.color = UIStyles.StatusSuccess;
+
+                            // Refresh panels that show login status
+                            TranslatorUIManager.WizardPanel?.UpdateAccountStatus();
+                            TranslatorUIManager.MainPanel?.RefreshUI();
+                        });
 
                         await System.Threading.Tasks.Task.Delay(2000);
-                        SetActive(false);
+
+                        TranslatorUIManager.RunOnMainThread(() =>
+                        {
+                            SetActive(false);
+                        });
                         return;
                     }
                     else if (!result.Pending)
                     {
                         // Not pending and not success = expired or error
-                        _statusLabel.text = result.Error ?? "Code expired. Please try again.";
-                        _statusLabel.color = UIStyles.StatusError;
+                        var errorMsg = result.Error ?? "Code expired. Please try again.";
                         _isPolling = false;
-                        ResetUI();
+
+                        TranslatorUIManager.RunOnMainThread(() =>
+                        {
+                            _statusLabel.text = errorMsg;
+                            _statusLabel.color = UIStyles.StatusError;
+                            ResetUI();
+                        });
                     }
                     // If Pending, continue polling
                 }

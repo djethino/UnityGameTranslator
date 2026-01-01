@@ -1244,38 +1244,58 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _compareWithServerBtn.ButtonText.text = "Loading...";
             }
 
+            // Capture values for closure
+            var siteId = serverState.SiteId.Value;
+
             try
             {
                 // Call API to init merge preview with local content
                 var result = await ApiClient.InitMergePreview(
-                    serverState.SiteId.Value,
+                    siteId,
                     TranslatorCore.TranslationCache
                 );
 
-                if (result.Success && !string.IsNullOrEmpty(result.Url))
+                // After await, we may be on a background thread (IL2CPP issue)
+                var success = result.Success;
+                var url = result.Url;
+                var error = result.Error;
+
+                TranslatorUIManager.RunOnMainThread(() =>
                 {
-                    string fullUrl = ApiClient.GetMergePreviewFullUrl(result.Url);
-                    TranslatorCore.LogInfo($"[MainPanel] Opening compare page: {fullUrl}");
-                    Application.OpenURL(fullUrl);
-                }
-                else
-                {
-                    TranslatorCore.LogWarning($"[MainPanel] Failed to init merge preview: {result.Error}");
-                    // Could show a toast/notification here
-                }
+                    if (success && !string.IsNullOrEmpty(url))
+                    {
+                        string fullUrl = ApiClient.GetMergePreviewFullUrl(url);
+                        TranslatorCore.LogInfo($"[MainPanel] Opening compare page: {fullUrl}");
+                        Application.OpenURL(fullUrl);
+                    }
+                    else
+                    {
+                        TranslatorCore.LogWarning($"[MainPanel] Failed to init merge preview: {error}");
+                        // Could show a toast/notification here
+                    }
+
+                    // Re-enable button
+                    if (_compareWithServerBtn != null)
+                    {
+                        _compareWithServerBtn.Component.interactable = true;
+                        _compareWithServerBtn.ButtonText.text = "Compare";
+                    }
+                });
             }
             catch (System.Exception e)
             {
-                TranslatorCore.LogWarning($"[MainPanel] Compare error: {e.Message}");
-            }
-            finally
-            {
-                // Re-enable button
-                if (_compareWithServerBtn != null)
+                var errorMsg = e.Message;
+                TranslatorUIManager.RunOnMainThread(() =>
                 {
-                    _compareWithServerBtn.Component.interactable = true;
-                    _compareWithServerBtn.ButtonText.text = "Compare";
-                }
+                    TranslatorCore.LogWarning($"[MainPanel] Compare error: {errorMsg}");
+
+                    // Re-enable button
+                    if (_compareWithServerBtn != null)
+                    {
+                        _compareWithServerBtn.Component.interactable = true;
+                        _compareWithServerBtn.ButtonText.text = "Compare";
+                    }
+                });
             }
         }
 
@@ -1320,8 +1340,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             string targetLang = TranslatorCore.Config.GetTargetLanguage();
             await _translationList.SearchAsync(game.steam_id, game.name, targetLang);
 
-            // Enable download button if results found
-            _downloadBtn.Component.interactable = _translationList.SelectedTranslation != null;
+            // After await, we may be on a background thread (IL2CPP issue)
+            TranslatorUIManager.RunOnMainThread(() =>
+            {
+                // Enable download button if results found
+                _downloadBtn.Component.interactable = _translationList.SelectedTranslation != null;
+            });
         }
 
         private async void OnDownloadCommunityClicked()

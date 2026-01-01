@@ -408,12 +408,21 @@ namespace UnityGameTranslator.Core.UI.Panels
                     if (_onlineMode && !_translationList.IsSearching)
                     {
                         string targetLang = LanguageHelper.GetSystemLanguageName();
-                        await _translationList.SearchAsync(_detectedGame.steam_id, _detectedGame.name, targetLang);
 
-                        UpdateActionButtons();
+                        // Capture values for closure
+                        var steamId = _detectedGame.steam_id;
+                        var gameName = _detectedGame.name;
 
-                        // Translations loaded, recalculate panel size
-                        RecalculateSize();
+                        await _translationList.SearchAsync(steamId, gameName, targetLang);
+
+                        // After await, we may be on a background thread (IL2CPP issue)
+                        TranslatorUIManager.RunOnMainThread(() =>
+                        {
+                            UpdateActionButtons();
+
+                            // Translations loaded, recalculate panel size
+                            RecalculateSize();
+                        });
                     }
                 }
                 else
@@ -588,11 +597,15 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
             });
 
+            // After await, we may be on a background thread (IL2CPP issue)
             // If MergePanel opened (conflicts), close wizard
-            if (TranslatorUIManager.MergePanel != null && TranslatorUIManager.MergePanel.Enabled)
+            TranslatorUIManager.RunOnMainThread(() =>
             {
-                SetActive(false);
-            }
+                if (TranslatorUIManager.MergePanel != null && TranslatorUIManager.MergePanel.Enabled)
+                {
+                    SetActive(false);
+                }
+            });
         }
 
         private void SetButtonsInteractable(bool interactable)
@@ -872,24 +885,36 @@ namespace UnityGameTranslator.Core.UI.Panels
             _ollamaStatusLabel.text = "Testing...";
             _ollamaStatusLabel.color = UIStyles.StatusWarning;
 
+            // Capture URL before await
+            string url = _ollamaUrl;
+
             try
             {
-                bool success = await TranslatorCore.TestOllamaConnection(_ollamaUrl);
-                if (success)
+                bool success = await TranslatorCore.TestOllamaConnection(url);
+
+                // After await, we may be on a background thread (IL2CPP issue)
+                TranslatorUIManager.RunOnMainThread(() =>
                 {
-                    _ollamaStatusLabel.text = "Connection successful!";
-                    _ollamaStatusLabel.color = UIStyles.StatusSuccess;
-                }
-                else
-                {
-                    _ollamaStatusLabel.text = "Connection failed";
-                    _ollamaStatusLabel.color = UIStyles.StatusError;
-                }
+                    if (success)
+                    {
+                        _ollamaStatusLabel.text = "Connection successful!";
+                        _ollamaStatusLabel.color = UIStyles.StatusSuccess;
+                    }
+                    else
+                    {
+                        _ollamaStatusLabel.text = "Connection failed";
+                        _ollamaStatusLabel.color = UIStyles.StatusError;
+                    }
+                });
             }
             catch (Exception e)
             {
-                _ollamaStatusLabel.text = $"Error: {e.Message}";
-                _ollamaStatusLabel.color = UIStyles.StatusError;
+                var errorMsg = e.Message;
+                TranslatorUIManager.RunOnMainThread(() =>
+                {
+                    _ollamaStatusLabel.text = $"Error: {errorMsg}";
+                    _ollamaStatusLabel.color = UIStyles.StatusError;
+                });
             }
         }
 

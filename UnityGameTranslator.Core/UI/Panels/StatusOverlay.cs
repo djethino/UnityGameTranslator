@@ -461,7 +461,11 @@ namespace UnityGameTranslator.Core.UI.Panels
                 await TranslatorUIManager.DownloadUpdate();
             }
 
-            RefreshOverlay();
+            // After await, we may be on a background thread (IL2CPP issue)
+            TranslatorUIManager.RunOnMainThread(() =>
+            {
+                RefreshOverlay();
+            });
         }
 
         private void OnSyncIgnoreClicked()

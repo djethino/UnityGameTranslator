@@ -1,8 +1,10 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using UnityEngine;
 using UniverseLib;
+using UniverseLib.Runtime;
 using UniverseLib.UI;
 
 namespace UnityGameTranslator.Core.UI
@@ -64,6 +66,30 @@ namespace UnityGameTranslator.Core.UI
                 _showUI = value;
                 // Don't disable UiBase - keep it enabled for hotkey detection and status overlay
                 // Individual panels control their own visibility
+            }
+        }
+
+        /// <summary>
+        /// Execute an action on the main Unity thread.
+        /// Essential for IL2CPP builds where async continuations run on background threads.
+        /// Safe to call from any thread - if already on main thread, executes immediately via coroutine.
+        /// </summary>
+        public static void RunOnMainThread(Action action)
+        {
+            if (action == null) return;
+            RuntimeHelper.StartCoroutine(RunOnMainThreadCoroutine(action));
+        }
+
+        private static IEnumerator RunOnMainThreadCoroutine(Action action)
+        {
+            yield return null; // Wait one frame to ensure we're on main thread
+            try
+            {
+                action();
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogError($"[UIManager] RunOnMainThread error: {e.Message}");
             }
         }
 
@@ -194,40 +220,59 @@ namespace UnityGameTranslator.Core.UI
                 TranslatorCore.LogInfo($"[UIManager] Fetching server state for UUID: {TranslatorCore.FileUuid}");
                 var result = await ApiClient.CheckUuid(TranslatorCore.FileUuid);
 
-                if (!result.Success)
+                // After await, we may be on a background thread (IL2CPP issue)
+                var success = result.Success;
+                var error = result.Error;
+                var exists = result.Exists;
+                var isOwner = result.IsOwner;
+                var role = result.Role;
+                var mainUsername = result.MainUsername;
+                var branchesCount = result.BranchesCount;
+                var existingTranslation = result.ExistingTranslation;
+                var originalTranslation = result.OriginalTranslation;
+
+                RunOnMainThread(() =>
                 {
-                    TranslatorCore.LogWarning($"[UIManager] Server state fetch failed: {result.Error}");
-                    TranslatorCore.ServerState = new ServerTranslationState { Checked = true };
-                    return;
-                }
+                    if (!success)
+                    {
+                        TranslatorCore.LogWarning($"[UIManager] Server state fetch failed: {error}");
+                        TranslatorCore.ServerState = new ServerTranslationState { Checked = true };
+                        MainPanel?.RefreshUI();
+                        return;
+                    }
 
-                TranslatorCore.ServerState = new ServerTranslationState
-                {
-                    Checked = true,
-                    Exists = result.Exists,
-                    IsOwner = result.IsOwner,
-                    Role = result.Role,
-                    MainUsername = result.MainUsername,
-                    BranchesCount = result.BranchesCount,
-                    SiteId = result.ExistingTranslation?.Id ?? result.OriginalTranslation?.Id,
-                    Uploader = result.IsOwner ? TranslatorCore.Config.api_user : result.OriginalTranslation?.Uploader,
-                    Hash = result.ExistingTranslation?.FileHash,
-                    Type = result.ExistingTranslation?.Type ?? result.OriginalTranslation?.Type,
-                    Notes = result.ExistingTranslation?.Notes
-                };
+                    TranslatorCore.ServerState = new ServerTranslationState
+                    {
+                        Checked = true,
+                        Exists = exists,
+                        IsOwner = isOwner,
+                        Role = role,
+                        MainUsername = mainUsername,
+                        BranchesCount = branchesCount,
+                        SiteId = existingTranslation?.Id ?? originalTranslation?.Id,
+                        Uploader = isOwner ? TranslatorCore.Config.api_user : originalTranslation?.Uploader,
+                        Hash = existingTranslation?.FileHash,
+                        Type = existingTranslation?.Type ?? originalTranslation?.Type,
+                        Notes = existingTranslation?.Notes
+                    };
 
-                TranslatorCore.LogInfo($"[UIManager] Server state: exists={result.Exists}, isOwner={result.IsOwner}, role={result.Role}, siteId={TranslatorCore.ServerState.SiteId}");
+                    TranslatorCore.LogInfo($"[UIManager] Server state: exists={exists}, isOwner={isOwner}, role={role}, siteId={TranslatorCore.ServerState.SiteId}");
 
-                // Refresh MainPanel if visible to show updated server state
-                MainPanel?.RefreshUI();
+                    // Refresh MainPanel if visible to show updated server state
+                    MainPanel?.RefreshUI();
+                });
             }
             catch (Exception e)
             {
-                TranslatorCore.LogWarning($"[UIManager] Server state fetch error: {e.Message}");
-                TranslatorCore.ServerState = new ServerTranslationState { Checked = true };
+                var errorMsg = e.Message;
+                RunOnMainThread(() =>
+                {
+                    TranslatorCore.LogWarning($"[UIManager] Server state fetch error: {errorMsg}");
+                    TranslatorCore.ServerState = new ServerTranslationState { Checked = true };
 
-                // Refresh MainPanel even on error to update "checking..." status
-                MainPanel?.RefreshUI();
+                    // Refresh MainPanel even on error to update "checking..." status
+                    MainPanel?.RefreshUI();
+                });
             }
         }
 
@@ -257,6 +302,9 @@ namespace UnityGameTranslator.Core.UI
                 return;
             }
 
+            // Capture values for closure
+            var siteId = serverState.SiteId.Value;
+
             try
             {
                 TranslatorCore.LogInfo("[UpdateCheck] Checking for updates...");
@@ -265,80 +313,98 @@ namespace UnityGameTranslator.Core.UI
                 string localHash = TranslatorCore.ComputeContentHash();
                 TranslatorCore.LogInfo($"[UpdateCheck] Local hash: {localHash?.Substring(0, 16)}...");
 
-                var result = await ApiClient.CheckUpdate(
-                    serverState.SiteId.Value,
-                    localHash
-                );
+                var result = await ApiClient.CheckUpdate(siteId, localHash);
 
-                TranslatorCore.LogInfo($"[UpdateCheck] Server response: HasUpdate={result.HasUpdate}, ServerHash={result.FileHash?.Substring(0, 16)}...");
+                // After await, we may be on a background thread (IL2CPP issue)
+                var success = result.Success;
+                var hasUpdate = result.HasUpdate;
+                var fileHash = result.FileHash;
+                var lineCount = result.LineCount;
+                var error = result.Error;
 
-                if (result.Success && result.HasUpdate)
+                RunOnMainThread(() =>
                 {
-                    // Determine sync direction based on what changed
-                    bool hasLocalChanges = TranslatorCore.LocalChangesCount > 0;
+                    TranslatorCore.LogInfo($"[UpdateCheck] Server response: HasUpdate={hasUpdate}, ServerHash={fileHash?.Substring(0, 16)}...");
 
-                    // Check if server changed since our last sync
-                    string lastSyncedHash = TranslatorCore.LastSyncedHash;
-                    bool serverChanged = !string.IsNullOrEmpty(lastSyncedHash) &&
-                                         result.FileHash != lastSyncedHash;
-
-                    // If no LastSyncedHash, we can't tell definitively what changed
-                    // If we have local changes AND server hash differs, assume potential conflict to be safe
-                    // This ensures merge dialog is shown rather than accidentally overwriting server changes
-                    if (string.IsNullOrEmpty(lastSyncedHash))
+                    if (success && hasUpdate)
                     {
-                        serverChanged = hasLocalChanges;
+                        // Determine sync direction based on what changed
+                        bool hasLocalChanges = TranslatorCore.LocalChangesCount > 0;
+
+                        // Check if server changed since our last sync
+                        string lastSyncedHash = TranslatorCore.LastSyncedHash;
+                        bool serverChanged = !string.IsNullOrEmpty(lastSyncedHash) &&
+                                             fileHash != lastSyncedHash;
+
+                        // If no LastSyncedHash, we can't tell definitively what changed
+                        // If we have local changes AND server hash differs, assume potential conflict to be safe
+                        // This ensures merge dialog is shown rather than accidentally overwriting server changes
+                        if (string.IsNullOrEmpty(lastSyncedHash))
+                        {
+                            serverChanged = hasLocalChanges;
+                        }
+
+                        // Determine direction based on what changed
+                        if (hasLocalChanges && serverChanged)
+                        {
+                            PendingUpdateDirection = UpdateDirection.Merge;
+                            TranslatorCore.LogInfo($"[UpdateCheck] CONFLICT: Both local ({TranslatorCore.LocalChangesCount} changes) and server changed - merge needed");
+                        }
+                        else if (hasLocalChanges)
+                        {
+                            PendingUpdateDirection = UpdateDirection.Upload;
+                            TranslatorCore.LogInfo($"[UpdateCheck] Local has {TranslatorCore.LocalChangesCount} changes to upload");
+                        }
+                        else
+                        {
+                            PendingUpdateDirection = UpdateDirection.Download;
+                            TranslatorCore.LogInfo($"[UpdateCheck] Server has update: {lineCount} lines");
+                        }
+
+                        HasPendingUpdate = true;
+                        PendingUpdateInfo = result;
+
+                        // Auto-download only if no local changes and no conflict
+                        if (PendingUpdateDirection == UpdateDirection.Download &&
+                            TranslatorCore.Config.sync.auto_download)
+                        {
+                            TranslatorCore.LogInfo("[UpdateCheck] Auto-downloading update...");
+                            // Note: DownloadUpdate is already fixed for IL2CPP threading
+                            _ = DownloadUpdate();
+                        }
+
+                        // Refresh MainPanel to show updated sync status
+                        MainPanel?.RefreshUI();
                     }
+                    else if (success)
+                    {
+                        TranslatorCore.LogInfo("[UpdateCheck] Translation is up to date");
+                        HasPendingUpdate = false;
+                        PendingUpdateInfo = null;
+                        PendingUpdateDirection = UpdateDirection.None;
 
-                    // Determine direction based on what changed
-                    if (hasLocalChanges && serverChanged)
-                    {
-                        PendingUpdateDirection = UpdateDirection.Merge;
-                        TranslatorCore.LogInfo($"[UpdateCheck] CONFLICT: Both local ({TranslatorCore.LocalChangesCount} changes) and server changed - merge needed");
-                    }
-                    else if (hasLocalChanges)
-                    {
-                        PendingUpdateDirection = UpdateDirection.Upload;
-                        TranslatorCore.LogInfo($"[UpdateCheck] Local has {TranslatorCore.LocalChangesCount} changes to upload");
+                        // Refresh MainPanel to show updated sync status
+                        MainPanel?.RefreshUI();
                     }
                     else
                     {
-                        PendingUpdateDirection = UpdateDirection.Download;
-                        TranslatorCore.LogInfo($"[UpdateCheck] Server has update: {result.LineCount} lines");
+                        TranslatorCore.LogWarning($"[UpdateCheck] Failed: {error}");
+
+                        // Refresh MainPanel even on error
+                        MainPanel?.RefreshUI();
                     }
-
-                    HasPendingUpdate = true;
-                    PendingUpdateInfo = result;
-
-                    // Auto-download only if no local changes and no conflict
-                    if (PendingUpdateDirection == UpdateDirection.Download &&
-                        TranslatorCore.Config.sync.auto_download)
-                    {
-                        TranslatorCore.LogInfo("[UpdateCheck] Auto-downloading update...");
-                        await DownloadUpdate();
-                    }
-                }
-                else if (result.Success)
-                {
-                    TranslatorCore.LogInfo("[UpdateCheck] Translation is up to date");
-                    HasPendingUpdate = false;
-                    PendingUpdateInfo = null;
-                    PendingUpdateDirection = UpdateDirection.None;
-                }
-                else
-                {
-                    TranslatorCore.LogWarning($"[UpdateCheck] Failed: {result.Error}");
-                }
-
-                // Refresh MainPanel to show updated sync status
-                MainPanel?.RefreshUI();
+                });
             }
             catch (Exception e)
             {
-                TranslatorCore.LogWarning($"[UpdateCheck] Error: {e.Message}");
+                var errorMsg = e.Message;
+                RunOnMainThread(() =>
+                {
+                    TranslatorCore.LogWarning($"[UpdateCheck] Error: {errorMsg}");
 
-                // Refresh MainPanel even on error
-                MainPanel?.RefreshUI();
+                    // Refresh MainPanel even on error
+                    MainPanel?.RefreshUI();
+                });
             }
         }
 
@@ -435,57 +501,78 @@ namespace UnityGameTranslator.Core.UI
             var serverState = TranslatorCore.ServerState;
             if (serverState?.SiteId == null) return;
 
+            // Capture values for closure
+            var siteId = serverState.SiteId.Value;
+
             try
             {
-                var result = await ApiClient.Download(serverState.SiteId.Value);
+                var result = await ApiClient.Download(siteId);
 
-                if (result.Success && !string.IsNullOrEmpty(result.Content))
+                // After await, we may be on a background thread (IL2CPP issue)
+                var success = result.Success;
+                var content = result.Content;
+                var fileHash = result.FileHash;
+                var error = result.Error;
+
+                RunOnMainThread(() =>
                 {
-                    // Backup current file
-                    string backupPath = TranslatorCore.CachePath + ".backup";
-                    if (System.IO.File.Exists(TranslatorCore.CachePath))
+                    if (success && !string.IsNullOrEmpty(content))
                     {
-                        System.IO.File.Copy(TranslatorCore.CachePath, backupPath, true);
+                        // Backup current file
+                        string backupPath = TranslatorCore.CachePath + ".backup";
+                        if (System.IO.File.Exists(TranslatorCore.CachePath))
+                        {
+                            System.IO.File.Copy(TranslatorCore.CachePath, backupPath, true);
+                        }
+
+                        // Write new content
+                        System.IO.File.WriteAllText(TranslatorCore.CachePath, content);
+
+                        // Reload cache to apply new content immediately
+                        TranslatorCore.ReloadCache();
+
+                        // Update server state hash in memory
+                        var currentServerState = TranslatorCore.ServerState;
+                        if (currentServerState != null)
+                        {
+                            currentServerState.Hash = fileHash;
+                        }
+
+                        // Update LastSyncedHash for multi-device sync detection
+                        TranslatorCore.LastSyncedHash = fileHash;
+
+                        // Save cache and ancestor
+                        TranslatorCore.SaveCache();
+                        TranslatorCore.SaveAncestorCache();
+
+                        // Clear all pending update state
+                        HasPendingUpdate = false;
+                        PendingUpdateInfo = null;
+                        PendingUpdateDirection = UpdateDirection.None;
+
+                        TranslatorCore.LogInfo($"[UpdateCheck] Translation updated successfully");
+
+                        // Refresh MainPanel to show new translation count
+                        MainPanel?.RefreshUI();
                     }
-
-                    // Write new content
-                    System.IO.File.WriteAllText(TranslatorCore.CachePath, result.Content);
-
-                    // Reload cache to apply new content immediately
-                    TranslatorCore.ReloadCache();
-
-                    // Update server state hash in memory
-                    serverState.Hash = result.FileHash;
-
-                    // Update LastSyncedHash for multi-device sync detection
-                    TranslatorCore.LastSyncedHash = result.FileHash;
-
-                    // Save cache and ancestor
-                    TranslatorCore.SaveCache();
-                    TranslatorCore.SaveAncestorCache();
-
-                    // Clear all pending update state
-                    HasPendingUpdate = false;
-                    PendingUpdateInfo = null;
-                    PendingUpdateDirection = UpdateDirection.None;
-
-                    TranslatorCore.LogInfo($"[UpdateCheck] Translation updated successfully");
-
-                    // Refresh MainPanel to show new translation count
-                    MainPanel?.RefreshUI();
-                }
-                else
-                {
-                    TranslatorCore.LogWarning($"[UpdateCheck] Download failed: {result.Error}");
-                }
+                    else
+                    {
+                        TranslatorCore.LogWarning($"[UpdateCheck] Download failed: {error}");
+                        // Refresh MainPanel in all cases to update status
+                        MainPanel?.RefreshUI();
+                    }
+                });
             }
             catch (Exception e)
             {
-                TranslatorCore.LogWarning($"[UpdateCheck] Download error: {e.Message}");
+                var errorMsg = e.Message;
+                RunOnMainThread(() =>
+                {
+                    TranslatorCore.LogWarning($"[UpdateCheck] Download error: {errorMsg}");
+                    // Refresh MainPanel in all cases to update status
+                    MainPanel?.RefreshUI();
+                });
             }
-
-            // Refresh MainPanel in all cases to update status
-            MainPanel?.RefreshUI();
         }
 
         /// <summary>
@@ -497,43 +584,59 @@ namespace UnityGameTranslator.Core.UI
             var serverState = TranslatorCore.ServerState;
             if (serverState?.SiteId == null) return;
 
+            // Capture values for closure
+            var siteId = serverState.SiteId.Value;
+
             try
             {
-                var result = await ApiClient.Download(serverState.SiteId.Value);
+                var result = await ApiClient.Download(siteId);
 
-                if (result.Success && !string.IsNullOrEmpty(result.Content))
+                // After await, we may be on a background thread (IL2CPP issue)
+                var success = result.Success;
+                var content = result.Content;
+                var fileHash = result.FileHash;
+                var error = result.Error;
+
+                RunOnMainThread(() =>
                 {
-                    // Parse remote translations with tags support
-                    var remoteTranslations = TranslatorCore.ParseTranslationsFromJson(result.Content);
-
-                    // Perform 3-way merge with tag preservation
-                    var local = TranslatorCore.TranslationCache;
-                    var ancestor = TranslatorCore.AncestorCache;
-
-                    var mergeResult = TranslationMerger.MergeWithTags(local, remoteTranslations, ancestor);
-
-                    TranslatorCore.LogInfo($"[Merge] Result: {mergeResult.Statistics.GetSummary()}");
-
-                    if (mergeResult.ConflictCount > 0)
+                    if (success && !string.IsNullOrEmpty(content))
                     {
-                        // Show merge panel for user to resolve conflicts
-                        MergePanel?.SetMergeDataWithTags(mergeResult, remoteTranslations, result.FileHash);
-                        MergePanel?.SetActive(true);
+                        // Parse remote translations with tags support
+                        var remoteTranslations = TranslatorCore.ParseTranslationsFromJson(content);
+
+                        // Perform 3-way merge with tag preservation
+                        var local = TranslatorCore.TranslationCache;
+                        var ancestor = TranslatorCore.AncestorCache;
+
+                        var mergeResult = TranslationMerger.MergeWithTags(local, remoteTranslations, ancestor);
+
+                        TranslatorCore.LogInfo($"[Merge] Result: {mergeResult.Statistics.GetSummary()}");
+
+                        if (mergeResult.ConflictCount > 0)
+                        {
+                            // Show merge panel for user to resolve conflicts
+                            MergePanel?.SetMergeDataWithTags(mergeResult, remoteTranslations, fileHash);
+                            MergePanel?.SetActive(true);
+                        }
+                        else
+                        {
+                            // No conflicts - apply merge directly
+                            ApplyMergeWithTags(mergeResult, fileHash, remoteTranslations);
+                        }
                     }
                     else
                     {
-                        // No conflicts - apply merge directly
-                        ApplyMergeWithTags(mergeResult, result.FileHash, remoteTranslations);
+                        TranslatorCore.LogWarning($"[Merge] Download failed: {error}");
                     }
-                }
-                else
-                {
-                    TranslatorCore.LogWarning($"[Merge] Download failed: {result.Error}");
-                }
+                });
             }
             catch (Exception e)
             {
-                TranslatorCore.LogWarning($"[Merge] Error: {e.Message}");
+                var errorMsg = e.Message;
+                RunOnMainThread(() =>
+                {
+                    TranslatorCore.LogWarning($"[Merge] Error: {errorMsg}");
+                });
             }
         }
 
@@ -667,58 +770,78 @@ namespace UnityGameTranslator.Core.UI
                 return;
             }
 
+            // Capture values for closure
+            var translationId = translation.Id;
+            var translationUploader = translation.Uploader;
+            var translationFileHash = translation.FileHash;
+            var translationType = translation.Type;
+            var translationNotes = translation.Notes;
+
             try
             {
-                var result = await ApiClient.Download(translation.Id);
+                var result = await ApiClient.Download(translationId);
 
-                if (result.Success && !string.IsNullOrEmpty(result.Content))
+                // After await, we may be on a background thread (IL2CPP issue)
+                var success = result.Success;
+                var content = result.Content;
+                var fileHash = result.FileHash;
+                var error = result.Error;
+
+                RunOnMainThread(() =>
                 {
-                    // Write content to file
-                    System.IO.File.WriteAllText(TranslatorCore.CachePath, result.Content);
-                    TranslatorCore.ReloadCache();
-
-                    // Check if current user owns this translation
-                    string currentUser = TranslatorCore.Config.api_user;
-                    bool isOwner = !string.IsNullOrEmpty(currentUser) &&
-                        translation.Uploader.Equals(currentUser, StringComparison.OrdinalIgnoreCase);
-
-                    // Update server state
-                    TranslatorCore.ServerState = new ServerTranslationState
+                    if (success && !string.IsNullOrEmpty(content))
                     {
-                        Checked = true,
-                        Exists = true,
-                        IsOwner = isOwner,
-                        Role = isOwner ? TranslationRole.Main : TranslationRole.Branch,
-                        MainUsername = isOwner ? null : translation.Uploader,
-                        SiteId = translation.Id,
-                        Uploader = translation.Uploader,
-                        Hash = result.FileHash ?? translation.FileHash,
-                        Type = translation.Type,
-                        Notes = translation.Notes
-                    };
+                        // Write content to file
+                        System.IO.File.WriteAllText(TranslatorCore.CachePath, content);
+                        TranslatorCore.ReloadCache();
 
-                    // Save as ancestor for sync tracking
-                    TranslatorCore.SaveAncestorCache();
+                        // Check if current user owns this translation
+                        string currentUser = TranslatorCore.Config.api_user;
+                        bool isOwner = !string.IsNullOrEmpty(currentUser) &&
+                            translationUploader.Equals(currentUser, StringComparison.OrdinalIgnoreCase);
 
-                    // Update sync state
-                    TranslatorCore.LastSyncedHash = result.FileHash ?? translation.FileHash;
-                    HasPendingUpdate = false;
-                    PendingUpdateDirection = UpdateDirection.None;
+                        // Update server state
+                        TranslatorCore.ServerState = new ServerTranslationState
+                        {
+                            Checked = true,
+                            Exists = true,
+                            IsOwner = isOwner,
+                            Role = isOwner ? TranslationRole.Main : TranslationRole.Branch,
+                            MainUsername = isOwner ? null : translationUploader,
+                            SiteId = translationId,
+                            Uploader = translationUploader,
+                            Hash = fileHash ?? translationFileHash,
+                            Type = translationType,
+                            Notes = translationNotes
+                        };
 
-                    TranslatorCore.LogInfo($"[Download] Downloaded translation #{translation.Id} from @{translation.Uploader}");
+                        // Save as ancestor for sync tracking
+                        TranslatorCore.SaveAncestorCache();
 
-                    MainPanel?.RefreshUI();
-                    onComplete?.Invoke(true, "Downloaded successfully!");
-                }
-                else
-                {
-                    onComplete?.Invoke(false, result.Error ?? "Download failed");
-                }
+                        // Update sync state
+                        TranslatorCore.LastSyncedHash = fileHash ?? translationFileHash;
+                        HasPendingUpdate = false;
+                        PendingUpdateDirection = UpdateDirection.None;
+
+                        TranslatorCore.LogInfo($"[Download] Downloaded translation #{translationId} from @{translationUploader}");
+
+                        MainPanel?.RefreshUI();
+                        onComplete?.Invoke(true, "Downloaded successfully!");
+                    }
+                    else
+                    {
+                        onComplete?.Invoke(false, error ?? "Download failed");
+                    }
+                });
             }
             catch (Exception e)
             {
-                TranslatorCore.LogWarning($"[Download] Error: {e.Message}");
-                onComplete?.Invoke(false, e.Message);
+                var errorMsg = e.Message;
+                RunOnMainThread(() =>
+                {
+                    TranslatorCore.LogWarning($"[Download] Error: {errorMsg}");
+                    onComplete?.Invoke(false, errorMsg);
+                });
             }
         }
 
@@ -736,76 +859,96 @@ namespace UnityGameTranslator.Core.UI
                 return;
             }
 
+            // Capture values for closure
+            var translationId = translation.Id;
+            var translationUploader = translation.Uploader;
+            var translationFileHash = translation.FileHash;
+            var translationType = translation.Type;
+            var translationNotes = translation.Notes;
+
             try
             {
-                var result = await ApiClient.Download(translation.Id);
+                var result = await ApiClient.Download(translationId);
 
-                if (result.Success && !string.IsNullOrEmpty(result.Content))
+                // After await, we may be on a background thread (IL2CPP issue)
+                var success = result.Success;
+                var content = result.Content;
+                var fileHash = result.FileHash;
+                var error = result.Error;
+
+                RunOnMainThread(() =>
                 {
-                    // Parse remote translations
-                    var parsed = Newtonsoft.Json.JsonConvert.DeserializeObject<Dictionary<string, object>>(result.Content);
-                    var remoteTranslations = new Dictionary<string, string>();
-
-                    foreach (var kvp in parsed)
+                    if (success && !string.IsNullOrEmpty(content))
                     {
-                        if (!kvp.Key.StartsWith("_") && kvp.Value is string strValue)
+                        // Parse remote translations
+                        var parsed = Newtonsoft.Json.JsonConvert.DeserializeObject<Dictionary<string, object>>(content);
+                        var remoteTranslations = new Dictionary<string, string>();
+
+                        foreach (var kvp in parsed)
                         {
-                            // Normalize line endings for cross-platform consistency
-                            string normalizedKey = TranslatorCore.NormalizeLineEndings(kvp.Key);
-                            string normalizedValue = TranslatorCore.NormalizeLineEndings(strValue);
-                            remoteTranslations[normalizedKey] = normalizedValue;
+                            if (!kvp.Key.StartsWith("_") && kvp.Value is string strValue)
+                            {
+                                // Normalize line endings for cross-platform consistency
+                                string normalizedKey = TranslatorCore.NormalizeLineEndings(kvp.Key);
+                                string normalizedValue = TranslatorCore.NormalizeLineEndings(strValue);
+                                remoteTranslations[normalizedKey] = normalizedValue;
+                            }
                         }
-                    }
 
-                    // Perform 3-way merge (using string dictionaries for legacy merge support)
-                    var local = TranslatorCore.GetCacheAsStrings();
-                    var ancestor = TranslatorCore.GetAncestorAsStrings();
-                    var mergeResult = TranslationMerger.Merge(local, remoteTranslations, ancestor);
+                        // Perform 3-way merge (using string dictionaries for legacy merge support)
+                        var local = TranslatorCore.GetCacheAsStrings();
+                        var ancestor = TranslatorCore.GetAncestorAsStrings();
+                        var mergeResult = TranslationMerger.Merge(local, remoteTranslations, ancestor);
 
-                    TranslatorCore.LogInfo($"[Merge] Result: {mergeResult.Statistics.GetSummary()}");
+                        TranslatorCore.LogInfo($"[Merge] Result: {mergeResult.Statistics.GetSummary()}");
 
-                    // Update server state to track this translation
-                    string currentUser = TranslatorCore.Config.api_user;
-                    bool isOwner = !string.IsNullOrEmpty(currentUser) &&
-                        translation.Uploader.Equals(currentUser, StringComparison.OrdinalIgnoreCase);
+                        // Update server state to track this translation
+                        string currentUser = TranslatorCore.Config.api_user;
+                        bool isOwner = !string.IsNullOrEmpty(currentUser) &&
+                            translationUploader.Equals(currentUser, StringComparison.OrdinalIgnoreCase);
 
-                    TranslatorCore.ServerState = new ServerTranslationState
-                    {
-                        Checked = true,
-                        Exists = true,
-                        IsOwner = isOwner,
-                        Role = isOwner ? TranslationRole.Main : TranslationRole.Branch,
-                        MainUsername = isOwner ? null : translation.Uploader,
-                        SiteId = translation.Id,
-                        Uploader = translation.Uploader,
-                        Hash = result.FileHash ?? translation.FileHash,
-                        Type = translation.Type,
-                        Notes = translation.Notes
-                    };
+                        TranslatorCore.ServerState = new ServerTranslationState
+                        {
+                            Checked = true,
+                            Exists = true,
+                            IsOwner = isOwner,
+                            Role = isOwner ? TranslationRole.Main : TranslationRole.Branch,
+                            MainUsername = isOwner ? null : translationUploader,
+                            SiteId = translationId,
+                            Uploader = translationUploader,
+                            Hash = fileHash ?? translationFileHash,
+                            Type = translationType,
+                            Notes = translationNotes
+                        };
 
-                    if (mergeResult.ConflictCount > 0)
-                    {
-                        // Show merge panel for user to resolve conflicts
-                        MergePanel?.SetMergeData(mergeResult, remoteTranslations, result.FileHash);
-                        MergePanel?.SetActive(true);
-                        // Don't call onComplete - MergePanel handles the rest
+                        if (mergeResult.ConflictCount > 0)
+                        {
+                            // Show merge panel for user to resolve conflicts
+                            MergePanel?.SetMergeData(mergeResult, remoteTranslations, fileHash);
+                            MergePanel?.SetActive(true);
+                            // Don't call onComplete - MergePanel handles the rest
+                        }
+                        else
+                        {
+                            // No conflicts - apply merge directly
+                            ApplyMerge(mergeResult, fileHash, remoteTranslations);
+                            onComplete?.Invoke(true, "Merged successfully!");
+                        }
                     }
                     else
                     {
-                        // No conflicts - apply merge directly
-                        ApplyMerge(mergeResult, result.FileHash, remoteTranslations);
-                        onComplete?.Invoke(true, "Merged successfully!");
+                        onComplete?.Invoke(false, error ?? "Download failed");
                     }
-                }
-                else
-                {
-                    onComplete?.Invoke(false, result.Error ?? "Download failed");
-                }
+                });
             }
             catch (Exception e)
             {
-                TranslatorCore.LogWarning($"[Merge] Error: {e.Message}");
-                onComplete?.Invoke(false, e.Message);
+                var errorMsg = e.Message;
+                RunOnMainThread(() =>
+                {
+                    TranslatorCore.LogWarning($"[Merge] Error: {errorMsg}");
+                    onComplete?.Invoke(false, errorMsg);
+                });
             }
         }
 

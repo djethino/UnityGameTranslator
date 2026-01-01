@@ -547,37 +547,49 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 var result = await GitHubUpdateChecker.CheckForUpdatesAsync(currentVersion, modLoaderType);
 
-                if (result.Success && result.HasUpdate)
-                {
-                    TranslatorUIManager.HasModUpdate = true;
-                    TranslatorUIManager.ModUpdateInfo = result;
-                    TranslatorUIManager.ModUpdateDismissed = false;
+                // After await, we may be on a background thread (IL2CPP issue)
+                var success = result.Success;
+                var hasUpdate = result.HasUpdate;
+                var latestVersion = result.LatestVersion;
+                var error = result.Error;
 
-                    _checkModUpdatesStatusLabel.text = $"Update available: v{result.LatestVersion}";
-                    _checkModUpdatesStatusLabel.color = UIStyles.StatusSuccess;
+                TranslatorUIManager.RunOnMainThread(() =>
+                {
+                    if (success && hasUpdate)
+                    {
+                        TranslatorUIManager.HasModUpdate = true;
+                        TranslatorUIManager.ModUpdateInfo = result;
+                        TranslatorUIManager.ModUpdateDismissed = false;
 
-                    // Refresh MainPanel if open
-                    TranslatorUIManager.MainPanel?.RefreshUI();
-                }
-                else if (result.Success)
-                {
-                    _checkModUpdatesStatusLabel.text = $"Up to date (v{currentVersion})";
-                    _checkModUpdatesStatusLabel.color = UIStyles.StatusSuccess;
-                }
-                else
-                {
-                    _checkModUpdatesStatusLabel.text = $"Error: {result.Error}";
-                    _checkModUpdatesStatusLabel.color = UIStyles.StatusError;
-                }
+                        _checkModUpdatesStatusLabel.text = $"Update available: v{latestVersion}";
+                        _checkModUpdatesStatusLabel.color = UIStyles.StatusSuccess;
+
+                        // Refresh MainPanel if open
+                        TranslatorUIManager.MainPanel?.RefreshUI();
+                    }
+                    else if (success)
+                    {
+                        _checkModUpdatesStatusLabel.text = $"Up to date (v{currentVersion})";
+                        _checkModUpdatesStatusLabel.color = UIStyles.StatusSuccess;
+                    }
+                    else
+                    {
+                        _checkModUpdatesStatusLabel.text = $"Error: {error}";
+                        _checkModUpdatesStatusLabel.color = UIStyles.StatusError;
+                    }
+
+                    _checkModUpdatesNowBtn.Component.interactable = true;
+                });
             }
             catch (System.Exception e)
             {
-                _checkModUpdatesStatusLabel.text = $"Error: {e.Message}";
-                _checkModUpdatesStatusLabel.color = UIStyles.StatusError;
-            }
-            finally
-            {
-                _checkModUpdatesNowBtn.Component.interactable = true;
+                var errorMsg = e.Message;
+                TranslatorUIManager.RunOnMainThread(() =>
+                {
+                    _checkModUpdatesStatusLabel.text = $"Error: {errorMsg}";
+                    _checkModUpdatesStatusLabel.color = UIStyles.StatusError;
+                    _checkModUpdatesNowBtn.Component.interactable = true;
+                });
             }
         }
 
@@ -586,24 +598,36 @@ namespace UnityGameTranslator.Core.UI.Panels
             _ollamaTestStatusLabel.text = "Testing...";
             _ollamaTestStatusLabel.color = UIStyles.StatusWarning;
 
+            // Capture URL before await
+            string url = _ollamaUrlInput.Text;
+
             try
             {
-                bool success = await TranslatorCore.TestOllamaConnection(_ollamaUrlInput.Text);
-                if (success)
+                bool success = await TranslatorCore.TestOllamaConnection(url);
+
+                // After await, we may be on a background thread (IL2CPP issue)
+                TranslatorUIManager.RunOnMainThread(() =>
                 {
-                    _ollamaTestStatusLabel.text = "Connection successful!";
-                    _ollamaTestStatusLabel.color = UIStyles.StatusSuccess;
-                }
-                else
-                {
-                    _ollamaTestStatusLabel.text = "Connection failed";
-                    _ollamaTestStatusLabel.color = UIStyles.StatusError;
-                }
+                    if (success)
+                    {
+                        _ollamaTestStatusLabel.text = "Connection successful!";
+                        _ollamaTestStatusLabel.color = UIStyles.StatusSuccess;
+                    }
+                    else
+                    {
+                        _ollamaTestStatusLabel.text = "Connection failed";
+                        _ollamaTestStatusLabel.color = UIStyles.StatusError;
+                    }
+                });
             }
             catch (Exception e)
             {
-                _ollamaTestStatusLabel.text = $"Error: {e.Message}";
-                _ollamaTestStatusLabel.color = UIStyles.StatusError;
+                var errorMsg = e.Message;
+                TranslatorUIManager.RunOnMainThread(() =>
+                {
+                    _ollamaTestStatusLabel.text = $"Error: {errorMsg}";
+                    _ollamaTestStatusLabel.color = UIStyles.StatusError;
+                });
             }
         }
 

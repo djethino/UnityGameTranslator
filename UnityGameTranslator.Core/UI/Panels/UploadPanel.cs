@@ -270,29 +270,30 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // Check UUID to determine mode
                 var result = await ApiClient.CheckUuid(TranslatorCore.FileUuid);
 
+                // After await, we may be on a background thread (IL2CPP issue)
+                // Use RunOnMainThread for all UI operations
+                TranslatorCore.LogInfo($"[UploadPanel] CheckUuid result: Exists={result.Exists}, IsOwner={result.IsOwner}, Success={result.Success}");
+
                 // Handle API errors separately from UUID not existing
                 if (!result.Success)
                 {
-                    _statusLabel.text = $"Error: {result.Error}";
-                    _statusLabel.color = UIStyles.StatusError;
-                    _isChecking = false;
-                    _uploadBtn.Component.interactable = false;
+                    var errorMsg = result.Error;
+                    TranslatorUIManager.RunOnMainThread(() =>
+                    {
+                        _statusLabel.text = $"Error: {errorMsg}";
+                        _statusLabel.color = UIStyles.StatusError;
+                        _isChecking = false;
+                        _uploadBtn.Component.interactable = false;
+                    });
                     return;
                 }
-
-                TranslatorCore.LogInfo($"[UploadPanel] CheckUuid result: Exists={result.Exists}, IsOwner={result.IsOwner}, Success={result.Success}");
 
                 if (result.Exists)
                 {
                     if (result.IsOwner)
                     {
-                        // UPDATE mode
-                        _uploadMode = UploadMode.Update;
-                        _titleLabel.text = "Update Translation";
+                        // UPDATE mode - update non-UI state first
                         TranslatorCore.LogInfo("[UploadPanel] Mode set to UPDATE");
-
-                        // Update ServerState from API response
-                        // Role comes from API (Main if owner, Branch if contributor)
                         TranslatorCore.ServerState = new ServerTranslationState
                         {
                             Checked = true,
@@ -307,30 +308,33 @@ namespace UnityGameTranslator.Core.UI.Panels
                             Hash = result.ExistingTranslation?.FileHash
                         };
 
-                        _modeInfoLabel.text = $"Updating: ID #{TranslatorCore.ServerState.SiteId}";
-                        _uploadBtn.ButtonText.text = "Update";
+                        // Capture for closure
+                        var siteId = TranslatorCore.ServerState.SiteId;
+                        var existingType = result.ExistingTranslation?.Type;
+                        var existingNotes = result.ExistingTranslation?.Notes ?? "";
 
-                        // Restore existing type if available
-                        if (!string.IsNullOrEmpty(result.ExistingTranslation?.Type))
+                        TranslatorUIManager.RunOnMainThread(() =>
                         {
-                            SetUploadType(result.ExistingTranslation.Type);
-                        }
+                            _uploadMode = UploadMode.Update;
+                            _titleLabel.text = "Update Translation";
+                            _modeInfoLabel.text = $"Updating: ID #{siteId}";
+                            _uploadBtn.ButtonText.text = "Update";
 
-                        // Restore existing notes
-                        _notesInput.Text = result.ExistingTranslation?.Notes ?? "";
+                            if (!string.IsNullOrEmpty(existingType))
+                            {
+                                SetUploadType(existingType);
+                            }
+                            _notesInput.Text = existingNotes;
 
-                        _statusLabel.text = "";
-                        _isChecking = false;
-                        _uploadBtn.Component.interactable = true;
-                        TranslatorCore.LogInfo($"[UploadPanel] UPDATE mode ready - button interactable={_uploadBtn.Component.interactable}, isChecking={_isChecking}");
+                            _statusLabel.text = "";
+                            _isChecking = false;
+                            _uploadBtn.Component.interactable = true;
+                            TranslatorCore.LogInfo($"[UploadPanel] UPDATE mode ready");
+                        });
                     }
                     else
                     {
-                        // BRANCH mode - contributing to existing Main
-                        _uploadMode = UploadMode.Branch;
-                        _titleLabel.text = "Contribute as Branch";
-
-                        // Update ServerState from API response
+                        // BRANCH mode - update non-UI state first
                         TranslatorCore.ServerState = new ServerTranslationState
                         {
                             Checked = true,
@@ -343,40 +347,50 @@ namespace UnityGameTranslator.Core.UI.Panels
                             Type = result.OriginalTranslation?.Type
                         };
 
-                        _modeInfoLabel.text = $"Contributing to: @{TranslatorCore.ServerState.Uploader ?? "unknown"}";
-                        _uploadBtn.ButtonText.text = "Contribute";
+                        // Capture for closure
+                        var uploader = TranslatorCore.ServerState.Uploader ?? "unknown";
+                        var originalType = result.OriginalTranslation?.Type ?? "ai";
 
-                        // Restore type from original translation
-                        SetUploadType(result.OriginalTranslation?.Type ?? "ai");
-
-                        _statusLabel.text = "";
-                        _isChecking = false;
-                        _uploadBtn.Component.interactable = true;
+                        TranslatorUIManager.RunOnMainThread(() =>
+                        {
+                            _uploadMode = UploadMode.Branch;
+                            _titleLabel.text = "Contribute as Branch";
+                            _modeInfoLabel.text = $"Contributing to: @{uploader}";
+                            _uploadBtn.ButtonText.text = "Contribute";
+                            SetUploadType(originalType);
+                            _statusLabel.text = "";
+                            _isChecking = false;
+                            _uploadBtn.Component.interactable = true;
+                        });
                     }
                 }
                 else
                 {
                     // NEW mode - redirect to UploadSetupPanel for game/language selection
-                    _uploadMode = UploadMode.New;
-                    _isChecking = false;
-
-                    // Close this panel and open UploadSetupPanel
-                    SetActive(false);
-
-                    TranslatorUIManager.UploadSetupPanel.ShowForSetup((game, srcLang, tgtLang) =>
+                    TranslatorUIManager.RunOnMainThread(() =>
                     {
-                        // This is called when user completes setup
-                        ContinueAfterSetup(game, srcLang, tgtLang);
+                        _uploadMode = UploadMode.New;
+                        _isChecking = false;
+                        SetActive(false);
+
+                        TranslatorUIManager.UploadSetupPanel.ShowForSetup((game, srcLang, tgtLang) =>
+                        {
+                            ContinueAfterSetup(game, srcLang, tgtLang);
+                        });
                     });
                 }
             }
             catch (Exception e)
             {
                 TranslatorCore.LogWarning($"[Upload] UUID check error: {e.Message}");
-                _statusLabel.text = $"Error: {e.Message}";
-                _statusLabel.color = UIStyles.StatusError;
-                _isChecking = false;
-                _uploadBtn.Component.interactable = true;
+                var errorMsg = e.Message;
+                TranslatorUIManager.RunOnMainThread(() =>
+                {
+                    _statusLabel.text = $"Error: {errorMsg}";
+                    _statusLabel.color = UIStyles.StatusError;
+                    _isChecking = false;
+                    _uploadBtn.Component.interactable = true;
+                });
             }
         }
 
@@ -424,10 +438,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             _statusLabel.text = actionText;
             _statusLabel.color = UIStyles.StatusWarning;
 
+            // Capture values before async (for use in RunOnMainThread callbacks)
+            var uploadMode = _uploadMode;
+            var uploadType = _uploadType;
+            string notes = _notesInput.Text;
+
             try
             {
-                string notes = _notesInput.Text;
-
                 // Determine languages based on mode
                 string srcLang, tgtLang;
                 if (_uploadMode == UploadMode.New && _setupComplete)
@@ -460,14 +477,11 @@ namespace UnityGameTranslator.Core.UI.Panels
                 var result = await ApiClient.UploadTranslation(request);
                 TranslatorCore.LogInfo($"[UploadPanel] Upload result: Success={result.Success}, Id={result.TranslationId}, Error={result.Error}");
 
+                // After await, we may be on a background thread (IL2CPP issue)
+                // Use RunOnMainThread for all UI operations
                 if (result.Success)
                 {
-                    string successMsg = _uploadMode == UploadMode.Update ? "Updated" :
-                                       (_uploadMode == UploadMode.Branch ? "Contributed" : "Uploaded");
-                    _statusLabel.text = $"{successMsg}! ID: {result.TranslationId}";
-                    _statusLabel.color = UIStyles.StatusSuccess;
-
-                    // Update server state with role from API response
+                    // Update non-UI state (thread-safe)
                     TranslatorCore.ServerState = new ServerTranslationState
                     {
                         Checked = true,
@@ -477,46 +491,64 @@ namespace UnityGameTranslator.Core.UI.Panels
                         SiteId = result.TranslationId,
                         Uploader = TranslatorCore.Config.api_user,
                         Hash = result.FileHash,
-                        Type = _uploadType,
+                        Type = uploadType,
                         Notes = notes
                     };
-
-                    // Update last synced hash for multi-device sync detection
                     TranslatorCore.LastSyncedHash = result.FileHash;
-
-                    // Save cache to persist _source.hash
                     TranslatorCore.SaveCache();
-
-                    // Save as ancestor for future merge detection
                     TranslatorCore.SaveAncestorCache();
-
-                    // Clear pending update state
                     TranslatorUIManager.HasPendingUpdate = false;
                     TranslatorUIManager.PendingUpdateInfo = null;
                     TranslatorUIManager.PendingUpdateDirection = UpdateDirection.None;
                     TranslatorUIManager.NotificationDismissed = false;
 
-                    await System.Threading.Tasks.Task.Delay(2000);
-                    SetActive(false);
+                    // Capture for closure
+                    var translationId = result.TranslationId;
+                    string successMsg = uploadMode == UploadMode.Update ? "Updated" :
+                                       (uploadMode == UploadMode.Branch ? "Contributed" : "Uploaded");
 
-                    // Refresh main panel if visible
-                    TranslatorUIManager.MainPanel?.RefreshUI();
+                    // Update UI on main thread
+                    TranslatorUIManager.RunOnMainThread(() =>
+                    {
+                        _statusLabel.text = $"{successMsg}! ID: {translationId}";
+                        _statusLabel.color = UIStyles.StatusSuccess;
+                    });
+
+                    await System.Threading.Tasks.Task.Delay(2000);
+
+                    // Close panel and refresh on main thread
+                    TranslatorUIManager.RunOnMainThread(() =>
+                    {
+                        _isUploading = false;
+                        _uploadBtn.Component.interactable = true;
+                        SetActive(false);
+                        TranslatorUIManager.MainPanel?.RefreshUI();
+                    });
+                    return; // Skip finally block UI updates (already done above)
                 }
                 else
                 {
-                    _statusLabel.text = $"Error: {result.Error}";
-                    _statusLabel.color = UIStyles.StatusError;
+                    var errorMsg = result.Error;
+                    TranslatorUIManager.RunOnMainThread(() =>
+                    {
+                        _statusLabel.text = $"Error: {errorMsg}";
+                        _statusLabel.color = UIStyles.StatusError;
+                        _isUploading = false;
+                        _uploadBtn.Component.interactable = true;
+                    });
+                    return;
                 }
             }
             catch (Exception e)
             {
-                _statusLabel.text = $"Error: {e.Message}";
-                _statusLabel.color = UIStyles.StatusError;
-            }
-            finally
-            {
-                _isUploading = false;
-                _uploadBtn.Component.interactable = true;
+                var errorMsg = e.Message;
+                TranslatorUIManager.RunOnMainThread(() =>
+                {
+                    _statusLabel.text = $"Error: {errorMsg}";
+                    _statusLabel.color = UIStyles.StatusError;
+                    _isUploading = false;
+                    _uploadBtn.Component.interactable = true;
+                });
             }
         }
 

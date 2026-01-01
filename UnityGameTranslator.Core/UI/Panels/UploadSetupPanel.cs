@@ -357,34 +357,45 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 var result = await ApiClient.SearchGamesExternal(query);
 
-                if (result.Success && result.Games != null && result.Games.Count > 0)
-                {
-                    _gameSearchResults = result.Games;
-                    _gameSearchStatus.text = $"Found {result.Games.Count} game(s)";
-                    _gameSearchStatus.color = UIStyles.StatusSuccess;
+                // After await, we may be on a background thread (IL2CPP issue)
+                var success = result.Success;
+                var games = result.Games;
+                var error = result.Error;
 
-                    PopulateGameResults();
-                }
-                else if (result.Success)
+                TranslatorUIManager.RunOnMainThread(() =>
                 {
-                    _gameSearchStatus.text = "No games found";
-                    _gameSearchStatus.color = UIStyles.TextMuted;
-                }
-                else
-                {
-                    _gameSearchStatus.text = $"Error: {result.Error}";
-                    _gameSearchStatus.color = UIStyles.StatusError;
-                }
+                    if (success && games != null && games.Count > 0)
+                    {
+                        _gameSearchResults = games;
+                        _gameSearchStatus.text = $"Found {games.Count} game(s)";
+                        _gameSearchStatus.color = UIStyles.StatusSuccess;
+
+                        PopulateGameResults();
+                    }
+                    else if (success)
+                    {
+                        _gameSearchStatus.text = "No games found";
+                        _gameSearchStatus.color = UIStyles.TextMuted;
+                    }
+                    else
+                    {
+                        _gameSearchStatus.text = $"Error: {error}";
+                        _gameSearchStatus.color = UIStyles.StatusError;
+                    }
+
+                    _gameSearchBtn.Component.interactable = true;
+                });
             }
             catch (Exception e)
             {
-                TranslatorCore.LogWarning($"[UploadSetup] Game search error: {e.Message}");
-                _gameSearchStatus.text = $"Error: {e.Message}";
-                _gameSearchStatus.color = UIStyles.StatusError;
-            }
-            finally
-            {
-                _gameSearchBtn.Component.interactable = true;
+                var errorMsg = e.Message;
+                TranslatorUIManager.RunOnMainThread(() =>
+                {
+                    TranslatorCore.LogWarning($"[UploadSetup] Game search error: {errorMsg}");
+                    _gameSearchStatus.text = $"Error: {errorMsg}";
+                    _gameSearchStatus.color = UIStyles.StatusError;
+                    _gameSearchBtn.Component.interactable = true;
+                });
             }
         }
 

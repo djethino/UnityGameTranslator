@@ -26,6 +26,7 @@ namespace UnityGameTranslator.Core
 
         /// <summary>
         /// Decrypt a token from config file.
+        /// Returns null if decryption fails (e.g., machine identity changed, corrupted token).
         /// </summary>
         public static string DecryptToken(string storedToken)
         {
@@ -45,9 +46,27 @@ namespace UnityGameTranslator.Core
                 return storedToken;
             }
 
-            // Decrypt AES
-            string encryptedPart = storedToken.Substring(TokenPrefix.Length);
-            return AesDecrypt(encryptedPart);
+            // Decrypt AES - catch decryption errors (e.g., padding invalid, key mismatch)
+            try
+            {
+                string encryptedPart = storedToken.Substring(TokenPrefix.Length);
+                return AesDecrypt(encryptedPart);
+            }
+            catch (CryptographicException ex)
+            {
+                // This happens when:
+                // - Machine identity changed (different computer/user)
+                // - Token was corrupted
+                // - Key derivation algorithm changed between versions
+                TranslatorCore.LogWarning($"[TokenProtection] Decryption failed: {ex.Message}");
+                return null;
+            }
+            catch (FormatException ex)
+            {
+                // Invalid Base64 string
+                TranslatorCore.LogWarning($"[TokenProtection] Invalid token format: {ex.Message}");
+                return null;
+            }
         }
 
         /// <summary>
@@ -148,6 +167,8 @@ namespace UnityGameTranslator.Core
         /// <summary>
         /// Get machine-specific secret for key derivation.
         /// Combines multiple sources for entropy.
+        /// NOTE: All values must be deterministic across process runs!
+        /// String.GetHashCode() is NOT stable across runs, so we use the actual values.
         /// </summary>
         private static string GetMachineSecret()
         {
@@ -157,7 +178,7 @@ namespace UnityGameTranslator.Core
             sb.Append(Environment.UserName);
             sb.Append("_");
             sb.Append(Environment.OSVersion.Platform);
-            sb.Append("_UGT_v2");
+            sb.Append("_UGT_v3"); // Bumped version due to key derivation change
 
             try
             {
@@ -165,7 +186,8 @@ namespace UnityGameTranslator.Core
                 if (!string.IsNullOrEmpty(home))
                 {
                     sb.Append("_");
-                    sb.Append(home.GetHashCode());
+                    // Use actual path instead of GetHashCode() - GetHashCode is NOT stable across runs!
+                    sb.Append(home);
                 }
             }
             catch { }

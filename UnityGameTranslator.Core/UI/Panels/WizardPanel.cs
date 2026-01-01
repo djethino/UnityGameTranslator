@@ -11,7 +11,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 {
     /// <summary>
     /// First-run wizard panel. Guides user through initial setup.
-    /// Steps: Welcome -> OnlineMode -> Hotkey -> TranslationChoice -> OllamaConfig -> Complete
+    /// Steps: Welcome -> OnlineMode -> Hotkey -> LanguageSelection -> TranslationChoice -> OllamaConfig -> Complete
     ///
     /// Uses CreateScrollablePanelLayout like all other panels.
     /// Each step is a simple container inside scrollContent.
@@ -23,6 +23,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             Welcome,
             OnlineMode,
             Hotkey,
+            LanguageSelection,
             TranslationChoice,
             OllamaConfig,
             Complete
@@ -47,6 +48,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private GameObject _welcomeStep;
         private GameObject _onlineModeStep;
         private GameObject _hotkeyStep;
+        private GameObject _languageSelectionStep;
         private GameObject _translationChoiceStep;
         private GameObject _ollamaConfigStep;
         private GameObject _completeStep;
@@ -57,6 +59,11 @@ namespace UnityGameTranslator.Core.UI.Panels
         private string _ollamaUrl;
         private string _model;
         private string _gameContext;
+        private string _targetLanguage;
+
+        // Language selection
+        private LanguageSelector _targetLanguageSelector;
+        private Text _detectedLanguageLabel;
 
         // Hotkey capture (reusable component)
         private HotkeyCapture _hotkeyCapture;
@@ -120,6 +127,17 @@ namespace UnityGameTranslator.Core.UI.Panels
             _model = TranslatorCore.Config.model ?? "qwen3:8b";
             _gameContext = TranslatorCore.Config.game_context ?? "";
 
+            // Initialize target language - auto-detect from system if not set or "auto"
+            string configTarget = TranslatorCore.Config.target_language;
+            if (string.IsNullOrEmpty(configTarget) || configTarget.ToLower() == "auto")
+            {
+                _targetLanguage = LanguageHelper.GetSystemLanguageName();
+            }
+            else
+            {
+                _targetLanguage = configTarget;
+            }
+
             // Initialize components
             string existingHotkey = TranslatorCore.Config.settings_hotkey ?? "F10";
             _hotkeyCapture = new HotkeyCapture(existingHotkey);
@@ -135,6 +153,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             CreateWelcomeStep();
             CreateOnlineModeStep();
             CreateHotkeyStep();
+            CreateLanguageSelectionStep();
             CreateTranslationChoiceStep();
             CreateOllamaConfigStep();
             CreateCompleteStep();
@@ -286,6 +305,73 @@ namespace UnityGameTranslator.Core.UI.Panels
             RegisterUIText(backBtn.ButtonText);
 
             var nextBtn = CreatePrimaryButton(buttonRow, "NextBtn", "Continue →");
+            nextBtn.OnClick += () => ShowStep(WizardStep.LanguageSelection);
+            RegisterUIText(nextBtn.ButtonText);
+        }
+
+        private void CreateLanguageSelectionStep()
+        {
+            _languageSelectionStep = UIFactory.CreateVerticalGroup(_scrollContent, "LanguageSelectionStep", false, false, true, true, UIStyles.ElementSpacing);
+            UIFactory.SetLayoutElement(_languageSelectionStep, flexibleWidth: 9999);
+
+            var card = CreateAdaptiveCard(_languageSelectionStep, "Card", 420);
+
+            var title = CreateTitle(card, "Title", "Translation Language");
+            RegisterUIText(title);
+            var desc = CreateDescription(card, "Description", "Choose the language you want games translated to");
+            RegisterUIText(desc);
+
+            UIStyles.CreateSpacer(card, 15);
+
+            // Detected language info
+            string systemLang = LanguageHelper.GetSystemLanguageName();
+            _detectedLanguageLabel = UIFactory.CreateLabel(card, "DetectedLabel",
+                $"Detected from your system: {systemLang}",
+                TextAnchor.MiddleCenter);
+            _detectedLanguageLabel.fontSize = UIStyles.FontSizeSmall;
+            _detectedLanguageLabel.color = UIStyles.TextMuted;
+            _detectedLanguageLabel.fontStyle = FontStyle.Italic;
+            UIFactory.SetLayoutElement(_detectedLanguageLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
+            RegisterExcluded(_detectedLanguageLabel); // Contains language name
+
+            UIStyles.CreateSpacer(card, 10);
+
+            // Target language selector
+            var langSection = CreateSection(card, "LanguageSection");
+
+            var langLabel = UIFactory.CreateLabel(langSection, "LangLabel", "Translate games to:", TextAnchor.MiddleLeft);
+            langLabel.color = UIStyles.TextSecondary;
+            langLabel.fontSize = UIStyles.FontSizeSmall;
+            UIFactory.SetLayoutElement(langLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+            RegisterUIText(langLabel);
+
+            _targetLanguageSelector = new LanguageSelector(
+                "TargetLang",
+                LanguageHelper.GetLanguageNames(),
+                _targetLanguage,
+                100
+            );
+            _targetLanguageSelector.CreateUI(langSection, (lang) => _targetLanguage = lang);
+
+            UIStyles.CreateSpacer(card, 10);
+
+            // Hint about source language
+            var hintLabel = UIFactory.CreateLabel(card, "HintLabel",
+                "The source language (game's original language) is detected automatically.",
+                TextAnchor.MiddleCenter);
+            hintLabel.fontSize = UIStyles.FontSizeHint;
+            hintLabel.color = UIStyles.TextMuted;
+            UIFactory.SetLayoutElement(hintLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
+            RegisterUIText(hintLabel);
+
+            // Navigation buttons
+            var buttonRow = CreateButtonRow(_languageSelectionStep);
+
+            var backBtn = CreateSecondaryButton(buttonRow, "BackBtn", "← Back");
+            backBtn.OnClick += () => ShowStep(WizardStep.Hotkey);
+            RegisterUIText(backBtn.ButtonText);
+
+            var nextBtn = CreatePrimaryButton(buttonRow, "NextBtn", "Continue →");
             nextBtn.OnClick += () =>
             {
                 if (_onlineMode)
@@ -407,7 +493,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                     _gameLabel.text = $"Game: {_detectedGame.name}";
                     if (_onlineMode && !_translationList.IsSearching)
                     {
-                        string targetLang = LanguageHelper.GetSystemLanguageName();
+                        // Use the selected target language from wizard
+                        string targetLang = _targetLanguage;
 
                         // Capture values for closure
                         var steamId = _detectedGame.steam_id;
@@ -785,7 +872,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 if (_onlineMode)
                     ShowStep(WizardStep.TranslationChoice);
                 else
-                    ShowStep(WizardStep.Hotkey);
+                    ShowStep(WizardStep.LanguageSelection);
             };
             RegisterUIText(backBtn.ButtonText);
 
@@ -838,6 +925,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _welcomeStep?.SetActive(false);
             _onlineModeStep?.SetActive(false);
             _hotkeyStep?.SetActive(false);
+            _languageSelectionStep?.SetActive(false);
             _translationChoiceStep?.SetActive(false);
             _ollamaConfigStep?.SetActive(false);
             _completeStep?.SetActive(false);
@@ -853,6 +941,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                     break;
                 case WizardStep.Hotkey:
                     _hotkeyStep?.SetActive(true);
+                    break;
+                case WizardStep.LanguageSelection:
+                    _languageSelectionStep?.SetActive(true);
                     break;
                 case WizardStep.TranslationChoice:
                     _translationChoiceStep?.SetActive(true);
@@ -923,6 +1014,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Save all settings
             TranslatorCore.Config.online_mode = _onlineMode;
             TranslatorCore.Config.settings_hotkey = _hotkeyCapture.HotkeyString;
+            TranslatorCore.Config.target_language = _targetLanguage;
             TranslatorCore.Config.enable_ollama = _enableOllama;
             TranslatorCore.Config.ollama_url = _ollamaUrl;
             TranslatorCore.Config.model = _model;

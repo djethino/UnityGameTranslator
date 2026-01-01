@@ -417,7 +417,7 @@ Configuration is centralized in `Directory.Build.props`:
 </PropertyGroup>
 ```
 
-**To self-host:** Deploy your own [website instance](../website/README.md), then update `ApiBaseUrl` and `WebsiteBaseUrl` before building.
+**To self-host:** Deploy your own [website instance](https://github.com/djethino/UnityGameTranslator-website), then update `ApiBaseUrl` and `WebsiteBaseUrl` before building.
 
 **Runtime override (advanced):** Users can also override URLs without recompiling by editing `config.json`:
 

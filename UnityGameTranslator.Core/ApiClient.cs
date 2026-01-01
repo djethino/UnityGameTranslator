@@ -862,6 +862,12 @@ namespace UnityGameTranslator.Core
         #region Upload
 
         /// <summary>
+        /// Maximum upload size (100MB) - must match server limit.
+        /// Even Baldur's Gate 3 (largest RPG ever) = ~80MB JSON with key+value.
+        /// </summary>
+        private const int MaxUploadSizeBytes = 100 * 1024 * 1024;
+
+        /// <summary>
         /// Compress JSON string using gzip for upload bandwidth optimization.
         /// Reduces upload size by ~70% for typical translation files.
         /// </summary>
@@ -905,6 +911,14 @@ namespace UnityGameTranslator.Core
                 };
 
                 var jsonPayload = JsonConvert.SerializeObject(payload);
+
+                // Check size before sending to avoid wasting bandwidth
+                if (jsonPayload.Length > MaxUploadSizeBytes)
+                {
+                    TranslatorCore.LogWarning($"[ApiClient] Upload rejected: file too large ({jsonPayload.Length / (1024 * 1024)}MB > {MaxUploadSizeBytes / (1024 * 1024)}MB limit)");
+                    return new UploadResult { Success = false, Error = $"Translation file too large ({jsonPayload.Length / (1024 * 1024)}MB). Maximum is {MaxUploadSizeBytes / (1024 * 1024)}MB." };
+                }
+
                 var content = CompressJson(jsonPayload);
 
                 TranslatorCore.LogInfo($"[ApiClient] POSTing to {DefaultBaseUrl}/translations (gzip: {jsonPayload.Length} -> {content.Headers.ContentLength ?? 0} bytes)...");

@@ -36,9 +36,6 @@ namespace UnityGameTranslator.Core.UI.Panels
         private Text _modeInfoLabel;
         private Text _statusLabel;
         private InputFieldRef _notesInput;
-        private Toggle _aiToggle;
-        private Toggle _aiCorrectedToggle;
-        private Toggle _manualToggle;
         private ButtonRef _backBtn;
         private ButtonRef _uploadBtn;
 
@@ -46,7 +43,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private bool _isUploading;
         private bool _isChecking;
         private UploadMode _uploadMode;
-        private string _uploadType = "ai";
+        // Note: Translation type is now auto-calculated by server from HVASM tags
 
         // For NEW uploads - selected from UploadSetupPanel
         private string _selectedSourceLanguage;
@@ -93,64 +90,8 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             UIStyles.CreateSpacer(card, 10);
 
-            // Translation type section
-            var typeTitle = UIStyles.CreateSectionTitle(card, "TypeLabel", "Translation Type");
-            RegisterUIText(typeTitle);
-
-            var typeBox = CreateSection(card, "TypeBox");
-
-            // AI toggle
-            var aiObj = UIFactory.CreateToggle(typeBox, "AIToggle", out _aiToggle, out var aiLabel);
-            aiLabel.text = "AI (Ollama-generated)";
-            aiLabel.color = UIStyles.TextSecondary;
-            _aiToggle.isOn = true;
-            UIHelpers.AddToggleListener(_aiToggle, (val) =>
-            {
-                if (val)
-                {
-                    _uploadType = "ai";
-                    _aiCorrectedToggle.isOn = false;
-                    _manualToggle.isOn = false;
-                }
-            });
-            UIFactory.SetLayoutElement(aiObj, minHeight: UIStyles.RowHeightNormal);
-            RegisterExcluded(aiLabel); // "Ollama" is a brand name
-
-            // AI Corrected toggle
-            var aiCorrectedObj = UIFactory.CreateToggle(typeBox, "AICorrectedToggle", out _aiCorrectedToggle, out var aiCorrectedLabel);
-            aiCorrectedLabel.text = "AI Corrected (reviewed & fixed)";
-            aiCorrectedLabel.color = UIStyles.TextSecondary;
-            _aiCorrectedToggle.isOn = false;
-            UIHelpers.AddToggleListener(_aiCorrectedToggle, (val) =>
-            {
-                if (val)
-                {
-                    _uploadType = "ai_corrected";
-                    _aiToggle.isOn = false;
-                    _manualToggle.isOn = false;
-                }
-            });
-            UIFactory.SetLayoutElement(aiCorrectedObj, minHeight: UIStyles.RowHeightNormal);
-            RegisterUIText(aiCorrectedLabel);
-
-            // Manual toggle
-            var manualObj = UIFactory.CreateToggle(typeBox, "ManualToggle", out _manualToggle, out var manualLabel);
-            manualLabel.text = "Human (manually translated)";
-            manualLabel.color = UIStyles.TextSecondary;
-            _manualToggle.isOn = false;
-            UIHelpers.AddToggleListener(_manualToggle, (val) =>
-            {
-                if (val)
-                {
-                    _uploadType = "human";
-                    _aiToggle.isOn = false;
-                    _aiCorrectedToggle.isOn = false;
-                }
-            });
-            UIFactory.SetLayoutElement(manualObj, minHeight: UIStyles.RowHeightNormal);
-            RegisterUIText(manualLabel);
-
-            UIStyles.CreateSpacer(card, 10);
+            // Note: Translation type is now auto-calculated by server from HVASM tags
+            // (Human/Validated/AI/System/Missing percentages in the file)
 
             // Notes
             var notesLabel = CreateSmallLabel(card, "NotesLabel", "Notes (optional):");
@@ -310,7 +251,6 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                         // Capture for closure
                         var siteId = TranslatorCore.ServerState.SiteId;
-                        var existingType = result.ExistingTranslation?.Type;
                         var existingNotes = result.ExistingTranslation?.Notes ?? "";
 
                         TranslatorUIManager.RunOnMainThread(() =>
@@ -320,10 +260,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                             _modeInfoLabel.text = $"Updating: ID #{siteId}";
                             _uploadBtn.ButtonText.text = "Update";
 
-                            if (!string.IsNullOrEmpty(existingType))
-                            {
-                                SetUploadType(existingType);
-                            }
+                            // Note: Type is now auto-calculated by server from HVASM tags
                             _notesInput.Text = existingNotes;
 
                             _statusLabel.text = "";
@@ -349,7 +286,6 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                         // Capture for closure
                         var uploader = TranslatorCore.ServerState.Uploader ?? "unknown";
-                        var originalType = result.OriginalTranslation?.Type ?? "ai";
 
                         TranslatorUIManager.RunOnMainThread(() =>
                         {
@@ -357,7 +293,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                             _titleLabel.text = "Contribute as Branch";
                             _modeInfoLabel.text = $"Contributing to: @{uploader}";
                             _uploadBtn.ButtonText.text = "Contribute";
-                            SetUploadType(originalType);
+                            // Note: Type is now auto-calculated by server from HVASM tags
                             _statusLabel.text = "";
                             _isChecking = false;
                             _uploadBtn.Component.interactable = true;
@@ -392,14 +328,6 @@ namespace UnityGameTranslator.Core.UI.Panels
                     _uploadBtn.Component.interactable = true;
                 });
             }
-        }
-
-        private void SetUploadType(string type)
-        {
-            _uploadType = type;
-            _aiToggle.isOn = type == "ai";
-            _aiCorrectedToggle.isOn = type == "ai_corrected";
-            _manualToggle.isOn = type == "human";
         }
 
         private void RefreshInfo()
@@ -440,7 +368,6 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Capture values before async (for use in RunOnMainThread callbacks)
             var uploadMode = _uploadMode;
-            var uploadType = _uploadType;
             string notes = _notesInput.Text;
 
             try
@@ -461,13 +388,13 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
 
                 // Build upload request
+                // Note: Type is auto-calculated by server from HVASM tags in the content
                 var request = new UploadRequest
                 {
                     SteamId = TranslatorCore.CurrentGame?.steam_id,
                     GameName = TranslatorCore.CurrentGame?.name ?? "Unknown Game",
                     SourceLanguage = srcLang,
                     TargetLanguage = tgtLang,
-                    Type = _uploadType,
                     Status = "in_progress",
                     Content = BuildTranslationContent(),
                     Notes = notes
@@ -491,7 +418,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                         SiteId = result.TranslationId,
                         Uploader = TranslatorCore.Config.api_user,
                         Hash = result.FileHash,
-                        Type = uploadType,
+                        // Type is now auto-calculated by server from HVASM tags
                         Notes = notes
                     };
                     TranslatorCore.LastSyncedHash = result.FileHash;

@@ -45,9 +45,11 @@ namespace UnityGameTranslator.Core.UI.Panels
         // UI elements - Translation sync notification
         private GameObject _syncBox;
         private Text _syncLabel;
-        private ButtonRef _syncActionBtn;
-        private ButtonRef _syncIgnoreBtn;
+        private ButtonRef _syncBranchBtn;    // Branch option (contribute, green)
+        private ButtonRef _syncForkBtn;      // Fork option (independent, red)
+        private ButtonRef _syncActionBtn;    // Generic action (Download/Update/Merge)
         private ButtonRef _syncSettingsBtn;
+        private ButtonRef _syncIgnoreBtn;
 
         // UI elements - Ollama queue status
         private GameObject _ollamaBox;
@@ -173,22 +175,39 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.SetLayoutElement(_syncLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
             RegisterUIText(_syncLabel);
 
-            var syncBtnRow = UIStyles.CreateFormRow(_syncBox, "SyncBtnRow", UIStyles.RowHeightMedium, 5);
+            var syncBtnRow = UIStyles.CreateFormRow(_syncBox, "SyncBtnRow", UIStyles.RowHeightMedium, 3);
 
+            // Branch button (green) - contribute to main, shown for non-owners with local changes
+            _syncBranchBtn = UIFactory.CreateButton(syncBtnRow, "SyncBranchBtn", "Branch");
+            UIFactory.SetLayoutElement(_syncBranchBtn.Component.gameObject, minWidth: 65, minHeight: UIStyles.RowHeightNormal);
+            UIStyles.SetBackground(_syncBranchBtn.Component.gameObject, UIStyles.ButtonSuccess);
+            _syncBranchBtn.OnClick += OnSyncBranchClicked;
+            RegisterUIText(_syncBranchBtn.ButtonText);
+
+            // Fork button (red) - create independent copy, shown for non-owners with local changes
+            _syncForkBtn = UIFactory.CreateButton(syncBtnRow, "SyncForkBtn", "Fork");
+            UIFactory.SetLayoutElement(_syncForkBtn.Component.gameObject, minWidth: 55, minHeight: UIStyles.RowHeightNormal);
+            UIStyles.SetBackground(_syncForkBtn.Component.gameObject, UIStyles.ButtonDanger);
+            _syncForkBtn.OnClick += OnSyncForkClicked;
+            RegisterUIText(_syncForkBtn.ButtonText);
+
+            // Generic action button (Download/Update/Merge) - for other scenarios
             _syncActionBtn = UIFactory.CreateButton(syncBtnRow, "SyncActionBtn", "Action");
-            UIFactory.SetLayoutElement(_syncActionBtn.Component.gameObject, minWidth: 80, minHeight: UIStyles.RowHeightNormal);
+            UIFactory.SetLayoutElement(_syncActionBtn.Component.gameObject, minWidth: 75, minHeight: UIStyles.RowHeightNormal);
             _syncActionBtn.OnClick += OnSyncActionClicked;
             RegisterUIText(_syncActionBtn.ButtonText);
 
-            _syncIgnoreBtn = UIFactory.CreateButton(syncBtnRow, "SyncIgnoreBtn", "Ignore");
-            UIFactory.SetLayoutElement(_syncIgnoreBtn.Component.gameObject, minWidth: 60, minHeight: UIStyles.RowHeightNormal);
-            _syncIgnoreBtn.OnClick += OnSyncIgnoreClicked;
-            RegisterUIText(_syncIgnoreBtn.ButtonText);
-
+            // Settings button
             _syncSettingsBtn = UIFactory.CreateButton(syncBtnRow, "SyncSettingsBtn", "Settings");
-            UIFactory.SetLayoutElement(_syncSettingsBtn.Component.gameObject, minWidth: 70, minHeight: UIStyles.RowHeightNormal);
+            UIFactory.SetLayoutElement(_syncSettingsBtn.Component.gameObject, minWidth: 65, minHeight: UIStyles.RowHeightNormal);
             _syncSettingsBtn.OnClick += OnSyncSettingsClicked;
             RegisterUIText(_syncSettingsBtn.ButtonText);
+
+            // Ignore button (last)
+            _syncIgnoreBtn = UIFactory.CreateButton(syncBtnRow, "SyncIgnoreBtn", "Ignore");
+            UIFactory.SetLayoutElement(_syncIgnoreBtn.Component.gameObject, minWidth: 55, minHeight: UIStyles.RowHeightNormal);
+            _syncIgnoreBtn.OnClick += OnSyncIgnoreClicked;
+            RegisterUIText(_syncIgnoreBtn.ButtonText);
 
             _syncBox.SetActive(false);
         }
@@ -291,49 +310,90 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 _syncBox.SetActive(true);
 
-                // Determine message and button based on direction
+                // Determine message and button visibility based on context
                 string message;
-                string buttonText;
                 var direction = TranslatorUIManager.PendingUpdateDirection;
 
-                // Get role for role-specific messages (use serverState from outer scope)
+                // Get role for role-specific messages
                 bool isBranch = serverState?.Role == TranslationRole.Branch;
+                bool isOwner = serverState?.IsOwner == true;
+
+                // Default: hide Branch/Fork buttons, show Action button
+                bool showBranchFork = false;
+                bool showAction = true;
+                string actionText = "Sync";
+
+                // Get owner name for context
+                string ownerName = serverState?.Uploader ?? "owner";
 
                 if (needsMerge)
                 {
-                    message = "Conflict: Both local and server changed!";
-                    buttonText = "Merge";
-                }
-                else if (hasServerUpdate)
-                {
-                    // Role-aware message: Branch sees "Parent" update, Main sees "Server" update
-                    message = isBranch ? "Parent translation update available!" : "Server update available!";
-                    buttonText = "Download";
-                }
-                else if (hasLocalChanges)
-                {
-                    // Use same terminology as MainPanel: Update for owner, Fork for non-owner
-                    bool isOwner = serverState?.IsOwner == true;
                     if (isOwner)
                     {
-                        message = $"You have {TranslatorCore.LocalChangesCount} local changes to update!";
-                        buttonText = "Update";
+                        // Owner: standard merge message
+                        message = "Conflict: Both local and server changed!";
                     }
                     else
                     {
-                        message = $"You have {TranslatorCore.LocalChangesCount} local changes to fork!";
-                        buttonText = "Fork";
+                        // Non-owner: after merge, they'll need to choose Branch/Fork
+                        message = $"Conflict with @{ownerName}'s update! Merge first.";
+                    }
+                    actionText = "Merge";
+                }
+                else if (hasServerUpdate)
+                {
+                    if (isBranch)
+                    {
+                        // Branch owner: parent (Main) has been updated
+                        message = "Parent translation update available!";
+                    }
+                    else if (isOwner)
+                    {
+                        // Main owner: server has update (multi-device scenario)
+                        message = "Server update available!";
+                    }
+                    else
+                    {
+                        // Non-owner: the Main they downloaded from has been updated
+                        message = $"@{ownerName} updated the translation!";
+                    }
+                    actionText = "Download";
+                }
+                else if (hasLocalChanges)
+                {
+                    if (isOwner)
+                    {
+                        // Owner: show Update button
+                        message = $"You have {TranslatorCore.LocalChangesCount} local changes to upload!";
+                        actionText = "Update";
+                    }
+                    else
+                    {
+                        // Non-owner: show Branch AND Fork options
+                        // User must choose to contribute (branch) or go independent (fork)
+                        message = $"You have {TranslatorCore.LocalChangesCount} local changes!";
+                        showBranchFork = true;
+                        showAction = false;
                     }
                 }
                 else
                 {
                     // Fallback for edge case (shouldn't happen with current logic)
                     message = $"{TranslatorCore.LocalChangesCount} local changes";
-                    buttonText = "Sync";
+                    actionText = "Sync";
                 }
 
                 _syncLabel.text = message;
-                _syncActionBtn.ButtonText.text = buttonText;
+
+                // Show/hide buttons based on context
+                _syncBranchBtn?.Component.gameObject.SetActive(showBranchFork);
+                _syncForkBtn?.Component.gameObject.SetActive(showBranchFork);
+                _syncActionBtn?.Component.gameObject.SetActive(showAction);
+
+                if (showAction)
+                {
+                    _syncActionBtn.ButtonText.text = actionText;
+                }
             }
             else
             {
@@ -477,6 +537,47 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void OnSyncSettingsClicked()
         {
             TranslatorUIManager.ShowMain();
+        }
+
+        /// <summary>
+        /// Handler for Branch button - contribute to the main translation.
+        /// Opens upload panel which will create a branch.
+        /// </summary>
+        private void OnSyncBranchClicked()
+        {
+            // Open upload panel - it will detect we're contributing and handle branch creation
+            TranslatorUIManager.UploadPanel?.SetActive(true);
+        }
+
+        /// <summary>
+        /// Handler for Fork button - create independent copy with new UUID.
+        /// Shows warning dialog before proceeding.
+        /// </summary>
+        private void OnSyncForkClicked()
+        {
+            var serverState = TranslatorCore.ServerState;
+            string ownerName = serverState?.Uploader ?? "the original owner";
+
+            // Show warning dialog before forking (destructive action)
+            TranslatorUIManager.ConfirmationPanel?.Show(
+                "Create Independent Fork?",
+                $"This will create a new independent translation with a new lineage.\n\n" +
+                $"You will become the owner of this new translation.\n\n" +
+                $"You will no longer be able to contribute to @{ownerName}'s translation.\n\n" +
+                "This action cannot be undone.",
+                "Fork",
+                () =>
+                {
+                    // Create fork: generate new UUID and reset server state
+                    TranslatorCore.CreateFork();
+
+                    // Open upload panel to push the forked translation
+                    TranslatorUIManager.UploadPanel?.SetActive(true);
+
+                    RefreshOverlay();
+                },
+                isDanger: true
+            );
         }
 
         #endregion

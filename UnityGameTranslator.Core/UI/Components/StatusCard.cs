@@ -379,15 +379,20 @@ namespace UnityGameTranslator.Core.UI.Components
         }
 
         /// <summary>
-        /// Configure card for Contributor state (same UUID, not owner).
+        /// Configure card for same lineage state (same UUID, not owner, not yet uploaded).
+        /// User hasn't decided yet whether to contribute (branch) or fork.
         /// </summary>
         public void ConfigureAsContributor(SyncStatusType syncStatus, int entryCount, string language, string mainOwner)
         {
             SetStatus(syncStatus);
-            SetRole(TranslationRoleType.Contributor);
+            // Don't show a role badge - user hasn't decided yet (not a contributor until they upload as branch)
+            SetRole(TranslationRoleType.None);
             SetDetails(entryCount, language);
             SetQualityStats(CalculateLocalStats());
-            SetSecondaryInfo(!string.IsNullOrEmpty(mainOwner) ? $"Based on @{mainOwner}'s translation" : null);
+            // Show whose translation this is based on, prompting user to make a choice
+            SetSecondaryInfo(!string.IsNullOrEmpty(mainOwner)
+                ? $"Based on @{mainOwner}'s translation • Choose: Branch or Fork"
+                : "Choose: Branch or Fork");
         }
 
         /// <summary>

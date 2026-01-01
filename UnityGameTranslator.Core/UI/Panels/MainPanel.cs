@@ -1002,10 +1002,11 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // Review Branches - only for Main role when there are branches to review
                 _reviewOnWebsiteBtn.Component.gameObject.SetActive(isMain && hasBranches);
 
-                // Compare with Server - for Main or Branch when there are local changes
-                _compareWithServerBtn.Component.gameObject.SetActive(existsOnServer && hasLocalChanges);
-                // Compare button enabled only when logged in
-                if (existsOnServer && hasLocalChanges)
+                // Compare with Server - only for owners (Main or Branch) who have uploaded
+                // Non-owners can't compare because they don't have a server version to compare against
+                bool canCompare = existsOnServer && state.IsOwner && hasLocalChanges;
+                _compareWithServerBtn.Component.gameObject.SetActive(canCompare);
+                if (canCompare)
                 {
                     _compareWithServerBtn.Component.interactable = isLoggedIn;
                 }
@@ -1039,7 +1040,14 @@ namespace UnityGameTranslator.Core.UI.Panels
                         TranslatorCore.Config.api_token_server = null;
                         TranslatorCore.SaveConfig();
                         ApiClient.SetAuthToken(null);
+
+                        // Reset server state since we're no longer authenticated
+                        TranslatorCore.ServerState = null;
+
+                        // Refresh all UI components
                         RefreshUI();
+                        TranslatorUIManager.StatusOverlay?.RefreshOverlay();
+                        TranslatorUIManager.NotificationDismissed = false; // Reset dismissals
                     },
                     isDanger: true
                 );

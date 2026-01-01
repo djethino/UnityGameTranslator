@@ -413,7 +413,8 @@ namespace UnityGameTranslator.Core
                     Role = role,
                     // MainUsername is in main.uploader when role is none and main exists
                     MainUsername = data["main"]?["uploader"]?.Value<string>(),
-                    BranchesCount = data["branches_count"]?.Value<int>() ?? 0
+                    // Use ToObject<int?>() to handle explicit JSON null values
+                    BranchesCount = data["branches_count"]?.ToObject<int?>() ?? 0
                 };
 
                 TranslatorCore.LogInfo($"[ApiClient] Parsed: exists={result.Exists}, isOwner={result.IsOwner}, role={result.Role}");
@@ -895,16 +896,16 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static async Task<UploadResult> UploadTranslation(UploadRequest request)
         {
-            TranslatorCore.LogInfo($"[ApiClient] UploadTranslation called - game={request.GameName}, type={request.Type}");
+            TranslatorCore.LogInfo($"[ApiClient] UploadTranslation called - game={request.GameName}, status={request.Status}");
             try
             {
+                // Note: type is auto-calculated by server from HVASM tags in content
                 var payload = new
                 {
                     steam_id = request.SteamId,
                     game_name = request.GameName,
                     source_language = request.SourceLanguage,
                     target_language = request.TargetLanguage,
-                    type = request.Type,
                     status = request.Status,
                     content = request.Content,
                     notes = request.Notes
@@ -1274,7 +1275,7 @@ namespace UnityGameTranslator.Core
         public string GameName { get; set; }
         public string SourceLanguage { get; set; }
         public string TargetLanguage { get; set; }
-        public string Type { get; set; }
+        // Note: Type is now auto-calculated by server from HVASM tags
         public string Status { get; set; }
         public string Content { get; set; }
         public string Notes { get; set; }

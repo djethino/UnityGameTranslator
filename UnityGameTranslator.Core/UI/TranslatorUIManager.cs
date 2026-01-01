@@ -106,7 +106,7 @@ namespace UnityGameTranslator.Core.UI
             Universe.Init(1f, OnUniverseLibInitialized, LogHandler, new UniverseLib.Config.UniverseLibConfig
             {
                 Disable_EventSystem_Override = false,
-                Force_Unlock_Mouse = true,
+                Force_Unlock_Mouse = false, // We manage cursor ourselves to avoid unlocking when only StatusOverlay is shown
                 Unhollowed_Modules_Folder = null
             });
         }

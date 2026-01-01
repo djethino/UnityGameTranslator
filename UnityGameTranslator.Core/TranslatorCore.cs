@@ -356,8 +356,11 @@ namespace UnityGameTranslator.Core
                 PreloadModel();
             }
 
-            Adapter.LogInfo("UnityGameTranslator-Ollama-Qwen3 v1.0 initialized!");
-            Adapter.LogInfo($"Ollama: {(Config.enable_ollama ? "ENABLED" : "DISABLED")} - Model: {Config.model}");
+            Adapter.LogInfo($"UnityGameTranslator v{PluginInfo.Version} initialized!");
+            if (Config.enable_ollama)
+            {
+                Adapter.LogInfo($"Ollama: ENABLED - Model: {Config.model}");
+            }
             string srcLang = Config.GetSourceLanguage() ?? "auto-detect";
             string tgtLang = Config.GetTargetLanguage();
             Adapter.LogInfo($"Translation: {srcLang} -> {tgtLang}");

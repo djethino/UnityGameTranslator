@@ -170,30 +170,75 @@ namespace UnityGameTranslator.Core
 
         /// <summary>
         /// Get the full language name from the system's current UI culture.
+        /// Falls back to Unity's Application.systemLanguage if .NET culture is invariant (MelonLoader issue).
         /// </summary>
         public static string GetSystemLanguageName()
         {
+            // First try .NET CultureInfo
             try
             {
                 var culture = CultureInfo.CurrentUICulture;
 
-                // Try with full code first (e.g., "zh-CN")
-                string fullCode = culture.Name.ToLowerInvariant();
-                if (IsoToName.TryGetValue(fullCode, out string fullName))
-                    return fullName;
+                // Check if culture is valid (not invariant - MelonLoader sets it to invariant)
+                if (culture != null && !string.IsNullOrEmpty(culture.Name) && culture.TwoLetterISOLanguageName != "iv")
+                {
+                    TranslatorCore.LogInfo($"[LanguageHelper] CurrentUICulture.Name='{culture.Name}' TwoLetter='{culture.TwoLetterISOLanguageName}'");
 
-                // Try with two-letter code
-                string twoLetter = culture.TwoLetterISOLanguageName.ToLowerInvariant();
-                if (IsoToName.TryGetValue(twoLetter, out fullName))
-                    return fullName;
+                    // Try with full code first (e.g., "zh-CN", "fr-FR")
+                    string fullCode = culture.Name.ToLowerInvariant();
+                    if (IsoToName.TryGetValue(fullCode, out string fullName))
+                    {
+                        TranslatorCore.LogInfo($"[LanguageHelper] Matched full code '{fullCode}' -> {fullName}");
+                        return fullName;
+                    }
 
-                // Fallback to English
-                return "English";
+                    // Try with two-letter code
+                    string twoLetter = culture.TwoLetterISOLanguageName.ToLowerInvariant();
+                    if (IsoToName.TryGetValue(twoLetter, out fullName))
+                    {
+                        TranslatorCore.LogInfo($"[LanguageHelper] Matched two-letter '{twoLetter}' -> {fullName}");
+                        return fullName;
+                    }
+                }
+                else
+                {
+                    TranslatorCore.LogInfo($"[LanguageHelper] CultureInfo is invariant (MelonLoader?), trying Unity API");
+                }
             }
-            catch
+            catch (System.Exception e)
             {
-                return "English";
+                TranslatorCore.LogWarning($"[LanguageHelper] CultureInfo exception: {e.Message}");
             }
+
+            // Fallback: Use Unity's Application.systemLanguage (works even when .NET culture is invariant)
+            try
+            {
+                var unityLang = UnityEngine.Application.systemLanguage;
+                TranslatorCore.LogInfo($"[LanguageHelper] Unity.systemLanguage = {unityLang}");
+
+                // Unity's SystemLanguage enum names match our ValidLanguageNames (e.g., "French", "German")
+                // Exception: Chinese needs special handling
+                string langName = unityLang.ToString();
+
+                if (unityLang == UnityEngine.SystemLanguage.ChineseSimplified || unityLang == UnityEngine.SystemLanguage.Chinese)
+                    langName = "Simplified Chinese";
+                else if (unityLang == UnityEngine.SystemLanguage.ChineseTraditional)
+                    langName = "Traditional Chinese";
+
+                if (ValidLanguageNames.Contains(langName))
+                {
+                    TranslatorCore.LogInfo($"[LanguageHelper] Matched Unity language -> {langName}");
+                    return langName;
+                }
+            }
+            catch (System.Exception e)
+            {
+                TranslatorCore.LogWarning($"[LanguageHelper] Unity.systemLanguage exception: {e.Message}");
+            }
+
+            // No detection worked
+            TranslatorCore.LogWarning("[LanguageHelper] Could not detect system language, defaulting to English");
+            return "English";
         }
 
         /// <summary>

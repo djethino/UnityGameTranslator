@@ -504,7 +504,50 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (active && !wasActive)
             {
                 RefreshUI();
+
+                // Auto-search community translations if conditions are met
+                TryAutoSearchCommunity();
             }
+        }
+
+        /// <summary>
+        /// Automatically search for community translations if:
+        /// - Online mode is enabled
+        /// - Game is detected
+        /// - List is empty (no previous search results)
+        /// - Not already searching
+        /// </summary>
+        private void TryAutoSearchCommunity()
+        {
+            if (!TranslatorCore.Config.online_mode) return;
+            if (_translationList == null) return;
+            if (_translationList.IsSearching) return;
+            if (_translationList.Count > 0) return; // Already has results
+
+            var game = TranslatorCore.CurrentGame;
+            if (game == null || string.IsNullOrEmpty(game.name)) return;
+
+            // Trigger search automatically
+            string targetLang = TranslatorCore.Config.GetTargetLanguage();
+            SearchCommunityAsync(game.steam_id, game.name, targetLang);
+        }
+
+        /// <summary>
+        /// Perform community search (shared between auto-search and button click).
+        /// </summary>
+        private async void SearchCommunityAsync(string steamId, string gameName, string targetLang)
+        {
+            await _translationList.SearchAsync(steamId, gameName, targetLang);
+
+            // After await, we may be on a background thread (IL2CPP issue)
+            TranslatorUIManager.RunOnMainThread(() =>
+            {
+                // Enable download button if results found
+                if (_downloadBtn != null)
+                {
+                    _downloadBtn.Component.interactable = _translationList?.SelectedTranslation != null;
+                }
+            });
         }
 
         /// <summary>
@@ -1334,7 +1377,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _translationList?.Refresh();
         }
 
-        private async void OnSearchCommunityClicked()
+        private void OnSearchCommunityClicked()
         {
             var game = TranslatorCore.CurrentGame;
             if (game == null)
@@ -1346,14 +1389,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_translationList.IsSearching) return;
 
             string targetLang = TranslatorCore.Config.GetTargetLanguage();
-            await _translationList.SearchAsync(game.steam_id, game.name, targetLang);
-
-            // After await, we may be on a background thread (IL2CPP issue)
-            TranslatorUIManager.RunOnMainThread(() =>
-            {
-                // Enable download button if results found
-                _downloadBtn.Component.interactable = _translationList.SelectedTranslation != null;
-            });
+            SearchCommunityAsync(game.steam_id, game.name, targetLang);
         }
 
         private async void OnDownloadCommunityClicked()

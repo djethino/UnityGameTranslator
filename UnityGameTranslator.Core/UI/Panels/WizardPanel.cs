@@ -470,16 +470,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             var buttonRow = CreateButtonRow(_translationChoiceStep);
 
             var backBtn = CreateSecondaryButton(buttonRow, "BackBtn", "← Back");
-            backBtn.OnClick += () => ShowStep(WizardStep.Hotkey);
+            backBtn.OnClick += () => ShowStep(WizardStep.LanguageSelection);
             RegisterUIText(backBtn.ButtonText);
 
-            var ollamaBtn = CreateSecondaryButton(buttonRow, "OllamaBtn", "Configure Ollama");
-            ollamaBtn.OnClick += () => ShowStep(WizardStep.OllamaConfig);
-            RegisterExcluded(ollamaBtn.ButtonText); // Contains "Ollama" brand name
-
-            var skipBtn = CreatePrimaryButton(buttonRow, "SkipBtn", "Skip →");
-            skipBtn.OnClick += () => ShowStep(WizardStep.Complete);
-            RegisterUIText(skipBtn.ButtonText);
+            var nextBtn = CreatePrimaryButton(buttonRow, "NextBtn", "Continue →");
+            nextBtn.OnClick += () => ShowStep(WizardStep.OllamaConfig);
+            RegisterUIText(nextBtn.ButtonText);
         }
 
         private async void OnTranslationChoiceEnter()

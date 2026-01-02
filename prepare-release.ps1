@@ -10,6 +10,33 @@ $Version = $props.Project.PropertyGroup.Version
 
 Write-Host "=== UnityGameTranslator Release $Version ===" -ForegroundColor Cyan
 
+# Build UniverseLib first (our fork with custom changes)
+Write-Host "`nBuilding UniverseLib..." -ForegroundColor Yellow
+
+$universeLibConfigs = @(
+    @{ Name = "Mono"; Config = "Release_Mono" }
+    @{ Name = "IL2CPP-BepInEx"; Config = "Release_IL2CPP_Interop_BIE" }
+    @{ Name = "IL2CPP-MelonLoader"; Config = "Release_IL2CPP_Interop_ML" }
+)
+
+foreach ($ulib in $universeLibConfigs) {
+    Write-Host "  Building UniverseLib $($ulib.Name)..." -ForegroundColor Gray -NoNewline
+    dotnet build "UniverseLib/src/UniverseLib.sln" -c $ulib.Config --nologo -v q
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host " FAILED" -ForegroundColor Red
+        exit 1
+    }
+    Write-Host " OK" -ForegroundColor Green
+}
+
+# Update reference DLL for Core compilation
+$refSource = "UniverseLib/Release/UniverseLib.Mono/UniverseLib.Mono.dll"
+$refDest = "extlibs/UniverseLib/UniverseLib.Mono.dll"
+if (Test-Path $refSource) {
+    Copy-Item $refSource $refDest -Force
+    Write-Host "  Updated extlibs reference DLL" -ForegroundColor DarkGray
+}
+
 # Create releases directory
 $releasesDir = "releases"
 if (Test-Path $releasesDir) {

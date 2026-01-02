@@ -105,7 +105,12 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Buttons - in fixed footer (outside scroll)
             var cancelBtn = CreateSecondaryButton(buttonRow, "CancelBtn", "Cancel");
-            cancelBtn.OnClick += () => SetActive(false);
+            cancelBtn.OnClick += () =>
+            {
+                // Clear fork context when cancelling
+                TranslatorCore.PendingFork = null;
+                SetActive(false);
+            };
             RegisterUIText(cancelBtn.ButtonText);
 
             // Back button - only visible for NEW mode to go back to setup
@@ -302,18 +307,55 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
                 else
                 {
-                    // NEW mode - redirect to UploadSetupPanel for game/language selection
-                    TranslatorUIManager.RunOnMainThread(() =>
-                    {
-                        _uploadMode = UploadMode.New;
-                        _isChecking = false;
-                        SetActive(false);
+                    // UUID doesn't exist on server - could be NEW or FORK
+                    var pendingFork = TranslatorCore.PendingFork;
 
-                        TranslatorUIManager.UploadSetupPanel.ShowForSetup((game, srcLang, tgtLang) =>
+                    if (pendingFork != null &&
+                        !string.IsNullOrEmpty(pendingFork.SourceLanguage) &&
+                        !string.IsNullOrEmpty(pendingFork.TargetLanguage))
+                    {
+                        // FORK mode - we have context from CreateFork(), skip UploadSetupPanel
+                        TranslatorCore.LogInfo($"[UploadPanel] Fork mode: {pendingFork.SourceLanguage} -> {pendingFork.TargetLanguage}");
+
+                        // Capture for closure
+                        var forkSourceLang = pendingFork.SourceLanguage;
+                        var forkTargetLang = pendingFork.TargetLanguage;
+
+                        TranslatorUIManager.RunOnMainThread(() =>
                         {
-                            ContinueAfterSetup(game, srcLang, tgtLang);
+                            _uploadMode = UploadMode.New;
+                            _selectedSourceLanguage = forkSourceLang;
+                            _selectedTargetLanguage = forkTargetLang;
+                            _setupComplete = true;
+
+                            _titleLabel.text = "Upload Fork";
+                            _modeInfoLabel.text = $"Languages: {forkSourceLang} -> {forkTargetLang} (from forked translation)";
+                            _uploadBtn.ButtonText.text = "Upload";
+                            _statusLabel.text = "";
+                            _isChecking = false;
+                            _uploadBtn.Component.interactable = true;
+
+                            // Don't show back button - fork context is fixed
+                            _backBtn.Component.gameObject.SetActive(false);
+
+                            RefreshInfo();
                         });
-                    });
+                    }
+                    else
+                    {
+                        // NEW mode - redirect to UploadSetupPanel for game/language selection
+                        TranslatorUIManager.RunOnMainThread(() =>
+                        {
+                            _uploadMode = UploadMode.New;
+                            _isChecking = false;
+                            SetActive(false);
+
+                            TranslatorUIManager.UploadSetupPanel.ShowForSetup((game, srcLang, tgtLang) =>
+                            {
+                                ContinueAfterSetup(game, srcLang, tgtLang);
+                            });
+                        });
+                    }
                 }
             }
             catch (Exception e)
@@ -427,6 +469,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                     TranslatorUIManager.HasPendingUpdate = false;
                     TranslatorUIManager.PendingUpdateInfo = null;
                     TranslatorUIManager.PendingUpdateDirection = UpdateDirection.None;
+
+                    // Clear fork context after successful upload
+                    TranslatorCore.PendingFork = null;
                     TranslatorUIManager.NotificationDismissed = false;
 
                     // Capture for closure

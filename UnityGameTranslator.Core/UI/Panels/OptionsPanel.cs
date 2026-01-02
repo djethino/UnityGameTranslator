@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using UnityEngine;
 using UnityEngine.UI;
 using UniverseLib;
@@ -65,6 +66,11 @@ namespace UnityGameTranslator.Core.UI.Panels
         private ButtonRef _checkModUpdatesNowBtn;
         private Text _checkModUpdatesStatusLabel;
 
+        // Exclusions section
+        private GameObject _exclusionsListContainer;
+        private InputFieldRef _manualPatternInput;
+        private Text _exclusionsStatusLabel;
+
         public OptionsPanel(UIBase owner) : base(owner)
         {
         }
@@ -112,6 +118,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             var generalTab = _tabBar.AddTab("General");
             var hotkeysTab = _tabBar.AddTab("Hotkeys");
             var translationTab = _tabBar.AddTab("Translation");
+            var exclusionsTab = _tabBar.AddTab("Exclusions");
             var onlineTab = _tabBar.AddTab("Online");
 
             // Register tab texts for localization
@@ -124,6 +131,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             CreateGeneralTabContent(generalTab);
             CreateHotkeysTabContent(hotkeysTab);
             CreateTranslationTabContent(translationTab);
+            CreateExclusionsTabContent(exclusionsTab);
             CreateOnlineTabContent(onlineTab);
 
             // Tab height will be fixed on first display (see SetActive)
@@ -361,6 +369,156 @@ namespace UnityGameTranslator.Core.UI.Panels
             RegisterUIText(strictHint);
         }
 
+        private void CreateExclusionsTabContent(GameObject parent)
+        {
+            var card = CreateAdaptiveCard(parent, "ExclusionsCard", PanelWidth - 60, stretchVertically: true);
+
+            // Header and explanation
+            var sectionTitle = UIStyles.CreateSectionTitle(card, "ExclusionsLabel", "UI Exclusions");
+            RegisterUIText(sectionTitle);
+
+            var explainHint = UIStyles.CreateHint(card, "ExclusionsHint", "Exclude UI elements from translation (chat windows, player names, etc.). Exclusions are shared when you upload your translation.");
+            RegisterUIText(explainHint);
+
+            UIStyles.CreateSpacer(card, 10);
+
+            // Inspector button
+            var inspectorBtn = CreatePrimaryButton(card, "InspectorBtn", "Start Inspector Mode", PanelWidth - 100);
+            inspectorBtn.OnClick += OnStartInspectorClicked;
+            RegisterUIText(inspectorBtn.ButtonText);
+
+            var inspectorHint = UIStyles.CreateHint(card, "InspectorHint", "Click on UI elements to exclude them");
+            RegisterUIText(inspectorHint);
+
+            UIStyles.CreateSpacer(card, 10);
+
+            // Manual add section
+            var manualLabel = UIFactory.CreateLabel(card, "ManualLabel", "Add pattern manually:", TextAnchor.MiddleLeft);
+            manualLabel.color = UIStyles.TextSecondary;
+            UIFactory.SetLayoutElement(manualLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+            RegisterUIText(manualLabel);
+
+            var addRow = UIStyles.CreateFormRow(card, "AddRow", UIStyles.InputHeight, 5);
+
+            _manualPatternInput = UIFactory.CreateInputField(addRow, "PatternInput", "e.g., **/ChatPanel/**");
+            UIFactory.SetLayoutElement(_manualPatternInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
+            UIStyles.SetBackground(_manualPatternInput.Component.gameObject, UIStyles.InputBackground);
+
+            var addBtn = CreateSecondaryButton(addRow, "AddBtn", "Add", 60);
+            addBtn.OnClick += OnAddManualPatternClicked;
+            RegisterUIText(addBtn.ButtonText);
+
+            var patternHint = UIStyles.CreateHint(card, "PatternHint", "Use ** for any depth, * for single level");
+            RegisterUIText(patternHint);
+
+            UIStyles.CreateSpacer(card, 10);
+
+            // Current exclusions list
+            var listLabel = UIFactory.CreateLabel(card, "ListLabel", "Current Exclusions:", TextAnchor.MiddleLeft);
+            listLabel.color = UIStyles.TextSecondary;
+            UIFactory.SetLayoutElement(listLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+            RegisterUIText(listLabel);
+
+            // Scrollable container for exclusions
+            var scrollObj = UIFactory.CreateScrollView(card, "ExclusionsScroll", out var scrollContent, out var scrollbar);
+            UIFactory.SetLayoutElement(scrollObj, minHeight: 120, flexibleHeight: 9999, flexibleWidth: 9999);
+            UIStyles.SetBackground(scrollObj, UIStyles.InputBackground);
+
+            _exclusionsListContainer = scrollContent;
+
+            // Status label
+            _exclusionsStatusLabel = UIFactory.CreateLabel(card, "ExclusionsStatus", "", TextAnchor.MiddleLeft);
+            _exclusionsStatusLabel.fontSize = UIStyles.FontSizeSmall;
+            UIFactory.SetLayoutElement(_exclusionsStatusLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+        }
+
+        private void OnStartInspectorClicked()
+        {
+            // Close options panel and open inspector panel
+            SetActive(false);
+            TranslatorUIManager.OpenInspectorPanel();
+        }
+
+        private void OnAddManualPatternClicked()
+        {
+            string pattern = _manualPatternInput.Text?.Trim();
+
+            if (string.IsNullOrEmpty(pattern))
+            {
+                _exclusionsStatusLabel.text = "Enter a pattern first";
+                _exclusionsStatusLabel.color = UIStyles.StatusWarning;
+                return;
+            }
+
+            // Check if already exists
+            if (TranslatorCore.UserExclusions.Contains(pattern))
+            {
+                _exclusionsStatusLabel.text = "Pattern already exists";
+                _exclusionsStatusLabel.color = UIStyles.StatusWarning;
+                return;
+            }
+
+            TranslatorCore.AddExclusion(pattern);
+            _manualPatternInput.Text = "";
+            _exclusionsStatusLabel.text = "Pattern added";
+            _exclusionsStatusLabel.color = UIStyles.StatusSuccess;
+
+            RefreshExclusionsList();
+        }
+
+        private void RefreshExclusionsList()
+        {
+            if (_exclusionsListContainer == null) return;
+
+            // Clear existing items
+            foreach (Transform child in _exclusionsListContainer.transform)
+            {
+                UnityEngine.Object.Destroy(child.gameObject);
+            }
+
+            var exclusions = TranslatorCore.UserExclusions;
+            TranslatorCore.LogInfo($"[OptionsPanel] UserExclusions count: {exclusions.Count}");
+
+            if (exclusions.Count == 0)
+            {
+                var emptyLabel = UIFactory.CreateLabel(_exclusionsListContainer, "EmptyLabel", "No exclusions defined", TextAnchor.MiddleCenter);
+                emptyLabel.color = UIStyles.TextMuted;
+                emptyLabel.fontStyle = FontStyle.Italic;
+                UIFactory.SetLayoutElement(emptyLabel.gameObject, minHeight: 40, flexibleWidth: 9999);
+                return;
+            }
+
+            foreach (var pattern in exclusions)
+            {
+                var row = UIStyles.CreateFormRow(_exclusionsListContainer, $"Row_{pattern.GetHashCode()}", UIStyles.RowHeightNormal, 5);
+
+                var patternLabel = UIFactory.CreateLabel(row, "PatternLabel", pattern, TextAnchor.MiddleLeft);
+                patternLabel.color = UIStyles.TextPrimary;
+                patternLabel.fontSize = UIStyles.FontSizeSmall;
+                UIFactory.SetLayoutElement(patternLabel.gameObject, flexibleWidth: 9999);
+
+                var deleteBtn = CreateSecondaryButton(row, "DeleteBtn", "X", 30);
+                var capturedPattern = pattern; // Capture for closure
+                deleteBtn.OnClick += () => OnDeleteExclusionClicked(capturedPattern);
+            }
+        }
+
+        private void OnDeleteExclusionClicked(string pattern)
+        {
+            if (TranslatorCore.RemoveExclusion(pattern))
+            {
+                TranslatorCore.SaveCache();
+                _exclusionsStatusLabel.text = "Pattern removed";
+                _exclusionsStatusLabel.color = UIStyles.StatusSuccess;
+                RefreshExclusionsList();
+            }
+            else
+            {
+                _exclusionsStatusLabel.text = "Failed to remove pattern";
+                _exclusionsStatusLabel.color = UIStyles.StatusError;
+            }
+        }
+
         private void CreateOnlineTabContent(GameObject parent)
         {
             var card = CreateAdaptiveCard(parent, "OnlineCard", PanelWidth - 60, stretchVertically: true);
@@ -526,6 +684,9 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Lock languages if translation exists on server
             UpdateLanguagesLocked();
+
+            // Refresh exclusions list
+            RefreshExclusionsList();
         }
 
         private void UpdateLanguagesLocked()

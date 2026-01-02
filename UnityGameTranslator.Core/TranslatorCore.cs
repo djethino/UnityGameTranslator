@@ -58,6 +58,13 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static ServerTranslationState ServerState { get; set; }
 
+        /// <summary>
+        /// Context for pending fork operation. Set before CreateFork() with source translation info.
+        /// Used by UploadPanel to skip UploadSetupPanel since languages/game are already known.
+        /// Cleared after successful upload.
+        /// </summary>
+        public static ForkContext PendingFork { get; set; }
+
         public static int LocalChangesCount { get; private set; } = 0;
         public static Dictionary<string, TranslationEntry> AncestorCache { get; private set; } = new Dictionary<string, TranslationEntry>();
 
@@ -123,6 +130,15 @@ namespace UnityGameTranslator.Core
         private static HashSet<int> ownUIExcluded = new HashSet<int>();      // Never translate (title, lang codes, config values)
         private static HashSet<int> ownUITranslatable = new HashSet<int>();  // Translate with UI-specific prompt
         private static HashSet<int> ownUIPanelRoots = new HashSet<int>();    // Root GameObjects of our panels (for hierarchy check)
+
+        // User exclusions (chat windows, player names, etc.) - stored in translations.json as _exclusions
+        private static List<string> userExclusions = new List<string>();
+        private static Dictionary<int, bool> userExclusionCache = new Dictionary<int, bool>();
+
+        /// <summary>
+        /// Current user exclusion patterns. Read-only access for UI.
+        /// </summary>
+        public static IReadOnlyList<string> UserExclusions => userExclusions;
 
         // Panel construction mode: when true, all translations are skipped
         // This prevents texts created during panel construction from being queued before we can register them
@@ -212,6 +228,183 @@ namespace UnityGameTranslator.Core
             return false;
         }
 
+        #region User Exclusions
+
+        /// <summary>
+        /// Get the full hierarchy path of a GameObject (e.g., "Canvas/Panel/ChatWindow/MessageList").
+        /// Used for exclusion pattern matching.
+        /// </summary>
+        public static string GetGameObjectPath(GameObject obj)
+        {
+            if (obj == null) return "";
+
+            var parts = new List<string>();
+            var current = obj.transform;
+            while (current != null)
+            {
+                parts.Insert(0, current.name);
+                current = current.parent;
+            }
+            return string.Join("/", parts);
+        }
+
+        /// <summary>
+        /// Check if a component is excluded by user-defined patterns.
+        /// Uses caching for performance.
+        /// </summary>
+        public static bool IsUserExcluded(Component component)
+        {
+            if (component == null || userExclusions.Count == 0) return false;
+
+            int id = component.GetInstanceID();
+            if (userExclusionCache.TryGetValue(id, out bool cached))
+                return cached;
+
+            string path = GetGameObjectPath(component.gameObject);
+            bool excluded = MatchesAnyExclusionPattern(path);
+            userExclusionCache[id] = excluded;
+
+            if (excluded)
+                Adapter?.LogInfo($"[Exclusion] Matched: {path}");
+
+            return excluded;
+        }
+
+        /// <summary>
+        /// Check if a path matches any exclusion pattern.
+        /// Supports: ** (any depth), * (single level), exact match.
+        /// </summary>
+        private static bool MatchesAnyExclusionPattern(string path)
+        {
+            foreach (var pattern in userExclusions)
+            {
+                if (MatchesExclusionPattern(path, pattern))
+                    return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Match a path against an exclusion pattern.
+        /// Patterns: "Canvas/Chat/**" matches any child, "**/PlayerName" matches at any depth.
+        /// </summary>
+        private static bool MatchesExclusionPattern(string path, string pattern)
+        {
+            if (string.IsNullOrEmpty(pattern)) return false;
+
+            // Convert pattern to regex-like matching
+            // ** = any number of path segments (including zero)
+            // * = any single path segment name
+
+            // Split both into segments
+            var pathParts = path.Split('/');
+            var patternParts = pattern.Split('/');
+
+            return MatchPatternRecursive(pathParts, 0, patternParts, 0);
+        }
+
+        private static bool MatchPatternRecursive(string[] path, int pathIdx, string[] pattern, int patternIdx)
+        {
+            // Base cases
+            if (patternIdx >= pattern.Length)
+                return pathIdx >= path.Length;
+
+            string patternPart = pattern[patternIdx];
+
+            if (patternPart == "**")
+            {
+                // ** matches zero or more path segments
+                // Try matching rest of pattern at every remaining position
+                for (int i = pathIdx; i <= path.Length; i++)
+                {
+                    if (MatchPatternRecursive(path, i, pattern, patternIdx + 1))
+                        return true;
+                }
+                return false;
+            }
+
+            if (pathIdx >= path.Length)
+                return false;
+
+            string pathPart = path[pathIdx];
+
+            if (patternPart == "*")
+            {
+                // * matches exactly one segment (any name)
+                return MatchPatternRecursive(path, pathIdx + 1, pattern, patternIdx + 1);
+            }
+
+            // Check if pattern part contains * as wildcard within the name
+            if (patternPart.Contains("*"))
+            {
+                // Convert to simple wildcard matching (e.g., "Chat*" matches "ChatWindow")
+                string regexPattern = "^" + Regex.Escape(patternPart).Replace("\\*", ".*") + "$";
+                if (!Regex.IsMatch(pathPart, regexPattern, RegexOptions.IgnoreCase))
+                    return false;
+            }
+            else
+            {
+                // Exact match (case-insensitive)
+                if (!string.Equals(pathPart, patternPart, StringComparison.OrdinalIgnoreCase))
+                    return false;
+            }
+
+            return MatchPatternRecursive(path, pathIdx + 1, pattern, patternIdx + 1);
+        }
+
+        /// <summary>
+        /// Add a new exclusion pattern. Clears the cache.
+        /// </summary>
+        public static void AddExclusion(string pattern)
+        {
+            if (string.IsNullOrEmpty(pattern)) return;
+            pattern = pattern.Trim();
+
+            if (!userExclusions.Contains(pattern))
+            {
+                userExclusions.Add(pattern);
+                userExclusionCache.Clear();
+                SaveCache(); // Auto-save
+                Adapter?.LogInfo($"[Exclusion] Added: {pattern}");
+            }
+        }
+
+        /// <summary>
+        /// Remove an exclusion pattern. Clears the cache.
+        /// </summary>
+        public static bool RemoveExclusion(string pattern)
+        {
+            if (userExclusions.Remove(pattern))
+            {
+                userExclusionCache.Clear();
+                SaveCache(); // Auto-save
+                Adapter?.LogInfo($"[Exclusion] Removed: {pattern}");
+                return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Clear all exclusions.
+        /// </summary>
+        public static void ClearExclusions()
+        {
+            userExclusions.Clear();
+            userExclusionCache.Clear();
+            SaveCache();
+            Adapter?.LogInfo("[Exclusion] Cleared all exclusions");
+        }
+
+        /// <summary>
+        /// Clear the exclusion cache (call on scene change).
+        /// </summary>
+        public static void ClearUserExclusionCache()
+        {
+            userExclusionCache.Clear();
+        }
+
+        #endregion
+
         /// <summary>
         /// Check if a component is excluded from translation (mod title, language codes, config values).
         /// </summary>
@@ -283,6 +476,11 @@ namespace UnityGameTranslator.Core
             if (IsInConstructionMode)
                 return true;
             if (component == null) return false;
+
+            // Check user-defined exclusions (priority - shared via translations.json)
+            if (IsUserExcluded(component))
+                return true;
+
             int instanceId = component.GetInstanceID();
             // Explicitly excluded - always skip
             if (ownUIExcluded.Contains(instanceId))
@@ -566,6 +764,20 @@ namespace UnityGameTranslator.Core
                         // Load saved steam_id for comparison with current detection
                         var game = prop.Value as JObject;
                         savedSteamId = game?["steam_id"]?.Value<string>();
+                    }
+                    else if (prop.Name == "_exclusions" && prop.Value.Type == JTokenType.Array)
+                    {
+                        // Load user exclusion patterns
+                        userExclusions.Clear();
+                        foreach (var item in prop.Value)
+                        {
+                            var pattern = item.ToString();
+                            if (!string.IsNullOrEmpty(pattern))
+                            {
+                                userExclusions.Add(pattern);
+                            }
+                        }
+                        Adapter?.LogInfo($"[LoadCache] Loaded {userExclusions.Count} user exclusions");
                     }
                     else if (!prop.Name.StartsWith("_"))
                     {
@@ -2061,6 +2273,9 @@ namespace UnityGameTranslator.Core
             // Clear pattern match failure cache (in case patterns changed)
             patternMatchFailures.Clear();
 
+            // Clear user exclusion cache (instance IDs change between scenes)
+            ClearUserExclusionCache();
+
             Adapter?.LogInfo("[TranslatorCore] Processing caches cleared - text will be re-evaluated");
         }
 
@@ -2109,6 +2324,17 @@ namespace UnityGameTranslator.Core
                         output["_local_changes"] = LocalChangesCount;
                     }
 
+                    // Save user exclusion patterns
+                    if (userExclusions.Count > 0)
+                    {
+                        var exclusionsArray = new JArray();
+                        foreach (var pattern in userExclusions)
+                        {
+                            exclusionsArray.Add(pattern);
+                        }
+                        output["_exclusions"] = exclusionsArray;
+                    }
+
                     // Sorted translations with new format {"v": "value", "t": "tag"}
                     var sortedKeys = TranslationCache.Keys.OrderBy(k => k).ToList();
                     foreach (var key in sortedKeys)
@@ -2139,10 +2365,24 @@ namespace UnityGameTranslator.Core
         /// Creates a new fork by generating a new UUID.
         /// This effectively starts a new lineage separate from any existing server translation.
         /// The current translations are preserved but will be treated as a new upload.
+        /// Call with languages from ServerState before it's reset (from downloaded translation).
         /// </summary>
-        public static void CreateFork()
+        /// <param name="sourceLanguage">Source language of the forked translation</param>
+        /// <param name="targetLanguage">Target language of the forked translation</param>
+        public static void CreateFork(string sourceLanguage = null, string targetLanguage = null)
         {
             string oldUuid = FileUuid;
+
+            // Store fork context with languages/game BEFORE resetting ServerState
+            // This allows UploadPanel to skip UploadSetupPanel since we already know the context
+            PendingFork = new ForkContext
+            {
+                SourceLanguage = sourceLanguage ?? ServerState?.SourceLanguage,
+                TargetLanguage = targetLanguage ?? ServerState?.TargetLanguage,
+                Game = CurrentGame
+            };
+
+            Adapter?.LogInfo($"[Fork] Context saved: {PendingFork.SourceLanguage} -> {PendingFork.TargetLanguage}, game={PendingFork.Game?.name}");
 
             // Generate new UUID for the fork
             FileUuid = Guid.NewGuid().ToString();
@@ -2337,6 +2577,23 @@ namespace UnityGameTranslator.Core
 
         /// <summary>If Main, the number of branches</summary>
         public int BranchesCount { get; set; }
+
+        /// <summary>Source language of the translation (original game language)</summary>
+        public string SourceLanguage { get; set; }
+
+        /// <summary>Target language of the translation (translated to)</summary>
+        public string TargetLanguage { get; set; }
+    }
+
+    /// <summary>
+    /// Context for a fork operation. Set before CreateFork() to preserve source translation info.
+    /// Cleared after successful upload.
+    /// </summary>
+    public class ForkContext
+    {
+        public string SourceLanguage { get; set; }
+        public string TargetLanguage { get; set; }
+        public GameInfo Game { get; set; }
     }
 
     /// <summary>

@@ -55,6 +55,7 @@ namespace UnityGameTranslator.Core.UI
         public static Panels.LanguagePanel LanguagePanel { get; private set; }
         public static Panels.StatusOverlay StatusOverlay { get; private set; }
         public static Panels.ConfirmationPanel ConfirmationPanel { get; private set; }
+        public static Panels.InspectorPanel InspectorPanel { get; private set; }
 
         /// <summary>
         /// List of all interactive panels (excludes StatusOverlay which is a notification overlay).
@@ -179,6 +180,7 @@ namespace UnityGameTranslator.Core.UI
             LanguagePanel = new Panels.LanguagePanel(UiBase);
             StatusOverlay = new Panels.StatusOverlay(UiBase);
             ConfirmationPanel = new Panels.ConfirmationPanel(UiBase);
+            InspectorPanel = new Panels.InspectorPanel(UiBase);
 
             // Register interactive panels (excludes StatusOverlay which is a notification overlay)
             _interactivePanels.Clear();
@@ -191,6 +193,7 @@ namespace UnityGameTranslator.Core.UI
             _interactivePanels.Add(MergePanel);
             _interactivePanels.Add(LanguagePanel);
             _interactivePanels.Add(ConfirmationPanel);
+            _interactivePanels.Add(InspectorPanel);
 
             // Hide all panels initially (using centralized list + StatusOverlay)
             CloseAllPanels();
@@ -822,6 +825,8 @@ namespace UnityGameTranslator.Core.UI
             var translationFileHash = translation.FileHash;
             var translationType = translation.Type;
             var translationNotes = translation.Notes;
+            var translationSourceLang = translation.SourceLanguage;
+            var translationTargetLang = translation.TargetLanguage;
 
             try
             {
@@ -858,7 +863,9 @@ namespace UnityGameTranslator.Core.UI
                             Uploader = translationUploader,
                             Hash = fileHash ?? translationFileHash,
                             Type = translationType,
-                            Notes = translationNotes
+                            Notes = translationNotes,
+                            SourceLanguage = translationSourceLang,
+                            TargetLanguage = translationTargetLang
                         };
 
                         // Save as ancestor for sync tracking
@@ -1041,6 +1048,16 @@ namespace UnityGameTranslator.Core.UI
             {
                 ShowMain();
             }
+        }
+
+        /// <summary>
+        /// Open the Inspector Panel for selecting UI elements to exclude.
+        /// </summary>
+        public static void OpenInspectorPanel()
+        {
+            if (InspectorPanel == null) return;
+            ShowUI = true;
+            InspectorPanel.SetActive(true);
         }
 
         /// <summary>

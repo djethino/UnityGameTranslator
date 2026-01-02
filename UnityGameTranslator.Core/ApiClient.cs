@@ -455,9 +455,27 @@ namespace UnityGameTranslator.Core
 
                 return result;
             }
+            catch (HttpRequestException httpEx)
+            {
+                TranslatorCore.LogWarning($"[ApiClient] UUID check HTTP error: {httpEx.Message}");
+                if (httpEx.InnerException != null)
+                {
+                    TranslatorCore.LogWarning($"[ApiClient] Inner exception: {httpEx.InnerException.Message}");
+                }
+                return new UuidCheckResult { Success = false, Error = $"Network error: {httpEx.Message}" };
+            }
+            catch (TaskCanceledException tcEx)
+            {
+                TranslatorCore.LogWarning($"[ApiClient] UUID check timeout: {tcEx.Message}");
+                return new UuidCheckResult { Success = false, Error = "Request timeout" };
+            }
             catch (Exception e)
             {
-                TranslatorCore.LogWarning($"[ApiClient] UUID check error: {e.Message}");
+                TranslatorCore.LogWarning($"[ApiClient] UUID check error: {e.GetType().Name}: {e.Message}");
+                if (e.InnerException != null)
+                {
+                    TranslatorCore.LogWarning($"[ApiClient] Inner exception: {e.InnerException.GetType().Name}: {e.InnerException.Message}");
+                }
                 return new UuidCheckResult { Success = false, Error = e.Message };
             }
         }

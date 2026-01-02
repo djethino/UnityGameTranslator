@@ -86,52 +86,68 @@ namespace UnityGameTranslator.Core.UI
         // Backdrop (screen dimming when panel is open)
         public static readonly Color BackdropColor = new Color(0f, 0f, 0f, 0.6f);
 
-        // Background colors
-        public static readonly Color PanelBackground = new Color(0.12f, 0.12f, 0.14f, 0.95f);
-        public static readonly Color CardBackground = new Color(0.16f, 0.16f, 0.19f, 0.98f);
-        public static readonly Color SectionBackground = new Color(0.12f, 0.12f, 0.14f, 0.85f);
-        public static readonly Color InputBackground = new Color(0.08f, 0.08f, 0.10f, 0.9f);
+        // Explicit transparent - use this instead of Color.clear when you want transparent
+        // WITHOUT inheriting automatic padding from UniverseLib defaults
+        public static readonly Color Transparent = new Color(0f, 0f, 0f, 0.001f);
+
+        // Background colors - from website CSS
+        // Body: rgb(15, 15, 26) = 0.059, 0.059, 0.102 - dark blue-night
+        // Card: rgb(30, 41, 57) = 0.118, 0.161, 0.224 - blue-gray
+        public static readonly Color PanelBackground = new Color(0.059f, 0.059f, 0.102f, 0.98f);   // Body bg
+        public static readonly Color CardBackground = new Color(0.118f, 0.161f, 0.224f, 0.92f);    // Card bg
+        public static readonly Color SectionBackground = Transparent;                               // Transparent (no auto-padding)
+        public static readonly Color InputBackground = new Color(0.212f, 0.255f, 0.325f, 0.95f);   // Slate blue
 
         // Text colors
-        public static readonly Color TextPrimary = new Color(0.92f, 0.92f, 0.95f);
-        public static readonly Color TextSecondary = new Color(0.7f, 0.7f, 0.75f);
-        public static readonly Color TextMuted = new Color(0.5f, 0.5f, 0.55f);
-        public static readonly Color TextAccent = new Color(0.4f, 0.85f, 0.95f);
+        public static readonly Color TextPrimary = new Color(0.92f, 0.94f, 0.98f);
+        public static readonly Color TextSecondary = new Color(0.65f, 0.70f, 0.78f);
+        public static readonly Color TextMuted = new Color(0.45f, 0.50f, 0.58f);
+        public static readonly Color TextAccent = new Color(0.55f, 0.36f, 0.96f);                  // Purple accent
 
-        // Button colors
-        public static readonly Color ButtonPrimary = new Color(0.22f, 0.52f, 0.72f);
-        public static readonly Color ButtonSecondary = new Color(0.28f, 0.28f, 0.32f);
-        public static readonly Color ButtonSuccess = new Color(0.2f, 0.6f, 0.35f);
-        public static readonly Color ButtonWarning = new Color(0.75f, 0.55f, 0.2f);
-        public static readonly Color ButtonDanger = new Color(0.7f, 0.25f, 0.25f);
-        public static readonly Color ButtonLink = new Color(0.11f, 0.63f, 0.89f);  // Light blue for links (#1ba1e2)
-        public static readonly Color ButtonHover = new Color(0.35f, 0.35f, 0.4f);
+        // Button colors (purple accent + navy blue tones)
+        public static readonly Color ButtonPrimary = new Color(0.55f, 0.36f, 0.96f);               // Purple #8b5cf6
+        public static readonly Color ButtonSecondary = new Color(0.12f, 0.16f, 0.26f);             // Navy
+        public static readonly Color ButtonSuccess = new Color(0.55f, 0.36f, 0.96f);               // Purple (main CTA)
+        public static readonly Color ButtonWarning = new Color(0.95f, 0.73f, 0.29f);               // Amber
+        public static readonly Color ButtonDanger = new Color(0.85f, 0.35f, 0.35f);                // Red
+        public static readonly Color ButtonLink = new Color(0.55f, 0.36f, 0.96f);                  // Purple for links
+        public static readonly Color ButtonHover = new Color(0.65f, 0.48f, 1f);                    // Lighter purple
 
         // Status colors
-        public static readonly Color StatusSuccess = new Color(0.3f, 0.85f, 0.4f);
-        public static readonly Color StatusWarning = new Color(1f, 0.8f, 0.3f);
-        public static readonly Color StatusError = new Color(1f, 0.35f, 0.35f);
-        public static readonly Color StatusInfo = new Color(0.4f, 0.75f, 1f);
+        public static readonly Color StatusSuccess = new Color(0.34f, 0.80f, 0.48f);               // Green
+        public static readonly Color StatusWarning = new Color(0.95f, 0.73f, 0.29f);               // Amber
+        public static readonly Color StatusError = new Color(0.95f, 0.41f, 0.41f);                 // Red
+        public static readonly Color StatusInfo = new Color(0.38f, 0.73f, 0.98f);                  // Blue
 
-        // Item/List backgrounds (for lists, entries, selectable items)
-        public static readonly Color ItemBackground = new Color(0.15f, 0.15f, 0.15f, 0.8f);
-        public static readonly Color ItemBackgroundHover = new Color(0.2f, 0.2f, 0.22f, 0.85f);
-        public static readonly Color ItemBackgroundSelected = new Color(0.2f, 0.35f, 0.5f, 0.9f);
-        public static readonly Color ItemBackgroundLineage = new Color(0.15f, 0.25f, 0.2f, 0.85f);  // Subtle teal for "your lineage"
+        // Item/List backgrounds (navy blue tones)
+        public static readonly Color ItemBackground = new Color(0.08f, 0.11f, 0.20f, 0.7f);        // Dark navy
+        public static readonly Color ItemBackgroundHover = new Color(0.12f, 0.16f, 0.28f, 0.85f);  // Navy hover
+        public static readonly Color ItemBackgroundSelected = new Color(0.30f, 0.22f, 0.55f, 0.8f); // Purple-navy
+        public static readonly Color ItemBackgroundLineage = new Color(0.20f, 0.18f, 0.40f, 0.7f); // Deep purple-navy
 
-        // Notification box colors (for status overlays, alerts)
-        public static readonly Color NotificationSuccess = new Color(0.15f, 0.35f, 0.15f, 0.95f);
-        public static readonly Color NotificationWarning = new Color(0.35f, 0.25f, 0.1f, 0.95f);
-        public static readonly Color NotificationInfo = new Color(0.1f, 0.1f, 0.1f, 0.9f);
+        // Notification box colors (navy base)
+        public static readonly Color NotificationSuccess = new Color(0.08f, 0.18f, 0.14f, 0.95f);  // Navy-green
+        public static readonly Color NotificationWarning = new Color(0.22f, 0.18f, 0.10f, 0.95f);  // Navy-amber
+        public static readonly Color NotificationInfo = new Color(0.08f, 0.11f, 0.20f, 0.95f);     // Navy
+
+        // Tab bar colors (navy blue tones for cohesive look)
+        public static readonly Color TabBarBackground = new Color(0.06f, 0.08f, 0.14f, 0.95f);     // Dark navy
+        public static readonly Color TabActiveBackground = new Color(0.10f, 0.14f, 0.24f, 1f);    // Same as CardBackground
+        public static readonly Color TabInactiveBackground = new Color(0.05f, 0.07f, 0.12f, 0.8f); // Very dark navy
+        public static readonly Color TabHoverBackground = new Color(0.08f, 0.11f, 0.18f, 0.9f);   // Slightly lighter navy
+        public static readonly Color TabContentBackground = new Color(0.06f, 0.08f, 0.14f, 0.95f); // Navy border around card
+
+        // Scroll view viewport background (replaces UniverseLib's gray default)
+        public static readonly Color ViewportBackground = new Color(0.06f, 0.08f, 0.14f, 1f);     // Dark navy (matches TabContentBackground)
 
         #endregion
 
         #region Dimensions
 
         // Padding & Margins
-        public static readonly int PanelPadding = 20;
-        public static readonly int CardPadding = 25;
-        public static readonly int SectionPadding = 15;
+        public static readonly int PanelPadding = 15;
+        public static readonly int CardPadding = 20;
+        public static readonly int SectionPadding = 12;
         public static readonly int ElementSpacing = 10;
         public static readonly int SmallSpacing = 5;
 
@@ -246,6 +262,7 @@ namespace UnityGameTranslator.Core.UI
         /// <summary>
         /// Configures a UniverseLib scroll view to auto-hide scrollbar and expand viewport.
         /// Uses UniverseLib's built-in DynamicScrollbar component.
+        /// Also applies our navy viewport background color.
         /// </summary>
         public static void ConfigureScrollViewNoScrollbar(GameObject scrollObj)
         {
@@ -253,6 +270,28 @@ namespace UnityGameTranslator.Core.UI
 
             // Use UniverseLib's built-in auto-hide scrollbar
             UIFactory.ConfigureAutoHideScrollbar(scrollObj);
+
+            // Override UniverseLib's gray viewport background with our navy color
+            ApplyViewportBackground(scrollObj);
+        }
+
+        /// <summary>
+        /// Applies our navy viewport background color to a scroll view.
+        /// Overrides UniverseLib's default gray color.
+        /// </summary>
+        public static void ApplyViewportBackground(GameObject scrollObj)
+        {
+            if (scrollObj == null) return;
+
+            var viewport = scrollObj.transform.Find("Viewport");
+            if (viewport != null)
+            {
+                var image = viewport.GetComponent<Image>();
+                if (image != null)
+                {
+                    image.color = ViewportBackground;
+                }
+            }
         }
 
         /// <summary>
@@ -283,10 +322,7 @@ namespace UnityGameTranslator.Core.UI
 
             SetBackground(card, CardBackground);
 
-            // Add subtle border effect with slightly darker outline
-            var outline = card.AddComponent<UnityEngine.UI.Outline>();
-            outline.effectColor = new Color(0.08f, 0.08f, 0.1f, 0.8f);
-            outline.effectDistance = new Vector2(1, -1);
+            // No outline - website uses clean, borderless cards
 
             var layout = card.GetComponent<VerticalLayoutGroup>();
             if (layout != null)
@@ -301,11 +337,25 @@ namespace UnityGameTranslator.Core.UI
         }
 
         /// <summary>
-        /// Creates a styled section box (smaller than card, for grouping related options)
+        /// Creates a styled section box (smaller than card, for grouping related options).
+        /// Clean design without borders - content flows naturally like website.
         /// </summary>
-        public static GameObject CreateSection(GameObject parent, string name, int minHeight = 0)
+        public static GameObject CreateSection(GameObject parent, string name, int minHeight = 0, bool showTopBorder = false)
         {
-            var section = UIFactory.CreateVerticalGroup(parent, name, false, false, true, true, SmallSpacing);
+            // Container for optional top border + content
+            var container = UIFactory.CreateVerticalGroup(parent, name + "_Container", false, false, true, true, 0);
+            UIFactory.SetLayoutElement(container, flexibleWidth: 9999);
+
+            // Optional subtle top border (disabled by default for cleaner look)
+            if (showTopBorder)
+            {
+                var topBorder = UIFactory.CreateUIObject(name + "_TopBorder", container);
+                UIFactory.SetLayoutElement(topBorder, minHeight: 1, flexibleWidth: 9999);
+                var borderImage = topBorder.AddComponent<Image>();
+                borderImage.color = new Color(0.20f, 0.22f, 0.26f, 0.3f);  // Very subtle line
+            }
+
+            var section = UIFactory.CreateVerticalGroup(container, name, false, false, true, true, SmallSpacing);
 
             if (minHeight > 0)
                 UIFactory.SetLayoutElement(section, minHeight: minHeight, flexibleWidth: 9999);
@@ -448,8 +498,8 @@ namespace UnityGameTranslator.Core.UI
         {
             var container = UIFactory.CreateHorizontalGroup(parent, name, false, false, true, true, 15);
             UIFactory.SetLayoutElement(container, minHeight: 50);
-            // Darker background for better contrast with toggles
-            SetBackground(container, new Color(0.06f, 0.06f, 0.08f, 0.9f));
+            // Blue-gray background matching website input fields rgb(54,65,83)
+            SetBackground(container, new Color(0.212f, 0.255f, 0.325f, 0.9f));
 
             var layout = container.GetComponent<HorizontalLayoutGroup>();
             if (layout != null)
@@ -580,37 +630,57 @@ namespace UnityGameTranslator.Core.UI
         /// Creates a card inside a scrollable panel layout.
         /// Unlike CreateCard, this version doesn't need minHeight - it adapts to content.
         /// </summary>
-        public static GameObject CreateAdaptiveCard(GameObject scrollContent, string name, int width = 420)
+        /// <param name="scrollContent">Parent container</param>
+        /// <param name="name">Card name</param>
+        /// <param name="width">Card width</param>
+        /// <param name="stretchVertically">If true, card expands to fill available vertical space (for tab content)</param>
+        public static GameObject CreateAdaptiveCard(GameObject scrollContent, string name, int width = 420, bool stretchVertically = false)
         {
-            // Create a horizontal wrapper to center the card
-            var wrapper = UIFactory.CreateHorizontalGroup(scrollContent, name + "_Wrapper", false, false, true, true, 0);
-            UIFactory.SetLayoutElement(wrapper, flexibleWidth: 9999);
+            // Create a horizontal wrapper to position the card (transparent - no automatic padding)
+            var wrapper = UIFactory.CreateHorizontalGroup(scrollContent, name + "_Wrapper", false, false, true, true, 0,
+                default, Transparent);
+
+            if (stretchVertically)
+            {
+                // For tab content: wrapper and card expand to fill space
+                UIFactory.SetLayoutElement(wrapper, flexibleWidth: 9999, flexibleHeight: 9999);
+            }
+            else
+            {
+                UIFactory.SetLayoutElement(wrapper, flexibleWidth: 9999);
+            }
+
             var wrapperLayout = wrapper.GetComponent<HorizontalLayoutGroup>();
             if (wrapperLayout != null)
             {
-                wrapperLayout.childAlignment = TextAnchor.MiddleCenter;
+                wrapperLayout.childAlignment = stretchVertically ? TextAnchor.UpperCenter : TextAnchor.MiddleCenter;
                 wrapperLayout.childForceExpandWidth = false;
-                wrapperLayout.childForceExpandHeight = false;
+                wrapperLayout.childForceExpandHeight = stretchVertically; // Expand card when stretching
             }
 
-            // Create the actual card inside the wrapper - NO minHeight, adapts to content
+            // Create the actual card inside the wrapper
             var card = UIFactory.CreateVerticalGroup(wrapper, name, false, false, true, true, ElementSpacing);
-            UIFactory.SetLayoutElement(card, minWidth: width, preferredWidth: width);
+
+            if (stretchVertically)
+            {
+                UIFactory.SetLayoutElement(card, minWidth: width, preferredWidth: width, flexibleHeight: 9999);
+            }
+            else
+            {
+                UIFactory.SetLayoutElement(card, minWidth: width, preferredWidth: width);
+            }
 
             SetBackground(card, CardBackground);
 
-            // Add subtle border effect
-            var outline = card.AddComponent<UnityEngine.UI.Outline>();
-            outline.effectColor = new Color(0.08f, 0.08f, 0.1f, 0.8f);
-            outline.effectDistance = new Vector2(1, -1);
+            // No outline - clean borderless design like website
 
             var layout = card.GetComponent<VerticalLayoutGroup>();
             if (layout != null)
             {
                 layout.padding = new RectOffset(CardPadding, CardPadding, CardPadding, CardPadding);
-                layout.childAlignment = TextAnchor.MiddleCenter;
+                layout.childAlignment = stretchVertically ? TextAnchor.UpperCenter : TextAnchor.MiddleCenter;
                 layout.childForceExpandWidth = true;
-                layout.childForceExpandHeight = false;
+                layout.childForceExpandHeight = false; // Content inside card doesn't stretch
             }
 
             return card;

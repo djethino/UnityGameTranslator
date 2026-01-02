@@ -66,9 +66,6 @@ namespace UnityGameTranslator.Core.UI.Panels
         private GameObject _loginCTASection;
         private ButtonRef _loginCTABtn;
         private GameObject _statusSection;
-        private Text _communityCollapseIcon;
-        private GameObject _communityContent;
-        private bool _isCommunityExpanded = true;
 
         // UI references - Contributor choice section (GAP 8: 3 guided buttons)
         private GameObject _contributorChoiceSection;
@@ -84,6 +81,11 @@ namespace UnityGameTranslator.Core.UI.Panels
         private GameObject _modUpdateBanner;
         private Text _modUpdateLabel;
         private ButtonRef _modUpdateBtn;
+
+        // Tab system
+        private TabBar _tabBar;
+        private const string TAB_MY_TRANSLATION = "My Translation";
+        private const string TAB_COMMUNITY = "Community";
 
         // Current layout state (cached for efficiency)
         private LayoutState _currentLayoutState = LayoutState.NotLogged;
@@ -101,48 +103,63 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Use scrollable layout - content scrolls if needed, buttons stay fixed
             CreateScrollablePanelLayout(out var scrollContent, out var buttonRow, PanelWidth - 40);
 
-            // Main card - adaptive, sizes to content (PanelWidth - 2*PanelPadding)
-            var card = CreateAdaptiveCard(scrollContent, "MainCard", PanelWidth - 40);
-
-            // Mod Update Banner (at very top, visible only when update available)
-            CreateModUpdateBanner(card);
-
-            var title = CreateTitle(card, "Title", "Unity Game Translator");
+            // === HEADER SECTION (outside tabs, like OptionsPanel) ===
+            // Title directly in scrollContent
+            var title = CreateTitle(scrollContent, "Title", "Unity Game Translator");
             RegisterExcluded(title); // Mod name - never translate
 
-            UIStyles.CreateSpacer(card, 5);
+            UIStyles.CreateSpacer(scrollContent, 5);
 
-            // Account Section (always visible, compact)
-            CreateAccountSection(card);
+            // Account Section (compact, inline)
+            CreateAccountSection(scrollContent);
 
-            UIStyles.CreateSpacer(card, 10);
+            UIStyles.CreateSpacer(scrollContent, 5);
+
+            // Mod Update Banner (between account and tabs, visible only when update available)
+            CreateModUpdateBanner(scrollContent);
+
+            // === TAB BAR (directly in scrollContent, like OptionsPanel) ===
+            _tabBar = new TabBar();
+            _tabBar.CreateUI(scrollContent);
+
+            // Create tab contents - each tab will create its own card
+            var myTranslationTab = _tabBar.AddTab(TAB_MY_TRANSLATION);
+            var communityTab = _tabBar.AddTab(TAB_COMMUNITY);
+
+            // Register tab texts for localization
+            foreach (var text in _tabBar.GetTabButtonTexts())
+            {
+                RegisterUIText(text);
+            }
+
+            // === MY TRANSLATION TAB (content in a stretching card) ===
+            var myTransCard = CreateAdaptiveCard(myTranslationTab, "MyTranslationCard", PanelWidth - 60, stretchVertically: true);
 
             // Login CTA Section (only visible when not logged in)
-            CreateLoginCTASection(card);
+            CreateLoginCTASection(myTransCard);
 
             // Status Section with StatusCard (visible when logged in + has local)
-            CreateStatusSection(card);
+            CreateStatusSection(myTransCard);
 
-            UIStyles.CreateSpacer(card, 5);
+            UIStyles.CreateSpacer(myTransCard, 5);
 
             // Legacy Translation Info Section (kept for backward compatibility, will be hidden when StatusCard is shown)
-            CreateTranslationInfoSection(card);
+            CreateTranslationInfoSection(myTransCard);
 
-            UIStyles.CreateSpacer(card, 10);
-
-            // Community Translations Section (collapsible, online mode only)
-            CreateCommunitySection(card);
-
-            UIStyles.CreateSpacer(card, 10);
+            UIStyles.CreateSpacer(myTransCard, 10);
 
             // Actions Section (context-dependent)
-            CreateActionsSection(card);
+            CreateActionsSection(myTransCard);
 
             // Contributor Choice Section (GAP 8: 3 guided buttons for ContributorSameUuid state)
-            CreateContributorChoiceSection(card);
+            CreateContributorChoiceSection(myTransCard);
 
             // Guidance Section (GAP 9: contextual messages)
-            CreateGuidanceSection(card);
+            CreateGuidanceSection(myTransCard);
+
+            // === COMMUNITY TAB (content in a stretching card) ===
+            var communityCard = CreateAdaptiveCard(communityTab, "CommunityCard", PanelWidth - 60, stretchVertically: true);
+            CreateCommunitySection(communityCard);
 
             // Bottom buttons - in fixed footer (outside scroll)
             var optionsBtn = CreateSecondaryButton(buttonRow, "OptionsBtn", "Options");
@@ -154,6 +171,31 @@ namespace UnityGameTranslator.Core.UI.Panels
             RegisterUIText(closeBtn.ButtonText);
 
             RefreshUI();
+        }
+
+        /// <summary>
+        /// Selects a tab by name. Used by notifications to open specific tabs.
+        /// </summary>
+        /// <param name="tabName">Tab name (use TAB_MY_TRANSLATION or TAB_COMMUNITY constants)</param>
+        public void SelectTab(string tabName)
+        {
+            _tabBar?.SelectTab(tabName);
+        }
+
+        /// <summary>
+        /// Opens the Community tab. Convenience method for external callers.
+        /// </summary>
+        public void OpenCommunityTab()
+        {
+            SelectTab(TAB_COMMUNITY);
+        }
+
+        /// <summary>
+        /// Opens the My Translation tab. Convenience method for external callers.
+        /// </summary>
+        public void OpenMyTranslationTab()
+        {
+            SelectTab(TAB_MY_TRANSLATION);
         }
 
         private void CreateAccountSection(GameObject parent)
@@ -431,25 +473,15 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private void CreateCommunitySection(GameObject parent)
         {
-            // Use collapsible section for community translations
-            var (container, header, iconLabel, titleLabel, content) = UIStyles.CreateCollapsibleSection(
-                parent, "Community", "Community Translations", initiallyExpanded: true);
+            // Community section - now a full tab, no longer collapsible
+            _communitySection = UIFactory.CreateVerticalGroup(parent, "CommunitySection", false, false, true, true, 5);
+            UIFactory.SetLayoutElement(_communitySection, flexibleWidth: 9999, flexibleHeight: 9999);
 
-            _communitySection = container;
-            _communityCollapseIcon = iconLabel;
-            _communityContent = content;
-
-            RegisterUIText(titleLabel);
-
-            // Wire up header click to toggle collapse (using UIHelpers for IL2CPP compatibility)
-            var headerBtn = header.GetComponent<Button>();
-            if (headerBtn != null)
-            {
-                UIHelpers.AddButtonListener(headerBtn, OnCommunityHeaderClicked);
-            }
+            var sectionTitle = UIStyles.CreateSectionTitle(_communitySection, "CommunitySectionLabel", "Community Translations");
+            RegisterUIText(sectionTitle);
 
             // Game info and search row
-            var searchRow = UIStyles.CreateFormRow(content, "SearchRow", UIStyles.RowHeightLarge);
+            var searchRow = UIStyles.CreateFormRow(_communitySection, "SearchRow", UIStyles.RowHeightLarge);
 
             _communityGameLabel = UIFactory.CreateLabel(searchRow, "GameLabel", "Game: Unknown", TextAnchor.MiddleLeft);
             _communityGameLabel.color = UIStyles.TextSecondary;
@@ -460,13 +492,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             _searchBtn.OnClick += OnSearchCommunityClicked;
             RegisterUIText(_searchBtn.ButtonText);
 
-            // Translation list - ensure initialized
+            // Translation list - ensure initialized (larger height for dedicated tab)
             if (_translationList == null)
             {
                 TranslatorCore.LogWarning("[MainPanel] _translationList was null - reinitializing");
                 _translationList = new TranslationList();
             }
-            _translationList.CreateUI(content, 100, onSelectionChanged: (t) =>
+            _translationList.CreateUI(_communitySection, 200, onSelectionChanged: (t) =>
             {
                 if (_downloadBtn != null)
                 {
@@ -474,10 +506,10 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
             });
 
-            UIStyles.CreateSpacer(content, 5);
+            UIStyles.CreateSpacer(_communitySection, 5);
 
             // Download button
-            var downloadRow = UIStyles.CreateFormRow(content, "DownloadRow", UIStyles.RowHeightLarge, 0);
+            var downloadRow = UIStyles.CreateFormRow(_communitySection, "DownloadRow", UIStyles.RowHeightLarge, 0);
             var layoutGroup = downloadRow.GetComponent<HorizontalLayoutGroup>();
             if (layoutGroup != null) layoutGroup.childAlignment = TextAnchor.MiddleCenter; // Center the button
 
@@ -486,13 +518,6 @@ namespace UnityGameTranslator.Core.UI.Panels
             _downloadBtn.OnClick += OnDownloadCommunityClicked;
             _downloadBtn.Component.interactable = false;
             RegisterUIText(_downloadBtn.ButtonText);
-        }
-
-        private void OnCommunityHeaderClicked()
-        {
-            _isCommunityExpanded = !_isCommunityExpanded;
-            UIStyles.SetCollapsibleState(_communityCollapseIcon, _communityContent, _isCommunityExpanded);
-            RecalculateSize();
         }
 
         public override void SetActive(bool active)
@@ -1354,22 +1379,27 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (_communitySection == null) return;
 
-            // Hide section if offline mode
-            bool showSection = TranslatorCore.Config.online_mode;
-            _communitySection.SetActive(showSection);
-
-            if (!showSection) return;
+            // Check online mode
+            bool isOnline = TranslatorCore.Config.online_mode;
 
             // Update game label
             var game = TranslatorCore.CurrentGame;
-            if (game != null && !string.IsNullOrEmpty(game.name))
+            if (!isOnline)
+            {
+                _communityGameLabel.text = "Offline mode - enable online in Options";
+                _communityGameLabel.color = UIStyles.StatusWarning;
+                _searchBtn.Component.interactable = false;
+            }
+            else if (game != null && !string.IsNullOrEmpty(game.name))
             {
                 _communityGameLabel.text = $"Game: {game.name}";
+                _communityGameLabel.color = UIStyles.TextSecondary;
                 _searchBtn.Component.interactable = true;
             }
             else
             {
                 _communityGameLabel.text = "Game: Not detected";
+                _communityGameLabel.color = UIStyles.TextSecondary;
                 _searchBtn.Component.interactable = false;
             }
 

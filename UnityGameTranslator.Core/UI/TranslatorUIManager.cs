@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using UnityEngine;
 using UniverseLib;
+using UniverseLib.Input;
 using UniverseLib.Runtime;
 using UniverseLib.UI;
 
@@ -30,6 +31,7 @@ namespace UnityGameTranslator.Core.UI
 
         private static bool _initialized;
         private static bool _showUI;
+        private static bool _lastPanelVisibleState; // Track panel state for EventSystem management
 
         // Update notification state
         public static bool HasPendingUpdate { get; set; } = false;
@@ -53,6 +55,17 @@ namespace UnityGameTranslator.Core.UI
         public static Panels.LanguagePanel LanguagePanel { get; private set; }
         public static Panels.StatusOverlay StatusOverlay { get; private set; }
         public static Panels.ConfirmationPanel ConfirmationPanel { get; private set; }
+
+        /// <summary>
+        /// List of all interactive panels (excludes StatusOverlay which is a notification overlay).
+        /// Used for centralized panel state management.
+        /// </summary>
+        private static readonly List<Panels.TranslatorPanelBase> _interactivePanels = new List<Panels.TranslatorPanelBase>();
+
+        /// <summary>
+        /// Gets all registered interactive panels.
+        /// </summary>
+        public static IReadOnlyList<Panels.TranslatorPanelBase> InteractivePanels => _interactivePanels;
 
         /// <summary>
         /// Whether any main panel is visible (not including status overlay).
@@ -125,6 +138,12 @@ namespace UnityGameTranslator.Core.UI
 
             TranslatorCore.LogInfo("[UIManager] Initializing UniverseLib...");
 
+            // Configure UniverseLib default colors to match our theme (navy blue)
+            UIFactory.Colors.DefaultLayoutBackground = UIStyles.ViewportBackground;
+            UIFactory.Colors.DefaultLayoutPadding = new Vector4(
+                UIStyles.SmallSpacing, UIStyles.SmallSpacing,
+                UIStyles.SmallSpacing, UIStyles.SmallSpacing);
+
             Universe.Init(1f, OnUniverseLibInitialized, LogHandler, new UniverseLib.Config.UniverseLibConfig
             {
                 Disable_EventSystem_Override = false,
@@ -149,6 +168,7 @@ namespace UnityGameTranslator.Core.UI
 
         private static void CreatePanels()
         {
+            // Create all panels
             WizardPanel = new Panels.WizardPanel(UiBase);
             MainPanel = new Panels.MainPanel(UiBase);
             OptionsPanel = new Panels.OptionsPanel(UiBase);
@@ -160,17 +180,21 @@ namespace UnityGameTranslator.Core.UI
             StatusOverlay = new Panels.StatusOverlay(UiBase);
             ConfirmationPanel = new Panels.ConfirmationPanel(UiBase);
 
-            // Hide all panels initially
-            WizardPanel.SetActive(false);
-            MainPanel.SetActive(false);
-            OptionsPanel.SetActive(false);
-            LoginPanel.SetActive(false);
-            UploadPanel.SetActive(false);
-            UploadSetupPanel.SetActive(false);
-            MergePanel.SetActive(false);
-            LanguagePanel.SetActive(false);
+            // Register interactive panels (excludes StatusOverlay which is a notification overlay)
+            _interactivePanels.Clear();
+            _interactivePanels.Add(WizardPanel);
+            _interactivePanels.Add(MainPanel);
+            _interactivePanels.Add(OptionsPanel);
+            _interactivePanels.Add(LoginPanel);
+            _interactivePanels.Add(UploadPanel);
+            _interactivePanels.Add(UploadSetupPanel);
+            _interactivePanels.Add(MergePanel);
+            _interactivePanels.Add(LanguagePanel);
+            _interactivePanels.Add(ConfirmationPanel);
+
+            // Hide all panels initially (using centralized list + StatusOverlay)
+            CloseAllPanels();
             StatusOverlay.SetActive(false);
-            ConfirmationPanel.SetActive(false);
         }
 
         private static void InitializeUIState()
@@ -1024,36 +1048,58 @@ namespace UnityGameTranslator.Core.UI
         /// </summary>
         public static void HideAll()
         {
-            WizardPanel.SetActive(false);
-            MainPanel.SetActive(false);
-            OptionsPanel.SetActive(false);
-            LoginPanel.SetActive(false);
-            UploadPanel.SetActive(false);
-            MergePanel.SetActive(false);
-            LanguagePanel.SetActive(false);
-            StatusOverlay.SetActive(false);
+            CloseAllPanels();
+            StatusOverlay?.SetActive(false);
             ShowUI = false;
         }
 
         /// <summary>
         /// Hide all main panels but allow status overlay to remain.
+        /// Alias for CloseAllPanels() for backward compatibility.
         /// </summary>
         public static void HideMainPanels()
         {
-            WizardPanel.SetActive(false);
-            MainPanel.SetActive(false);
-            OptionsPanel.SetActive(false);
-            LoginPanel.SetActive(false);
-            UploadPanel.SetActive(false);
-            MergePanel.SetActive(false);
-            LanguagePanel.SetActive(false);
+            CloseAllPanels();
         }
 
+        /// <summary>
+        /// Check if any interactive panel is currently visible.
+        /// Uses the centralized panel list.
+        /// </summary>
         private static bool AnyPanelVisible()
         {
-            return WizardPanel.Enabled || MainPanel.Enabled || OptionsPanel.Enabled ||
-                   LoginPanel.Enabled || UploadPanel.Enabled || UploadSetupPanel.Enabled ||
-                   MergePanel.Enabled || LanguagePanel.Enabled;
+            for (int i = 0; i < _interactivePanels.Count; i++)
+            {
+                if (_interactivePanels[i].Enabled)
+                    return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Close all interactive panels.
+        /// Uses the centralized panel list.
+        /// </summary>
+        public static void CloseAllPanels()
+        {
+            for (int i = 0; i < _interactivePanels.Count; i++)
+            {
+                _interactivePanels[i].SetActive(false);
+            }
+        }
+
+        /// <summary>
+        /// Get all currently visible panels.
+        /// </summary>
+        public static List<Panels.TranslatorPanelBase> GetVisiblePanels()
+        {
+            var visible = new List<Panels.TranslatorPanelBase>();
+            for (int i = 0; i < _interactivePanels.Count; i++)
+            {
+                if (_interactivePanels[i].Enabled)
+                    visible.Add(_interactivePanels[i]);
+            }
+            return visible;
         }
 
         private static float _overlayRefreshTimer = 0f;
@@ -1067,6 +1113,22 @@ namespace UnityGameTranslator.Core.UI
             // Called every frame when UI is active
             // Can be used for hotkey detection, etc.
             CheckHotkey();
+
+            // Manage EventSystem for InputField support
+            // Enable when panels open, release when all panels close
+            bool panelsVisible = AnyPanelVisible();
+            if (panelsVisible != _lastPanelVisibleState)
+            {
+                _lastPanelVisibleState = panelsVisible;
+                if (panelsVisible)
+                {
+                    EventSystemHelper.EnableEventSystem();
+                }
+                else
+                {
+                    EventSystemHelper.ReleaseEventSystem();
+                }
+            }
 
             // Manage status overlay visibility
             UpdateStatusOverlay();

@@ -2275,6 +2275,7 @@ namespace UnityGameTranslator.Core
 
     /// <summary>
     /// Per-panel window preferences for persistence across sessions.
+    /// Position and size are saved independently.
     /// </summary>
     public class WindowPreference
     {
@@ -2286,7 +2287,9 @@ namespace UnityGameTranslator.Core
         public float width { get; set; }
         /// <summary>Panel height in pixels</summary>
         public float height { get; set; }
-        /// <summary>True if user manually resized (don't auto-adjust)</summary>
+        /// <summary>True if user manually moved the panel (apply saved position)</summary>
+        public bool hasPosition { get; set; }
+        /// <summary>True if user manually resized (don't auto-adjust size)</summary>
         public bool userResized { get; set; }
     }
 

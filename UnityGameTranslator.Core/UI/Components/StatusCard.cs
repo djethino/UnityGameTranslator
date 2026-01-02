@@ -93,10 +93,28 @@ namespace UnityGameTranslator.Core.UI.Components
         /// <summary>
         /// Create the status card UI in the given parent.
         /// </summary>
-        public void CreateUI(GameObject parent)
+        /// <param name="parent">Parent container</param>
+        /// <param name="width">Optional fixed width (0 = flexible width to fill parent)</param>
+        public void CreateUI(GameObject parent, int width = 0)
         {
-            // Main card container
-            _root = UIStyles.CreateAdaptiveCard(parent, "StatusCard");
+            // Main card container - use flexible width if not specified
+            if (width > 0)
+            {
+                _root = UIStyles.CreateAdaptiveCard(parent, "StatusCard", width);
+            }
+            else
+            {
+                // Create a card that fills available width
+                _root = UIFactory.CreateVerticalGroup(parent, "StatusCard", false, false, true, true, UIStyles.ElementSpacing);
+                UIFactory.SetLayoutElement(_root, flexibleWidth: 9999);
+                UIStyles.SetBackground(_root, UIStyles.CardBackground);
+                var layout = _root.GetComponent<VerticalLayoutGroup>();
+                if (layout != null)
+                {
+                    layout.padding = new RectOffset(UIStyles.CardPadding, UIStyles.CardPadding, UIStyles.CardPadding, UIStyles.CardPadding);
+                    layout.childAlignment = TextAnchor.UpperLeft;
+                }
+            }
 
             // First row: Status icon + label + Role badge
             var statusRow = UIFactory.CreateHorizontalGroup(_root, "StatusRow", false, false, true, true, UIStyles.SmallSpacing);

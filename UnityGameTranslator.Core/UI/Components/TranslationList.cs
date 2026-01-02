@@ -199,8 +199,9 @@ namespace UnityGameTranslator.Core.UI.Components
         {
             ClearUI();
 
-            string currentUser = _getCurrentUser?.Invoke();
-            bool isLoggedIn = !string.IsNullOrEmpty(currentUser);
+            // isLoggedIn must be based on api_token, not api_user (api_user persists after logout)
+            bool isLoggedIn = !string.IsNullOrEmpty(TranslatorCore.Config.api_token);
+            string currentUser = isLoggedIn ? _getCurrentUser?.Invoke() : null;
 
             int displayCount = Math.Min(5, _translations.Count);
             for (int i = 0; i < displayCount; i++)

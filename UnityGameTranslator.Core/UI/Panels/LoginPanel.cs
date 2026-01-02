@@ -12,12 +12,12 @@ namespace UnityGameTranslator.Core.UI.Panels
     public class LoginPanel : TranslatorPanelBase
     {
         public override string Name => "Login";
-        public override int MinWidth => 420;
-        public override int MinHeight => 300;
+        public override int MinWidth => 380;
+        public override int MinHeight => 200;
         public override int PanelWidth => 420;
-        public override int PanelHeight => 420;
+        public override int PanelHeight => 350;
 
-        protected override int MinPanelHeight => 300;
+        protected override int MinPanelHeight => 200;
 
         private Text _instructionLabel;
         private Text _codeLabel;
@@ -138,6 +138,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                         _instructionLabel.text = "Click the button below to open the website,\nthen enter this code:";
                         _statusLabel.text = "Waiting for authorization...";
                         _statusLabel.color = UIStyles.StatusInfo;
+
+                        // Recalculate size after content changed
+                        RecalculateSize();
 
                         _isPolling = true;
                         PollForAuth();
@@ -270,6 +273,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                                       "You will receive a code to enter on the website.";
             _statusLabel.text = "";
             _verificationUri = null;
+
+            // Recalculate size after content changed
+            RecalculateSize();
         }
     }
 }

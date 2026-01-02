@@ -120,9 +120,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// Creates an adaptive card that sizes to its content (no fixed minHeight).
         /// Use inside scrollContent from CreateScrollablePanelLayout.
         /// </summary>
-        protected GameObject CreateAdaptiveCard(GameObject parent, string name, int width = 420)
+        /// <param name="stretchVertically">If true, card expands to fill available vertical space (for tab content)</param>
+        protected GameObject CreateAdaptiveCard(GameObject parent, string name, int width = 420, bool stretchVertically = false)
         {
-            return UIStyles.CreateAdaptiveCard(parent, name, width);
+            return UIStyles.CreateAdaptiveCard(parent, name, width, stretchVertically);
         }
 
         /// <summary>
@@ -493,56 +494,56 @@ namespace UnityGameTranslator.Core.UI.Panels
                 return;
             }
 
-            // Try to load saved preferences (position only - size will be calculated on first show)
+            // Try to load saved preferences
+            // Position and size are now independent:
+            // - Position is only applied if hasPosition is true (user moved the panel)
+            // - Size is only applied if userResized is true (user resized the panel)
             WindowPreference pref = null;
             var prefs = TranslatorCore.Config.window_preferences;
-            bool hasValidPreference = PersistWindowPreferences &&
-                prefs.panels.TryGetValue(Name, out pref) &&
-                pref.width > 0 && pref.height > 0 && prefs.screenWidth > 0;
+            bool hasPreference = PersistWindowPreferences && prefs.panels.TryGetValue(Name, out pref);
 
-            if (hasValidPreference)
+            var screenDim = new Vector2(Screen.width, Screen.height);
+            float widthRatio = prefs.screenWidth > 0 ? screenDim.x / prefs.screenWidth : 1f;
+            float heightRatio = prefs.screenHeight > 0 ? screenDim.y / prefs.screenHeight : 1f;
+            bool resolutionChanged = Math.Abs(widthRatio - 1) > 0.1f || Math.Abs(heightRatio - 1) > 0.1f;
+
+            // Handle position (independent of size)
+            if (hasPreference && pref.hasPosition)
             {
-                // Apply saved position (scaled if resolution changed)
-                var screenDim = new Vector2(Screen.width, Screen.height);
-                float widthRatio = screenDim.x / prefs.screenWidth;
-                float heightRatio = screenDim.y / prefs.screenHeight;
-                bool resolutionChanged = Math.Abs(widthRatio - 1) > 0.1f || Math.Abs(heightRatio - 1) > 0.1f;
-
-                // Check if saved position would be out of bounds with new resolution
                 float newX = resolutionChanged ? pref.x * widthRatio : pref.x;
                 float newY = resolutionChanged ? pref.y * heightRatio : pref.y;
-                float halfWidth = (resolutionChanged ? PanelWidth : pref.width) / 2f;
-                float halfHeight = (resolutionChanged ? PanelHeight : pref.height) / 2f;
+                float halfWidth = PanelWidth / 2f;
+                float halfHeight = PanelHeight / 2f;
 
-                // Calculate screen bounds (panel is center-anchored, so position is relative to center)
+                // Check if saved position would be out of bounds
                 bool positionOutOfBounds = Math.Abs(newX) + halfWidth > screenDim.x / 2f ||
                                            Math.Abs(newY) + halfHeight > screenDim.y / 2f;
 
-                if (positionOutOfBounds)
-                {
-                    // Invalidate saved preference - window would be outside screen
-                    Rect.anchoredPosition = Vector2.zero;
-                    pref.userResized = false;
-                }
-                else
+                if (!positionOutOfBounds)
                 {
                     Rect.anchoredPosition = new Vector2(newX, newY);
                 }
-
-                // If user manually resized AND resolution didn't change, use saved size and skip dynamic sizing
-                if (pref.userResized && !resolutionChanged && !positionOutOfBounds)
+                else
                 {
-                    Rect.sizeDelta = new Vector2(pref.width, pref.height);
-                    _needsFirstShowSizing = false; // User already resized, don't override
-                    _initialSizingComplete = true;
+                    // Position out of bounds - reset to center
+                    Rect.anchoredPosition = Vector2.zero;
                 }
-                // Otherwise, keep _needsFirstShowSizing = true to calculate on first show
             }
             else
             {
-                // No preference - center position, size will be calculated on first show
+                // No saved position - use auto (center)
                 Rect.anchoredPosition = Vector2.zero;
             }
+
+            // Handle size (independent of position)
+            if (hasPreference && pref.userResized && pref.width > 0 && pref.height > 0 && !resolutionChanged)
+            {
+                // User manually resized - apply saved size and skip dynamic sizing
+                Rect.sizeDelta = new Vector2(pref.width, pref.height);
+                _needsFirstShowSizing = false;
+                _initialSizingComplete = true;
+            }
+            // Otherwise, keep _needsFirstShowSizing = true to calculate size dynamically
 
             // Initialize tracking values
             _lastSavedPosition = Rect.anchoredPosition;
@@ -580,16 +581,16 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Don't save during initial construction - only after user interaction
             if (!_initialSizingComplete) return;
 
-            // Save preference (user manually resized) - only if persistence enabled and size actually changed
+            // Save size only (not position) - position is saved separately when dragging
             if (PersistWindowPreferences && HasSizeChanged())
             {
-                SaveWindowPreference(userResized: true);
+                SaveWindowPreference(savePosition: false, saveSize: true);
             }
         }
 
         /// <summary>
         /// Called when user finishes dragging the panel.
-        /// Saves position preference only if position actually changed.
+        /// Saves position only (not size) to preserve auto-sizing.
         /// </summary>
         private void OnPanelDragged()
         {
@@ -598,7 +599,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             if (HasPositionChanged())
             {
-                SaveWindowPreference(userResized: false);
+                SaveWindowPreference(savePosition: true, saveSize: false);
             }
         }
 
@@ -857,7 +858,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         /// <summary>
         /// Call this when panel content changes dynamically to recalculate size.
-        /// Waits one frame for layout to update before measuring.
+        /// Waits for layout to update before measuring.
         /// </summary>
         protected void RecalculateSize()
         {
@@ -867,8 +868,30 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private System.Collections.IEnumerator DelayedRecalculateSize()
         {
-            // Wait one frame for layout to update after content changes
+            // Force immediate layout rebuild on ContentRoot
+            if (ContentRoot != null)
+            {
+                var contentRect = ContentRoot.GetComponent<RectTransform>();
+                if (contentRect != null)
+                {
+                    LayoutRebuilder.ForceRebuildLayoutImmediate(contentRect);
+                }
+            }
+
+            // Wait 2 frames for Unity to fully recalculate layouts after SetActive changes
             yield return null;
+            yield return null;
+
+            // Force rebuild again after frames have passed
+            if (ContentRoot != null)
+            {
+                var contentRect = ContentRoot.GetComponent<RectTransform>();
+                if (contentRect != null)
+                {
+                    LayoutRebuilder.ForceRebuildLayoutImmediate(contentRect);
+                }
+            }
+
             _contentMeasured = false; // Force re-measurement
             CalculateAndApplyOptimalSize();
         }
@@ -914,11 +937,15 @@ namespace UnityGameTranslator.Core.UI.Panels
         #region Window Preference Persistence
 
         /// <summary>
-        /// Saves current window position and size to config.
+        /// Saves window preferences to config.
+        /// Position and size are saved independently.
         /// </summary>
-        protected void SaveWindowPreference(bool userResized)
+        /// <param name="savePosition">If true, saves current position and sets hasPosition flag</param>
+        /// <param name="saveSize">If true, saves current size and sets userResized flag</param>
+        protected void SaveWindowPreference(bool savePosition, bool saveSize)
         {
             if (!PersistWindowPreferences) return;
+            if (!savePosition && !saveSize) return;
 
             var screenDim = new Vector2(Screen.width, Screen.height);
             var prefs = TranslatorCore.Config.window_preferences;
@@ -929,17 +956,22 @@ namespace UnityGameTranslator.Core.UI.Panels
                 pref = new WindowPreference();
             }
 
-            // Update per-panel values
-            // Use Rect.rect for size because UniverseLib resizes via anchors, not sizeDelta
-            pref.x = Rect.anchoredPosition.x;
-            pref.y = Rect.anchoredPosition.y;
-            pref.width = Rect.rect.width;
-            pref.height = Rect.rect.height;
-
-            // Only set userResized to true if explicitly requested (don't reset to false)
-            if (userResized)
+            // Save position if requested
+            if (savePosition)
             {
+                pref.x = Rect.anchoredPosition.x;
+                pref.y = Rect.anchoredPosition.y;
+                pref.hasPosition = true;
+                _lastSavedPosition = Rect.anchoredPosition;
+            }
+
+            // Save size if requested
+            if (saveSize)
+            {
+                pref.width = Rect.rect.width;
+                pref.height = Rect.rect.height;
                 pref.userResized = true;
+                _lastSavedSize = new Vector2(Rect.rect.width, Rect.rect.height);
             }
 
             prefs.panels[Name] = pref;
@@ -948,9 +980,6 @@ namespace UnityGameTranslator.Core.UI.Panels
             prefs.screenWidth = Mathf.RoundToInt(screenDim.x);
             prefs.screenHeight = Mathf.RoundToInt(screenDim.y);
 
-            // Update tracking values
-            _lastSavedPosition = Rect.anchoredPosition;
-            _lastSavedSize = new Vector2(Rect.rect.width, Rect.rect.height);
             _hasLastSavedValues = true;
 
             // Save config (debounced by TranslatorCore)

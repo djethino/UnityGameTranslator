@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using UnityEngine;
 using UniverseLib;
+using UniverseLib.Config;
 using UniverseLib.Input;
 using UniverseLib.Runtime;
 using UniverseLib.UI;
@@ -31,7 +32,7 @@ namespace UnityGameTranslator.Core.UI
 
         private static bool _initialized;
         private static bool _showUI;
-        private static bool _lastPanelVisibleState; // Track panel state for EventSystem management
+        private static bool _lastPanelVisibleState; // Track panel state for EventSystem and cursor management
 
         // Update notification state
         public static bool HasPendingUpdate { get; set; } = false;
@@ -1131,18 +1132,23 @@ namespace UnityGameTranslator.Core.UI
             // Can be used for hotkey detection, etc.
             CheckHotkey();
 
-            // Manage EventSystem for InputField support
+            // Manage EventSystem and Cursor for InputField support
             // Enable when panels open, release when all panels close
+            // Uses UniverseLib's Force_Unlock_Mouse to properly handle cursor locking
             bool panelsVisible = AnyPanelVisible();
             if (panelsVisible != _lastPanelVisibleState)
             {
                 _lastPanelVisibleState = panelsVisible;
                 if (panelsVisible)
                 {
+                    // Enable cursor unlock - UniverseLib will handle the rest
+                    ConfigManager.Force_Unlock_Mouse = true;
                     EventSystemHelper.EnableEventSystem();
                 }
                 else
                 {
+                    // Disable cursor unlock - UniverseLib will restore game's cursor state
+                    ConfigManager.Force_Unlock_Mouse = false;
                     EventSystemHelper.ReleaseEventSystem();
                 }
             }

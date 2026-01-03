@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Reflection;
 using UnityEngine;
 using UnityEngine.UI;
@@ -12,6 +13,24 @@ namespace UnityGameTranslator.Core
     /// </summary>
     public static class TranslatorPatches
     {
+        // Keywords to identify localization string types (case-insensitive)
+        private static readonly string[] LocalizationPrefixes = { "locali", "l10n", "i18n", "translat" };
+        private static readonly string[] LocalizationSuffixes = { "string", "text", "entry", "value" };
+
+        // Types to exclude (known non-text types)
+        private static readonly HashSet<string> ExcludedTypeNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "LocalizationSettings",
+            "LocalizationManager",
+            "LocalizationService",
+            "LocalizationDatabase",
+            "LocalizationTable",
+            "LocalizationAsset",
+            "StringLocalizer",
+            "TranslationManager",
+            "TranslationService",
+            "TranslationDatabase"
+        };
         /// <summary>
         /// Apply all Harmony patches using the provided patcher.
         /// </summary>
@@ -56,11 +75,36 @@ namespace UnityGameTranslator.Core
                     patchCount++;
                 }
 
+                // TextMesh.text setter (legacy 3D text)
+                var textMeshType = typeof(TextMesh);
+                var textMeshProp = textMeshType.GetProperty("text", BindingFlags.Public | BindingFlags.Instance);
+                if (textMeshProp?.SetMethod != null)
+                {
+                    var prefix = typeof(TranslatorPatches).GetMethod(nameof(TextMesh_SetText_Prefix), BindingFlags.Static | BindingFlags.Public);
+                    patcher(textMeshProp.SetMethod, prefix, null);
+                    patchCount++;
+                }
+
                 // Unity.Localization.StringTableEntry (optional)
                 Type stringTableEntryType = FindStringTableEntryType();
                 if (stringTableEntryType != null)
                 {
                     patchCount += PatchStringTableEntry(stringTableEntryType, patcher);
+                }
+
+                // tk2dTextMesh (2D Toolkit - used by many 2D games)
+                Type tk2dTextMeshType = FindTk2dTextMeshType();
+                if (tk2dTextMeshType != null)
+                {
+                    patchCount += PatchTk2dTextMesh(tk2dTextMeshType, patcher);
+                }
+
+                // Generic localization system detection
+                // Finds custom localization types like LocalisedString, LocalizedText, I18nString, etc.
+                var customLocalizationTypes = FindCustomLocalizationTypes();
+                foreach (var locType in customLocalizationTypes)
+                {
+                    patchCount += PatchCustomLocalizationType(locType, patcher);
                 }
             }
             catch (Exception e)
@@ -83,6 +127,218 @@ namespace UnityGameTranslator.Core
                 catch { }
             }
             return null;
+        }
+
+        private static Type FindTk2dTextMeshType()
+        {
+            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                try
+                {
+                    // Try common tk2d namespaces
+                    var type = asm.GetType("tk2dTextMesh");
+                    if (type != null) return type;
+                }
+                catch { }
+            }
+            return null;
+        }
+
+        private static int PatchTk2dTextMesh(Type tk2dTextMeshType, Action<MethodInfo, MethodInfo, MethodInfo> patcher)
+        {
+            int count = 0;
+            var prefix = typeof(TranslatorPatches).GetMethod(nameof(Tk2dTextMesh_SetText_Prefix), BindingFlags.Static | BindingFlags.Public);
+            var getterPostfix = typeof(TranslatorPatches).GetMethod(nameof(Tk2dTextMesh_GetText_Postfix), BindingFlags.Static | BindingFlags.Public);
+
+            var textProp = tk2dTextMeshType.GetProperty("text", BindingFlags.Public | BindingFlags.Instance);
+
+            // Patch the text property setter
+            if (textProp?.SetMethod != null)
+            {
+                try
+                {
+                    patcher(textProp.SetMethod, prefix, null);
+                    count++;
+                }
+                catch { }
+            }
+
+            // Patch the text property getter (for pre-loaded/deserialized text)
+            if (textProp?.GetMethod != null)
+            {
+                try
+                {
+                    patcher(textProp.GetMethod, null, getterPostfix);
+                    count++;
+                }
+                catch { }
+            }
+
+            // Also patch FormattedText getter (used for display)
+            var formattedTextProp = tk2dTextMeshType.GetProperty("FormattedText", BindingFlags.Public | BindingFlags.Instance);
+            if (formattedTextProp?.GetMethod != null)
+            {
+                try
+                {
+                    patcher(formattedTextProp.GetMethod, null, getterPostfix);
+                    count++;
+                }
+                catch { }
+            }
+
+            if (count > 0)
+            {
+                TranslatorCore.LogInfo($"[Patches] Patched {count} tk2dTextMesh methods");
+            }
+
+            return count;
+        }
+
+        /// <summary>
+        /// Finds all custom localization types in loaded assemblies.
+        /// Searches for types with names matching patterns like LocalisedString, LocalizedText, I18nString, etc.
+        /// </summary>
+        private static List<Type> FindCustomLocalizationTypes()
+        {
+            var results = new List<Type>();
+            var foundTypeNames = new HashSet<string>(); // Avoid duplicates
+
+            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                try
+                {
+                    // Skip system/Unity assemblies for performance
+                    string asmName = asm.GetName().Name;
+                    if (asmName.StartsWith("System") || asmName.StartsWith("mscorlib") ||
+                        asmName.StartsWith("Unity.") || asmName.StartsWith("UnityEngine."))
+                        continue;
+
+                    foreach (var type in asm.GetTypes())
+                    {
+                        try
+                        {
+                            if (IsLocalizationStringType(type) && !foundTypeNames.Contains(type.FullName))
+                            {
+                                results.Add(type);
+                                foundTypeNames.Add(type.FullName);
+                            }
+                        }
+                        catch { } // Skip types that fail to load
+                    }
+                }
+                catch { } // Skip assemblies that fail to enumerate
+            }
+
+            return results;
+        }
+
+        /// <summary>
+        /// Checks if a type matches the pattern for a localization string type.
+        /// </summary>
+        private static bool IsLocalizationStringType(Type type)
+        {
+            if (type == null || type.IsInterface || type.IsAbstract)
+                return false;
+
+            string typeName = type.Name;
+
+            // Check if excluded
+            if (ExcludedTypeNames.Contains(typeName))
+                return false;
+
+            // Check if name matches pattern: (locali|l10n|i18n|translat) + (string|text|entry|value)
+            string lowerName = typeName.ToLowerInvariant();
+
+            bool hasPrefix = false;
+            foreach (var prefix in LocalizationPrefixes)
+            {
+                if (lowerName.Contains(prefix))
+                {
+                    hasPrefix = true;
+                    break;
+                }
+            }
+
+            if (!hasPrefix) return false;
+
+            bool hasSuffix = false;
+            foreach (var suffix in LocalizationSuffixes)
+            {
+                if (lowerName.Contains(suffix))
+                {
+                    hasSuffix = true;
+                    break;
+                }
+            }
+
+            if (!hasSuffix) return false;
+
+            // Must have ToString() returning string OR op_Implicit to string
+            bool hasStringMethod = false;
+
+            // Check for ToString() override (not just inherited from object)
+            var toStringMethod = type.GetMethod("ToString", BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly, null, Type.EmptyTypes, null);
+            if (toStringMethod != null && toStringMethod.ReturnType == typeof(string))
+                hasStringMethod = true;
+
+            // Check for op_Implicit to string
+            var implicitMethods = type.GetMethods(BindingFlags.Public | BindingFlags.Static);
+            foreach (var method in implicitMethods)
+            {
+                if (method.Name == "op_Implicit" && method.ReturnType == typeof(string))
+                {
+                    hasStringMethod = true;
+                    break;
+                }
+            }
+
+            return hasStringMethod;
+        }
+
+        /// <summary>
+        /// Patches a custom localization type's ToString() and op_Implicit methods.
+        /// </summary>
+        private static int PatchCustomLocalizationType(Type locType, Action<MethodInfo, MethodInfo, MethodInfo> patcher)
+        {
+            int count = 0;
+            var postfix = typeof(TranslatorPatches).GetMethod(nameof(CustomLocalization_ToString_Postfix), BindingFlags.Static | BindingFlags.Public);
+
+            // Patch ToString() methods (declared in this type, not inherited)
+            var toStringMethods = locType.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+            foreach (var method in toStringMethods)
+            {
+                if (method.Name == "ToString" && method.ReturnType == typeof(string))
+                {
+                    try
+                    {
+                        patcher(method, null, postfix);
+                        count++;
+                    }
+                    catch { }
+                }
+            }
+
+            // Patch op_Implicit (string conversion)
+            var implicitMethods = locType.GetMethods(BindingFlags.Public | BindingFlags.Static);
+            foreach (var method in implicitMethods)
+            {
+                if (method.Name == "op_Implicit" && method.ReturnType == typeof(string))
+                {
+                    try
+                    {
+                        patcher(method, null, postfix);
+                        count++;
+                    }
+                    catch { }
+                }
+            }
+
+            if (count > 0)
+            {
+                TranslatorCore.LogInfo($"[Patches] Found custom localization: {locType.FullName} ({count} methods patched)");
+            }
+
+            return count;
         }
 
         private static int PatchStringTableEntry(Type stringTableEntryType, Action<MethodInfo, MethodInfo, MethodInfo> patcher)
@@ -184,6 +440,22 @@ namespace UnityGameTranslator.Core
             // try { __result = TranslatorCore.TranslateText(__result); } catch { }
         }
 
+        /// <summary>
+        /// Postfix for custom localization types' ToString() and op_Implicit.
+        /// Translates the localized string result before it's used.
+        /// Works with any localization system (TeamCherry, custom studios, etc.)
+        /// </summary>
+        public static void CustomLocalization_ToString_Postfix(ref string __result)
+        {
+            if (string.IsNullOrEmpty(__result)) return;
+            try
+            {
+                // Translate the localized string (no component context available)
+                __result = TranslatorCore.TranslateText(__result);
+            }
+            catch { }
+        }
+
         public static void TMPText_SetText_Prefix(TMP_Text __instance, ref string value)
         {
             if (string.IsNullOrEmpty(value)) return;
@@ -234,6 +506,67 @@ namespace UnityGameTranslator.Core
                 // Check if own UI (use UI-specific prompt) - uses hierarchy check
                 bool isOwnUI = TranslatorCore.IsOwnUITranslatable(__instance);
                 value = TranslatorCore.TranslateTextWithTracking(value, __instance, isOwnUI);
+            }
+            catch { }
+        }
+
+        public static void TextMesh_SetText_Prefix(TextMesh __instance, ref string value)
+        {
+            if (string.IsNullOrEmpty(value)) return;
+            try
+            {
+                // Skip if part of our own UI (uses hierarchy check)
+                if (TranslatorCore.ShouldSkipTranslation(__instance)) return;
+
+                // TextMesh is legacy 3D text, typically not used for UI input fields
+                // Check if own UI (use UI-specific prompt) - uses hierarchy check
+                bool isOwnUI = TranslatorCore.IsOwnUITranslatable(__instance);
+                value = TranslatorCore.TranslateTextWithTracking(value, __instance, isOwnUI);
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Prefix for tk2dTextMesh.text setter (2D Toolkit).
+        /// Uses object type since tk2dTextMesh is not available at compile time.
+        /// </summary>
+        public static void Tk2dTextMesh_SetText_Prefix(object __instance, ref string value)
+        {
+            if (string.IsNullOrEmpty(value)) return;
+            try
+            {
+                // tk2dTextMesh inherits from MonoBehaviour, so cast to Component for hierarchy checks
+                var component = __instance as Component;
+                if (component == null) return;
+
+                // Skip if part of our own UI (uses hierarchy check)
+                if (TranslatorCore.ShouldSkipTranslation(component)) return;
+
+                // Check if own UI (use UI-specific prompt) - uses hierarchy check
+                bool isOwnUI = TranslatorCore.IsOwnUITranslatable(component);
+                value = TranslatorCore.TranslateTextWithTracking(value, component, isOwnUI);
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Postfix for tk2dTextMesh.text and FormattedText getters.
+        /// Translates pre-loaded/deserialized text when it's read.
+        /// </summary>
+        public static void Tk2dTextMesh_GetText_Postfix(object __instance, ref string __result)
+        {
+            if (string.IsNullOrEmpty(__result)) return;
+            try
+            {
+                var component = __instance as Component;
+                if (component == null) return;
+
+                // Skip if part of our own UI
+                if (TranslatorCore.ShouldSkipTranslation(component)) return;
+
+                // Translate and track
+                bool isOwnUI = TranslatorCore.IsOwnUITranslatable(component);
+                __result = TranslatorCore.TranslateTextWithTracking(__result, component, isOwnUI);
             }
             catch { }
         }

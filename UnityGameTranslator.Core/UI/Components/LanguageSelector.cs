@@ -22,6 +22,11 @@ namespace UnityGameTranslator.Core.UI.Components
         private string _selectedLanguage;
         private Action<string> _onLanguageChanged;
 
+        /// <summary>
+        /// Event fired when the selection changes. Can have multiple subscribers.
+        /// </summary>
+        public event Action<string> OnSelectionChanged;
+
         // Configuration
         private readonly string _name;
         private readonly int _listHeight;
@@ -159,6 +164,7 @@ namespace UnityGameTranslator.Core.UI.Components
             UpdateSelectedLabel();
             Refresh();
             _onLanguageChanged?.Invoke(language);
+            OnSelectionChanged?.Invoke(language);
         }
 
         private void UpdateSelectedLabel()

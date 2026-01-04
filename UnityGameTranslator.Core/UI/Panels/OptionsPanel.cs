@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 using UnityEngine.UI;
@@ -76,6 +77,66 @@ namespace UnityGameTranslator.Core.UI.Panels
         private Text _fontsStatusLabel;
         private string[] _systemFonts;
 
+        // Pending font changes (fontName -> (enabled, fallback))
+        private Dictionary<string, (bool enabled, string fallback)> _pendingFontSettings = new Dictionary<string, (bool, string)>();
+        private Dictionary<string, (bool enabled, string fallback)> _initialFontSettings = new Dictionary<string, (bool, string)>();
+
+        // Pending exclusion changes
+        private HashSet<string> _pendingExclusionAdds = new HashSet<string>();
+        private HashSet<string> _pendingExclusionRemoves = new HashSet<string>();
+        private HashSet<string> _initialExclusions = new HashSet<string>();
+
+        // Apply button tracking
+        private ButtonRef _applyBtn;
+        private ConfigSnapshot _initialSnapshot;
+
+        /// <summary>
+        /// Snapshot of config values taken when panel opens.
+        /// Used to detect changes and update Apply button text.
+        /// </summary>
+        private class ConfigSnapshot
+        {
+            public bool enable_translations;
+            public bool translate_mod_ui;
+            public string source_language;
+            public string target_language;
+            public string settings_hotkey;
+            public bool capture_keys_only;
+            public bool enable_ollama;
+            public string ollama_url;
+            public string model;
+            public string game_context;
+            public bool strict_source_language;
+            public bool online_mode;
+            public bool check_update_on_start;
+            public bool notify_updates;
+            public bool auto_download;
+            public bool check_mod_updates;
+
+            public static ConfigSnapshot FromConfig()
+            {
+                return new ConfigSnapshot
+                {
+                    enable_translations = TranslatorCore.Config.enable_translations,
+                    translate_mod_ui = TranslatorCore.Config.translate_mod_ui,
+                    source_language = TranslatorCore.Config.source_language ?? "auto",
+                    target_language = TranslatorCore.Config.target_language ?? "auto",
+                    settings_hotkey = TranslatorCore.Config.settings_hotkey ?? "F10",
+                    capture_keys_only = TranslatorCore.Config.capture_keys_only,
+                    enable_ollama = TranslatorCore.Config.enable_ollama,
+                    ollama_url = TranslatorCore.Config.ollama_url ?? "http://localhost:11434",
+                    model = TranslatorCore.Config.model ?? "qwen3:8b",
+                    game_context = TranslatorCore.Config.game_context ?? "",
+                    strict_source_language = TranslatorCore.Config.strict_source_language,
+                    online_mode = TranslatorCore.Config.online_mode,
+                    check_update_on_start = TranslatorCore.Config.sync.check_update_on_start,
+                    notify_updates = TranslatorCore.Config.sync.notify_updates,
+                    auto_download = TranslatorCore.Config.sync.auto_download,
+                    check_mod_updates = TranslatorCore.Config.sync.check_mod_updates
+                };
+            }
+        }
+
         public OptionsPanel(UIBase owner) : base(owner)
         {
         }
@@ -148,9 +209,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             cancelBtn.OnClick += () => SetActive(false);
             RegisterUIText(cancelBtn.ButtonText);
 
-            var applyBtn = CreatePrimaryButton(buttonRow, "ApplyBtn", "Apply");
-            applyBtn.OnClick += ApplySettings;
-            RegisterUIText(applyBtn.ButtonText);
+            _applyBtn = CreatePrimaryButton(buttonRow, "ApplyBtn", "Apply");
+            _applyBtn.OnClick += OnApplyClicked;
+            RegisterUIText(_applyBtn.ButtonText);
+
+            // Setup change listeners for tracking pending changes
+            SetupChangeListeners();
         }
 
         private void CreateGeneralTabContent(GameObject parent)
@@ -553,35 +617,69 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private void OnFontEnableChanged(string fontName, bool enabled)
         {
-            var settings = FontManager.GetFontSettings(fontName);
-            string fallback = settings?.fallback;
-            FontManager.UpdateFontSettings(fontName, enabled, fallback);
+            // Get current pending state or initial state
+            string fallback;
+            if (_pendingFontSettings.TryGetValue(fontName, out var pending))
+            {
+                fallback = pending.fallback;
+            }
+            else if (_initialFontSettings.TryGetValue(fontName, out var initial))
+            {
+                fallback = initial.fallback;
+            }
+            else
+            {
+                var settings = FontManager.GetFontSettings(fontName);
+                fallback = settings?.fallback;
+            }
+
+            // Store pending change
+            _pendingFontSettings[fontName] = (enabled, fallback);
 
             if (_fontsStatusLabel != null)
             {
                 _fontsStatusLabel.text = enabled ? $"Translation enabled for {fontName}" : $"Translation disabled for {fontName}";
-                _fontsStatusLabel.color = UIStyles.StatusSuccess;
+                _fontsStatusLabel.color = UIStyles.TextSecondary;
             }
+
+            UpdateApplyButtonText();
         }
 
         private void OnFontFallbackChanged(string fontName, string fallbackFont)
         {
-            var settings = FontManager.GetFontSettings(fontName);
-            bool enabled = settings?.enabled ?? true;
-            FontManager.UpdateFontSettings(fontName, enabled, fallbackFont);
+            // Get current pending state or initial state
+            bool enabled;
+            if (_pendingFontSettings.TryGetValue(fontName, out var pending))
+            {
+                enabled = pending.enabled;
+            }
+            else if (_initialFontSettings.TryGetValue(fontName, out var initial))
+            {
+                enabled = initial.enabled;
+            }
+            else
+            {
+                var settings = FontManager.GetFontSettings(fontName);
+                enabled = settings?.enabled ?? true;
+            }
+
+            // Store pending change
+            _pendingFontSettings[fontName] = (enabled, fallbackFont);
 
             if (_fontsStatusLabel != null)
             {
                 if (string.IsNullOrEmpty(fallbackFont))
                 {
-                    _fontsStatusLabel.text = $"Fallback removed from {fontName}";
+                    _fontsStatusLabel.text = $"Fallback will be removed from {fontName}";
                 }
                 else
                 {
-                    _fontsStatusLabel.text = $"Fallback '{fallbackFont}' applied to {fontName}";
+                    _fontsStatusLabel.text = $"Fallback '{fallbackFont}' will be applied to {fontName}";
                 }
-                _fontsStatusLabel.color = UIStyles.StatusSuccess;
+                _fontsStatusLabel.color = UIStyles.TextSecondary;
             }
+
+            UpdateApplyButtonText();
         }
 
         private void CreateExclusionsTabContent(GameObject parent)
@@ -665,20 +763,34 @@ namespace UnityGameTranslator.Core.UI.Panels
                 return;
             }
 
-            // Check if already exists
-            if (TranslatorCore.UserExclusions.Contains(pattern))
+            // Check if already exists (in current list or pending adds)
+            bool alreadyExists = TranslatorCore.UserExclusions.Contains(pattern) ||
+                                 _pendingExclusionAdds.Contains(pattern);
+            bool wasRemoved = _pendingExclusionRemoves.Contains(pattern);
+
+            if (alreadyExists && !wasRemoved)
             {
                 _exclusionsStatusLabel.text = "Pattern already exists";
                 _exclusionsStatusLabel.color = UIStyles.StatusWarning;
                 return;
             }
 
-            TranslatorCore.AddExclusion(pattern);
+            // If it was pending removal, just cancel the removal
+            if (wasRemoved)
+            {
+                _pendingExclusionRemoves.Remove(pattern);
+            }
+            else
+            {
+                _pendingExclusionAdds.Add(pattern);
+            }
+
             _manualPatternInput.Text = "";
-            _exclusionsStatusLabel.text = "Pattern added";
-            _exclusionsStatusLabel.color = UIStyles.StatusSuccess;
+            _exclusionsStatusLabel.text = "Pattern will be added on Apply";
+            _exclusionsStatusLabel.color = UIStyles.TextSecondary;
 
             RefreshExclusionsList();
+            UpdateApplyButtonText();
         }
 
         private void RefreshExclusionsList()
@@ -691,10 +803,25 @@ namespace UnityGameTranslator.Core.UI.Panels
                 UnityEngine.Object.Destroy(child.gameObject);
             }
 
-            var exclusions = TranslatorCore.UserExclusions;
-            TranslatorCore.LogInfo($"[OptionsPanel] UserExclusions count: {exclusions.Count}");
+            // Build effective list: current - pending removes + pending adds
+            var effectiveExclusions = new List<(string pattern, bool isPending, bool isRemoved)>();
 
-            if (exclusions.Count == 0)
+            // Add current exclusions (mark removed ones)
+            foreach (var pattern in TranslatorCore.UserExclusions)
+            {
+                bool isRemoved = _pendingExclusionRemoves.Contains(pattern);
+                effectiveExclusions.Add((pattern, false, isRemoved));
+            }
+
+            // Add pending additions
+            foreach (var pattern in _pendingExclusionAdds)
+            {
+                effectiveExclusions.Add((pattern, true, false));
+            }
+
+            TranslatorCore.LogInfo($"[OptionsPanel] UserExclusions count: {effectiveExclusions.Count}");
+
+            if (effectiveExclusions.Count == 0)
             {
                 var emptyLabel = UIFactory.CreateLabel(_exclusionsListContainer, "EmptyLabel", "No exclusions defined", TextAnchor.MiddleCenter);
                 emptyLabel.color = UIStyles.TextMuted;
@@ -703,35 +830,74 @@ namespace UnityGameTranslator.Core.UI.Panels
                 return;
             }
 
-            foreach (var pattern in exclusions)
+            foreach (var (pattern, isPending, isRemoved) in effectiveExclusions)
             {
                 var row = UIStyles.CreateFormRow(_exclusionsListContainer, $"Row_{pattern.GetHashCode()}", UIStyles.RowHeightNormal, 5);
 
-                var patternLabel = UIFactory.CreateLabel(row, "PatternLabel", pattern, TextAnchor.MiddleLeft);
-                patternLabel.color = UIStyles.TextPrimary;
+                // Show pattern with visual indicator for pending state
+                string displayText = pattern;
+                if (isPending) displayText = $"+ {pattern}";
+                else if (isRemoved) displayText = $"- {pattern}";
+
+                var patternLabel = UIFactory.CreateLabel(row, "PatternLabel", displayText, TextAnchor.MiddleLeft);
                 patternLabel.fontSize = UIStyles.FontSizeSmall;
                 UIFactory.SetLayoutElement(patternLabel.gameObject, flexibleWidth: 9999);
 
-                var deleteBtn = CreateSecondaryButton(row, "DeleteBtn", "X", 30);
-                var capturedPattern = pattern; // Capture for closure
-                deleteBtn.OnClick += () => OnDeleteExclusionClicked(capturedPattern);
+                // Set color based on state
+                if (isPending)
+                {
+                    patternLabel.color = UIStyles.StatusSuccess;
+                }
+                else if (isRemoved)
+                {
+                    patternLabel.color = UIStyles.StatusError;
+                    // Note: Unity doesn't support strikethrough, using color only
+                }
+                else
+                {
+                    patternLabel.color = UIStyles.TextPrimary;
+                }
+
+                var deleteBtn = CreateSecondaryButton(row, "DeleteBtn", isRemoved ? "â†©" : "X", 30);
+                var capturedPattern = pattern;
+                var capturedIsRemoved = isRemoved;
+
+                if (isRemoved)
+                {
+                    // Undo removal
+                    deleteBtn.OnClick += () =>
+                    {
+                        _pendingExclusionRemoves.Remove(capturedPattern);
+                        RefreshExclusionsList();
+                        UpdateApplyButtonText();
+                    };
+                }
+                else
+                {
+                    deleteBtn.OnClick += () => OnDeleteExclusionClicked(capturedPattern);
+                }
             }
         }
 
         private void OnDeleteExclusionClicked(string pattern)
         {
-            if (TranslatorCore.RemoveExclusion(pattern))
+            // If it was a pending add, just remove from pending
+            if (_pendingExclusionAdds.Contains(pattern))
             {
-                TranslatorCore.SaveCache();
-                _exclusionsStatusLabel.text = "Pattern removed";
-                _exclusionsStatusLabel.color = UIStyles.StatusSuccess;
-                RefreshExclusionsList();
+                _pendingExclusionAdds.Remove(pattern);
+                _exclusionsStatusLabel.text = "Pending pattern cancelled";
+                _exclusionsStatusLabel.color = UIStyles.TextSecondary;
             }
             else
             {
-                _exclusionsStatusLabel.text = "Failed to remove pattern";
-                _exclusionsStatusLabel.color = UIStyles.StatusError;
+                // Mark for removal on Apply
+                _pendingExclusionRemoves.Add(pattern);
+                _exclusionsStatusLabel.text = "Pattern will be removed on Apply";
+                _exclusionsStatusLabel.color = UIStyles.TextSecondary;
             }
+
+            RefreshExclusionsList();
+            UpdateApplyButtonText();
         }
 
         private void CreateOnlineTabContent(GameObject parent)
@@ -905,6 +1071,28 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Refresh fonts list
             RefreshFontsList();
+
+            // Capture initial font settings for change tracking
+            _initialFontSettings.Clear();
+            _pendingFontSettings.Clear();
+            foreach (var fontInfo in FontManager.GetDetectedFontsInfo())
+            {
+                var settings = FontManager.GetFontSettings(fontInfo.Name);
+                _initialFontSettings[fontInfo.Name] = (settings?.enabled ?? true, settings?.fallback);
+            }
+
+            // Capture initial exclusions for change tracking
+            _initialExclusions.Clear();
+            _pendingExclusionAdds.Clear();
+            _pendingExclusionRemoves.Clear();
+            foreach (var pattern in TranslatorCore.UserExclusions)
+            {
+                _initialExclusions.Add(pattern);
+            }
+
+            // Take snapshot for change tracking and update button text
+            _initialSnapshot = ConfigSnapshot.FromConfig();
+            UpdateApplyButtonText();
         }
 
         private void UpdateLanguagesLocked()
@@ -1124,6 +1312,22 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TranslatorCore.Config.sync.auto_download = _autoDownloadToggle.isOn;
                 TranslatorCore.Config.sync.check_mod_updates = _checkModUpdatesToggle.isOn;
 
+                // Apply pending font changes
+                foreach (var kvp in _pendingFontSettings)
+                {
+                    FontManager.UpdateFontSettings(kvp.Key, kvp.Value.enabled, kvp.Value.fallback);
+                }
+
+                // Apply pending exclusion changes
+                foreach (var pattern in _pendingExclusionAdds)
+                {
+                    TranslatorCore.AddExclusion(pattern);
+                }
+                foreach (var pattern in _pendingExclusionRemoves)
+                {
+                    TranslatorCore.RemoveExclusion(pattern);
+                }
+
                 TranslatorCore.SaveConfig();
                 TranslatorCore.LogInfo("[Options] Settings saved successfully");
 
@@ -1141,13 +1345,169 @@ namespace UnityGameTranslator.Core.UI.Panels
                     TranslatorCore.ClearQueue();
                 }
 
-                SetActive(false);
+                // Update snapshots after apply (no pending changes now)
+                _initialSnapshot = ConfigSnapshot.FromConfig();
+
+                // Update initial font settings
+                _initialFontSettings.Clear();
+                foreach (var fontInfo in FontManager.GetDetectedFontsInfo())
+                {
+                    var settings = FontManager.GetFontSettings(fontInfo.Name);
+                    _initialFontSettings[fontInfo.Name] = (settings?.enabled ?? true, settings?.fallback);
+                }
+                _pendingFontSettings.Clear();
+
+                // Update initial exclusions
+                _initialExclusions.Clear();
+                foreach (var pattern in TranslatorCore.UserExclusions)
+                {
+                    _initialExclusions.Add(pattern);
+                }
+                _pendingExclusionAdds.Clear();
+                _pendingExclusionRemoves.Clear();
+
+                // Refresh lists to show applied state
+                RefreshFontsList();
+                RefreshExclusionsList();
+
+                UpdateApplyButtonText();
             }
             catch (Exception e)
             {
                 TranslatorCore.LogError($"[Options] Failed to save settings: {e.Message}");
                 _ollamaTestStatusLabel.text = $"Save failed: {e.Message}";
                 _ollamaTestStatusLabel.color = UIStyles.StatusError;
+            }
+        }
+
+        /// <summary>
+        /// Called when Apply button is clicked. Applies settings if there are changes,
+        /// or closes the panel if there are no pending changes.
+        /// </summary>
+        private void OnApplyClicked()
+        {
+            int changes = CountPendingChanges();
+            if (changes > 0)
+            {
+                ApplySettings();
+            }
+            else
+            {
+                // No changes - just close
+                SetActive(false);
+            }
+        }
+
+        /// <summary>
+        /// Sets up change listeners on all configurable controls to track pending changes.
+        /// </summary>
+        private void SetupChangeListeners()
+        {
+            // Toggles
+            _enableTranslationsToggle.onValueChanged.AddListener(_ => UpdateApplyButtonText());
+            _translateModUIToggle.onValueChanged.AddListener(_ => UpdateApplyButtonText());
+            _captureKeysOnlyToggle.onValueChanged.AddListener(_ => UpdateApplyButtonText());
+            _enableOllamaToggle.onValueChanged.AddListener(_ => UpdateApplyButtonText());
+            _strictSourceToggle.onValueChanged.AddListener(_ => UpdateApplyButtonText());
+            _onlineModeToggle.onValueChanged.AddListener(_ => UpdateApplyButtonText());
+            _checkUpdatesToggle.onValueChanged.AddListener(_ => UpdateApplyButtonText());
+            _notifyUpdatesToggle.onValueChanged.AddListener(_ => UpdateApplyButtonText());
+            _autoDownloadToggle.onValueChanged.AddListener(_ => UpdateApplyButtonText());
+            _checkModUpdatesToggle.onValueChanged.AddListener(_ => UpdateApplyButtonText());
+
+            // Input fields
+            _ollamaUrlInput.OnValueChanged += _ => UpdateApplyButtonText();
+            _modelInput.OnValueChanged += _ => UpdateApplyButtonText();
+            _gameContextInput.OnValueChanged += _ => UpdateApplyButtonText();
+
+            // Language selectors - hook into their change events
+            _sourceLanguageSelector.OnSelectionChanged += _ => UpdateApplyButtonText();
+            _targetLanguageSelector.OnSelectionChanged += _ => UpdateApplyButtonText();
+
+            // Hotkey capture
+            _hotkeyCapture.OnHotkeyChanged += _ => UpdateApplyButtonText();
+        }
+
+        /// <summary>
+        /// Counts how many settings differ from their initial values.
+        /// </summary>
+        private int CountPendingChanges()
+        {
+            if (_initialSnapshot == null) return 0;
+
+            int count = 0;
+
+            // General
+            if (_enableTranslationsToggle.isOn != _initialSnapshot.enable_translations) count++;
+            if (_translateModUIToggle.isOn != _initialSnapshot.translate_mod_ui) count++;
+
+            // Languages
+            string currentSource = _sourceLanguageSelector.SelectedLanguage;
+            string snapshotSource = _initialSnapshot.source_language == "auto" ? "auto (Detect)" : _initialSnapshot.source_language;
+            if (currentSource != snapshotSource) count++;
+
+            string currentTarget = _targetLanguageSelector.SelectedLanguage;
+            string snapshotTarget = _initialSnapshot.target_language == "auto" ? "auto (System)" : _initialSnapshot.target_language;
+            if (currentTarget != snapshotTarget) count++;
+
+            // Hotkey
+            if (_hotkeyCapture.HotkeyString != _initialSnapshot.settings_hotkey) count++;
+
+            // Translation (Capture + Ollama)
+            if (_captureKeysOnlyToggle.isOn != _initialSnapshot.capture_keys_only) count++;
+            if (_enableOllamaToggle.isOn != _initialSnapshot.enable_ollama) count++;
+            if (_ollamaUrlInput.Text != _initialSnapshot.ollama_url) count++;
+            if (_modelInput.Text != _initialSnapshot.model) count++;
+            if (_gameContextInput.Text != _initialSnapshot.game_context) count++;
+            if (_strictSourceToggle.isOn != _initialSnapshot.strict_source_language) count++;
+
+            // Online
+            if (_onlineModeToggle.isOn != _initialSnapshot.online_mode) count++;
+            if (_checkUpdatesToggle.isOn != _initialSnapshot.check_update_on_start) count++;
+            if (_notifyUpdatesToggle.isOn != _initialSnapshot.notify_updates) count++;
+            if (_autoDownloadToggle.isOn != _initialSnapshot.auto_download) count++;
+            if (_checkModUpdatesToggle.isOn != _initialSnapshot.check_mod_updates) count++;
+
+            // Fonts - count fonts that differ from initial
+            foreach (var kvp in _pendingFontSettings)
+            {
+                if (_initialFontSettings.TryGetValue(kvp.Key, out var initial))
+                {
+                    if (kvp.Value.enabled != initial.enabled || kvp.Value.fallback != initial.fallback)
+                    {
+                        count++;
+                    }
+                }
+                else
+                {
+                    // New font not in initial - count as change
+                    count++;
+                }
+            }
+
+            // Exclusions - count adds and removes
+            count += _pendingExclusionAdds.Count;
+            count += _pendingExclusionRemoves.Count;
+
+            return count;
+        }
+
+        /// <summary>
+        /// Updates the Apply button text based on pending changes count.
+        /// Shows "Apply (x)" when there are changes, "Close" when there are none.
+        /// </summary>
+        private void UpdateApplyButtonText()
+        {
+            if (_applyBtn == null) return;
+
+            int changes = CountPendingChanges();
+            if (changes > 0)
+            {
+                _applyBtn.ButtonText.text = $"Apply ({changes})";
+            }
+            else
+            {
+                _applyBtn.ButtonText.text = "Close";
             }
         }
     }

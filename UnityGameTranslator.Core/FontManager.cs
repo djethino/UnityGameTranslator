@@ -388,7 +388,7 @@ namespace UnityGameTranslator.Core
                 var tmpAsset = CreateTMPFontAsset(unityFont);
                 if (tmpAsset == null)
                 {
-                    TranslatorCore.LogError("[FontManager] Failed to create TMP_FontAsset");
+                    TranslatorCore.LogWarning($"[FontManager] Failed to create TMP_FontAsset from '{systemFontName}' - TMP version may not support dynamic font creation");
                     return null;
                 }
 

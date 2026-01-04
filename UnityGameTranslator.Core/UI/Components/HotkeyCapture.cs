@@ -31,6 +31,11 @@ namespace UnityGameTranslator.Core.UI.Components
         private Action<string> _onHotkeyChanged;
 
         /// <summary>
+        /// Event fired when the hotkey changes. Can have multiple subscribers.
+        /// </summary>
+        public event Action<string> OnHotkeyChanged;
+
+        /// <summary>
         /// Whether currently capturing a key press.
         /// </summary>
         public bool IsCapturing => _isCapturing;
@@ -217,6 +222,7 @@ namespace UnityGameTranslator.Core.UI.Components
         private void NotifyChange()
         {
             _onHotkeyChanged?.Invoke(HotkeyString);
+            OnHotkeyChanged?.Invoke(HotkeyString);
         }
     }
 }

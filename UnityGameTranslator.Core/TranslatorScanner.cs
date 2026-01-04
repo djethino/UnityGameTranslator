@@ -63,6 +63,11 @@ namespace UnityGameTranslator.Core
         // Track components that are part of our own UI (UniverseLib/UnityGameTranslator) - never translate
         private static HashSet<int> ownUIComponentIds = new HashSet<int>();
 
+        // Track original text per component (before translation was applied)
+        // Key: component InstanceID, Value: original text before translation
+        // Used to restore originals when translations are disabled at runtime
+        private static Dictionary<int, string> componentOriginals = new Dictionary<int, string>();
+
         #endregion
 
         // Logging flags (one-time)
@@ -100,6 +105,7 @@ namespace UnityGameTranslator.Core
             cacheRefreshPending = false;
             processedTextHashes.Clear();
             inputFieldTextIds.Clear();
+            componentOriginals.Clear();  // Clear original text tracking (components are invalid after scene change)
             scanLoggedTMP = false;
             scanLoggedUI = false;
             inputFieldDebugLogCount = 0;
@@ -122,6 +128,455 @@ namespace UnityGameTranslator.Core
             currentBatchIndexUI = 0;
             scanCycleComplete = true;
         }
+
+        /// <summary>
+        /// Force refresh all text components by re-assigning their text.
+        /// If translations are disabled, restores original texts from cache.
+        /// This triggers Harmony patches to re-process and apply translations/fonts.
+        /// Call after changing settings that affect text display (fonts, translations).
+        /// </summary>
+        public static void ForceRefreshAllText()
+        {
+            int refreshed = 0;
+            int restored = 0;
+
+            // Check if we should restore originals (translations disabled)
+            bool shouldRestore = !TranslatorCore.Config.enable_translations;
+
+            try
+            {
+                // Refresh cached Mono UI.Text components
+                if (cachedUIMono != null)
+                {
+                    foreach (var ui in cachedUIMono)
+                    {
+                        if (ui == null) continue;
+                        try
+                        {
+                            int instanceId = ui.GetInstanceID();
+
+                            if (shouldRestore)
+                            {
+                                // Try to restore original if we have it
+                                string original = GetOriginalText(instanceId);
+                                if (original != null)
+                                {
+                                    ui.text = original;
+                                    ClearOriginalText(instanceId);
+                                    processedTextHashes.Remove(instanceId);
+                                    restored++;
+                                    continue;
+                                }
+                            }
+
+                            // Normal refresh path (trigger Harmony patch)
+                            string currentText = ui.text;
+                            if (!string.IsNullOrEmpty(currentText))
+                            {
+                                ui.text = currentText;
+                                refreshed++;
+                            }
+                        }
+                        catch { }
+                    }
+                }
+
+                // Refresh cached Mono TMP components
+                if (cachedTMPMono != null)
+                {
+                    foreach (var tmp in cachedTMPMono)
+                    {
+                        if (tmp == null) continue;
+                        try
+                        {
+                            int instanceId = tmp.GetInstanceID();
+
+                            if (shouldRestore)
+                            {
+                                string original = GetOriginalText(instanceId);
+                                if (original != null)
+                                {
+                                    tmp.text = original;
+                                    ClearOriginalText(instanceId);
+                                    processedTextHashes.Remove(instanceId);
+                                    restored++;
+                                    continue;
+                                }
+                            }
+
+                            string currentText = tmp.text;
+                            if (!string.IsNullOrEmpty(currentText))
+                            {
+                                tmp.text = currentText;
+                                refreshed++;
+                            }
+                        }
+                        catch { }
+                    }
+                }
+
+                // Refresh cached IL2CPP components (if available)
+                if (cachedUIComponents != null && tryCastTextMethod != null)
+                {
+                    foreach (var obj in cachedUIComponents)
+                    {
+                        if (obj == null) continue;
+                        try
+                        {
+                            var ui = tryCastTextMethod.Invoke(null, new object[] { obj }) as Text;
+                            if (ui == null) continue;
+
+                            int instanceId = ui.GetInstanceID();
+
+                            if (shouldRestore)
+                            {
+                                string original = GetOriginalText(instanceId);
+                                if (original != null)
+                                {
+                                    ui.text = original;
+                                    ClearOriginalText(instanceId);
+                                    processedTextHashes.Remove(instanceId);
+                                    restored++;
+                                    continue;
+                                }
+                            }
+
+                            string currentText = ui.text;
+                            if (!string.IsNullOrEmpty(currentText))
+                            {
+                                ui.text = currentText;
+                                refreshed++;
+                            }
+                        }
+                        catch { }
+                    }
+                }
+
+                if (cachedTMPComponents != null && tryCastTMPMethod != null)
+                {
+                    foreach (var obj in cachedTMPComponents)
+                    {
+                        if (obj == null) continue;
+                        try
+                        {
+                            var tmp = tryCastTMPMethod.Invoke(null, new object[] { obj }) as TMP_Text;
+                            if (tmp == null) continue;
+
+                            int instanceId = tmp.GetInstanceID();
+
+                            if (shouldRestore)
+                            {
+                                string original = GetOriginalText(instanceId);
+                                if (original != null)
+                                {
+                                    tmp.text = original;
+                                    ClearOriginalText(instanceId);
+                                    processedTextHashes.Remove(instanceId);
+                                    restored++;
+                                    continue;
+                                }
+                            }
+
+                            string currentText = tmp.text;
+                            if (!string.IsNullOrEmpty(currentText))
+                            {
+                                tmp.text = currentText;
+                                refreshed++;
+                            }
+                        }
+                        catch { }
+                    }
+                }
+
+                if (restored > 0)
+                    TranslatorCore.LogInfo($"[Scanner] Restored {restored} original texts, refreshed {refreshed} components");
+                else
+                    TranslatorCore.LogInfo($"[Scanner] Force refreshed {refreshed} text components");
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogWarning($"[Scanner] ForceRefreshAllText error: {ex.Message}");
+            }
+        }
+
+        #region Original Text Tracking
+
+        /// <summary>
+        /// Store the original (untranslated) text for a component.
+        /// Called when translation is applied. Only stores on first translation (preserves true original).
+        /// </summary>
+        public static void StoreOriginalText(object component, string originalText)
+        {
+            if (component == null || string.IsNullOrEmpty(originalText)) return;
+
+            int instanceId = GetComponentInstanceId(component);
+            if (instanceId == -1) return;
+
+            // Only store if not already stored (first translation wins - preserves true original)
+            if (!componentOriginals.ContainsKey(instanceId))
+            {
+                componentOriginals[instanceId] = originalText;
+            }
+        }
+
+        /// <summary>
+        /// Get the original (untranslated) text for a component.
+        /// Returns null if no original stored (component was never translated).
+        /// </summary>
+        public static string GetOriginalText(object component)
+        {
+            if (component == null) return null;
+
+            int instanceId = GetComponentInstanceId(component);
+            if (instanceId == -1) return null;
+
+            if (componentOriginals.TryGetValue(instanceId, out string original))
+                return original;
+
+            return null;
+        }
+
+        /// <summary>
+        /// Get the original text by instance ID directly.
+        /// </summary>
+        public static string GetOriginalText(int instanceId)
+        {
+            if (componentOriginals.TryGetValue(instanceId, out string original))
+                return original;
+            return null;
+        }
+
+        /// <summary>
+        /// Clear the stored original for a component (after restoration).
+        /// </summary>
+        public static void ClearOriginalText(int instanceId)
+        {
+            componentOriginals.Remove(instanceId);
+        }
+
+        /// <summary>
+        /// Helper to get InstanceID from various component types.
+        /// </summary>
+        private static int GetComponentInstanceId(object component)
+        {
+            if (component is TMP_Text tmp)
+                return tmp.GetInstanceID();
+            if (component is Text ui)
+                return ui.GetInstanceID();
+            if (component is Component c)
+                return c.GetInstanceID();
+            return -1;
+        }
+
+        /// <summary>
+        /// Restore originals for components using a specific font.
+        /// Call when per-font translation is disabled.
+        /// </summary>
+        public static void RestoreOriginalsForFont(string fontName)
+        {
+            if (string.IsNullOrEmpty(fontName)) return;
+            int restored = 0;
+
+            try
+            {
+                // Restore TMP components with this font
+                if (cachedTMPMono != null)
+                {
+                    foreach (var tmp in cachedTMPMono)
+                    {
+                        if (tmp == null || tmp.font == null) continue;
+                        if (tmp.font.name != fontName) continue;
+
+                        int id = tmp.GetInstanceID();
+                        string original = GetOriginalText(id);
+                        if (original != null)
+                        {
+                            tmp.text = original;
+                            ClearOriginalText(id);
+                            processedTextHashes.Remove(id);
+                            restored++;
+                        }
+                    }
+                }
+
+                // Restore Unity UI.Text components with this font
+                if (cachedUIMono != null)
+                {
+                    foreach (var ui in cachedUIMono)
+                    {
+                        if (ui == null || ui.font == null) continue;
+                        if (ui.font.name != fontName) continue;
+
+                        int id = ui.GetInstanceID();
+                        string original = GetOriginalText(id);
+                        if (original != null)
+                        {
+                            ui.text = original;
+                            ClearOriginalText(id);
+                            processedTextHashes.Remove(id);
+                            restored++;
+                        }
+                    }
+                }
+
+                // IL2CPP TMP components
+                if (cachedTMPComponents != null && tryCastTMPMethod != null)
+                {
+                    foreach (var obj in cachedTMPComponents)
+                    {
+                        if (obj == null) continue;
+                        var tmp = tryCastTMPMethod.Invoke(null, new object[] { obj }) as TMP_Text;
+                        if (tmp == null || tmp.font == null) continue;
+                        if (tmp.font.name != fontName) continue;
+
+                        int id = tmp.GetInstanceID();
+                        string original = GetOriginalText(id);
+                        if (original != null)
+                        {
+                            tmp.text = original;
+                            ClearOriginalText(id);
+                            processedTextHashes.Remove(id);
+                            restored++;
+                        }
+                    }
+                }
+
+                // IL2CPP UI.Text components
+                if (cachedUIComponents != null && tryCastTextMethod != null)
+                {
+                    foreach (var obj in cachedUIComponents)
+                    {
+                        if (obj == null) continue;
+                        var ui = tryCastTextMethod.Invoke(null, new object[] { obj }) as Text;
+                        if (ui == null || ui.font == null) continue;
+                        if (ui.font.name != fontName) continue;
+
+                        int id = ui.GetInstanceID();
+                        string original = GetOriginalText(id);
+                        if (original != null)
+                        {
+                            ui.text = original;
+                            ClearOriginalText(id);
+                            processedTextHashes.Remove(id);
+                            restored++;
+                        }
+                    }
+                }
+
+                if (restored > 0)
+                    TranslatorCore.LogInfo($"[Scanner] Restored {restored} originals for font: {fontName}");
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogWarning($"[Scanner] RestoreOriginalsForFont error: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Re-translate components for a specific font.
+        /// Call when per-font translation is re-enabled.
+        /// </summary>
+        public static void RefreshForFont(string fontName)
+        {
+            if (string.IsNullOrEmpty(fontName)) return;
+            int refreshed = 0;
+
+            try
+            {
+                // Refresh TMP components with this font
+                if (cachedTMPMono != null)
+                {
+                    foreach (var tmp in cachedTMPMono)
+                    {
+                        if (tmp == null || tmp.font == null) continue;
+                        if (tmp.font.name != fontName) continue;
+
+                        int id = tmp.GetInstanceID();
+                        processedTextHashes.Remove(id); // Force re-evaluation
+
+                        string currentText = tmp.text;
+                        if (!string.IsNullOrEmpty(currentText))
+                        {
+                            tmp.text = currentText; // Trigger Harmony patch
+                            refreshed++;
+                        }
+                    }
+                }
+
+                // Refresh Unity UI.Text components with this font
+                if (cachedUIMono != null)
+                {
+                    foreach (var ui in cachedUIMono)
+                    {
+                        if (ui == null || ui.font == null) continue;
+                        if (ui.font.name != fontName) continue;
+
+                        int id = ui.GetInstanceID();
+                        processedTextHashes.Remove(id);
+
+                        string currentText = ui.text;
+                        if (!string.IsNullOrEmpty(currentText))
+                        {
+                            ui.text = currentText;
+                            refreshed++;
+                        }
+                    }
+                }
+
+                // IL2CPP TMP components
+                if (cachedTMPComponents != null && tryCastTMPMethod != null)
+                {
+                    foreach (var obj in cachedTMPComponents)
+                    {
+                        if (obj == null) continue;
+                        var tmp = tryCastTMPMethod.Invoke(null, new object[] { obj }) as TMP_Text;
+                        if (tmp == null || tmp.font == null) continue;
+                        if (tmp.font.name != fontName) continue;
+
+                        int id = tmp.GetInstanceID();
+                        processedTextHashes.Remove(id);
+
+                        string currentText = tmp.text;
+                        if (!string.IsNullOrEmpty(currentText))
+                        {
+                            tmp.text = currentText;
+                            refreshed++;
+                        }
+                    }
+                }
+
+                // IL2CPP UI.Text components
+                if (cachedUIComponents != null && tryCastTextMethod != null)
+                {
+                    foreach (var obj in cachedUIComponents)
+                    {
+                        if (obj == null) continue;
+                        var ui = tryCastTextMethod.Invoke(null, new object[] { obj }) as Text;
+                        if (ui == null || ui.font == null) continue;
+                        if (ui.font.name != fontName) continue;
+
+                        int id = ui.GetInstanceID();
+                        processedTextHashes.Remove(id);
+
+                        string currentText = ui.text;
+                        if (!string.IsNullOrEmpty(currentText))
+                        {
+                            ui.text = currentText;
+                            refreshed++;
+                        }
+                    }
+                }
+
+                if (refreshed > 0)
+                    TranslatorCore.LogInfo($"[Scanner] Refreshed {refreshed} components for font: {fontName}");
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogWarning($"[Scanner] RefreshForFont error: {ex.Message}");
+            }
+        }
+
+        #endregion
 
         /// <summary>
         /// Check if scanning should be skipped (no useful work to do).
@@ -700,6 +1155,9 @@ namespace UnityGameTranslator.Core
 
                         if (actualText == originalText)
                         {
+                            // Store original before applying translation (enables runtime toggle restoration)
+                            StoreOriginalText(comp, originalText);
+
                             tmp.text = translation;
 
                             // Force visual refresh by toggling enabled state
@@ -724,6 +1182,9 @@ namespace UnityGameTranslator.Core
 
                         if (actualText == originalText)
                         {
+                            // Store original before applying translation (enables runtime toggle restoration)
+                            StoreOriginalText(comp, originalText);
+
                             ui.text = translation;
 
                             // Force visual refresh by toggling enabled state

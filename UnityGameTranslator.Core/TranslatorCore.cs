@@ -51,6 +51,14 @@ namespace UnityGameTranslator.Core
         public static string ModFolder { get; private set; }
         public static bool DebugMode { get; private set; } = false;
         public static string FileUuid { get; private set; }
+
+        /// <summary>
+        /// Per-font settings for translation and fallback.
+        /// Stored in translations.json as _fonts for sharing.
+        /// Key = font name, Value = settings (enabled, fallback)
+        /// </summary>
+        public static Dictionary<string, FontSettings> FontSettingsMap { get; set; } = new Dictionary<string, FontSettings>();
+
         public static GameInfo CurrentGame { get; internal set; }
 
         /// <summary>
@@ -106,6 +114,7 @@ namespace UnityGameTranslator.Core
         private static HttpClient httpClient;
         private static int skippedTargetLang = 0;
         private static int skippedAlreadyTranslated = 0;
+        private static bool _enableTranslationsLogOnce = true; // Log once when translations disabled
 
         // Reverse cache: all translated values (to detect already-translated text)
         private static HashSet<string> translatedTexts = new HashSet<string>();
@@ -536,6 +545,9 @@ namespace UnityGameTranslator.Core
 
             LoadConfig();
 
+            // Initialize font manager for non-Latin script support
+            FontManager.Initialize();
+
             httpClient = new HttpClient();
             httpClient.Timeout = TimeSpan.FromMinutes(5);
 
@@ -655,7 +667,7 @@ namespace UnityGameTranslator.Core
                     }
                 }
 
-                Adapter.LogInfo("Loaded config file");
+                Adapter.LogInfo($"Loaded config file (enable_translations={Config.enable_translations})");
             }
             catch (Exception e)
             {
@@ -778,6 +790,24 @@ namespace UnityGameTranslator.Core
                             }
                         }
                         Adapter?.LogInfo($"[LoadCache] Loaded {userExclusions.Count} user exclusions");
+                    }
+                    else if (prop.Name == "_fonts" && prop.Value.Type == JTokenType.Object)
+                    {
+                        // Load per-font settings
+                        FontSettingsMap.Clear();
+                        foreach (var fontProp in (prop.Value as JObject).Properties())
+                        {
+                            var settings = new FontSettings();
+                            var fontObj = fontProp.Value as JObject;
+                            if (fontObj != null)
+                            {
+                                settings.enabled = fontObj["enabled"]?.Value<bool>() ?? true;
+                                settings.fallback = fontObj["fallback"]?.Value<string>();
+                                settings.type = fontObj["type"]?.Value<string>();
+                            }
+                            FontSettingsMap[fontProp.Name] = settings;
+                        }
+                        Adapter?.LogInfo($"[LoadCache] Loaded {FontSettingsMap.Count} font settings");
                     }
                     else if (!prop.Name.StartsWith("_"))
                     {
@@ -1943,6 +1973,10 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static string TranslateText(string text)
         {
+            // Check if translations are disabled
+            if (!Config.enable_translations)
+                return text;
+
             if (string.IsNullOrEmpty(text) || text.Length < 2)
                 return text;
 
@@ -2063,7 +2097,15 @@ namespace UnityGameTranslator.Core
         {
             // Check if translations are disabled
             if (!Config.enable_translations)
+            {
+                // Debug: log first time to confirm this check works
+                if (_enableTranslationsLogOnce)
+                {
+                    _enableTranslationsLogOnce = false;
+                    LogInfo($"[TranslatorCore] enable_translations=false, skipping translation");
+                }
                 return text;
+            }
 
             if (string.IsNullOrEmpty(text) || text.Length < 2)
                 return text;
@@ -2162,6 +2204,11 @@ namespace UnityGameTranslator.Core
             // This prevents the game from reading back translated text and appending to it
             if (translation != null)
             {
+                // Store original text for this component (enables runtime toggle restoration)
+                if (component != null)
+                {
+                    TranslatorScanner.StoreOriginalText(component, text);
+                }
                 return translation;
             }
 
@@ -2333,6 +2380,22 @@ namespace UnityGameTranslator.Core
                             exclusionsArray.Add(pattern);
                         }
                         output["_exclusions"] = exclusionsArray;
+                    }
+
+                    // Save per-font settings
+                    if (FontSettingsMap.Count > 0)
+                    {
+                        var fontsObj = new JObject();
+                        foreach (var kvp in FontSettingsMap)
+                        {
+                            fontsObj[kvp.Key] = new JObject
+                            {
+                                ["enabled"] = kvp.Value.enabled,
+                                ["fallback"] = kvp.Value.fallback,
+                                ["type"] = kvp.Value.type
+                            };
+                        }
+                        output["_fonts"] = fontsObj;
                     }
 
                     // Sorted translations with new format {"v": "value", "t": "tag"}
@@ -2706,5 +2769,29 @@ namespace UnityGameTranslator.Core
         /// How the steam_id was detected: "steam_appid.txt", "appmanifest", or null if not detected
         /// </summary>
         public string detection_method { get; set; }
+    }
+
+    /// <summary>
+    /// Per-font settings for translation control and fallback fonts.
+    /// Stored in translations.json as _fonts for sharing with translations.
+    /// </summary>
+    public class FontSettings
+    {
+        /// <summary>
+        /// Whether to translate text using this font.
+        /// Set to false for bitmap fonts that can't display non-Latin characters.
+        /// </summary>
+        public bool enabled { get; set; } = true;
+
+        /// <summary>
+        /// System font name to use as fallback for missing glyphs.
+        /// Only applies to TMP fonts that support fallback.
+        /// </summary>
+        public string fallback { get; set; }
+
+        /// <summary>
+        /// Font type detected: "TMP", "Unity", "TextMesh", "tk2d"
+        /// </summary>
+        public string type { get; set; }
     }
 }

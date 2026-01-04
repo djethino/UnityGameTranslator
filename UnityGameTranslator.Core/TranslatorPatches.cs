@@ -461,6 +461,16 @@ namespace UnityGameTranslator.Core
             if (string.IsNullOrEmpty(value)) return;
             try
             {
+                // Register font for fallback management (non-Latin script support)
+                if (__instance.font != null)
+                {
+                    FontManager.RegisterFont(__instance.font);
+
+                    // Skip translation if disabled for this font
+                    if (!FontManager.IsTranslationEnabled(__instance.font))
+                        return;
+                }
+
                 // Skip if part of our own UI and should not be translated (uses hierarchy check)
                 if (TranslatorCore.ShouldSkipTranslation(__instance)) return;
 
@@ -479,6 +489,16 @@ namespace UnityGameTranslator.Core
             if (string.IsNullOrEmpty(__0)) return;
             try
             {
+                // Register font for fallback management (non-Latin script support)
+                if (__instance.font != null)
+                {
+                    FontManager.RegisterFont(__instance.font);
+
+                    // Skip translation if disabled for this font
+                    if (!FontManager.IsTranslationEnabled(__instance.font))
+                        return;
+                }
+
                 // Skip if part of our own UI and should not be translated (uses hierarchy check)
                 if (TranslatorCore.ShouldSkipTranslation(__instance)) return;
 
@@ -497,6 +517,23 @@ namespace UnityGameTranslator.Core
             if (string.IsNullOrEmpty(value)) return;
             try
             {
+                // Register font for detection (Unity UI fonts)
+                if (__instance.font != null)
+                {
+                    FontManager.RegisterFont(__instance.font);
+
+                    // Skip translation if disabled for this font
+                    if (!FontManager.IsTranslationEnabled(__instance.font))
+                        return;
+
+                    // Apply replacement font if configured (for non-Latin script support)
+                    var replacementFont = FontManager.GetUnityReplacementFont(__instance.font);
+                    if (replacementFont != null)
+                    {
+                        __instance.font = replacementFont;
+                    }
+                }
+
                 // Skip if part of our own UI and should not be translated (uses hierarchy check)
                 if (TranslatorCore.ShouldSkipTranslation(__instance)) return;
 
@@ -515,6 +552,16 @@ namespace UnityGameTranslator.Core
             if (string.IsNullOrEmpty(value)) return;
             try
             {
+                // Register font for detection (legacy 3D text)
+                if (__instance.font != null)
+                {
+                    FontManager.RegisterFont(__instance.font);
+
+                    // Skip translation if disabled for this font
+                    if (!FontManager.IsTranslationEnabled(__instance.font))
+                        return;
+                }
+
                 // Skip if part of our own UI (uses hierarchy check)
                 if (TranslatorCore.ShouldSkipTranslation(__instance)) return;
 

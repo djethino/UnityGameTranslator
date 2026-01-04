@@ -71,6 +71,11 @@ namespace UnityGameTranslator.Core.UI.Panels
         private InputFieldRef _manualPatternInput;
         private Text _exclusionsStatusLabel;
 
+        // Fonts section
+        private GameObject _fontsListContainer;
+        private Text _fontsStatusLabel;
+        private string[] _systemFonts;
+
         public OptionsPanel(UIBase owner) : base(owner)
         {
         }
@@ -118,6 +123,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             var generalTab = _tabBar.AddTab("General");
             var hotkeysTab = _tabBar.AddTab("Hotkeys");
             var translationTab = _tabBar.AddTab("Translation");
+            var fontsTab = _tabBar.AddTab("Fonts");
             var exclusionsTab = _tabBar.AddTab("Exclusions");
             var onlineTab = _tabBar.AddTab("Online");
 
@@ -131,6 +137,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             CreateGeneralTabContent(generalTab);
             CreateHotkeysTabContent(hotkeysTab);
             CreateTranslationTabContent(translationTab);
+            CreateFontsTabContent(fontsTab);
             CreateExclusionsTabContent(exclusionsTab);
             CreateOnlineTabContent(onlineTab);
 
@@ -367,6 +374,214 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             var strictHint = UIStyles.CreateHint(card, "StrictHint", "Skip texts not matching source language");
             RegisterUIText(strictHint);
+        }
+
+        private void CreateFontsTabContent(GameObject parent)
+        {
+            var card = CreateAdaptiveCard(parent, "FontsCard", PanelWidth - 60, stretchVertically: true);
+
+            // Header and explanation
+            var sectionTitle = UIStyles.CreateSectionTitle(card, "FontsLabel", "Font Management");
+            RegisterUIText(sectionTitle);
+
+            var explainHint = UIStyles.CreateHint(card, "FontsHint", "Configure translation for detected fonts. Add fallback fonts for non-Latin scripts (Hindi, Arabic, Chinese, etc.). Settings are saved with translations.");
+            RegisterUIText(explainHint);
+
+            UIStyles.CreateSpacer(card, 10);
+
+            // Refresh button
+            var refreshRow = UIStyles.CreateFormRow(card, "RefreshRow", UIStyles.RowHeightNormal, 5);
+
+            var refreshBtn = CreateSecondaryButton(refreshRow, "RefreshFontsBtn", "Refresh List", 100);
+            refreshBtn.OnClick += RefreshFontsList;
+            RegisterUIText(refreshBtn.ButtonText);
+
+            _fontsStatusLabel = UIFactory.CreateLabel(refreshRow, "FontsStatus", "", TextAnchor.MiddleLeft);
+            _fontsStatusLabel.fontSize = UIStyles.FontSizeSmall;
+            UIFactory.SetLayoutElement(_fontsStatusLabel.gameObject, flexibleWidth: 9999);
+
+            UIStyles.CreateSpacer(card, 10);
+
+            // Detected fonts list
+            var listLabel = UIFactory.CreateLabel(card, "FontsListLabel", "Detected Fonts:", TextAnchor.MiddleLeft);
+            listLabel.color = UIStyles.TextSecondary;
+            UIFactory.SetLayoutElement(listLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+            RegisterUIText(listLabel);
+
+            // Scrollable container for fonts
+            var scrollObj = UIFactory.CreateScrollView(card, "FontsScroll", out var scrollContent, out var scrollbar);
+            UIFactory.SetLayoutElement(scrollObj, minHeight: 180, flexibleHeight: 9999, flexibleWidth: 9999);
+            UIStyles.SetBackground(scrollObj, UIStyles.InputBackground);
+
+            _fontsListContainer = scrollContent;
+        }
+
+        private void RefreshFontsList()
+        {
+            if (_fontsListContainer == null) return;
+
+            // Clear existing items
+            foreach (Transform child in _fontsListContainer.transform)
+            {
+                UnityEngine.Object.Destroy(child.gameObject);
+            }
+
+            var fonts = FontManager.GetDetectedFontsInfo();
+
+            if (fonts.Count == 0)
+            {
+                var emptyLabel = UIFactory.CreateLabel(_fontsListContainer, "EmptyLabel", "No fonts detected yet. Play the game to detect fonts.", TextAnchor.MiddleCenter);
+                emptyLabel.color = UIStyles.TextMuted;
+                emptyLabel.fontStyle = FontStyle.Italic;
+                UIFactory.SetLayoutElement(emptyLabel.gameObject, minHeight: 60, flexibleWidth: 9999);
+                RegisterUIText(emptyLabel);
+
+                if (_fontsStatusLabel != null)
+                {
+                    _fontsStatusLabel.text = "0 fonts detected";
+                    _fontsStatusLabel.color = UIStyles.TextMuted;
+                }
+                return;
+            }
+
+            // Cache system fonts if not already done
+            if (_systemFonts == null)
+            {
+                _systemFonts = FontManager.SystemFonts;
+            }
+
+            foreach (var fontInfo in fonts)
+            {
+                CreateFontRow(fontInfo);
+            }
+
+            if (_fontsStatusLabel != null)
+            {
+                _fontsStatusLabel.text = $"{fonts.Count} font(s) detected";
+                _fontsStatusLabel.color = UIStyles.StatusSuccess;
+            }
+        }
+
+        private void CreateFontRow(FontDisplayInfo fontInfo)
+        {
+            // Main row container with padding
+            var row = UIFactory.CreateVerticalGroup(_fontsListContainer, $"FontRow_{fontInfo.Name.GetHashCode()}",
+                false, false, true, true, 3, new Vector4(5, 5, 5, 5), UIStyles.CardBackground, TextAnchor.UpperLeft);
+            UIFactory.SetLayoutElement(row, minHeight: 55, flexibleWidth: 9999);
+
+            // Header row: font name + type + enable toggle
+            var headerRow = UIStyles.CreateFormRow(row, "HeaderRow", UIStyles.RowHeightNormal, 5);
+
+            // Font name and type
+            var fontLabel = UIFactory.CreateLabel(headerRow, "FontLabel", $"{fontInfo.Name} ({fontInfo.Type})", TextAnchor.MiddleLeft);
+            fontLabel.color = UIStyles.TextPrimary;
+            fontLabel.fontSize = UIStyles.FontSizeNormal;
+            UIFactory.SetLayoutElement(fontLabel.gameObject, flexibleWidth: 9999);
+
+            // Enable toggle
+            var toggleObj = UIFactory.CreateToggle(headerRow, "EnableToggle", out var enableToggle, out var toggleLabel);
+            toggleLabel.text = " Translate";
+            toggleLabel.color = UIStyles.TextSecondary;
+            toggleLabel.fontSize = UIStyles.FontSizeSmall;
+            UIFactory.SetLayoutElement(toggleObj, minWidth: 80);
+            enableToggle.isOn = fontInfo.Enabled;
+
+            // Capture values for closure
+            string capturedFontName = fontInfo.Name;
+            UIHelpers.AddToggleListener(enableToggle, (isOn) => OnFontEnableChanged(capturedFontName, isOn));
+
+            // Fallback row (only for TMP fonts)
+            if (fontInfo.SupportsFallback)
+            {
+                var fallbackRow = UIStyles.CreateFormRow(row, "FallbackRow", UIStyles.RowHeightNormal, 5);
+
+                var fallbackLabel = UIFactory.CreateLabel(fallbackRow, "FallbackLabel", "Fallback:", TextAnchor.MiddleLeft);
+                fallbackLabel.color = UIStyles.TextSecondary;
+                fallbackLabel.fontSize = UIStyles.FontSizeSmall;
+                UIFactory.SetLayoutElement(fallbackLabel.gameObject, minWidth: 55);
+
+                // Dropdown for system fonts
+                var dropdown = UIFactory.CreateDropdown(fallbackRow, "FallbackDropdown", out var dropdownComp, "(None)", 14, null);
+                UIFactory.SetLayoutElement(dropdown, minWidth: 200, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
+                UIStyles.SetBackground(dropdown, UIStyles.InputBackground);
+
+                // Populate dropdown options
+                dropdownComp.options.Clear();
+                dropdownComp.options.Add(new Dropdown.OptionData("(None)"));
+
+                if (_systemFonts != null)
+                {
+                    foreach (var sysFont in _systemFonts)
+                    {
+                        dropdownComp.options.Add(new Dropdown.OptionData(sysFont));
+                    }
+                }
+
+                // Set current value
+                int selectedIndex = 0;
+                if (!string.IsNullOrEmpty(fontInfo.FallbackFont) && _systemFonts != null)
+                {
+                    for (int i = 0; i < _systemFonts.Length; i++)
+                    {
+                        if (_systemFonts[i] == fontInfo.FallbackFont)
+                        {
+                            selectedIndex = i + 1; // +1 because index 0 is "(None)"
+                            break;
+                        }
+                    }
+                }
+                dropdownComp.value = selectedIndex;
+                dropdownComp.RefreshShownValue();
+
+                // Capture for closure
+                dropdownComp.onValueChanged.AddListener((index) =>
+                {
+                    string fallback = index == 0 ? null : _systemFonts[index - 1];
+                    OnFontFallbackChanged(capturedFontName, fallback);
+                });
+            }
+            else
+            {
+                // Show hint for non-TMP fonts
+                var noFallbackLabel = UIFactory.CreateLabel(row, "NoFallbackLabel", "Fallback not supported for this font type", TextAnchor.MiddleLeft);
+                noFallbackLabel.color = UIStyles.TextMuted;
+                noFallbackLabel.fontSize = UIStyles.FontSizeSmall;
+                noFallbackLabel.fontStyle = FontStyle.Italic;
+                UIFactory.SetLayoutElement(noFallbackLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+            }
+        }
+
+        private void OnFontEnableChanged(string fontName, bool enabled)
+        {
+            var settings = FontManager.GetFontSettings(fontName);
+            string fallback = settings?.fallback;
+            FontManager.UpdateFontSettings(fontName, enabled, fallback);
+
+            if (_fontsStatusLabel != null)
+            {
+                _fontsStatusLabel.text = enabled ? $"Translation enabled for {fontName}" : $"Translation disabled for {fontName}";
+                _fontsStatusLabel.color = UIStyles.StatusSuccess;
+            }
+        }
+
+        private void OnFontFallbackChanged(string fontName, string fallbackFont)
+        {
+            var settings = FontManager.GetFontSettings(fontName);
+            bool enabled = settings?.enabled ?? true;
+            FontManager.UpdateFontSettings(fontName, enabled, fallbackFont);
+
+            if (_fontsStatusLabel != null)
+            {
+                if (string.IsNullOrEmpty(fallbackFont))
+                {
+                    _fontsStatusLabel.text = $"Fallback removed from {fontName}";
+                }
+                else
+                {
+                    _fontsStatusLabel.text = $"Fallback '{fallbackFont}' applied to {fontName}";
+                }
+                _fontsStatusLabel.color = UIStyles.StatusSuccess;
+            }
         }
 
         private void CreateExclusionsTabContent(GameObject parent)
@@ -687,6 +902,9 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Refresh exclusions list
             RefreshExclusionsList();
+
+            // Refresh fonts list
+            RefreshFontsList();
         }
 
         private void UpdateLanguagesLocked()
@@ -910,6 +1128,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TranslatorCore.LogInfo("[Options] Settings saved successfully");
 
                 TranslatorCore.ClearProcessingCaches();
+
+                // Force refresh all text to apply new settings (fonts, translations)
+                TranslatorScanner.ForceRefreshAllText();
 
                 if (_enableOllamaToggle.isOn)
                 {

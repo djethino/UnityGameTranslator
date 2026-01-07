@@ -146,10 +146,13 @@ namespace UnityGameTranslator.Core.UI
                 UIStyles.SmallSpacing, UIStyles.SmallSpacing,
                 UIStyles.SmallSpacing, UIStyles.SmallSpacing);
 
+            // Use per-game setting for EventSystem override (stored in translations.json as _settings.disable_eventsystem_override)
+            // Default is false (UniverseLib CAN override). Set to true in translations.json if the game's UI animations break.
             Universe.Init(1f, OnUniverseLibInitialized, LogHandler, new UniverseLib.Config.UniverseLibConfig
             {
-                Disable_EventSystem_Override = false,
+                Disable_EventSystem_Override = TranslatorCore.DisableEventSystemOverride, // Per-game setting, requires restart
                 Force_Unlock_Mouse = false, // We manage cursor ourselves to avoid unlocking when only StatusOverlay is shown
+                Allow_UI_Selection_Outside_UIBase = true, // Don't block game's UI navigation when our overlay is shown
                 Unhollowed_Modules_Folder = null
             });
         }

@@ -118,6 +118,31 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Force refresh of component caches.
+        /// Use before RefreshForFont to ensure all components are captured.
+        /// </summary>
+        public static void ForceRefreshCache()
+        {
+            try
+            {
+                if (TranslatorCore.Adapter?.IsIL2CPP == true)
+                {
+                    RefreshIL2CPPCache();
+                }
+                else
+                {
+                    RefreshMonoCache();
+                }
+                lastComponentCacheTime = Time.time;
+                TranslatorCore.LogInfo($"[Scanner] Force refreshed cache: {cachedTMPMono?.Length ?? 0} TMP, {cachedUIMono?.Length ?? 0} UI.Text");
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogWarning($"[Scanner] ForceRefreshCache error: {ex.Message}");
+            }
+        }
+
+        /// <summary>
         /// Clear the processed text cache. Call when settings change to force re-evaluation.
         /// </summary>
         public static void ClearProcessedCache()
@@ -483,6 +508,9 @@ namespace UnityGameTranslator.Core
 
             try
             {
+                // Force cache refresh to capture all current components
+                ForceRefreshCache();
+
                 // Refresh TMP components with this font
                 if (cachedTMPMono != null)
                 {
@@ -980,6 +1008,10 @@ namespace UnityGameTranslator.Core
                 if (TranslatorCore.ShouldSkipTranslation(tmp))
                     return;
 
+                // Skip if translation disabled for this font
+                if (tmp.font != null && !FontManager.IsTranslationEnabled(tmp.font))
+                    return;
+
                 // Skip if already identified as InputField user text (not placeholder)
                 if (inputFieldTextIds.Contains(instanceId))
                     return;
@@ -1040,6 +1072,10 @@ namespace UnityGameTranslator.Core
 
                 // Skip if own UI and should not be translated (uses hierarchy check)
                 if (TranslatorCore.ShouldSkipTranslation(ui))
+                    return;
+
+                // Skip if translation disabled for this font
+                if (ui.font != null && !FontManager.IsTranslationEnabled(ui.font))
                     return;
 
                 // Skip if already identified as InputField user text (not placeholder)

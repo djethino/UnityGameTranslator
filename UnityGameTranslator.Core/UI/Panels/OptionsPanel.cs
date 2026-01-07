@@ -42,6 +42,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         // Interface section
         private Text _resetWindowsStatusLabel;
+        private Toggle _disableEventSystemOverrideToggle;
 
         // Tab sizing
         private bool _tabHeightFixed = false;
@@ -77,9 +78,9 @@ namespace UnityGameTranslator.Core.UI.Panels
         private Text _fontsStatusLabel;
         private string[] _systemFonts;
 
-        // Pending font changes (fontName -> (enabled, fallback))
-        private Dictionary<string, (bool enabled, string fallback)> _pendingFontSettings = new Dictionary<string, (bool, string)>();
-        private Dictionary<string, (bool enabled, string fallback)> _initialFontSettings = new Dictionary<string, (bool, string)>();
+        // Pending font changes (fontName -> (enabled, fallback, scale))
+        private Dictionary<string, (bool enabled, string fallback, float scale)> _pendingFontSettings = new Dictionary<string, (bool, string, float)>();
+        private Dictionary<string, (bool enabled, string fallback, float scale)> _initialFontSettings = new Dictionary<string, (bool, string, float)>();
 
         // Pending exclusion changes
         private HashSet<string> _pendingExclusionAdds = new HashSet<string>();
@@ -112,6 +113,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             public bool notify_updates;
             public bool auto_download;
             public bool check_mod_updates;
+            public bool disable_eventsystem_override;
 
             public static ConfigSnapshot FromConfig()
             {
@@ -132,7 +134,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                     check_update_on_start = TranslatorCore.Config.sync.check_update_on_start,
                     notify_updates = TranslatorCore.Config.sync.notify_updates,
                     auto_download = TranslatorCore.Config.sync.auto_download,
-                    check_mod_updates = TranslatorCore.Config.sync.check_mod_updates
+                    check_mod_updates = TranslatorCore.Config.sync.check_mod_updates,
+                    disable_eventsystem_override = TranslatorCore.DisableEventSystemOverride
                 };
             }
         }
@@ -240,6 +243,22 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             var modUIHint = UIStyles.CreateHint(card, "ModUIHint", "Translate this mod's own buttons and labels");
             RegisterUIText(modUIHint);
+
+            UIStyles.CreateSpacer(card, 10);
+
+            // === ADVANCED SECTION ===
+            var advancedSectionTitle = UIStyles.CreateSectionTitle(card, "AdvancedLabel", "Advanced");
+            RegisterUIText(advancedSectionTitle);
+
+            // Disable EventSystem Override toggle (per-game setting stored in translations.json)
+            var eventSystemObj = UIFactory.CreateToggle(card, "DisableEventSystemToggle", out _disableEventSystemOverrideToggle, out var eventSystemLabel);
+            eventSystemLabel.text = " Disable UI input interception";
+            eventSystemLabel.color = UIStyles.TextSecondary;
+            UIFactory.SetLayoutElement(eventSystemObj, minHeight: UIStyles.RowHeightNormal);
+            RegisterUIText(eventSystemLabel);
+
+            var eventSystemHint = UIStyles.CreateHint(card, "EventSystemHint", "Enable if game's UI animations or menus don't work. Requires game restart.");
+            RegisterUIText(eventSystemHint);
 
             UIStyles.CreateSpacer(card, 10);
 
@@ -484,6 +503,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (_fontsListContainer == null) return;
 
+            TranslatorCore.LogInfo($"[OptionsPanel] RefreshFontsList called");
+
             // Clear existing items
             foreach (Transform child in _fontsListContainer.transform)
             {
@@ -491,6 +512,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
 
             var fonts = FontManager.GetDetectedFontsInfo();
+            TranslatorCore.LogInfo($"[OptionsPanel] fonts.Count={fonts.Count}");
 
             if (fonts.Count == 0)
             {
@@ -528,6 +550,8 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private void CreateFontRow(FontDisplayInfo fontInfo)
         {
+            TranslatorCore.LogInfo($"[OptionsPanel] CreateFontRow: {fontInfo.Name}, Enabled={fontInfo.Enabled}, SupportsFallback={fontInfo.SupportsFallback}");
+
             // Main row container with padding
             var row = UIFactory.CreateVerticalGroup(_fontsListContainer, $"FontRow_{fontInfo.Name.GetHashCode()}",
                 false, false, true, true, 3, new Vector4(5, 5, 5, 5), UIStyles.CardBackground, TextAnchor.UpperLeft);
@@ -552,9 +576,10 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Capture values for closure
             string capturedFontName = fontInfo.Name;
+            TranslatorCore.LogInfo($"[OptionsPanel] Adding toggle listener for font: {capturedFontName}");
             UIHelpers.AddToggleListener(enableToggle, (isOn) => OnFontEnableChanged(capturedFontName, isOn));
 
-            // Fallback row (only for TMP fonts)
+            // Fallback row (only for fonts that support it)
             if (fontInfo.SupportsFallback)
             {
                 var fallbackRow = UIStyles.CreateFormRow(row, "FallbackRow", UIStyles.RowHeightNormal, 5);
@@ -613,28 +638,99 @@ namespace UnityGameTranslator.Core.UI.Panels
                 noFallbackLabel.fontStyle = FontStyle.Italic;
                 UIFactory.SetLayoutElement(noFallbackLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
             }
+
+            // Size scale row (for all fonts)
+            var scaleRow = UIStyles.CreateFormRow(row, "ScaleRow", UIStyles.RowHeightNormal, 5);
+
+            var scaleLabel = UIFactory.CreateLabel(scaleRow, "ScaleLabel", "Size:", TextAnchor.MiddleLeft);
+            scaleLabel.color = UIStyles.TextSecondary;
+            scaleLabel.fontSize = UIStyles.FontSizeSmall;
+            UIFactory.SetLayoutElement(scaleLabel.gameObject, minWidth: 55);
+
+            // Dropdown for scale values
+            var scaleDropdown = UIFactory.CreateDropdown(scaleRow, "ScaleDropdown", out var scaleDropdownComp, "100%", 14, null);
+            UIFactory.SetLayoutElement(scaleDropdown, minWidth: 80, minHeight: UIStyles.InputHeight);
+            UIStyles.SetBackground(scaleDropdown, UIStyles.InputBackground);
+
+            // Populate scale options with fine-grained control
+            scaleDropdownComp.options.Clear();
+            scaleDropdownComp.options.Add(new Dropdown.OptionData("50%"));
+            scaleDropdownComp.options.Add(new Dropdown.OptionData("60%"));
+            scaleDropdownComp.options.Add(new Dropdown.OptionData("70%"));
+            scaleDropdownComp.options.Add(new Dropdown.OptionData("80%"));
+            scaleDropdownComp.options.Add(new Dropdown.OptionData("90%"));
+            scaleDropdownComp.options.Add(new Dropdown.OptionData("100%"));
+            scaleDropdownComp.options.Add(new Dropdown.OptionData("110%"));
+            scaleDropdownComp.options.Add(new Dropdown.OptionData("120%"));
+            scaleDropdownComp.options.Add(new Dropdown.OptionData("130%"));
+            scaleDropdownComp.options.Add(new Dropdown.OptionData("140%"));
+            scaleDropdownComp.options.Add(new Dropdown.OptionData("150%"));
+            scaleDropdownComp.options.Add(new Dropdown.OptionData("175%"));
+            scaleDropdownComp.options.Add(new Dropdown.OptionData("200%"));
+
+            // Map scale value to dropdown index
+            int scaleIndex = ScaleToIndex(fontInfo.Scale);
+            scaleDropdownComp.value = scaleIndex;
+            scaleDropdownComp.RefreshShownValue();
+
+            // Capture for closure
+            scaleDropdownComp.onValueChanged.AddListener((index) =>
+            {
+                float scale = IndexToScale(index);
+                OnFontScaleChanged(capturedFontName, scale);
+            });
+        }
+
+        // Scale dropdown helpers
+        private static readonly float[] _scaleValues = { 0.5f, 0.6f, 0.7f, 0.8f, 0.9f, 1.0f, 1.1f, 1.2f, 1.3f, 1.4f, 1.5f, 1.75f, 2.0f };
+
+        private static int ScaleToIndex(float scale)
+        {
+            for (int i = 0; i < _scaleValues.Length; i++)
+            {
+                if (Math.Abs(_scaleValues[i] - scale) < 0.01f)
+                    return i;
+            }
+            return 5; // Default to 100% (index 5)
+        }
+
+        private static float IndexToScale(int index)
+        {
+            if (index >= 0 && index < _scaleValues.Length)
+                return _scaleValues[index];
+            return 1.0f;
         }
 
         private void OnFontEnableChanged(string fontName, bool enabled)
         {
+            TranslatorCore.LogInfo($"[OptionsPanel] OnFontEnableChanged: font={fontName}, enabled={enabled}");
+
             // Get current pending state or initial state
             string fallback;
+            float scale;
             if (_pendingFontSettings.TryGetValue(fontName, out var pending))
             {
                 fallback = pending.fallback;
+                scale = pending.scale;
+                TranslatorCore.LogInfo($"[OptionsPanel] Using pending fallback: {fallback ?? "(null)"}, scale: {scale}");
             }
             else if (_initialFontSettings.TryGetValue(fontName, out var initial))
             {
                 fallback = initial.fallback;
+                scale = initial.scale;
+                TranslatorCore.LogInfo($"[OptionsPanel] Using initial fallback: {fallback ?? "(null)"}, scale: {scale}, initial.enabled={initial.enabled}");
             }
             else
             {
                 var settings = FontManager.GetFontSettings(fontName);
                 fallback = settings?.fallback;
+                scale = settings?.scale ?? 1.0f;
+                TranslatorCore.LogInfo($"[OptionsPanel] Using FontManager fallback: {fallback ?? "(null)"}, scale: {scale}");
             }
 
             // Store pending change
-            _pendingFontSettings[fontName] = (enabled, fallback);
+            _pendingFontSettings[fontName] = (enabled, fallback, scale);
+            TranslatorCore.LogInfo($"[OptionsPanel] Stored pending: ({enabled}, {fallback ?? "(null)"}, {scale}), total pending fonts: {_pendingFontSettings.Count}");
 
             if (_fontsStatusLabel != null)
             {
@@ -649,22 +745,26 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             // Get current pending state or initial state
             bool enabled;
+            float scale;
             if (_pendingFontSettings.TryGetValue(fontName, out var pending))
             {
                 enabled = pending.enabled;
+                scale = pending.scale;
             }
             else if (_initialFontSettings.TryGetValue(fontName, out var initial))
             {
                 enabled = initial.enabled;
+                scale = initial.scale;
             }
             else
             {
                 var settings = FontManager.GetFontSettings(fontName);
                 enabled = settings?.enabled ?? true;
+                scale = settings?.scale ?? 1.0f;
             }
 
             // Store pending change
-            _pendingFontSettings[fontName] = (enabled, fallbackFont);
+            _pendingFontSettings[fontName] = (enabled, fallbackFont, scale);
 
             if (_fontsStatusLabel != null)
             {
@@ -676,6 +776,43 @@ namespace UnityGameTranslator.Core.UI.Panels
                 {
                     _fontsStatusLabel.text = $"Fallback '{fallbackFont}' will be applied to {fontName}";
                 }
+                _fontsStatusLabel.color = UIStyles.TextSecondary;
+            }
+
+            UpdateApplyButtonText();
+        }
+
+        private void OnFontScaleChanged(string fontName, float scale)
+        {
+            TranslatorCore.LogInfo($"[OptionsPanel] OnFontScaleChanged: font={fontName}, scale={scale}");
+
+            // Get current pending state or initial state
+            bool enabled;
+            string fallback;
+            if (_pendingFontSettings.TryGetValue(fontName, out var pending))
+            {
+                enabled = pending.enabled;
+                fallback = pending.fallback;
+            }
+            else if (_initialFontSettings.TryGetValue(fontName, out var initial))
+            {
+                enabled = initial.enabled;
+                fallback = initial.fallback;
+            }
+            else
+            {
+                var settings = FontManager.GetFontSettings(fontName);
+                enabled = settings?.enabled ?? true;
+                fallback = settings?.fallback;
+            }
+
+            // Store pending change
+            _pendingFontSettings[fontName] = (enabled, fallback, scale);
+
+            if (_fontsStatusLabel != null)
+            {
+                int scalePercent = Mathf.RoundToInt(scale * 100f);
+                _fontsStatusLabel.text = $"Font size {scalePercent}% will be applied to {fontName}";
                 _fontsStatusLabel.color = UIStyles.TextSecondary;
             }
 
@@ -1060,6 +1197,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             _checkModUpdatesToggle.isOn = TranslatorCore.Config.sync.check_mod_updates;
             OnOnlineModeChanged(_onlineModeToggle.isOn);
 
+            // Advanced settings (per-game, stored in translations.json)
+            _disableEventSystemOverrideToggle.isOn = TranslatorCore.DisableEventSystemOverride;
+
             // Update strict toggle based on source language
             OnSourceLanguageChanged(_sourceLanguageSelector.SelectedLanguage);
 
@@ -1075,11 +1215,17 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Capture initial font settings for change tracking
             _initialFontSettings.Clear();
             _pendingFontSettings.Clear();
+            TranslatorCore.LogInfo($"[OptionsPanel] Capturing initial font settings...");
             foreach (var fontInfo in FontManager.GetDetectedFontsInfo())
             {
                 var settings = FontManager.GetFontSettings(fontInfo.Name);
-                _initialFontSettings[fontInfo.Name] = (settings?.enabled ?? true, settings?.fallback);
+                var enabled = settings?.enabled ?? true;
+                var fallback = settings?.fallback;
+                var scale = settings?.scale ?? 1.0f;
+                _initialFontSettings[fontInfo.Name] = (enabled, fallback, scale);
+                TranslatorCore.LogInfo($"[OptionsPanel] Initial font: {fontInfo.Name} = (enabled={enabled}, fallback={fallback ?? "(null)"}, scale={scale})");
             }
+            TranslatorCore.LogInfo($"[OptionsPanel] Total initial fonts: {_initialFontSettings.Count}");
 
             // Capture initial exclusions for change tracking
             _initialExclusions.Clear();
@@ -1312,10 +1458,15 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TranslatorCore.Config.sync.auto_download = _autoDownloadToggle.isOn;
                 TranslatorCore.Config.sync.check_mod_updates = _checkModUpdatesToggle.isOn;
 
+                // Advanced settings (per-game, stored in translations.json, requires restart)
+                bool eventSystemChanged = TranslatorCore.DisableEventSystemOverride != _disableEventSystemOverrideToggle.isOn;
+                TranslatorCore.DisableEventSystemOverride = _disableEventSystemOverrideToggle.isOn;
+
                 // Apply pending font changes
                 foreach (var kvp in _pendingFontSettings)
                 {
                     FontManager.UpdateFontSettings(kvp.Key, kvp.Value.enabled, kvp.Value.fallback);
+                    FontManager.UpdateFontScale(kvp.Key, kvp.Value.scale);
                 }
 
                 // Apply pending exclusion changes
@@ -1329,6 +1480,14 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
 
                 TranslatorCore.SaveConfig();
+
+                // Save per-game settings (translations.json) if EventSystem override changed
+                if (eventSystemChanged)
+                {
+                    TranslatorCore.SaveCache();
+                    TranslatorCore.LogInfo("[Options] EventSystem override setting changed - game restart required for effect");
+                }
+
                 TranslatorCore.LogInfo("[Options] Settings saved successfully");
 
                 TranslatorCore.ClearProcessingCaches();
@@ -1353,7 +1512,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 foreach (var fontInfo in FontManager.GetDetectedFontsInfo())
                 {
                     var settings = FontManager.GetFontSettings(fontInfo.Name);
-                    _initialFontSettings[fontInfo.Name] = (settings?.enabled ?? true, settings?.fallback);
+                    _initialFontSettings[fontInfo.Name] = (settings?.enabled ?? true, settings?.fallback, settings?.scale ?? 1.0f);
                 }
                 _pendingFontSettings.Clear();
 
@@ -1414,6 +1573,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _notifyUpdatesToggle.onValueChanged.AddListener(_ => UpdateApplyButtonText());
             _autoDownloadToggle.onValueChanged.AddListener(_ => UpdateApplyButtonText());
             _checkModUpdatesToggle.onValueChanged.AddListener(_ => UpdateApplyButtonText());
+            _disableEventSystemOverrideToggle.onValueChanged.AddListener(_ => UpdateApplyButtonText());
 
             // Input fields
             _ollamaUrlInput.OnValueChanged += _ => UpdateApplyButtonText();
@@ -1468,12 +1628,20 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_autoDownloadToggle.isOn != _initialSnapshot.auto_download) count++;
             if (_checkModUpdatesToggle.isOn != _initialSnapshot.check_mod_updates) count++;
 
+            // Advanced (per-game settings)
+            if (_disableEventSystemOverrideToggle.isOn != _initialSnapshot.disable_eventsystem_override) count++;
+
             // Fonts - count fonts that differ from initial
+            TranslatorCore.LogInfo($"[OptionsPanel] CountPendingChanges: _pendingFontSettings.Count={_pendingFontSettings.Count}, _initialFontSettings.Count={_initialFontSettings.Count}");
             foreach (var kvp in _pendingFontSettings)
             {
                 if (_initialFontSettings.TryGetValue(kvp.Key, out var initial))
                 {
-                    if (kvp.Value.enabled != initial.enabled || kvp.Value.fallback != initial.fallback)
+                    bool enabledDiff = kvp.Value.enabled != initial.enabled;
+                    bool fallbackDiff = kvp.Value.fallback != initial.fallback;
+                    bool scaleDiff = Math.Abs(kvp.Value.scale - initial.scale) > 0.01f;
+                    TranslatorCore.LogInfo($"[OptionsPanel] Font '{kvp.Key}': pending=({kvp.Value.enabled}, {kvp.Value.fallback ?? "(null)"}, {kvp.Value.scale}), initial=({initial.enabled}, {initial.fallback ?? "(null)"}, {initial.scale}), enabledDiff={enabledDiff}, fallbackDiff={fallbackDiff}, scaleDiff={scaleDiff}");
+                    if (enabledDiff || fallbackDiff || scaleDiff)
                     {
                         count++;
                     }
@@ -1481,6 +1649,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 else
                 {
                     // New font not in initial - count as change
+                    TranslatorCore.LogInfo($"[OptionsPanel] Font '{kvp.Key}' NOT in initial, counting as change");
                     count++;
                 }
             }

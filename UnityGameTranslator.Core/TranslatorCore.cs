@@ -84,6 +84,14 @@ namespace UnityGameTranslator.Core
         public static string LastSyncedHash { get; set; } = null;
 
         /// <summary>
+        /// If true, UniverseLib won't override the game's EventSystem.
+        /// Enable this if the game's UI animations or navigation don't work with the mod.
+        /// Stored in translations.json as _settings.disable_eventsystem_override
+        /// Requires game restart to take effect.
+        /// </summary>
+        public static bool DisableEventSystemOverride { get; set; } = false;
+
+        /// <summary>
         /// Returns true if source/target languages are locked (translation exists on server).
         /// Once a translation is uploaded, languages cannot be changed to maintain consistency.
         /// </summary>
@@ -804,10 +812,21 @@ namespace UnityGameTranslator.Core
                                 settings.enabled = fontObj["enabled"]?.Value<bool>() ?? true;
                                 settings.fallback = fontObj["fallback"]?.Value<string>();
                                 settings.type = fontObj["type"]?.Value<string>();
+                                settings.scale = fontObj["scale"]?.Value<float>() ?? 1.0f;
                             }
                             FontSettingsMap[fontProp.Name] = settings;
                         }
                         Adapter?.LogInfo($"[LoadCache] Loaded {FontSettingsMap.Count} font settings");
+                    }
+                    else if (prop.Name == "_settings" && prop.Value.Type == JTokenType.Object)
+                    {
+                        // Load game-specific settings
+                        var settingsObj = prop.Value as JObject;
+                        if (settingsObj != null)
+                        {
+                            DisableEventSystemOverride = settingsObj["disable_eventsystem_override"]?.Value<bool>() ?? false;
+                            Adapter?.LogInfo($"[LoadCache] Loaded settings: DisableEventSystemOverride={DisableEventSystemOverride}");
+                        }
                     }
                     else if (!prop.Name.StartsWith("_"))
                     {
@@ -2388,14 +2407,29 @@ namespace UnityGameTranslator.Core
                         var fontsObj = new JObject();
                         foreach (var kvp in FontSettingsMap)
                         {
-                            fontsObj[kvp.Key] = new JObject
+                            var fontObj = new JObject
                             {
                                 ["enabled"] = kvp.Value.enabled,
                                 ["fallback"] = kvp.Value.fallback,
                                 ["type"] = kvp.Value.type
                             };
+                            // Only save scale if not default (1.0)
+                            if (Math.Abs(kvp.Value.scale - 1.0f) > 0.001f)
+                            {
+                                fontObj["scale"] = kvp.Value.scale;
+                            }
+                            fontsObj[kvp.Key] = fontObj;
                         }
                         output["_fonts"] = fontsObj;
+                    }
+
+                    // Save game-specific settings (only if non-default values)
+                    if (DisableEventSystemOverride)
+                    {
+                        output["_settings"] = new JObject
+                        {
+                            ["disable_eventsystem_override"] = DisableEventSystemOverride
+                        };
                     }
 
                     // Sorted translations with new format {"v": "value", "t": "tag"}
@@ -2793,5 +2827,11 @@ namespace UnityGameTranslator.Core
         /// Font type detected: "TMP", "Unity", "TextMesh", "tk2d"
         /// </summary>
         public string type { get; set; }
+
+        /// <summary>
+        /// Font size scale factor. 1.0 = original size, 1.5 = 150%, 0.8 = 80%.
+        /// Applied to translated text only.
+        /// </summary>
+        public float scale { get; set; } = 1.0f;
     }
 }

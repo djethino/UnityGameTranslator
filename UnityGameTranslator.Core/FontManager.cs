@@ -23,6 +23,10 @@ namespace UnityGameTranslator.Core
         // Created Unity fonts from system fonts (for legacy UI.Text replacement)
         private static readonly Dictionary<string, Font> _unityFallbackFonts = new Dictionary<string, Font>();
 
+        // Track fonts we created for fallback (to exclude from detection)
+        private static readonly HashSet<Font> _createdFallbackFonts = new HashSet<Font>();
+        private static readonly HashSet<TMP_FontAsset> _createdFallbackTMPFonts = new HashSet<TMP_FontAsset>();
+
         // Cache of system fonts
         private static string[] _systemFonts;
 
@@ -105,6 +109,10 @@ namespace UnityGameTranslator.Core
         {
             if (font == null) return;
 
+            // Don't register fonts we created for fallback
+            if (_createdFallbackTMPFonts.Contains(font))
+                return;
+
             if (_detectedTMPFonts.Add(font))
             {
                 TranslatorCore.LogInfo($"[FontManager] Detected TMP font: {font.name}");
@@ -129,6 +137,10 @@ namespace UnityGameTranslator.Core
         {
             if (font == null) return;
 
+            // Don't register fonts we created for fallback
+            if (_createdFallbackFonts.Contains(font))
+                return;
+
             if (_detectedUnityFonts.Add(font))
             {
                 TranslatorCore.LogInfo($"[FontManager] Detected Unity font: {font.name}");
@@ -148,6 +160,53 @@ namespace UnityGameTranslator.Core
 
             TranslatorCore.FontSettingsMap.TryGetValue(fontName, out var settings);
             return settings;
+        }
+
+        /// <summary>
+        /// Get the font scale factor for a font.
+        /// Returns 1.0 if no scale is set.
+        /// </summary>
+        public static float GetFontScale(string fontName)
+        {
+            if (string.IsNullOrEmpty(fontName))
+                return 1.0f;
+
+            if (TranslatorCore.FontSettingsMap.TryGetValue(fontName, out var settings))
+                return settings.scale;
+
+            return 1.0f;
+        }
+
+        /// <summary>
+        /// Update the scale factor for a font.
+        /// </summary>
+        public static void UpdateFontScale(string fontName, float scale)
+        {
+            if (string.IsNullOrEmpty(fontName))
+                return;
+
+            // Clamp scale to reasonable values
+            scale = Math.Max(0.5f, Math.Min(3.0f, scale));
+
+            if (!TranslatorCore.FontSettingsMap.TryGetValue(fontName, out var settings))
+            {
+                settings = new FontSettings { type = "Unknown" };
+                TranslatorCore.FontSettingsMap[fontName] = settings;
+            }
+
+            if (Math.Abs(settings.scale - scale) > 0.001f)
+            {
+                settings.scale = scale;
+                TranslatorCore.LogInfo($"[FontManager] Updated scale for '{fontName}' to {scale:F2}");
+
+                // Refresh all text using this font to apply new scale
+                if (settings.enabled)
+                {
+                    TranslatorScanner.RefreshForFont(fontName);
+                }
+
+                TranslatorCore.SaveCache();
+            }
         }
 
         /// <summary>
@@ -249,6 +308,8 @@ namespace UnityGameTranslator.Core
                         return false;
 
                     _fallbackAssets[systemFontName] = fallbackAsset;
+                    // Mark as created fallback so it won't be registered as game font
+                    _createdFallbackTMPFonts.Add(fallbackAsset);
                 }
 
                 // Get the fallback list
@@ -319,6 +380,8 @@ namespace UnityGameTranslator.Core
                 if (replacementFont != null)
                 {
                     _unityFallbackFonts[settings.fallback] = replacementFont;
+                    // Mark as created fallback so it won't be registered as game font
+                    _createdFallbackFonts.Add(replacementFont);
                 }
             }
 
@@ -333,6 +396,47 @@ namespace UnityGameTranslator.Core
             if (originalFont == null)
                 return null;
             return GetUnityReplacementFont(originalFont.name);
+        }
+
+        /// <summary>
+        /// Get the replacement TMP_FontAsset for a TMP font.
+        /// Returns null if no fallback is configured.
+        /// </summary>
+        public static TMP_FontAsset GetTMPReplacementFont(string originalFontName)
+        {
+            if (string.IsNullOrEmpty(originalFontName))
+                return null;
+
+            // Check if fallback is configured for this font
+            if (!TranslatorCore.FontSettingsMap.TryGetValue(originalFontName, out var settings))
+                return null;
+
+            if (string.IsNullOrEmpty(settings.fallback))
+                return null;
+
+            // Get or create the replacement TMP_FontAsset
+            if (!_fallbackAssets.TryGetValue(settings.fallback, out var replacementFont))
+            {
+                replacementFont = CreateFallbackAsset(settings.fallback);
+                if (replacementFont != null)
+                {
+                    _fallbackAssets[settings.fallback] = replacementFont;
+                    // Mark as created fallback so it won't be registered as game font
+                    _createdFallbackTMPFonts.Add(replacementFont);
+                }
+            }
+
+            return replacementFont;
+        }
+
+        /// <summary>
+        /// Get the replacement TMP_FontAsset for a TMP font.
+        /// </summary>
+        public static TMP_FontAsset GetTMPReplacementFont(TMP_FontAsset originalFont)
+        {
+            if (originalFont == null)
+                return null;
+            return GetTMPReplacementFont(originalFont.name);
         }
 
         /// <summary>
@@ -443,6 +547,45 @@ namespace UnityGameTranslator.Core
             return null;
         }
 
+        // Common font style suffixes to try parsing
+        private static readonly string[] FontStyleSuffixes = new[]
+        {
+            " Bold Italic", " BoldItalic", " Bold", " Italic",
+            " Light Italic", " LightItalic", " Light",
+            " Medium Italic", " MediumItalic", " Medium",
+            " Thin Italic", " ThinItalic", " Thin",
+            " Black Italic", " BlackItalic", " Black",
+            " ExtraBold Italic", " ExtraBold", " SemiBold Italic", " SemiBold",
+            " Condensed Bold", " Condensed Italic", " Condensed",
+            " Extended Bold", " Extended Italic", " Extended",
+            " Ex BT", " BT" // Bitstream fonts
+        };
+
+        /// <summary>
+        /// Parse a font name into family name and style name.
+        /// E.g., "Carlito Bold Italic" -> ("Carlito", "Bold Italic")
+        /// </summary>
+        private static (string familyName, string styleName) ParseFontName(string fontName)
+        {
+            if (string.IsNullOrEmpty(fontName))
+                return (fontName, "Regular");
+
+            // Try to find a known style suffix
+            foreach (var suffix in FontStyleSuffixes)
+            {
+                if (fontName.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                {
+                    string family = fontName.Substring(0, fontName.Length - suffix.Length).Trim();
+                    string style = suffix.Trim();
+                    if (!string.IsNullOrEmpty(family))
+                        return (family, style);
+                }
+            }
+
+            // No known suffix found, use as-is with Regular style
+            return (fontName, "Regular");
+        }
+
         /// <summary>
         /// Create a TMP_FontAsset from a Unity Font.
         /// Uses reflection to handle different TMP versions.
@@ -464,25 +607,62 @@ namespace UnityGameTranslator.Core
                 {
                     var result = createMethod.Invoke(null, new object[] { font }) as TMP_FontAsset;
                     if (result != null)
+                    {
+                        TranslatorCore.LogInfo($"[FontManager] Created TMP font via CreateFontAsset(Font)");
                         return result;
+                    }
                 }
 
-                // Try version with more parameters for dynamic atlas
-                var createMethodFull = tmpFontType.GetMethod("CreateFontAsset",
+                // Unity 6 / UGUI 2.0: try with string family name
+                var createMethodByName = tmpFontType.GetMethod("CreateFontAsset",
                     System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static,
                     null,
-                    new Type[] { typeof(Font), typeof(int), typeof(int), typeof(int), typeof(int), typeof(int) },
+                    new Type[] { typeof(string), typeof(string), typeof(int) },
                     null);
 
-                if (createMethodFull != null)
+                if (createMethodByName != null && font != null)
                 {
-                    // CreateFontAsset(font, samplingPointSize, atlasPadding, renderMode, atlasWidth, atlasHeight)
-                    var result = createMethodFull.Invoke(null, new object[] { font, 32, 4, 4165, 1024, 1024 }) as TMP_FontAsset;
-                    if (result != null)
-                        return result;
+                    // Parse font name to extract family and style
+                    var (familyName, styleName) = ParseFontName(font.name);
+
+                    // Try with parsed family/style first
+                    TranslatorCore.LogInfo($"[FontManager] Trying CreateFontAsset(\"{familyName}\", \"{styleName}\", 90)");
+                    try
+                    {
+                        var result = createMethodByName.Invoke(null, new object[] { familyName, styleName, 90 }) as TMP_FontAsset;
+                        if (result != null)
+                            return result;
+                    }
+                    catch { }
+
+                    // If that failed and we had a style, try with just family name + "Regular"
+                    if (styleName != "Regular")
+                    {
+                        TranslatorCore.LogInfo($"[FontManager] Trying CreateFontAsset(\"{familyName}\", \"Regular\", 90)");
+                        try
+                        {
+                            var result = createMethodByName.Invoke(null, new object[] { familyName, "Regular", 90 }) as TMP_FontAsset;
+                            if (result != null)
+                                return result;
+                        }
+                        catch { }
+                    }
+
+                    // Last resort: try original name as family with Regular
+                    if (familyName != font.name)
+                    {
+                        TranslatorCore.LogInfo($"[FontManager] Trying CreateFontAsset(\"{font.name}\", \"Regular\", 90)");
+                        try
+                        {
+                            var result = createMethodByName.Invoke(null, new object[] { font.name, "Regular", 90 }) as TMP_FontAsset;
+                            if (result != null)
+                                return result;
+                        }
+                        catch { }
+                    }
                 }
 
-                TranslatorCore.LogWarning("[FontManager] CreateFontAsset method not found");
+                TranslatorCore.LogWarning($"[FontManager] Failed to create TMP font for '{font?.name}'");
                 return null;
             }
             catch (Exception ex)
@@ -520,7 +700,8 @@ namespace UnityGameTranslator.Core
                     Type = "TextMeshPro",
                     SupportsFallback = true,
                     Enabled = settings?.enabled ?? true,
-                    FallbackFont = settings?.fallback
+                    FallbackFont = settings?.fallback,
+                    Scale = settings?.scale ?? 1.0f
                 });
             }
 
@@ -535,7 +716,8 @@ namespace UnityGameTranslator.Core
                     Type = "Unity Font",
                     SupportsFallback = true, // We can replace the font directly
                     Enabled = settings?.enabled ?? true,
-                    FallbackFont = settings?.fallback
+                    FallbackFont = settings?.fallback,
+                    Scale = settings?.scale ?? 1.0f
                 });
             }
 
@@ -551,6 +733,8 @@ namespace UnityGameTranslator.Core
             _detectedUnityFonts.Clear();
             _fallbackAssets.Clear();
             _unityFallbackFonts.Clear();
+            _createdFallbackFonts.Clear();
+            _createdFallbackTMPFonts.Clear();
         }
     }
 
@@ -564,5 +748,6 @@ namespace UnityGameTranslator.Core
         public bool SupportsFallback { get; set; }
         public bool Enabled { get; set; }
         public string FallbackFont { get; set; }
+        public float Scale { get; set; } = 1.0f;
     }
 }

@@ -17,6 +17,10 @@ namespace UnityGameTranslator.Core
         private static readonly string[] LocalizationPrefixes = { "locali", "l10n", "i18n", "translat" };
         private static readonly string[] LocalizationSuffixes = { "string", "text", "entry", "value" };
 
+        // Cache for original font sizes (instance ID -> original fontSize)
+        // Used to apply scale without cumulative errors
+        private static readonly Dictionary<int, float> _originalFontSizes = new Dictionary<int, float>();
+
         // Types to exclude (known non-text types)
         private static readonly HashSet<string> ExcludedTypeNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -456,23 +460,90 @@ namespace UnityGameTranslator.Core
             catch { }
         }
 
+        /// <summary>
+        /// Apply font scale to a TMP_Text component.
+        /// Stores original size on first call and applies scale relative to it.
+        /// </summary>
+        private static void ApplyFontScale(TMP_Text instance, string fontName)
+        {
+            if (instance == null || string.IsNullOrEmpty(fontName)) return;
+
+            float scale = FontManager.GetFontScale(fontName);
+            if (Math.Abs(scale - 1.0f) < 0.001f) return; // No scale needed
+
+            int instanceId = instance.GetInstanceID();
+            float originalSize;
+
+            if (!_originalFontSizes.TryGetValue(instanceId, out originalSize))
+            {
+                // First time seeing this instance, store its current size as original
+                originalSize = instance.fontSize;
+                _originalFontSizes[instanceId] = originalSize;
+            }
+
+            float scaledSize = originalSize * scale;
+            if (Math.Abs(instance.fontSize - scaledSize) > 0.1f)
+            {
+                instance.fontSize = scaledSize;
+            }
+        }
+
+        /// <summary>
+        /// Apply font scale to a UI.Text component.
+        /// Stores original size on first call and applies scale relative to it.
+        /// </summary>
+        private static void ApplyFontScale(Text instance, string fontName)
+        {
+            if (instance == null || string.IsNullOrEmpty(fontName)) return;
+
+            float scale = FontManager.GetFontScale(fontName);
+            if (Math.Abs(scale - 1.0f) < 0.001f) return; // No scale needed
+
+            int instanceId = instance.GetInstanceID();
+            float originalSize;
+
+            if (!_originalFontSizes.TryGetValue(instanceId, out originalSize))
+            {
+                // First time seeing this instance, store its current size as original
+                originalSize = instance.fontSize;
+                _originalFontSizes[instanceId] = originalSize;
+            }
+
+            int scaledSize = Mathf.RoundToInt(originalSize * scale);
+            if (instance.fontSize != scaledSize)
+            {
+                instance.fontSize = scaledSize;
+            }
+        }
+
         public static void TMPText_SetText_Prefix(TMP_Text __instance, ref string value)
         {
             if (string.IsNullOrEmpty(value)) return;
             try
             {
+                // Skip if part of our own UI and should not be translated (uses hierarchy check)
+                // Check this FIRST to avoid registering mod UI fonts
+                if (TranslatorCore.ShouldSkipTranslation(__instance)) return;
+
+                string fontName = null;
+
                 // Register font for fallback management (non-Latin script support)
                 if (__instance.font != null)
                 {
+                    fontName = __instance.font.name;
                     FontManager.RegisterFont(__instance.font);
 
                     // Skip translation if disabled for this font
                     if (!FontManager.IsTranslationEnabled(__instance.font))
                         return;
-                }
 
-                // Skip if part of our own UI and should not be translated (uses hierarchy check)
-                if (TranslatorCore.ShouldSkipTranslation(__instance)) return;
+                    // Apply replacement font if configured
+                    var replacementFont = FontManager.GetTMPReplacementFont(__instance.font);
+                    if (replacementFont != null)
+                    {
+                        __instance.font = replacementFont;
+                    }
+                }
 
                 // Don't translate InputField textComponent (user's typed text)
                 if (IsTMPInputFieldTextComponent(__instance)) return;
@@ -480,6 +551,9 @@ namespace UnityGameTranslator.Core
                 // Check if own UI (use UI-specific prompt) - uses hierarchy check
                 bool isOwnUI = TranslatorCore.IsOwnUITranslatable(__instance);
                 value = TranslatorCore.TranslateTextWithTracking(value, __instance, isOwnUI);
+
+                // Apply font scale if configured for this font
+                ApplyFontScale(__instance, fontName);
             }
             catch { }
         }
@@ -489,18 +563,29 @@ namespace UnityGameTranslator.Core
             if (string.IsNullOrEmpty(__0)) return;
             try
             {
+                // Skip if part of our own UI and should not be translated (uses hierarchy check)
+                // Check this FIRST to avoid registering mod UI fonts
+                if (TranslatorCore.ShouldSkipTranslation(__instance)) return;
+
+                string fontName = null;
+
                 // Register font for fallback management (non-Latin script support)
                 if (__instance.font != null)
                 {
+                    fontName = __instance.font.name;
                     FontManager.RegisterFont(__instance.font);
 
                     // Skip translation if disabled for this font
                     if (!FontManager.IsTranslationEnabled(__instance.font))
                         return;
-                }
 
-                // Skip if part of our own UI and should not be translated (uses hierarchy check)
-                if (TranslatorCore.ShouldSkipTranslation(__instance)) return;
+                    // Apply replacement font if configured
+                    var replacementFont = FontManager.GetTMPReplacementFont(__instance.font);
+                    if (replacementFont != null)
+                    {
+                        __instance.font = replacementFont;
+                    }
+                }
 
                 // Don't translate InputField textComponent (user's typed text)
                 if (IsTMPInputFieldTextComponent(__instance)) return;
@@ -508,6 +593,9 @@ namespace UnityGameTranslator.Core
                 // Check if own UI (use UI-specific prompt) - uses hierarchy check
                 bool isOwnUI = TranslatorCore.IsOwnUITranslatable(__instance);
                 __0 = TranslatorCore.TranslateTextWithTracking(__0, __instance, isOwnUI);
+
+                // Apply font scale if configured for this font
+                ApplyFontScale(__instance, fontName);
             }
             catch { }
         }
@@ -517,9 +605,16 @@ namespace UnityGameTranslator.Core
             if (string.IsNullOrEmpty(value)) return;
             try
             {
+                // Skip if part of our own UI and should not be translated (uses hierarchy check)
+                // Check this FIRST to avoid registering mod UI fonts
+                if (TranslatorCore.ShouldSkipTranslation(__instance)) return;
+
+                string fontName = null;
+
                 // Register font for detection (Unity UI fonts)
                 if (__instance.font != null)
                 {
+                    fontName = __instance.font.name;
                     FontManager.RegisterFont(__instance.font);
 
                     // Skip translation if disabled for this font
@@ -534,15 +629,15 @@ namespace UnityGameTranslator.Core
                     }
                 }
 
-                // Skip if part of our own UI and should not be translated (uses hierarchy check)
-                if (TranslatorCore.ShouldSkipTranslation(__instance)) return;
-
                 // Don't translate InputField textComponent (user's typed text)
                 if (IsInputFieldTextComponent(__instance)) return;
 
                 // Check if own UI (use UI-specific prompt) - uses hierarchy check
                 bool isOwnUI = TranslatorCore.IsOwnUITranslatable(__instance);
                 value = TranslatorCore.TranslateTextWithTracking(value, __instance, isOwnUI);
+
+                // Apply font scale if configured for this font
+                ApplyFontScale(__instance, fontName);
             }
             catch { }
         }
@@ -552,6 +647,10 @@ namespace UnityGameTranslator.Core
             if (string.IsNullOrEmpty(value)) return;
             try
             {
+                // Skip if part of our own UI (uses hierarchy check)
+                // Check this FIRST to avoid registering mod UI fonts
+                if (TranslatorCore.ShouldSkipTranslation(__instance)) return;
+
                 // Register font for detection (legacy 3D text)
                 if (__instance.font != null)
                 {
@@ -561,9 +660,6 @@ namespace UnityGameTranslator.Core
                     if (!FontManager.IsTranslationEnabled(__instance.font))
                         return;
                 }
-
-                // Skip if part of our own UI (uses hierarchy check)
-                if (TranslatorCore.ShouldSkipTranslation(__instance)) return;
 
                 // TextMesh is legacy 3D text, typically not used for UI input fields
                 // Check if own UI (use UI-specific prompt) - uses hierarchy check

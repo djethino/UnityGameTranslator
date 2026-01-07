@@ -62,7 +62,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private string _targetLanguage;
 
         // Language selection
-        private LanguageSelector _targetLanguageSelector;
+        private SearchableDropdown _targetLanguageDropdown;
         private Text _detectedLanguageLabel;
 
         // Hotkey capture (reusable component)
@@ -345,13 +345,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.SetLayoutElement(langLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
             RegisterUIText(langLabel);
 
-            _targetLanguageSelector = new LanguageSelector(
+            _targetLanguageDropdown = new SearchableDropdown(
                 "TargetLang",
                 LanguageHelper.GetLanguageNames(),
                 _targetLanguage,
-                100
+                popupHeight: 250,
+                showSearch: true
             );
-            _targetLanguageSelector.CreateUI(langSection, (lang) => _targetLanguage = lang);
+            _targetLanguageDropdown.CreateUI(langSection, (lang) => _targetLanguage = lang, width: 200);
 
             UIStyles.CreateSpacer(card, 10);
 

@@ -21,9 +21,9 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         protected override int MinPanelHeight => 300;
 
-        // Language selectors (reusable components)
-        private LanguageSelector _sourceSelector;
-        private LanguageSelector _targetSelector;
+        // Language dropdowns (reusable components)
+        private SearchableDropdown _sourceDropdown;
+        private SearchableDropdown _targetDropdown;
 
         // Summary display
         private Text _summaryLabel;
@@ -47,8 +47,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             // Initialize components (must be here, not in constructor - base calls ConstructUI first)
             var languages = LanguageHelper.GetLanguageNames();
-            _sourceSelector = new LanguageSelector("Source", languages, "English", 100);
-            _targetSelector = new LanguageSelector("Target", languages, "", 120);
+            _sourceDropdown = new SearchableDropdown("Source", languages, "English", popupHeight: 250, showSearch: true);
+            _targetDropdown = new SearchableDropdown("Target", languages, "", popupHeight: 250, showSearch: true);
 
             // Use scrollable layout for the content
             CreateScrollablePanelLayout(out var scrollContent, out var buttonRow, PanelWidth - 40);
@@ -63,14 +63,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Source language section
             var sourceTitle = UIStyles.CreateSectionTitle(card, "SourceTitle", "Source Language (original game language)");
             RegisterUIText(sourceTitle);
-            _sourceSelector.CreateUI(card, (lang) => UpdateSummary());
+            _sourceDropdown.CreateUI(card, (lang) => UpdateSummary(), width: 200);
 
             UIStyles.CreateSpacer(card, 10);
 
             // Target language section
             var targetTitle = UIStyles.CreateSectionTitle(card, "TargetTitle", "Target Language (translation language)");
             RegisterUIText(targetTitle);
-            _targetSelector.CreateUI(card, (lang) => UpdateSummary());
+            _targetDropdown.CreateUI(card, (lang) => UpdateSummary(), width: 200);
 
             UIStyles.CreateSpacer(card, 10);
 
@@ -98,8 +98,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (_summaryLabel == null) return;
 
-            string target = _targetSelector?.SelectedLanguage;
-            string source = _sourceSelector?.SelectedLanguage ?? "English";
+            string target = _targetDropdown?.SelectedValue;
+            string source = _sourceDropdown?.SelectedValue ?? "English";
 
             if (!string.IsNullOrEmpty(target))
             {
@@ -115,7 +115,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private void ConfirmSelection()
         {
-            string target = _targetSelector?.SelectedLanguage;
+            string target = _targetDropdown?.SelectedValue;
 
             if (string.IsNullOrEmpty(target))
             {
@@ -124,7 +124,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 return;
             }
 
-            _onLanguagesSelected?.Invoke(_sourceSelector.SelectedLanguage, target);
+            _onLanguagesSelected?.Invoke(_sourceDropdown.SelectedValue, target);
             SetActive(false);
         }
     }

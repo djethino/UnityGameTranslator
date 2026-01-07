@@ -29,8 +29,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         // General section
         private Toggle _enableTranslationsToggle;
         private Toggle _translateModUIToggle;
-        private LanguageSelector _sourceLanguageSelector;
-        private LanguageSelector _targetLanguageSelector;
+        private SearchableDropdown _sourceLanguageDropdown;
+        private SearchableDropdown _targetLanguageDropdown;
         private string[] _languages;
         private string[] _sourceLanguages;
 
@@ -164,8 +164,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _languages[i + 1] = langs[i];
             }
 
-            _sourceLanguageSelector = new LanguageSelector("SourceLang", _sourceLanguages, "auto (Detect)", 100);
-            _targetLanguageSelector = new LanguageSelector("TargetLang", _languages, "auto (System)", 100);
+            _sourceLanguageDropdown = new SearchableDropdown("SourceLang", _sourceLanguages, "auto (Detect)", popupHeight: 250, showSearch: true);
+            _targetLanguageDropdown = new SearchableDropdown("TargetLang", _languages, "auto (System)", popupHeight: 250, showSearch: true);
             _hotkeyCapture = new HotkeyCapture("F10");
 
             // Use scrollable layout - content scrolls if needed, buttons stay fixed
@@ -276,7 +276,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.SetLayoutElement(sourceLangLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
             RegisterUIText(sourceLangLabel);
 
-            _sourceLanguageSelector.CreateUI(_languagesEditableSection, OnSourceLanguageChanged);
+            _sourceLanguageDropdown.CreateUI(_languagesEditableSection, OnSourceLanguageChanged, width: 200);
 
             UIStyles.CreateSpacer(_languagesEditableSection, 5);
 
@@ -286,7 +286,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.SetLayoutElement(targetLangLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
             RegisterUIText(targetLangLabel);
 
-            _targetLanguageSelector.CreateUI(_languagesEditableSection);
+            _targetLanguageDropdown.CreateUI(_languagesEditableSection, width: 200);
 
             // === LOCKED LANGUAGES SECTION ===
             _languagesLockedSection = UIFactory.CreateVerticalGroup(card, "LanguagesLockedSection", false, false, true, true, 0);
@@ -646,58 +646,44 @@ namespace UnityGameTranslator.Core.UI.Panels
             scaleLabel.fontSize = UIStyles.FontSizeSmall;
             UIFactory.SetLayoutElement(scaleLabel.gameObject, minWidth: 55);
 
-            // Dropdown for scale values
-            var scaleDropdown = UIFactory.CreateDropdown(scaleRow, "ScaleDropdown", out var scaleDropdownComp, "100%", 14, null);
-            UIFactory.SetLayoutElement(scaleDropdown, minWidth: 80, minHeight: UIStyles.InputHeight);
-            UIStyles.SetBackground(scaleDropdown, UIStyles.InputBackground);
+            // Scale dropdown - no search needed for small list
+            var scaleDropdown = new SearchableDropdown(
+                $"Scale_{capturedFontName}",
+                _scaleOptions,
+                ScaleToString(fontInfo.Scale),
+                popupHeight: 200,
+                showSearch: false
+            );
 
-            // Populate scale options with fine-grained control
-            scaleDropdownComp.options.Clear();
-            scaleDropdownComp.options.Add(new Dropdown.OptionData("50%"));
-            scaleDropdownComp.options.Add(new Dropdown.OptionData("60%"));
-            scaleDropdownComp.options.Add(new Dropdown.OptionData("70%"));
-            scaleDropdownComp.options.Add(new Dropdown.OptionData("80%"));
-            scaleDropdownComp.options.Add(new Dropdown.OptionData("90%"));
-            scaleDropdownComp.options.Add(new Dropdown.OptionData("100%"));
-            scaleDropdownComp.options.Add(new Dropdown.OptionData("110%"));
-            scaleDropdownComp.options.Add(new Dropdown.OptionData("120%"));
-            scaleDropdownComp.options.Add(new Dropdown.OptionData("130%"));
-            scaleDropdownComp.options.Add(new Dropdown.OptionData("140%"));
-            scaleDropdownComp.options.Add(new Dropdown.OptionData("150%"));
-            scaleDropdownComp.options.Add(new Dropdown.OptionData("175%"));
-            scaleDropdownComp.options.Add(new Dropdown.OptionData("200%"));
-
-            // Map scale value to dropdown index
-            int scaleIndex = ScaleToIndex(fontInfo.Scale);
-            scaleDropdownComp.value = scaleIndex;
-            scaleDropdownComp.RefreshShownValue();
-
-            // Capture for closure
-            scaleDropdownComp.onValueChanged.AddListener((index) =>
+            scaleDropdown.CreateUI(scaleRow, (selectedValue) =>
             {
-                float scale = IndexToScale(index);
+                float scale = StringToScale(selectedValue);
                 OnFontScaleChanged(capturedFontName, scale);
-            });
+            }, width: 80);
         }
 
         // Scale dropdown helpers
+        private static readonly string[] _scaleOptions = { "50%", "60%", "70%", "80%", "90%", "100%", "110%", "120%", "130%", "140%", "150%", "175%", "200%" };
         private static readonly float[] _scaleValues = { 0.5f, 0.6f, 0.7f, 0.8f, 0.9f, 1.0f, 1.1f, 1.2f, 1.3f, 1.4f, 1.5f, 1.75f, 2.0f };
 
-        private static int ScaleToIndex(float scale)
+        private static string ScaleToString(float scale)
         {
             for (int i = 0; i < _scaleValues.Length; i++)
             {
                 if (Math.Abs(_scaleValues[i] - scale) < 0.01f)
-                    return i;
+                    return _scaleOptions[i];
             }
-            return 5; // Default to 100% (index 5)
+            return "100%"; // Default to 100%
         }
 
-        private static float IndexToScale(int index)
+        private static float StringToScale(string scaleStr)
         {
-            if (index >= 0 && index < _scaleValues.Length)
-                return _scaleValues[index];
-            return 1.0f;
+            for (int i = 0; i < _scaleOptions.Length; i++)
+            {
+                if (_scaleOptions[i] == scaleStr)
+                    return _scaleValues[i];
+            }
+            return 1.0f; // Default to 100%
         }
 
         private void OnFontEnableChanged(string fontName, bool enabled)
@@ -1102,6 +1088,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 _strictSourceToggle.isOn = false;
             }
+            UpdateApplyButtonText();
         }
 
         public override void SetActive(bool active)
@@ -1157,22 +1144,22 @@ namespace UnityGameTranslator.Core.UI.Panels
             string configSourceLang = TranslatorCore.Config.source_language;
             if (string.IsNullOrEmpty(configSourceLang) || configSourceLang == "auto")
             {
-                _sourceLanguageSelector.SelectedLanguage = "auto (Detect)";
+                _sourceLanguageDropdown.SelectedValue = "auto (Detect)";
             }
             else
             {
-                _sourceLanguageSelector.SelectedLanguage = configSourceLang;
+                _sourceLanguageDropdown.SelectedValue = configSourceLang;
             }
 
             // Target language
             string configTargetLang = TranslatorCore.Config.target_language;
             if (string.IsNullOrEmpty(configTargetLang) || configTargetLang == "auto")
             {
-                _targetLanguageSelector.SelectedLanguage = "auto (System)";
+                _targetLanguageDropdown.SelectedValue = "auto (System)";
             }
             else
             {
-                _targetLanguageSelector.SelectedLanguage = configTargetLang;
+                _targetLanguageDropdown.SelectedValue = configTargetLang;
             }
 
             // Hotkey
@@ -1200,7 +1187,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _disableEventSystemOverrideToggle.isOn = TranslatorCore.DisableEventSystemOverride;
 
             // Update strict toggle based on source language
-            OnSourceLanguageChanged(_sourceLanguageSelector.SelectedLanguage);
+            OnSourceLanguageChanged(_sourceLanguageDropdown.SelectedValue);
 
             // Lock languages if translation exists on server
             UpdateLanguagesLocked();
@@ -1317,7 +1304,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _modelInput.Component.interactable = usable;
             _gameContextInput.Component.interactable = usable;
 
-            bool sourceIsAuto = _sourceLanguageSelector.SelectedLanguage == "auto (Detect)";
+            bool sourceIsAuto = _sourceLanguageDropdown.SelectedValue == "auto (Detect)";
             _strictSourceToggle.interactable = usable && !sourceIsAuto;
 
             _enableOllamaToggle.interactable = !_captureKeysOnlyToggle.isOn;
@@ -1433,10 +1420,10 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TranslatorCore.Config.translate_mod_ui = _translateModUIToggle.isOn;
 
                 // Languages
-                string selectedSourceLang = _sourceLanguageSelector.SelectedLanguage;
+                string selectedSourceLang = _sourceLanguageDropdown.SelectedValue;
                 TranslatorCore.Config.source_language = selectedSourceLang == "auto (Detect)" ? "auto" : selectedSourceLang;
 
-                string selectedTargetLang = _targetLanguageSelector.SelectedLanguage;
+                string selectedTargetLang = _targetLanguageDropdown.SelectedValue;
                 TranslatorCore.Config.target_language = selectedTargetLang == "auto (System)" ? "auto" : selectedTargetLang;
 
                 // Hotkey
@@ -1579,9 +1566,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             _modelInput.OnValueChanged += _ => UpdateApplyButtonText();
             _gameContextInput.OnValueChanged += _ => UpdateApplyButtonText();
 
-            // Language selectors - hook into their change events
-            _sourceLanguageSelector.OnSelectionChanged += _ => UpdateApplyButtonText();
-            _targetLanguageSelector.OnSelectionChanged += _ => UpdateApplyButtonText();
+            // Language dropdowns - hook into their change events
+            _sourceLanguageDropdown.OnSelectionChanged += _ => UpdateApplyButtonText();
+            _targetLanguageDropdown.OnSelectionChanged += _ => UpdateApplyButtonText();
 
             // Hotkey capture
             _hotkeyCapture.OnHotkeyChanged += _ => UpdateApplyButtonText();
@@ -1601,11 +1588,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_translateModUIToggle.isOn != _initialSnapshot.translate_mod_ui) count++;
 
             // Languages
-            string currentSource = _sourceLanguageSelector.SelectedLanguage;
+            string currentSource = _sourceLanguageDropdown.SelectedValue;
             string snapshotSource = _initialSnapshot.source_language == "auto" ? "auto (Detect)" : _initialSnapshot.source_language;
             if (currentSource != snapshotSource) count++;
 
-            string currentTarget = _targetLanguageSelector.SelectedLanguage;
+            string currentTarget = _targetLanguageDropdown.SelectedValue;
             string snapshotTarget = _initialSnapshot.target_language == "auto" ? "auto (System)" : _initialSnapshot.target_language;
             if (currentTarget != snapshotTarget) count++;
 

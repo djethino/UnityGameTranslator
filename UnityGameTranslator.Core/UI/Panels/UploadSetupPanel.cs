@@ -24,9 +24,9 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         protected override int MinPanelHeight => 400;
 
-        // Language selectors (reusable components)
-        private LanguageSelector _sourceSelector;
-        private LanguageSelector _targetSelector;
+        // Language dropdowns (reusable components)
+        private SearchableDropdown _sourceDropdown;
+        private SearchableDropdown _targetDropdown;
 
         // Game
         private GameInfo _selectedGame = null;
@@ -148,18 +148,18 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Source: use config if not auto, otherwise leave empty for user to select
             if (!string.IsNullOrEmpty(configSource) && configSource.ToLower() != "auto")
             {
-                _sourceSelector.SelectedLanguage = configSource;
+                _sourceDropdown.SelectedValue = configSource;
             }
 
             // Target: use config if not auto, otherwise fall back to system language
             if (!string.IsNullOrEmpty(configTarget) && configTarget.ToLower() != "auto")
             {
-                _targetSelector.SelectedLanguage = configTarget;
+                _targetDropdown.SelectedValue = configTarget;
             }
             else
             {
                 string systemLang = LanguageHelper.GetSystemLanguageName();
-                _targetSelector.SelectedLanguage = systemLang;
+                _targetDropdown.SelectedValue = systemLang;
             }
 
             // Reset search state
@@ -186,8 +186,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Initialize components (must be here, not in constructor - base calls ConstructUI first)
             var languages = LanguageHelper.GetLanguageNames();
             // No default for source - must be explicitly selected (required field)
-            _sourceSelector = new LanguageSelector("Source", languages, "", 100);
-            _targetSelector = new LanguageSelector("Target", languages, "", 120);
+            _sourceDropdown = new SearchableDropdown("Source", languages, "", popupHeight: 250, showSearch: true);
+            _targetDropdown = new SearchableDropdown("Target", languages, "", popupHeight: 250, showSearch: true);
 
             CreateScrollablePanelLayout(out var scrollContent, out var buttonRow, PanelWidth - 40);
 
@@ -268,14 +268,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             // === SOURCE LANGUAGE SECTION ===
             var sourceTitle = UIStyles.CreateSectionTitle(card, "SourceTitle", "2. Source Language (original game language)");
             RegisterUIText(sourceTitle);
-            _sourceSelector.CreateUI(card, (lang) => UpdateValidation());
+            _sourceDropdown.CreateUI(card, (lang) => UpdateValidation(), width: 200);
 
             UIStyles.CreateSpacer(card, 10);
 
             // === TARGET LANGUAGE SECTION ===
             var targetTitle = UIStyles.CreateSectionTitle(card, "TargetTitle", "3. Target Language (your translation)");
             RegisterUIText(targetTitle);
-            _targetSelector.CreateUI(card, (lang) => UpdateValidation());
+            _targetDropdown.CreateUI(card, (lang) => UpdateValidation(), width: 200);
 
             UIStyles.CreateSpacer(card, 10);
 
@@ -481,12 +481,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             var game = _selectedGame;
             bool hasGame = game != null && !string.IsNullOrEmpty(game.name);
 
-            // Use IsValidSelection() to ensure language is from the list, not just non-empty
-            bool hasValidSource = _sourceSelector?.IsValidSelection() ?? false;
-            bool hasValidTarget = _targetSelector?.IsValidSelection() ?? false;
-
-            string source = _sourceSelector?.SelectedLanguage;
-            string target = _targetSelector?.SelectedLanguage;
+            // Ensure language is selected (dropdown values are always from the list)
+            string source = _sourceDropdown?.SelectedValue;
+            string target = _targetDropdown?.SelectedValue;
+            bool hasValidSource = !string.IsNullOrEmpty(source);
+            bool hasValidTarget = !string.IsNullOrEmpty(target);
             bool differentLangs = hasValidSource && hasValidTarget && source != target;
 
             if (!hasGame)
@@ -533,7 +532,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Update CurrentGame with user's confirmed selection
             TranslatorCore.CurrentGame = _selectedGame;
 
-            _onSetupComplete?.Invoke(_selectedGame, _sourceSelector.SelectedLanguage, _targetSelector.SelectedLanguage);
+            _onSetupComplete?.Invoke(_selectedGame, _sourceDropdown.SelectedValue, _targetDropdown.SelectedValue);
             SetActive(false);
         }
     }

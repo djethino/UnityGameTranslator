@@ -55,9 +55,9 @@ namespace UnityGameTranslator.Core
         /// <summary>
         /// Per-font settings for translation and fallback.
         /// Stored in translations.json as _fonts for sharing.
-        /// Key = font name, Value = settings (enabled, fallback)
+        /// Key = font name (case-insensitive), Value = settings (enabled, fallback)
         /// </summary>
-        public static Dictionary<string, FontSettings> FontSettingsMap { get; set; } = new Dictionary<string, FontSettings>();
+        public static Dictionary<string, FontSettings> FontSettingsMap { get; set; } = new Dictionary<string, FontSettings>(StringComparer.OrdinalIgnoreCase);
 
         public static GameInfo CurrentGame { get; internal set; }
 

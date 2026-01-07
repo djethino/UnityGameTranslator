@@ -684,14 +684,45 @@ namespace UnityGameTranslator.Core
 
         /// <summary>
         /// Get font info for display in UI.
+        /// Shows all fonts from saved settings + newly detected fonts.
+        /// Deduplicates by font name (case-insensitive) to avoid showing duplicates.
         /// </summary>
         public static List<FontDisplayInfo> GetDetectedFontsInfo()
         {
             var result = new List<FontDisplayInfo>();
+            var seenNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+            // First: add all fonts from saved settings (FontSettingsMap)
+            // These are fonts that were previously detected and saved in translations.json
+            foreach (var kvp in TranslatorCore.FontSettingsMap)
+            {
+                if (string.IsNullOrEmpty(kvp.Key)) continue;
+
+                seenNames.Add(kvp.Key);
+                var settings = kvp.Value;
+
+                // Determine type from saved settings or default to "Unknown"
+                string fontType = settings?.type ?? "Unknown";
+
+                result.Add(new FontDisplayInfo
+                {
+                    Name = kvp.Key,
+                    Type = fontType,
+                    SupportsFallback = true,
+                    Enabled = settings?.enabled ?? true,
+                    FallbackFont = settings?.fallback,
+                    Scale = settings?.scale ?? 1.0f
+                });
+            }
+
+            // Then: add newly detected TMP fonts not already in settings
             foreach (var font in _detectedTMPFonts)
             {
                 if (font == null) continue;
+
+                // Skip if we've already seen this font name (case-insensitive)
+                if (!seenNames.Add(font.name))
+                    continue;
 
                 var settings = GetFontSettings(font.name);
                 result.Add(new FontDisplayInfo
@@ -705,16 +736,21 @@ namespace UnityGameTranslator.Core
                 });
             }
 
+            // Then: add newly detected Unity fonts not already in settings
             foreach (var font in _detectedUnityFonts)
             {
                 if (font == null) continue;
+
+                // Skip if we've already seen this font name (case-insensitive)
+                if (!seenNames.Add(font.name))
+                    continue;
 
                 var settings = GetFontSettings(font.name);
                 result.Add(new FontDisplayInfo
                 {
                     Name = font.name,
                     Type = "Unity Font",
-                    SupportsFallback = true, // We can replace the font directly
+                    SupportsFallback = true,
                     Enabled = settings?.enabled ?? true,
                     FallbackFont = settings?.fallback,
                     Scale = settings?.scale ?? 1.0f

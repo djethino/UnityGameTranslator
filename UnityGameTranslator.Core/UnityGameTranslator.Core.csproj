@@ -34,6 +34,10 @@
       <HintPath>..\extlibs\Unity\UnityEngine.IMGUIModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="UnityEngine.UIModule">
+      <HintPath>..\extlibs\Unity\UnityEngine.UIModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="UnityEngine.TextRenderingModule">
       <HintPath>..\extlibs\Unity\UnityEngine.TextRenderingModule.dll</HintPath>
       <Private>false</Private>

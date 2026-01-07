@@ -77,6 +77,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private GameObject _fontsListContainer;
         private Text _fontsStatusLabel;
         private string[] _systemFonts;
+        private List<SearchableDropdown> _fallbackDropdowns = new List<SearchableDropdown>();
 
         // Pending font changes (fontName -> (enabled, fallback, scale))
         private Dictionary<string, (bool enabled, string fallback, float scale)> _pendingFontSettings = new Dictionary<string, (bool, string, float)>();
@@ -505,6 +506,13 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             TranslatorCore.LogInfo($"[OptionsPanel] RefreshFontsList called");
 
+            // Clean up searchable dropdowns first
+            foreach (var dropdown in _fallbackDropdowns)
+            {
+                dropdown.Destroy();
+            }
+            _fallbackDropdowns.Clear();
+
             // Clear existing items
             foreach (Transform child in _fontsListContainer.transform)
             {
@@ -589,45 +597,36 @@ namespace UnityGameTranslator.Core.UI.Panels
                 fallbackLabel.fontSize = UIStyles.FontSizeSmall;
                 UIFactory.SetLayoutElement(fallbackLabel.gameObject, minWidth: 55);
 
-                // Dropdown for system fonts
-                var dropdown = UIFactory.CreateDropdown(fallbackRow, "FallbackDropdown", out var dropdownComp, "(None)", 14, null);
-                UIFactory.SetLayoutElement(dropdown, minWidth: 200, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
-                UIStyles.SetBackground(dropdown, UIStyles.InputBackground);
-
-                // Populate dropdown options
-                dropdownComp.options.Clear();
-                dropdownComp.options.Add(new Dropdown.OptionData("(None)"));
-
+                // Build options array with (None) as first option
+                var options = new List<string> { "(None)" };
                 if (_systemFonts != null)
                 {
-                    foreach (var sysFont in _systemFonts)
-                    {
-                        dropdownComp.options.Add(new Dropdown.OptionData(sysFont));
-                    }
+                    options.AddRange(_systemFonts);
                 }
 
-                // Set current value
-                int selectedIndex = 0;
+                // Determine initial value
+                string initialValue = "(None)";
                 if (!string.IsNullOrEmpty(fontInfo.FallbackFont) && _systemFonts != null)
                 {
-                    for (int i = 0; i < _systemFonts.Length; i++)
-                    {
-                        if (_systemFonts[i] == fontInfo.FallbackFont)
-                        {
-                            selectedIndex = i + 1; // +1 because index 0 is "(None)"
-                            break;
-                        }
-                    }
+                    initialValue = fontInfo.FallbackFont;
                 }
-                dropdownComp.value = selectedIndex;
-                dropdownComp.RefreshShownValue();
 
-                // Capture for closure
-                dropdownComp.onValueChanged.AddListener((index) =>
+                // Create searchable dropdown with filter
+                var dropdown = new SearchableDropdown(
+                    $"Fallback_{capturedFontName}",
+                    options.ToArray(),
+                    initialValue,
+                    popupHeight: 250,
+                    showSearch: true
+                );
+
+                dropdown.CreateUI(fallbackRow, (selectedValue) =>
                 {
-                    string fallback = index == 0 ? null : _systemFonts[index - 1];
+                    string fallback = selectedValue == "(None)" ? null : selectedValue;
                     OnFontFallbackChanged(capturedFontName, fallback);
-                });
+                }, width: 200);
+
+                _fallbackDropdowns.Add(dropdown);
             }
             else
             {

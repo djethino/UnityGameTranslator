@@ -140,6 +140,12 @@ namespace UnityGameTranslator.Core.UI
         // Scroll view viewport background (replaces UniverseLib's gray default)
         public static readonly Color ViewportBackground = new Color(0.06f, 0.08f, 0.14f, 1f);     // Dark navy (matches TabContentBackground)
 
+        // Dropdown colors (for SearchableDropdown component)
+        public static readonly Color DropdownBackground = new Color(0.118f, 0.161f, 0.224f, 0.98f);  // Same as CardBackground
+        public static readonly Color DropdownItemNormal = new Color(0.08f, 0.11f, 0.18f, 0.9f);      // Dark navy
+        public static readonly Color DropdownItemHighlight = new Color(0.55f, 0.36f, 0.96f, 0.5f);   // Purple highlight
+        public static readonly Color InputFieldBackground = new Color(0.212f, 0.255f, 0.325f, 0.95f); // Slate blue (same as InputBackground)
+
         #endregion
 
         #region Dimensions

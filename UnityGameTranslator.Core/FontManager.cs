@@ -151,6 +151,34 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Register a font by name only (when we don't have the actual Font object).
+        /// Used for tk2d bitmap fonts and other non-standard font systems.
+        /// </summary>
+        public static void RegisterFontByName(string fontName, string fontType)
+        {
+            if (string.IsNullOrEmpty(fontName)) return;
+
+            // Check if already in settings map
+            if (TranslatorCore.FontSettingsMap.TryGetValue(fontName, out var existing))
+            {
+                // Update type if the new type is more specific (e.g., "TMP (alt)" overrides "TMP")
+                // This handles the case where fonts are first detected by the generic TMP scanner
+                // and later identified as alternate TMP (TMProOld, etc.)
+                // Also update if the existing type is null/empty (from old config)
+                if (fontType == "TMP (alt)" && (existing.type == "TMP" || string.IsNullOrEmpty(existing.type)))
+                {
+                    string oldType = existing.type ?? "null";
+                    existing.type = fontType;
+                    TranslatorCore.LogInfo($"[FontManager] Updated {fontName} type: {oldType} -> {fontType}");
+                }
+                return;
+            }
+
+            TranslatorCore.LogInfo($"[FontManager] Detected {fontType} font: {fontName}");
+            EnsureFontSettings(fontName, fontType);
+        }
+
+        /// <summary>
         /// Get settings for a font, or null if not configured.
         /// </summary>
         public static FontSettings GetFontSettings(string fontName)
@@ -206,6 +234,21 @@ namespace UnityGameTranslator.Core
                 }
 
                 TranslatorCore.SaveCache();
+            }
+        }
+
+        /// <summary>
+        /// Increment the usage count for a font.
+        /// Called when text using this font is translated.
+        /// </summary>
+        public static void IncrementUsageCount(string fontName)
+        {
+            if (string.IsNullOrEmpty(fontName))
+                return;
+
+            if (TranslatorCore.FontSettingsMap.TryGetValue(fontName, out var settings))
+            {
+                settings.usageCount++;
             }
         }
 
@@ -440,12 +483,34 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Get the configured fallback font name for a font.
+        /// Returns null if no fallback is configured.
+        /// </summary>
+        public static string GetConfiguredFallback(string fontName)
+        {
+            if (string.IsNullOrEmpty(fontName))
+                return null;
+
+            if (!TranslatorCore.FontSettingsMap.TryGetValue(fontName, out var settings))
+                return null;
+
+            return settings.fallback;
+        }
+
+        /// <summary>
         /// Create a Unity Font from a system font name.
         /// </summary>
         private static Font CreateUnityFontFromSystem(string systemFontName)
         {
             try
             {
+                // Custom SDF fonts are not compatible with Unity Fonts (UI.Text)
+                // They only work with TMP. Skip silently.
+                if (IsCustomFont(systemFontName))
+                {
+                    return null;
+                }
+
                 if (!SystemFonts.Contains(systemFontName))
                 {
                     TranslatorCore.LogWarning($"[FontManager] System font not found: {systemFontName}");
@@ -467,37 +532,67 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Create a TMP fallback asset from a system font.
+        /// Create a TMP fallback asset from a system font or custom font.
         /// </summary>
-        private static TMP_FontAsset CreateFallbackAsset(string systemFontName)
+        private static TMP_FontAsset CreateFallbackAsset(string fontName)
         {
             try
             {
-                // Check if font exists in system
-                if (!SystemFonts.Contains(systemFontName))
+                // Check if this is a custom font (from fonts/ folder)
+                string cleanName = fontName;
+                if (fontName.StartsWith("[Custom] "))
+                    cleanName = fontName.Substring(9);
+
+                if (IsCustomFont(cleanName))
                 {
-                    TranslatorCore.LogWarning($"[FontManager] System font not found: {systemFontName}");
+                    // Load custom font via CustomFontLoader
+                    var customAsset = CustomFontLoader.LoadCustomFont(cleanName);
+                    if (customAsset != null)
+                    {
+                        // Cast to TMP_FontAsset - works because CustomFontLoader creates the correct runtime type
+                        var tmpAsset = customAsset as TMP_FontAsset;
+                        if (tmpAsset != null)
+                        {
+                            TranslatorCore.LogInfo($"[FontManager] Created fallback from custom font: {cleanName}");
+                            return tmpAsset;
+                        }
+                        else
+                        {
+                            TranslatorCore.LogWarning($"[FontManager] Custom font '{cleanName}' is not compatible with TMP_FontAsset type");
+                        }
+                    }
+                    else
+                    {
+                        TranslatorCore.LogWarning($"[FontManager] Failed to load custom font: {cleanName}");
+                    }
+                    return null;
+                }
+
+                // Check if font exists in system fonts
+                if (!SystemFonts.Contains(cleanName))
+                {
+                    TranslatorCore.LogWarning($"[FontManager] System font not found: {cleanName}");
                     return null;
                 }
 
                 // Create Unity font from system font
-                var unityFont = Font.CreateDynamicFontFromOSFont(systemFontName, 32);
+                var unityFont = Font.CreateDynamicFontFromOSFont(cleanName, 32);
                 if (unityFont == null)
                 {
-                    TranslatorCore.LogError($"[FontManager] Failed to create font from: {systemFontName}");
+                    TranslatorCore.LogError($"[FontManager] Failed to create font from: {cleanName}");
                     return null;
                 }
 
                 // Create TMP_FontAsset from Unity font
-                var tmpAsset = CreateTMPFontAsset(unityFont);
-                if (tmpAsset == null)
+                var tmpAsset2 = CreateTMPFontAsset(unityFont);
+                if (tmpAsset2 == null)
                 {
-                    TranslatorCore.LogWarning($"[FontManager] Failed to create TMP_FontAsset from '{systemFontName}' - TMP version may not support dynamic font creation");
+                    TranslatorCore.LogWarning($"[FontManager] Failed to create TMP_FontAsset from '{cleanName}' - TMP version may not support dynamic font creation");
                     return null;
                 }
 
-                TranslatorCore.LogInfo($"[FontManager] Created fallback font asset from: {systemFontName}");
-                return tmpAsset;
+                TranslatorCore.LogInfo($"[FontManager] Created fallback font asset from: {cleanName}");
+                return tmpAsset2;
             }
             catch (Exception ex)
             {
@@ -711,7 +806,8 @@ namespace UnityGameTranslator.Core
                     SupportsFallback = true,
                     Enabled = settings?.enabled ?? true,
                     FallbackFont = settings?.fallback,
-                    Scale = settings?.scale ?? 1.0f
+                    Scale = settings?.scale ?? 1.0f,
+                    UsageCount = settings?.usageCount ?? 0
                 });
             }
 
@@ -732,7 +828,8 @@ namespace UnityGameTranslator.Core
                     SupportsFallback = true,
                     Enabled = settings?.enabled ?? true,
                     FallbackFont = settings?.fallback,
-                    Scale = settings?.scale ?? 1.0f
+                    Scale = settings?.scale ?? 1.0f,
+                    UsageCount = settings?.usageCount ?? 0
                 });
             }
 
@@ -753,9 +850,18 @@ namespace UnityGameTranslator.Core
                     SupportsFallback = true,
                     Enabled = settings?.enabled ?? true,
                     FallbackFont = settings?.fallback,
-                    Scale = settings?.scale ?? 1.0f
+                    Scale = settings?.scale ?? 1.0f,
+                    UsageCount = settings?.usageCount ?? 0
                 });
             }
+
+            // Sort by usage count (most used first), then by name
+            result.Sort((a, b) =>
+            {
+                int usageCompare = b.UsageCount.CompareTo(a.UsageCount);
+                if (usageCompare != 0) return usageCompare;
+                return string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
+            });
 
             return result;
         }
@@ -772,6 +878,44 @@ namespace UnityGameTranslator.Core
             _createdFallbackFonts.Clear();
             _createdFallbackTMPFonts.Clear();
         }
+
+        /// <summary>
+        /// Gets the names of all available custom fonts (from fonts/ folder).
+        /// These are SDF fonts that can be used as fallback for any TMP font.
+        /// </summary>
+        public static string[] GetCustomFontNames()
+        {
+            return CustomFontLoader.GetCustomFontNames();
+        }
+
+        /// <summary>
+        /// Checks if a font name is a custom font (from fonts/ folder).
+        /// </summary>
+        public static bool IsCustomFont(string fontName)
+        {
+            if (string.IsNullOrEmpty(fontName))
+                return false;
+
+            // Check if it has the [Custom] prefix
+            if (fontName.StartsWith("[Custom] "))
+                return true;
+
+            // Check if it's in the custom fonts list
+            var customFonts = CustomFontLoader.CustomFonts;
+            return customFonts.ContainsKey(fontName);
+        }
+
+        /// <summary>
+        /// Gets or loads a custom font asset by name.
+        /// </summary>
+        public static object GetCustomFontAsset(string fontName)
+        {
+            // Strip [Custom] prefix if present
+            if (fontName.StartsWith("[Custom] "))
+                fontName = fontName.Substring(9);
+
+            return CustomFontLoader.LoadCustomFont(fontName);
+        }
     }
 
     /// <summary>
@@ -785,5 +929,6 @@ namespace UnityGameTranslator.Core
         public bool Enabled { get; set; }
         public string FallbackFont { get; set; }
         public float Scale { get; set; } = 1.0f;
+        public int UsageCount { get; set; } = 0;
     }
 }

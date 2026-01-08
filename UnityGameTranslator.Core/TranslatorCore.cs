@@ -556,6 +556,9 @@ namespace UnityGameTranslator.Core
             // Initialize font manager for non-Latin script support
             FontManager.Initialize();
 
+            // Initialize custom font loader (user-provided SDF fonts)
+            CustomFontLoader.Initialize(ModFolder);
+
             httpClient = new HttpClient();
             httpClient.Timeout = TimeSpan.FromMinutes(5);
 
@@ -590,6 +593,9 @@ namespace UnityGameTranslator.Core
             lastSeenText.Clear();
             TranslatorScanner.OnSceneChange();
             TranslatorPatches.ClearCache();
+
+            // Disabled: causes text to become empty - need deeper investigation
+            // TranslatorPatches.ScheduleDelayedFontScan(0.5f);
 
             if (DebugMode)
                 Adapter?.LogInfo($"Scene: {sceneName}");
@@ -911,13 +917,23 @@ namespace UnityGameTranslator.Core
                 // Recalculate LocalChangesCount based on actual differences (always, even if no ancestor)
                 RecalculateLocalChanges();
 
-                // Build reverse cache: all translated values
+                // Build reverse cache: all translated values (NORMALIZED for comparison)
+                // Values must be normalized the same way as incoming text in TranslateTextWithTracking
+                // ALSO trim trailing whitespace/newlines because TMP often strips them when displaying
                 translatedTexts.Clear();
                 foreach (var kv in TranslationCache)
                 {
                     if (kv.Key != kv.Value.Value && !string.IsNullOrEmpty(kv.Value.Value))
                     {
-                        translatedTexts.Add(kv.Value.Value);
+                        // Normalize the value the same way we normalize incoming text
+                        string normalizedValue = NormalizeLineEndings(kv.Value.Value);
+                        if (Config.normalize_numbers)
+                        {
+                            normalizedValue = ExtractNumbersToPlaceholders(normalizedValue, out _);
+                        }
+                        // Trim trailing whitespace - TMP strips these when displaying
+                        normalizedValue = normalizedValue.TrimEnd();
+                        translatedTexts.Add(normalizedValue);
                     }
                 }
 
@@ -1867,9 +1883,17 @@ namespace UnityGameTranslator.Core
                 }
 
                 // Add to reverse cache (only if value is non-empty and different from key)
+                // Must normalize the same way as in LoadCache and TranslateTextWithTracking
                 if (normalizedKey != entry.Value && !string.IsNullOrEmpty(entry.Value))
                 {
-                    translatedTexts.Add(entry.Value);
+                    string normalizedTranslation = NormalizeLineEndings(entry.Value);
+                    if (Config.normalize_numbers)
+                    {
+                        normalizedTranslation = ExtractNumbersToPlaceholders(normalizedTranslation, out _);
+                    }
+                    // Trim trailing whitespace - TMP strips these when displaying
+                    normalizedTranslation = normalizedTranslation.TrimEnd();
+                    translatedTexts.Add(normalizedTranslation);
                 }
 
                 // Note: No longer clearing lastSeenText here.
@@ -2087,8 +2111,10 @@ namespace UnityGameTranslator.Core
 
             if (Config.enable_ollama && !string.IsNullOrEmpty(text) && text.Length >= 3)
             {
-                // Check reverse cache with NORMALIZED text (translations are stored normalized)
-                if (translatedTexts.Contains(normalizedText))
+                // Check reverse cache with NORMALIZED text (translations are stored normalized + trimmed)
+                // TrimEnd because TMP often strips trailing whitespace/newlines when displaying
+                string trimmedNormalized = normalizedText.TrimEnd();
+                if (translatedTexts.Contains(trimmedNormalized))
                 {
                     skippedAlreadyTranslated++;
                     return text;
@@ -2240,8 +2266,10 @@ namespace UnityGameTranslator.Core
             // No cache hit - queue for Ollama if enabled
             if (Config.enable_ollama && !string.IsNullOrEmpty(text) && text.Length >= 3)
             {
-                // Check reverse cache with NORMALIZED text (translations are stored normalized)
-                if (translatedTexts.Contains(normalizedText))
+                // Check reverse cache with NORMALIZED text (translations are stored normalized + trimmed)
+                // TrimEnd because TMP often strips trailing whitespace/newlines when displaying
+                string trimmedNormalized = normalizedText.TrimEnd();
+                if (translatedTexts.Contains(trimmedNormalized))
                 {
                     skippedAlreadyTranslated++;
                     return text;
@@ -2541,6 +2569,13 @@ namespace UnityGameTranslator.Core
         public bool capture_keys_only { get; set; } = false;
         public bool translate_mod_ui { get; set; } = false; // Translate the mod's own interface
 
+        /// <summary>
+        /// Advanced fallback: Translate at localization string level (ToString/op_Implicit).
+        /// WARNING: Ignores font-based enable/disable settings.
+        /// Only enable if some text is not being captured by other methods.
+        /// </summary>
+        public bool translate_localization_fallback { get; set; } = false;
+
         // Online mode and sync settings
         public bool first_run_completed { get; set; } = false;
         public bool online_mode { get; set; } = false;
@@ -2833,5 +2868,11 @@ namespace UnityGameTranslator.Core
         /// Applied to translated text only.
         /// </summary>
         public float scale { get; set; } = 1.0f;
+
+        /// <summary>
+        /// Number of times this font has been used for translation.
+        /// Used to sort fonts by usage in the UI.
+        /// </summary>
+        public int usageCount { get; set; } = 0;
     }
 }

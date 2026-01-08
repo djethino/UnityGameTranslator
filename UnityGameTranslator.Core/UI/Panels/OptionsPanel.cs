@@ -597,18 +597,84 @@ namespace UnityGameTranslator.Core.UI.Panels
                 fallbackLabel.fontSize = UIStyles.FontSizeSmall;
                 UIFactory.SetLayoutElement(fallbackLabel.gameObject, minWidth: 55);
 
-                // Build options array with (None) as first option
+                // Build options array based on font type
+                // TMP (alt) fonts can only use fonts already loaded in the game (incompatible type)
+                // Standard TMP and Unity fonts can use system fonts (we can create TMP_FontAsset)
                 var options = new List<string> { "(None)" };
-                if (_systemFonts != null)
+                string[] availableFonts = null;
+
+                TranslatorCore.LogInfo($"[OptionsPanel] Font '{capturedFontName}' type='{fontInfo.Type}', checking for TMP (alt)...");
+
+                if (fontInfo.Type == "TMP (alt)")
                 {
-                    options.AddRange(_systemFonts);
+                    // For alternate TMP (TMProOld, etc.), show fonts already loaded in the game
+                    availableFonts = TranslatorPatches.GetAlternateTMPFontNames();
+                    TranslatorCore.LogInfo($"[OptionsPanel] TMP (alt) font: found {availableFonts.Length} alternate fonts");
+                }
+                else
+                {
+                    // For standard TMP and Unity fonts, use system fonts
+                    TranslatorCore.LogInfo($"[OptionsPanel] Non-TMP (alt) font, using system fonts");
+                    availableFonts = _systemFonts;
+                }
+
+                if (availableFonts != null && availableFonts.Length > 0)
+                {
+                    options.AddRange(availableFonts);
+                }
+
+                // Add custom fonts (user-provided SDF fonts from fonts/ folder)
+                // Custom fonts only work with TMP fonts (standard or alt), NOT Unity Fonts
+                // because they are SDF-based TMP_FontAsset, not regular Font
+                bool isTMPFont = fontInfo.Type == "TMP" || fontInfo.Type == "TextMeshPro" || fontInfo.Type == "TMP (alt)";
+                string[] customFonts = null;
+                if (isTMPFont)
+                {
+                    customFonts = FontManager.GetCustomFontNames();
+                    if (customFonts != null && customFonts.Length > 0)
+                    {
+                        // Add separator if there are other fonts
+                        if (options.Count > 1)
+                        {
+                            options.Add("--- Custom Fonts ---");
+                        }
+                        foreach (var customFont in customFonts)
+                        {
+                            options.Add("[Custom] " + customFont);
+                        }
+                        TranslatorCore.LogInfo($"[OptionsPanel] Added {customFonts.Length} custom font(s) to dropdown");
+                    }
+                }
+
+                // If no fonts available at all (no system fonts, no game fonts, no custom fonts)
+                if (options.Count <= 1)
+                {
+                    var noFontsLabel = UIFactory.CreateLabel(fallbackRow, "NoFontsLabel", "(no fonts available)", TextAnchor.MiddleLeft);
+                    noFontsLabel.color = UIStyles.TextMuted;
+                    noFontsLabel.fontSize = UIStyles.FontSizeSmall;
+                    noFontsLabel.fontStyle = FontStyle.Italic;
+                    return;
                 }
 
                 // Determine initial value
                 string initialValue = "(None)";
-                if (!string.IsNullOrEmpty(fontInfo.FallbackFont) && _systemFonts != null)
+                if (!string.IsNullOrEmpty(fontInfo.FallbackFont))
                 {
-                    initialValue = fontInfo.FallbackFont;
+                    // Check if the configured fallback is in the available fonts or custom fonts
+                    bool foundInList = (availableFonts != null && Array.Exists(availableFonts, f => f == fontInfo.FallbackFont));
+                    bool foundInCustom = (customFonts != null && Array.Exists(customFonts, f => "[Custom] " + f == fontInfo.FallbackFont || f == fontInfo.FallbackFont));
+
+                    if (foundInList || foundInCustom)
+                    {
+                        initialValue = fontInfo.FallbackFont;
+                    }
+                    else
+                    {
+                        // Fallback not in current list - could be from different font type
+                        // Still show it but it won't work until user changes it
+                        initialValue = fontInfo.FallbackFont;
+                        options.Add(fontInfo.FallbackFont + " (incompatible)");
+                    }
                 }
 
                 // Create searchable dropdown with filter
@@ -622,6 +688,11 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 dropdown.CreateUI(fallbackRow, (selectedValue) =>
                 {
+                    // Handle incompatible marker
+                    if (selectedValue != null && selectedValue.EndsWith(" (incompatible)"))
+                    {
+                        selectedValue = selectedValue.Replace(" (incompatible)", "");
+                    }
                     string fallback = selectedValue == "(None)" ? null : selectedValue;
                     OnFontFallbackChanged(capturedFontName, fallback);
                 }, width: 200);

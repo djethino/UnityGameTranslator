@@ -17,6 +17,7 @@ namespace UnityGameTranslator.Core
     public static class ApiClient
     {
         private static readonly HttpClient client;
+        private static readonly HttpClient sseClient;
         private static bool _urlOverrideLogged = false;
 
         // URLs can be overridden in config.json (api_base_url, website_base_url)
@@ -86,6 +87,49 @@ namespace UnityGameTranslator.Core
             client.DefaultRequestHeaders.Add("User-Agent", "UnityGameTranslator/1.0");
             client.DefaultRequestHeaders.Add("Accept", "application/json");
             client.DefaultRequestHeaders.Add("Accept-Encoding", "gzip");
+
+            // Dedicated SSE client: no timeout (long-lived streams), no gzip (breaks streaming)
+            var sseHandler = new HttpClientHandler
+            {
+                AllowAutoRedirect = false
+            };
+            sseClient = new HttpClient(sseHandler);
+            sseClient.Timeout = System.Threading.Timeout.InfiniteTimeSpan;
+            sseClient.DefaultRequestHeaders.Add("User-Agent", "UnityGameTranslator/1.0");
+        }
+
+        /// <summary>
+        /// Get the HttpClient configured for SSE streaming (infinite timeout, no gzip).
+        /// </summary>
+        public static HttpClient GetSseHttpClient() => sseClient;
+
+        /// <summary>
+        /// Build the SSE URL for Device Flow authentication stream.
+        /// </summary>
+        public static string GetDeviceFlowSseUrl(string deviceCode)
+        {
+            return $"{DefaultBaseUrl}/auth/device/{Uri.EscapeDataString(deviceCode)}/stream";
+        }
+
+        /// <summary>
+        /// Build the SSE URL for translation sync stream.
+        /// </summary>
+        public static string GetSyncSseUrl(string uuid, string localHash)
+        {
+            var url = $"{DefaultBaseUrl}/sync/stream?uuid={Uri.EscapeDataString(uuid)}";
+            if (!string.IsNullOrEmpty(localHash))
+            {
+                url += $"&hash={Uri.EscapeDataString(localHash)}";
+            }
+            return url;
+        }
+
+        /// <summary>
+        /// Build the SSE URL for merge preview completion stream.
+        /// </summary>
+        public static string GetMergeStreamUrl(string token)
+        {
+            return $"{DefaultBaseUrl}/merge-preview/{Uri.EscapeDataString(token)}/stream";
         }
 
         /// <summary>
@@ -213,69 +257,6 @@ namespace UnityGameTranslator.Core
                 FileUuid = t["file_uuid"]?.Value<string>(),
                 UpdatedAt = t["updated_at"]?.Value<string>()
             };
-        }
-
-        #endregion
-
-        #region Translation Check
-
-        /// <summary>
-        /// Check if a translation has been updated
-        /// </summary>
-        public static async Task<TranslationCheckResult> CheckUpdate(int translationId, string currentHash)
-        {
-            try
-            {
-                // Add debug=1 to get hash comparison info from server
-                var request = new HttpRequestMessage(HttpMethod.Get, $"{DefaultBaseUrl}/translations/{translationId}/check?hash={Uri.EscapeDataString(currentHash ?? "")}&debug=1");
-
-                if (!string.IsNullOrEmpty(currentHash))
-                {
-                    request.Headers.Add("If-None-Match", $"\"{currentHash}\"");
-                }
-
-                var response = await client.SendAsync(request);
-
-                if (response.StatusCode == System.Net.HttpStatusCode.NotModified)
-                {
-                    return new TranslationCheckResult { Success = true, HasUpdate = false };
-                }
-
-                if (!response.IsSuccessStatusCode)
-                {
-                    return new TranslationCheckResult { Success = false, Error = $"HTTP {response.StatusCode}" };
-                }
-
-                string json = await response.Content.ReadAsStringAsync();
-                var data = JObject.Parse(json);
-
-                // Log debug info if present
-                var debug = data["debug"];
-                if (debug != null)
-                {
-                    TranslatorCore.LogInfo($"[HashDebug] Client hash:   {debug["client_hash"]}");
-                    TranslatorCore.LogInfo($"[HashDebug] Stored hash:   {debug["stored_hash"]}");
-                    TranslatorCore.LogInfo($"[HashDebug] Computed hash: {debug["computed_hash"]}");
-                    TranslatorCore.LogInfo($"[HashDebug] Stored==Computed: {debug["stored_matches_computed"]}");
-                    TranslatorCore.LogInfo($"[HashDebug] Server JSON preview: {debug["json_preview"]?.ToString()?.Substring(0, Math.Min(100, debug["json_preview"]?.ToString()?.Length ?? 0))}...");
-                    TranslatorCore.LogInfo($"[HashDebug] Server entry count: {debug["entry_count"]}, length: {debug["json_length"]}");
-                }
-
-                return new TranslationCheckResult
-                {
-                    Success = true,
-                    HasUpdate = data["has_update"]?.Value<bool>() ?? false,
-                    FileHash = data["file_hash"]?.Value<string>(),
-                    LineCount = data["line_count"]?.Value<int>() ?? 0,
-                    VoteCount = data["vote_count"]?.Value<int>() ?? 0,
-                    UpdatedAt = data["updated_at"]?.Value<string>()
-                };
-            }
-            catch (Exception e)
-            {
-                TranslatorCore.LogWarning($"[ApiClient] Check error: {e.Message}");
-                return new TranslationCheckResult { Success = false, Error = e.Message };
-            }
         }
 
         #endregion
@@ -828,54 +809,6 @@ namespace UnityGameTranslator.Core
             }
         }
 
-        /// <summary>
-        /// Poll for device flow authorization status.
-        /// Returns authorization_pending until user authorizes.
-        /// </summary>
-        public static async Task<DeviceFlowPollResult> PollDeviceFlow(string deviceCode)
-        {
-            try
-            {
-                var content = new StringContent(
-                    JsonConvert.SerializeObject(new { device_code = deviceCode }),
-                    Encoding.UTF8,
-                    "application/json"
-                );
-
-                var response = await client.PostAsync($"{DefaultBaseUrl}/auth/device/poll", content);
-
-                string json = await response.Content.ReadAsStringAsync();
-                var data = JObject.Parse(json);
-
-                if (!response.IsSuccessStatusCode)
-                {
-                    string error = data["error"]?.Value<string>();
-                    return new DeviceFlowPollResult
-                    {
-                        Success = false,
-                        Pending = error == "authorization_pending",
-                        Error = data["error_description"]?.Value<string>() ?? error
-                    };
-                }
-
-                // Success - we got the token
-                string token = data["access_token"]?.Value<string>();
-                var user = data["user"];
-
-                return new DeviceFlowPollResult
-                {
-                    Success = true,
-                    AccessToken = token,
-                    UserName = user?["name"]?.Value<string>()
-                };
-            }
-            catch (Exception e)
-            {
-                TranslatorCore.LogWarning($"[ApiClient] Device flow poll error: {e.Message}");
-                return new DeviceFlowPollResult { Success = false, Error = e.Message };
-            }
-        }
-
         #endregion
 
         #region Upload
@@ -1267,15 +1200,6 @@ namespace UnityGameTranslator.Core
         public string VerificationUri { get; set; }
         public int ExpiresIn { get; set; }
         public int Interval { get; set; }
-    }
-
-    public class DeviceFlowPollResult
-    {
-        public bool Success { get; set; }
-        public bool Pending { get; set; }
-        public string Error { get; set; }
-        public string AccessToken { get; set; }
-        public string UserName { get; set; }
     }
 
     public class VoteResult

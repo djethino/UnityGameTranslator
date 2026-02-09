@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using Newtonsoft.Json.Linq;
 using UnityEngine;
 using UniverseLib;
 using UniverseLib.Config;
@@ -31,6 +32,10 @@ namespace UnityGameTranslator.Core.UI
         public static UIBase UiBase { get; private set; }
 
         private static bool _initialized;
+        public static bool IsInitialized => _initialized;
+
+        // Callback for when initialization completes (used by TranslatorPatches to retry failed font replacements)
+        public static event Action OnInitialized;
         private static bool _showUI;
         private static bool _lastPanelVisibleState; // Track panel state for EventSystem and cursor management
 
@@ -44,6 +49,10 @@ namespace UnityGameTranslator.Core.UI
         public static bool HasModUpdate { get; set; } = false;
         public static ModUpdateInfo ModUpdateInfo { get; set; } = null;
         public static bool ModUpdateDismissed { get; set; } = false;
+
+        // SSE sync stream
+        private static SseClient _syncSseClient;
+        public static SseConnectionState SyncConnectionState { get; private set; } = SseConnectionState.Disconnected;
 
         // Panels
         public static Panels.WizardPanel WizardPanel { get; private set; }
@@ -167,6 +176,9 @@ namespace UnityGameTranslator.Core.UI
 
             _initialized = true;
 
+            // Notify listeners (e.g., TranslatorPatches to retry failed font replacements)
+            try { OnInitialized?.Invoke(); } catch { }
+
             // Initialize UI state based on config
             InitializeUIState();
         }
@@ -238,212 +250,444 @@ namespace UnityGameTranslator.Core.UI
                 CheckForModUpdates();
             }
 
-            // Fetch server state if online mode is enabled and we have a token
+            // Start SSE sync stream (replaces FetchServerState + CheckForUpdates)
+            // The SSE 'state' event combines check-uuid + check in one real-time payload
             if (TranslatorCore.Config.online_mode && !string.IsNullOrEmpty(TranslatorCore.Config.api_token))
             {
-                await FetchServerState();
+                StartSyncStream();
             }
-
-            // Then check for translation updates (only if we have server state with a site_id)
-            CheckForUpdates();
         }
 
-        #region Server State and Updates
+        #region SSE Sync Stream
 
         /// <summary>
-        /// Fetch server state for current translation via check-uuid.
-        /// Only called if online_mode is enabled and user is authenticated.
+        /// Start the SSE sync stream. Replaces FetchServerState + CheckForUpdates with a
+        /// single real-time connection. The 'state' event provides initial state on connect,
+        /// and 'translation_updated' events push live changes.
+        /// Called at startup and after successful login.
         /// </summary>
-        private static async Task FetchServerState()
+        public static void StartSyncStream()
         {
             if (!TranslatorCore.Config.online_mode)
             {
-                TranslatorCore.LogInfo("[UIManager] Online mode disabled, skipping server state fetch");
+                TranslatorCore.LogInfo("[SyncSSE] Online mode disabled, skipping sync stream");
                 return;
             }
 
             if (string.IsNullOrEmpty(TranslatorCore.Config.api_token))
             {
-                TranslatorCore.LogInfo("[UIManager] Not authenticated, skipping server state fetch");
+                TranslatorCore.LogInfo("[SyncSSE] Not authenticated, skipping sync stream");
                 return;
             }
 
-            try
+            string uuid = TranslatorCore.FileUuid;
+            if (string.IsNullOrEmpty(uuid))
             {
-                TranslatorCore.LogInfo($"[UIManager] Fetching server state for UUID: {TranslatorCore.FileUuid}");
-                var result = await ApiClient.CheckUuid(TranslatorCore.FileUuid);
+                TranslatorCore.LogInfo("[SyncSSE] No FileUuid, skipping sync stream");
+                return;
+            }
 
-                // After await, we may be on a background thread (IL2CPP issue)
-                var success = result.Success;
-                var error = result.Error;
-                var exists = result.Exists;
-                var isOwner = result.IsOwner;
-                var role = result.Role;
-                var mainUsername = result.MainUsername;
-                var branchesCount = result.BranchesCount;
-                var existingTranslation = result.ExistingTranslation;
-                var originalTranslation = result.OriginalTranslation;
+            StopSyncStream();
+
+            string localHash = TranslatorCore.ComputeContentHash();
+            string url = ApiClient.GetSyncSseUrl(uuid, localHash);
+
+            var headers = new Dictionary<string, string>
+            {
+                { "Authorization", $"Bearer {TranslatorCore.Config.api_token}" }
+            };
+
+            _syncSseClient = new SseClient(ApiClient.GetSseHttpClient());
+
+            _syncSseClient.OnEvent += (evt) =>
+            {
+                // Capture values before RunOnMainThread (IL2CPP safety)
+                var eventType = evt.EventType;
+                var data = evt.Data;
 
                 RunOnMainThread(() =>
                 {
-                    if (!success)
+                    switch (eventType)
                     {
-                        TranslatorCore.LogWarning($"[UIManager] Server state fetch failed: {error}");
-                        TranslatorCore.ServerState = new ServerTranslationState { Checked = true };
-                        MainPanel?.RefreshUI();
-                        return;
+                        case "state":
+                            HandleSyncStateEvent(data);
+                            break;
+                        case "translation_updated":
+                            HandleTranslationUpdatedEvent(data);
+                            break;
                     }
+                });
+            };
 
-                    TranslatorCore.ServerState = new ServerTranslationState
+            _syncSseClient.OnStateChanged += (state) =>
+            {
+                RunOnMainThread(() =>
+                {
+                    SyncConnectionState = state;
+                    StatusOverlay?.RefreshOverlay();
+                });
+            };
+
+            _syncSseClient.OnError += (error) =>
+            {
+                var errorMsg = error;
+                RunOnMainThread(() =>
+                {
+                    TranslatorCore.LogWarning($"[SyncSSE] Permanent error: {errorMsg}");
+                    SyncConnectionState = SseConnectionState.Disconnected;
+                    // Set server state as checked (even on error) so UI stops showing "checking..."
+                    if (TranslatorCore.ServerState == null || !TranslatorCore.ServerState.Checked)
                     {
-                        Checked = true,
-                        Exists = exists,
-                        IsOwner = isOwner,
-                        Role = role,
-                        MainUsername = mainUsername,
-                        BranchesCount = branchesCount,
-                        SiteId = existingTranslation?.Id ?? originalTranslation?.Id,
-                        Uploader = isOwner ? TranslatorCore.Config.api_user : originalTranslation?.Uploader,
-                        Hash = existingTranslation?.FileHash,
-                        Type = existingTranslation?.Type ?? originalTranslation?.Type,
-                        Notes = existingTranslation?.Notes
-                    };
-
-                    TranslatorCore.LogInfo($"[UIManager] Server state: exists={exists}, isOwner={isOwner}, role={role}, siteId={TranslatorCore.ServerState.SiteId}");
-
-                    // Refresh MainPanel if visible to show updated server state
+                        TranslatorCore.ServerState = new ServerTranslationState { Checked = true };
+                    }
+                    StatusOverlay?.RefreshOverlay();
                     MainPanel?.RefreshUI();
                 });
+            };
+
+            _syncSseClient.Connect(url, headers);
+            TranslatorCore.LogInfo($"[SyncSSE] Connecting for UUID: {uuid}, hash: {localHash?.Substring(0, 16)}...");
+        }
+
+        /// <summary>
+        /// Stop the SSE sync stream. Called on logout, offline mode toggle, or shutdown.
+        /// </summary>
+        public static void StopSyncStream()
+        {
+            if (_syncSseClient != null)
+            {
+                _syncSseClient.Disconnect();
+                _syncSseClient.Dispose();
+                _syncSseClient = null;
+            }
+            SyncConnectionState = SseConnectionState.Disconnected;
+        }
+
+        /// <summary>
+        /// Handle the SSE 'state' event — combines check-uuid + check in one payload.
+        /// Sent immediately on connect and on reconnect (with Last-Event-ID).
+        /// </summary>
+        private static void HandleSyncStateEvent(string jsonData)
+        {
+            try
+            {
+                var data = JObject.Parse(jsonData);
+
+                bool exists = data["exists"]?.Value<bool>() ?? false;
+                string roleStr = data["role"]?.Value<string>() ?? "none";
+                int branchesCount = data["branches_count"]?.Value<int>() ?? 0;
+
+                TranslationRole role;
+                switch (roleStr)
+                {
+                    case "main": role = TranslationRole.Main; break;
+                    case "branch": role = TranslationRole.Branch; break;
+                    default: role = TranslationRole.None; break;
+                }
+
+                var translation = data["translation"];
+                var main = data["main"];
+
+                // Build ServerState (replaces FetchServerState logic)
+                var serverState = new ServerTranslationState
+                {
+                    Checked = true,
+                    Exists = exists,
+                    IsOwner = role == TranslationRole.Main || role == TranslationRole.Branch,
+                    Role = role,
+                    BranchesCount = branchesCount,
+                };
+
+                if (translation != null && translation.Type != JTokenType.Null)
+                {
+                    serverState.SiteId = translation["id"]?.Value<int>();
+                    serverState.Uploader = TranslatorCore.Config.api_user;
+                    serverState.Hash = translation["file_hash"]?.Value<string>();
+                    serverState.Type = translation["type"]?.Value<string>();
+                    serverState.Notes = translation["notes"]?.Value<string>();
+                }
+                else if (main != null && main.Type != JTokenType.Null)
+                {
+                    serverState.SiteId = main["id"]?.Value<int>();
+                    serverState.Uploader = main["uploader"]?.Value<string>();
+                    serverState.MainUsername = main["uploader"]?.Value<string>();
+                    serverState.Hash = main["file_hash"]?.Value<string>();
+                }
+
+                TranslatorCore.ServerState = serverState;
+
+                TranslatorCore.LogInfo($"[SyncSSE] State: exists={exists}, role={role}, siteId={serverState.SiteId}");
+
+                // Client-side update detection (URL hash may be stale after reconnection)
+                string serverHash = serverState.Hash;
+                string localHash = TranslatorCore.ComputeContentHash();
+                bool hasUpdate = !string.IsNullOrEmpty(serverHash) && serverHash != localHash;
+
+                if (hasUpdate && TranslatorCore.Config.sync.check_update_on_start)
+                {
+                    int lineCount = translation?["line_count"]?.Value<int>()
+                                    ?? main?["line_count"]?.Value<int>()
+                                    ?? 0;
+                    int voteCount = translation?["vote_count"]?.Value<int>() ?? 0;
+
+                    TranslatorCore.LogInfo($"[SyncSSE] Update detected: serverHash={serverHash?.Substring(0, 16)}..., localHash={localHash?.Substring(0, 16)}...");
+                    DetermineAndApplyUpdateDirection(serverHash, lineCount, voteCount);
+                }
+                else
+                {
+                    HasPendingUpdate = false;
+                    PendingUpdateInfo = null;
+                    PendingUpdateDirection = UpdateDirection.None;
+                }
+
+                MainPanel?.RefreshUI();
             }
             catch (Exception e)
             {
-                var errorMsg = e.Message;
-                RunOnMainThread(() =>
-                {
-                    TranslatorCore.LogWarning($"[UIManager] Server state fetch error: {errorMsg}");
-                    TranslatorCore.ServerState = new ServerTranslationState { Checked = true };
-
-                    // Refresh MainPanel even on error to update "checking..." status
-                    MainPanel?.RefreshUI();
-                });
+                TranslatorCore.LogError($"[SyncSSE] Error handling state event: {e.Message}");
+                TranslatorCore.ServerState = new ServerTranslationState { Checked = true };
+                MainPanel?.RefreshUI();
             }
         }
 
         /// <summary>
-        /// Check for translation updates from the server.
+        /// Handle the SSE 'translation_updated' event — real-time notification when
+        /// the server translation is modified (upload from another device, merge, etc.).
         /// </summary>
-        public static async void CheckForUpdates()
+        private static void HandleTranslationUpdatedEvent(string jsonData)
         {
-            // Only check if online mode is enabled
-            if (!TranslatorCore.Config.online_mode)
-            {
-                TranslatorCore.LogInfo("[UpdateCheck] Skipped - online mode disabled");
-                return;
-            }
-
-            if (!TranslatorCore.Config.sync.check_update_on_start)
-            {
-                TranslatorCore.LogInfo("[UpdateCheck] Skipped - check_update_on_start disabled");
-                return;
-            }
-
-            // Need server state with site_id to check for updates
-            var serverState = TranslatorCore.ServerState;
-            if (serverState?.SiteId == null)
-            {
-                TranslatorCore.LogInfo("[UpdateCheck] Skipped - no server translation");
-                return;
-            }
-
-            // Capture values for closure
-            var siteId = serverState.SiteId.Value;
-
             try
             {
-                TranslatorCore.LogInfo("[UpdateCheck] Checking for updates...");
+                var data = JObject.Parse(jsonData);
 
-                // Compute local content hash to compare with server
+                string serverHash = data["file_hash"]?.Value<string>();
+                int lineCount = data["line_count"]?.Value<int>() ?? 0;
+                int voteCount = data["vote_count"]?.Value<int>() ?? 0;
+
+                // Update server state hash
+                var serverState = TranslatorCore.ServerState;
+                if (serverState != null)
+                {
+                    serverState.Hash = serverHash;
+                }
+
+                // Client-side update detection
                 string localHash = TranslatorCore.ComputeContentHash();
-                TranslatorCore.LogInfo($"[UpdateCheck] Local hash: {localHash?.Substring(0, 16)}...");
+                bool hasUpdate = !string.IsNullOrEmpty(serverHash) && serverHash != localHash;
 
-                var result = await ApiClient.CheckUpdate(siteId, localHash);
+                TranslatorCore.LogInfo($"[SyncSSE] Translation updated: serverHash={serverHash?.Substring(0, 16)}..., hasUpdate={hasUpdate}");
+
+                if (hasUpdate)
+                {
+                    DetermineAndApplyUpdateDirection(serverHash, lineCount, voteCount);
+                }
+                else
+                {
+                    // Local content matches server — we're synced
+                    HasPendingUpdate = false;
+                    PendingUpdateInfo = null;
+                    PendingUpdateDirection = UpdateDirection.None;
+                }
+
+                MainPanel?.RefreshUI();
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogError($"[SyncSSE] Error handling translation_updated event: {e.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Determine the sync direction (Download/Upload/Merge) and set pending update state.
+        /// Shared logic used by both 'state' and 'translation_updated' event handlers.
+        /// </summary>
+        private static void DetermineAndApplyUpdateDirection(string serverHash, int lineCount, int voteCount)
+        {
+            bool hasLocalChanges = TranslatorCore.LocalChangesCount > 0;
+
+            // Check if server changed since our last sync
+            string lastSyncedHash = TranslatorCore.LastSyncedHash;
+            bool serverChanged = !string.IsNullOrEmpty(lastSyncedHash) &&
+                                 serverHash != lastSyncedHash;
+
+            // If no LastSyncedHash, we can't tell definitively what changed
+            // If we have local changes AND server hash differs, assume potential conflict to be safe
+            if (string.IsNullOrEmpty(lastSyncedHash))
+            {
+                serverChanged = hasLocalChanges;
+            }
+
+            // Determine direction based on what changed
+            if (hasLocalChanges && serverChanged)
+            {
+                PendingUpdateDirection = UpdateDirection.Merge;
+                TranslatorCore.LogInfo($"[SyncSSE] CONFLICT: Both local ({TranslatorCore.LocalChangesCount} changes) and server changed - merge needed");
+            }
+            else if (hasLocalChanges)
+            {
+                PendingUpdateDirection = UpdateDirection.Upload;
+                TranslatorCore.LogInfo($"[SyncSSE] Local has {TranslatorCore.LocalChangesCount} changes to upload");
+            }
+            else
+            {
+                PendingUpdateDirection = UpdateDirection.Download;
+                TranslatorCore.LogInfo($"[SyncSSE] Server has update: {lineCount} lines");
+            }
+
+            HasPendingUpdate = true;
+            PendingUpdateInfo = new TranslationCheckResult
+            {
+                Success = true,
+                HasUpdate = true,
+                FileHash = serverHash,
+                LineCount = lineCount,
+                VoteCount = voteCount,
+            };
+
+            // Auto-download only if no local changes and no conflict
+            if (PendingUpdateDirection == UpdateDirection.Download &&
+                TranslatorCore.Config.sync.auto_download)
+            {
+                TranslatorCore.LogInfo("[SyncSSE] Auto-downloading update...");
+                _ = DownloadUpdate();
+            }
+        }
+
+        #endregion
+
+        #region SSE Merge Completion
+
+        private static SseClient _mergeSseClient;
+
+        /// <summary>
+        /// Start listening for merge preview completion via SSE.
+        /// When the user completes a merge in the browser, auto-downloads the result.
+        /// Called after opening the merge preview URL in the browser.
+        /// </summary>
+        /// <param name="token">Merge preview token from InitMergePreview API</param>
+        /// <param name="translationId">Translation ID to download after merge completes</param>
+        public static void StartMergeCompletionListener(string token, int translationId)
+        {
+            if (string.IsNullOrEmpty(token))
+            {
+                TranslatorCore.LogWarning("[MergeSSE] No token, skipping merge completion listener");
+                return;
+            }
+
+            StopMergeCompletionListener();
+
+            string url = ApiClient.GetMergeStreamUrl(token);
+
+            _mergeSseClient = new SseClient(ApiClient.GetSseHttpClient());
+
+            _mergeSseClient.OnEvent += (evt) =>
+            {
+                var eventType = evt.EventType;
+                var data = evt.Data;
+
+                RunOnMainThread(() =>
+                {
+                    if (eventType == "merge_completed")
+                    {
+                        HandleMergeCompleted(data, translationId);
+                    }
+                });
+            };
+
+            _mergeSseClient.OnError += (error) =>
+            {
+                var errorMsg = error;
+                RunOnMainThread(() =>
+                {
+                    TranslatorCore.LogWarning($"[MergeSSE] Error: {errorMsg}");
+                    StopMergeCompletionListener();
+                });
+            };
+
+            _mergeSseClient.Connect(url);
+            TranslatorCore.LogInfo($"[MergeSSE] Listening for merge completion (token: {token.Substring(0, 8)}...)");
+        }
+
+        /// <summary>
+        /// Stop listening for merge preview completion.
+        /// </summary>
+        public static void StopMergeCompletionListener()
+        {
+            if (_mergeSseClient != null)
+            {
+                _mergeSseClient.Disconnect();
+                _mergeSseClient.Dispose();
+                _mergeSseClient = null;
+            }
+        }
+
+        /// <summary>
+        /// Handle the merge_completed SSE event — auto-download the merged translation.
+        /// </summary>
+        private static async void HandleMergeCompleted(string jsonData, int translationId)
+        {
+            try
+            {
+                var data = JObject.Parse(jsonData);
+                string fileHash = data["file_hash"]?.Value<string>();
+                int lineCount = data["line_count"]?.Value<int>() ?? 0;
+
+                TranslatorCore.LogInfo($"[MergeSSE] Merge completed! hash={fileHash?.Substring(0, 16)}..., lines={lineCount}");
+
+                // Stop listening — we only need one event
+                StopMergeCompletionListener();
+
+                // Auto-download the merged translation
+                var result = await ApiClient.Download(translationId);
 
                 // After await, we may be on a background thread (IL2CPP issue)
                 var success = result.Success;
-                var hasUpdate = result.HasUpdate;
-                var fileHash = result.FileHash;
-                var lineCount = result.LineCount;
+                var content = result.Content;
+                var downloadHash = result.FileHash;
                 var error = result.Error;
 
                 RunOnMainThread(() =>
                 {
-                    TranslatorCore.LogInfo($"[UpdateCheck] Server response: HasUpdate={hasUpdate}, ServerHash={fileHash?.Substring(0, 16)}...");
-
-                    if (success && hasUpdate)
+                    if (success && !string.IsNullOrEmpty(content))
                     {
-                        // Determine sync direction based on what changed
-                        bool hasLocalChanges = TranslatorCore.LocalChangesCount > 0;
-
-                        // Check if server changed since our last sync
-                        string lastSyncedHash = TranslatorCore.LastSyncedHash;
-                        bool serverChanged = !string.IsNullOrEmpty(lastSyncedHash) &&
-                                             fileHash != lastSyncedHash;
-
-                        // If no LastSyncedHash, we can't tell definitively what changed
-                        // If we have local changes AND server hash differs, assume potential conflict to be safe
-                        // This ensures merge dialog is shown rather than accidentally overwriting server changes
-                        if (string.IsNullOrEmpty(lastSyncedHash))
+                        // Backup current file
+                        string backupPath = TranslatorCore.CachePath + ".backup";
+                        if (System.IO.File.Exists(TranslatorCore.CachePath))
                         {
-                            serverChanged = hasLocalChanges;
+                            System.IO.File.Copy(TranslatorCore.CachePath, backupPath, true);
                         }
 
-                        // Determine direction based on what changed
-                        if (hasLocalChanges && serverChanged)
-                        {
-                            PendingUpdateDirection = UpdateDirection.Merge;
-                            TranslatorCore.LogInfo($"[UpdateCheck] CONFLICT: Both local ({TranslatorCore.LocalChangesCount} changes) and server changed - merge needed");
-                        }
-                        else if (hasLocalChanges)
-                        {
-                            PendingUpdateDirection = UpdateDirection.Upload;
-                            TranslatorCore.LogInfo($"[UpdateCheck] Local has {TranslatorCore.LocalChangesCount} changes to upload");
-                        }
-                        else
-                        {
-                            PendingUpdateDirection = UpdateDirection.Download;
-                            TranslatorCore.LogInfo($"[UpdateCheck] Server has update: {lineCount} lines");
-                        }
+                        // Write new content
+                        System.IO.File.WriteAllText(TranslatorCore.CachePath, content);
 
-                        HasPendingUpdate = true;
-                        PendingUpdateInfo = result;
+                        // Reload cache to apply new content immediately
+                        TranslatorCore.ReloadCache();
 
-                        // Auto-download only if no local changes and no conflict
-                        if (PendingUpdateDirection == UpdateDirection.Download &&
-                            TranslatorCore.Config.sync.auto_download)
+                        // Update sync state
+                        var serverState = TranslatorCore.ServerState;
+                        if (serverState != null)
                         {
-                            TranslatorCore.LogInfo("[UpdateCheck] Auto-downloading update...");
-                            // Note: DownloadUpdate is already fixed for IL2CPP threading
-                            _ = DownloadUpdate();
+                            serverState.Hash = downloadHash ?? fileHash;
                         }
+                        TranslatorCore.LastSyncedHash = downloadHash ?? fileHash;
+                        TranslatorCore.SaveCache();
+                        TranslatorCore.SaveAncestorCache();
 
-                        // Refresh MainPanel to show updated sync status
-                        MainPanel?.RefreshUI();
-                    }
-                    else if (success)
-                    {
-                        TranslatorCore.LogInfo("[UpdateCheck] Translation is up to date");
+                        // Clear pending update
                         HasPendingUpdate = false;
                         PendingUpdateInfo = null;
                         PendingUpdateDirection = UpdateDirection.None;
 
-                        // Refresh MainPanel to show updated sync status
+                        TranslatorCore.LogInfo("[MergeSSE] Merge result downloaded and applied!");
+
+                        // Clear processing caches so scanner re-evaluates text
+                        TranslatorCore.ClearProcessingCaches();
+
                         MainPanel?.RefreshUI();
                     }
                     else
                     {
-                        TranslatorCore.LogWarning($"[UpdateCheck] Failed: {error}");
-
-                        // Refresh MainPanel even on error
+                        TranslatorCore.LogWarning($"[MergeSSE] Auto-download after merge failed: {error}");
                         MainPanel?.RefreshUI();
                     }
                 });
@@ -453,13 +697,14 @@ namespace UnityGameTranslator.Core.UI
                 var errorMsg = e.Message;
                 RunOnMainThread(() =>
                 {
-                    TranslatorCore.LogWarning($"[UpdateCheck] Error: {errorMsg}");
-
-                    // Refresh MainPanel even on error
-                    MainPanel?.RefreshUI();
+                    TranslatorCore.LogError($"[MergeSSE] Error handling merge_completed: {errorMsg}");
                 });
             }
         }
+
+        #endregion
+
+        #region Server State and Updates
 
         /// <summary>
         /// Check for mod updates on GitHub.

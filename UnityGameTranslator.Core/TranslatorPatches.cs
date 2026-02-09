@@ -1382,10 +1382,106 @@ namespace UnityGameTranslator.Core
         private static Type _alternateTMPFontAssetType = null;
         private static bool _alternateTMPFontSearchDone = false;
 
+        // Flag to register callback only once
+        private static bool _initCallbackRegistered = false;
+
+        // Pending font replacements: components that need font change but were encountered before init
+        // Key: instance hashcode, Value: (WeakReference to instance, original font name, original English text)
+        // We store the English text so we can replay the full set_text flow after init
+        private static Dictionary<int, (WeakReference instance, string fontName, string originalText)> _pendingFontReplacements = new Dictionary<int, (WeakReference, string, string)>();
+
+        /// <summary>
+        /// Register a callback for when UI is initialized.
+        /// </summary>
+        private static void RegisterInitCallback()
+        {
+            if (_initCallbackRegistered) return;
+            _initCallbackRegistered = true;
+
+            UI.TranslatorUIManager.OnInitialized += OnUIInitialized;
+            TranslatorCore.LogInfo("[AlternateTMP] Registered init callback for pending font replacements");
+        }
+
+        /// <summary>
+        /// Called when UniverseLib UI is fully initialized.
+        /// Schedule delayed replay for pending components to ensure Unity state is stable.
+        /// </summary>
+        private static void OnUIInitialized()
+        {
+            TranslatorCore.LogInfo($"[AlternateTMP] UI initialized - scheduling {_pendingFontReplacements.Count} pending text operations");
+
+            // Collect pending items
+            var toProcess = new List<(object instance, string fontName, string originalText)>();
+            foreach (var kvp in _pendingFontReplacements)
+            {
+                var weakRef = kvp.Value.instance;
+                var fontName = kvp.Value.fontName;
+                var originalText = kvp.Value.originalText;
+                if (weakRef.IsAlive && weakRef.Target != null)
+                {
+                    toProcess.Add((weakRef.Target, fontName, originalText));
+                }
+            }
+            _pendingFontReplacements.Clear();
+
+            if (toProcess.Count == 0) return;
+
+            // Use RunDelayed to wait a few frames for Unity to stabilize
+            // This is critical: applying font immediately after init often fails
+            UI.TranslatorUIManager.RunDelayed(0.1f, () => ProcessPendingFontReplacements(toProcess));
+        }
+
+        /// <summary>
+        /// Process pending font replacements after a delay.
+        /// Applies font and triggers translation for each queued component.
+        /// </summary>
+        private static void ProcessPendingFontReplacements(List<(object instance, string fontName, string originalText)> toProcess)
+        {
+            TranslatorCore.LogInfo($"[AlternateTMP] Processing {toProcess.Count} pending font replacements");
+
+            foreach (var (instance, fontName, originalText) in toProcess)
+            {
+                try
+                {
+                    // Check if instance is still valid
+                    var component = instance as Component;
+                    if (component == null || component.gameObject == null)
+                    {
+                        TranslatorCore.LogWarning($"[AlternateTMP] Component no longer valid, skipping");
+                        continue;
+                    }
+
+                    TranslatorCore.LogInfo($"[AlternateTMP] Processing: '{(originalText.Length > 40 ? originalText.Substring(0, 40) + "..." : originalText)}' with font '{fontName}'");
+
+                    // Step 1: Apply font replacement
+                    TryApplyAlternateTMPReplacementFont(instance, fontName);
+
+                    // Step 2: Trigger set_text with original text
+                    // Our prefix will now translate it (UI is ready, font was just applied)
+                    var textProp = instance.GetType().GetProperty("text", BindingFlags.Public | BindingFlags.Instance);
+                    if (textProp != null && !string.IsNullOrEmpty(originalText))
+                    {
+                        textProp.SetValue(instance, originalText, null);
+
+                        // Check result
+                        var resultText = textProp.GetValue(instance, null) as string ?? "(null)";
+                        TranslatorCore.LogInfo($"[AlternateTMP] After processing, text is: '{(resultText.Length > 40 ? resultText.Substring(0, 40) + "..." : resultText)}'");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    TranslatorCore.LogWarning($"[AlternateTMP] Failed to process pending: {ex.Message}");
+                }
+            }
+
+            TranslatorCore.LogInfo($"[AlternateTMP] Completed processing {toProcess.Count} pending text operations");
+        }
+
         /// <summary>
         /// Try to find and apply a replacement font for an alternate TMP component.
         /// Since TMProOld.TMP_FontAsset != TMPro.TMP_FontAsset, we search for fonts already loaded in the game.
         /// Also applies font scale if configured.
+        /// NOTE: This should only be called when UI is initialized (caller must check).
         /// </summary>
         private static void TryApplyAlternateTMPReplacementFont(object instance, string originalFontName)
         {
@@ -1496,23 +1592,131 @@ namespace UnityGameTranslator.Core
                         }
 
                         // Replace the font directly
+                        var fontBefore = fontProp.GetValue(instance, null) as UnityEngine.Object;
                         fontProp.SetValue(instance, customFontAsset, null);
-                        TranslatorCore.LogInfo($"[AlternateTMP] Applied custom font '{customFontName}' (direct replacement)");
+                        var fontAfter = fontProp.GetValue(instance, null) as UnityEngine.Object;
+                        var comp = instance as Component;
+                        string compInfo = comp != null ? $"{comp.GetType().Name} on '{comp.gameObject.name}'" : instance.GetType().Name;
+                        string hierarchy = "";
+                        if (comp != null)
+                        {
+                            var t = comp.transform;
+                            for (int i = 0; i < 4 && t != null; i++)
+                            {
+                                hierarchy += (i > 0 ? " -> " : "") + t.name;
+                                t = t.parent;
+                            }
+                            var canvas = comp.GetComponentInParent<Canvas>();
+                            hierarchy += canvas != null ? $" [Canvas: {canvas.renderMode}]" : " [No Canvas - World Space]";
+                        }
+                        TranslatorCore.LogInfo($"[AlternateTMP] Applied custom font '{customFontName}' to {compInfo}");
+                        TranslatorCore.LogInfo($"[AlternateTMP] Hierarchy: {hierarchy}");
+                        TranslatorCore.LogInfo($"[AlternateTMP] Font before: {fontBefore?.name ?? "null"}, after: {fontAfter?.name ?? "null"}");
 
-                        // Force TMP to regenerate mesh with new font
+                        // Also set the material to match the font's material
+                        try
+                        {
+                            var materialField = customFontAsset.GetType().GetField("material", BindingFlags.Public | BindingFlags.Instance);
+                            if (materialField != null)
+                            {
+                                var fontMaterial = materialField.GetValue(customFontAsset) as Material;
+                                if (fontMaterial != null)
+                                {
+                                    var fontSharedMatProp = instance.GetType().GetProperty("fontSharedMaterial", BindingFlags.Public | BindingFlags.Instance);
+                                    if (fontSharedMatProp != null && fontSharedMatProp.CanWrite)
+                                    {
+                                        fontSharedMatProp.SetValue(instance, fontMaterial, null);
+                                        TranslatorCore.LogInfo($"[AlternateTMP] Set fontSharedMaterial to '{fontMaterial.name}'");
+                                    }
+                                }
+                            }
+                        }
+                        catch (Exception matEx)
+                        {
+                            TranslatorCore.LogWarning($"[AlternateTMP] Could not set material: {matEx.Message}");
+                        }
+
+                        // UI is guaranteed to be initialized here (we return early if not)
+                        // Force mesh regeneration after font change
+                        bool meshUpdated = false;
+
+                        // Try ForceMeshUpdate first - most reliable
                         try
                         {
                             var forceMeshUpdate = instance.GetType().GetMethod("ForceMeshUpdate",
-                                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance,
+                                BindingFlags.Public | BindingFlags.Instance,
                                 null, Type.EmptyTypes, null);
                             if (forceMeshUpdate != null)
                             {
                                 forceMeshUpdate.Invoke(instance, null);
                                 TranslatorCore.LogInfo($"[AlternateTMP] Called ForceMeshUpdate");
+                                meshUpdated = true;
+                            }
+                        }
+                        catch (Exception fmuEx)
+                        {
+                            TranslatorCore.LogWarning($"[AlternateTMP] ForceMeshUpdate failed: {fmuEx.InnerException?.Message ?? fmuEx.Message}");
+                        }
+
+                        // Note: ForceMeshUpdate may fail for pending components, but that's OK
+                        // The proper mesh update will happen when the original set_text runs
+                        // after our prefix completes with the translated text
+
+                        TranslatorCore.LogInfo($"[AlternateTMP] Custom font type: {customFontAsset.GetType().FullName}");
+
+                        // Log current text content and mesh state
+                        try
+                        {
+                            var textPropDbg = instance.GetType().GetProperty("text", BindingFlags.Public | BindingFlags.Instance);
+                            if (textPropDbg != null)
+                            {
+                                var currentText = textPropDbg.GetValue(instance, null) as string ?? "(null)";
+                                TranslatorCore.LogInfo($"[AlternateTMP] Current text content: '{(currentText.Length > 50 ? currentText.Substring(0, 50) + "..." : currentText)}'");
+                            }
+
+                            // Check mesh state
+                            var compMesh = instance as Component;
+                            if (compMesh != null)
+                            {
+                                var meshFilter = compMesh.GetComponent<MeshFilter>();
+                                if (meshFilter != null && meshFilter.sharedMesh != null)
+                                {
+                                    var mesh = meshFilter.sharedMesh;
+                                    TranslatorCore.LogInfo($"[AlternateTMP] Mesh: vertices={mesh.vertexCount}, bounds={mesh.bounds.size}");
+
+                                    // Check first few UVs
+                                    var uvs = mesh.uv;
+                                    if (uvs != null && uvs.Length > 0)
+                                    {
+                                        var uv0 = uvs[0];
+                                        var uv1 = uvs.Length > 1 ? uvs[1] : Vector2.zero;
+                                        var uv2 = uvs.Length > 2 ? uvs[2] : Vector2.zero;
+                                        var uv3 = uvs.Length > 3 ? uvs[3] : Vector2.zero;
+                                        TranslatorCore.LogInfo($"[AlternateTMP] First quad UVs: ({uv0.x:F3},{uv0.y:F3}) ({uv1.x:F3},{uv1.y:F3}) ({uv2.x:F3},{uv2.y:F3}) ({uv3.x:F3},{uv3.y:F3})");
+                                    }
+                                }
+                                else
+                                {
+                                    TranslatorCore.LogWarning($"[AlternateTMP] No mesh found on component!");
+                                }
+
+                                var meshRenderer = compMesh.GetComponent<MeshRenderer>();
+                                if (meshRenderer != null)
+                                {
+                                    var mat = meshRenderer.sharedMaterial;
+                                    var mainTex = mat?.mainTexture;
+                                    TranslatorCore.LogInfo($"[AlternateTMP] Renderer material: {mat?.name ?? "null"}, texture: {mainTex?.name ?? "null"} ({mainTex?.width}x{mainTex?.height}), enabled={meshRenderer.enabled}");
+
+                                    // Check if material has _MainTex
+                                    if (mat != null && mat.HasProperty("_MainTex"))
+                                    {
+                                        var shaderTex = mat.GetTexture("_MainTex");
+                                        TranslatorCore.LogInfo($"[AlternateTMP] Shader _MainTex: {shaderTex?.name ?? "null"} ({shaderTex?.width}x{shaderTex?.height})");
+                                    }
+                                }
                             }
                         }
                         catch { }
-                        TranslatorCore.LogInfo($"[AlternateTMP] Custom font type: {customFontAsset.GetType().FullName}");
 
                         // Debug: Check if font has glyphs for the text being set
                         try
@@ -1858,16 +2062,47 @@ namespace UnityGameTranslator.Core
                         if (!FontManager.IsTranslationEnabled(fontName))
                             return;
 
-                        // Try to apply replacement font for non-Latin scripts
-                        TryApplyAlternateTMPReplacementFont(__instance, fontName);
+                        // Check if this font needs replacement (has a fallback configured)
+                        string fallback = FontManager.GetConfiguredFallback(fontName);
+                        bool needsFontReplacement = !string.IsNullOrEmpty(fallback);
+
+                        // If UI not ready yet, queue for later processing
+                        // DON'T apply font here - it will be reset by the game before we can replay
+                        // We queue the component and will apply font + translation together after init
+                        if (needsFontReplacement && !UI.TranslatorUIManager.IsInitialized)
+                        {
+                            RegisterInitCallback();
+                            if (!_pendingFontReplacements.ContainsKey(instanceId))
+                            {
+                                _pendingFontReplacements[instanceId] = (new WeakReference(__instance), fontName, __0);
+                                TranslatorCore.LogInfo($"[AlternateTMP] Queued for font+translation after init: '{fontName}'");
+                            }
+                            // Skip font and translation - let original set_text run with English
+                            // We'll do everything after UI init
+                            return;
+                        }
+
+                        // UI is ready, apply font replacement now
+                        if (needsFontReplacement)
+                        {
+                            TryApplyAlternateTMPReplacementFont(__instance, fontName);
+                        }
                     }
                 }
 
                 // Check if own UI (use UI-specific prompt)
                 bool isOwnUI = TranslatorCore.IsOwnUITranslatable(component);
+                string beforeTranslate = __0;
                 __0 = TranslatorCore.TranslateTextWithTracking(__0, component, isOwnUI);
+                if (__0 != beforeTranslate)
+                {
+                    TranslatorCore.LogInfo($"[AlternateTMP] Translated: '{(beforeTranslate.Length > 30 ? beforeTranslate.Substring(0, 30) + "..." : beforeTranslate)}' -> '{(__0.Length > 30 ? __0.Substring(0, 30) + "..." : __0)}'");
+                }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogError($"[AlternateTMP] Prefix exception: {ex.Message}");
+            }
         }
 
         /// <summary>

@@ -1334,6 +1334,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // After await, we may be on a background thread (IL2CPP issue)
                 var success = result.Success;
                 var url = result.Url;
+                var token = result.Token;
                 var error = result.Error;
 
                 TranslatorUIManager.RunOnMainThread(() =>
@@ -1343,11 +1344,16 @@ namespace UnityGameTranslator.Core.UI.Panels
                         string fullUrl = ApiClient.GetMergePreviewFullUrl(url);
                         TranslatorCore.LogInfo($"[MainPanel] Opening compare page: {fullUrl}");
                         Application.OpenURL(fullUrl);
+
+                        // Listen for merge completion via SSE — auto-downloads result
+                        if (!string.IsNullOrEmpty(token))
+                        {
+                            TranslatorUIManager.StartMergeCompletionListener(token, siteId);
+                        }
                     }
                     else
                     {
                         TranslatorCore.LogWarning($"[MainPanel] Failed to init merge preview: {error}");
-                        // Could show a toast/notification here
                     }
 
                     // Re-enable button

@@ -313,6 +313,9 @@ namespace UnityGameTranslator.Core
                     }
                 }
 
+                // Refresh alternate TMP components (TMProOld, etc.) - scan dynamically since they're not cached
+                refreshed += RefreshAlternateTMPComponents(shouldRestore, ref restored);
+
                 if (restored > 0)
                     TranslatorCore.LogInfo($"[Scanner] Restored {restored} original texts, refreshed {refreshed} components");
                 else
@@ -322,6 +325,80 @@ namespace UnityGameTranslator.Core
             {
                 TranslatorCore.LogWarning($"[Scanner] ForceRefreshAllText error: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// Refresh alternate TMP components (TMProOld, etc.) by scanning the scene.
+        /// These are not cached because they use reflection and different types per game.
+        /// </summary>
+        private static int RefreshAlternateTMPComponents(bool shouldRestore, ref int restored)
+        {
+            int refreshed = 0;
+
+            try
+            {
+                // Find TMProOld.TMP_Text type
+                Type tmpTextType = null;
+                foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    tmpTextType = asm.GetType("TMProOld.TMP_Text");
+                    if (tmpTextType != null) break;
+                }
+
+                if (tmpTextType == null) return 0;
+
+                // Get text property for reflection
+                var textProp = tmpTextType.GetProperty("text", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                if (textProp == null) return 0;
+
+                // Find all components in scene
+                var allComponents = UnityEngine.Object.FindObjectsOfType(tmpTextType);
+                TranslatorCore.LogInfo($"[Scanner] Found {allComponents.Length} alternate TMP components");
+
+                foreach (var component in allComponents)
+                {
+                    if (component == null) continue;
+
+                    try
+                    {
+                        var unityComponent = component as Component;
+                        if (unityComponent == null) continue;
+
+                        // Skip our own UI
+                        if (TranslatorCore.ShouldSkipTranslation(unityComponent)) continue;
+
+                        int instanceId = unityComponent.GetInstanceID();
+
+                        if (shouldRestore)
+                        {
+                            string original = GetOriginalText(instanceId);
+                            if (original != null)
+                            {
+                                textProp.SetValue(component, original, null);
+                                ClearOriginalText(instanceId);
+                                processedTextHashes.Remove(instanceId);
+                                restored++;
+                                continue;
+                            }
+                        }
+
+                        // Refresh by re-setting text (triggers Harmony patch)
+                        string currentText = textProp.GetValue(component, null) as string;
+                        if (!string.IsNullOrEmpty(currentText))
+                        {
+                            textProp.SetValue(component, currentText, null);
+                            refreshed++;
+                        }
+                    }
+                    catch { }
+                }
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogWarning($"[Scanner] RefreshAlternateTMP error: {ex.Message}");
+            }
+
+            return refreshed;
         }
 
         #region Original Text Tracking

@@ -56,6 +56,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         private Text _ollamaStatusLabel;
         private Text _ollamaQueueLabel;
 
+        // UI elements - SSE connection indicator
+        private GameObject _connectionBox;
+        private Text _connectionLabel;
+
         // State - whether main panels are open (affects which boxes are shown)
         private bool _panelsOpenMode = false;
 
@@ -121,6 +125,9 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Ollama Queue Status Box
             CreateOllamaBox();
+
+            // SSE Connection Indicator
+            CreateConnectionBox();
 
             // Start hidden and with update
             RefreshOverlay();
@@ -235,6 +242,20 @@ namespace UnityGameTranslator.Core.UI.Panels
             RegisterExcluded(_ollamaQueueLabel);
 
             _ollamaBox.SetActive(false);
+        }
+
+        private void CreateConnectionBox()
+        {
+            _connectionBox = UIFactory.CreateHorizontalGroup(ContentRoot, "ConnectionBox", false, false, true, true, 5,
+                new Vector4(8, 8, 3, 3), Color.clear, TextAnchor.MiddleRight);
+            UIFactory.SetLayoutElement(_connectionBox, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999);
+
+            _connectionLabel = UIFactory.CreateLabel(_connectionBox, "ConnectionLabel", "", TextAnchor.MiddleRight);
+            _connectionLabel.fontSize = UIStyles.FontSizeSmall;
+            UIFactory.SetLayoutElement(_connectionLabel.gameObject, flexibleWidth: 9999);
+            RegisterExcluded(_connectionLabel);
+
+            _connectionBox.SetActive(false);
         }
 
         /// <summary>
@@ -437,6 +458,44 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _ollamaBox?.SetActive(false);
             }
 
+            // 4. SSE Connection indicator (compact, shown when overlay is visible)
+            bool showConnection = false;
+            if (TranslatorCore.Config.online_mode && !string.IsNullOrEmpty(TranslatorCore.Config.api_token))
+            {
+                var connState = TranslatorUIManager.SyncConnectionState;
+                switch (connState)
+                {
+                    case SseConnectionState.Connected:
+                        showConnection = true;
+                        if (_connectionLabel != null)
+                        {
+                            _connectionLabel.text = "Connected";
+                            _connectionLabel.color = UIStyles.StatusSuccess;
+                        }
+                        break;
+                    case SseConnectionState.Connecting:
+                        showConnection = true;
+                        if (_connectionLabel != null)
+                        {
+                            _connectionLabel.text = "Connecting...";
+                            _connectionLabel.color = UIStyles.StatusWarning;
+                        }
+                        break;
+                    case SseConnectionState.Reconnecting:
+                        showConnection = true;
+                        if (_connectionLabel != null)
+                        {
+                            _connectionLabel.text = "Reconnecting...";
+                            _connectionLabel.color = UIStyles.StatusWarning;
+                        }
+                        break;
+                    default:
+                        showConnection = false;
+                        break;
+                }
+            }
+            _connectionBox?.SetActive(showConnection);
+
             // Adjust panel height based on visible content
             AdjustHeight();
         }
@@ -447,6 +506,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_modUpdateBox != null && _modUpdateBox.activeSelf) height += 60;
             if (_syncBox != null && _syncBox.activeSelf) height += 60;
             if (_ollamaBox != null && _ollamaBox.activeSelf) height += 50;
+            if (_connectionBox != null && _connectionBox.activeSelf) height += 20;
 
             Rect.sizeDelta = new Vector2(PanelWidth, Mathf.Max(50, height));
         }

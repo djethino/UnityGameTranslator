@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using Newtonsoft.Json.Linq;
 using UnityEngine;
 using UnityEngine.UI;
 using UniverseLib.UI;
@@ -7,7 +9,7 @@ using UniverseLib.UI.Models;
 namespace UnityGameTranslator.Core.UI.Panels
 {
     /// <summary>
-    /// Login panel using Device Flow authentication.
+    /// Login panel using Device Flow authentication via SSE.
     /// </summary>
     public class LoginPanel : TranslatorPanelBase
     {
@@ -27,7 +29,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private ButtonRef _copyCodeBtn;
         private GameObject _codeRow;
         private string _verificationUri;
-        private bool _isPolling;
+        private SseClient _sseClient;
         private string _deviceCode;
         private string _userCode;
 
@@ -103,7 +105,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private async void StartLogin()
         {
-            if (_isPolling) return;
+            if (_sseClient != null) return;
 
             _startLoginBtn.Component.interactable = false;
             _statusLabel.text = "Requesting code...";
@@ -142,8 +144,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                         // Recalculate size after content changed
                         RecalculateSize();
 
-                        _isPolling = true;
-                        PollForAuth();
+                        StartDeviceFlowSse();
                     }
                     else
                     {
@@ -165,74 +166,138 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
         }
 
-        private async void PollForAuth()
+        private void StartDeviceFlowSse()
         {
-            while (_isPolling)
+            _sseClient?.Disconnect();
+            _sseClient = new SseClient(ApiClient.GetSseHttpClient());
+
+            _sseClient.OnEvent += (evt) =>
             {
-                await System.Threading.Tasks.Task.Delay(5000);
+                // Capture values before RunOnMainThread (IL2CPP safety)
+                var eventType = evt.EventType;
+                var data = evt.Data;
 
-                if (!_isPolling) break;
-
-                try
+                TranslatorUIManager.RunOnMainThread(() =>
                 {
-                    var result = await ApiClient.PollDeviceFlow(_deviceCode);
-
-                    // After await, we may be on a background thread (IL2CPP issue)
-                    if (result.Success)
+                    switch (eventType)
                     {
-                        // Save config (thread-safe)
-                        TranslatorCore.Config.api_token = result.AccessToken;
-                        TranslatorCore.Config.api_user = result.UserName;
-                        TranslatorCore.Config.api_token_server = TranslatorCore.Config.api_base_url ?? PluginInfo.ApiBaseUrl;
-                        TranslatorCore.SaveConfig();
-                        ApiClient.SetAuthToken(result.AccessToken);
-
-                        var userName = result.UserName;
-                        _isPolling = false;
-
-                        TranslatorUIManager.RunOnMainThread(() =>
-                        {
-                            _statusLabel.text = $"Logged in as {userName}!";
-                            _statusLabel.color = UIStyles.StatusSuccess;
-
-                            // Refresh panels that show login status
-                            TranslatorUIManager.WizardPanel?.UpdateAccountStatus();
-                            TranslatorUIManager.MainPanel?.RefreshUI();
-                        });
-
-                        await System.Threading.Tasks.Task.Delay(2000);
-
-                        TranslatorUIManager.RunOnMainThread(() =>
-                        {
-                            SetActive(false);
-                        });
-                        return;
+                        case "authorized":
+                            HandleAuthorized(data);
+                            break;
+                        case "expired":
+                            HandleExpired();
+                            break;
+                        case "error":
+                            HandleSseError(data);
+                            break;
                     }
-                    else if (!result.Pending)
-                    {
-                        // Not pending and not success = expired or error
-                        var errorMsg = result.Error ?? "Code expired. Please try again.";
-                        _isPolling = false;
+                });
+            };
 
-                        TranslatorUIManager.RunOnMainThread(() =>
-                        {
-                            _statusLabel.text = errorMsg;
-                            _statusLabel.color = UIStyles.StatusError;
-                            ResetUI();
-                        });
-                    }
-                    // If Pending, continue polling
-                }
-                catch (Exception e)
+            _sseClient.OnStateChanged += (state) =>
+            {
+                TranslatorUIManager.RunOnMainThread(() =>
                 {
-                    TranslatorCore.LogWarning($"[Login] Poll error: {e.Message}");
-                }
+                    switch (state)
+                    {
+                        case SseConnectionState.Reconnecting:
+                            _statusLabel.text = "Connection lost, reconnecting...";
+                            _statusLabel.color = UIStyles.StatusWarning;
+                            break;
+                        case SseConnectionState.Connected:
+                            _statusLabel.text = "Waiting for authorization...";
+                            _statusLabel.color = UIStyles.StatusInfo;
+                            break;
+                    }
+                });
+            };
+
+            _sseClient.OnError += (error) =>
+            {
+                var errorMsg = error;
+                TranslatorUIManager.RunOnMainThread(() =>
+                {
+                    _statusLabel.text = $"Error: {errorMsg}";
+                    _statusLabel.color = UIStyles.StatusError;
+                    _sseClient = null;
+                    ResetUI();
+                });
+            };
+
+            _sseClient.Connect(ApiClient.GetDeviceFlowSseUrl(_deviceCode));
+        }
+
+        private void HandleAuthorized(string jsonData)
+        {
+            try
+            {
+                var data = JObject.Parse(jsonData);
+                string token = data["access_token"]?.Value<string>();
+                string userName = data["user"]?["name"]?.Value<string>();
+
+                _sseClient?.Disconnect();
+                _sseClient = null;
+
+                TranslatorCore.Config.api_token = token;
+                TranslatorCore.Config.api_user = userName;
+                TranslatorCore.Config.api_token_server = TranslatorCore.Config.api_base_url ?? PluginInfo.ApiBaseUrl;
+                TranslatorCore.SaveConfig();
+                ApiClient.SetAuthToken(token);
+
+                _statusLabel.text = $"Logged in as {userName}!";
+                _statusLabel.color = UIStyles.StatusSuccess;
+
+                // Refresh panels that show login status
+                TranslatorUIManager.WizardPanel?.UpdateAccountStatus();
+                TranslatorUIManager.MainPanel?.RefreshUI();
+
+                // Start SSE sync stream now that we're authenticated
+                TranslatorUIManager.StartSyncStream();
+
+                TranslatorUIManager.RunDelayed(2f, () =>
+                {
+                    SetActive(false);
+                });
             }
+            catch (Exception e)
+            {
+                TranslatorCore.LogError($"[Login] Error handling auth response: {e.Message}");
+                _statusLabel.text = "Login succeeded but error processing response";
+                _statusLabel.color = UIStyles.StatusError;
+            }
+        }
+
+        private void HandleExpired()
+        {
+            _sseClient?.Disconnect();
+            _sseClient = null;
+            _statusLabel.text = "Code expired. Please try again.";
+            _statusLabel.color = UIStyles.StatusError;
+            ResetUI();
+        }
+
+        private void HandleSseError(string jsonData)
+        {
+            try
+            {
+                var data = JObject.Parse(jsonData);
+                string error = data["error"]?.Value<string>() ?? "Unknown error";
+                _statusLabel.text = error;
+            }
+            catch
+            {
+                _statusLabel.text = "Connection error";
+            }
+            _statusLabel.color = UIStyles.StatusError;
+            _sseClient?.Disconnect();
+            _sseClient = null;
+            ResetUI();
         }
 
         private void CancelLogin()
         {
-            _isPolling = false;
+            _sseClient?.Disconnect();
+            _sseClient = null;
             ResetUI();
             SetActive(false);
         }

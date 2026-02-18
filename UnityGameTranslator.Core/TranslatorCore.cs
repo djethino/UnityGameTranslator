@@ -2590,6 +2590,7 @@ namespace UnityGameTranslator.Core
         // For self-hosting or testing. Edit config.json manually to use.
         public string api_base_url { get; set; } = null;
         public string website_base_url { get; set; } = null;
+        public string sse_base_url { get; set; } = null;
 
         public SyncConfig sync { get; set; } = new SyncConfig();
         public WindowPreferences window_preferences { get; set; } = new WindowPreferences();

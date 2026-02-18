@@ -50,6 +50,24 @@ namespace UnityGameTranslator.Core
             }
         }
 
+        /// <summary>
+        /// Base URL for SSE streams (Node.js micro-server).
+        /// Can be overridden in config.json with sse_base_url for self-hosting.
+        /// </summary>
+        public static string SseBaseUrl
+        {
+            get
+            {
+                var config = TranslatorCore.Config;
+                if (config != null && !string.IsNullOrEmpty(config.sse_base_url))
+                {
+                    LogUrlOverrideOnce();
+                    return config.sse_base_url.TrimEnd('/');
+                }
+                return PluginInfo.SseBaseUrl;
+            }
+        }
+
         private static void LogUrlOverrideOnce()
         {
             if (!_urlOverrideLogged)
@@ -105,18 +123,20 @@ namespace UnityGameTranslator.Core
 
         /// <summary>
         /// Build the SSE URL for Device Flow authentication stream.
+        /// Points to the Node.js SSE micro-server.
         /// </summary>
         public static string GetDeviceFlowSseUrl(string deviceCode)
         {
-            return $"{DefaultBaseUrl}/auth/device/{Uri.EscapeDataString(deviceCode)}/stream";
+            return $"{SseBaseUrl}/auth/device/{Uri.EscapeDataString(deviceCode)}/stream";
         }
 
         /// <summary>
         /// Build the SSE URL for translation sync stream.
+        /// Points to the Node.js SSE micro-server.
         /// </summary>
         public static string GetSyncSseUrl(string uuid, string localHash)
         {
-            var url = $"{DefaultBaseUrl}/sync/stream?uuid={Uri.EscapeDataString(uuid)}";
+            var url = $"{SseBaseUrl}/sync/stream?uuid={Uri.EscapeDataString(uuid)}";
             if (!string.IsNullOrEmpty(localHash))
             {
                 url += $"&hash={Uri.EscapeDataString(localHash)}";
@@ -126,10 +146,11 @@ namespace UnityGameTranslator.Core
 
         /// <summary>
         /// Build the SSE URL for merge preview completion stream.
+        /// Points to the Node.js SSE micro-server.
         /// </summary>
         public static string GetMergeStreamUrl(string token)
         {
-            return $"{DefaultBaseUrl}/merge-preview/{Uri.EscapeDataString(token)}/stream";
+            return $"{SseBaseUrl}/merge-preview/{Uri.EscapeDataString(token)}/stream";
         }
 
         /// <summary>

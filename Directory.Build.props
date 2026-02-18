@@ -4,6 +4,7 @@
     <!-- API Configuration - Change these URLs to use your own instance -->
     <ApiBaseUrl>https://unitygametranslator.asymptomatikgames.com/api/v1</ApiBaseUrl>
     <WebsiteBaseUrl>https://unitygametranslator.asymptomatikgames.com</WebsiteBaseUrl>
+    <SseBaseUrl>https://sse-unitygametranslator.asymptomatikgames.com</SseBaseUrl>
   </PropertyGroup>
 
   <!-- Generate PluginInfo.g.cs with version and API constants before build -->
@@ -17,6 +18,8 @@ namespace UnityGameTranslator {
         public const string ApiBaseUrl = "$(ApiBaseUrl)"%3B
         /// &lt;summary&gt;Base URL for website links (e.g., https://example.com)&lt;/summary&gt;
         public const string WebsiteBaseUrl = "$(WebsiteBaseUrl)"%3B
+        /// &lt;summary&gt;Base URL for SSE streams (e.g., https://sse-example.com)&lt;/summary&gt;
+        public const string SseBaseUrl = "$(SseBaseUrl)"%3B
     }
 }
       </VersionFileContent>

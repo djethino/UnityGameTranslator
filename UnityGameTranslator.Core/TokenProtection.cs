@@ -155,6 +155,9 @@ namespace UnityGameTranslator.Core
         /// <summary>
         /// Derive a 256-bit key using PBKDF2-SHA1 (compatible with .NET Standard 2.0).
         /// 100,000 iterations provides strong protection against brute force.
+        /// NOTE: Uses SHA-1 as HMAC because .NET Standard 2.0 Rfc2898DeriveBytes
+        /// does not support HashAlgorithmName parameter. If target is upgraded to
+        /// .NET Standard 2.1+, use: new Rfc2898DeriveBytes(secret, salt, 100000, HashAlgorithmName.SHA256)
         /// </summary>
         private static byte[] DeriveKey(string secret, byte[] salt)
         {

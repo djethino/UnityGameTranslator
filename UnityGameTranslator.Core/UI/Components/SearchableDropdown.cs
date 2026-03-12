@@ -4,11 +4,13 @@ using UnityEngine;
 using UnityEngine.UI;
 using UniverseLib;
 using UniverseLib.UI;
+using UniverseLib.UI.Models;
 
 namespace UnityGameTranslator.Core.UI.Components
 {
     /// <summary>
     /// A custom dropdown component with search/filter functionality.
+    /// Uses UniverseLib's ButtonRef and InputFieldRef for IL2CPP-safe event handling.
     /// </summary>
     public class SearchableDropdown
     {
@@ -28,7 +30,7 @@ namespace UnityGameTranslator.Core.UI.Components
         private GameObject _buttonObject;
         private Text _buttonText;
         private GameObject _popupRoot;
-        private InputField _searchInput;
+        private InputFieldRef _searchInputRef;
         private GameObject _listContent;
         private ScrollRect _scrollRect;
 
@@ -106,7 +108,11 @@ namespace UnityGameTranslator.Core.UI.Components
             button.targetGraphic = buttonImage;
             RuntimeHelper.SetColorBlock(button, UIStyles.DropdownBackground,
                 UIStyles.DropdownBackground * 1.2f, UIStyles.DropdownBackground * 0.8f);
-            button.onClick.AddListener(TogglePopup);
+
+            // Use ButtonRef for IL2CPP-safe click handling
+            // ButtonRef's constructor calls AddListener inside UniverseLib (compiled with correct platform defines)
+            var mainBtnRef = new ButtonRef(button);
+            mainBtnRef.OnClick = TogglePopup;
 
             // Button text
             GameObject textObj = UIFactory.CreateUIObject("Text", _buttonObject);
@@ -244,18 +250,18 @@ namespace UnityGameTranslator.Core.UI.Components
             // Search input
             if (_showSearch)
             {
-                var searchFieldRef = UIFactory.CreateInputField(_popupRoot, "SearchInput", "Search...");
-                RectTransform searchRect = searchFieldRef.GameObject.GetComponent<RectTransform>();
+                _searchInputRef = UIFactory.CreateInputField(_popupRoot, "SearchInput", "Search...");
+                RectTransform searchRect = _searchInputRef.GameObject.GetComponent<RectTransform>();
                 searchRect.anchorMin = new Vector2(0, 1);
                 searchRect.anchorMax = new Vector2(1, 1);
                 searchRect.pivot = new Vector2(0.5f, 1);
                 searchRect.anchoredPosition = new Vector2(0, -yOffset);
                 searchRect.sizeDelta = new Vector2(-8, searchHeight);
 
-                _searchInput = searchFieldRef.Component;
-                _searchInput.onValueChanged.AddListener(OnSearchChanged);
+                // Use InputFieldRef.OnValueChanged (IL2CPP-safe: AddListener is inside UniverseLib)
+                _searchInputRef.OnValueChanged += OnSearchChanged;
 
-                Image searchBg = searchFieldRef.GameObject.GetComponent<Image>();
+                Image searchBg = _searchInputRef.GameObject.GetComponent<Image>();
                 if (searchBg != null)
                     searchBg.color = UIStyles.InputFieldBackground;
 
@@ -306,7 +312,7 @@ namespace UnityGameTranslator.Core.UI.Components
                 _popupRoot = null;
             }
 
-            _searchInput = null;
+            _searchInputRef = null;
             _listContent = null;
             _scrollRect = null;
         }
@@ -324,14 +330,14 @@ namespace UnityGameTranslator.Core.UI.Components
             _itemIndex = 0;
             _selectedItemIndex = -1;
 
-            // Clear existing items from content
-            foreach (Transform child in _listContent.transform)
+            // Clear existing items (manual iteration for IL2CPP compatibility)
+            for (int i = _listContent.transform.childCount - 1; i >= 0; i--)
             {
-                UnityEngine.Object.Destroy(child.gameObject);
+                UnityEngine.Object.Destroy(_listContent.transform.GetChild(i).gameObject);
             }
 
             // Get filter text
-            string filter = _searchInput != null ? _searchInput.text.ToLowerInvariant() : "";
+            string filter = _searchInputRef != null ? _searchInputRef.Component.text.ToLowerInvariant() : "";
 
             // Create filtered list
             int currentFilteredIndex = 0;
@@ -436,8 +442,10 @@ namespace UnityGameTranslator.Core.UI.Components
                 UIStyles.DropdownItemHighlight,
                 UIStyles.DropdownItemNormal * 0.8f);
 
+            // Use ButtonRef for IL2CPP-safe click handling
             string capturedOption = option;
-            itemButton.onClick.AddListener(() => SelectOption(capturedOption));
+            var itemBtnRef = new ButtonRef(itemButton);
+            itemBtnRef.OnClick = () => SelectOption(capturedOption);
 
             // Option text
             Text itemText = UIFactory.CreateLabel(itemObj, "Text", "", TextAnchor.MiddleLeft,

@@ -672,6 +672,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_loginCTASection != null)
             {
                 _loginCTASection.SetActive(_currentLayoutState == LayoutState.NotLogged);
+
+                // Disable CTA button when offline
+                if (_loginCTABtn != null)
+                {
+                    _loginCTABtn.Component.interactable = TranslatorCore.Config.online_mode;
+                }
             }
 
             // Determine if we should show StatusCard vs legacy TranslationInfo
@@ -1129,6 +1135,8 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private async void OnUploadClicked()
         {
+            if (!TranslatorCore.Config.online_mode) return;
+
             // Check if merge is needed - open MergePanel instead of UploadPanel
             if (TranslatorUIManager.HasPendingUpdate &&
                 TranslatorUIManager.PendingUpdateDirection == UpdateDirection.Merge)
@@ -1395,6 +1403,10 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _communityGameLabel.text = "Offline mode - enable online in Options";
                 _communityGameLabel.color = UIStyles.StatusWarning;
                 _searchBtn.Component.interactable = false;
+
+                // Clear previous search results - can't download in offline mode
+                _translationList?.Clear();
+                return;
             }
             else if (game != null && !string.IsNullOrEmpty(game.name))
             {
@@ -1415,6 +1427,8 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private void OnSearchCommunityClicked()
         {
+            if (!TranslatorCore.Config.online_mode) return;
+
             var game = TranslatorCore.CurrentGame;
             if (game == null)
             {
@@ -1430,6 +1444,8 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private async void OnDownloadCommunityClicked()
         {
+            if (!TranslatorCore.Config.online_mode) return;
+
             var selectedTranslation = _translationList?.SelectedTranslation;
             if (selectedTranslation == null) return;
 

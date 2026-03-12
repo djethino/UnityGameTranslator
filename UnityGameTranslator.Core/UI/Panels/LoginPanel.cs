@@ -103,9 +103,26 @@ namespace UnityGameTranslator.Core.UI.Panels
             RegisterUIText(cancelBtn.ButtonText);
         }
 
+        public override void SetActive(bool active)
+        {
+            if (active && !TranslatorCore.Config.online_mode)
+            {
+                TranslatorCore.LogWarning("[Login] Cannot open login panel in offline mode");
+                return;
+            }
+            base.SetActive(active);
+        }
+
         private async void StartLogin()
         {
             if (_sseClient != null) return;
+
+            if (!TranslatorCore.Config.online_mode)
+            {
+                _statusLabel.text = "Offline mode - enable online in Options first";
+                _statusLabel.color = UIStyles.StatusError;
+                return;
+            }
 
             _startLoginBtn.Component.interactable = false;
             _statusLabel.text = "Requesting code...";

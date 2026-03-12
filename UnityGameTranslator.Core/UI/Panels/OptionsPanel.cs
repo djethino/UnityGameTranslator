@@ -513,10 +513,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
             _fallbackDropdowns.Clear();
 
-            // Clear existing items
-            foreach (Transform child in _fontsListContainer.transform)
+            // Clear existing items (manual iteration for IL2CPP compatibility)
+            for (int i = _fontsListContainer.transform.childCount - 1; i >= 0; i--)
             {
-                UnityEngine.Object.Destroy(child.gameObject);
+                UnityEngine.Object.Destroy(_fontsListContainer.transform.GetChild(i).gameObject);
             }
 
             var fonts = FontManager.GetDetectedFontsInfo();
@@ -990,10 +990,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (_exclusionsListContainer == null) return;
 
-            // Clear existing items
-            foreach (Transform child in _exclusionsListContainer.transform)
+            // Clear existing items (manual iteration for IL2CPP compatibility)
+            for (int i = _exclusionsListContainer.transform.childCount - 1; i >= 0; i--)
             {
-                UnityEngine.Object.Destroy(child.gameObject);
+                UnityEngine.Object.Destroy(_exclusionsListContainer.transform.GetChild(i).gameObject);
             }
 
             // Build effective list: current - pending removes + pending adds
@@ -1203,6 +1203,15 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             base.Update();
             _hotkeyCapture?.Update();
+
+            // Poll toggle/dropdown state changes to update Apply button text.
+            // We cannot use onValueChanged.AddListener on toggles because it fails on IL2CPP
+            // (UnityAction delegate conversion issue). Polling is cheap (just bool comparisons)
+            // and only runs while the panel is visible.
+            if (Enabled)
+            {
+                UpdateApplyButtonText();
+            }
         }
 
         private void LoadCurrentSettings()
@@ -1263,26 +1272,28 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Lock languages if translation exists on server
             UpdateLanguagesLocked();
 
-            // Refresh exclusions list
-            RefreshExclusionsList();
+            // Refresh UI lists (may fail on IL2CPP due to missing methods, non-critical)
+            try { RefreshExclusionsList(); }
+            catch (Exception ex) { TranslatorCore.LogWarning($"[OptionsPanel] RefreshExclusionsList failed: {ex.Message}"); }
 
-            // Refresh fonts list
-            RefreshFontsList();
+            try { RefreshFontsList(); }
+            catch (Exception ex) { TranslatorCore.LogWarning($"[OptionsPanel] RefreshFontsList failed: {ex.Message}"); }
 
             // Capture initial font settings for change tracking
             _initialFontSettings.Clear();
             _pendingFontSettings.Clear();
-            TranslatorCore.LogInfo($"[OptionsPanel] Capturing initial font settings...");
-            foreach (var fontInfo in FontManager.GetDetectedFontsInfo())
+            try
             {
-                var settings = FontManager.GetFontSettings(fontInfo.Name);
-                var enabled = settings?.enabled ?? true;
-                var fallback = settings?.fallback;
-                var scale = settings?.scale ?? 1.0f;
-                _initialFontSettings[fontInfo.Name] = (enabled, fallback, scale);
-                TranslatorCore.LogInfo($"[OptionsPanel] Initial font: {fontInfo.Name} = (enabled={enabled}, fallback={fallback ?? "(null)"}, scale={scale})");
+                foreach (var fontInfo in FontManager.GetDetectedFontsInfo())
+                {
+                    var settings = FontManager.GetFontSettings(fontInfo.Name);
+                    var enabled = settings?.enabled ?? true;
+                    var fallback = settings?.fallback;
+                    var scale = settings?.scale ?? 1.0f;
+                    _initialFontSettings[fontInfo.Name] = (enabled, fallback, scale);
+                }
             }
-            TranslatorCore.LogInfo($"[OptionsPanel] Total initial fonts: {_initialFontSettings.Count}");
+            catch (Exception ex) { TranslatorCore.LogWarning($"[OptionsPanel] Font settings capture failed: {ex.Message}"); }
 
             // Capture initial exclusions for change tracking
             _initialExclusions.Clear();
@@ -1293,7 +1304,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _initialExclusions.Add(pattern);
             }
 
-            // Take snapshot for change tracking and update button text
+            // CRITICAL: Always create snapshot, even if some UI refreshes above failed.
+            // Without this, CountPendingChanges() returns 0 and Apply button stays "Close".
             _initialSnapshot = ConfigSnapshot.FromConfig();
             UpdateApplyButtonText();
         }
@@ -1508,8 +1520,10 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TranslatorCore.Config.game_context = _gameContextInput.Text;
                 TranslatorCore.Config.strict_source_language = _strictSourceToggle.isOn;
 
-                // Online mode
-                TranslatorCore.Config.online_mode = _onlineModeToggle.isOn;
+                // Online mode - detect transition for sync stream management
+                bool wasOnline = TranslatorCore.Config.online_mode;
+                bool nowOnline = _onlineModeToggle.isOn;
+                TranslatorCore.Config.online_mode = nowOnline;
                 TranslatorCore.Config.sync.check_update_on_start = _checkUpdatesToggle.isOn;
                 TranslatorCore.Config.sync.notify_updates = _notifyUpdatesToggle.isOn;
                 TranslatorCore.Config.sync.auto_download = _autoDownloadToggle.isOn;
@@ -1559,6 +1573,38 @@ namespace UnityGameTranslator.Core.UI.Panels
                 else
                 {
                     TranslatorCore.ClearQueue();
+                }
+
+                // Handle online mode transition
+                if (nowOnline && !wasOnline)
+                {
+                    // Switched from offline to online - start sync stream and check for updates
+                    TranslatorCore.LogInfo("[Options] Online mode enabled, starting sync stream...");
+                    TranslatorUIManager.StartSyncStream();
+                    if (TranslatorCore.Config.sync.check_mod_updates)
+                    {
+                        TranslatorUIManager.CheckForModUpdates();
+                    }
+                }
+                else if (!nowOnline && wasOnline)
+                {
+                    // Switched from online to offline - stop sync stream and clear server state
+                    TranslatorCore.LogInfo("[Options] Online mode disabled, stopping sync stream...");
+                    TranslatorUIManager.StopSyncStream();
+
+                    // Reset server state - we're offline, server info is no longer relevant
+                    TranslatorCore.ServerState = null;
+
+                    // Reset pending update notifications
+                    TranslatorUIManager.HasPendingUpdate = false;
+                    TranslatorUIManager.NotificationDismissed = false;
+                }
+
+                // Always refresh UI after online mode change (or any settings change)
+                if (nowOnline != wasOnline)
+                {
+                    TranslatorUIManager.MainPanel?.RefreshUI();
+                    TranslatorUIManager.StatusOverlay?.RefreshOverlay();
                 }
 
                 // Update snapshots after apply (no pending changes now)
@@ -1615,24 +1661,14 @@ namespace UnityGameTranslator.Core.UI.Panels
         }
 
         /// <summary>
-        /// Sets up change listeners on all configurable controls to track pending changes.
+        /// Sets up change listeners on configurable controls to track pending changes.
+        /// Note: Toggle listeners are NOT set here because onValueChanged.AddListener
+        /// fails on IL2CPP (UnityAction delegate conversion issue). Instead, toggle
+        /// state changes are detected via polling in Update().
         /// </summary>
         private void SetupChangeListeners()
         {
-            // Toggles
-            _enableTranslationsToggle.onValueChanged.AddListener(_ => UpdateApplyButtonText());
-            _translateModUIToggle.onValueChanged.AddListener(_ => UpdateApplyButtonText());
-            _captureKeysOnlyToggle.onValueChanged.AddListener(_ => UpdateApplyButtonText());
-            _enableOllamaToggle.onValueChanged.AddListener(_ => UpdateApplyButtonText());
-            _strictSourceToggle.onValueChanged.AddListener(_ => UpdateApplyButtonText());
-            _onlineModeToggle.onValueChanged.AddListener(_ => UpdateApplyButtonText());
-            _checkUpdatesToggle.onValueChanged.AddListener(_ => UpdateApplyButtonText());
-            _notifyUpdatesToggle.onValueChanged.AddListener(_ => UpdateApplyButtonText());
-            _autoDownloadToggle.onValueChanged.AddListener(_ => UpdateApplyButtonText());
-            _checkModUpdatesToggle.onValueChanged.AddListener(_ => UpdateApplyButtonText());
-            _disableEventSystemOverrideToggle.onValueChanged.AddListener(_ => UpdateApplyButtonText());
-
-            // Input fields
+            // Input fields (InputFieldRef.OnValueChanged is a C# event, IL2CPP-safe)
             _ollamaUrlInput.OnValueChanged += _ => UpdateApplyButtonText();
             _modelInput.OnValueChanged += _ => UpdateApplyButtonText();
             _gameContextInput.OnValueChanged += _ => UpdateApplyButtonText();

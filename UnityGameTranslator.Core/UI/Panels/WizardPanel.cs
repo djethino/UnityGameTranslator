@@ -11,7 +11,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 {
     /// <summary>
     /// First-run wizard panel. Guides user through initial setup.
-    /// Steps: Welcome -> OnlineMode -> Hotkey -> LanguageSelection -> TranslationChoice -> OllamaConfig -> Complete
+    /// Steps: Welcome -> OnlineMode -> Hotkey -> LanguageSelection -> TranslationChoice -> AIConfig -> Complete
     ///
     /// Uses CreateScrollablePanelLayout like all other panels.
     /// Each step is a simple container inside scrollContent.
@@ -25,7 +25,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             Hotkey,
             LanguageSelection,
             TranslationChoice,
-            OllamaConfig,
+            AIConfig,
             Complete
         }
 
@@ -50,14 +50,15 @@ namespace UnityGameTranslator.Core.UI.Panels
         private GameObject _hotkeyStep;
         private GameObject _languageSelectionStep;
         private GameObject _translationChoiceStep;
-        private GameObject _ollamaConfigStep;
+        private GameObject _aiConfigStep;
         private GameObject _completeStep;
 
         // State variables - initialized from config in ConstructPanelContent
         private bool _onlineMode;
-        private bool _enableOllama;
-        private string _ollamaUrl;
-        private string _model;
+        private bool _enableAI;
+        private string _aiUrl;
+        private string _aiApiKey;
+        private string _aiModel;
         private string _gameContext;
         private string _targetLanguage;
 
@@ -70,10 +71,11 @@ namespace UnityGameTranslator.Core.UI.Panels
         private Text _hotkeyDisplayLabel;
 
         // UI references
-        private InputFieldRef _ollamaUrlInput;
-        private InputFieldRef _modelInput;
+        private InputFieldRef _aiUrlInput;
+        private InputFieldRef _aiApiKeyInput;
+        private SearchableDropdown _modelDropdown;
         private InputFieldRef _gameContextInput;
-        private Text _ollamaStatusLabel;
+        private Text _aiStatusLabel;
 
         // TranslationChoice step state
         private GameInfo _detectedGame;
@@ -122,9 +124,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             // Initialize state from existing config (for re-running wizard)
             _onlineMode = TranslatorCore.Config.online_mode;
-            _enableOllama = TranslatorCore.Config.enable_ollama;
-            _ollamaUrl = TranslatorCore.Config.ollama_url ?? "http://localhost:11434";
-            _model = TranslatorCore.Config.model ?? "qwen3:8b";
+            _enableAI = TranslatorCore.Config.enable_ai;
+            _aiUrl = TranslatorCore.Config.ai_url ?? "http://localhost:11434";
+            _aiApiKey = TranslatorCore.Config.ai_api_key ?? "";
+            _aiModel = TranslatorCore.Config.ai_model ?? "";
             _gameContext = TranslatorCore.Config.game_context ?? "";
 
             // Initialize target language - auto-detect from system if not set or "auto"
@@ -155,7 +158,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             CreateHotkeyStep();
             CreateLanguageSelectionStep();
             CreateTranslationChoiceStep();
-            CreateOllamaConfigStep();
+            CreateAIConfigStep();
             CreateCompleteStep();
 
             ShowStep(WizardStep.Welcome);
@@ -175,13 +178,13 @@ namespace UnityGameTranslator.Core.UI.Panels
                 "This mod automatically translates Unity games using AI.\n\n" +
                 "You can either:\n" +
                 "• Download community translations from our website\n" +
-                "• Generate translations locally using Ollama AI\n" +
+                "• Generate translations using AI (local or cloud)\n" +
                 "• Or both!",
                 TextAnchor.MiddleCenter);
             desc.fontSize = UIStyles.FontSizeNormal;
             desc.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(desc.gameObject, minHeight: UIStyles.MultiLineLarge + 20);
-            RegisterExcluded(desc); // Contains "Ollama" brand name
+            RegisterUIText(desc);
 
             var buttonRow = CreateButtonRow(_welcomeStep);
             var nextBtn = CreatePrimaryButton(buttonRow, "NextBtn", "Get Started →", 160);
@@ -247,12 +250,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             RegisterUIText(offlineTextLabel);
 
             var offlineDescLabel = UIFactory.CreateLabel(offlineBox, "OfflineDesc",
-                "• Use only local Ollama AI\n• No internet connection\n• Full privacy",
+                "• Use only local AI\n• No internet connection\n• Full privacy",
                 TextAnchor.MiddleLeft);
             offlineDescLabel.fontSize = UIStyles.FontSizeSmall;
             offlineDescLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(offlineDescLabel.gameObject, minHeight: UIStyles.MultiLineSmall);
-            RegisterExcluded(offlineDescLabel); // Contains "Ollama" brand name
+            RegisterUIText(offlineDescLabel);
 
             var buttonRow = CreateButtonRow(_onlineModeStep);
             var backBtn = CreateSecondaryButton(buttonRow, "BackBtn", "← Back");
@@ -378,7 +381,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 if (_onlineMode)
                     ShowStep(WizardStep.TranslationChoice);
                 else
-                    ShowStep(WizardStep.OllamaConfig);
+                    ShowStep(WizardStep.AIConfig);
             };
             RegisterUIText(nextBtn.ButtonText);
         }
@@ -475,7 +478,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             RegisterUIText(backBtn.ButtonText);
 
             var nextBtn = CreatePrimaryButton(buttonRow, "NextBtn", "Continue →");
-            nextBtn.OnClick += () => ShowStep(WizardStep.OllamaConfig);
+            nextBtn.OnClick += () => ShowStep(WizardStep.AIConfig);
             RegisterUIText(nextBtn.ButtonText);
         }
 
@@ -761,17 +764,17 @@ namespace UnityGameTranslator.Core.UI.Panels
             });
         }
 
-        private void CreateOllamaConfigStep()
+        private void CreateAIConfigStep()
         {
-            _ollamaConfigStep = UIFactory.CreateVerticalGroup(_scrollContent, "OllamaConfigStep", false, false, true, true, UIStyles.ElementSpacing);
-            UIFactory.SetLayoutElement(_ollamaConfigStep, flexibleWidth: 9999);
+            _aiConfigStep = UIFactory.CreateVerticalGroup(_scrollContent, "AIConfigStep", false, false, true, true, UIStyles.ElementSpacing);
+            UIFactory.SetLayoutElement(_aiConfigStep, flexibleWidth: 9999);
 
-            var card = CreateAdaptiveCard(_ollamaConfigStep, "Card", 420);
+            var card = CreateAdaptiveCard(_aiConfigStep, "Card", 420);
 
-            var ollamaTitle = CreateTitle(card, "Title", "Ollama Configuration");
-            RegisterExcluded(ollamaTitle); // Contains "Ollama" brand name
-            var ollamaDesc = CreateDescription(card, "Description", "Configure local AI for offline translation");
-            RegisterUIText(ollamaDesc);
+            var aiTitle = CreateTitle(card, "Title", "AI Translation");
+            RegisterUIText(aiTitle);
+            var aiDesc = CreateDescription(card, "Description", "Configure AI for automatic translation");
+            RegisterUIText(aiDesc);
 
             UIStyles.CreateSpacer(card, 10);
 
@@ -780,48 +783,69 @@ namespace UnityGameTranslator.Core.UI.Panels
             var enableRow = UIStyles.CreateFormRow(enableSection, "EnableRow", UIStyles.RowHeightLarge);
 
             var enableObj = UIFactory.CreateToggle(enableRow, "EnableToggle", out var enableToggle, out var enableLabel);
-            enableToggle.isOn = _enableOllama;
+            enableToggle.isOn = _enableAI;
             enableLabel.text = "";
-            UIHelpers.AddToggleListener(enableToggle, (val) => _enableOllama = val);
+            UIHelpers.AddToggleListener(enableToggle, (val) => _enableAI = val);
             UIFactory.SetLayoutElement(enableObj, minWidth: UIStyles.ToggleControlWidth);
 
-            var enableTextLabel = UIFactory.CreateLabel(enableRow, "EnableTextLabel", "Enable Ollama (local AI)", TextAnchor.MiddleLeft);
+            var enableTextLabel = UIFactory.CreateLabel(enableRow, "EnableTextLabel", "Enable AI Translation", TextAnchor.MiddleLeft);
             enableTextLabel.fontStyle = FontStyle.Bold;
             enableTextLabel.color = UIStyles.TextPrimary;
             UIFactory.SetLayoutElement(enableTextLabel.gameObject, flexibleWidth: 9999);
-            RegisterExcluded(enableTextLabel); // Contains "Ollama" brand name
+            RegisterUIText(enableTextLabel);
 
             UIStyles.CreateSpacer(card, 10);
 
             // URL input section
             var urlSection = CreateSection(card, "UrlSection");
 
-            var urlLabel = UIFactory.CreateLabel(urlSection, "UrlLabel", "Ollama URL:", TextAnchor.MiddleLeft);
+            var urlLabel = UIFactory.CreateLabel(urlSection, "UrlLabel", "Server URL:", TextAnchor.MiddleLeft);
             urlLabel.color = UIStyles.TextSecondary;
             urlLabel.fontSize = UIStyles.FontSizeSmall;
             UIFactory.SetLayoutElement(urlLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
-            RegisterExcluded(urlLabel); // Contains "Ollama" and "URL" - technical terms
+            RegisterExcluded(urlLabel);
 
             var urlRow = UIStyles.CreateFormRow(urlSection, "UrlRow", UIStyles.RowHeightLarge, 5);
 
-            _ollamaUrlInput = UIFactory.CreateInputField(urlRow, "OllamaUrl", "http://localhost:11434");
-            _ollamaUrlInput.Text = _ollamaUrl;
-            _ollamaUrlInput.OnValueChanged += (val) => _ollamaUrl = val;
-            UIFactory.SetLayoutElement(_ollamaUrlInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
-            UIStyles.SetBackground(_ollamaUrlInput.Component.gameObject, UIStyles.InputBackground);
+            _aiUrlInput = UIFactory.CreateInputField(urlRow, "AIUrl", "http://localhost:11434");
+            _aiUrlInput.Text = _aiUrl;
+            _aiUrlInput.OnValueChanged += (val) => _aiUrl = val;
+            UIFactory.SetLayoutElement(_aiUrlInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
+            UIStyles.SetBackground(_aiUrlInput.Component.gameObject, UIStyles.InputBackground);
 
             var testBtn = CreateSecondaryButton(urlRow, "TestBtn", "Test", 70);
-            testBtn.OnClick += TestOllamaConnection;
+            testBtn.OnClick += TestAIConnection;
             RegisterUIText(testBtn.ButtonText);
 
-            _ollamaStatusLabel = UIFactory.CreateLabel(urlSection, "StatusLabel", "", TextAnchor.MiddleCenter);
-            _ollamaStatusLabel.fontSize = UIStyles.FontSizeSmall;
-            UIFactory.SetLayoutElement(_ollamaStatusLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
-            RegisterUIText(_ollamaStatusLabel);
+            _aiStatusLabel = UIFactory.CreateLabel(urlSection, "StatusLabel", "", TextAnchor.MiddleCenter);
+            _aiStatusLabel.fontSize = UIStyles.FontSizeSmall;
+            UIFactory.SetLayoutElement(_aiStatusLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
+            RegisterUIText(_aiStatusLabel);
 
             UIStyles.CreateSpacer(card, 10);
 
-            // Model input section
+            // API Key section
+            var keySection = CreateSection(card, "KeySection");
+
+            var keyLabel = UIFactory.CreateLabel(keySection, "KeyLabel", "API Key:", TextAnchor.MiddleLeft);
+            keyLabel.color = UIStyles.TextSecondary;
+            keyLabel.fontSize = UIStyles.FontSizeSmall;
+            UIFactory.SetLayoutElement(keyLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+            RegisterExcluded(keyLabel);
+
+            _aiApiKeyInput = UIFactory.CreateInputField(keySection, "AIApiKey", "");
+            _aiApiKeyInput.Text = _aiApiKey;
+            _aiApiKeyInput.Component.contentType = UnityEngine.UI.InputField.ContentType.Password;
+            _aiApiKeyInput.OnValueChanged += (val) => _aiApiKey = val;
+            UIFactory.SetLayoutElement(_aiApiKeyInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
+            UIStyles.SetBackground(_aiApiKeyInput.Component.gameObject, UIStyles.InputBackground);
+
+            var keyHint = UIStyles.CreateHint(keySection, "KeyHint", "Optional for local servers (Ollama, LM Studio)");
+            RegisterUIText(keyHint);
+
+            UIStyles.CreateSpacer(card, 10);
+
+            // Model dropdown section
             var modelSection = CreateSection(card, "ModelSection");
 
             var modelLabel = UIFactory.CreateLabel(modelSection, "ModelLabel", "Model:", TextAnchor.MiddleLeft);
@@ -830,14 +854,19 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.SetLayoutElement(modelLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
             RegisterUIText(modelLabel);
 
-            _modelInput = UIFactory.CreateInputField(modelSection, "ModelInput", "qwen3:8b");
-            _modelInput.Text = _model;
-            _modelInput.OnValueChanged += (val) => _model = val;
-            UIFactory.SetLayoutElement(_modelInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
-            UIStyles.SetBackground(_modelInput.Component.gameObject, UIStyles.InputBackground);
+            var modelRow = UIStyles.CreateFormRow(modelSection, "ModelRow", UIStyles.RowHeightLarge, 5);
 
-            var modelHint = UIStyles.CreateHint(modelSection, "ModelHint", "Recommended: qwen3:8b • Install: ollama pull qwen3:8b");
-            RegisterExcluded(modelHint); // Contains technical model name and command
+            string[] initialModels = !string.IsNullOrEmpty(_aiModel) ? new[] { _aiModel } : new string[0];
+            _modelDropdown = new SearchableDropdown("ModelDropdown", initialModels, _aiModel, 200, false);
+            var modelObj = _modelDropdown.CreateUI(modelRow, (val) => _aiModel = val);
+            UIFactory.SetLayoutElement(modelObj, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
+
+            var refreshBtn = CreateSecondaryButton(modelRow, "RefreshBtn", "Refresh", 70);
+            refreshBtn.OnClick += RefreshModels;
+            RegisterUIText(refreshBtn.ButtonText);
+
+            var modelHint = UIStyles.CreateHint(modelSection, "ModelHint", "Select a model from your server");
+            RegisterUIText(modelHint);
 
             UIStyles.CreateSpacer(card, 10);
 
@@ -861,7 +890,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             RegisterUIText(contextHint);
 
             // Navigation buttons
-            var buttonRow = CreateButtonRow(_ollamaConfigStep);
+            var buttonRow = CreateButtonRow(_aiConfigStep);
 
             var backBtn = CreateSecondaryButton(buttonRow, "BackBtn", "← Back");
             backBtn.OnClick += () =>
@@ -924,7 +953,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _hotkeyStep?.SetActive(false);
             _languageSelectionStep?.SetActive(false);
             _translationChoiceStep?.SetActive(false);
-            _ollamaConfigStep?.SetActive(false);
+            _aiConfigStep?.SetActive(false);
             _completeStep?.SetActive(false);
 
             // Show current step
@@ -946,8 +975,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                     _translationChoiceStep?.SetActive(true);
                     OnTranslationChoiceEnter();
                     break;
-                case WizardStep.OllamaConfig:
-                    _ollamaConfigStep?.SetActive(true);
+                case WizardStep.AIConfig:
+                    _aiConfigStep?.SetActive(true);
                     break;
                 case WizardStep.Complete:
                     _completeStep?.SetActive(true);
@@ -966,32 +995,35 @@ namespace UnityGameTranslator.Core.UI.Panels
             CalculateAndApplyOptimalSize();
         }
 
-        private async void TestOllamaConnection()
+        private async void TestAIConnection()
         {
-            if (_ollamaStatusLabel == null) return;
+            if (_aiStatusLabel == null) return;
 
-            _ollamaStatusLabel.text = "Testing...";
-            _ollamaStatusLabel.color = UIStyles.StatusWarning;
+            _aiStatusLabel.text = "Testing...";
+            _aiStatusLabel.color = UIStyles.StatusWarning;
 
-            // Capture URL before await
-            string url = _ollamaUrl;
+            // Capture values before await
+            string url = _aiUrl;
+            string apiKey = _aiApiKey;
 
             try
             {
-                bool success = await TranslatorCore.TestOllamaConnection(url);
+                bool success = await TranslatorCore.TestAIConnection(url, apiKey);
 
                 // After await, we may be on a background thread (IL2CPP issue)
                 TranslatorUIManager.RunOnMainThread(() =>
                 {
                     if (success)
                     {
-                        _ollamaStatusLabel.text = "Connection successful!";
-                        _ollamaStatusLabel.color = UIStyles.StatusSuccess;
+                        _aiStatusLabel.text = "Connection successful!";
+                        _aiStatusLabel.color = UIStyles.StatusSuccess;
+                        // Auto-refresh models on successful test
+                        RefreshModels();
                     }
                     else
                     {
-                        _ollamaStatusLabel.text = "Connection failed";
-                        _ollamaStatusLabel.color = UIStyles.StatusError;
+                        _aiStatusLabel.text = "Connection failed";
+                        _aiStatusLabel.color = UIStyles.StatusError;
                     }
                 });
             }
@@ -1000,9 +1032,37 @@ namespace UnityGameTranslator.Core.UI.Panels
                 var errorMsg = e.Message;
                 TranslatorUIManager.RunOnMainThread(() =>
                 {
-                    _ollamaStatusLabel.text = $"Error: {errorMsg}";
-                    _ollamaStatusLabel.color = UIStyles.StatusError;
+                    _aiStatusLabel.text = $"Error: {errorMsg}";
+                    _aiStatusLabel.color = UIStyles.StatusError;
                 });
+            }
+        }
+
+        private async void RefreshModels()
+        {
+            string url = _aiUrl;
+            string apiKey = _aiApiKey;
+
+            try
+            {
+                string[] models = await TranslatorCore.FetchModels(url, apiKey);
+
+                TranslatorUIManager.RunOnMainThread(() =>
+                {
+                    if (models.Length > 0)
+                    {
+                        _modelDropdown.SetOptions(models);
+                        // Keep current selection if still valid
+                        if (!string.IsNullOrEmpty(_aiModel) && Array.IndexOf(models, _aiModel) >= 0)
+                        {
+                            _modelDropdown.SelectedValue = _aiModel;
+                        }
+                    }
+                });
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogWarning($"[Wizard] Failed to refresh models: {e.Message}");
             }
         }
 
@@ -1012,15 +1072,16 @@ namespace UnityGameTranslator.Core.UI.Panels
             TranslatorCore.Config.online_mode = _onlineMode;
             TranslatorCore.Config.settings_hotkey = _hotkeyCapture.HotkeyString;
             TranslatorCore.Config.target_language = _targetLanguage;
-            TranslatorCore.Config.enable_ollama = _enableOllama;
-            TranslatorCore.Config.ollama_url = _ollamaUrl;
-            TranslatorCore.Config.model = _model;
+            TranslatorCore.Config.enable_ai = _enableAI;
+            TranslatorCore.Config.ai_url = _aiUrl;
+            TranslatorCore.Config.ai_api_key = !string.IsNullOrEmpty(_aiApiKey) ? _aiApiKey : null;
+            TranslatorCore.Config.ai_model = _aiModel;
             TranslatorCore.Config.game_context = _gameContext;
             TranslatorCore.Config.first_run_completed = true;
             TranslatorCore.SaveConfig();
 
-            // Start Ollama worker if enabled
-            if (_enableOllama)
+            // Start AI worker if enabled
+            if (_enableAI)
             {
                 TranslatorCore.EnsureWorkerRunning();
             }

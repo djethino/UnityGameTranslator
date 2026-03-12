@@ -7,7 +7,7 @@ using UniverseLib.UI.Models;
 namespace UnityGameTranslator.Core.UI.Panels
 {
     /// <summary>
-    /// Corner notification overlay showing mod updates, sync status, and Ollama queue.
+    /// Corner notification overlay showing mod updates, sync status, and AI queue.
     /// Displays when no main panels are open.
     /// </summary>
     public class StatusOverlay : TranslatorPanelBase
@@ -51,10 +51,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         private ButtonRef _syncSettingsBtn;
         private ButtonRef _syncIgnoreBtn;
 
-        // UI elements - Ollama queue status
-        private GameObject _ollamaBox;
-        private Text _ollamaStatusLabel;
-        private Text _ollamaQueueLabel;
+        // UI elements - AI queue status
+        private GameObject _aiBox;
+        private Text _aiStatusLabel;
+        private Text _aiQueueLabel;
 
         // UI elements - SSE connection indicator
         private GameObject _connectionBox;
@@ -68,7 +68,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         }
 
         /// <summary>
-        /// Set whether panels are currently open. When true, only Ollama queue is shown.
+        /// Set whether panels are currently open. When true, only AI queue is shown.
         /// </summary>
         public void SetPanelsOpenMode(bool panelsOpen)
         {
@@ -77,7 +77,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         /// <summary>
         /// Returns true if there's notification content (mod update or sync) to display.
-        /// Does NOT include Ollama queue (which is handled separately).
+        /// Does NOT include AI queue (which is handled separately).
         /// </summary>
         public bool HasNotificationContent()
         {
@@ -123,8 +123,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Translation Sync Notification Box
             CreateSyncBox();
 
-            // Ollama Queue Status Box
-            CreateOllamaBox();
+            // AI Queue Status Box
+            CreateAIBox();
 
             // SSE Connection Indicator
             CreateConnectionBox();
@@ -219,29 +219,29 @@ namespace UnityGameTranslator.Core.UI.Panels
             _syncBox.SetActive(false);
         }
 
-        private void CreateOllamaBox()
+        private void CreateAIBox()
         {
-            _ollamaBox = UIFactory.CreateVerticalGroup(ContentRoot, "OllamaBox", false, false, true, true, 3);
-            UIFactory.SetLayoutElement(_ollamaBox, minHeight: UIStyles.MultiLineSmall, flexibleWidth: 9999);
-            SetBackgroundColor(_ollamaBox, UIStyles.NotificationInfo);
+            _aiBox = UIFactory.CreateVerticalGroup(ContentRoot, "AIBox", false, false, true, true, 3);
+            UIFactory.SetLayoutElement(_aiBox, minHeight: UIStyles.MultiLineSmall, flexibleWidth: 9999);
+            SetBackgroundColor(_aiBox, UIStyles.NotificationInfo);
 
-            var padding = _ollamaBox.GetComponent<VerticalLayoutGroup>();
+            var padding = _aiBox.GetComponent<VerticalLayoutGroup>();
             if (padding != null)
             {
                 padding.padding = new RectOffset(8, 8, 5, 5);
             }
 
-            _ollamaStatusLabel = UIFactory.CreateLabel(_ollamaBox, "OllamaStatusLabel", "Translating...", TextAnchor.MiddleLeft);
-            UIFactory.SetLayoutElement(_ollamaStatusLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+            _aiStatusLabel = UIFactory.CreateLabel(_aiBox, "AIStatusLabel", "Translating...", TextAnchor.MiddleLeft);
+            UIFactory.SetLayoutElement(_aiStatusLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
 
-            _ollamaQueueLabel = UIFactory.CreateLabel(_ollamaBox, "OllamaQueueLabel", "Queue: 0 pending", TextAnchor.MiddleLeft);
-            _ollamaQueueLabel.fontSize = UIStyles.FontSizeSmall;
-            UIFactory.SetLayoutElement(_ollamaQueueLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+            _aiQueueLabel = UIFactory.CreateLabel(_aiBox, "AIQueueLabel", "Queue: 0 pending", TextAnchor.MiddleLeft);
+            _aiQueueLabel.fontSize = UIStyles.FontSizeSmall;
+            UIFactory.SetLayoutElement(_aiQueueLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
             // Exclude dynamic status labels from translation (they contain truncated game text!)
-            RegisterExcluded(_ollamaStatusLabel);
-            RegisterExcluded(_ollamaQueueLabel);
+            RegisterExcluded(_aiStatusLabel);
+            RegisterExcluded(_aiQueueLabel);
 
-            _ollamaBox.SetActive(false);
+            _aiBox.SetActive(false);
         }
 
         private void CreateConnectionBox()
@@ -278,13 +278,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             bool showSyncNotification = (hasLocalChanges || hasServerUpdate || needsMerge) &&
                 !TranslatorUIManager.NotificationDismissed;
 
-            // 3. Ollama queue status
-            bool ollamaEnabled = TranslatorCore.Config.enable_ollama;
+            // 3. AI queue status
+            bool aiEnabled = TranslatorCore.Config.enable_ai;
             int queueCount = TranslatorCore.QueueCount;
             bool isTranslating = TranslatorCore.IsTranslating;
-            bool showOllama = ollamaEnabled && (queueCount > 0 || isTranslating);
+            bool showAI = aiEnabled && (queueCount > 0 || isTranslating);
 
-            return showModUpdate || showSyncNotification || showOllama;
+            return showModUpdate || showSyncNotification || showAI;
         }
 
         /// <summary>
@@ -292,7 +292,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         public void RefreshOverlay()
         {
-            // When panels are open, only show Ollama queue (mod update & sync are in MainPanel)
+            // When panels are open, only show AI queue (mod update & sync are in MainPanel)
             // When panels are closed, show all notifications
 
             // 1. Mod update notification (hidden when panels open - shown in MainPanel instead)
@@ -421,41 +421,41 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _syncBox?.SetActive(false);
             }
 
-            // 3. Ollama queue status
-            bool ollamaEnabled = TranslatorCore.Config.enable_ollama;
+            // 3. AI queue status
+            bool aiEnabled = TranslatorCore.Config.enable_ai;
             int queueCount = TranslatorCore.QueueCount;
             bool isTranslating = TranslatorCore.IsTranslating;
-            bool showOllama = ollamaEnabled && (queueCount > 0 || isTranslating);
+            bool showAI = aiEnabled && (queueCount > 0 || isTranslating);
 
-            if (showOllama && _ollamaBox != null)
+            if (showAI && _aiBox != null)
             {
-                _ollamaBox.SetActive(true);
+                _aiBox.SetActive(true);
 
                 if (isTranslating)
                 {
                     string text = TranslatorCore.CurrentText ?? "";
                     if (text.Length > 25) text = text.Substring(0, 25) + "...";
-                    _ollamaStatusLabel.text = $"Translating: {text}";
-                    _ollamaStatusLabel.gameObject.SetActive(true);
+                    _aiStatusLabel.text = $"Translating: {text}";
+                    _aiStatusLabel.gameObject.SetActive(true);
                 }
                 else
                 {
-                    _ollamaStatusLabel.gameObject.SetActive(false);
+                    _aiStatusLabel.gameObject.SetActive(false);
                 }
 
                 if (queueCount > 0)
                 {
-                    _ollamaQueueLabel.text = $"Queue: {queueCount} pending";
-                    _ollamaQueueLabel.gameObject.SetActive(true);
+                    _aiQueueLabel.text = $"Queue: {queueCount} pending";
+                    _aiQueueLabel.gameObject.SetActive(true);
                 }
                 else
                 {
-                    _ollamaQueueLabel.gameObject.SetActive(false);
+                    _aiQueueLabel.gameObject.SetActive(false);
                 }
             }
             else
             {
-                _ollamaBox?.SetActive(false);
+                _aiBox?.SetActive(false);
             }
 
             // 4. SSE Connection indicator (compact, shown when overlay is visible)
@@ -505,7 +505,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             int height = 10; // padding
             if (_modUpdateBox != null && _modUpdateBox.activeSelf) height += 60;
             if (_syncBox != null && _syncBox.activeSelf) height += 60;
-            if (_ollamaBox != null && _ollamaBox.activeSelf) height += 50;
+            if (_aiBox != null && _aiBox.activeSelf) height += 50;
             if (_connectionBox != null && _connectionBox.activeSelf) height += 20;
 
             Rect.sizeDelta = new Vector2(PanelWidth, Mathf.Max(50, height));

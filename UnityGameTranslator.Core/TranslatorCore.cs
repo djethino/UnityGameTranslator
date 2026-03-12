@@ -110,7 +110,7 @@ namespace UnityGameTranslator.Core
 
         private static float lastSaveTime = 0f;
         private static int translatedCount = 0;
-        private static int ollamaCount = 0;
+        private static int aiTranslationCount = 0;
         private static int cacheHitCount = 0;
         private static Dictionary<int, string> lastSeenText = new Dictionary<int, string>();
         private static HashSet<string> pendingTranslations = new HashSet<string>();
@@ -511,8 +511,8 @@ namespace UnityGameTranslator.Core
             return false;
         }
 
-        // Security: Maximum text length for Ollama translation requests (prevents DoS)
-        private const int MaxOllamaTextLength = 5000;
+        // Security: Maximum text length for AI translation requests (prevents DoS)
+        private const int MaxAITextLength = 5000;
 
         // Marker for skipped translations (text not in expected source language)
         private const string SkipTranslationMarker = "AxNoTranslateXa";
@@ -572,15 +572,15 @@ namespace UnityGameTranslator.Core
             LoadCache();
             StartTranslationWorker();
 
-            if (Config.preload_model && Config.enable_ollama)
+            if (Config.preload_model && Config.enable_ai)
             {
                 PreloadModel();
             }
 
             Adapter.LogInfo($"UnityGameTranslator v{PluginInfo.Version} initialized!");
-            if (Config.enable_ollama)
+            if (Config.enable_ai)
             {
-                Adapter.LogInfo($"Ollama: ENABLED - Model: {Config.model}");
+                Adapter.LogInfo($"AI: ENABLED - Model: {Config.ai_model} - URL: {Config.ai_url}");
             }
             string srcLang = Config.GetSourceLanguage() ?? "auto-detect";
             string tgtLang = Config.GetTargetLanguage();
@@ -608,7 +608,7 @@ namespace UnityGameTranslator.Core
                 try { SaveCache(); } catch { }
             }
 
-            Adapter?.LogInfo($"Session: {translatedCount} translations, {cacheHitCount} cache hits, {ollamaCount} Ollama calls");
+            Adapter?.LogInfo($"Session: {translatedCount} translations, {cacheHitCount} cache hits, {aiTranslationCount} AI calls");
             Adapter?.LogInfo($"Skipped: {skippedTargetLang} (target lang heuristic), {skippedAlreadyTranslated} (reverse cache)");
         }
 
@@ -681,6 +681,21 @@ namespace UnityGameTranslator.Core
                     }
                 }
 
+                // Decrypt AI API key if present
+                if (!string.IsNullOrEmpty(Config.ai_api_key))
+                {
+                    string decryptedKey = TokenProtection.DecryptToken(Config.ai_api_key);
+                    if (decryptedKey != null)
+                    {
+                        Config.ai_api_key = decryptedKey;
+                    }
+                    else
+                    {
+                        Adapter.LogWarning("Failed to decrypt AI API key - clearing it");
+                        Config.ai_api_key = null;
+                    }
+                }
+
                 Adapter.LogInfo($"Loaded config file (enable_translations={Config.enable_translations})");
             }
             catch (Exception e)
@@ -693,22 +708,26 @@ namespace UnityGameTranslator.Core
         {
             try
             {
-                // Create a copy for serialization with encrypted token
+                // Create a copy for serialization with encrypted tokens
                 var configToSave = new ModConfig
                 {
-                    // Ollama settings
-                    ollama_url = Config.ollama_url,
-                    model = Config.model,
+                    // AI Translation settings
+                    ai_url = Config.ai_url,
+                    ai_model = Config.ai_model,
                     target_language = Config.target_language,
                     source_language = Config.source_language,
                     strict_source_language = Config.strict_source_language,
                     game_context = Config.game_context,
                     timeout_ms = Config.timeout_ms,
-                    enable_ollama = Config.enable_ollama,
+                    enable_ai = Config.enable_ai,
                     cache_new_translations = Config.cache_new_translations,
                     normalize_numbers = Config.normalize_numbers,
-                    debug_ollama = Config.debug_ollama,
+                    debug_ai = Config.debug_ai,
                     preload_model = Config.preload_model,
+                    // Encrypt AI API key before saving
+                    ai_api_key = !string.IsNullOrEmpty(Config.ai_api_key)
+                        ? TokenProtection.EncryptToken(Config.ai_api_key)
+                        : null,
 
                     // General settings
                     capture_keys_only = Config.capture_keys_only,
@@ -725,7 +744,7 @@ namespace UnityGameTranslator.Core
                     website_base_url = Config.website_base_url,
                     sync = Config.sync,
                     window_preferences = Config.window_preferences,
-                    // Encrypt token before saving
+                    // Encrypt API token before saving
                     api_token = !string.IsNullOrEmpty(Config.api_token)
                         ? TokenProtection.EncryptToken(Config.api_token)
                         : null
@@ -1350,7 +1369,7 @@ namespace UnityGameTranslator.Core
 
         private static void StartTranslationWorker()
         {
-            if (!Config.enable_ollama) return;
+            if (!Config.enable_ai) return;
             if (workerRunning) return; // Already running
 
             workerRunning = true;
@@ -1360,20 +1379,20 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Start the translation worker if Ollama is enabled and worker isn't running.
-        /// Call this after enabling Ollama in settings.
+        /// Start the translation worker if AI is enabled and worker isn't running.
+        /// Call this after enabling AI in settings.
         /// </summary>
         public static void EnsureWorkerRunning()
         {
-            if (Config.enable_ollama && !workerRunning)
+            if (Config.enable_ai && !workerRunning)
             {
-                Adapter?.LogInfo("[TranslatorCore] Starting Ollama worker thread...");
+                Adapter?.LogInfo("[TranslatorCore] Starting AI worker thread...");
                 StartTranslationWorker();
             }
         }
 
         /// <summary>
-        /// Clear the translation queue. Called when Ollama is disabled.
+        /// Clear the translation queue. Called when AI is disabled.
         /// </summary>
         public static void ClearQueue()
         {
@@ -1396,11 +1415,22 @@ namespace UnityGameTranslator.Core
         {
             try
             {
-                Adapter.LogInfo($"Preloading model {Config.model}...");
-                var requestBody = new { model = Config.model, prompt = "Hi", stream = false, options = new { num_predict = 1 } };
+                Adapter.LogInfo($"Preloading model {Config.ai_model}...");
+                var requestBody = new
+                {
+                    model = Config.ai_model,
+                    messages = new[] { new { role = "user", content = "Hi" } },
+                    max_tokens = 1,
+                    stream = false
+                };
                 string jsonRequest = JsonConvert.SerializeObject(requestBody);
                 var content = new StringContent(jsonRequest, Encoding.UTF8, "application/json");
-                var response = httpClient.PostAsync($"{Config.ollama_url}/api/generate", content).Result;
+
+                var request = new HttpRequestMessage(HttpMethod.Post, $"{Config.ai_url.TrimEnd('/')}/v1/chat/completions");
+                request.Content = content;
+                AddAIAuthHeader(request);
+
+                var response = httpClient.SendAsync(request).Result;
                 if (response.IsSuccessStatusCode)
                 {
                     Adapter.LogInfo("Model preloaded successfully");
@@ -1417,16 +1447,33 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Test connection to Ollama server.
+        /// Add Authorization header for AI API requests if an API key is configured.
         /// </summary>
-        /// <param name="url">The Ollama URL to test</param>
+        private static void AddAIAuthHeader(HttpRequestMessage request, string apiKey = null)
+        {
+            string key = apiKey ?? Config?.ai_api_key;
+            if (!string.IsNullOrEmpty(key))
+            {
+                request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", key);
+            }
+        }
+
+        /// <summary>
+        /// Test connection to AI server via OpenAI-compatible /v1/models endpoint.
+        /// </summary>
+        /// <param name="url">The server URL to test</param>
+        /// <param name="apiKey">Optional API key for authenticated servers</param>
         /// <returns>True if connection successful</returns>
-        public static async System.Threading.Tasks.Task<bool> TestOllamaConnection(string url)
+        public static async System.Threading.Tasks.Task<bool> TestAIConnection(string url, string apiKey = null)
         {
             try
             {
-                var testUrl = url.TrimEnd('/') + "/api/tags";
-                var response = await httpClient.GetAsync(testUrl);
+                var request = new HttpRequestMessage(HttpMethod.Get, url.TrimEnd('/') + "/v1/models");
+                if (!string.IsNullOrEmpty(apiKey))
+                {
+                    request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
+                }
+                var response = await httpClient.SendAsync(request);
                 return response.IsSuccessStatusCode;
             }
             catch
@@ -1435,17 +1482,59 @@ namespace UnityGameTranslator.Core
             }
         }
 
+        /// <summary>
+        /// Fetch available models from AI server via OpenAI-compatible /v1/models endpoint.
+        /// </summary>
+        /// <param name="url">The server URL</param>
+        /// <param name="apiKey">Optional API key for authenticated servers</param>
+        /// <returns>Sorted array of model names, or empty array on failure</returns>
+        public static async System.Threading.Tasks.Task<string[]> FetchModels(string url, string apiKey = null)
+        {
+            try
+            {
+                var request = new HttpRequestMessage(HttpMethod.Get, url.TrimEnd('/') + "/v1/models");
+                if (!string.IsNullOrEmpty(apiKey))
+                {
+                    request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
+                }
+                var response = await httpClient.SendAsync(request);
+                if (!response.IsSuccessStatusCode)
+                    return new string[0];
+
+                string json = await response.Content.ReadAsStringAsync();
+                var obj = JObject.Parse(json);
+                var data = obj["data"] as JArray;
+                if (data == null)
+                    return new string[0];
+
+                var models = new List<string>();
+                foreach (var item in data)
+                {
+                    string id = item["id"]?.ToString();
+                    if (!string.IsNullOrEmpty(id))
+                        models.Add(id);
+                }
+                models.Sort(StringComparer.OrdinalIgnoreCase);
+                return models.ToArray();
+            }
+            catch (Exception e)
+            {
+                Adapter?.LogWarning($"Failed to fetch models: {e.Message}");
+                return new string[0];
+            }
+        }
+
         private static void TranslationWorkerLoop()
         {
-            if (Config.debug_ollama)
+            if (Config.debug_ai)
                 Adapter?.LogInfo("[Worker] Thread started");
 
             while (true)
             {
-                // Stop if Ollama was disabled
-                if (!Config.enable_ollama)
+                // Stop if AI was disabled
+                if (!Config.enable_ai)
                 {
-                    Adapter?.LogInfo("[Worker] Ollama disabled, stopping worker thread");
+                    Adapter?.LogInfo("[Worker] AI disabled, stopping worker thread");
                     workerRunning = false;
                     return;
                 }
@@ -1464,19 +1553,19 @@ namespace UnityGameTranslator.Core
                         {
                             componentsToUpdate = comps; // Take the list directly
                             pendingComponents.Remove(textToTranslate); // Remove NOW
-                            if (Config.debug_ollama)
+                            if (Config.debug_ai)
                                 Adapter?.LogInfo($"[Worker] Found {comps.Count} components for text");
                         }
                         else
                         {
-                            if (Config.debug_ollama)
+                            if (Config.debug_ai)
                                 Adapter?.LogWarning($"[Worker] NO components found for text!");
                         }
 
                         // Remove from pending so same text can be re-queued with new components
                         pendingTranslations.Remove(textToTranslate);
 
-                        if (Config.debug_ollama)
+                        if (Config.debug_ai)
                             Adapter?.LogInfo($"[Worker] Dequeued: {textToTranslate?.Substring(0, Math.Min(30, textToTranslate?.Length ?? 0))}...");
                     }
                 }
@@ -1505,10 +1594,10 @@ namespace UnityGameTranslator.Core
 
                     try
                     {
-                        if (Config.debug_ollama)
-                            Adapter?.LogInfo($"[Worker] Calling Ollama...{(isOwnUI ? " (UI prompt)" : "")}");
+                        if (Config.debug_ai)
+                            Adapter?.LogInfo($"[Worker] Calling AI...{(isOwnUI ? " (UI prompt)" : "")}");
 
-                        // Extract numbers BEFORE sending to Ollama
+                        // Extract numbers BEFORE sending to AI
                         string normalizedOriginal = textToTranslate;
                         List<string> extractedNumbers = null;
                         if (Config.normalize_numbers)
@@ -1523,29 +1612,29 @@ namespace UnityGameTranslator.Core
                             if (cachedEntry.Value != normalizedOriginal)
                             {
                                 translation = cachedEntry.Value;
-                                if (Config.debug_ollama)
-                                    Adapter?.LogInfo($"[Worker] Cache hit for normalized text, skipping Ollama");
+                                if (Config.debug_ai)
+                                    Adapter?.LogInfo($"[Worker] Cache hit for normalized text, skipping AI");
                             }
                         }
 
-                        // Capture keys only mode: store H+empty without calling Ollama
+                        // Capture keys only mode: store H+empty without calling AI
                         if (Config.capture_keys_only)
                         {
                             AddToCache(normalizedOriginal, "", "H");
-                            if (Config.debug_ollama)
+                            if (Config.debug_ai)
                                 Adapter?.LogInfo($"[Worker] Captured key (no translation): {normalizedOriginal.Substring(0, Math.Min(30, normalizedOriginal.Length))}...");
                         }
-                        // Only call Ollama if not in cache
+                        // Only call AI if not in cache
                         else if (translation == null)
                         {
-                            translation = TranslateWithOllama(normalizedOriginal, extractedNumbers, isOwnUI);
+                            translation = TranslateWithAI(normalizedOriginal, extractedNumbers, isOwnUI);
 
-                            if (Config.debug_ollama)
-                                Adapter?.LogInfo($"[Worker] Ollama returned: {translation?.Substring(0, Math.Min(30, translation?.Length ?? 0))}...");
+                            if (Config.debug_ai)
+                                Adapter?.LogInfo($"[Worker] AI returned: {translation?.Substring(0, Math.Min(30, translation?.Length ?? 0))}...");
 
                             if (!string.IsNullOrEmpty(translation))
                             {
-                                // Check if Ollama returned the skip marker (text not in expected source language)
+                                // Check if AI returned the skip marker (text not in expected source language)
                                 bool isSkipped = translation.Contains(SkipTranslationMarker);
 
                                 // Cache with appropriate tag: S=Skipped, M=Mod UI, A=AI-translated
@@ -1554,7 +1643,7 @@ namespace UnityGameTranslator.Core
 
                                 if (!isSkipped && translation != normalizedOriginal)
                                 {
-                                    ollamaCount++;
+                                    aiTranslationCount++;
 
                                     // For updating components, restore actual numbers
                                     string translationWithNumbers = translation;
@@ -1566,24 +1655,24 @@ namespace UnityGameTranslator.Core
                                     // Notify mod loader to update components
                                     OnTranslationComplete?.Invoke(originalText, translationWithNumbers, componentsToUpdate);
 
-                                    if (DebugMode || Config.debug_ollama)
+                                    if (DebugMode || Config.debug_ai)
                                     {
                                         string preview = originalText.Length > 30 ? originalText.Substring(0, 30) + "..." : originalText;
-                                        Adapter?.LogInfo($"[Ollama] {preview}");
+                                        Adapter?.LogInfo($"[AI] {preview}");
                                     }
                                 }
-                                else if (isSkipped && Config.debug_ollama)
+                                else if (isSkipped && Config.debug_ai)
                                 {
                                     string preview = originalText.Length > 30 ? originalText.Substring(0, 30) + "..." : originalText;
-                                    Adapter?.LogInfo($"[Ollama] Skipped (not in source language): {preview}");
+                                    Adapter?.LogInfo($"[AI] Skipped (not in source language): {preview}");
                                 }
                             }
                         }
                     }
                     catch (Exception e)
                     {
-                        if (Config.debug_ollama)
-                            Adapter?.LogWarning($"Ollama error: {e.Message}");
+                        if (Config.debug_ai)
+                            Adapter?.LogWarning($"AI error: {e.Message}");
                     }
                     finally
                     {
@@ -1637,13 +1726,13 @@ namespace UnityGameTranslator.Core
             }
         }
 
-        private static string TranslateWithOllama(string textWithPlaceholders, List<string> extractedNumbers, bool isOwnUI = false)
+        private static string TranslateWithAI(string textWithPlaceholders, List<string> extractedNumbers, bool isOwnUI = false)
         {
             // Security: Reject text that's too long (prevents DoS via large requests)
-            if (textWithPlaceholders.Length > MaxOllamaTextLength)
+            if (textWithPlaceholders.Length > MaxAITextLength)
             {
-                if (Config.debug_ollama)
-                    Adapter?.LogWarning($"[Ollama] Text too long ({textWithPlaceholders.Length} chars), skipping translation");
+                if (Config.debug_ai)
+                    Adapter?.LogWarning($"[AI] Text too long ({textWithPlaceholders.Length} chars), skipping translation");
                 return null;
             }
 
@@ -1662,14 +1751,14 @@ namespace UnityGameTranslator.Core
                     // UI-specific prompt for mod interface (source is always English)
                     promptBuilder.AppendLine("=== CONTEXT ===");
                     promptBuilder.AppendLine($"Translating a game translation tool interface from English to {targetLang}.");
-                    promptBuilder.AppendLine("Technical UI with terms: Ollama, cache, merge, sync, upload, download, API, hotkey, config, JSON.");
+                    promptBuilder.AppendLine("Technical UI with terms: AI, cache, merge, sync, upload, download, API, hotkey, config, JSON.");
                     promptBuilder.AppendLine();
                     promptBuilder.AppendLine("=== TRANSLATION RULES ===");
                     promptBuilder.AppendLine("- Output the translation only, no explanation");
                     promptBuilder.AppendLine("- Translation must be understandable and correct in target language");
                     promptBuilder.AppendLine("- Keep it concise for UI");
                     promptBuilder.AppendLine("- Preserve formatting tags and special characters");
-                    promptBuilder.AppendLine("- Keep technical terms unchanged: Ollama, API, URL, UUID, JSON, AI");
+                    promptBuilder.AppendLine("- Keep technical terms unchanged: API, URL, UUID, JSON, AI");
                     promptBuilder.AppendLine("- Keep keyboard shortcuts as-is: Ctrl, Alt, Shift, F1-F12, Tab, Esc");
                     if (extractedNumbers != null && extractedNumbers.Count > 0)
                     {
@@ -1729,51 +1818,55 @@ namespace UnityGameTranslator.Core
                 string systemPrompt = promptBuilder.ToString();
 
                 // Debug: log the full system prompt being sent
-                if (Config.debug_ollama)
+                if (Config.debug_ai)
                 {
-                    Adapter?.LogInfo($"[Ollama] System prompt:\n{systemPrompt}");
+                    Adapter?.LogInfo($"[AI] System prompt:\n{systemPrompt}");
                 }
 
                 var requestBody = new
                 {
-                    model = Config.model,
+                    model = Config.ai_model,
                     messages = new object[]
                     {
                         new { role = "system", content = systemPrompt },
-                        new { role = "user", content = textToTranslate + " /no_think" },
-                        new { role = "assistant", content = "<think>\n\n</think>\n\n" }
+                        new { role = "user", content = textToTranslate }
                     },
-                    stream = false,
-                    options = new { temperature = 0.0, num_predict = Math.Max(200, textToTranslate.Length * 2) }
+                    temperature = 0.0,
+                    max_tokens = Math.Max(200, textToTranslate.Length * 2),
+                    stream = false
                 };
 
                 string jsonRequest = JsonConvert.SerializeObject(requestBody);
-                var content = new StringContent(jsonRequest, Encoding.UTF8, "application/json");
+                var httpContent = new StringContent(jsonRequest, Encoding.UTF8, "application/json");
 
-                var response = httpClient.PostAsync($"{Config.ollama_url}/api/chat", content).Result;
+                var request = new HttpRequestMessage(HttpMethod.Post, $"{Config.ai_url.TrimEnd('/')}/v1/chat/completions");
+                request.Content = httpContent;
+                AddAIAuthHeader(request);
+
+                var response = httpClient.SendAsync(request).Result;
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    if (Config.debug_ollama)
-                        Adapter?.LogWarning($"Ollama HTTP {response.StatusCode}");
+                    if (Config.debug_ai)
+                        Adapter?.LogWarning($"AI HTTP {response.StatusCode}");
                     return null;
                 }
 
                 string responseJson = response.Content.ReadAsStringAsync().Result;
                 var responseObj = JObject.Parse(responseJson);
-                string translation = responseObj["message"]?["content"]?.ToString()?.Trim();
+                string translation = responseObj["choices"]?[0]?["message"]?["content"]?.ToString()?.Trim();
 
-                if (Config.debug_ollama)
+                if (Config.debug_ai)
                 {
-                    Adapter?.LogInfo($"[Ollama Raw] {translation?.Substring(0, Math.Min(80, translation?.Length ?? 0))}");
+                    Adapter?.LogInfo($"[AI Raw] {translation?.Substring(0, Math.Min(80, translation?.Length ?? 0))}");
                 }
 
                 if (!string.IsNullOrEmpty(translation))
                 {
                     translation = CleanTranslation(translation);
-                    if (Config.debug_ollama)
+                    if (Config.debug_ai)
                     {
-                        Adapter?.LogInfo($"[Ollama Clean] {translation?.Substring(0, Math.Min(50, translation?.Length ?? 0))}");
+                        Adapter?.LogInfo($"[AI Clean] {translation?.Substring(0, Math.Min(50, translation?.Length ?? 0))}");
                     }
                 }
 
@@ -1781,8 +1874,8 @@ namespace UnityGameTranslator.Core
             }
             catch (Exception e)
             {
-                if (Config.debug_ollama)
-                    Adapter?.LogWarning($"Ollama exception: {e.Message}");
+                if (Config.debug_ai)
+                    Adapter?.LogWarning($"AI exception: {e.Message}");
                 return null;
             }
         }
@@ -1982,7 +2075,7 @@ namespace UnityGameTranslator.Core
 
         public static void QueueForTranslation(string text, object component = null, bool isOwnUI = false)
         {
-            if (!Config.enable_ollama) return;
+            if (!Config.enable_ai) return;
             if (string.IsNullOrEmpty(text) || text.Length < 3) return;
 
             lock (lockObj)
@@ -2002,7 +2095,7 @@ namespace UnityGameTranslator.Core
                 pendingTranslations.Add(text);
                 translationQueue.Enqueue(text);
 
-                if (Config.debug_ollama)
+                if (Config.debug_ai)
                 {
                     string preview = text.Length > 40 ? text.Substring(0, 40) + "..." : text;
                     Adapter?.LogInfo($"[Queue] {preview}{(isOwnUI ? " (UI)" : "")}");
@@ -2011,7 +2104,7 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Main translation method - translate text from cache or queue for Ollama.
+        /// Main translation method - translate text from cache or queue for AI.
         /// Treats multiline text as a single unit to preserve context and ensure consistency.
         /// </summary>
         public static string TranslateText(string text)
@@ -2109,7 +2202,7 @@ namespace UnityGameTranslator.Core
                 return patternResult;
             }
 
-            if (Config.enable_ollama && !string.IsNullOrEmpty(text) && text.Length >= 3)
+            if (Config.enable_ai && !string.IsNullOrEmpty(text) && text.Length >= 3)
             {
                 // Check reverse cache with NORMALIZED text (translations are stored normalized + trimmed)
                 // TrimEnd because TMP often strips trailing whitespace/newlines when displaying
@@ -2263,8 +2356,8 @@ namespace UnityGameTranslator.Core
                 return text;
             }
 
-            // No cache hit - queue for Ollama if enabled
-            if (Config.enable_ollama && !string.IsNullOrEmpty(text) && text.Length >= 3)
+            // No cache hit - queue for AI if enabled
+            if (Config.enable_ai && !string.IsNullOrEmpty(text) && text.Length >= 3)
             {
                 // Check reverse cache with NORMALIZED text (translations are stored normalized + trimmed)
                 // TrimEnd because TMP often strips trailing whitespace/newlines when displaying
@@ -2292,7 +2385,7 @@ namespace UnityGameTranslator.Core
         {
             // Disabled: too many false positives with mixed-language content
             // The reverse cache (translatedTexts) handles exact matches
-            // Ollama can recognize already-translated text and return it unchanged
+            // AI can recognize already-translated text and return it unchanged
             return false;
         }
 
@@ -2350,7 +2443,7 @@ namespace UnityGameTranslator.Core
 
         /// <summary>
         /// Clear all processing state caches to force re-evaluation of text.
-        /// Call this when settings change (enable_translations, enable_ollama, etc.)
+        /// Call this when settings change (enable_translations, enable_ai, etc.)
         /// Does NOT clear the translation cache itself.
         /// </summary>
         public static void ClearProcessingCaches()
@@ -2551,19 +2644,39 @@ namespace UnityGameTranslator.Core
 
     public class ModConfig
     {
-        // Ollama settings
-        public string ollama_url { get; set; } = "http://localhost:11434";
-        public string model { get; set; } = "qwen3:8b";
+        // AI Translation settings (universal OpenAI-compatible)
+        public string ai_url { get; set; } = "http://localhost:11434";
+        public string ai_model { get; set; } = "";
         public string target_language { get; set; } = "auto";
         public string source_language { get; set; } = "auto";
         public bool strict_source_language { get; set; } = false;
         public string game_context { get; set; } = "";
         public int timeout_ms { get; set; } = 30000;
-        public bool enable_ollama { get; set; } = false;
+        public bool enable_ai { get; set; } = false;
         public bool cache_new_translations { get; set; } = true;
         public bool normalize_numbers { get; set; } = true;
-        public bool debug_ollama { get; set; } = false;
+        public bool debug_ai { get; set; } = false;
         public bool preload_model { get; set; } = true;
+        public string ai_api_key { get; set; } = null;
+
+        // Backward-compatible migration from old config format
+        [JsonExtensionData]
+        private IDictionary<string, JToken> _extraData;
+
+        [System.Runtime.Serialization.OnDeserialized]
+        private void OnDeserialized(System.Runtime.Serialization.StreamingContext context)
+        {
+            if (_extraData == null) return;
+            if (_extraData.TryGetValue("ollama_url", out var url))
+                ai_url = url.ToString();
+            if (_extraData.TryGetValue("enable_ollama", out var eo))
+                enable_ai = eo.Value<bool>();
+            if (_extraData.TryGetValue("debug_ollama", out var dbg))
+                debug_ai = dbg.Value<bool>();
+            if (_extraData.TryGetValue("model", out var m) && string.IsNullOrEmpty(ai_model))
+                ai_model = m.ToString();
+            _extraData = null;
+        }
 
         // General settings
         public bool capture_keys_only { get; set; } = false;

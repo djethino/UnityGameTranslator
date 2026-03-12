@@ -45,7 +45,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private Text _sourceLabel;
         private Text _roleLabel;
         private Text _syncStatusLabel;
-        private Text _ollamaStatusLabel;
+        private Text _aiStatusLabel;
 
         // UI references - Actions section
         private ButtonRef _uploadBtn;
@@ -343,8 +343,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.SetLayoutElement(_syncStatusLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
             RegisterUIText(_syncStatusLabel);
 
-            _ollamaStatusLabel = CreateSmallLabel(infoBox, "OllamaStatusLabel", "");
-            RegisterUIText(_ollamaStatusLabel);
+            _aiStatusLabel = CreateSmallLabel(infoBox, "AIStatusLabel", "");
+            RegisterUIText(_aiStatusLabel);
         }
 
         private void CreateActionsSection(GameObject parent)
@@ -736,13 +736,13 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 case LayoutState.NoLocal:
                     // No local translation - guide user
-                    if (TranslatorCore.Config.enable_ollama)
+                    if (TranslatorCore.Config.enable_ai)
                     {
-                        message = "Use Ollama to translate captured text, or download a community translation.";
+                        message = "Use AI to translate captured text, or download a community translation.";
                     }
                     else
                     {
-                        message = "Enable Ollama for AI translation, or download a community translation to get started.";
+                        message = "Enable AI translation, or download a community translation to get started.";
                     }
                     break;
 
@@ -976,15 +976,15 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
             }
 
-            // Ollama status
-            if (TranslatorCore.Config.enable_ollama)
+            // AI status
+            if (TranslatorCore.Config.enable_ai)
             {
                 int queueCount = TranslatorCore.QueueCount;
-                _ollamaStatusLabel.text = queueCount > 0 ? $"Ollama: {queueCount} in queue" : "Ollama: Ready";
+                _aiStatusLabel.text = queueCount > 0 ? $"AI: {queueCount} in queue" : "AI: Ready";
             }
             else
             {
-                _ollamaStatusLabel.text = "";
+                _aiStatusLabel.text = "";
             }
         }
 

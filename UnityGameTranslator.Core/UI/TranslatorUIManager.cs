@@ -1413,15 +1413,15 @@ namespace UnityGameTranslator.Core.UI
             bool panelsOpen = AnyPanelVisible();
             bool firstRunDone = TranslatorCore.Config.first_run_completed;
 
-            // Ollama queue is ALWAYS visible when translating (even with panels open)
-            bool ollamaActive = TranslatorCore.Config.enable_ollama &&
-                               (TranslatorCore.QueueCount > 0 || TranslatorCore.IsTranslating);
+            // AI queue is ALWAYS visible when translating (even with panels open)
+            bool aiActive = TranslatorCore.Config.enable_ai &&
+                           (TranslatorCore.QueueCount > 0 || TranslatorCore.IsTranslating);
 
             // Other notifications only show when no panels are open
             // (mod update and sync are now shown in MainPanel)
             bool hasOtherContent = !panelsOpen && StatusOverlay.HasNotificationContent();
 
-            bool shouldShow = firstRunDone && (ollamaActive || hasOtherContent);
+            bool shouldShow = firstRunDone && (aiActive || hasOtherContent);
 
             if (shouldShow)
             {

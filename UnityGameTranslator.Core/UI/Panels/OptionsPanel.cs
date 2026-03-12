@@ -50,14 +50,15 @@ namespace UnityGameTranslator.Core.UI.Panels
         // Hotkey section
         private HotkeyCapture _hotkeyCapture;
 
-        // Translation section (Ollama + Capture)
+        // Translation section (AI + Capture)
         private Toggle _captureKeysOnlyToggle;
-        private Toggle _enableOllamaToggle;
-        private InputFieldRef _ollamaUrlInput;
-        private InputFieldRef _modelInput;
+        private Toggle _enableAIToggle;
+        private InputFieldRef _aiUrlInput;
+        private InputFieldRef _aiApiKeyInput;
+        private SearchableDropdown _modelDropdown;
         private InputFieldRef _gameContextInput;
         private Toggle _strictSourceToggle;
-        private Text _ollamaTestStatusLabel;
+        private Text _aiTestStatusLabel;
 
         // Online section
         private Toggle _onlineModeToggle;
@@ -104,9 +105,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             public string target_language;
             public string settings_hotkey;
             public bool capture_keys_only;
-            public bool enable_ollama;
-            public string ollama_url;
-            public string model;
+            public bool enable_ai;
+            public string ai_url;
+            public string ai_api_key;
+            public string ai_model;
             public string game_context;
             public bool strict_source_language;
             public bool online_mode;
@@ -126,9 +128,10 @@ namespace UnityGameTranslator.Core.UI.Panels
                     target_language = TranslatorCore.Config.target_language ?? "auto",
                     settings_hotkey = TranslatorCore.Config.settings_hotkey ?? "F10",
                     capture_keys_only = TranslatorCore.Config.capture_keys_only,
-                    enable_ollama = TranslatorCore.Config.enable_ollama,
-                    ollama_url = TranslatorCore.Config.ollama_url ?? "http://localhost:11434",
-                    model = TranslatorCore.Config.model ?? "qwen3:8b",
+                    enable_ai = TranslatorCore.Config.enable_ai,
+                    ai_url = TranslatorCore.Config.ai_url ?? "http://localhost:11434",
+                    ai_api_key = TranslatorCore.Config.ai_api_key ?? "",
+                    ai_model = TranslatorCore.Config.ai_model ?? "",
                     game_context = TranslatorCore.Config.game_context ?? "",
                     strict_source_language = TranslatorCore.Config.strict_source_language,
                     online_mode = TranslatorCore.Config.online_mode,
@@ -382,16 +385,16 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             UIStyles.CreateSpacer(card, 15);
 
-            // Ollama section
-            var ollamaSectionTitle = UIStyles.CreateSectionTitle(card, "OllamaLabel", "Ollama (Local AI)");
-            RegisterExcluded(ollamaSectionTitle);
+            // AI Translation section
+            var aiSectionTitle = UIStyles.CreateSectionTitle(card, "AILabel", "AI Translation");
+            RegisterUIText(aiSectionTitle);
 
-            var enableOllamaObj = UIFactory.CreateToggle(card, "EnableOllamaToggle", out _enableOllamaToggle, out var enableLabel);
-            enableLabel.text = " Enable Ollama";
+            var enableAIObj = UIFactory.CreateToggle(card, "EnableAIToggle", out _enableAIToggle, out var enableLabel);
+            enableLabel.text = " Enable AI Translation";
             enableLabel.color = UIStyles.TextPrimary;
-            UIHelpers.AddToggleListener(_enableOllamaToggle, OnOllamaToggleChanged);
-            UIFactory.SetLayoutElement(enableOllamaObj, minHeight: UIStyles.RowHeightMedium);
-            RegisterExcluded(enableLabel);
+            UIHelpers.AddToggleListener(_enableAIToggle, OnAIToggleChanged);
+            UIFactory.SetLayoutElement(enableAIObj, minHeight: UIStyles.RowHeightMedium);
+            RegisterUIText(enableLabel);
 
             UIStyles.CreateSpacer(card, 5);
 
@@ -403,18 +406,34 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.SetLayoutElement(urlLabel.gameObject, minWidth: 45);
             RegisterExcluded(urlLabel);
 
-            _ollamaUrlInput = UIFactory.CreateInputField(urlRow, "OllamaUrl", "http://localhost:11434");
-            UIFactory.SetLayoutElement(_ollamaUrlInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
-            UIStyles.SetBackground(_ollamaUrlInput.Component.gameObject, UIStyles.InputBackground);
+            _aiUrlInput = UIFactory.CreateInputField(urlRow, "AIUrl", "http://localhost:11434");
+            UIFactory.SetLayoutElement(_aiUrlInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
+            UIStyles.SetBackground(_aiUrlInput.Component.gameObject, UIStyles.InputBackground);
 
             var testBtn = CreateSecondaryButton(urlRow, "TestBtn", "Test", 60);
-            testBtn.OnClick += TestOllamaConnection;
+            testBtn.OnClick += TestAIConnection;
             RegisterUIText(testBtn.ButtonText);
 
-            _ollamaTestStatusLabel = UIFactory.CreateLabel(card, "TestStatus", "", TextAnchor.MiddleLeft);
-            _ollamaTestStatusLabel.fontSize = UIStyles.FontSizeSmall;
-            UIFactory.SetLayoutElement(_ollamaTestStatusLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
-            RegisterUIText(_ollamaTestStatusLabel);
+            _aiTestStatusLabel = UIFactory.CreateLabel(card, "TestStatus", "", TextAnchor.MiddleLeft);
+            _aiTestStatusLabel.fontSize = UIStyles.FontSizeSmall;
+            UIFactory.SetLayoutElement(_aiTestStatusLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+            RegisterUIText(_aiTestStatusLabel);
+
+            // API Key row
+            var keyRow = UIStyles.CreateFormRow(card, "KeyRow", UIStyles.InputHeight, 5);
+
+            var keyLabel = UIFactory.CreateLabel(keyRow, "KeyLabel", "API Key:", TextAnchor.MiddleLeft);
+            keyLabel.color = UIStyles.TextSecondary;
+            UIFactory.SetLayoutElement(keyLabel.gameObject, minWidth: 55);
+            RegisterExcluded(keyLabel);
+
+            _aiApiKeyInput = UIFactory.CreateInputField(keyRow, "AIApiKey", "");
+            _aiApiKeyInput.Component.contentType = UnityEngine.UI.InputField.ContentType.Password;
+            UIFactory.SetLayoutElement(_aiApiKeyInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
+            UIStyles.SetBackground(_aiApiKeyInput.Component.gameObject, UIStyles.InputBackground);
+
+            var keyHint = UIStyles.CreateHint(card, "KeyHint", "Optional for local servers");
+            RegisterUIText(keyHint);
 
             // Model row
             var modelRow = UIStyles.CreateFormRow(card, "ModelRow", UIStyles.InputHeight, 5);
@@ -424,12 +443,16 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.SetLayoutElement(modelLabel.gameObject, minWidth: 50);
             RegisterUIText(modelLabel);
 
-            _modelInput = UIFactory.CreateInputField(modelRow, "ModelInput", "qwen3:8b");
-            UIFactory.SetLayoutElement(_modelInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
-            UIStyles.SetBackground(_modelInput.Component.gameObject, UIStyles.InputBackground);
+            _modelDropdown = new SearchableDropdown("ModelDropdown", new string[0], null, 200, false);
+            var modelObj = _modelDropdown.CreateUI(modelRow, (val) => { /* value tracked via SelectedValue */ });
+            UIFactory.SetLayoutElement(modelObj, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
 
-            var modelHint = UIStyles.CreateHint(card, "ModelHint", "Recommended: qwen3:8b");
-            RegisterExcluded(modelHint);
+            var refreshBtn = CreateSecondaryButton(modelRow, "RefreshBtn", "Refresh", 60);
+            refreshBtn.OnClick += RefreshModels;
+            RegisterUIText(refreshBtn.ButtonText);
+
+            var modelHint = UIStyles.CreateHint(card, "ModelHint", "Select a model from your server");
+            RegisterUIText(modelHint);
 
             UIStyles.CreateSpacer(card, 5);
 
@@ -444,8 +467,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.SetLayoutElement(_gameContextInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.MultiLineMedium);
             UIStyles.SetBackground(_gameContextInput.Component.gameObject, UIStyles.InputBackground);
 
-            var contextHint = UIStyles.CreateHint(card, "ContextHint", "Helps Ollama understand game vocabulary");
-            RegisterExcluded(contextHint);
+            var contextHint = UIStyles.CreateHint(card, "ContextHint", "Helps the AI understand game vocabulary");
+            RegisterUIText(contextHint);
 
             UIStyles.CreateSpacer(card, 5);
 
@@ -1154,7 +1177,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void OnSourceLanguageChanged(string newSource)
         {
             bool isAuto = newSource == "auto (Detect)";
-            _strictSourceToggle.interactable = !isAuto && _enableOllamaToggle.isOn && !_captureKeysOnlyToggle.isOn;
+            _strictSourceToggle.interactable = !isAuto && _enableAIToggle.isOn && !_captureKeysOnlyToggle.isOn;
             if (isAuto && _strictSourceToggle.isOn)
             {
                 _strictSourceToggle.isOn = false;
@@ -1245,15 +1268,21 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Hotkey
             _hotkeyCapture.SetHotkey(TranslatorCore.Config.settings_hotkey ?? "F10");
 
-            // Translation (Capture + Ollama)
+            // Translation (Capture + AI)
             _captureKeysOnlyToggle.isOn = TranslatorCore.Config.capture_keys_only;
-            _enableOllamaToggle.isOn = TranslatorCore.Config.enable_ollama;
-            _ollamaUrlInput.Text = TranslatorCore.Config.ollama_url ?? "http://localhost:11434";
-            _modelInput.Text = TranslatorCore.Config.model ?? "qwen3:8b";
+            _enableAIToggle.isOn = TranslatorCore.Config.enable_ai;
+            _aiUrlInput.Text = TranslatorCore.Config.ai_url ?? "http://localhost:11434";
+            _aiApiKeyInput.Text = TranslatorCore.Config.ai_api_key ?? "";
+            string currentModel = TranslatorCore.Config.ai_model ?? "";
+            if (!string.IsNullOrEmpty(currentModel))
+            {
+                _modelDropdown.SetOptions(new[] { currentModel });
+                _modelDropdown.SelectedValue = currentModel;
+            }
             _gameContextInput.Text = TranslatorCore.Config.game_context ?? "";
             _strictSourceToggle.isOn = TranslatorCore.Config.strict_source_language;
-            _ollamaTestStatusLabel.text = "";
-            UpdateOllamaInteractable();
+            _aiTestStatusLabel.text = "";
+            UpdateAIInteractable();
 
             // Online mode
             _onlineModeToggle.isOn = TranslatorCore.Config.online_mode;
@@ -1372,25 +1401,26 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private void OnCaptureKeysOnlyChanged(bool captureOnly)
         {
-            UpdateOllamaInteractable();
+            UpdateAIInteractable();
         }
 
-        private void OnOllamaToggleChanged(bool enabled)
+        private void OnAIToggleChanged(bool enabled)
         {
-            UpdateOllamaInteractable();
+            UpdateAIInteractable();
         }
 
-        private void UpdateOllamaInteractable()
+        private void UpdateAIInteractable()
         {
-            bool usable = _enableOllamaToggle.isOn && !_captureKeysOnlyToggle.isOn;
-            _ollamaUrlInput.Component.interactable = usable;
-            _modelInput.Component.interactable = usable;
+            bool usable = _enableAIToggle.isOn && !_captureKeysOnlyToggle.isOn;
+            _aiUrlInput.Component.interactable = usable;
+            _aiApiKeyInput.Component.interactable = usable;
+            _modelDropdown.SetInteractable(usable);
             _gameContextInput.Component.interactable = usable;
 
             bool sourceIsAuto = _sourceLanguageDropdown.SelectedValue == "auto (Detect)";
             _strictSourceToggle.interactable = usable && !sourceIsAuto;
 
-            _enableOllamaToggle.interactable = !_captureKeysOnlyToggle.isOn;
+            _enableAIToggle.interactable = !_captureKeysOnlyToggle.isOn;
         }
 
         private async void OnCheckModUpdatesNowClicked()
@@ -1457,28 +1487,31 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
         }
 
-        private async void TestOllamaConnection()
+        private async void TestAIConnection()
         {
-            _ollamaTestStatusLabel.text = "Testing...";
-            _ollamaTestStatusLabel.color = UIStyles.StatusWarning;
+            _aiTestStatusLabel.text = "Testing...";
+            _aiTestStatusLabel.color = UIStyles.StatusWarning;
 
-            string url = _ollamaUrlInput.Text;
+            string url = _aiUrlInput.Text;
+            string apiKey = _aiApiKeyInput.Text;
 
             try
             {
-                bool success = await TranslatorCore.TestOllamaConnection(url);
+                bool success = await TranslatorCore.TestAIConnection(url, apiKey);
 
                 TranslatorUIManager.RunOnMainThread(() =>
                 {
                     if (success)
                     {
-                        _ollamaTestStatusLabel.text = "Connection successful!";
-                        _ollamaTestStatusLabel.color = UIStyles.StatusSuccess;
+                        _aiTestStatusLabel.text = "Connection successful!";
+                        _aiTestStatusLabel.color = UIStyles.StatusSuccess;
+                        // Auto-refresh models on successful test
+                        RefreshModels();
                     }
                     else
                     {
-                        _ollamaTestStatusLabel.text = "Connection failed";
-                        _ollamaTestStatusLabel.color = UIStyles.StatusError;
+                        _aiTestStatusLabel.text = "Connection failed";
+                        _aiTestStatusLabel.color = UIStyles.StatusError;
                     }
                 });
             }
@@ -1487,9 +1520,38 @@ namespace UnityGameTranslator.Core.UI.Panels
                 var errorMsg = e.Message;
                 TranslatorUIManager.RunOnMainThread(() =>
                 {
-                    _ollamaTestStatusLabel.text = $"Error: {errorMsg}";
-                    _ollamaTestStatusLabel.color = UIStyles.StatusError;
+                    _aiTestStatusLabel.text = $"Error: {errorMsg}";
+                    _aiTestStatusLabel.color = UIStyles.StatusError;
                 });
+            }
+        }
+
+        private async void RefreshModels()
+        {
+            string url = _aiUrlInput.Text;
+            string apiKey = _aiApiKeyInput.Text;
+
+            try
+            {
+                string[] models = await TranslatorCore.FetchModels(url, apiKey);
+
+                TranslatorUIManager.RunOnMainThread(() =>
+                {
+                    if (models.Length > 0)
+                    {
+                        string currentSelection = _modelDropdown.SelectedValue;
+                        _modelDropdown.SetOptions(models);
+                        // Keep current selection if still valid
+                        if (!string.IsNullOrEmpty(currentSelection) && Array.IndexOf(models, currentSelection) >= 0)
+                        {
+                            _modelDropdown.SelectedValue = currentSelection;
+                        }
+                    }
+                });
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogWarning($"[Options] Failed to refresh models: {e.Message}");
             }
         }
 
@@ -1512,11 +1574,13 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // Hotkey
                 TranslatorCore.Config.settings_hotkey = _hotkeyCapture.HotkeyString;
 
-                // Translation (Capture + Ollama)
+                // Translation (Capture + AI)
                 TranslatorCore.Config.capture_keys_only = _captureKeysOnlyToggle.isOn;
-                TranslatorCore.Config.enable_ollama = _enableOllamaToggle.isOn;
-                TranslatorCore.Config.ollama_url = _ollamaUrlInput.Text;
-                TranslatorCore.Config.model = _modelInput.Text;
+                TranslatorCore.Config.enable_ai = _enableAIToggle.isOn;
+                TranslatorCore.Config.ai_url = _aiUrlInput.Text;
+                string apiKeyValue = _aiApiKeyInput.Text;
+                TranslatorCore.Config.ai_api_key = !string.IsNullOrEmpty(apiKeyValue) ? apiKeyValue : null;
+                TranslatorCore.Config.ai_model = _modelDropdown.SelectedValue ?? "";
                 TranslatorCore.Config.game_context = _gameContextInput.Text;
                 TranslatorCore.Config.strict_source_language = _strictSourceToggle.isOn;
 
@@ -1566,7 +1630,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // Force refresh all text to apply new settings (fonts, translations)
                 TranslatorScanner.ForceRefreshAllText();
 
-                if (_enableOllamaToggle.isOn)
+                if (_enableAIToggle.isOn)
                 {
                     TranslatorCore.EnsureWorkerRunning();
                 }
@@ -1637,8 +1701,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             catch (Exception e)
             {
                 TranslatorCore.LogError($"[Options] Failed to save settings: {e.Message}");
-                _ollamaTestStatusLabel.text = $"Save failed: {e.Message}";
-                _ollamaTestStatusLabel.color = UIStyles.StatusError;
+                _aiTestStatusLabel.text = $"Error: {e.Message}";
+                _aiTestStatusLabel.color = UIStyles.StatusError;
             }
         }
 
@@ -1669,8 +1733,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void SetupChangeListeners()
         {
             // Input fields (InputFieldRef.OnValueChanged is a C# event, IL2CPP-safe)
-            _ollamaUrlInput.OnValueChanged += _ => UpdateApplyButtonText();
-            _modelInput.OnValueChanged += _ => UpdateApplyButtonText();
+            _aiUrlInput.OnValueChanged += _ => UpdateApplyButtonText();
+            _aiApiKeyInput.OnValueChanged += _ => UpdateApplyButtonText();
             _gameContextInput.OnValueChanged += _ => UpdateApplyButtonText();
 
             // Language dropdowns - hook into their change events
@@ -1706,11 +1770,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Hotkey
             if (_hotkeyCapture.HotkeyString != _initialSnapshot.settings_hotkey) count++;
 
-            // Translation (Capture + Ollama)
+            // Translation (Capture + AI)
             if (_captureKeysOnlyToggle.isOn != _initialSnapshot.capture_keys_only) count++;
-            if (_enableOllamaToggle.isOn != _initialSnapshot.enable_ollama) count++;
-            if (_ollamaUrlInput.Text != _initialSnapshot.ollama_url) count++;
-            if (_modelInput.Text != _initialSnapshot.model) count++;
+            if (_enableAIToggle.isOn != _initialSnapshot.enable_ai) count++;
+            if (_aiUrlInput.Text != _initialSnapshot.ai_url) count++;
+            if ((_aiApiKeyInput.Text ?? "") != _initialSnapshot.ai_api_key) count++;
+            if ((_modelDropdown.SelectedValue ?? "") != _initialSnapshot.ai_model) count++;
             if (_gameContextInput.Text != _initialSnapshot.game_context) count++;
             if (_strictSourceToggle.isOn != _initialSnapshot.strict_source_language) count++;
 

@@ -697,15 +697,15 @@ namespace UnityGameTranslator.Core
             if (TranslatorCore.TranslationCache.Count > 0)
                 return false;
 
-            // If Ollama is enabled, we need to scan to queue new translations
-            if (TranslatorCore.Config.enable_ollama)
+            // If AI is enabled, we need to scan to queue new translations
+            if (TranslatorCore.Config.enable_ai)
                 return false;
 
             // If capture mode is enabled, we need to scan to capture keys
             if (TranslatorCore.Config.capture_keys_only)
                 return false;
 
-            // No cache, no Ollama, no capture mode - nothing useful to do
+            // No cache, no AI, no capture mode - nothing useful to do
             return true;
         }
 
@@ -826,7 +826,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static void ScanMono()
         {
-            // Apply any pending translations from Ollama (main thread) - always do this
+            // Apply any pending translations from AI (main thread) - always do this
             ProcessPendingUpdates();
 
             // Skip scanning if there's no useful work to do
@@ -940,7 +940,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static void ScanIL2CPP()
         {
-            // Apply any pending translations from Ollama (main thread) - always do this
+            // Apply any pending translations from AI (main thread) - always do this
             ProcessPendingUpdates();
 
             if (!il2cppMethodsInitialized) InitializeIL2CPP();

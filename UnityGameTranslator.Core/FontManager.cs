@@ -755,55 +755,88 @@ namespace UnityGameTranslator.Core
                 }
             }
 
-            // Try 2: Font(string) constructor via reflection
+            // Try 2: Font() + Internal_CreateFont(Font, String) — IL2CPP internal API
             try
             {
-                foreach (var ctor in fontType.GetConstructors())
+                var internalCreate = fontType.GetMethod("Internal_CreateFont",
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+                if (internalCreate != null)
                 {
-                    var parameters = ctor.GetParameters();
-                    if (parameters.Length == 1)
+                    // Create empty Font first
+                    var emptyCtor = fontType.GetConstructor(Type.EmptyTypes);
+                    if (emptyCtor != null)
                     {
-                        try
+                        var font = emptyCtor.Invoke(null) as Font;
+                        if (font != null)
                         {
-                            var font = ctor.Invoke(new object[] { fontName }) as Font;
-                            if (font != null)
-                            {
-                                TranslatorCore.LogInfo($"[FontManager] Created Font via constructor({parameters[0].ParameterType.Name}): {fontName}");
-                                return font;
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            TranslatorCore.LogWarning($"[FontManager] Font ctor({parameters[0].ParameterType.Name}) failed: {ex.InnerException?.Message ?? ex.Message}");
+                            internalCreate.Invoke(null, new object[] { font, fontName });
+                            TranslatorCore.LogInfo($"[FontManager] Created Font via Internal_CreateFont: {fontName}");
+                            return font;
                         }
                     }
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogWarning($"[FontManager] Internal_CreateFont failed: {ex.InnerException?.Message ?? ex.Message}");
+            }
 
-            // Try 3: Any CreateDynamicFontFromOSFont overload via reflection (IL2CPP may have different signatures)
+            // Try 3: Font() + Internal_CreateDynamicFont(Font, string[], int) — dynamic font from names
             try
             {
-                foreach (var method in fontType.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static))
+                var internalDynamic = fontType.GetMethod("Internal_CreateDynamicFont",
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+                if (internalDynamic != null)
                 {
-                    if (method.Name != "CreateDynamicFontFromOSFont") continue;
-                    var parameters = method.GetParameters();
-                    if (parameters.Length >= 2)
+                    var emptyCtor = fontType.GetConstructor(Type.EmptyTypes);
+                    if (emptyCtor != null)
                     {
-                        try
+                        var font = emptyCtor.Invoke(null) as Font;
+                        if (font != null)
                         {
-                            var font = method.Invoke(null, new object[] { fontName, 32 }) as Font;
-                            if (font != null)
+                            // Need to create an Il2CppStringArray for the font names
+                            var parameters = internalDynamic.GetParameters();
+                            var arrayType = parameters[1].ParameterType;
+
+                            // Try to create the array with the font name
+                            object fontNamesArray = null;
+                            try
                             {
-                                TranslatorCore.LogInfo($"[FontManager] Created Font via reflected overload: {fontName}");
+                                var arrayCtor = arrayType.GetConstructor(new Type[] { typeof(string[]) });
+                                if (arrayCtor != null)
+                                    fontNamesArray = arrayCtor.Invoke(new object[] { new string[] { fontName } });
+                            }
+                            catch { }
+
+                            if (fontNamesArray == null)
+                            {
+                                try
+                                {
+                                    var arrayCtor = arrayType.GetConstructor(new Type[] { typeof(int) });
+                                    if (arrayCtor != null)
+                                    {
+                                        fontNamesArray = arrayCtor.Invoke(new object[] { 1 });
+                                        var indexer = arrayType.GetProperty("Item");
+                                        indexer?.SetValue(fontNamesArray, fontName, new object[] { 0 });
+                                    }
+                                }
+                                catch { }
+                            }
+
+                            if (fontNamesArray != null)
+                            {
+                                internalDynamic.Invoke(null, new object[] { font, fontNamesArray, 32 });
+                                TranslatorCore.LogInfo($"[FontManager] Created Font via Internal_CreateDynamicFont: {fontName}");
                                 return font;
                             }
                         }
-                        catch { continue; }
                     }
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogWarning($"[FontManager] Internal_CreateDynamicFont failed: {ex.InnerException?.Message ?? ex.Message}");
+            }
 
             // Log available Font constructors/methods for diagnostics
             try

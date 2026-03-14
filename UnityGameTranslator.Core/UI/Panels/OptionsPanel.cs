@@ -630,9 +630,20 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 if (fontInfo.Type == "TMP (alt)")
                 {
-                    // For alternate TMP (TMProOld, etc.), show fonts already loaded in the game
-                    availableFonts = TranslatorPatches.GetAlternateTMPFontNames();
-                    TranslatorCore.LogInfo($"[OptionsPanel] TMP (alt) font: found {availableFonts?.Length ?? 0} alternate fonts");
+                    // For alternate TMP (TMProOld, etc.), show game fonts + system fonts
+                    var altFonts = TranslatorPatches.GetAlternateTMPFontNames();
+                    if (altFonts != null && altFonts.Length > 0)
+                    {
+                        options.Add("--- Game Fonts ---");
+                        options.AddRange(altFonts);
+                    }
+
+                    // Also show system fonts (conversion works on Mono and IL2CPP)
+                    if (_systemFonts != null && _systemFonts.Length > 0)
+                    {
+                        options.Add("--- System Fonts ---");
+                        availableFonts = _systemFonts;
+                    }
                 }
                 else if (isTMPFont)
                 {

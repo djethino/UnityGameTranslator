@@ -497,6 +497,14 @@ namespace UnityGameTranslator.Core
         /// Does NOT replace the font on the component. TMP uses fallback fonts automatically
         /// for characters not found in the primary font.
         /// </summary>
+        /// <summary>
+        /// Check if fallback was successfully applied for a font.
+        /// </summary>
+        public static bool IsFallbackApplied(string fontName)
+        {
+            return _fallbackAppliedFonts.Contains(fontName);
+        }
+
         public static void EnsureFallbackApplied(object fontObj, string fontName)
         {
             if (fontObj == null || string.IsNullOrEmpty(fontName)) return;

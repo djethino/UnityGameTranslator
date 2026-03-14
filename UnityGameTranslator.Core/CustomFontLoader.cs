@@ -624,19 +624,50 @@ namespace UnityGameTranslator.Core
                 var metrics = fontInfo.AtlasData.metrics;
                 var pointSize = atlas.size;
 
-                // Set atlas texture — try property first (IL2CPP), then field (Mono)
+                // Set atlas texture on all relevant properties
                 var fontAssetType = fontAsset.GetType();
-                if (!SetPropertyOrField(fontAsset, fontAssetType, "atlas", fontInfo.AtlasTexture))
+                int atlasW = fontInfo.AtlasTexture.width;
+                int atlasH = fontInfo.AtlasTexture.height;
+
+                // Set main atlas property
+                SetPropertyOrField(fontAsset, fontAssetType, "atlasTexture", fontInfo.AtlasTexture);
+                SetPropertyOrField(fontAsset, fontAssetType, "m_AtlasTexture", fontInfo.AtlasTexture);
+                SetPropertyOrField(fontAsset, fontAssetType, "atlas", fontInfo.AtlasTexture);
+
+                // Set atlas dimensions
+                SetPropertyOrField(fontAsset, fontAssetType, "m_AtlasWidth", atlasW);
+                SetPropertyOrField(fontAsset, fontAssetType, "m_AtlasHeight", atlasH);
+                SetPropertyOrField(fontAsset, fontAssetType, "atlasWidth", atlasW);
+                SetPropertyOrField(fontAsset, fontAssetType, "atlasHeight", atlasH);
+
+                // Update m_AtlasTextures array element [0]
+                try
                 {
-                    // Try alternate names
-                    if (!SetPropertyOrField(fontAsset, fontAssetType, "atlasTexture", fontInfo.AtlasTexture))
-                        TranslatorCore.LogWarning("[CustomFontLoader] Could not set atlas texture");
+                    var atlasTexturesProp = fontAssetType.GetProperty("m_AtlasTextures", BindingFlags.Public | BindingFlags.Instance)
+                        ?? fontAssetType.GetProperty("atlasTextures", BindingFlags.Public | BindingFlags.Instance);
+                    if (atlasTexturesProp != null)
+                    {
+                        var atlasArray = atlasTexturesProp.GetValue(fontAsset, null);
+                        if (atlasArray != null)
+                        {
+                            var indexer = atlasArray.GetType().GetProperty("Item");
+                            if (indexer != null && indexer.CanWrite)
+                            {
+                                indexer.SetValue(atlasArray, fontInfo.AtlasTexture, new object[] { 0 });
+                                TranslatorCore.LogInfo($"[CustomFontLoader] Set atlasTextures[0] = {atlasW}x{atlasH}");
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    TranslatorCore.LogWarning($"[CustomFontLoader] Failed to set atlasTextures[0]: {ex.Message}");
                 }
 
                 // Set material (required for rendering)
                 SetupMaterial(fontAsset, fontInfo.AtlasTexture, fontInfo.AtlasData.atlas.distanceRange);
 
-                // Set face info / font info
+                // Set face info / font info — use existing clone's faceInfo and modify it
                 SetupFaceInfo(fontAsset, fontInfo, pointSize);
 
                 // Set glyphs
@@ -931,7 +962,6 @@ namespace UnityGameTranslator.Core
 
                 if (fontInfoProp == null && fontInfoField == null)
                 {
-                    // Try alternate names
                     fontInfoProp = fontAssetType.GetProperty("fontInfo", BindingFlags.Public | BindingFlags.Instance);
                     if (fontInfoProp == null)
                     {
@@ -942,15 +972,19 @@ namespace UnityGameTranslator.Core
 
                 object faceInfo;
 
-                // Create FaceInfo instance
-                if (_faceInfoType != null && _faceInfoType.IsValueType)
+                // Try to get existing FaceInfo from clone (IL2CPP: proper typed object)
+                object existingFaceInfo = fontInfoProp != null
+                    ? fontInfoProp.GetValue(fontAsset, null)
+                    : fontInfoField?.GetValue(fontAsset);
+
+                if (existingFaceInfo != null)
                 {
-                    // Struct - create via Activator
-                    faceInfo = Activator.CreateInstance(_faceInfoType);
+                    // Reuse existing FaceInfo and modify its values
+                    faceInfo = existingFaceInfo;
+                    TranslatorCore.LogInfo($"[CustomFontLoader] Reusing existing FaceInfo type: {faceInfo.GetType().Name}");
                 }
                 else if (_faceInfoType != null)
                 {
-                    // Class - create instance
                     faceInfo = Activator.CreateInstance(_faceInfoType);
                 }
                 else

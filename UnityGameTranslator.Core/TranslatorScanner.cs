@@ -123,16 +123,19 @@ namespace UnityGameTranslator.Core
         {
             try
             {
+                // Always refresh Mono caches (FindAllObjectsOfType works on IL2CPP via TypeHelper)
+                RefreshMonoCache();
+
                 if (TranslatorCore.Adapter?.IsIL2CPP == true)
                 {
+                    // Also refresh IL2CPP-specific caches for the scan loop
                     RefreshIL2CPPCache();
                 }
-                else
-                {
-                    RefreshMonoCache();
-                }
+
                 lastComponentCacheTime = Time.time;
-                TranslatorCore.LogInfo($"[Scanner] Force refreshed cache: {cachedTMPMono?.Length ?? 0} TMP, {cachedUIMono?.Length ?? 0} UI.Text");
+                int tmpCount = (cachedTMPMono?.Length ?? 0) + (cachedTMPComponents?.Length ?? 0);
+                int uiCount = (cachedUIMono?.Length ?? 0) + (cachedUIComponents?.Length ?? 0);
+                TranslatorCore.LogInfo($"[Scanner] Force refreshed cache: {tmpCount} TMP, {uiCount} UI.Text");
             }
             catch (Exception ex)
             {

@@ -18,6 +18,7 @@ namespace UnityGameTranslator.Core
         // Cache for original font sizes (instance ID -> original fontSize)
         // Used to apply scale without cumulative errors
         private static readonly Dictionary<int, float> _originalFontSizes = new Dictionary<int, float>();
+        private static bool s_altFontChangeLogged = false;
 
         // Types to exclude (known non-text types)
         private static readonly HashSet<string> ExcludedTypeNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -1170,8 +1171,23 @@ namespace UnityGameTranslator.Core
                                 var replacementFont = FontManager.GetTMPReplacementFont(fontName);
                                 if (replacementFont != null)
                                 {
+                                    // Verify font before/after
+                                    string beforeFont = TypeHelper.GetFontName(__instance);
                                     TypeHelper.SetFont(__instance, replacementFont);
-                                    TypeHelper.ForceMeshUpdate(__instance);
+                                    string afterFont = TypeHelper.GetFontName(__instance);
+                                    if (beforeFont != afterFont)
+                                    {
+                                        if (!s_altFontChangeLogged)
+                                        {
+                                            s_altFontChangeLogged = true;
+                                            TranslatorCore.LogInfo($"[Patches] TMProOld SetFont: {beforeFont} -> {afterFont}");
+                                        }
+                                    }
+                                    else if (!s_altFontChangeLogged)
+                                    {
+                                        s_altFontChangeLogged = true;
+                                        TranslatorCore.LogWarning($"[Patches] TMProOld SetFont FAILED: font still {beforeFont}, replacement type={replacementFont?.GetType().Name}");
+                                    }
                                 }
                             }
                             else

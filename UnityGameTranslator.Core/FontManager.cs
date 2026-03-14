@@ -895,6 +895,7 @@ namespace UnityGameTranslator.Core
                                 TranslatorCore.LogInfo($"[FontManager] TMP_FontAsset.CreateFontAsset(Font) succeeded!");
                                 return result;
                             }
+                            TranslatorCore.LogWarning($"[FontManager] CreateFontAsset(Font) returned null — font may not have valid data");
                         }
                         catch (Exception ex)
                         {
@@ -907,43 +908,50 @@ namespace UnityGameTranslator.Core
                     {
                         try
                         {
-                            // Build enum values safely (IL2CPP enums may not be System.Enum)
-                            object renderMode = null;
-                            var renderModeType = parameters[3].ParameterType;
-                            if (renderModeType.IsEnum)
+                            // Build args array matching the exact parameter list
+                            var args = new object[parameters.Length];
+                            args[0] = font;
+
+                            for (int i = 1; i < parameters.Length; i++)
                             {
-                                try { renderMode = Enum.Parse(renderModeType, "SDFAA_HINTED"); } catch { }
-                                if (renderMode == null)
-                                    try { renderMode = Enum.Parse(renderModeType, "SDFAA"); } catch { }
+                                var pType = parameters[i].ParameterType;
+                                string pName = pType.Name;
+
+                                if (pName.Contains("GlyphRenderMode"))
+                                {
+                                    // SDFAA_HINTED = 4166
+                                    args[i] = pType.IsEnum ? Enum.ToObject(pType, 4166) : (object)4166;
+                                }
+                                else if (pName.Contains("AtlasPopulationMode"))
+                                {
+                                    // Dynamic = 1
+                                    args[i] = pType.IsEnum ? Enum.ToObject(pType, 1) : (object)1;
+                                }
+                                else if (pType == typeof(int) || pType == typeof(System.Int32))
+                                {
+                                    // Int params: samplingPointSize, atlasPadding, atlasWidth, atlasHeight
+                                    // For 9-param version: extra int is samplingPointSize (index 1)
+                                    if (i <= 3) args[i] = 48; // sampling point size / padding
+                                    else args[i] = 512; // atlas width/height
+                                }
+                                else if (pType == typeof(bool))
+                                {
+                                    args[i] = true; // enableMultiAtlasSupport
+                                }
+                                else
+                                {
+                                    args[i] = parameters[i].HasDefaultValue ? parameters[i].DefaultValue : null;
+                                }
                             }
-                            if (renderMode == null)
-                                renderMode = Enum.ToObject(typeof(int), 4166); // raw int fallback
 
-                            // AtlasPopulationMode.Dynamic
-                            object dynamicMode = null;
-                            if (parameters.Length >= 7)
-                            {
-                                var popModeType = parameters[6].ParameterType;
-                                if (popModeType.IsEnum)
-                                    try { dynamicMode = Enum.Parse(popModeType, "Dynamic"); } catch { }
-                                if (dynamicMode == null)
-                                    dynamicMode = 1; // Dynamic = 1 typically
-                            }
-
-                            var args = new List<object> { font, 48, 5, renderMode, 512, 512 };
-                            if (dynamicMode != null)
-                                args.Add(dynamicMode);
-
-                            // Pad with defaults if more params needed
-                            while (args.Count < parameters.Length)
-                                args.Add(parameters[args.Count].DefaultValue);
-
-                            var result = method.Invoke(null, args.ToArray());
+                            TranslatorCore.LogInfo($"[FontManager] Calling CreateFontAsset with {args.Length} args");
+                            var result = method.Invoke(null, args);
                             if (result != null)
                             {
                                 TranslatorCore.LogInfo($"[FontManager] TMP_FontAsset.CreateFontAsset(Font, advanced) succeeded!");
                                 return result;
                             }
+                            TranslatorCore.LogWarning($"[FontManager] CreateFontAsset advanced returned null");
                         }
                         catch (Exception ex)
                         {

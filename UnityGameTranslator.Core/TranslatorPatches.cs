@@ -1169,7 +1169,10 @@ namespace UnityGameTranslator.Core
                             {
                                 var replacementFont = FontManager.GetTMPReplacementFont(fontName);
                                 if (replacementFont != null)
+                                {
                                     TypeHelper.SetFont(__instance, replacementFont);
+                                    TypeHelper.ForceMeshUpdate(__instance);
+                                }
                             }
                             else
                             {

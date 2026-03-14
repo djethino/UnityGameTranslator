@@ -1773,19 +1773,38 @@ namespace UnityGameTranslator.Core
                 int pixelCount = rawData.Length / bpp;
                 bool needsConversion = false;
 
+                // Determine channel offsets based on texture format
+                // RGBA32: R=0, G=1, B=2, A=3
+                // ARGB32: A=0, R=1, G=2, B=3
+                // BGRA32: B=0, G=1, R=2, A=3
+                int rOffset, gOffset, bOffset, alphaOffset;
+                switch (texture.format)
+                {
+                    case TextureFormat.ARGB32:
+                        alphaOffset = 0; rOffset = 1; gOffset = 2; bOffset = 3;
+                        break;
+                    case TextureFormat.BGRA32:
+                        bOffset = 0; gOffset = 1; rOffset = 2; alphaOffset = 3;
+                        break;
+                    default: // RGBA32 and others
+                        rOffset = 0; gOffset = 1; bOffset = 2; alphaOffset = bpp >= 4 ? 3 : -1;
+                        break;
+                }
+
+                TranslatorCore.LogInfo($"[CustomFontLoader] Texture format: {texture.format}, offsets: R={rOffset} G={gOffset} B={bOffset} A={alphaOffset}");
+
                 // Sample check: if alpha is mostly max but R varies, we need to copy R to A
                 int sampleCount = Math.Min(100, pixelCount);
                 int alphaOnes = 0;
                 int rVariation = 0;
                 int lastR = -1;
-                int alphaOffset = bpp >= 4 ? 3 : -1; // Alpha is 4th byte in RGBA32
 
                 for (int i = 0; i < sampleCount; i++)
                 {
                     int idx = (i * (pixelCount / sampleCount)) * bpp;
                     if (idx + bpp > rawData.Length) break;
 
-                    byte r = rawData[idx]; // R is first byte
+                    byte r = rawData[idx + rOffset];
                     byte a = alphaOffset >= 0 ? rawData[idx + alphaOffset] : (byte)255;
 
                     if (a > 252) alphaOnes++;
@@ -1802,11 +1821,11 @@ namespace UnityGameTranslator.Core
                     {
                         int idx = i * bpp;
                         if (idx + bpp > rawData.Length) break;
-                        byte r = rawData[idx];
-                        rawData[idx] = 255;     // R = white
-                        rawData[idx + 1] = 255; // G = white
-                        rawData[idx + 2] = 255; // B = white
-                        rawData[idx + alphaOffset] = r; // A = original R (SDF distance)
+                        byte r = rawData[idx + rOffset];
+                        rawData[idx + rOffset] = 255;  // R = white
+                        rawData[idx + gOffset] = 255;   // G = white
+                        rawData[idx + bOffset] = 255;   // B = white
+                        rawData[idx + alphaOffset] = r;  // A = original R (SDF distance)
                     }
                     if (!LoadRawTextureDataSafe(texture, rawData))
                     {

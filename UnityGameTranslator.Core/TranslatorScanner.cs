@@ -1204,11 +1204,15 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static void ProcessPendingUpdates()
         {
-            // Check if a font was just created and we need to refresh
+            // Check if a font was just created — clear processed cache
+            // so scan loop re-evaluates all components with the new font
             if (FontManager.ConsumePendingRefresh())
             {
                 ClearProcessedCache();
-                ForceRefreshAllText();
+                // Reset batch indices to start from the beginning
+                currentBatchIndexTMP = 0;
+                currentBatchIndexUI = 0;
+                scanCycleComplete = true;
             }
 
             // Process all pending updates immediately

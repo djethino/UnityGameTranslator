@@ -679,8 +679,6 @@ namespace UnityGameTranslator.Core
                         _createdFallbackFontNames.Add(uobj.name);
 
                     // Font just created — schedule refresh on next scan cycle
-                    // Can't call ForceRefreshAllText from inside a Harmony prefix
-                    TranslatorScanner.ClearProcessedCache();
                     _pendingRefresh = true;
                 }
                 else

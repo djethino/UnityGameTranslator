@@ -511,6 +511,10 @@ namespace UnityGameTranslator.Core
         {
             if (fontObj == null || string.IsNullOrEmpty(fontName)) return;
 
+            // Store font object reference for later use (RemoveFallbackApplied needs it)
+            if (!_detectedTMPFontObjects.ContainsKey(fontName))
+                _detectedTMPFontObjects[fontName] = fontObj;
+
             // Fast path: already applied
             if (_fallbackAppliedFonts.Contains(fontName)) return;
 

@@ -223,6 +223,10 @@ namespace UnityGameTranslator.Core
         {
             if (string.IsNullOrEmpty(fontName)) return;
 
+            // Don't register fonts we created for fallback
+            if (_createdFallbackFontNames.Contains(fontName))
+                return;
+
             // Check if already in settings map
             if (TranslatorCore.FontSettingsMap.TryGetValue(fontName, out var existing))
             {
@@ -291,6 +295,9 @@ namespace UnityGameTranslator.Core
             {
                 settings.scale = scale;
                 TranslatorCore.LogInfo($"[FontManager] Updated scale for '{fontName}' to {scale:F2}");
+
+                // Clear cached original sizes so ApplyFontScale re-reads current sizes
+                TranslatorPatches.ClearFontSizeCache();
 
                 // Refresh all text using this font to apply new scale
                 if (settings.enabled)

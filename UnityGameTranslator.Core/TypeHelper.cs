@@ -238,6 +238,7 @@ namespace UnityGameTranslator.Core
         /// <summary>
         /// Get the font object from a text component.
         /// Returns TMP_FontAsset for TMP, Font for UI.Text/TextMesh.
+        /// Uses cached PropertyInfo first, falls back to instance type reflection.
         /// </summary>
         public static object GetFont(object component)
         {
@@ -245,6 +246,7 @@ namespace UnityGameTranslator.Core
 
             try
             {
+                // Try cached PropertyInfo first (fast path)
                 var type = component.GetType();
 
                 if (TMP_TextType != null && TMP_TextType.IsAssignableFrom(type) && TMP_FontProp != null)
@@ -255,6 +257,12 @@ namespace UnityGameTranslator.Core
 
                 if (TextMeshType != null && TextMeshType.IsAssignableFrom(type) && TextMesh_FontProp != null)
                     return TextMesh_FontProp.GetValue(component, null);
+
+                // Fallback: look up "font" property on the actual instance type
+                // Handles cases where TypeHelper resolved a different type (e.g. TMProOld vs TMPro)
+                var fontProp = type.GetProperty("font", BindingFlags.Public | BindingFlags.Instance);
+                if (fontProp != null)
+                    return fontProp.GetValue(component, null);
             }
             catch { }
 
@@ -272,6 +280,7 @@ namespace UnityGameTranslator.Core
             {
                 var type = component.GetType();
 
+                // Try cached PropertyInfo first
                 if (TMP_TextType != null && TMP_TextType.IsAssignableFrom(type) && TMP_FontProp != null && TMP_FontProp.CanWrite)
                 {
                     TMP_FontProp.SetValue(component, font, null);
@@ -289,8 +298,21 @@ namespace UnityGameTranslator.Core
                     TextMesh_FontProp.SetValue(component, font, null);
                     return;
                 }
+
+                // Fallback: look up "font" property on actual instance type
+                var fontProp = type.GetProperty("font", BindingFlags.Public | BindingFlags.Instance);
+                if (fontProp != null && fontProp.CanWrite)
+                {
+                    fontProp.SetValue(component, font, null);
+                    return;
+                }
+
+                TranslatorCore.LogWarning($"[TypeHelper] SetFont failed: no writable font property on {type.Name}");
             }
-            catch { }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogWarning($"[TypeHelper] SetFont error on {component.GetType().Name}: {ex.Message}");
+            }
         }
 
         /// <summary>
@@ -304,17 +326,21 @@ namespace UnityGameTranslator.Core
             try
             {
                 var type = component.GetType();
+                PropertyInfo prop = null;
 
-                if (TMP_TextType != null && TMP_TextType.IsAssignableFrom(type) && TMP_FontSizeProp != null)
-                {
-                    var val = TMP_FontSizeProp.GetValue(component, null);
-                    if (val is float f) return f;
-                }
+                if (TMP_TextType != null && TMP_TextType.IsAssignableFrom(type))
+                    prop = TMP_FontSizeProp;
+                else if (UI_TextType != null && UI_TextType.IsAssignableFrom(type))
+                    prop = UI_FontSizeProp;
 
-                if (UI_TextType != null && UI_TextType.IsAssignableFrom(type) && UI_FontSizeProp != null)
+                // Fallback: look up on actual type
+                if (prop == null)
+                    prop = type.GetProperty("fontSize", BindingFlags.Public | BindingFlags.Instance);
+
+                if (prop != null)
                 {
-                    var val = UI_FontSizeProp.GetValue(component, null);
-                    if (val is int i) return i;
+                    var val = prop.GetValue(component, null);
+                    return Convert.ToSingle(val);
                 }
             }
             catch { }
@@ -332,20 +358,32 @@ namespace UnityGameTranslator.Core
             try
             {
                 var type = component.GetType();
+                PropertyInfo prop = null;
 
-                if (TMP_TextType != null && TMP_TextType.IsAssignableFrom(type) && TMP_FontSizeProp != null && TMP_FontSizeProp.CanWrite)
-                {
-                    TMP_FontSizeProp.SetValue(component, size, null);
-                    return;
-                }
+                if (TMP_TextType != null && TMP_TextType.IsAssignableFrom(type))
+                    prop = TMP_FontSizeProp;
+                else if (UI_TextType != null && UI_TextType.IsAssignableFrom(type))
+                    prop = UI_FontSizeProp;
 
-                if (UI_TextType != null && UI_TextType.IsAssignableFrom(type) && UI_FontSizeProp != null && UI_FontSizeProp.CanWrite)
+                // Fallback
+                if (prop == null)
+                    prop = type.GetProperty("fontSize", BindingFlags.Public | BindingFlags.Instance);
+
+                if (prop != null && prop.CanWrite)
                 {
-                    UI_FontSizeProp.SetValue(component, (int)Math.Round(size), null);
+                    // Set with the correct type (float for TMP, int for UI.Text)
+                    var propType = prop.PropertyType;
+                    if (propType == typeof(int))
+                        prop.SetValue(component, (int)Math.Round(size), null);
+                    else
+                        prop.SetValue(component, size, null);
                     return;
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogWarning($"[TypeHelper] SetFontSize error: {ex.Message}");
+            }
         }
 
         /// <summary>
@@ -367,6 +405,11 @@ namespace UnityGameTranslator.Core
 
                 if (TextMeshType != null && TextMeshType.IsAssignableFrom(type) && TextMesh_TextProp != null)
                     return TextMesh_TextProp.GetValue(component, null) as string;
+
+                // Fallback: look up "text" property on actual instance type
+                var textProp = type.GetProperty("text", BindingFlags.Public | BindingFlags.Instance);
+                if (textProp != null)
+                    return textProp.GetValue(component, null) as string;
             }
             catch { }
 
@@ -399,6 +442,14 @@ namespace UnityGameTranslator.Core
                 if (TextMeshType != null && TextMeshType.IsAssignableFrom(type) && TextMesh_TextProp != null && TextMesh_TextProp.CanWrite)
                 {
                     TextMesh_TextProp.SetValue(component, text, null);
+                    return;
+                }
+
+                // Fallback
+                var textProp = type.GetProperty("text", BindingFlags.Public | BindingFlags.Instance);
+                if (textProp != null && textProp.CanWrite)
+                {
+                    textProp.SetValue(component, text, null);
                     return;
                 }
             }

@@ -942,6 +942,15 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Clear cached original font sizes. Call when font scale settings change
+        /// so that ApplyFontScale re-reads the current (unscaled) size.
+        /// </summary>
+        public static void ClearFontSizeCache()
+        {
+            _originalFontSizes.Clear();
+        }
+
+        /// <summary>
         /// Schedule a delayed scan to apply font replacements to TMP components.
         /// Called after scene change to catch early-initialized text.
         /// </summary>
@@ -1162,7 +1171,10 @@ namespace UnityGameTranslator.Core
                 // Apply font scale if configured for this font
                 ApplyFontScale(__instance, fontName);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogError($"[Patches] ProcessTextPatchPrefix error ({componentType}): {ex.Message}");
+            }
         }
 
         public static void TMPText_SetText_Prefix(object __instance, ref string value)

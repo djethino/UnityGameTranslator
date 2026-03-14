@@ -30,6 +30,12 @@ namespace UnityGameTranslator.Core
         // Track font names we created for fallback (to exclude from detection)
         private static readonly HashSet<string> _createdFallbackFontNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+        // Track font names that failed to create (don't retry)
+        private static readonly HashSet<string> _failedFallbackFontNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // Whether CreateDynamicFontFromOSFont is available on this runtime
+        private static bool _dynamicFontCreationAvailable = true;
+
         // Cache of system fonts
         private static string[] _systemFonts;
 
@@ -502,6 +508,10 @@ namespace UnityGameTranslator.Core
             if (string.IsNullOrEmpty(settings.fallback))
                 return null;
 
+            // Check if already tried and failed
+            if (_failedFallbackFontNames.Contains(settings.fallback))
+                return null;
+
             // Get or create the replacement font
             if (!_unityFallbackFonts.TryGetValue(settings.fallback, out var replacementFont))
             {
@@ -509,8 +519,11 @@ namespace UnityGameTranslator.Core
                 if (replacementFont != null)
                 {
                     _unityFallbackFonts[settings.fallback] = replacementFont;
-                    // Mark as created fallback so it won't be registered as game font
                     _createdFallbackFontNames.Add(replacementFont.name);
+                }
+                else
+                {
+                    _failedFallbackFontNames.Add(settings.fallback);
                 }
             }
 
@@ -544,6 +557,10 @@ namespace UnityGameTranslator.Core
             if (string.IsNullOrEmpty(settings.fallback))
                 return null;
 
+            // Check if already tried and failed
+            if (_failedFallbackFontNames.Contains(settings.fallback))
+                return null;
+
             // Get or create the replacement font asset
             if (!_fallbackAssets.TryGetValue(settings.fallback, out var replacementFont))
             {
@@ -553,6 +570,10 @@ namespace UnityGameTranslator.Core
                     _fallbackAssets[settings.fallback] = replacementFont;
                     if (replacementFont is UnityEngine.Object uobj)
                         _createdFallbackFontNames.Add(uobj.name);
+                }
+                else
+                {
+                    _failedFallbackFontNames.Add(settings.fallback);
                 }
             }
 
@@ -581,12 +602,10 @@ namespace UnityGameTranslator.Core
         {
             try
             {
+                if (!_dynamicFontCreationAvailable) return null;
+
                 // Custom SDF fonts are not compatible with Unity Fonts (UI.Text)
-                // They only work with TMP. Skip silently.
-                if (IsCustomFont(systemFontName))
-                {
-                    return null;
-                }
+                if (IsCustomFont(systemFontName)) return null;
 
                 if (!SystemFonts.Contains(systemFontName))
                 {
@@ -603,6 +622,13 @@ namespace UnityGameTranslator.Core
             }
             catch (Exception ex)
             {
+                // If the method is stripped/unavailable, disable for all future calls
+                if (ex.Message.Contains("unstripping") || ex.Message.Contains("Method not found"))
+                {
+                    _dynamicFontCreationAvailable = false;
+                    TranslatorCore.LogWarning($"[FontManager] CreateDynamicFontFromOSFont unavailable on this runtime, disabling system font creation");
+                    return null;
+                }
                 TranslatorCore.LogError($"[FontManager] Failed to create Unity font: {ex.Message}");
                 return null;
             }
@@ -630,6 +656,12 @@ namespace UnityGameTranslator.Core
                         return customAsset;
                     }
                     TranslatorCore.LogWarning($"[FontManager] Failed to load custom font: {cleanName}");
+                    return null;
+                }
+
+                // System font creation requires CreateDynamicFontFromOSFont
+                if (!_dynamicFontCreationAvailable)
+                {
                     return null;
                 }
 
@@ -945,6 +977,7 @@ namespace UnityGameTranslator.Core
             _fallbackAssets.Clear();
             _unityFallbackFonts.Clear();
             _createdFallbackFontNames.Clear();
+            _failedFallbackFontNames.Clear();
         }
 
         /// <summary>

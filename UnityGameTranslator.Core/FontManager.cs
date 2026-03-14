@@ -594,13 +594,6 @@ namespace UnityGameTranslator.Core
                     return null;
                 }
 
-                // On IL2CPP, CreateDynamicFontFromOSFont may crash silently
-                if (TranslatorCore.Adapter?.IsIL2CPP == true)
-                {
-                    TranslatorCore.LogInfo($"[FontManager] Skipping CreateDynamicFontFromOSFont on IL2CPP for: {systemFontName}");
-                    return null;
-                }
-
                 var font = Font.CreateDynamicFontFromOSFont(systemFontName, 32);
                 if (font != null)
                 {
@@ -644,13 +637,6 @@ namespace UnityGameTranslator.Core
                 if (!SystemFonts.Contains(cleanName))
                 {
                     TranslatorCore.LogWarning($"[FontManager] System font not found: {cleanName}");
-                    return null;
-                }
-
-                // On IL2CPP, Font.CreateDynamicFontFromOSFont may crash silently
-                if (TranslatorCore.Adapter?.IsIL2CPP == true)
-                {
-                    TranslatorCore.LogInfo($"[FontManager] Skipping dynamic font creation on IL2CPP for: {cleanName}");
                     return null;
                 }
 

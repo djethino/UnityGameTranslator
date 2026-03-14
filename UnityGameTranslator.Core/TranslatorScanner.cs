@@ -281,7 +281,7 @@ namespace UnityGameTranslator.Core
                 if (textProp == null) return 0;
 
                 // Find all components in scene
-                var allComponents = UnityEngine.Object.FindObjectsOfType(tmpTextType);
+                var allComponents = FindAllObjectsOfType(tmpTextType);
                 TranslatorCore.LogInfo($"[Scanner] Found {allComponents.Length} alternate TMP components");
 
                 foreach (var component in allComponents)
@@ -895,31 +895,55 @@ namespace UnityGameTranslator.Core
 
         /// <summary>
         /// Find all objects of a given type, using reflection to handle both Mono and IL2CPP.
-        /// Tries FindObjectsOfType(type, true) first, fallback to FindObjectsOfType(type).
+        /// On IL2CPP, FindObjectsOfType(Type) may not exist — uses Resources.FindObjectsOfTypeAll as fallback.
         /// </summary>
         private static UnityEngine.Object[] FindAllObjectsOfType(Type type)
         {
             if (type == null) return null;
 
+            // Try FindObjectsOfType with includeInactive parameter (Unity 2020+, Mono)
             try
             {
-                // Try with includeInactive parameter (Unity 2020+)
                 var method = typeof(UnityEngine.Object).GetMethod("FindObjectsOfType",
                     BindingFlags.Public | BindingFlags.Static,
                     null, new Type[] { typeof(Type), typeof(bool) }, null);
                 if (method != null)
                 {
-                    return method.Invoke(null, new object[] { type, true }) as UnityEngine.Object[];
+                    var result = method.Invoke(null, new object[] { type, true }) as UnityEngine.Object[];
+                    if (result != null) return result;
                 }
             }
             catch { }
 
+            // Try FindObjectsOfType(Type) without includeInactive
             try
             {
-                // Fallback without includeInactive
                 return UnityEngine.Object.FindObjectsOfType(type);
             }
             catch { }
+
+            // IL2CPP fallback: use Resources.FindObjectsOfTypeAll(Type)
+            // This finds ALL objects (including inactive/hidden) which is fine for scanning
+            try
+            {
+                var result = Resources.FindObjectsOfTypeAll(type);
+                if (result != null) return result;
+            }
+            catch { }
+
+            // IL2CPP fallback 2: use the IL2CPP-specific method if available
+            if (il2cppScanAvailable && il2cppTypeOfMethod != null && resourcesFindAllMethod != null)
+            {
+                try
+                {
+                    var il2cppType = il2cppTypeOfMethod.MakeGenericMethod(type).Invoke(null, null);
+                    if (il2cppType != null)
+                    {
+                        return FindAllComponentsIL2CPPCached(il2cppType);
+                    }
+                }
+                catch { }
+            }
 
             return null;
         }

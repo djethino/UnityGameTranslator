@@ -237,16 +237,23 @@ namespace UnityGameTranslator.Core
                 // Debug: Check if texture has actual content (not all white/transparent)
                 try
                 {
-                    var pixels32 = texture.GetPixels32();
-                    int sampleSize = Math.Min(100, pixels32.Length);
+                    byte[] rawSample = texture.GetRawTextureData();
+                    int bpp = GetBytesPerPixel(texture.format);
+                    int pixelCount = rawSample.Length / bpp;
+                    int sampleSize = Math.Min(100, pixelCount);
                     int nonWhiteCount = 0;
                     for (int pi = 0; pi < sampleSize; pi++)
                     {
-                        var p = pixels32[pi];
-                        if (p.r < 252 || p.g < 252 || p.b < 252 || p.a < 252)
-                            nonWhiteCount++;
+                        int idx = pi * bpp;
+                        if (idx + bpp > rawSample.Length) break;
+                        bool isWhite = true;
+                        for (int b = 0; b < bpp && b < 4; b++)
+                        {
+                            if (rawSample[idx + b] < 252) { isWhite = false; break; }
+                        }
+                        if (!isWhite) nonWhiteCount++;
                     }
-                    TranslatorCore.LogInfo($"[CustomFontLoader] Texture sample: {nonWhiteCount}/{sampleSize} non-white pixels in corner");
+                    TranslatorCore.LogInfo($"[CustomFontLoader] Texture sample: {nonWhiteCount}/{sampleSize} non-white pixels");
                 }
                 catch (Exception ex)
                 {
@@ -995,37 +1002,61 @@ namespace UnityGameTranslator.Core
 
             try
             {
-                // Use GetPixels32/SetPixels32 for IL2CPP compatibility
-                // (GetPixels with float Color[] is not available on all IL2CPP builds)
-                var pixels = texture.GetPixels32();
+                // Use GetRawTextureData for maximum compatibility (works on IL2CPP where GetPixels/GetPixels32 may not exist)
+                byte[] rawData = texture.GetRawTextureData();
+                if (rawData == null || rawData.Length == 0)
+                {
+                    TranslatorCore.LogWarning("[CustomFontLoader] GetRawTextureData returned empty");
+                    return;
+                }
+
+                // Determine bytes per pixel from format
+                int bpp = GetBytesPerPixel(texture.format);
+                if (bpp < 3)
+                {
+                    TranslatorCore.LogInfo($"[CustomFontLoader] Texture format {texture.format} (bpp={bpp}), skipping SDF conversion");
+                    return;
+                }
+
+                int pixelCount = rawData.Length / bpp;
                 bool needsConversion = false;
 
-                // Check if we need conversion: if alpha is mostly 255 but R varies, we need to copy R to A
-                int sampleCount = Math.Min(100, pixels.Length);
+                // Sample check: if alpha is mostly max but R varies, we need to copy R to A
+                int sampleCount = Math.Min(100, pixelCount);
                 int alphaOnes = 0;
                 int rVariation = 0;
                 int lastR = -1;
+                int alphaOffset = bpp >= 4 ? 3 : -1; // Alpha is 4th byte in RGBA32
 
                 for (int i = 0; i < sampleCount; i++)
                 {
-                    int idx = i * (pixels.Length / sampleCount);
-                    if (pixels[idx].a > 252) alphaOnes++;
-                    if (lastR >= 0 && Math.Abs(pixels[idx].r - lastR) > 2) rVariation++;
-                    lastR = pixels[idx].r;
+                    int idx = (i * (pixelCount / sampleCount)) * bpp;
+                    if (idx + bpp > rawData.Length) break;
+
+                    byte r = rawData[idx]; // R is first byte
+                    byte a = alphaOffset >= 0 ? rawData[idx + alphaOffset] : (byte)255;
+
+                    if (a > 252) alphaOnes++;
+                    if (lastR >= 0 && Math.Abs(r - lastR) > 2) rVariation++;
+                    lastR = r;
                 }
 
-                // If alpha is constant but R varies, we need to copy R to A
                 needsConversion = alphaOnes > sampleCount * 0.9f && rVariation > sampleCount * 0.1f;
 
-                if (needsConversion)
+                if (needsConversion && alphaOffset >= 0)
                 {
                     TranslatorCore.LogInfo("[CustomFontLoader] Converting SDF texture: copying R channel to Alpha");
-                    for (int i = 0; i < pixels.Length; i++)
+                    for (int i = 0; i < pixelCount; i++)
                     {
-                        // Copy R channel to Alpha, keep RGB as white for proper rendering
-                        pixels[i] = new Color32(255, 255, 255, pixels[i].r);
+                        int idx = i * bpp;
+                        if (idx + bpp > rawData.Length) break;
+                        byte r = rawData[idx];
+                        rawData[idx] = 255;     // R = white
+                        rawData[idx + 1] = 255; // G = white
+                        rawData[idx + 2] = 255; // B = white
+                        rawData[idx + alphaOffset] = r; // A = original R (SDF distance)
                     }
-                    texture.SetPixels32(pixels);
+                    texture.LoadRawTextureData(rawData);
                     texture.Apply();
                     TranslatorCore.LogInfo("[CustomFontLoader] SDF texture conversion complete");
                 }
@@ -1037,6 +1068,34 @@ namespace UnityGameTranslator.Core
             catch (Exception ex)
             {
                 TranslatorCore.LogWarning($"[CustomFontLoader] Failed to convert SDF texture: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Get bytes per pixel for a texture format.
+        /// </summary>
+        private static int GetBytesPerPixel(TextureFormat format)
+        {
+            switch (format)
+            {
+                case TextureFormat.RGBA32:
+                case TextureFormat.BGRA32:
+                case TextureFormat.ARGB32:
+                    return 4;
+                case TextureFormat.RGB24:
+                    return 3;
+                case TextureFormat.Alpha8:
+                case TextureFormat.R8:
+                    return 1;
+                case TextureFormat.RG16:
+                case TextureFormat.R16:
+                    return 2;
+                case TextureFormat.RGBAFloat:
+                    return 16;
+                case TextureFormat.RGBAHalf:
+                    return 8;
+                default:
+                    return 4; // Assume RGBA32 as default
             }
         }
     }

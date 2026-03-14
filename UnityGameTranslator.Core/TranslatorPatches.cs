@@ -1004,7 +1004,9 @@ namespace UnityGameTranslator.Core
                 }
 
                 // Find all TMP text components in the scene
-                var allTmpComponents = UnityEngine.Object.FindObjectsOfType(tmpTextType);
+                UnityEngine.Object[] allTmpComponents;
+                try { allTmpComponents = UnityEngine.Object.FindObjectsOfType(tmpTextType); }
+                catch { allTmpComponents = Resources.FindObjectsOfTypeAll(tmpTextType); }
                 int appliedCount = 0;
 
                 foreach (var component in allTmpComponents)

@@ -1055,7 +1055,8 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Sets up the glyph list.
+        /// Sets up the glyph list. Tries modern TMP system (m_GlyphTable + m_CharacterTable) first,
+        /// then falls back to legacy (m_glyphInfoList).
         /// </summary>
         private static void SetupGlyphs(object fontAsset, CustomFontInfo fontInfo, float pointSize)
         {
@@ -1065,69 +1066,349 @@ namespace UnityGameTranslator.Core
 
             try
             {
-                // Find glyph list — property on IL2CPP, field on Mono
                 var fontAssetType = fontAsset.GetType();
-                var glyphListProp = fontAssetType.GetProperty("m_glyphInfoList", BindingFlags.Public | BindingFlags.Instance);
-                var glyphListField = glyphListProp == null
-                    ? fontAssetType.GetField("m_glyphInfoList", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-                    : null;
 
-                if (glyphListProp == null && glyphListField == null)
+                // Try MODERN system first (m_GlyphTable + m_CharacterTable)
+                // This is what TMP actually uses in Unity 2019+
+                object glyphTable = GetPropertyOrField(fontAsset, fontAssetType, "m_GlyphTable");
+                object charTable = GetPropertyOrField(fontAsset, fontAssetType, "m_CharacterTable");
+
+                if (glyphTable != null && charTable != null)
                 {
-                    TranslatorCore.LogWarning("[CustomFontLoader] m_glyphInfoList not found as property or field");
+                    TranslatorCore.LogInfo($"[CustomFontLoader] Using MODERN glyph system (m_GlyphTable + m_CharacterTable)");
+                    SetupGlyphsModern(fontAsset, fontAssetType, glyphTable, charTable, fontInfo, pointSize, yFlipped);
+
+                    // Mark lookup tables as dirty so TMP rebuilds them
+                    SetPropertyOrField(fontAsset, fontAssetType, "IsFontAssetLookupTablesDirty", true);
+
+                    // Clear lookup dictionaries to force rebuild
+                    var glyphLookup = GetPropertyOrField(fontAsset, fontAssetType, "m_GlyphLookupDictionary");
+                    if (glyphLookup != null)
+                    {
+                        var clearMethod = glyphLookup.GetType().GetMethod("Clear");
+                        clearMethod?.Invoke(glyphLookup, null);
+                    }
+                    var charLookup = GetPropertyOrField(fontAsset, fontAssetType, "m_CharacterLookupDictionary");
+                    if (charLookup != null)
+                    {
+                        var clearMethod = charLookup.GetType().GetMethod("Clear");
+                        clearMethod?.Invoke(charLookup, null);
+                    }
+
                     return;
                 }
 
-                // Get the existing list to determine the correct IL2CPP list type
-                object existingList = glyphListProp != null
-                    ? glyphListProp.GetValue(fontAsset, null)
-                    : glyphListField.GetValue(fontAsset);
-
-                // Create list of glyphs — use same type as existing list for IL2CPP compatibility
-                object glyphList;
-                MethodInfo addMethod;
-
-                if (existingList != null)
-                {
-                    // Clear existing and reuse (IL2CPP: list type is Il2CppSystem.Collections.Generic.List<TMP_Glyph>)
-                    var clearMethod = existingList.GetType().GetMethod("Clear");
-                    clearMethod?.Invoke(existingList, null);
-                    glyphList = existingList;
-                    addMethod = existingList.GetType().GetMethod("Add");
-                    TranslatorCore.LogInfo($"[CustomFontLoader] Reusing existing glyph list type: {existingList.GetType().Name}");
-                }
-                else
-                {
-                    // Create new managed list
-                    var glyphListType = typeof(List<>).MakeGenericType(_tmpGlyphType ?? _tmpTextElementType ?? typeof(object));
-                    glyphList = Activator.CreateInstance(glyphListType);
-                    addMethod = glyphListType.GetMethod("Add");
-                }
-
-                foreach (var glyphInfo in glyphs)
-                {
-                    var glyph = CreateGlyph(glyphInfo, atlas, pointSize, yFlipped);
-                    if (glyph != null)
-                    {
-                        addMethod.Invoke(glyphList, new[] { glyph });
-                    }
-                }
-
-                // Write back
-                if (glyphListProp != null && glyphListProp.CanWrite)
-                    glyphListProp.SetValue(fontAsset, glyphList, null);
-                else if (glyphListField != null)
-                    glyphListField.SetValue(fontAsset, glyphList);
-
-                // Also build the character dictionary for lookups
-                BuildCharacterDictionary(fontAsset, glyphList);
-
-                TranslatorCore.LogInfo($"[CustomFontLoader] Added {glyphs.Count} glyphs");
+                // LEGACY fallback (m_glyphInfoList)
+                TranslatorCore.LogInfo($"[CustomFontLoader] Using LEGACY glyph system (m_glyphInfoList)");
+                SetupGlyphsLegacy(fontAsset, fontAssetType, fontInfo, pointSize, yFlipped);
             }
             catch (Exception ex)
             {
                 TranslatorCore.LogWarning($"[CustomFontLoader] Failed to setup glyphs: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// Populate m_GlyphTable and m_CharacterTable (modern TMP system).
+        /// </summary>
+        private static void SetupGlyphsModern(object fontAsset, Type fontAssetType,
+            object glyphTable, object charTable, CustomFontInfo fontInfo, float pointSize, bool yFlipped)
+        {
+            var atlas = fontInfo.AtlasData.atlas;
+            var glyphs = fontInfo.AtlasData.glyphs;
+
+            // Clear existing tables
+            var clearGlyph = glyphTable.GetType().GetMethod("Clear");
+            var clearChar = charTable.GetType().GetMethod("Clear");
+            clearGlyph?.Invoke(glyphTable, null);
+            clearChar?.Invoke(charTable, null);
+
+            var addGlyph = glyphTable.GetType().GetMethod("Add");
+            var addChar = charTable.GetType().GetMethod("Add");
+
+            if (addGlyph == null || addChar == null)
+            {
+                TranslatorCore.LogWarning("[CustomFontLoader] Cannot find Add method on glyph/char tables");
+                return;
+            }
+
+            // Get an existing glyph to discover its type (for creating new instances)
+            // We already cleared, so we need to know the element type from the list's generic argument
+            Type glyphType = GetListElementType(glyphTable);
+            Type charType = GetListElementType(charTable);
+
+            if (glyphType == null || charType == null)
+            {
+                TranslatorCore.LogWarning($"[CustomFontLoader] Cannot determine element types: glyph={glyphType?.Name}, char={charType?.Name}");
+                return;
+            }
+
+            TranslatorCore.LogInfo($"[CustomFontLoader] Modern glyph type: {glyphType.FullName}, char type: {charType.FullName}");
+
+            // Log properties of glyph type
+            if (!_glyphFieldsLogged)
+            {
+                _glyphFieldsLogged = true;
+                var props = glyphType.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+                TranslatorCore.LogInfo($"[CustomFontLoader] Modern Glyph props: {string.Join(", ", props.Select(p => p.Name + ":" + p.PropertyType.Name))}");
+            }
+
+            int addedCount = 0;
+            foreach (var glyphInfo in glyphs)
+            {
+                try
+                {
+                    uint glyphIndex = (uint)addedCount;
+
+                    // Create Glyph object
+                    object newGlyph = CreateModernGlyph(glyphType, glyphIndex, glyphInfo, atlas, pointSize, yFlipped);
+                    if (newGlyph == null) continue;
+
+                    addGlyph.Invoke(glyphTable, new[] { newGlyph });
+
+                    // Create TMP_Character mapping unicode -> glyph
+                    object newChar = CreateModernCharacter(charType, (uint)glyphInfo.unicode, glyphIndex);
+                    if (newChar != null)
+                    {
+                        addChar.Invoke(charTable, new[] { newChar });
+                    }
+
+                    addedCount++;
+                }
+                catch (Exception ex)
+                {
+                    if (addedCount < 3)
+                        TranslatorCore.LogWarning($"[CustomFontLoader] Failed to create modern glyph U+{glyphInfo.unicode:X4}: {ex.Message}");
+                }
+            }
+
+            TranslatorCore.LogInfo($"[CustomFontLoader] Added {addedCount} modern glyphs + characters");
+        }
+
+        /// <summary>
+        /// Get the element type of a generic List (works with both System and IL2CPP lists).
+        /// </summary>
+        private static Type GetListElementType(object list)
+        {
+            if (list == null) return null;
+            var listType = list.GetType();
+
+            // Try generic argument
+            if (listType.IsGenericType)
+            {
+                var args = listType.GetGenericArguments();
+                if (args.Length > 0) return args[0];
+            }
+
+            // Try Item property return type
+            var itemProp = listType.GetProperty("Item");
+            if (itemProp != null) return itemProp.PropertyType;
+
+            return null;
+        }
+
+        /// <summary>
+        /// Create a modern UnityEngine.TextCore.Glyph object.
+        /// </summary>
+        private static object CreateModernGlyph(Type glyphType, uint index, GlyphInfo glyphInfo,
+            AtlasInfo atlas, float pointSize, bool yFlipped)
+        {
+            try
+            {
+                // Try constructor with parameters first
+                object glyph = null;
+
+                // Try parameterless constructor
+                try { glyph = Activator.CreateInstance(glyphType); } catch { }
+
+                // If that fails, try ScriptableObject pattern (for IL2CPP types)
+                if (glyph == null)
+                {
+                    glyph = TypeHelper.CreateScriptableObject(glyphType);
+                }
+
+                if (glyph == null)
+                {
+                    TranslatorCore.LogWarning($"[CustomFontLoader] Cannot create Glyph instance of type {glyphType.Name}");
+                    return null;
+                }
+
+                var ab = glyphInfo.atlasBounds;
+                var pb = glyphInfo.planeBounds;
+
+                // Atlas coordinates
+                float x = 0, y = 0, w = 0, h = 0;
+                if (ab != null)
+                {
+                    x = ab.left;
+                    y = yFlipped ? (atlas.height - ab.top) : ab.bottom;
+                    w = ab.right - ab.left;
+                    h = ab.top - ab.bottom;
+                }
+
+                // Metrics (in font units = em * pointSize)
+                float metricsW = (pb != null) ? (pb.right - pb.left) * pointSize : 0;
+                float metricsH = (pb != null) ? (pb.top - pb.bottom) * pointSize : 0;
+                float bearingX = (pb?.left ?? 0) * pointSize;
+                float bearingY = (pb?.top ?? 0) * pointSize;
+                float advance = glyphInfo.advance * pointSize;
+
+                // Set properties via reflection
+                SetFieldValue(glyph, "m_Index", index);
+                SetFieldValue(glyph, "index", index);
+                SetFieldValue(glyph, "m_Scale", 1f);
+                SetFieldValue(glyph, "scale", 1f);
+                SetFieldValue(glyph, "m_AtlasIndex", 0);
+                SetFieldValue(glyph, "atlasIndex", 0);
+
+                // Set GlyphRect (x, y, width, height in atlas pixels)
+                object glyphRect = GetPropertyOrField(glyph, glyph.GetType(), "m_GlyphRect");
+                if (glyphRect == null)
+                    glyphRect = GetPropertyOrField(glyph, glyph.GetType(), "glyphRect");
+
+                if (glyphRect != null)
+                {
+                    SetFieldValue(glyphRect, "m_X", (int)x);
+                    SetFieldValue(glyphRect, "m_Y", (int)y);
+                    SetFieldValue(glyphRect, "m_Width", (int)w);
+                    SetFieldValue(glyphRect, "m_Height", (int)h);
+                    SetFieldValue(glyphRect, "x", (int)x);
+                    SetFieldValue(glyphRect, "y", (int)y);
+                    SetFieldValue(glyphRect, "width", (int)w);
+                    SetFieldValue(glyphRect, "height", (int)h);
+                }
+
+                // Set GlyphMetrics (width, height, bearingX, bearingY, advance)
+                object metrics = GetPropertyOrField(glyph, glyph.GetType(), "m_Metrics");
+                if (metrics == null)
+                    metrics = GetPropertyOrField(glyph, glyph.GetType(), "metrics");
+
+                if (metrics != null)
+                {
+                    SetFieldValue(metrics, "m_Width", metricsW);
+                    SetFieldValue(metrics, "m_Height", metricsH);
+                    SetFieldValue(metrics, "m_HorizontalBearingX", bearingX);
+                    SetFieldValue(metrics, "m_HorizontalBearingY", bearingY);
+                    SetFieldValue(metrics, "m_HorizontalAdvance", advance);
+                    SetFieldValue(metrics, "width", metricsW);
+                    SetFieldValue(metrics, "height", metricsH);
+                    SetFieldValue(metrics, "horizontalBearingX", bearingX);
+                    SetFieldValue(metrics, "horizontalBearingY", bearingY);
+                    SetFieldValue(metrics, "horizontalAdvance", advance);
+                }
+
+                // Log first few
+                bool shouldLog = (glyphInfo.unicode >= 65 && glyphInfo.unicode <= 67)
+                    || (glyphInfo.unicode >= 2309 && glyphInfo.unicode <= 2312);
+                if (shouldLog)
+                {
+                    TranslatorCore.LogInfo($"[CustomFontLoader] Modern Glyph U+{glyphInfo.unicode:X4}: rect=({(int)x},{(int)y},{(int)w},{(int)h}), metrics=({metricsW:F1},{metricsH:F1},{bearingX:F1},{bearingY:F1},{advance:F1})");
+                }
+
+                return glyph;
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogWarning($"[CustomFontLoader] CreateModernGlyph error: {ex.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Create a modern TMP_Character object.
+        /// </summary>
+        private static object CreateModernCharacter(Type charType, uint unicode, uint glyphIndex)
+        {
+            try
+            {
+                object character = null;
+
+                // Try constructor with (uint unicode, uint glyphIndex)
+                var ctor2 = charType.GetConstructor(new Type[] { typeof(uint), typeof(uint) });
+                if (ctor2 != null)
+                {
+                    character = ctor2.Invoke(new object[] { unicode, glyphIndex });
+                }
+
+                // Try parameterless constructor
+                if (character == null)
+                {
+                    try { character = Activator.CreateInstance(charType); } catch { }
+                }
+
+                if (character == null) return null;
+
+                // Set properties
+                SetFieldValue(character, "m_Unicode", unicode);
+                SetFieldValue(character, "unicode", unicode);
+                SetFieldValue(character, "m_GlyphIndex", glyphIndex);
+                SetFieldValue(character, "glyphIndex", glyphIndex);
+                SetFieldValue(character, "m_Scale", 1f);
+                SetFieldValue(character, "scale", 1f);
+
+                return character;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Legacy glyph setup (m_glyphInfoList with TMP_Glyph objects).
+        /// </summary>
+        private static void SetupGlyphsLegacy(object fontAsset, Type fontAssetType,
+            CustomFontInfo fontInfo, float pointSize, bool yFlipped)
+        {
+            var atlas = fontInfo.AtlasData.atlas;
+            var glyphs = fontInfo.AtlasData.glyphs;
+
+            var glyphListProp = fontAssetType.GetProperty("m_glyphInfoList", BindingFlags.Public | BindingFlags.Instance);
+            var glyphListField = glyphListProp == null
+                ? fontAssetType.GetField("m_glyphInfoList", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                : null;
+
+            if (glyphListProp == null && glyphListField == null)
+            {
+                TranslatorCore.LogWarning("[CustomFontLoader] m_glyphInfoList not found");
+                return;
+            }
+
+            object existingList = glyphListProp != null
+                ? glyphListProp.GetValue(fontAsset, null)
+                : glyphListField?.GetValue(fontAsset);
+
+            object glyphList;
+            MethodInfo addMethod;
+
+            if (existingList != null)
+            {
+                var clearMethod = existingList.GetType().GetMethod("Clear");
+                clearMethod?.Invoke(existingList, null);
+                glyphList = existingList;
+                addMethod = existingList.GetType().GetMethod("Add");
+            }
+            else
+            {
+                var glyphListType = typeof(List<>).MakeGenericType(_tmpGlyphType ?? _tmpTextElementType ?? typeof(object));
+                glyphList = Activator.CreateInstance(glyphListType);
+                addMethod = glyphListType.GetMethod("Add");
+            }
+
+            foreach (var glyphInfo in glyphs)
+            {
+                var glyph = CreateGlyph(glyphInfo, atlas, pointSize, yFlipped);
+                if (glyph != null)
+                    addMethod.Invoke(glyphList, new[] { glyph });
+            }
+
+            if (glyphListProp != null && glyphListProp.CanWrite)
+                glyphListProp.SetValue(fontAsset, glyphList, null);
+            else if (glyphListField != null)
+                glyphListField.SetValue(fontAsset, glyphList);
+
+            BuildCharacterDictionary(fontAsset, glyphList);
+            TranslatorCore.LogInfo($"[CustomFontLoader] Added {glyphs.Count} legacy glyphs");
         }
 
         private static bool _glyphFieldsLogged = false;

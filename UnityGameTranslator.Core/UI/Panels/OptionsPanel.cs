@@ -1814,7 +1814,6 @@ namespace UnityGameTranslator.Core.UI.Panels
                     bool enabledDiff = kvp.Value.enabled != initial.enabled;
                     bool fallbackDiff = kvp.Value.fallback != initial.fallback;
                     bool scaleDiff = Math.Abs(kvp.Value.scale - initial.scale) > 0.01f;
-                    TranslatorCore.LogInfo($"[OptionsPanel] Font '{kvp.Key}': pending=({kvp.Value.enabled}, {kvp.Value.fallback ?? "(null)"}, {kvp.Value.scale}), initial=({initial.enabled}, {initial.fallback ?? "(null)"}, {initial.scale}), enabledDiff={enabledDiff}, fallbackDiff={fallbackDiff}, scaleDiff={scaleDiff}");
                     if (enabledDiff || fallbackDiff || scaleDiff)
                     {
                         count++;

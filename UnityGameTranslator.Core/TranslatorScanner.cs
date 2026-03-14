@@ -166,8 +166,8 @@ namespace UnityGameTranslator.Core
             int refreshed = 0;
             int restored = 0;
 
-            // Check if we should restore originals (translations disabled)
-            bool shouldRestore = !TranslatorCore.Config.enable_translations;
+            // Check if we should restore originals (global translations disabled)
+            bool globalRestore = !TranslatorCore.Config.enable_translations;
 
             try
             {
@@ -181,6 +181,9 @@ namespace UnityGameTranslator.Core
                         {
                             int instanceId = obj.GetInstanceID();
 
+                            // Restore if global translations disabled OR per-font disabled
+                            string compFontName = TypeHelper.GetFontName(obj);
+                            bool shouldRestore = globalRestore || (!string.IsNullOrEmpty(compFontName) && !FontManager.IsTranslationEnabled(compFontName));
                             if (shouldRestore)
                             {
                                 // Try to restore original if we have it
@@ -217,6 +220,9 @@ namespace UnityGameTranslator.Core
                         {
                             int instanceId = obj.GetInstanceID();
 
+                            // Restore if global translations disabled OR per-font disabled
+                            string compFontName = TypeHelper.GetFontName(obj);
+                            bool shouldRestore = globalRestore || (!string.IsNullOrEmpty(compFontName) && !FontManager.IsTranslationEnabled(compFontName));
                             if (shouldRestore)
                             {
                                 string original = GetOriginalText(instanceId);
@@ -242,11 +248,11 @@ namespace UnityGameTranslator.Core
                 }
 
                 // Refresh cached IL2CPP components (if available)
-                RefreshIL2CPPCachedComponents(cachedUIComponents, tryCastTextMethod, shouldRestore, ref refreshed, ref restored);
-                RefreshIL2CPPCachedComponents(cachedTMPComponents, tryCastTMPMethod, shouldRestore, ref refreshed, ref restored);
+                RefreshIL2CPPCachedComponents(cachedUIComponents, tryCastTextMethod, globalRestore, ref refreshed, ref restored);
+                RefreshIL2CPPCachedComponents(cachedTMPComponents, tryCastTMPMethod, globalRestore, ref refreshed, ref restored);
 
                 // Refresh alternate TMP components (TMProOld, etc.) - scan dynamically since they're not cached
-                refreshed += RefreshAlternateTMPComponents(shouldRestore, ref restored);
+                refreshed += RefreshAlternateTMPComponents(globalRestore, ref restored);
 
                 if (restored > 0)
                     TranslatorCore.LogInfo($"[Scanner] Restored {restored} original texts, refreshed {refreshed} components");
@@ -337,7 +343,7 @@ namespace UnityGameTranslator.Core
         /// Helper to refresh IL2CPP cached components (shared logic for TMP and UI).
         /// </summary>
         private static void RefreshIL2CPPCachedComponents(UnityEngine.Object[] cache, MethodInfo tryCastMethod,
-            bool shouldRestore, ref int refreshed, ref int restored)
+            bool globalRestore, ref int refreshed, ref int restored)
         {
             if (cache == null || tryCastMethod == null) return;
 
@@ -356,6 +362,9 @@ namespace UnityGameTranslator.Core
                     int instanceId = TypeHelper.GetInstanceID(component);
                     if (instanceId == -1) continue;
 
+                    // Check per-font translation state
+                    string compFontName = TypeHelper.GetFontName(component);
+                    bool shouldRestore = globalRestore || (!string.IsNullOrEmpty(compFontName) && !FontManager.IsTranslationEnabled(compFontName));
                     if (shouldRestore)
                     {
                         string original = GetOriginalText(instanceId);

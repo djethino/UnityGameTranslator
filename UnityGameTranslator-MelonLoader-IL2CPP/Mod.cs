@@ -35,8 +35,15 @@ namespace UnityGameTranslator.MelonLoaderIL2CPP
             System.AppDomain.CurrentDomain.AssemblyResolve += OnAssemblyResolve;
 
             // Pre-load the correct UniverseLib assembly
-            string pluginPath = Path.Combine(MelonEnvironment.UserDataDirectory, "UnityGameTranslator");
-            string universeLibPath = Path.Combine(pluginPath, "UniverseLib.ML.IL2CPP.Interop.dll");
+            // Look next to the mod DLL first (Mods/ folder), then fallback to UserData/
+            string modDllDir = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
+            string universeLibPath = Path.Combine(modDllDir, "UniverseLib.ML.IL2CPP.Interop.dll");
+            if (!File.Exists(universeLibPath))
+            {
+                // Fallback to UserData/UnityGameTranslator/
+                string pluginPath = Path.Combine(MelonEnvironment.UserDataDirectory, "UnityGameTranslator");
+                universeLibPath = Path.Combine(pluginPath, "UniverseLib.ML.IL2CPP.Interop.dll");
+            }
             if (File.Exists(universeLibPath))
             {
                 _universeLibAssembly = Assembly.LoadFrom(universeLibPath);
@@ -117,7 +124,8 @@ namespace UnityGameTranslator.MelonLoaderIL2CPP
         }
 
         /// <summary>
-        /// Resolve UniverseLib.Mono requests to the IL2CPP variant.
+        /// Resolve UniverseLib.Mono requests to the IL2CPP variant,
+        /// and resolve Unity assemblies from MelonLoader's Il2CppAssemblies folder.
         /// Core references UniverseLib.Mono at compile-time, but at runtime we use the IL2CPP variant.
         /// </summary>
         private static Assembly OnAssemblyResolve(object sender, System.ResolveEventArgs args)
@@ -129,6 +137,22 @@ namespace UnityGameTranslator.MelonLoaderIL2CPP
             {
                 return _universeLibAssembly;
             }
+
+            // Try to resolve from MelonLoader's Il2CppAssemblies folder
+            // This is needed for Unity types (TMPro, UnityEngine.UI, etc.) in IL2CPP games
+            try
+            {
+                string il2cppAssembliesDir = Path.Combine(MelonEnvironment.MelonLoaderDirectory, "Il2CppAssemblies");
+                if (Directory.Exists(il2cppAssembliesDir))
+                {
+                    string dllPath = Path.Combine(il2cppAssembliesDir, assemblyName.Name + ".dll");
+                    if (File.Exists(dllPath))
+                    {
+                        return Assembly.LoadFrom(dllPath);
+                    }
+                }
+            }
+            catch { }
 
             return null;
         }

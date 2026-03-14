@@ -1,4 +1,5 @@
 using System.IO;
+using System.Reflection;
 using MelonLoader;
 using MelonLoader.Utils;
 using HarmonyLib;
@@ -13,6 +14,7 @@ namespace UnityGameTranslator.MelonLoaderMono
     public class TranslatorMod : MelonMod
     {
         private float lastScanTime = 0f;
+        private static Assembly _universeLibAssembly;
 
         private class MelonLoaderAdapter : IModLoaderAdapter
         {
@@ -26,6 +28,27 @@ namespace UnityGameTranslator.MelonLoaderMono
 
         public override void OnInitializeMelon()
         {
+            // Register assembly resolver to find UniverseLib next to the mod DLL
+            System.AppDomain.CurrentDomain.AssemblyResolve += OnAssemblyResolve;
+
+            // Pre-load UniverseLib from next to the mod DLL (Mods/ folder), then fallback to UserData/
+            string modDllDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+            string universeLibPath = Path.Combine(modDllDir, "UniverseLib.Mono.dll");
+            if (!File.Exists(universeLibPath))
+            {
+                string pluginPath = Path.Combine(MelonEnvironment.UserDataDirectory, "UnityGameTranslator");
+                universeLibPath = Path.Combine(pluginPath, "UniverseLib.Mono.dll");
+            }
+            if (File.Exists(universeLibPath))
+            {
+                _universeLibAssembly = Assembly.LoadFrom(universeLibPath);
+                MelonLogger.Msg($"Pre-loaded UniverseLib from: {universeLibPath}");
+            }
+            else
+            {
+                MelonLogger.Warning($"UniverseLib not found at: {universeLibPath}");
+            }
+
             TranslatorCore.Initialize(new MelonLoaderAdapter());
             TranslatorCore.OnTranslationComplete = TranslatorScanner.OnTranslationComplete;
 
@@ -64,6 +87,21 @@ namespace UnityGameTranslator.MelonLoaderMono
         public override void OnApplicationQuit()
         {
             TranslatorCore.OnShutdown();
+        }
+
+        /// <summary>
+        /// Resolve UniverseLib if needed.
+        /// </summary>
+        private static Assembly OnAssemblyResolve(object sender, System.ResolveEventArgs args)
+        {
+            var assemblyName = new AssemblyName(args.Name);
+
+            if (assemblyName.Name == "UniverseLib.Mono" && _universeLibAssembly != null)
+            {
+                return _universeLibAssembly;
+            }
+
+            return null;
         }
     }
 }

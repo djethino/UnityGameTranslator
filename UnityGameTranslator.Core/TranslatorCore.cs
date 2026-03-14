@@ -553,6 +553,9 @@ namespace UnityGameTranslator.Core
 
             LoadConfig();
 
+            // Initialize type resolution (must be before patches and scanning)
+            TypeHelper.Initialize();
+
             // Initialize font manager for non-Latin script support
             FontManager.Initialize();
 

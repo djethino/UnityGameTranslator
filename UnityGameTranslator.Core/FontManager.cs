@@ -548,6 +548,9 @@ namespace UnityGameTranslator.Core
             {
                 _fallbackAppliedFonts.Add(fontName);
                 TranslatorCore.LogInfo($"[FontManager] Applied fallback '{settings.fallback}' to font '{fontName}'");
+
+                // Refresh all text so components pick up the new fallback
+                TranslatorScanner.ClearProcessedCache();
             }
         }
 
@@ -656,9 +659,11 @@ namespace UnityGameTranslator.Core
                 if (replacementFont != null)
                 {
                     _fallbackAssets[settings.fallback] = replacementFont;
-                    // Only mark as "created" if it's NOT a game font (game fonts should stay detectable)
                     if (replacementFont is UnityEngine.Object uobj && !_gameTMPFonts.ContainsKey(uobj.name))
                         _createdFallbackFontNames.Add(uobj.name);
+
+                    // Font just created — refresh all text so components pick it up
+                    TranslatorScanner.ClearProcessedCache();
                 }
                 else
                 {

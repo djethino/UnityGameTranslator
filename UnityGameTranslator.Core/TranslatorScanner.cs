@@ -2,8 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using UnityEngine;
-using UnityEngine.UI;
-using TMPro;
 
 namespace UnityGameTranslator.Core
 {
@@ -34,8 +32,8 @@ namespace UnityGameTranslator.Core
         // Cache found components to avoid FindObjectsOfTypeAll every frame
         private static UnityEngine.Object[] cachedTMPComponents;
         private static UnityEngine.Object[] cachedUIComponents;
-        private static TMP_Text[] cachedTMPMono;
-        private static Text[] cachedUIMono;
+        private static UnityEngine.Object[] cachedTMPMono;
+        private static UnityEngine.Object[] cachedUIMono;
         private static float lastComponentCacheTime = 0f;
         private const float COMPONENT_CACHE_DURATION = 2f; // Minimum time between cache refreshes
         private static bool cacheRefreshPending = false; // Defer refresh until cycle completes
@@ -173,12 +171,12 @@ namespace UnityGameTranslator.Core
                 // Refresh cached Mono UI.Text components
                 if (cachedUIMono != null)
                 {
-                    foreach (var ui in cachedUIMono)
+                    foreach (var obj in cachedUIMono)
                     {
-                        if (ui == null) continue;
+                        if (obj == null) continue;
                         try
                         {
-                            int instanceId = ui.GetInstanceID();
+                            int instanceId = obj.GetInstanceID();
 
                             if (shouldRestore)
                             {
@@ -186,7 +184,7 @@ namespace UnityGameTranslator.Core
                                 string original = GetOriginalText(instanceId);
                                 if (original != null)
                                 {
-                                    ui.text = original;
+                                    TypeHelper.SetText(obj, original);
                                     ClearOriginalText(instanceId);
                                     processedTextHashes.Remove(instanceId);
                                     restored++;
@@ -195,10 +193,10 @@ namespace UnityGameTranslator.Core
                             }
 
                             // Normal refresh path (trigger Harmony patch)
-                            string currentText = ui.text;
+                            string currentText = TypeHelper.GetText(obj);
                             if (!string.IsNullOrEmpty(currentText))
                             {
-                                ui.text = currentText;
+                                TypeHelper.SetText(obj, currentText);
                                 refreshed++;
                             }
                         }
@@ -209,19 +207,19 @@ namespace UnityGameTranslator.Core
                 // Refresh cached Mono TMP components
                 if (cachedTMPMono != null)
                 {
-                    foreach (var tmp in cachedTMPMono)
+                    foreach (var obj in cachedTMPMono)
                     {
-                        if (tmp == null) continue;
+                        if (obj == null) continue;
                         try
                         {
-                            int instanceId = tmp.GetInstanceID();
+                            int instanceId = obj.GetInstanceID();
 
                             if (shouldRestore)
                             {
                                 string original = GetOriginalText(instanceId);
                                 if (original != null)
                                 {
-                                    tmp.text = original;
+                                    TypeHelper.SetText(obj, original);
                                     ClearOriginalText(instanceId);
                                     processedTextHashes.Remove(instanceId);
                                     restored++;
@@ -229,10 +227,10 @@ namespace UnityGameTranslator.Core
                                 }
                             }
 
-                            string currentText = tmp.text;
+                            string currentText = TypeHelper.GetText(obj);
                             if (!string.IsNullOrEmpty(currentText))
                             {
-                                tmp.text = currentText;
+                                TypeHelper.SetText(obj, currentText);
                                 refreshed++;
                             }
                         }
@@ -241,77 +239,8 @@ namespace UnityGameTranslator.Core
                 }
 
                 // Refresh cached IL2CPP components (if available)
-                if (cachedUIComponents != null && tryCastTextMethod != null)
-                {
-                    foreach (var obj in cachedUIComponents)
-                    {
-                        if (obj == null) continue;
-                        try
-                        {
-                            var ui = tryCastTextMethod.Invoke(null, new object[] { obj }) as Text;
-                            if (ui == null) continue;
-
-                            int instanceId = ui.GetInstanceID();
-
-                            if (shouldRestore)
-                            {
-                                string original = GetOriginalText(instanceId);
-                                if (original != null)
-                                {
-                                    ui.text = original;
-                                    ClearOriginalText(instanceId);
-                                    processedTextHashes.Remove(instanceId);
-                                    restored++;
-                                    continue;
-                                }
-                            }
-
-                            string currentText = ui.text;
-                            if (!string.IsNullOrEmpty(currentText))
-                            {
-                                ui.text = currentText;
-                                refreshed++;
-                            }
-                        }
-                        catch { }
-                    }
-                }
-
-                if (cachedTMPComponents != null && tryCastTMPMethod != null)
-                {
-                    foreach (var obj in cachedTMPComponents)
-                    {
-                        if (obj == null) continue;
-                        try
-                        {
-                            var tmp = tryCastTMPMethod.Invoke(null, new object[] { obj }) as TMP_Text;
-                            if (tmp == null) continue;
-
-                            int instanceId = tmp.GetInstanceID();
-
-                            if (shouldRestore)
-                            {
-                                string original = GetOriginalText(instanceId);
-                                if (original != null)
-                                {
-                                    tmp.text = original;
-                                    ClearOriginalText(instanceId);
-                                    processedTextHashes.Remove(instanceId);
-                                    restored++;
-                                    continue;
-                                }
-                            }
-
-                            string currentText = tmp.text;
-                            if (!string.IsNullOrEmpty(currentText))
-                            {
-                                tmp.text = currentText;
-                                refreshed++;
-                            }
-                        }
-                        catch { }
-                    }
-                }
+                RefreshIL2CPPCachedComponents(cachedUIComponents, tryCastTextMethod, shouldRestore, ref refreshed, ref restored);
+                RefreshIL2CPPCachedComponents(cachedTMPComponents, tryCastTMPMethod, shouldRestore, ref refreshed, ref restored);
 
                 // Refresh alternate TMP components (TMProOld, etc.) - scan dynamically since they're not cached
                 refreshed += RefreshAlternateTMPComponents(shouldRestore, ref restored);
@@ -401,6 +330,53 @@ namespace UnityGameTranslator.Core
             return refreshed;
         }
 
+        /// <summary>
+        /// Helper to refresh IL2CPP cached components (shared logic for TMP and UI).
+        /// </summary>
+        private static void RefreshIL2CPPCachedComponents(UnityEngine.Object[] cache, MethodInfo tryCastMethod,
+            bool shouldRestore, ref int refreshed, ref int restored)
+        {
+            if (cache == null || tryCastMethod == null) return;
+
+            foreach (var obj in cache)
+            {
+                if (obj == null) continue;
+                try
+                {
+                    object component;
+                    if (tryCastMethod.DeclaringType != null && !tryCastMethod.IsStatic)
+                        component = tryCastMethod.Invoke(obj, null);
+                    else
+                        component = tryCastMethod.Invoke(null, new object[] { obj });
+                    if (component == null) continue;
+
+                    int instanceId = TypeHelper.GetInstanceID(component);
+                    if (instanceId == -1) continue;
+
+                    if (shouldRestore)
+                    {
+                        string original = GetOriginalText(instanceId);
+                        if (original != null)
+                        {
+                            TypeHelper.SetText(component, original);
+                            ClearOriginalText(instanceId);
+                            processedTextHashes.Remove(instanceId);
+                            restored++;
+                            continue;
+                        }
+                    }
+
+                    string currentText = TypeHelper.GetText(component);
+                    if (!string.IsNullOrEmpty(currentText))
+                    {
+                        TypeHelper.SetText(component, currentText);
+                        refreshed++;
+                    }
+                }
+                catch { }
+            }
+        }
+
         #region Original Text Tracking
 
         /// <summary>
@@ -461,13 +437,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static int GetComponentInstanceId(object component)
         {
-            if (component is TMP_Text tmp)
-                return tmp.GetInstanceID();
-            if (component is Text ui)
-                return ui.GetInstanceID();
-            if (component is Component c)
-                return c.GetInstanceID();
-            return -1;
+            return TypeHelper.GetInstanceID(component);
         }
 
         /// <summary>
@@ -481,89 +451,13 @@ namespace UnityGameTranslator.Core
 
             try
             {
-                // Restore TMP components with this font
-                if (cachedTMPMono != null)
-                {
-                    foreach (var tmp in cachedTMPMono)
-                    {
-                        if (tmp == null || tmp.font == null) continue;
-                        if (tmp.font.name != fontName) continue;
+                // Restore Mono components with this font (TMP + UI.Text)
+                restored += RestoreOriginalsForFontInCache(cachedTMPMono, fontName);
+                restored += RestoreOriginalsForFontInCache(cachedUIMono, fontName);
 
-                        int id = tmp.GetInstanceID();
-                        string original = GetOriginalText(id);
-                        if (original != null)
-                        {
-                            tmp.text = original;
-                            ClearOriginalText(id);
-                            processedTextHashes.Remove(id);
-                            restored++;
-                        }
-                    }
-                }
-
-                // Restore Unity UI.Text components with this font
-                if (cachedUIMono != null)
-                {
-                    foreach (var ui in cachedUIMono)
-                    {
-                        if (ui == null || ui.font == null) continue;
-                        if (ui.font.name != fontName) continue;
-
-                        int id = ui.GetInstanceID();
-                        string original = GetOriginalText(id);
-                        if (original != null)
-                        {
-                            ui.text = original;
-                            ClearOriginalText(id);
-                            processedTextHashes.Remove(id);
-                            restored++;
-                        }
-                    }
-                }
-
-                // IL2CPP TMP components
-                if (cachedTMPComponents != null && tryCastTMPMethod != null)
-                {
-                    foreach (var obj in cachedTMPComponents)
-                    {
-                        if (obj == null) continue;
-                        var tmp = tryCastTMPMethod.Invoke(null, new object[] { obj }) as TMP_Text;
-                        if (tmp == null || tmp.font == null) continue;
-                        if (tmp.font.name != fontName) continue;
-
-                        int id = tmp.GetInstanceID();
-                        string original = GetOriginalText(id);
-                        if (original != null)
-                        {
-                            tmp.text = original;
-                            ClearOriginalText(id);
-                            processedTextHashes.Remove(id);
-                            restored++;
-                        }
-                    }
-                }
-
-                // IL2CPP UI.Text components
-                if (cachedUIComponents != null && tryCastTextMethod != null)
-                {
-                    foreach (var obj in cachedUIComponents)
-                    {
-                        if (obj == null) continue;
-                        var ui = tryCastTextMethod.Invoke(null, new object[] { obj }) as Text;
-                        if (ui == null || ui.font == null) continue;
-                        if (ui.font.name != fontName) continue;
-
-                        int id = ui.GetInstanceID();
-                        string original = GetOriginalText(id);
-                        if (original != null)
-                        {
-                            ui.text = original;
-                            ClearOriginalText(id);
-                            processedTextHashes.Remove(id);
-                            restored++;
-                        }
-                    }
-                }
+                // IL2CPP components
+                restored += RestoreOriginalsForFontIL2CPP(cachedTMPComponents, tryCastTMPMethod, fontName);
+                restored += RestoreOriginalsForFontIL2CPP(cachedUIComponents, tryCastTextMethod, fontName);
 
                 if (restored > 0)
                     TranslatorCore.LogInfo($"[Scanner] Restored {restored} originals for font: {fontName}");
@@ -588,89 +482,13 @@ namespace UnityGameTranslator.Core
                 // Force cache refresh to capture all current components
                 ForceRefreshCache();
 
-                // Refresh TMP components with this font
-                if (cachedTMPMono != null)
-                {
-                    foreach (var tmp in cachedTMPMono)
-                    {
-                        if (tmp == null || tmp.font == null) continue;
-                        if (tmp.font.name != fontName) continue;
+                // Refresh Mono components (TMP + UI.Text)
+                refreshed += RefreshForFontInCache(cachedTMPMono, fontName);
+                refreshed += RefreshForFontInCache(cachedUIMono, fontName);
 
-                        int id = tmp.GetInstanceID();
-                        processedTextHashes.Remove(id); // Force re-evaluation
-
-                        string currentText = tmp.text;
-                        if (!string.IsNullOrEmpty(currentText))
-                        {
-                            tmp.text = currentText; // Trigger Harmony patch
-                            refreshed++;
-                        }
-                    }
-                }
-
-                // Refresh Unity UI.Text components with this font
-                if (cachedUIMono != null)
-                {
-                    foreach (var ui in cachedUIMono)
-                    {
-                        if (ui == null || ui.font == null) continue;
-                        if (ui.font.name != fontName) continue;
-
-                        int id = ui.GetInstanceID();
-                        processedTextHashes.Remove(id);
-
-                        string currentText = ui.text;
-                        if (!string.IsNullOrEmpty(currentText))
-                        {
-                            ui.text = currentText;
-                            refreshed++;
-                        }
-                    }
-                }
-
-                // IL2CPP TMP components
-                if (cachedTMPComponents != null && tryCastTMPMethod != null)
-                {
-                    foreach (var obj in cachedTMPComponents)
-                    {
-                        if (obj == null) continue;
-                        var tmp = tryCastTMPMethod.Invoke(null, new object[] { obj }) as TMP_Text;
-                        if (tmp == null || tmp.font == null) continue;
-                        if (tmp.font.name != fontName) continue;
-
-                        int id = tmp.GetInstanceID();
-                        processedTextHashes.Remove(id);
-
-                        string currentText = tmp.text;
-                        if (!string.IsNullOrEmpty(currentText))
-                        {
-                            tmp.text = currentText;
-                            refreshed++;
-                        }
-                    }
-                }
-
-                // IL2CPP UI.Text components
-                if (cachedUIComponents != null && tryCastTextMethod != null)
-                {
-                    foreach (var obj in cachedUIComponents)
-                    {
-                        if (obj == null) continue;
-                        var ui = tryCastTextMethod.Invoke(null, new object[] { obj }) as Text;
-                        if (ui == null || ui.font == null) continue;
-                        if (ui.font.name != fontName) continue;
-
-                        int id = ui.GetInstanceID();
-                        processedTextHashes.Remove(id);
-
-                        string currentText = ui.text;
-                        if (!string.IsNullOrEmpty(currentText))
-                        {
-                            ui.text = currentText;
-                            refreshed++;
-                        }
-                    }
-                }
+                // IL2CPP components
+                refreshed += RefreshForFontIL2CPP(cachedTMPComponents, tryCastTMPMethod, fontName);
+                refreshed += RefreshForFontIL2CPP(cachedUIComponents, tryCastTextMethod, fontName);
 
                 if (refreshed > 0)
                     TranslatorCore.LogInfo($"[Scanner] Refreshed {refreshed} components for font: {fontName}");
@@ -679,6 +497,142 @@ namespace UnityGameTranslator.Core
             {
                 TranslatorCore.LogWarning($"[Scanner] RefreshForFont error: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// Restore originals for a given font in a Mono component cache.
+        /// </summary>
+        private static int RestoreOriginalsForFontInCache(UnityEngine.Object[] cache, string fontName)
+        {
+            if (cache == null) return 0;
+            int restored = 0;
+
+            foreach (var obj in cache)
+            {
+                if (obj == null) continue;
+                try
+                {
+                    string compFont = TypeHelper.GetFontName(obj);
+                    if (compFont != fontName) continue;
+
+                    int id = obj.GetInstanceID();
+                    string original = GetOriginalText(id);
+                    if (original != null)
+                    {
+                        TypeHelper.SetText(obj, original);
+                        ClearOriginalText(id);
+                        processedTextHashes.Remove(id);
+                        restored++;
+                    }
+                }
+                catch { }
+            }
+            return restored;
+        }
+
+        /// <summary>
+        /// Restore originals for a given font in an IL2CPP component cache.
+        /// </summary>
+        private static int RestoreOriginalsForFontIL2CPP(UnityEngine.Object[] cache, MethodInfo tryCastMethod, string fontName)
+        {
+            if (cache == null || tryCastMethod == null) return 0;
+            int restored = 0;
+
+            foreach (var obj in cache)
+            {
+                if (obj == null) continue;
+                try
+                {
+                    object component = tryCastMethod.IsStatic
+                        ? tryCastMethod.Invoke(null, new object[] { obj })
+                        : tryCastMethod.Invoke(obj, null);
+                    if (component == null) continue;
+
+                    string compFont = TypeHelper.GetFontName(component);
+                    if (compFont != fontName) continue;
+
+                    int id = TypeHelper.GetInstanceID(component);
+                    if (id == -1) continue;
+                    string original = GetOriginalText(id);
+                    if (original != null)
+                    {
+                        TypeHelper.SetText(component, original);
+                        ClearOriginalText(id);
+                        processedTextHashes.Remove(id);
+                        restored++;
+                    }
+                }
+                catch { }
+            }
+            return restored;
+        }
+
+        /// <summary>
+        /// Refresh components for a given font in a Mono cache.
+        /// </summary>
+        private static int RefreshForFontInCache(UnityEngine.Object[] cache, string fontName)
+        {
+            if (cache == null) return 0;
+            int refreshed = 0;
+
+            foreach (var obj in cache)
+            {
+                if (obj == null) continue;
+                try
+                {
+                    string compFont = TypeHelper.GetFontName(obj);
+                    if (compFont != fontName) continue;
+
+                    int id = obj.GetInstanceID();
+                    processedTextHashes.Remove(id);
+
+                    string currentText = TypeHelper.GetText(obj);
+                    if (!string.IsNullOrEmpty(currentText))
+                    {
+                        TypeHelper.SetText(obj, currentText);
+                        refreshed++;
+                    }
+                }
+                catch { }
+            }
+            return refreshed;
+        }
+
+        /// <summary>
+        /// Refresh components for a given font in an IL2CPP cache.
+        /// </summary>
+        private static int RefreshForFontIL2CPP(UnityEngine.Object[] cache, MethodInfo tryCastMethod, string fontName)
+        {
+            if (cache == null || tryCastMethod == null) return 0;
+            int refreshed = 0;
+
+            foreach (var obj in cache)
+            {
+                if (obj == null) continue;
+                try
+                {
+                    object component = tryCastMethod.IsStatic
+                        ? tryCastMethod.Invoke(null, new object[] { obj })
+                        : tryCastMethod.Invoke(obj, null);
+                    if (component == null) continue;
+
+                    string compFont = TypeHelper.GetFontName(component);
+                    if (compFont != fontName) continue;
+
+                    int id = TypeHelper.GetInstanceID(component);
+                    if (id == -1) continue;
+                    processedTextHashes.Remove(id);
+
+                    string currentText = TypeHelper.GetText(component);
+                    if (!string.IsNullOrEmpty(currentText))
+                    {
+                        TypeHelper.SetText(component, currentText);
+                        refreshed++;
+                    }
+                }
+                catch { }
+            }
+            return refreshed;
         }
 
         #endregion
@@ -786,22 +740,31 @@ namespace UnityGameTranslator.Core
                 il2cppScanAvailable = il2cppTypeOfMethod != null && resourcesFindAllMethod != null;
 
                 // Pre-cache generic methods for TMP_Text and Text
+                // Use TypeHelper resolved types instead of compile-time typeof()
+                // This avoids TypeLoadException on IL2CPP where standard assemblies aren't compatible
                 if (il2cppScanAvailable)
                 {
                     try
                     {
-                        il2cppTypeTMP = il2cppTypeOfMethod.MakeGenericMethod(typeof(TMP_Text)).Invoke(null, null);
-                        il2cppTypeText = il2cppTypeOfMethod.MakeGenericMethod(typeof(Text)).Invoke(null, null);
+                        if (TypeHelper.TMP_TextType != null)
+                            il2cppTypeTMP = il2cppTypeOfMethod.MakeGenericMethod(TypeHelper.TMP_TextType).Invoke(null, null);
+                        if (TypeHelper.UI_TextType != null)
+                            il2cppTypeText = il2cppTypeOfMethod.MakeGenericMethod(TypeHelper.UI_TextType).Invoke(null, null);
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        TranslatorCore.LogWarning($"IL2CPP type resolution failed: {ex.Message}");
+                    }
 
                     if (tryCastMethod != null)
                     {
-                        tryCastTMPMethod = tryCastMethod.MakeGenericMethod(typeof(TMP_Text));
-                        tryCastTextMethod = tryCastMethod.MakeGenericMethod(typeof(Text));
+                        if (TypeHelper.TMP_TextType != null)
+                            tryCastTMPMethod = tryCastMethod.MakeGenericMethod(TypeHelper.TMP_TextType);
+                        if (TypeHelper.UI_TextType != null)
+                            tryCastTextMethod = tryCastMethod.MakeGenericMethod(TypeHelper.UI_TextType);
                     }
 
-                    TranslatorCore.LogInfo($"IL2CPP scan initialized (TryCast cached: {tryCastTMPMethod != null})");
+                    TranslatorCore.LogInfo($"IL2CPP scan initialized (TMP={il2cppTypeTMP != null}, Text={il2cppTypeText != null}, TryCast={tryCastTMPMethod != null})");
                 }
                 else
                 {
@@ -874,9 +837,9 @@ namespace UnityGameTranslator.Core
                     int endIndex = Math.Min(currentBatchIndexTMP + BATCH_SIZE, cachedTMPMono.Length);
                     for (int i = currentBatchIndexTMP; i < endIndex; i++)
                     {
-                        var tmp = cachedTMPMono[i];
-                        if (tmp == null) continue;
-                        ProcessTMPComponent(tmp);
+                        var obj = cachedTMPMono[i];
+                        if (obj == null) continue;
+                        ProcessComponentReflection(obj, "TMP");
                     }
 
                     if (endIndex >= cachedTMPMono.Length)
@@ -897,9 +860,9 @@ namespace UnityGameTranslator.Core
                     int endIndex = Math.Min(currentBatchIndexUI + BATCH_SIZE, cachedUIMono.Length);
                     for (int i = currentBatchIndexUI; i < endIndex; i++)
                     {
-                        var ui = cachedUIMono[i];
-                        if (ui == null) continue;
-                        ProcessUITextComponent(ui);
+                        var obj = cachedUIMono[i];
+                        if (obj == null) continue;
+                        ProcessComponentReflection(obj, "Unity");
                     }
 
                     if (endIndex >= cachedUIMono.Length)
@@ -920,15 +883,42 @@ namespace UnityGameTranslator.Core
         {
             try
             {
-                try { cachedTMPMono = UnityEngine.Object.FindObjectsOfType<TMP_Text>(true); }
-                catch { cachedTMPMono = UnityEngine.Object.FindObjectsOfType<TMP_Text>(); }
-
-                try { cachedUIMono = UnityEngine.Object.FindObjectsOfType<Text>(true); }
-                catch { cachedUIMono = UnityEngine.Object.FindObjectsOfType<Text>(); }
-
+                cachedTMPMono = FindAllObjectsOfType(TypeHelper.TMP_TextType);
+                cachedUIMono = FindAllObjectsOfType(TypeHelper.UI_TextType);
                 // Don't reset batch indices - continue from where we were
             }
             catch { }
+        }
+
+        /// <summary>
+        /// Find all objects of a given type, using reflection to handle both Mono and IL2CPP.
+        /// Tries FindObjectsOfType(type, true) first, fallback to FindObjectsOfType(type).
+        /// </summary>
+        private static UnityEngine.Object[] FindAllObjectsOfType(Type type)
+        {
+            if (type == null) return null;
+
+            try
+            {
+                // Try with includeInactive parameter (Unity 2020+)
+                var method = typeof(UnityEngine.Object).GetMethod("FindObjectsOfType",
+                    BindingFlags.Public | BindingFlags.Static,
+                    null, new Type[] { typeof(Type), typeof(bool) }, null);
+                if (method != null)
+                {
+                    return method.Invoke(null, new object[] { type, true }) as UnityEngine.Object[];
+                }
+            }
+            catch { }
+
+            try
+            {
+                // Fallback without includeInactive
+                return UnityEngine.Object.FindObjectsOfType(type);
+            }
+            catch { }
+
+            return null;
         }
 
         #endregion
@@ -1004,10 +994,10 @@ namespace UnityGameTranslator.Core
                         var obj = cachedTMPComponents[i];
                         if (obj == null) continue;
 
-                        var tmp = TryCastTMP(obj);
-                        if (tmp == null) continue;
+                        var component = TryCastToType(obj, tryCastTMPMethod);
+                        if (component == null) continue;
 
-                        ProcessTMPComponent(tmp);
+                        ProcessComponentReflection(component, "TMP");
                     }
 
                     if (endIndex >= cachedTMPComponents.Length)
@@ -1038,10 +1028,10 @@ namespace UnityGameTranslator.Core
                         var obj = cachedUIComponents[i];
                         if (obj == null) continue;
 
-                        var ui = TryCastText(obj);
-                        if (ui == null) continue;
+                        var component = TryCastToType(obj, tryCastTextMethod);
+                        if (component == null) continue;
 
-                        ProcessUITextComponent(ui);
+                        ProcessComponentReflection(component, "Unity");
                     }
 
                     if (endIndex >= cachedUIComponents.Length)
@@ -1075,109 +1065,54 @@ namespace UnityGameTranslator.Core
 
         #region Component Processing
 
-        private static void ProcessTMPComponent(TMP_Text tmp)
-        {
-            try
-            {
-                int instanceId = tmp.GetInstanceID();
-
-                // Skip if own UI and should not be translated (uses hierarchy check)
-                if (TranslatorCore.ShouldSkipTranslation(tmp))
-                    return;
-
-                // Skip if translation disabled for this font
-                if (tmp.font != null && !FontManager.IsTranslationEnabled(tmp.font))
-                    return;
-
-                // Skip if already identified as InputField user text (not placeholder)
-                if (inputFieldTextIds.Contains(instanceId))
-                    return;
-
-                // First-time check: is this the textComponent of a TMP_InputField? (exclude user input, not placeholder)
-                var tmpInputField = tmp.GetComponentInParent<TMPro.TMP_InputField>();
-                if (tmpInputField != null && tmpInputField.textComponent == tmp)
-                {
-                    inputFieldTextIds.Add(instanceId);
-                    TranslatorCore.LogInfo($"[Scanner] Excluded TMP_InputField textComponent: {tmp.gameObject.name} (parent: {tmpInputField.gameObject.name})");
-                    return;
-                }
-
-                string currentText = tmp.text;
-                if (string.IsNullOrEmpty(currentText) || currentText.Length < 2) return;
-
-                int textHash = currentText.GetHashCode();
-
-                // Quick skip: already processed with same text
-                if (processedTextHashes.TryGetValue(instanceId, out int lastHash) && lastHash == textHash)
-                    return;
-
-                // Check if text changed since last seen
-                if (TranslatorCore.HasSeenText(instanceId, currentText, out _))
-                {
-                    processedTextHashes[instanceId] = textHash;
-                    return;
-                }
-
-                // Check if own UI (use UI-specific prompt) - uses hierarchy check
-                bool isOwnUI = TranslatorCore.IsOwnUITranslatable(tmp);
-                string translated = TranslatorCore.TranslateTextWithTracking(currentText, tmp, isOwnUI);
-                if (translated != currentText)
-                {
-                    tmp.text = translated;
-                    tmp.ForceMeshUpdate();  // Force Unity to refresh
-                    TranslatorCore.UpdateSeenText(instanceId, translated);
-                    processedTextHashes[instanceId] = translated.GetHashCode();
-                }
-                else
-                {
-                    TranslatorCore.UpdateSeenText(instanceId, currentText);
-                    processedTextHashes[instanceId] = textHash;
-                }
-            }
-            catch { }
-        }
-
         // Debug: track how many times we've logged for InputField detection
         private static int inputFieldDebugLogCount = 0;
         private const int MAX_INPUTFIELD_DEBUG_LOGS = 50;
 
-        private static void ProcessUITextComponent(Text ui)
+        /// <summary>
+        /// Unified component processing via reflection.
+        /// Works for TMP_Text, UI.Text, and any component type resolved by TypeHelper.
+        /// </summary>
+        private static void ProcessComponentReflection(object component, string componentType)
         {
             try
             {
-                int instanceId = ui.GetInstanceID();
+                var comp = component as Component;
+                if (comp == null) return;
+
+                int instanceId = comp.GetInstanceID();
 
                 // Skip if own UI and should not be translated (uses hierarchy check)
-                if (TranslatorCore.ShouldSkipTranslation(ui))
+                if (TranslatorCore.ShouldSkipTranslation(comp))
                     return;
 
                 // Skip if translation disabled for this font
-                if (ui.font != null && !FontManager.IsTranslationEnabled(ui.font))
+                string fontName = TypeHelper.GetFontName(component);
+                if (!string.IsNullOrEmpty(fontName) && !FontManager.IsTranslationEnabled(fontName))
                     return;
 
                 // Skip if already identified as InputField user text (not placeholder)
                 if (inputFieldTextIds.Contains(instanceId))
                     return;
 
-                // First-time check: is this the textComponent of an InputField? (exclude user input, not placeholder)
-                var inputField = ui.GetComponentInParent<InputField>();
-                if (inputField != null && inputField.textComponent == ui)
+                // First-time check: is this the textComponent of an InputField?
+                if (TypeHelper.IsInputFieldTextComponent(component))
                 {
                     inputFieldTextIds.Add(instanceId);
-                    TranslatorCore.LogInfo($"[Scanner] Excluded InputField textComponent: {ui.gameObject.name} (parent: {inputField.gameObject.name})");
+                    TranslatorCore.LogInfo($"[Scanner] Excluded InputField textComponent: {comp.gameObject.name}");
                     return;
                 }
 
-                // Debug: log first few Text components that are NOT detected as InputField children
-                if (inputFieldDebugLogCount < MAX_INPUTFIELD_DEBUG_LOGS && !string.IsNullOrEmpty(ui.text) && ui.text.Length > 2)
+                string currentText = TypeHelper.GetText(component);
+                if (string.IsNullOrEmpty(currentText) || currentText.Length < 2) return;
+
+                // Debug log for UI.Text
+                if (componentType == "Unity" && inputFieldDebugLogCount < MAX_INPUTFIELD_DEBUG_LOGS)
                 {
-                    var parentNames = GetParentHierarchy(ui.gameObject, 5);
-                    TranslatorCore.LogInfo($"[Scanner] Text NOT in InputField: '{ui.gameObject.name}' hierarchy: {parentNames}");
+                    var parentNames = GetParentHierarchy(comp.gameObject, 5);
+                    TranslatorCore.LogInfo($"[Scanner] Text NOT in InputField: '{comp.gameObject.name}' hierarchy: {parentNames}");
                     inputFieldDebugLogCount++;
                 }
-
-                string currentText = ui.text;
-                if (string.IsNullOrEmpty(currentText) || currentText.Length < 2) return;
 
                 int textHash = currentText.GetHashCode();
 
@@ -1193,12 +1128,18 @@ namespace UnityGameTranslator.Core
                 }
 
                 // Check if own UI (use UI-specific prompt) - uses hierarchy check
-                bool isOwnUI = TranslatorCore.IsOwnUITranslatable(ui);
-                string translated = TranslatorCore.TranslateTextWithTracking(currentText, ui, isOwnUI);
+                bool isOwnUI = TranslatorCore.IsOwnUITranslatable(comp);
+                string translated = TranslatorCore.TranslateTextWithTracking(currentText, comp, isOwnUI);
                 if (translated != currentText)
                 {
-                    ui.text = translated;
-                    ui.SetAllDirty();  // Force Unity to refresh
+                    TypeHelper.SetText(component, translated);
+
+                    // Force refresh based on component type
+                    if (componentType == "TMP")
+                        TypeHelper.ForceMeshUpdate(component);
+                    else
+                        TypeHelper.SetAllDirty(component);
+
                     TranslatorCore.UpdateSeenText(instanceId, translated);
                     processedTextHashes[instanceId] = translated.GetHashCode();
                 }
@@ -1260,59 +1201,33 @@ namespace UnityGameTranslator.Core
             {
                 try
                 {
-                    if (comp is TMP_Text tmp && tmp != null)
+                    string actualText = TypeHelper.GetText(comp);
+                    if (actualText == null) continue;
+
+                    string expectedPreview = originalText.Length > 40 ? originalText.Substring(0, 40) + "..." : originalText;
+                    string actualPreview = actualText.Length > 40 ? actualText.Substring(0, 40) + "..." : actualText;
+
+                    if (actualText == originalText)
                     {
-                        string actualText = tmp.text;
-                        string expectedPreview = originalText.Length > 40 ? originalText.Substring(0, 40) + "..." : originalText;
-                        string actualPreview = actualText.Length > 40 ? actualText.Substring(0, 40) + "..." : actualText;
+                        // Store original before applying translation (enables runtime toggle restoration)
+                        StoreOriginalText(comp, originalText);
 
-                        if (actualText == originalText)
+                        TypeHelper.SetText(comp, translation);
+
+                        // Force visual refresh by toggling enabled state
+                        TypeHelper.ToggleEnabled(comp);
+
+                        int id = TypeHelper.GetInstanceID(comp);
+                        if (id != -1)
                         {
-                            // Store original before applying translation (enables runtime toggle restoration)
-                            StoreOriginalText(comp, originalText);
-
-                            tmp.text = translation;
-
-                            // Force visual refresh by toggling enabled state
-                            tmp.enabled = false;
-                            tmp.enabled = true;
-
-                            int id = tmp.GetInstanceID();
                             TranslatorCore.UpdateSeenText(id, translation);
                             processedTextHashes[id] = translation.GetHashCode();
-                            TranslatorCore.LogInfo($"[Apply OK] {expectedPreview}");
                         }
-                        else
-                        {
-                            TranslatorCore.LogWarning($"[Apply SKIP] expected='{expectedPreview}' actual='{actualPreview}'");
-                        }
+                        TranslatorCore.LogInfo($"[Apply OK] {expectedPreview}");
                     }
-                    else if (comp is Text ui && ui != null)
+                    else
                     {
-                        string actualText = ui.text;
-                        string expectedPreview = originalText.Length > 40 ? originalText.Substring(0, 40) + "..." : originalText;
-                        string actualPreview = actualText.Length > 40 ? actualText.Substring(0, 40) + "..." : actualText;
-
-                        if (actualText == originalText)
-                        {
-                            // Store original before applying translation (enables runtime toggle restoration)
-                            StoreOriginalText(comp, originalText);
-
-                            ui.text = translation;
-
-                            // Force visual refresh by toggling enabled state
-                            ui.enabled = false;
-                            ui.enabled = true;
-
-                            int id = ui.GetInstanceID();
-                            TranslatorCore.UpdateSeenText(id, translation);
-                            processedTextHashes[id] = translation.GetHashCode();
-                            TranslatorCore.LogInfo($"[Apply OK] {expectedPreview}");
-                        }
-                        else
-                        {
-                            TranslatorCore.LogWarning($"[Apply SKIP] expected='{expectedPreview}' actual='{actualPreview}'");
-                        }
+                        TranslatorCore.LogWarning($"[Apply SKIP] expected='{expectedPreview}' actual='{actualPreview}'");
                     }
                 }
                 catch { }
@@ -1335,7 +1250,9 @@ namespace UnityGameTranslator.Core
             while (current != null && depth < maxDepth)
             {
                 // Also check if this object has InputField component
-                var hasInputField = current.GetComponent<InputField>() != null;
+                bool hasInputField = false;
+                if (TypeHelper.UI_InputFieldType != null)
+                    hasInputField = current.GetComponent(TypeHelper.UI_InputFieldType) != null;
                 names.Add(hasInputField ? $"{current.name}[IF]" : current.name);
                 current = current.parent;
                 depth++;
@@ -1348,42 +1265,27 @@ namespace UnityGameTranslator.Core
 
         #region IL2CPP Helpers (Optimized)
 
-        private static TMP_Text TryCastTMP(object obj)
+        /// <summary>
+        /// Try to cast an IL2CPP object to a specific type using the cached TryCast method.
+        /// </summary>
+        private static object TryCastToType(object obj, MethodInfo typedTryCastMethod)
         {
-            if (obj == null) return null;
-            if (obj is TMP_Text direct) return direct;
+            if (obj == null || typedTryCastMethod == null) return null;
 
-            if (tryCastTMPMethod != null)
+            // Check if already the right type
+            if (TypeHelper.TMP_TextType != null && TypeHelper.TMP_TextType.IsInstanceOfType(obj))
+                return obj;
+            if (TypeHelper.UI_TextType != null && TypeHelper.UI_TextType.IsInstanceOfType(obj))
+                return obj;
+
+            try
             {
-                try
-                {
-                    if (tryCastMethod.IsStatic)
-                        return tryCastTMPMethod.Invoke(null, new[] { obj }) as TMP_Text;
-                    else
-                        return tryCastTMPMethod.Invoke(obj, null) as TMP_Text;
-                }
-                catch { }
+                if (tryCastMethod != null && tryCastMethod.IsStatic)
+                    return typedTryCastMethod.Invoke(null, new[] { obj });
+                else
+                    return typedTryCastMethod.Invoke(obj, null);
             }
-
-            return null;
-        }
-
-        private static Text TryCastText(object obj)
-        {
-            if (obj == null) return null;
-            if (obj is Text direct) return direct;
-
-            if (tryCastTextMethod != null)
-            {
-                try
-                {
-                    if (tryCastMethod.IsStatic)
-                        return tryCastTextMethod.Invoke(null, new[] { obj }) as Text;
-                    else
-                        return tryCastTextMethod.Invoke(obj, null) as Text;
-                }
-                catch { }
-            }
+            catch { }
 
             return null;
         }

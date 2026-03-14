@@ -563,6 +563,22 @@ namespace UnityGameTranslator.Core
             if (_detectedTMPFontObjects.TryGetValue(fontName, out var fontObj))
             {
                 RemoveFallbackFromFont(fontObj);
+
+                // Force TMP to rebuild its internal lookup caches
+                var fontType = fontObj.GetType();
+                try
+                {
+                    var dirtyProp = fontType.GetProperty("IsFontAssetLookupTablesDirty",
+                        System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                    if (dirtyProp != null && dirtyProp.CanWrite)
+                        dirtyProp.SetValue(fontObj, true, null);
+
+                    // Also try ReadFontAssetDefinition to force full rebuild
+                    var readMethod = fontType.GetMethod("ReadFontAssetDefinition",
+                        System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                    readMethod?.Invoke(fontObj, null);
+                }
+                catch { }
             }
         }
 

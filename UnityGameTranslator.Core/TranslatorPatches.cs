@@ -1097,8 +1097,6 @@ namespace UnityGameTranslator.Core
             if (instance == null || string.IsNullOrEmpty(fontName)) return;
 
             float scale = FontManager.GetFontScale(fontName);
-            if (Math.Abs(scale - 1.0f) < 0.001f) return; // No scale needed
-
             int instanceId = TypeHelper.GetInstanceID(instance);
             if (instanceId == -1) return;
 
@@ -1110,9 +1108,20 @@ namespace UnityGameTranslator.Core
                 _originalFontSizes[instanceId] = originalSize;
             }
 
+            // Scale = 1.0 means restore original size
+            if (Math.Abs(scale - 1.0f) < 0.001f)
+            {
+                float currentSize = TypeHelper.GetFontSize(instance);
+                if (currentSize >= 0 && Math.Abs(currentSize - originalSize) > 0.1f)
+                {
+                    TypeHelper.SetFontSize(instance, originalSize);
+                }
+                return;
+            }
+
             float scaledSize = originalSize * scale;
-            float currentSize = TypeHelper.GetFontSize(instance);
-            if (currentSize >= 0 && Math.Abs(currentSize - scaledSize) > 0.1f)
+            float currentSize2 = TypeHelper.GetFontSize(instance);
+            if (currentSize2 >= 0 && Math.Abs(currentSize2 - scaledSize) > 0.1f)
             {
                 TypeHelper.SetFontSize(instance, scaledSize);
             }

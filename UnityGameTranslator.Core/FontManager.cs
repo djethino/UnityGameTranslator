@@ -391,21 +391,15 @@ namespace UnityGameTranslator.Core
                 }
             }
 
-            // Handle translation toggle for this font's components
-            if (enabledChanged)
+            // Handle translation toggle / fallback change
+            // Use ForceRefreshAllText because when a font is replaced,
+            // components have the replacement font name, not the original.
+            // Targeted refresh by font name can't find them reliably.
+            if (enabledChanged || (fallbackChanged && enabled))
             {
-                if (wasEnabled && !enabled)
-                {
-                    TranslatorScanner.RestoreOriginalsForFont(fontName, oldFallback);
-                }
-                else if (!wasEnabled && enabled)
-                {
-                    TranslatorScanner.RefreshForFont(fontName, oldFallback);
-                }
-            }
-            else if (fallbackChanged && enabled)
-            {
-                TranslatorScanner.RefreshForFont(fontName, oldFallback);
+                // Clear all processed hashes to force re-evaluation
+                TranslatorScanner.ClearProcessedCache();
+                TranslatorScanner.ForceRefreshAllText();
             }
 
             // Save changes

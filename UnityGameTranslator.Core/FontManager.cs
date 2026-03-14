@@ -36,6 +36,11 @@ namespace UnityGameTranslator.Core
         // Whether CreateDynamicFontFromOSFont is available on this runtime
         private static bool _dynamicFontCreationAvailable = true;
 
+        // Game fonts (TMP_FontAsset objects already loaded in the game)
+        // These work on IL2CPP without CreateDynamicFontFromOSFont
+        private static readonly Dictionary<string, object> _gameTMPFonts = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+        private static bool _gameFontsScanned = false;
+
         // Cache of system fonts
         private static string[] _systemFonts;
 
@@ -568,7 +573,8 @@ namespace UnityGameTranslator.Core
                 if (replacementFont != null)
                 {
                     _fallbackAssets[settings.fallback] = replacementFont;
-                    if (replacementFont is UnityEngine.Object uobj)
+                    // Only mark as "created" if it's NOT a game font (game fonts should stay detectable)
+                    if (replacementFont is UnityEngine.Object uobj && !_gameTMPFonts.ContainsKey(uobj.name))
                         _createdFallbackFontNames.Add(uobj.name);
                 }
                 else
@@ -657,6 +663,14 @@ namespace UnityGameTranslator.Core
                     }
                     TranslatorCore.LogWarning($"[FontManager] Failed to load custom font: {cleanName}");
                     return null;
+                }
+
+                // Try game fonts first (works on IL2CPP — already valid IL2CPP objects)
+                var gameFont = GetGameFont(cleanName);
+                if (gameFont != null)
+                {
+                    TranslatorCore.LogInfo($"[FontManager] Using game font as fallback: {cleanName}");
+                    return gameFont;
                 }
 
                 // System font creation requires CreateDynamicFontFromOSFont
@@ -884,6 +898,85 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Scan all TMP_FontAsset objects loaded in the game.
+        /// These are valid IL2CPP objects that can be used as font replacements
+        /// without needing CreateDynamicFontFromOSFont (which is stripped on IL2CPP).
+        /// </summary>
+        public static void ScanGameFonts()
+        {
+            if (_gameFontsScanned) return;
+            _gameFontsScanned = true;
+
+            if (TypeHelper.TMP_FontAssetType == null)
+            {
+                TranslatorCore.LogWarning("[FontManager] Cannot scan game fonts: TMP_FontAsset type not resolved");
+                return;
+            }
+
+            try
+            {
+                var allFonts = TypeHelper.FindAllObjectsOfType(TypeHelper.TMP_FontAssetType);
+                if (allFonts == null || allFonts.Length == 0)
+                {
+                    TranslatorCore.LogInfo("[FontManager] No game TMP fonts found");
+                    return;
+                }
+
+                foreach (var font in allFonts)
+                {
+                    if (font == null) continue;
+                    string name = font.name;
+                    if (string.IsNullOrEmpty(name)) continue;
+
+                    // Skip fonts we created
+                    if (_createdFallbackFontNames.Contains(name)) continue;
+
+                    if (!_gameTMPFonts.ContainsKey(name))
+                    {
+                        _gameTMPFonts[name] = font;
+                    }
+                }
+
+                TranslatorCore.LogInfo($"[FontManager] Found {_gameTMPFonts.Count} game TMP fonts: {string.Join(", ", GetGameFontNames())}");
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogWarning($"[FontManager] Failed to scan game fonts: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Get names of all TMP fonts loaded in the game.
+        /// </summary>
+        public static string[] GetGameFontNames()
+        {
+            if (!_gameFontsScanned) ScanGameFonts();
+
+            var names = new string[_gameTMPFonts.Count];
+            _gameTMPFonts.Keys.CopyTo(names, 0);
+            System.Array.Sort(names, StringComparer.OrdinalIgnoreCase);
+            return names;
+        }
+
+        /// <summary>
+        /// Get a game font object by name. Returns null if not found.
+        /// </summary>
+        public static object GetGameFont(string fontName)
+        {
+            if (string.IsNullOrEmpty(fontName)) return null;
+            if (!_gameFontsScanned) ScanGameFonts();
+
+            _gameTMPFonts.TryGetValue(fontName, out object font);
+            return font;
+        }
+
+        /// <summary>
+        /// Whether dynamic font creation from system fonts is available.
+        /// On MelonLoader IL2CPP, CreateDynamicFontFromOSFont is stripped.
+        /// </summary>
+        public static bool IsDynamicFontCreationAvailable => _dynamicFontCreationAvailable;
+
+        /// <summary>
         /// Get font info for display in UI.
         /// Shows all fonts from saved settings + newly detected fonts.
         /// Deduplicates by font name (case-insensitive) to avoid showing duplicates.
@@ -978,6 +1071,8 @@ namespace UnityGameTranslator.Core
             _unityFallbackFonts.Clear();
             _createdFallbackFontNames.Clear();
             _failedFallbackFontNames.Clear();
+            _gameTMPFonts.Clear();
+            _gameFontsScanned = false;
         }
 
         /// <summary>

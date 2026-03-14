@@ -622,22 +622,40 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 // Build options array based on font type
                 // TMP (alt) fonts can only use fonts already loaded in the game (incompatible type)
-                // Standard TMP and Unity fonts can use system fonts (we can create TMP_FontAsset)
                 var options = new List<string> { "(None)" };
                 string[] availableFonts = null;
+                bool isTMPFont = fontInfo.Type == "TMP" || fontInfo.Type == "TextMeshPro" || fontInfo.Type == "TMP (alt)";
 
-                TranslatorCore.LogInfo($"[OptionsPanel] Font '{capturedFontName}' type='{fontInfo.Type}', checking for TMP (alt)...");
+                TranslatorCore.LogInfo($"[OptionsPanel] Font '{capturedFontName}' type='{fontInfo.Type}'");
 
                 if (fontInfo.Type == "TMP (alt)")
                 {
                     // For alternate TMP (TMProOld, etc.), show fonts already loaded in the game
                     availableFonts = TranslatorPatches.GetAlternateTMPFontNames();
-                    TranslatorCore.LogInfo($"[OptionsPanel] TMP (alt) font: found {availableFonts.Length} alternate fonts");
+                    TranslatorCore.LogInfo($"[OptionsPanel] TMP (alt) font: found {availableFonts?.Length ?? 0} alternate fonts");
+                }
+                else if (isTMPFont)
+                {
+                    // For TMP fonts: show game fonts first (always available, including IL2CPP)
+                    // then system fonts (only available on Mono, not IL2CPP)
+                    var gameFonts = FontManager.GetGameFontNames();
+                    if (gameFonts.Length > 0)
+                    {
+                        options.Add("--- Game Fonts ---");
+                        options.AddRange(gameFonts);
+                        TranslatorCore.LogInfo($"[OptionsPanel] Added {gameFonts.Length} game font(s)");
+                    }
+
+                    // Add system fonts if available (they won't work on IL2CPP but show for Mono)
+                    if (FontManager.IsDynamicFontCreationAvailable && _systemFonts != null && _systemFonts.Length > 0)
+                    {
+                        options.Add("--- System Fonts ---");
+                        availableFonts = _systemFonts;
+                    }
                 }
                 else
                 {
-                    // For standard TMP and Unity fonts, use system fonts
-                    TranslatorCore.LogInfo($"[OptionsPanel] Non-TMP (alt) font, using system fonts");
+                    // Unity Font: system fonts only
                     availableFonts = _systemFonts;
                 }
 
@@ -649,7 +667,6 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // Add custom fonts (user-provided SDF fonts from fonts/ folder)
                 // Custom fonts only work with TMP fonts (standard or alt), NOT Unity Fonts
                 // because they are SDF-based TMP_FontAsset, not regular Font
-                bool isTMPFont = fontInfo.Type == "TMP" || fontInfo.Type == "TextMeshPro" || fontInfo.Type == "TMP (alt)";
                 string[] customFonts = null;
                 if (isTMPFont)
                 {

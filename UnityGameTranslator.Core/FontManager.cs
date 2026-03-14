@@ -714,72 +714,76 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static Font CreateUnityFont(string fontName)
         {
-            // Check if system font exists
             if (!SystemFonts.Contains(fontName))
             {
                 TranslatorCore.LogWarning($"[FontManager] System font not found: {fontName}");
                 return null;
             }
 
-            // Try 1: Font.CreateDynamicFontFromOSFont (Mono, some BepInEx IL2CPP)
+            // ALL Font creation is done via reflection to avoid JIT resolution crashes on IL2CPP
+            // Direct calls like `new Font(name)` or `Font.CreateDynamicFontFromOSFont` cause
+            // MissingMethodException at JIT compile time on IL2CPP when methods are stripped.
+
+            var fontType = typeof(Font);
+
+            // Try 1: CreateDynamicFontFromOSFont via reflection
             if (_dynamicFontCreationAvailable)
             {
                 try
                 {
-                    var font = Font.CreateDynamicFontFromOSFont(fontName, 32);
-                    if (font != null)
+                    var method = fontType.GetMethod("CreateDynamicFontFromOSFont",
+                        System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static,
+                        null, new Type[] { typeof(string), typeof(int) }, null);
+                    if (method != null)
                     {
-                        TranslatorCore.LogInfo($"[FontManager] Created Font via CreateDynamicFontFromOSFont: {fontName}");
-                        return font;
+                        var font = method.Invoke(null, new object[] { fontName, 32 }) as Font;
+                        if (font != null)
+                        {
+                            TranslatorCore.LogInfo($"[FontManager] Created Font via CreateDynamicFontFromOSFont: {fontName}");
+                            return font;
+                        }
                     }
                 }
                 catch (Exception ex)
                 {
-                    if (ex.Message.Contains("unstripping") || ex.Message.Contains("Method not found"))
+                    var msg = ex.InnerException?.Message ?? ex.Message;
+                    if (msg.Contains("unstripping") || msg.Contains("Method not found"))
                     {
                         _dynamicFontCreationAvailable = false;
-                        TranslatorCore.LogInfo("[FontManager] CreateDynamicFontFromOSFont unavailable, trying alternatives");
+                        TranslatorCore.LogInfo($"[FontManager] CreateDynamicFontFromOSFont unavailable: {msg}");
                     }
                 }
             }
 
-            // Try 2: new Font(fontName) — creates a font reference by name
+            // Try 2: Font(string) constructor via reflection
             try
             {
-                var font = new Font(fontName);
-                if (font != null)
-                {
-                    TranslatorCore.LogInfo($"[FontManager] Created Font via constructor: {fontName}");
-                    return font;
-                }
-            }
-            catch { }
-
-            // Try 3: Reflection — find any Font constructor or factory method
-            try
-            {
-                var fontType = typeof(Font);
-
-                // Try Font(string) constructor via reflection (for IL2CPP)
                 foreach (var ctor in fontType.GetConstructors())
                 {
                     var parameters = ctor.GetParameters();
-                    if (parameters.Length == 1 && parameters[0].ParameterType == typeof(string))
+                    if (parameters.Length == 1)
                     {
                         try
                         {
                             var font = ctor.Invoke(new object[] { fontName }) as Font;
                             if (font != null)
                             {
-                                TranslatorCore.LogInfo($"[FontManager] Created Font via reflected constructor: {fontName}");
+                                TranslatorCore.LogInfo($"[FontManager] Created Font via constructor({parameters[0].ParameterType.Name}): {fontName}");
                                 return font;
                             }
                         }
-                        catch { continue; }
+                        catch (Exception ex)
+                        {
+                            TranslatorCore.LogWarning($"[FontManager] Font ctor({parameters[0].ParameterType.Name}) failed: {ex.InnerException?.Message ?? ex.Message}");
+                        }
                     }
                 }
+            }
+            catch { }
 
-                // Try CreateDynamicFontFromOSFont via reflection (different signature on IL2CPP)
+            // Try 3: Any CreateDynamicFontFromOSFont overload via reflection (IL2CPP may have different signatures)
+            try
+            {
                 foreach (var method in fontType.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static))
                 {
                     if (method.Name != "CreateDynamicFontFromOSFont") continue;
@@ -791,7 +795,7 @@ namespace UnityGameTranslator.Core
                             var font = method.Invoke(null, new object[] { fontName, 32 }) as Font;
                             if (font != null)
                             {
-                                TranslatorCore.LogInfo($"[FontManager] Created Font via reflected CreateDynamicFontFromOSFont: {fontName}");
+                                TranslatorCore.LogInfo($"[FontManager] Created Font via reflected overload: {fontName}");
                                 return font;
                             }
                         }
@@ -801,7 +805,20 @@ namespace UnityGameTranslator.Core
             }
             catch { }
 
-            TranslatorCore.LogWarning($"[FontManager] All Font creation methods failed for: {fontName}");
+            // Log available Font constructors/methods for diagnostics
+            try
+            {
+                var ctors = fontType.GetConstructors();
+                var methods = fontType.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+                var ctorInfo = string.Join(", ", ctors.Select(c => $"({string.Join(",", c.GetParameters().Select(p => p.ParameterType.Name))})"));
+                var factoryMethods = methods.Where(m => m.Name.Contains("Font") || m.Name.Contains("Create"))
+                    .Select(m => $"{m.Name}({string.Join(",", m.GetParameters().Select(p => p.ParameterType.Name))})");
+                TranslatorCore.LogWarning($"[FontManager] Font constructors: {ctorInfo}");
+                TranslatorCore.LogWarning($"[FontManager] Font factory methods: {string.Join(", ", factoryMethods)}");
+            }
+            catch { }
+
+            TranslatorCore.LogWarning($"[FontManager] Cannot create Font on this runtime for: {fontName}");
             return null;
         }
 

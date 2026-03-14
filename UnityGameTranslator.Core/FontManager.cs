@@ -395,6 +395,16 @@ namespace UnityGameTranslator.Core
                 }
             }
 
+            // Clear font size cache if scale might have changed
+            bool scaleChanged = false;
+            if (TranslatorCore.FontSettingsMap.TryGetValue(fontName, out var currentSettings))
+            {
+                // Scale is set separately via UpdateFontScale, but clear cache on any change
+                scaleChanged = true; // Always clear to be safe
+            }
+            if (scaleChanged)
+                TranslatorPatches.ClearFontSizeCache();
+
             // Refresh all text to re-evaluate with new settings
             if (enabledChanged || (fallbackChanged && enabled))
             {
@@ -476,13 +486,13 @@ namespace UnityGameTranslator.Core
                 var fallbackList = GetFallbackListReflection(font);
                 if (fallbackList == null) return;
 
-                var removeMethod = fallbackList.GetType().GetMethod("Remove");
-                if (removeMethod == null) return;
-
-                // Remove any of our created fallback assets
-                foreach (var fallback in _fallbackAssets.Values)
+                // Clear the entire fallback list — on IL2CPP, Remove() may not work
+                // because object identity comparison fails across IL2CPP/managed boundary
+                var clearMethod = fallbackList.GetType().GetMethod("Clear");
+                if (clearMethod != null)
                 {
-                    try { removeMethod.Invoke(fallbackList, new[] { fallback }); } catch { }
+                    clearMethod.Invoke(fallbackList, null);
+                    TranslatorCore.LogInfo($"[FontManager] Cleared fallback list for font");
                 }
             }
             catch { }

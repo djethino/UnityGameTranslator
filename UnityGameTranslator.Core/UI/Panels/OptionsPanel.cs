@@ -646,8 +646,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                         TranslatorCore.LogInfo($"[OptionsPanel] Added {gameFonts.Length} game font(s)");
                     }
 
-                    // Add system fonts if available (they won't work on IL2CPP but show for Mono)
-                    if (FontManager.IsDynamicFontCreationAvailable && _systemFonts != null && _systemFonts.Length > 0)
+                    // Add system fonts — now works on IL2CPP too via new Font() + CreateFontAsset
+                    if (_systemFonts != null && _systemFonts.Length > 0)
                     {
                         options.Add("--- System Fonts ---");
                         availableFonts = _systemFonts;

@@ -412,6 +412,84 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Set a value on an object by property name first (IL2CPP), then field name (Mono).
+        /// Returns true if successfully set.
+        /// </summary>
+        private static bool SetPropertyOrField(object obj, Type type, string name, object value)
+        {
+            // Try property first (IL2CPP exposes fields as properties)
+            try
+            {
+                var prop = type.GetProperty(name, BindingFlags.Public | BindingFlags.Instance);
+                if (prop != null && prop.CanWrite)
+                {
+                    prop.SetValue(obj, value, null);
+                    return true;
+                }
+            }
+            catch { }
+
+            // Try field
+            try
+            {
+                var field = type.GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                if (field != null)
+                {
+                    field.SetValue(obj, value);
+                    return true;
+                }
+            }
+            catch { }
+
+            // Try with m_ prefix (Unity convention)
+            try
+            {
+                var field = type.GetField("m_" + name, BindingFlags.NonPublic | BindingFlags.Instance);
+                if (field != null)
+                {
+                    field.SetValue(obj, value);
+                    return true;
+                }
+            }
+            catch { }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Get a value from an object by property name first (IL2CPP), then field name (Mono).
+        /// Returns null if not found.
+        /// </summary>
+        private static object GetPropertyOrField(object obj, Type type, string name)
+        {
+            try
+            {
+                var prop = type.GetProperty(name, BindingFlags.Public | BindingFlags.Instance);
+                if (prop != null && prop.CanRead)
+                    return prop.GetValue(obj, null);
+            }
+            catch { }
+
+            try
+            {
+                var field = type.GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                if (field != null)
+                    return field.GetValue(obj);
+            }
+            catch { }
+
+            try
+            {
+                var field = type.GetField("m_" + name, BindingFlags.NonPublic | BindingFlags.Instance);
+                if (field != null)
+                    return field.GetValue(obj);
+            }
+            catch { }
+
+            return null;
+        }
+
+        /// <summary>
         /// Find a type by simple name in an assembly (handles IL2CPP prefixed namespaces).
         /// </summary>
         private static Type FindTypeByName(System.Reflection.Assembly asm, string typeName)
@@ -504,15 +582,31 @@ namespace UnityGameTranslator.Core
             {
                 // Try to clone an existing font asset first (better initialization)
                 object fontAsset = null;
+                UnityEngine.Object sourceFont = null;
                 var existingFonts = TypeHelper.FindAllObjectsOfType(_tmpFontAssetType);
                 foreach (var existingFont in existingFonts)
                 {
                     if (existingFont != null && existingFont.name != "NotoSansDevanagari" && existingFont.name != "KrutiDev714Normal")
                     {
-                        // Clone the existing font
-                        fontAsset = UnityEngine.Object.Instantiate(existingFont);
-                        ((UnityEngine.Object)fontAsset).name = fontInfo.Name;
-                        TranslatorCore.LogInfo($"[CustomFontLoader] Cloned existing font: {existingFont.name}");
+                        sourceFont = existingFont;
+
+                        // Dump the SOURCE font structure (not the clone) to see IL2CPP properties
+                        DumpExistingFontStructure(existingFont);
+
+                        // Clone using Instantiate — returns the same IL2CPP type
+                        var cloned = UnityEngine.Object.Instantiate(existingFont);
+
+                        // On IL2CPP, cast to the proper type so reflection sees all properties
+                        fontAsset = TypeHelper.Il2CppCast(cloned, _tmpFontAssetType);
+                        if (fontAsset is UnityEngine.Object uobj)
+                            uobj.name = fontInfo.Name;
+
+                        TranslatorCore.LogInfo($"[CustomFontLoader] Cloned existing font: {existingFont.name}, clone type: {fontAsset?.GetType().FullName}");
+
+                        // Dump the clone to see if it has the right type
+                        if (fontAsset is UnityEngine.Object clonedObj)
+                            DumpExistingFontStructure(clonedObj);
+
                         break;
                     }
                 }
@@ -521,7 +615,8 @@ namespace UnityGameTranslator.Core
                 if (fontAsset == null)
                 {
                     fontAsset = TypeHelper.CreateScriptableObject(_tmpFontAssetType);
-                    ((UnityEngine.Object)fontAsset).name = fontInfo.Name;
+                    if (fontAsset is UnityEngine.Object uobj)
+                        uobj.name = fontInfo.Name;
                     TranslatorCore.LogInfo("[CustomFontLoader] Created new font asset instance");
                 }
 
@@ -529,11 +624,13 @@ namespace UnityGameTranslator.Core
                 var metrics = fontInfo.AtlasData.metrics;
                 var pointSize = atlas.size;
 
-                // Set atlas texture
-                var atlasField = _tmpFontAssetType.GetField("atlas", BindingFlags.Public | BindingFlags.Instance);
-                if (atlasField != null)
+                // Set atlas texture — try property first (IL2CPP), then field (Mono)
+                var fontAssetType = fontAsset.GetType();
+                if (!SetPropertyOrField(fontAsset, fontAssetType, "atlas", fontInfo.AtlasTexture))
                 {
-                    atlasField.SetValue(fontAsset, fontInfo.AtlasTexture);
+                    // Try alternate names
+                    if (!SetPropertyOrField(fontAsset, fontAssetType, "atlasTexture", fontInfo.AtlasTexture))
+                        TranslatorCore.LogWarning("[CustomFontLoader] Could not set atlas texture");
                 }
 
                 // Set material (required for rendering)

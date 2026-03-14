@@ -922,12 +922,22 @@ namespace UnityGameTranslator.Core
 
             try
             {
-                // Find m_fontInfo field
-                var fontInfoField = _tmpFontAssetType.GetField("m_fontInfo", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-                if (fontInfoField == null)
+                // Find m_fontInfo — property on IL2CPP, field on Mono
+                var fontAssetType = fontAsset.GetType();
+                var fontInfoProp = fontAssetType.GetProperty("m_fontInfo", BindingFlags.Public | BindingFlags.Instance);
+                var fontInfoField = fontInfoProp == null
+                    ? fontAssetType.GetField("m_fontInfo", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                    : null;
+
+                if (fontInfoProp == null && fontInfoField == null)
                 {
-                    TranslatorCore.LogWarning("[CustomFontLoader] m_fontInfo field not found");
-                    return;
+                    // Try alternate names
+                    fontInfoProp = fontAssetType.GetProperty("fontInfo", BindingFlags.Public | BindingFlags.Instance);
+                    if (fontInfoProp == null)
+                    {
+                        TranslatorCore.LogWarning("[CustomFontLoader] m_fontInfo not found as property or field");
+                        return;
+                    }
                 }
 
                 object faceInfo;
@@ -974,14 +984,22 @@ namespace UnityGameTranslator.Core
                 SetFieldValue(faceInfo, "AtlasWidth", (float)atlas.width);
                 SetFieldValue(faceInfo, "AtlasHeight", (float)atlas.height);
 
-                fontInfoField.SetValue(fontAsset, faceInfo);
+                // Write faceInfo back
+                if (fontInfoProp != null && fontInfoProp.CanWrite)
+                    fontInfoProp.SetValue(fontAsset, faceInfo, null);
+                else if (fontInfoField != null)
+                    fontInfoField.SetValue(fontAsset, faceInfo);
 
                 // Log the configured metrics for debugging
                 TranslatorCore.LogInfo($"[CustomFontLoader] Configured FaceInfo: PointSize={pointSize}, Ascender={ascender:F2}, Descender={descender:F2}, LineHeight={metrics.lineHeight * pointSize:F2}");
                 TranslatorCore.LogInfo($"[CustomFontLoader] Atlas dimensions: {atlas.width}x{atlas.height}, DistanceRange={atlas.distanceRange}");
 
                 // DEBUG: Verify the values were actually written
-                var verifyFaceInfo = fontInfoField.GetValue(fontAsset);
+                object verifyFaceInfo;
+                if (fontInfoProp != null)
+                    verifyFaceInfo = fontInfoProp.GetValue(fontAsset, null);
+                else
+                    verifyFaceInfo = fontInfoField.GetValue(fontAsset);
                 if (verifyFaceInfo != null)
                 {
                     var verifyType = verifyFaceInfo.GetType();
@@ -1013,23 +1031,47 @@ namespace UnityGameTranslator.Core
 
             try
             {
-                // Find glyph list field
-                var glyphListField = _tmpFontAssetType.GetField("m_glyphInfoList", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-                if (glyphListField == null)
+                // Find glyph list — property on IL2CPP, field on Mono
+                var fontAssetType = fontAsset.GetType();
+                var glyphListProp = fontAssetType.GetProperty("m_glyphInfoList", BindingFlags.Public | BindingFlags.Instance);
+                var glyphListField = glyphListProp == null
+                    ? fontAssetType.GetField("m_glyphInfoList", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                    : null;
+
+                if (glyphListProp == null && glyphListField == null)
                 {
-                    TranslatorCore.LogWarning("[CustomFontLoader] m_glyphInfoList field not found");
+                    TranslatorCore.LogWarning("[CustomFontLoader] m_glyphInfoList not found as property or field");
                     return;
                 }
 
-                // Create list of glyphs
-                var glyphListType = typeof(List<>).MakeGenericType(_tmpGlyphType ?? _tmpTextElementType ?? typeof(object));
-                var glyphList = Activator.CreateInstance(glyphListType);
-                var addMethod = glyphListType.GetMethod("Add");
+                // Get the existing list to determine the correct IL2CPP list type
+                object existingList = glyphListProp != null
+                    ? glyphListProp.GetValue(fontAsset, null)
+                    : glyphListField.GetValue(fontAsset);
+
+                // Create list of glyphs — use same type as existing list for IL2CPP compatibility
+                object glyphList;
+                MethodInfo addMethod;
+
+                if (existingList != null)
+                {
+                    // Clear existing and reuse (IL2CPP: list type is Il2CppSystem.Collections.Generic.List<TMP_Glyph>)
+                    var clearMethod = existingList.GetType().GetMethod("Clear");
+                    clearMethod?.Invoke(existingList, null);
+                    glyphList = existingList;
+                    addMethod = existingList.GetType().GetMethod("Add");
+                    TranslatorCore.LogInfo($"[CustomFontLoader] Reusing existing glyph list type: {existingList.GetType().Name}");
+                }
+                else
+                {
+                    // Create new managed list
+                    var glyphListType = typeof(List<>).MakeGenericType(_tmpGlyphType ?? _tmpTextElementType ?? typeof(object));
+                    glyphList = Activator.CreateInstance(glyphListType);
+                    addMethod = glyphListType.GetMethod("Add");
+                }
 
                 foreach (var glyphInfo in glyphs)
                 {
-                    // Create glyph even for characters without visual bounds (like space)
-                    // They still need an entry with xAdvance for proper spacing
                     var glyph = CreateGlyph(glyphInfo, atlas, pointSize, yFlipped);
                     if (glyph != null)
                     {
@@ -1037,7 +1079,11 @@ namespace UnityGameTranslator.Core
                     }
                 }
 
-                glyphListField.SetValue(fontAsset, glyphList);
+                // Write back
+                if (glyphListProp != null && glyphListProp.CanWrite)
+                    glyphListProp.SetValue(fontAsset, glyphList, null);
+                else if (glyphListField != null)
+                    glyphListField.SetValue(fontAsset, glyphList);
 
                 // Also build the character dictionary for lookups
                 BuildCharacterDictionary(fontAsset, glyphList);
@@ -1063,12 +1109,15 @@ namespace UnityGameTranslator.Core
                 if (glyphType == null)
                     return null;
 
-                // Log available fields once for debugging
+                // Log available fields AND properties once for debugging
                 if (!_glyphFieldsLogged)
                 {
                     _glyphFieldsLogged = true;
                     var fields = glyphType.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-                    TranslatorCore.LogInfo($"[CustomFontLoader] Glyph type: {glyphType.FullName}, fields: {string.Join(", ", fields.Select(f => f.Name + ":" + f.FieldType.Name))}");
+                    var props = glyphType.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+                    TranslatorCore.LogInfo($"[CustomFontLoader] Glyph type: {glyphType.FullName}");
+                    TranslatorCore.LogInfo($"[CustomFontLoader] Glyph fields ({fields.Length}): {string.Join(", ", fields.Select(f => f.Name + ":" + f.FieldType.Name))}");
+                    TranslatorCore.LogInfo($"[CustomFontLoader] Glyph props ({props.Length}): {string.Join(", ", props.Select(p => p.Name + ":" + p.PropertyType.Name))}");
                 }
 
                 var glyph = Activator.CreateInstance(glyphType);
@@ -1182,16 +1231,29 @@ namespace UnityGameTranslator.Core
             if (obj == null) return;
 
             var type = obj.GetType();
+
+            // Try property first (IL2CPP)
+            var prop = type.GetProperty(fieldName, BindingFlags.Public | BindingFlags.Instance);
+            if (prop != null && prop.CanWrite)
+            {
+                try
+                {
+                    if (value != null && prop.PropertyType != value.GetType())
+                        value = Convert.ChangeType(value, prop.PropertyType);
+                    prop.SetValue(obj, value, null);
+                    return;
+                }
+                catch { }
+            }
+
+            // Try field (Mono)
             var field = type.GetField(fieldName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
             if (field != null)
             {
                 try
                 {
-                    // Convert value if needed
                     if (value != null && field.FieldType != value.GetType())
-                    {
                         value = Convert.ChangeType(value, field.FieldType);
-                    }
                     field.SetValue(obj, value);
                 }
                 catch { }

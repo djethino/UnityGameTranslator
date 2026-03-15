@@ -1014,6 +1014,9 @@ namespace UnityGameTranslator.Core
                     var customAsset = CustomFontLoader.LoadCustomFont(cleanName);
                     if (customAsset != null)
                     {
+                        // Track the created asset name to exclude from game font detection
+                        if (customAsset is UnityEngine.Object uobj2)
+                            _createdFallbackFontNames.Add(uobj2.name);
                         TranslatorCore.LogInfo($"[FontManager] Created fallback from custom font: {cleanName}");
                         return customAsset;
                     }

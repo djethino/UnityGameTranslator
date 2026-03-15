@@ -770,7 +770,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     }
                     string fallback = selectedValue == "(None)" ? null : selectedValue;
                     OnFontFallbackChanged(capturedFontName, fallback);
-                }, width: 200);
+                }, width: 350);
 
                 _fallbackDropdowns.Add(dropdown);
             }

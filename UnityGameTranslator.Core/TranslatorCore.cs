@@ -92,6 +92,39 @@ namespace UnityGameTranslator.Core
         public static bool DisableEventSystemOverride { get; set; } = false;
 
         /// <summary>
+        /// Cached flag for whether the current AI provider supports the "think" parameter.
+        /// null = unknown (will try), true = supported, false = not supported (got 400).
+        /// Invalidated when ai_url or ai_model changes.
+        /// </summary>
+        private static bool? _providerSupportsThinkParam = null;
+        private static string _thinkParamCacheKey = null;
+
+        /// <summary>
+        /// Build a cache key from current AI config to detect provider/model changes.
+        /// </summary>
+        private static string GetThinkParamCacheKey()
+        {
+            return $"{Config?.ai_url}|{Config?.ai_model}";
+        }
+
+        /// <summary>
+        /// Check if the think parameter should be sent based on cached provider capability.
+        /// Returns true if we should include "think": false in the request.
+        /// </summary>
+        private static bool ShouldSendThinkParam()
+        {
+            string currentKey = GetThinkParamCacheKey();
+            if (_thinkParamCacheKey != currentKey)
+            {
+                // Provider or model changed, reset cache
+                _providerSupportsThinkParam = null;
+                _thinkParamCacheKey = currentKey;
+            }
+            // Send if supported or unknown (optimistic)
+            return _providerSupportsThinkParam != false;
+        }
+
+        /// <summary>
         /// Returns true if source/target languages are locked (translation exists on server).
         /// Once a translation is uploaded, languages cannot be changed to maintain consistency.
         /// </summary>
@@ -1872,20 +1905,57 @@ namespace UnityGameTranslator.Core
                     ["messages"] = messagesArray,
                     ["temperature"] = 0.0,
                     ["max_tokens"] = Math.Max(200, textToTranslate.Length * 2),
-                    ["stream"] = false,
-                    // Universal: disable thinking for any model that supports it
-                    // Non-thinking models ignore this field
-                    ["think"] = false
+                    ["stream"] = false
                 };
 
+                // Send "think": false to disable reasoning on providers that support it (e.g. Ollama).
+                // Some providers (OpenAI, Grok, etc.) reject unknown parameters with 400.
+                // We use a cached flag to avoid retrying on every request.
+                bool sendThink = ShouldSendThinkParam();
+                if (sendThink)
+                {
+                    requestObj["think"] = false;
+                }
+
+                string aiEndpoint = $"{Config.ai_url.TrimEnd('/')}/v1/chat/completions";
                 string jsonRequest = requestObj.ToString(Newtonsoft.Json.Formatting.None);
                 var httpContent = new StringContent(jsonRequest, Encoding.UTF8, "application/json");
 
-                var request = new HttpRequestMessage(HttpMethod.Post, $"{Config.ai_url.TrimEnd('/')}/v1/chat/completions");
+                var request = new HttpRequestMessage(HttpMethod.Post, aiEndpoint);
                 request.Content = httpContent;
                 AddAIAuthHeader(request);
 
                 var response = httpClient.SendAsync(request).Result;
+
+                // Handle providers that reject the "think" parameter with 400
+                if (!response.IsSuccessStatusCode && sendThink && (int)response.StatusCode == 400)
+                {
+                    string errorBody = "";
+                    try { errorBody = response.Content.ReadAsStringAsync().Result; } catch { }
+
+                    if (errorBody.Contains("Unrecognized request argument") && errorBody.Contains("think"))
+                    {
+                        // This provider doesn't support "think" param — cache and retry without it
+                        _providerSupportsThinkParam = false;
+                        Adapter?.LogInfo("[AI] Provider does not support 'think' parameter, retrying without it");
+
+                        requestObj.Remove("think");
+                        jsonRequest = requestObj.ToString(Newtonsoft.Json.Formatting.None);
+                        httpContent = new StringContent(jsonRequest, Encoding.UTF8, "application/json");
+
+                        request = new HttpRequestMessage(HttpMethod.Post, aiEndpoint);
+                        request.Content = httpContent;
+                        AddAIAuthHeader(request);
+
+                        response = httpClient.SendAsync(request).Result;
+                    }
+                }
+
+                // Mark provider as supporting think param on success (if we sent it)
+                if (response.IsSuccessStatusCode && sendThink && _providerSupportsThinkParam == null)
+                {
+                    _providerSupportsThinkParam = true;
+                }
 
                 if (!response.IsSuccessStatusCode)
                 {

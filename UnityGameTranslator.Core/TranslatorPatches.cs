@@ -1596,10 +1596,20 @@ namespace UnityGameTranslator.Core
                         }
                         else if (componentType == "Unity")
                         {
-                            // Unity UI.Text doesn't support fallback — still need SetFont for these
-                            var replacementFont = FontManager.GetUnityReplacementFont(fontName);
+                            var replacementFont = FontManager.GetUnityReplacementFont(settingsFontName);
                             if (replacementFont != null)
-                                TypeHelper.SetFont(__instance, replacementFont);
+                            {
+                                // Track original font (same pattern as TMP)
+                                int instId = TypeHelper.GetInstanceID(__instance);
+                                if (instId != -1)
+                                    FontManager.TrackOriginalFont(instId, fontObj);
+
+                                // Don't re-apply if already replaced with the right font
+                                string currentName = (fontObj is UnityEngine.Object co) ? co.name : null;
+                                string replaceName = replacementFont.name;
+                                if (currentName != replaceName)
+                                    TypeHelper.SetFont(__instance, replacementFont);
+                            }
                         }
                     }
                 }

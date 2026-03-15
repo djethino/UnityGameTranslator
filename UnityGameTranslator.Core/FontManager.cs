@@ -944,41 +944,41 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static Font CreateUnityFontFromSystem(string systemFontName)
         {
-            // Custom SDF fonts are not compatible with Unity Fonts (UI.Text)
-            if (IsCustomFont(systemFontName)) return null;
+            // Strip [Custom] prefix if present
+            string cleanName = systemFontName;
+            if (systemFontName.StartsWith("[Custom] "))
+                cleanName = systemFontName.Substring(9);
 
             // Try game fonts first — already loaded, works on IL2CPP without CreateDynamicFontFromOSFont
             if (!_gameFontsScanned) ScanGameFonts();
-            if (_gameUnityFonts.TryGetValue(systemFontName, out var gameFont))
+            if (_gameUnityFonts.TryGetValue(cleanName, out var gameFont))
             {
-                TranslatorCore.LogInfo($"[FontManager] Using game Unity font: {systemFontName}");
+                TranslatorCore.LogInfo($"[FontManager] Using game Unity font: {cleanName}");
                 return gameFont;
             }
 
             // Partial match (font name contains search or vice versa)
             foreach (var kvp in _gameUnityFonts)
             {
-                if (kvp.Key.IndexOf(systemFontName, StringComparison.OrdinalIgnoreCase) >= 0 ||
-                    systemFontName.IndexOf(kvp.Key, StringComparison.OrdinalIgnoreCase) >= 0)
+                if (kvp.Key.IndexOf(cleanName, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    cleanName.IndexOf(kvp.Key, StringComparison.OrdinalIgnoreCase) >= 0)
                 {
-                    TranslatorCore.LogInfo($"[FontManager] Using game Unity font (partial match): {kvp.Key} for {systemFontName}");
+                    TranslatorCore.LogInfo($"[FontManager] Using game Unity font (partial match): {kvp.Key} for {cleanName}");
                     return kvp.Value;
                 }
             }
 
-            // Try CreateDynamicFontFromOSFont — the ONLY method that creates a proper
-            // dynamic font for UI.Text rendering. Internal_CreateFontFromPath loads font data
-            // but doesn't enable dynamic rasterization (text renders empty on IL2CPP).
+            // Try CreateDynamicFontFromOSFont (works on Mono, stripped on some IL2CPP)
             if (_dynamicFontCreationAvailable)
             {
                 try
                 {
-                    if (SystemFonts.Contains(systemFontName))
+                    if (SystemFonts.Contains(cleanName))
                     {
-                        var font = Font.CreateDynamicFontFromOSFont(systemFontName, 32);
+                        var font = Font.CreateDynamicFontFromOSFont(cleanName, 32);
                         if (font != null)
                         {
-                            TranslatorCore.LogInfo($"[FontManager] Created Unity font from system: {systemFontName}");
+                            TranslatorCore.LogInfo($"[FontManager] Created Unity font from system: {cleanName}");
                             return font;
                         }
                     }
@@ -991,6 +991,14 @@ namespace UnityGameTranslator.Core
                         TranslatorCore.LogWarning($"[FontManager] CreateDynamicFontFromOSFont unavailable on this runtime");
                     }
                 }
+            }
+
+            // Last resort: rasterize TTF to bitmap Unity Font (works on all runtimes)
+            var rasterizedFont = CustomFontLoader.CreateUnityFontFromTtf(cleanName);
+            if (rasterizedFont != null)
+            {
+                TranslatorCore.LogInfo($"[FontManager] Created Unity Font via TTF rasterizer: {cleanName}");
+                return rasterizedFont;
             }
 
             return null;

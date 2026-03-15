@@ -392,6 +392,359 @@ namespace UnityGameTranslator.Core
             return LoadCustomFont(fontName);
         }
 
+        // Cache of Unity Fonts created from TTF rasterization (for UI.Text replacement)
+        // Stored as object to avoid Font type reference that crashes IL2CPP JIT
+        private static readonly Dictionary<string, object> _rasterizedUnityFonts = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Create a Unity Font (for UI.Text) from a TTF file by rasterizing glyphs to a bitmap atlas.
+        /// This is the fallback for IL2CPP where CreateDynamicFontFromOSFont is stripped.
+        /// ALL Font/CharacterInfo access is via reflection to avoid IL2CPP JIT crashes.
+        /// </summary>
+        public static Font CreateUnityFontFromTtf(string fontName)
+        {
+            object cached;
+            if (_rasterizedUnityFonts.TryGetValue(fontName, out cached) && cached is Font cachedFont)
+                return cachedFont;
+
+            var result = CreateUnityFontFromTtfReflection(fontName);
+            return result as Font;
+        }
+
+        /// <summary>
+        /// Internal: creates Font entirely via reflection. No direct Font/CharacterInfo references
+        /// to prevent IL2CPP JIT resolution crashes on stripped methods.
+        /// </summary>
+        private static object CreateUnityFontFromTtfReflection(string fontName)
+        {
+            // Find TTF path
+            string ttfPath = null;
+            CustomFontInfo fontInfo;
+            if (_customFonts.TryGetValue(fontName, out fontInfo) && fontInfo.IsTtf)
+                ttfPath = fontInfo.TtfPath;
+            if (ttfPath == null)
+                ttfPath = FontManager.GetSystemFontPath(fontName);
+            if (ttfPath == null)
+                ttfPath = FindSystemTtfPath(fontName);
+
+            if (ttfPath == null)
+            {
+                TranslatorCore.LogWarning($"[CustomFontLoader] Cannot find TTF for Unity font: {fontName}");
+                return null;
+            }
+
+            try
+            {
+                TranslatorCore.LogInfo($"[CustomFontLoader] Creating Unity Font from TTF: {fontName} -> {ttfPath}");
+
+                var fontData = System.IO.File.ReadAllBytes(ttfPath);
+                var parser = new Rasterizer.TtfParser(fontData);
+                var codepoints = parser.GetSupportedCodepoints();
+                var metrics = parser.Metrics;
+                float upm = metrics.UnitsPerEm;
+                float renderSize = 48f;
+                int padding = 1;
+
+                // Rasterize
+                var rasterizedGlyphs = new List<Rasterizer.RasterizedGlyph>();
+                var outlines = new List<Rasterizer.GlyphOutline>();
+                for (int i = 0; i < codepoints.Length && i < Rasterizer.TtfFontPipeline.MaxGlyphCount; i++)
+                {
+                    var outline = parser.GetGlyphOutline(codepoints[i]);
+                    if (outline == null) continue;
+                    var rasterized = Rasterizer.GlyphRasterizer.Rasterize(outline, metrics, renderSize, padding);
+                    if (rasterized == null) continue;
+                    rasterized.Unicode = codepoints[i];
+                    rasterizedGlyphs.Add(rasterized);
+                    outlines.Add(outline);
+                }
+
+                // Pack atlas
+                var packable = new List<Rasterizer.RasterizedGlyph>();
+                foreach (var rg in rasterizedGlyphs)
+                    if (rg.Bitmap != null && rg.Width > 0 && rg.Height > 0) packable.Add(rg);
+                packable.Sort((a, b) => b.Height.CompareTo(a.Height));
+                var atlasResult = Rasterizer.AtlasPacker.PackAtlas(packable);
+                int atlasW = atlasResult.Width, atlasH = atlasResult.Height;
+
+                // Atlas from packer has R=G=B=bitmap, A=255 (grayscale)
+                // GUI/Text Shader reads alpha for glyph mask → copy R to A, set RGB=255
+                var rgba = atlasResult.RgbaData;
+                for (int pi = 0; pi < atlasW * atlasH; pi++)
+                {
+                    int idx = pi * 4;
+                    byte val = rgba[idx]; // bitmap value from R channel
+                    rgba[idx] = val;       // R = bitmap (some shaders read R)
+                    rgba[idx + 1] = val;   // G = bitmap
+                    rgba[idx + 2] = val;   // B = bitmap
+                    rgba[idx + 3] = val;   // A = bitmap (GUI/Text Shader reads A)
+                }
+
+                // Save as real PNG then reload via LoadImage — same proven path as TMP fonts.
+                // This is the only reliable cross-runtime method (Mono + IL2CPP).
+                string cacheDir = _cacheFolderPath;
+                if (string.IsNullOrEmpty(cacheDir))
+                {
+                    // No fonts folder configured — try to find one
+                    CustomFontInfo fi;
+                    if (_customFonts.TryGetValue(fontName, out fi) && fi.TtfPath != null)
+                        cacheDir = Path.GetDirectoryName(fi.TtfPath);
+                }
+
+                Texture2D texture = null;
+
+                if (!string.IsNullOrEmpty(cacheDir))
+                {
+                    if (!Directory.Exists(cacheDir))
+                        Directory.CreateDirectory(cacheDir);
+
+                    string pngPath = Path.Combine(cacheDir, fontName + ".uitext.png");
+
+                    // Create temp texture with SetPixels32Safe, encode to PNG, reload via LoadImage
+                    var tmpTex = new Texture2D(atlasW, atlasH, TextureFormat.RGBA32, false);
+                    var colors = new Color32[atlasW * atlasH];
+                    for (int row = 0; row < atlasH; row++)
+                    {
+                        int srcRow = atlasH - 1 - row; // Flip for SetPixels32
+                        for (int col = 0; col < atlasW; col++)
+                        {
+                            int srcIdx = (srcRow * atlasW + col) * 4;
+                            colors[row * atlasW + col] = new Color32(rgba[srcIdx], rgba[srcIdx + 1], rgba[srcIdx + 2], rgba[srcIdx + 3]);
+                        }
+                    }
+                    SetPixels32Safe(tmpTex, colors);
+                    tmpTex.Apply();
+
+                    byte[] pngData = EncodeToPngSafe(tmpTex);
+                    UnityEngine.Object.Destroy(tmpTex);
+
+                    if (pngData != null && pngData.Length > 0)
+                    {
+                        File.WriteAllBytes(pngPath, pngData);
+                        TranslatorCore.LogInfo($"[CustomFontLoader] Saved Unity Font atlas PNG: {pngPath} ({pngData.Length} bytes)");
+
+                        // Reload via LoadImage — the proven path
+                        texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+                        texture.filterMode = FilterMode.Bilinear;
+                        if (!LoadImageToTexture(texture, pngData))
+                        {
+                            TranslatorCore.LogWarning("[CustomFontLoader] LoadImage failed for Unity Font atlas");
+                            texture = null;
+                        }
+                    }
+                    else
+                    {
+                        TranslatorCore.LogWarning("[CustomFontLoader] EncodeToPNG failed for Unity Font atlas");
+                    }
+                }
+
+                if (texture == null)
+                {
+                    TranslatorCore.LogWarning("[CustomFontLoader] Failed to create Unity Font atlas texture");
+                    return null;
+                }
+
+                TranslatorCore.LogInfo($"[CustomFontLoader] Unity Font texture loaded: {texture.width}x{texture.height}");
+
+                // Create Font via reflection only
+                var fontType = typeof(Font);
+                object font = null;
+
+                // Try Font(string) constructor
+                try
+                {
+                    var ctor = fontType.GetConstructor(new Type[] { typeof(string) });
+                    if (ctor != null) font = ctor.Invoke(new object[] { fontName });
+                }
+                catch { }
+
+                // Try Font() parameterless
+                if (font == null)
+                {
+                    try
+                    {
+                        var ctor = fontType.GetConstructor(Type.EmptyTypes);
+                        if (ctor != null) font = ctor.Invoke(null);
+                    }
+                    catch { }
+                }
+
+                if (font == null)
+                {
+                    TranslatorCore.LogWarning("[CustomFontLoader] Cannot create Font instance on this runtime");
+                    return null;
+                }
+
+                // Set name
+                if (font is UnityEngine.Object uobj) uobj.name = fontName;
+
+                // Set material — try to copy from an existing game font for correct shader
+                Material mat = null;
+                try
+                {
+                    var gameFonts = TypeHelper.FindAllObjectsOfType(typeof(Font));
+                    foreach (var gf in gameFonts)
+                    {
+                        if (gf == null || gf == font) continue;
+                        var gfMat = GetPropertyOrField(gf, typeof(Font), "material") as Material;
+                        if (gfMat != null && gfMat.shader != null)
+                        {
+                            mat = new Material(gfMat.shader);
+                            mat.CopyPropertiesFromMaterial(gfMat);
+                            TranslatorCore.LogInfo($"[CustomFontLoader] Copied material from game font: {gf.name}, shader: {gfMat.shader.name}");
+                            break;
+                        }
+                    }
+                }
+                catch { }
+
+                if (mat == null)
+                {
+                    var shader = Shader.Find("UI/Default") ?? Shader.Find("Sprites/Default") ?? Shader.Find("GUI/Text Shader");
+                    if (shader != null) mat = new Material(shader);
+                }
+
+                if (mat != null)
+                {
+                    mat.mainTexture = texture;
+                    mat.name = fontName + " Material";
+                    SetPropertyOrField(font, fontType, "material", mat);
+                    TranslatorCore.LogInfo($"[CustomFontLoader] Font material set, shader: {mat.shader?.name}, tex: {texture.width}x{texture.height}");
+                }
+
+                // Build CharacterInfo array and assign to Font.
+                // On IL2CPP, Font.characterInfo property accepts a managed CharacterInfo[]
+                // and converts internally. The key is that CharacterInfo struct fields must be
+                // set BEFORE the struct is placed in the array (value type semantics).
+                float scale = renderSize / upm;
+                int ciCount = 0;
+                for (int i = 0; i < rasterizedGlyphs.Count; i++)
+                    if (i < outlines.Count && outlines[i] != null) ciCount++;
+
+                // Build managed CharacterInfo[] with all values set at construction
+                var ciArray = new CharacterInfo[ciCount];
+                int ciWriteIdx = 0;
+
+                for (int i = 0; i < rasterizedGlyphs.Count; i++)
+                {
+                    var rg = rasterizedGlyphs[i];
+                    var outline = i < outlines.Count ? outlines[i] : null;
+                    if (outline == null) continue;
+
+                    // Build the struct completely before writing to array
+                    CharacterInfo ci = default;
+
+                    // Use reflection to set each property on the boxed struct,
+                    // then unbox back before array assignment
+                    object boxed = (object)ci;
+
+                    SetPropertyOrField(boxed, typeof(CharacterInfo), "index", rg.Unicode);
+                    SetPropertyOrField(boxed, typeof(CharacterInfo), "advance", (int)(rg.AdvanceWidth * scale + 0.5f));
+
+                    if (rg.Bitmap != null && rg.Width > 0 && rg.Height > 0)
+                    {
+                        float uvLeft = (float)rg.AtlasX / atlasW;
+                        float uvRight = (float)(rg.AtlasX + rg.Width) / atlasW;
+                        float uvTop = 1f - (float)rg.AtlasY / atlasH;
+                        float uvBottom = 1f - (float)(rg.AtlasY + rg.Height) / atlasH;
+
+                        SetPropertyOrField(boxed, typeof(CharacterInfo), "uvBottomLeft", new Vector2(uvLeft, uvBottom));
+                        SetPropertyOrField(boxed, typeof(CharacterInfo), "uvBottomRight", new Vector2(uvRight, uvBottom));
+                        SetPropertyOrField(boxed, typeof(CharacterInfo), "uvTopLeft", new Vector2(uvLeft, uvTop));
+                        SetPropertyOrField(boxed, typeof(CharacterInfo), "uvTopRight", new Vector2(uvRight, uvTop));
+                        SetPropertyOrField(boxed, typeof(CharacterInfo), "minX", (int)(outline.XMin * scale - padding));
+                        SetPropertyOrField(boxed, typeof(CharacterInfo), "maxX", (int)(outline.XMax * scale + padding));
+                        SetPropertyOrField(boxed, typeof(CharacterInfo), "minY", (int)(outline.YMin * scale - padding));
+                        SetPropertyOrField(boxed, typeof(CharacterInfo), "maxY", (int)(outline.YMax * scale + padding));
+                        SetPropertyOrField(boxed, typeof(CharacterInfo), "glyphWidth", rg.Width);
+                        SetPropertyOrField(boxed, typeof(CharacterInfo), "glyphHeight", rg.Height);
+                    }
+
+                    // Unbox back to struct and assign to array
+                    ciArray[ciWriteIdx] = (CharacterInfo)boxed;
+                    ciWriteIdx++;
+                }
+
+                // Assign to Font — the property setter handles managed→IL2CPP conversion
+                var ciPropForType = fontType.GetProperty("characterInfo", BindingFlags.Public | BindingFlags.Instance);
+                bool ciSet = false;
+                if (ciPropForType != null)
+                {
+                    try
+                    {
+                        ciPropForType.SetValue(font, ciArray, null);
+                        ciSet = true;
+                    }
+                    catch (Exception ex)
+                    {
+                        TranslatorCore.LogWarning($"[CustomFontLoader] characterInfo property set failed: {ex.Message}");
+                    }
+                }
+                if (!ciSet)
+                    ciSet = SetPropertyOrField(font, fontType, "characterInfo", ciArray);
+
+                TranslatorCore.LogInfo($"[CustomFontLoader] characterInfo set={ciSet}, length={ciWriteIdx}");
+
+                // Verify: read back characterInfo and inspect first element
+                var readBack = GetPropertyOrField(font, fontType, "characterInfo");
+                if (readBack != null)
+                {
+                    var rbType = readBack.GetType();
+                    var countProp = rbType.GetProperty("Length") ?? rbType.GetProperty("Count");
+                    int rbCount = countProp != null ? (int)countProp.GetValue(readBack, null) : -1;
+                    TranslatorCore.LogInfo($"[CustomFontLoader] characterInfo readback: type={rbType.Name}, count={rbCount}");
+
+                    // Dump first element to verify values were written
+                    if (rbCount > 0)
+                    {
+                        try
+                        {
+                            var indexer = rbType.GetProperty("Item");
+                            if (indexer != null)
+                            {
+                                var firstCi = indexer.GetValue(readBack, new object[] { 0 });
+                                if (firstCi != null)
+                                {
+                                    var t = firstCi.GetType();
+                                    var props = t.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+                                    var vals = new List<string>();
+                                    foreach (var p in props)
+                                    {
+                                        try { vals.Add($"{p.Name}={p.GetValue(firstCi, null)}"); }
+                                        catch { vals.Add($"{p.Name}=err"); }
+                                    }
+                                    TranslatorCore.LogInfo($"[CustomFontLoader] CI[0]: {string.Join(", ", vals)}");
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            TranslatorCore.LogWarning($"[CustomFontLoader] CI dump failed: {ex.Message}");
+                        }
+                    }
+                }
+                else
+                {
+                    TranslatorCore.LogWarning("[CustomFontLoader] characterInfo readback is NULL");
+                }
+
+                // Also verify material
+                var readMat = GetPropertyOrField(font, fontType, "material");
+                TranslatorCore.LogInfo($"[CustomFontLoader] material readback: {(readMat != null ? "OK" : "NULL")}, " +
+                    $"texture={(readMat is Material m ? (m.mainTexture != null ? $"{m.mainTexture.width}x{m.mainTexture.height}" : "null") : "?")}");
+
+                TranslatorCore.LogInfo($"[CustomFontLoader] Created Unity Font '{fontName}': {ciWriteIdx} characters, {atlasW}x{atlasH} atlas");
+
+                _rasterizedUnityFonts[fontName] = font;
+                return font;
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogError($"[CustomFontLoader] Failed to create Unity Font from TTF: {ex}");
+                return null;
+            }
+        }
+
         /// <summary>
         /// Loads a custom font's texture and creates the TMP_FontAsset.
         /// Call this lazily when the font is actually needed.
@@ -484,7 +837,7 @@ namespace UnityGameTranslator.Core
                             colors[row * w + col] = new Color32(rgba[srcIdx], rgba[srcIdx + 1], rgba[srcIdx + 2], rgba[srcIdx + 3]);
                         }
                     }
-                    tmpTex.SetPixels32(colors);
+                    SetPixels32Safe(tmpTex, colors);
                     tmpTex.Apply();
 
                     // Save as real PNG via EncodeToPNG (reflection for IL2CPP compatibility)
@@ -1986,6 +2339,74 @@ namespace UnityGameTranslator.Core
         /// <summary>
         /// Encode a Texture2D to PNG via reflection (handles IL2CPP where EncodeToPNG may differ).
         /// </summary>
+        /// <summary>
+        /// SetPixels32 via reflection for IL2CPP compatibility.
+        /// On IL2CPP, Color32[] may need conversion to Il2CppStructArray.
+        /// </summary>
+        private static bool SetPixels32Safe(Texture2D texture, Color32[] colors)
+        {
+            if (texture == null || colors == null) return false;
+
+            // ALL access via reflection to avoid IL2CPP JIT crashes on stripped methods
+            var texType = texture.GetType();
+            foreach (var method in texType.GetMethods(BindingFlags.Public | BindingFlags.Instance))
+            {
+                if (method.Name != "SetPixels32") continue;
+                var parameters = method.GetParameters();
+                if (parameters.Length != 1) continue;
+
+                var paramType = parameters[0].ParameterType;
+                try
+                {
+                    // If it accepts Color32[], call directly
+                    if (paramType == typeof(Color32[]))
+                    {
+                        method.Invoke(texture, new object[] { colors });
+                        return true;
+                    }
+
+                    // IL2CPP: try to construct the expected array type from Color32[]
+                    var ctor = paramType.GetConstructor(new Type[] { typeof(int) });
+                    if (ctor != null)
+                    {
+                        var il2cppArray = ctor.Invoke(new object[] { colors.Length });
+                        var indexer = paramType.GetProperty("Item");
+                        if (indexer != null)
+                        {
+                            for (int i = 0; i < colors.Length; i++)
+                                indexer.SetValue(il2cppArray, colors[i], new object[] { i });
+                            method.Invoke(texture, new object[] { il2cppArray });
+                            return true;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    TranslatorCore.LogWarning($"[CustomFontLoader] SetPixels32 reflection failed: {ex.Message}");
+                }
+            }
+
+            // Last resort: set pixels one by one via SetPixel
+            try
+            {
+                int w = texture.width;
+                int h = texture.height;
+                for (int i = 0; i < colors.Length && i < w * h; i++)
+                {
+                    int x = i % w;
+                    int y = i / w;
+                    texture.SetPixel(x, y, colors[i]);
+                }
+                return true;
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogWarning($"[CustomFontLoader] SetPixel fallback failed: {ex.Message}");
+            }
+
+            return false;
+        }
+
         private static byte[] EncodeToPngSafe(Texture2D texture)
         {
             if (texture == null) return null;

@@ -706,9 +706,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
 
                 // Add custom fonts (user-provided fonts from fonts/ folder — JSON+PNG or TTF/OTF)
-                // Custom fonts work with TMP fonts (rasterized to SDF TMP_FontAsset on demand)
+                // Works for TMP (SDF TMP_FontAsset) and Unity fonts (bitmap Font with CharacterInfo)
                 string[] customFonts = null;
-                if (isTMPFont)
                 {
                     customFonts = FontManager.GetCustomFontNames();
                     if (customFonts != null && customFonts.Length > 0)

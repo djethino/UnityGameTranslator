@@ -1,10 +1,25 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using UnityEngine;
 
 namespace UnityGameTranslator.Core
 {
+    /// <summary>
+    /// Info about a generically detected text component type (NGUI, SuperTextMesh, etc.)
+    /// </summary>
+    public class GenericTextTypeInfo
+    {
+        public Type ComponentType { get; set; }
+        public PropertyInfo TextProp { get; set; }          // .text (string get/set)
+        public PropertyInfo FontProp { get; set; }          // .font or .trueTypeFont (Font)
+        public PropertyInfo FontSizeProp { get; set; }      // .fontSize (int or float)
+        public PropertyInfo ColorProp { get; set; }         // .color (Color)
+        public string FrameworkName { get; set; }           // "NGUI", "Custom", etc.
+        public string FontTypeName { get; set; }            // For FontManager registration
+    }
+
     /// <summary>
     /// Shared Harmony patch methods and application logic.
     /// Works with any mod loader that provides a Harmony instance.
@@ -18,6 +33,14 @@ namespace UnityGameTranslator.Core
         // Cache for original font sizes (instance ID -> original fontSize)
         // Used to apply scale without cumulative errors
         private static readonly Dictionary<int, float> _originalFontSizes = new Dictionary<int, float>();
+
+        // Generically detected text component types (NGUI UILabel, SuperTextMesh, etc.)
+        private static readonly List<GenericTextTypeInfo> _genericTextTypes = new List<GenericTextTypeInfo>();
+
+        /// <summary>
+        /// Get the list of generically detected text types (for scanner integration).
+        /// </summary>
+        public static IReadOnlyList<GenericTextTypeInfo> GenericTextTypes => _genericTextTypes;
 
         // Types to exclude (known non-text types)
         private static readonly HashSet<string> ExcludedTypeNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -135,6 +158,14 @@ namespace UnityGameTranslator.Core
                     patchCount += PatchLocalizationBridge(bridgeType, patcher);
                 }
 
+                // Generic text component detection (NGUI UILabel, SuperTextMesh, etc.)
+                // Scans all loaded types for MonoBehaviours with a 'text' property
+                var genericTextTypes = FindGenericTextTypes();
+                foreach (var typeInfo in genericTextTypes)
+                {
+                    patchCount += PatchGenericTextType(typeInfo, patcher);
+                }
+
                 // Generic localization system detection (FALLBACK - disabled by default)
                 // Finds custom localization types like LocalisedString, LocalizedText, I18nString, etc.
                 // Only patches ToString/op_Implicit - no font context available
@@ -180,6 +211,380 @@ namespace UnityGameTranslator.Core
             }
             return null;
         }
+
+        #region Generic Text Type Detection
+
+        // Known framework class names (explicit detection — Tier 1)
+        private static readonly Dictionary<string, string> KnownTextTypes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            { "UILabel", "NGUI" },              // NGUI (very popular in Asian games)
+            { "SuperTextMesh", "SuperTextMesh" }, // Super Text Mesh asset
+            { "dfLabel", "DaikonForge" },        // Daikon Forge GUI (legacy)
+            { "dfRichTextLabel", "DaikonForge" },
+        };
+
+        // Heuristic class name patterns for generic detection
+        private static readonly string[] TextClassHints = { "Label", "TextField", "Caption", "TextUI", "UIText", "GameText" };
+
+        // Types to skip in generic detection (already handled, or known non-text)
+        private static readonly HashSet<string> GenericExcludedTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "TMP_Text", "TextMeshPro", "TextMeshProUGUI", "Text", "TextMesh",
+            "InputField", "TMP_InputField", "tk2dTextMesh",
+            "TMP_Dropdown", "Dropdown", "Toggle", "Button", "Slider", "Scrollbar",
+            "ScrollRect", "LayoutGroup", "ContentSizeFitter", "CanvasScaler",
+            "DynamicScrollbarHider", // Our own component
+        };
+
+        // Common font property names to check (in priority order)
+        private static readonly string[] FontPropertyNames = { "font", "trueTypeFont", "fontAsset" };
+        private static readonly string[] FontSizePropertyNames = { "fontSize", "size", "fontsize" };
+
+        /// <summary>
+        /// Scan all loaded assemblies for MonoBehaviour types with a 'text' property.
+        /// Returns info about each detected type including font/size property access.
+        /// </summary>
+        private static List<GenericTextTypeInfo> FindGenericTextTypes()
+        {
+            var results = new List<GenericTextTypeInfo>();
+            var pubInst = BindingFlags.Public | BindingFlags.Instance;
+
+            // Collect types we already handle (to avoid double-patching)
+            var handledTypes = new HashSet<Type>();
+            if (TypeHelper.TMP_TextType != null) handledTypes.Add(TypeHelper.TMP_TextType);
+            if (TypeHelper.UI_TextType != null) handledTypes.Add(TypeHelper.UI_TextType);
+            if (TypeHelper.TextMeshType != null) handledTypes.Add(TypeHelper.TextMeshType);
+
+            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                try
+                {
+                    string asmName = asm.GetName().Name;
+                    // Skip Unity/System/Harmony/modloader assemblies
+                    if (asmName.StartsWith("Unity", StringComparison.OrdinalIgnoreCase) && !asmName.Contains("NGUI"))
+                        continue;
+                    if (asmName.StartsWith("System") || asmName.StartsWith("mscorlib") ||
+                        asmName.StartsWith("Mono.") || asmName.StartsWith("0Harmony") ||
+                        asmName.StartsWith("HarmonyLib") || asmName.StartsWith("MelonLoader") ||
+                        asmName.StartsWith("BepInEx") || asmName.StartsWith("UniverseLib") ||
+                        asmName.StartsWith("UnityGameTranslator") || asmName.StartsWith("Newtonsoft") ||
+                        asmName.StartsWith("Il2CppInterop") || asmName.StartsWith("Il2CppSystem"))
+                        continue;
+
+                    foreach (var type in asm.GetTypes())
+                    {
+                        try
+                        {
+                            // Must be a class, not abstract, not generic
+                            if (!type.IsClass || type.IsAbstract || type.IsGenericType) continue;
+
+                            // Skip already handled types
+                            string typeName = type.Name;
+                            // Strip Il2Cpp prefix for name matching
+                            string cleanName = typeName.StartsWith("Il2Cpp") ? typeName.Substring(6) : typeName;
+                            if (GenericExcludedTypes.Contains(cleanName)) continue;
+                            if (handledTypes.Contains(type)) continue;
+
+                            // Check if it inherits from MonoBehaviour (Component chain)
+                            if (!typeof(Component).IsAssignableFrom(type) && !InheritsFromComponent(type))
+                                continue;
+
+                            // Must have a 'text' property with string get + set
+                            var textProp = type.GetProperty("text", pubInst);
+                            if (textProp == null || !textProp.CanRead || !textProp.CanWrite) continue;
+                            if (textProp.PropertyType != typeof(string)) continue;
+                            if (textProp.SetMethod == null) continue;
+
+                            // Check: known framework OR heuristic name match
+                            string framework = null;
+                            if (KnownTextTypes.TryGetValue(cleanName, out framework))
+                            {
+                                // Explicit match — always include
+                            }
+                            else
+                            {
+                                // Heuristic: class name must suggest it's a text component
+                                bool nameMatch = false;
+                                foreach (var hint in TextClassHints)
+                                {
+                                    if (cleanName.IndexOf(hint, StringComparison.OrdinalIgnoreCase) >= 0)
+                                    {
+                                        nameMatch = true;
+                                        break;
+                                    }
+                                }
+                                if (!nameMatch) continue;
+                                framework = "Custom";
+                            }
+
+                            // Detect font properties
+                            PropertyInfo fontProp = null;
+                            foreach (var fpName in FontPropertyNames)
+                            {
+                                var fp = type.GetProperty(fpName, pubInst);
+                                if (fp != null && fp.CanRead)
+                                {
+                                    // Accept Font, Object, or any type with a .name property
+                                    fontProp = fp;
+                                    break;
+                                }
+                            }
+
+                            // Detect fontSize property
+                            PropertyInfo fontSizeProp = null;
+                            foreach (var fsName in FontSizePropertyNames)
+                            {
+                                var fs = type.GetProperty(fsName, pubInst);
+                                if (fs != null && fs.CanRead && fs.CanWrite &&
+                                    (fs.PropertyType == typeof(float) || fs.PropertyType == typeof(int) || fs.PropertyType == typeof(System.Single)))
+                                {
+                                    fontSizeProp = fs;
+                                    break;
+                                }
+                            }
+
+                            // Detect color property
+                            PropertyInfo colorProp = type.GetProperty("color", pubInst);
+
+                            var info = new GenericTextTypeInfo
+                            {
+                                ComponentType = type,
+                                TextProp = textProp,
+                                FontProp = fontProp,
+                                FontSizeProp = fontSizeProp,
+                                ColorProp = colorProp,
+                                FrameworkName = framework,
+                                FontTypeName = framework == "NGUI" ? "NGUI" : $"Custom ({cleanName})"
+                            };
+
+                            results.Add(info);
+                            TranslatorCore.LogInfo($"[Patches] Detected generic text type: {type.FullName} ({framework})" +
+                                $" font={fontProp?.Name ?? "none"}, fontSize={fontSizeProp?.Name ?? "none"}");
+                        }
+                        catch { }
+                    }
+                }
+                catch { }
+            }
+
+            _genericTextTypes.AddRange(results);
+            return results;
+        }
+
+        /// <summary>
+        /// Check if a type inherits from Component (handles IL2CPP where IsAssignableFrom may fail).
+        /// </summary>
+        private static bool InheritsFromComponent(Type type)
+        {
+            var current = type.BaseType;
+            while (current != null)
+            {
+                if (current == typeof(Component) || current.Name == "Component" || current.Name == "MonoBehaviour")
+                    return true;
+                current = current.BaseType;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Patch a generically detected text type's set_text with our prefix.
+        /// </summary>
+        private static int PatchGenericTextType(GenericTextTypeInfo typeInfo, Action<MethodInfo, MethodInfo, MethodInfo> patcher)
+        {
+            int patched = 0;
+            try
+            {
+                var setMethod = typeInfo.TextProp.SetMethod;
+                if (setMethod != null)
+                {
+                    var prefix = typeof(TranslatorPatches).GetMethod(nameof(GenericText_SetText_Prefix),
+                        BindingFlags.Static | BindingFlags.Public);
+                    patcher(setMethod, prefix, null);
+                    patched++;
+                    TranslatorCore.LogInfo($"[Patches] Patched {typeInfo.FrameworkName}: {typeInfo.ComponentType.Name}.set_text");
+                }
+
+                // Also patch get_text for scanner (catches pre-loaded text)
+                var getMethod = typeInfo.TextProp.GetMethod;
+                if (getMethod != null)
+                {
+                    var postfix = typeof(TranslatorPatches).GetMethod(nameof(GenericText_GetText_Postfix),
+                        BindingFlags.Static | BindingFlags.Public);
+                    patcher(getMethod, null, postfix);
+                    patched++;
+                }
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogWarning($"[Patches] Failed to patch {typeInfo.ComponentType.Name}: {ex.Message}");
+            }
+            return patched;
+        }
+
+        /// <summary>
+        /// Prefix for generically detected text components (NGUI UILabel, etc.)
+        /// </summary>
+        public static void GenericText_SetText_Prefix(object __instance, ref string value)
+        {
+            if (string.IsNullOrEmpty(value)) return;
+            try
+            {
+                var component = __instance as Component;
+                if (component == null) return;
+                if (TranslatorCore.ShouldSkipTranslation(component)) return;
+
+                // Find the matching type info for font handling
+                var typeInfo = FindTypeInfoForInstance(__instance);
+
+                string fontName = null;
+                string settingsFontName = null;
+
+                // Get font name if available
+                if (typeInfo?.FontProp != null)
+                {
+                    try
+                    {
+                        var fontObj = typeInfo.FontProp.GetValue(__instance, null);
+                        if (fontObj is UnityEngine.Object uobj && !string.IsNullOrEmpty(uobj.name))
+                        {
+                            fontName = uobj.name;
+                            int compId = component.GetInstanceID();
+                            settingsFontName = FontManager.GetOriginalFontName(compId) ?? fontName;
+
+                            FontManager.RegisterFontByName(settingsFontName, typeInfo.FontTypeName);
+                            FontManager.IncrementUsageCount(settingsFontName);
+
+                            if (!FontManager.IsTranslationEnabled(settingsFontName))
+                                return;
+                        }
+                    }
+                    catch { }
+                }
+
+                // Translate
+                bool isOwnUI = TranslatorCore.IsOwnUITranslatable(component);
+                value = TranslatorCore.TranslateTextWithTracking(value, component, isOwnUI);
+
+                // Apply font scale
+                if (typeInfo?.FontSizeProp != null && !string.IsNullOrEmpty(settingsFontName ?? fontName))
+                {
+                    ApplyGenericFontScale(__instance, typeInfo, settingsFontName ?? fontName);
+                }
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Postfix for generically detected text getters (catches pre-loaded text).
+        /// </summary>
+        public static void GenericText_GetText_Postfix(object __instance, ref string __result)
+        {
+            if (string.IsNullOrEmpty(__result)) return;
+            try
+            {
+                var component = __instance as Component;
+                if (component == null) return;
+                if (TranslatorCore.ShouldSkipTranslation(component)) return;
+
+                var typeInfo = FindTypeInfoForInstance(__instance);
+
+                // Check font-based enable/disable
+                if (typeInfo?.FontProp != null)
+                {
+                    try
+                    {
+                        var fontObj = typeInfo.FontProp.GetValue(__instance, null);
+                        if (fontObj is UnityEngine.Object uobj && !string.IsNullOrEmpty(uobj.name))
+                        {
+                            int compId = component.GetInstanceID();
+                            string settingsFontName = FontManager.GetOriginalFontName(compId) ?? uobj.name;
+                            FontManager.RegisterFontByName(settingsFontName, typeInfo.FontTypeName);
+                            if (!FontManager.IsTranslationEnabled(settingsFontName))
+                                return;
+                        }
+                    }
+                    catch { }
+                }
+
+                bool isOwnUI = TranslatorCore.IsOwnUITranslatable(component);
+                __result = TranslatorCore.TranslateTextWithTracking(__result, component, isOwnUI);
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Find the GenericTextTypeInfo matching an instance's type.
+        /// </summary>
+        private static GenericTextTypeInfo FindTypeInfoForInstance(object instance)
+        {
+            if (instance == null) return null;
+            var type = instance.GetType();
+            foreach (var info in _genericTextTypes)
+            {
+                if (info.ComponentType.IsAssignableFrom(type) || info.ComponentType == type)
+                    return info;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Apply font scale for a generic text component using its detected fontSize property.
+        /// </summary>
+        private static void ApplyGenericFontScale(object instance, GenericTextTypeInfo typeInfo, string fontName)
+        {
+            if (typeInfo.FontSizeProp == null || string.IsNullOrEmpty(fontName)) return;
+
+            float scale = FontManager.GetFontScale(fontName);
+            int instanceId = TypeHelper.GetInstanceID(instance);
+            if (instanceId == -1) return;
+
+            float originalSize;
+            if (!_originalFontSizes.TryGetValue(instanceId, out originalSize))
+            {
+                try
+                {
+                    var val = typeInfo.FontSizeProp.GetValue(instance, null);
+                    if (val is float f) originalSize = f;
+                    else if (val is int i) originalSize = i;
+                    else return;
+                }
+                catch { return; }
+                if (originalSize <= 0) return;
+                _originalFontSizes[instanceId] = originalSize;
+            }
+
+            if (Math.Abs(scale - 1.0f) < 0.001f)
+            {
+                // Restore original
+                try
+                {
+                    float currentSize = Convert.ToSingle(typeInfo.FontSizeProp.GetValue(instance, null));
+                    if (Math.Abs(currentSize - originalSize) > 0.1f)
+                        SetGenericFontSize(typeInfo, instance, originalSize);
+                }
+                catch { }
+                return;
+            }
+
+            float scaledSize = originalSize * scale;
+            try
+            {
+                float currentSize = Convert.ToSingle(typeInfo.FontSizeProp.GetValue(instance, null));
+                if (Math.Abs(currentSize - scaledSize) > 0.1f)
+                    SetGenericFontSize(typeInfo, instance, scaledSize);
+            }
+            catch { }
+        }
+
+        private static void SetGenericFontSize(GenericTextTypeInfo typeInfo, object instance, float size)
+        {
+            if (typeInfo.FontSizeProp.PropertyType == typeof(int))
+                typeInfo.FontSizeProp.SetValue(instance, (int)Math.Round(size), null);
+            else
+                typeInfo.FontSizeProp.SetValue(instance, size, null);
+        }
+
+        #endregion
 
         /// <summary>
         /// Finds alternate TMP implementations in different namespaces (TMProOld, etc.).

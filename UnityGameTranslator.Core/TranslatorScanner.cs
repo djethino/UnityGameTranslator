@@ -99,6 +99,8 @@ namespace UnityGameTranslator.Core
             lastComponentCacheTime = 0f;
             currentBatchIndexTMP = 0;
             currentBatchIndexUI = 0;
+            il2cppMonoBatchIndexTMP = 0;
+            il2cppMonoBatchIndexUI = 0;
             scanCycleComplete = true;
             cacheRefreshPending = false;
             processedTextHashes.Clear();
@@ -106,6 +108,11 @@ namespace UnityGameTranslator.Core
             componentOriginals.Clear();  // Clear original text tracking (components are invalid after scene change)
             scanLoggedTMP = false;
             scanLoggedUI = false;
+            il2cppMonoLoggedTMP = false;
+            il2cppMonoLoggedUI = false;
+            _genericTextCaches.Clear();
+            _genericTextBatchIndices.Clear();
+            _genericTextLoggedOnce = false;
             inputFieldDebugLogCount = 0;
 
             // Clear pending updates (components from old scene are invalid)
@@ -270,6 +277,9 @@ namespace UnityGameTranslator.Core
                 // Refresh alternate TMP components (TMProOld, etc.) - scan dynamically since they're not cached
                 refreshed += RefreshAlternateTMPComponents(globalRestore, ref restored);
 
+                // Refresh generic text types (NGUI UILabel, SuperTextMesh, etc.)
+                refreshed += RefreshGenericTextComponents(globalRestore, ref restored);
+
                 if (restored > 0)
                     TranslatorCore.LogInfo($"[Scanner] Restored {restored} original texts, refreshed {refreshed} components");
                 else
@@ -356,6 +366,80 @@ namespace UnityGameTranslator.Core
                 TranslatorCore.LogWarning($"[Scanner] RefreshAlternateTMP error: {ex.Message}");
             }
 
+            return refreshed;
+        }
+
+        /// <summary>
+        /// Refresh generically detected text components (NGUI UILabel, etc.)
+        /// </summary>
+        private static int RefreshGenericTextComponents(bool globalRestore, ref int restored)
+        {
+            int refreshed = 0;
+            foreach (var typeInfo in TranslatorPatches.GenericTextTypes)
+            {
+                try
+                {
+                    var allComponents = TypeHelper.FindAllObjectsOfType(typeInfo.ComponentType);
+                    if (allComponents == null) continue;
+
+                    foreach (var component in allComponents)
+                    {
+                        if (component == null) continue;
+                        try
+                        {
+                            var unityComponent = component as Component;
+                            if (unityComponent == null) continue;
+                            if (TranslatorCore.ShouldSkipTranslation(unityComponent)) continue;
+
+                            int instanceId = unityComponent.GetInstanceID();
+
+                            // Check per-font disable
+                            bool shouldRestore = globalRestore;
+                            if (!shouldRestore && typeInfo.FontProp != null)
+                            {
+                                try
+                                {
+                                    var fontObj = typeInfo.FontProp.GetValue(component, null);
+                                    if (fontObj is UnityEngine.Object uobj && !string.IsNullOrEmpty(uobj.name))
+                                    {
+                                        string origFont = FontManager.GetOriginalFontName(instanceId);
+                                        string checkFont = origFont ?? uobj.name;
+                                        if (!FontManager.IsTranslationEnabled(checkFont))
+                                            shouldRestore = true;
+                                    }
+                                }
+                                catch { }
+                            }
+
+                            if (shouldRestore)
+                            {
+                                string original = GetOriginalText(instanceId);
+                                if (original != null)
+                                {
+                                    typeInfo.TextProp.SetValue(component, original, null);
+                                    ClearOriginalText(instanceId);
+                                    processedTextHashes.Remove(instanceId);
+                                    restored++;
+                                    continue;
+                                }
+                            }
+
+                            // Refresh by re-setting text (triggers Harmony patch)
+                            string currentText = typeInfo.TextProp.GetValue(component, null) as string;
+                            if (!string.IsNullOrEmpty(currentText))
+                            {
+                                typeInfo.TextProp.SetValue(component, currentText, null);
+                                refreshed++;
+                            }
+                        }
+                        catch { }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    TranslatorCore.LogWarning($"[Scanner] RefreshGenericText error ({typeInfo.FrameworkName}): {ex.Message}");
+                }
+            }
             return refreshed;
         }
 
@@ -758,6 +842,9 @@ namespace UnityGameTranslator.Core
                 // IL2CPP caches (need casting to get font info)
                 HighlightIL2CPPCache(cachedTMPComponents, tryCastTMPMethod, fontName);
                 HighlightIL2CPPCache(cachedUIComponents, tryCastTextMethod, fontName);
+
+                // Generic text types (NGUI, SuperTextMesh, etc.)
+                HighlightGenericTextTypes(fontName);
             }
             catch (Exception ex)
             {
@@ -779,6 +866,7 @@ namespace UnityGameTranslator.Core
                 RestoreCache(cachedUIMono);
                 RestoreIL2CPPCache(cachedTMPComponents, tryCastTMPMethod);
                 RestoreIL2CPPCache(cachedUIComponents, tryCastTextMethod);
+                RestoreGenericTextTypes();
             }
             catch { }
 
@@ -843,6 +931,42 @@ namespace UnityGameTranslator.Core
                     int id = TypeHelper.GetInstanceID(component);
                     if (id == -1) continue;
                     RestoreComponentColor(component, id);
+                }
+                catch { }
+            }
+        }
+
+        private static void HighlightGenericTextTypes(string targetFontName)
+        {
+            foreach (var typeInfo in TranslatorPatches.GenericTextTypes)
+            {
+                try
+                {
+                    var allComponents = TypeHelper.FindAllObjectsOfType(typeInfo.ComponentType);
+                    if (allComponents == null) continue;
+                    foreach (var obj in allComponents)
+                    {
+                        if (obj == null) continue;
+                        try { HighlightComponent(obj, obj.GetInstanceID(), targetFontName); } catch { }
+                    }
+                }
+                catch { }
+            }
+        }
+
+        private static void RestoreGenericTextTypes()
+        {
+            foreach (var typeInfo in TranslatorPatches.GenericTextTypes)
+            {
+                try
+                {
+                    var allComponents = TypeHelper.FindAllObjectsOfType(typeInfo.ComponentType);
+                    if (allComponents == null) continue;
+                    foreach (var obj in allComponents)
+                    {
+                        if (obj == null) continue;
+                        try { RestoreComponentColor(obj, obj.GetInstanceID()); } catch { }
+                    }
                 }
                 catch { }
             }
@@ -1124,7 +1248,10 @@ namespace UnityGameTranslator.Core
                     }
                 }
 
-                scanCycleComplete = tmpDone && uiDone;
+                // Generic text types (NGUI UILabel, etc.)
+                bool genericDone = ScanGenericTextTypesBatch();
+
+                scanCycleComplete = tmpDone && uiDone && genericDone;
             }
             catch { }
         }
@@ -1156,6 +1283,12 @@ namespace UnityGameTranslator.Core
         /// <summary>
         /// Scan and translate text components (IL2CPP version) - batched for performance.
         /// </summary>
+        // Separate batch indices for Mono fallback caches on IL2CPP
+        private static int il2cppMonoBatchIndexTMP = 0;
+        private static int il2cppMonoBatchIndexUI = 0;
+        private static bool il2cppMonoLoggedTMP = false;
+        private static bool il2cppMonoLoggedUI = false;
+
         public static void ScanIL2CPP()
         {
             // Apply any pending translations from AI (main thread) - always do this
@@ -1178,22 +1311,23 @@ namespace UnityGameTranslator.Core
             {
                 if (scanCycleComplete)
                 {
-                    // Cycle is complete, safe to refresh now
                     RefreshIL2CPPCache();
+                    // Also refresh Mono caches as fallback (TypeHelper.FindAllObjectsOfType
+                    // often finds more components than the IL2CPP-native scan)
+                    RefreshMonoCache();
                     lastComponentCacheTime = currentTime;
                     cacheRefreshPending = false;
                 }
                 else
                 {
-                    // Cycle in progress, defer refresh until complete
                     cacheRefreshPending = true;
                 }
             }
 
-            // Handle deferred refresh when cycle completes
             if (cacheRefreshPending && scanCycleComplete)
             {
                 RefreshIL2CPPCache();
+                RefreshMonoCache();
                 lastComponentCacheTime = currentTime;
                 cacheRefreshPending = false;
             }
@@ -1203,7 +1337,9 @@ namespace UnityGameTranslator.Core
                 bool tmpDone = true;
                 bool uiDone = true;
 
-                // Process TMP batch
+                // === IL2CPP native caches ===
+
+                // Process TMP batch (IL2CPP)
                 if (cachedTMPComponents != null && cachedTMPComponents.Length > 0)
                 {
                     if (!scanLoggedTMP)
@@ -1212,7 +1348,6 @@ namespace UnityGameTranslator.Core
                         scanLoggedTMP = true;
                     }
 
-                    // Ensure index is valid after potential cache changes
                     if (currentBatchIndexTMP >= cachedTMPComponents.Length)
                         currentBatchIndexTMP = 0;
 
@@ -1237,7 +1372,7 @@ namespace UnityGameTranslator.Core
                     }
                 }
 
-                // Process UI batch
+                // Process UI batch (IL2CPP)
                 if (cachedUIComponents != null && cachedUIComponents.Length > 0)
                 {
                     if (!scanLoggedUI)
@@ -1246,7 +1381,6 @@ namespace UnityGameTranslator.Core
                         scanLoggedUI = true;
                     }
 
-                    // Ensure index is valid after potential cache changes
                     if (currentBatchIndexUI >= cachedUIComponents.Length)
                         currentBatchIndexUI = 0;
 
@@ -1271,11 +1405,400 @@ namespace UnityGameTranslator.Core
                     }
                 }
 
-                // Cycle is complete when both TMP and UI have wrapped around
-                scanCycleComplete = tmpDone && uiDone;
+                // === Mono fallback caches (catches components missed by IL2CPP-native scan) ===
+
+                bool monoTmpDone = true;
+                bool monoUiDone = true;
+
+                // Process TMP batch (Mono fallback)
+                if (cachedTMPMono != null && cachedTMPMono.Length > 0)
+                {
+                    if (!il2cppMonoLoggedTMP)
+                    {
+                        TranslatorCore.LogInfo($"Scan: Found {cachedTMPMono.Length} TMP_Text components (Mono fallback)");
+                        il2cppMonoLoggedTMP = true;
+                    }
+
+                    if (il2cppMonoBatchIndexTMP >= cachedTMPMono.Length)
+                        il2cppMonoBatchIndexTMP = 0;
+
+                    int endIndex = Math.Min(il2cppMonoBatchIndexTMP + BATCH_SIZE, cachedTMPMono.Length);
+                    for (int i = il2cppMonoBatchIndexTMP; i < endIndex; i++)
+                    {
+                        var obj = cachedTMPMono[i];
+                        if (obj == null) continue;
+                        ProcessComponentReflection(obj, "TMP");
+                    }
+
+                    if (endIndex >= cachedTMPMono.Length)
+                        il2cppMonoBatchIndexTMP = 0;
+                    else
+                    {
+                        il2cppMonoBatchIndexTMP = endIndex;
+                        monoTmpDone = false;
+                    }
+                }
+
+                // Process UI batch (Mono fallback)
+                if (cachedUIMono != null && cachedUIMono.Length > 0)
+                {
+                    if (!il2cppMonoLoggedUI)
+                    {
+                        TranslatorCore.LogInfo($"Scan: Found {cachedUIMono.Length} UI.Text components (Mono fallback)");
+                        il2cppMonoLoggedUI = true;
+                    }
+
+                    if (il2cppMonoBatchIndexUI >= cachedUIMono.Length)
+                        il2cppMonoBatchIndexUI = 0;
+
+                    int endIndex = Math.Min(il2cppMonoBatchIndexUI + BATCH_SIZE, cachedUIMono.Length);
+                    for (int i = il2cppMonoBatchIndexUI; i < endIndex; i++)
+                    {
+                        var obj = cachedUIMono[i];
+                        if (obj == null) continue;
+                        ProcessComponentReflection(obj, "Unity");
+                    }
+
+                    if (endIndex >= cachedUIMono.Length)
+                        il2cppMonoBatchIndexUI = 0;
+                    else
+                    {
+                        il2cppMonoBatchIndexUI = endIndex;
+                        monoUiDone = false;
+                    }
+                }
+
+                // === Generic text types (NGUI UILabel, etc.) ===
+                bool genericDone = ScanGenericTextTypesBatch();
+
+                scanCycleComplete = tmpDone && uiDone && monoTmpDone && monoUiDone && genericDone;
             }
             catch { }
         }
+
+        #region Generic Text Type Batch Scanning
+
+        // Cached components per generic text type + batch indices
+        private static readonly Dictionary<Type, UnityEngine.Object[]> _genericTextCaches = new Dictionary<Type, UnityEngine.Object[]>();
+        private static readonly Dictionary<Type, int> _genericTextBatchIndices = new Dictionary<Type, int>();
+        private static bool _genericTextLoggedOnce = false;
+
+        /// <summary>
+        /// Batch-scan all generically detected text types (NGUI UILabel, etc.)
+        /// Uses per-type caches and batch indices.
+        /// Returns true when all types have completed a full cycle.
+        /// </summary>
+        private static bool ScanGenericTextTypesBatch()
+        {
+            var genericTypes = TranslatorPatches.GenericTextTypes;
+            if (genericTypes.Count == 0) return true;
+
+            bool allDone = true;
+
+            foreach (var typeInfo in genericTypes)
+            {
+                try
+                {
+                    // Get or refresh cache for this type
+                    if (!_genericTextCaches.TryGetValue(typeInfo.ComponentType, out var cache) || cache == null)
+                    {
+                        cache = FindGenericTextComponents(typeInfo);
+                        _genericTextCaches[typeInfo.ComponentType] = cache;
+
+                        if (!_genericTextLoggedOnce && cache != null && cache.Length > 0)
+                        {
+                            TranslatorCore.LogInfo($"Scan: Found {cache.Length} {typeInfo.FrameworkName} ({typeInfo.ComponentType.Name}) components");
+                            _genericTextLoggedOnce = true;
+                        }
+                    }
+
+                    if (cache == null || cache.Length == 0) continue;
+
+                    // Get batch index
+                    if (!_genericTextBatchIndices.TryGetValue(typeInfo.ComponentType, out int batchIndex))
+                        batchIndex = 0;
+                    if (batchIndex >= cache.Length)
+                        batchIndex = 0;
+
+                    int endIndex = Math.Min(batchIndex + BATCH_SIZE, cache.Length);
+                    for (int i = batchIndex; i < endIndex; i++)
+                    {
+                        var obj = cache[i];
+                        if (obj == null) continue;
+
+                        try
+                        {
+                            var comp = obj as Component;
+                            if (comp == null) continue;
+                            if (TranslatorCore.ShouldSkipTranslation(comp)) continue;
+
+                            int instanceId = comp.GetInstanceID();
+                            if (inputFieldTextIds.Contains(instanceId)) continue;
+
+                            // Get text via the type's own property (not TypeHelper which doesn't know this type)
+                            string currentText = typeInfo.TextProp.GetValue(obj, null) as string;
+                            if (string.IsNullOrEmpty(currentText) || currentText.Length < 2) continue;
+
+                            int textHash = currentText.GetHashCode();
+                            if (processedTextHashes.TryGetValue(instanceId, out int lastHash) && lastHash == textHash)
+                                continue;
+
+                            if (TranslatorCore.HasSeenText(instanceId, currentText, out _))
+                            {
+                                processedTextHashes[instanceId] = textHash;
+                                continue;
+                            }
+
+                            bool isOwnUI = TranslatorCore.IsOwnUITranslatable(comp);
+                            string translated = TranslatorCore.TranslateTextWithTracking(currentText, comp, isOwnUI);
+                            if (translated != currentText)
+                            {
+                                typeInfo.TextProp.SetValue(obj, translated, null);
+                                TranslatorCore.UpdateSeenText(instanceId, translated);
+                                processedTextHashes[instanceId] = translated.GetHashCode();
+                            }
+                            else
+                            {
+                                TranslatorCore.UpdateSeenText(instanceId, currentText);
+                                processedTextHashes[instanceId] = textHash;
+                            }
+                        }
+                        catch { }
+                    }
+
+                    if (endIndex >= cache.Length)
+                    {
+                        _genericTextBatchIndices[typeInfo.ComponentType] = 0;
+                        // Invalidate cache so it refreshes next cycle
+                        _genericTextCaches[typeInfo.ComponentType] = null;
+                    }
+                    else
+                    {
+                        _genericTextBatchIndices[typeInfo.ComponentType] = endIndex;
+                        allDone = false;
+                    }
+                }
+                catch { }
+            }
+
+            return allDone;
+        }
+
+        /// <summary>
+        /// Find all instances of a generic text component type.
+        /// Tries multiple approaches: static list field, IL2CPP scan, TypeHelper fallback.
+        /// </summary>
+        private static bool _genericScanLoggedOnce = false;
+
+        private static UnityEngine.Object[] FindGenericTextComponents(GenericTextTypeInfo typeInfo)
+        {
+            var type = typeInfo.ComponentType;
+
+            // Approach 1: Check for static list fields (NGUI UILabel.mList, etc.)
+            try
+            {
+                var staticFields = type.GetFields(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+
+                // Known static list field names per framework
+                string[] listFieldNames = { "mList", "sList", "s_Instances", "instances", "allInstances", "s_list" };
+
+                foreach (var field in staticFields)
+                {
+                    var fieldType = field.FieldType;
+                    if (fieldType == null) continue;
+
+                    // Match by field name (known patterns) OR by type name (contains list/array)
+                    bool nameMatch = false;
+                    foreach (var knownName in listFieldNames)
+                    {
+                        if (string.Equals(field.Name, knownName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            nameMatch = true;
+                            break;
+                        }
+                    }
+
+                    if (!nameMatch)
+                    {
+                        // Also check type name for list-like patterns
+                        string ftName = fieldType.Name ?? "";
+                        if (!ftName.Contains("List") && !ftName.Contains("Array") &&
+                            !ftName.Contains("Collection") && !ftName.Contains("HashSet"))
+                            continue;
+                    }
+
+                    object listObj = null;
+                    try { listObj = field.GetValue(null); }
+                    catch (Exception ex)
+                    {
+                        if (!_genericScanLoggedOnce)
+                            TranslatorCore.LogWarning($"[Scanner] {typeInfo.FrameworkName}: field '{field.Name}' GetValue failed: {ex.Message}");
+                        continue;
+                    }
+
+                    if (listObj == null) continue;
+
+                    if (!_genericScanLoggedOnce)
+                        TranslatorCore.LogInfo($"[Scanner] {typeInfo.FrameworkName}: trying field '{field.Name}' (type: {listObj.GetType().Name})");
+
+                    var items = ExtractObjectsFromList(listObj, type);
+                    if (items != null && items.Length > 0)
+                    {
+                        TranslatorCore.LogInfo($"[Scanner] Found {items.Length} {typeInfo.FrameworkName} via static field '{field.Name}'");
+                        _genericScanLoggedOnce = true;
+                        return items;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                if (!_genericScanLoggedOnce)
+                    TranslatorCore.LogWarning($"[Scanner] {typeInfo.FrameworkName} static field scan error: {ex.Message}");
+            }
+
+            // Approach 2: IL2CPP native scan via FindObjectsOfTypeAll
+            try
+            {
+                var il2cppType = GetIL2CPPTypeFor(type);
+                var result = FindAllComponentsIL2CPPCached(il2cppType);
+                if (result != null && result.Length > 0)
+                {
+                    if (!_genericScanLoggedOnce)
+                        TranslatorCore.LogInfo($"[Scanner] {typeInfo.FrameworkName}: found {result.Length} via IL2CPP scan");
+                    _genericScanLoggedOnce = true;
+                    return result;
+                }
+            }
+            catch { }
+
+            // Approach 3: TypeHelper fallback
+            try
+            {
+                var result = TypeHelper.FindAllObjectsOfType(type);
+                if (result != null && result.Length > 0)
+                {
+                    if (!_genericScanLoggedOnce)
+                        TranslatorCore.LogInfo($"[Scanner] {typeInfo.FrameworkName}: found {result.Length} via TypeHelper");
+                    _genericScanLoggedOnce = true;
+                    return result;
+                }
+            }
+            catch { }
+
+            // Approach 4: Scan all MonoBehaviours and filter by type
+            // This is slower but works universally on IL2CPP where type-specific
+            // FindObjectsOfTypeAll fails for game/third-party types
+            try
+            {
+                var allMonoBehaviours = TypeHelper.FindAllObjectsOfType(typeof(MonoBehaviour));
+                if (allMonoBehaviours != null && allMonoBehaviours.Length > 0)
+                {
+                    var filtered = new List<UnityEngine.Object>();
+                    foreach (var obj in allMonoBehaviours)
+                    {
+                        if (obj == null) continue;
+                        if (type.IsInstanceOfType(obj))
+                            filtered.Add(obj);
+                    }
+                    if (filtered.Count > 0)
+                    {
+                        TranslatorCore.LogInfo($"[Scanner] Found {filtered.Count} {typeInfo.FrameworkName} via MonoBehaviour filter (from {allMonoBehaviours.Length} total)");
+                        _genericScanLoggedOnce = true;
+                        return filtered.ToArray();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                if (!_genericScanLoggedOnce)
+                    TranslatorCore.LogWarning($"[Scanner] {typeInfo.FrameworkName}: MonoBehaviour filter failed: {ex.Message}");
+            }
+
+            if (!_genericScanLoggedOnce)
+            {
+                TranslatorCore.LogWarning($"[Scanner] {typeInfo.FrameworkName}: all scan methods failed for {type.Name}");
+                _genericScanLoggedOnce = true;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Extract UnityEngine.Object instances from a list/collection object.
+        /// Handles BetterList (NGUI), List, arrays, etc.
+        /// </summary>
+        private static UnityEngine.Object[] ExtractObjectsFromList(object listObj, Type expectedType)
+        {
+            try
+            {
+                var results = new List<UnityEngine.Object>();
+
+                // Try 'buffer' field + 'size' field (BetterList pattern from NGUI)
+                var bufferField = listObj.GetType().GetField("buffer", BindingFlags.Public | BindingFlags.Instance);
+                var sizeField = listObj.GetType().GetField("size", BindingFlags.Public | BindingFlags.Instance);
+                if (bufferField != null && sizeField != null)
+                {
+                    var buffer = bufferField.GetValue(listObj);
+                    var size = sizeField.GetValue(listObj);
+                    if (buffer is System.Collections.IEnumerable enumerable && size is int count)
+                    {
+                        int idx = 0;
+                        foreach (var item in enumerable)
+                        {
+                            if (idx >= count) break;
+                            if (item is UnityEngine.Object uobj)
+                                results.Add(uobj);
+                            idx++;
+                        }
+                        if (results.Count > 0) return results.ToArray();
+                    }
+                }
+
+                // Try IEnumerable directly (List<T>, etc.)
+                if (listObj is System.Collections.IEnumerable directEnum)
+                {
+                    foreach (var item in directEnum)
+                    {
+                        if (item is UnityEngine.Object uobj)
+                            results.Add(uobj);
+                    }
+                    if (results.Count > 0) return results.ToArray();
+                }
+
+                // Try Count + Item indexer pattern
+                var countProp = listObj.GetType().GetProperty("Count");
+                var itemProp = listObj.GetType().GetProperty("Item");
+                if (countProp != null && itemProp != null)
+                {
+                    int count2 = (int)countProp.GetValue(listObj, null);
+                    for (int i = 0; i < count2; i++)
+                    {
+                        var item = itemProp.GetValue(listObj, new object[] { i });
+                        if (item is UnityEngine.Object uobj)
+                            results.Add(uobj);
+                    }
+                    if (results.Count > 0) return results.ToArray();
+                }
+            }
+            catch { }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Get the IL2CPP type representation for a managed type (for FindObjectsOfTypeAll).
+        /// Uses the same Il2CppType.Of method cached during InitializeIL2CPP.
+        /// </summary>
+        private static object GetIL2CPPTypeFor(Type managedType)
+        {
+            if (managedType == null || il2cppTypeOfMethod == null) return null;
+            try
+            {
+                return il2cppTypeOfMethod.MakeGenericMethod(managedType).Invoke(null, null);
+            }
+            catch { return null; }
+        }
+
+        #endregion
 
         private static void RefreshIL2CPPCache()
         {
@@ -1296,6 +1819,7 @@ namespace UnityGameTranslator.Core
         // Debug: track how many times we've logged for InputField detection
         private static int inputFieldDebugLogCount = 0;
         private const int MAX_INPUTFIELD_DEBUG_LOGS = 50;
+        private static int _scanDiagCount = 0;
 
         /// <summary>
         /// Unified component processing via reflection.
@@ -1332,6 +1856,16 @@ namespace UnityGameTranslator.Core
                 }
 
                 string currentText = TypeHelper.GetText(component);
+
+                // Diagnostic: log first N texts found by scanner to verify what's being read
+                if (_scanDiagCount < 30)
+                {
+                    string preview = currentText != null ? (currentText.Length > 30 ? currentText.Substring(0, 30) + "..." : currentText) : "(null)";
+                    bool isNumSym = !string.IsNullOrEmpty(currentText) && TranslatorCore.IsNumericOrSymbol(currentText);
+                    TranslatorCore.LogInfo($"[ScanDiag] {componentType} id={instanceId} len={currentText?.Length ?? 0} numSym={isNumSym} text='{preview}'");
+                    _scanDiagCount++;
+                }
+
                 if (string.IsNullOrEmpty(currentText) || currentText.Length < 2) return;
 
                 // Debug log for UI.Text
@@ -1466,6 +2000,14 @@ namespace UnityGameTranslator.Core
                     }
                     else
                     {
+                        // Clear tracking so scanner retries this component on next cycle
+                        // (text was changed/cleared by the game before we could apply)
+                        int skipId = TypeHelper.GetInstanceID(comp);
+                        if (skipId != -1)
+                        {
+                            processedTextHashes.Remove(skipId);
+                            TranslatorCore.ClearSeenText(skipId);
+                        }
                         TranslatorCore.LogWarning($"[Apply SKIP] expected='{expectedPreview}' actual='{actualPreview}'");
                     }
                 }

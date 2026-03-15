@@ -2548,7 +2548,23 @@ namespace UnityGameTranslator.Core
         {
             foreach (char c in text.Trim())
             {
+                // char.IsLetter may fail for CJK characters on some IL2CPP runtimes.
+                // Explicitly check Unicode ranges for letters and CJK ideographs.
                 if (char.IsLetter(c))
+                    return false;
+                if (c >= 0x2E80 && c <= 0x9FFF)  // CJK radicals, kangxi, ideographs
+                    return false;
+                if (c >= 0xAC00 && c <= 0xD7AF)  // Korean Hangul syllables
+                    return false;
+                if (c >= 0x3040 && c <= 0x30FF)  // Japanese Hiragana + Katakana
+                    return false;
+                if (c >= 0x0400 && c <= 0x04FF)  // Cyrillic
+                    return false;
+                if (c >= 0x0600 && c <= 0x06FF)  // Arabic
+                    return false;
+                if (c >= 0x0900 && c <= 0x097F)  // Devanagari (Hindi)
+                    return false;
+                if (c >= 0x0E00 && c <= 0x0E7F)  // Thai
                     return false;
             }
             return true;
@@ -2592,6 +2608,11 @@ namespace UnityGameTranslator.Core
         public static void UpdateSeenText(int id, string text)
         {
             lastSeenText[id] = text;
+        }
+
+        public static void ClearSeenText(int id)
+        {
+            lastSeenText.Remove(id);
         }
 
         public static void SaveCache()

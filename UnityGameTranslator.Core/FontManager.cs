@@ -1128,6 +1128,41 @@ namespace UnityGameTranslator.Core
             if (!_unityFallbackFonts.TryGetValue(settings.fallback, out var replacementFont))
             {
                 replacementFont = CreateUnityFontFromSystem(settings.fallback);
+
+                // IL2CPP fallback: modify the ORIGINAL font's fontNames to point to the system font
+                // This avoids clone atlas sharing issues — Unity re-rasterizes using the new font
+                if (replacementFont == null && _gameUnityFonts.TryGetValue(originalFontName, out var originalGameFont))
+                {
+                    string cleanFallback = settings.fallback;
+                    if (cleanFallback.StartsWith("[Custom] "))
+                        cleanFallback = cleanFallback.Substring(9);
+
+                    // Get real font family name from TTF
+                    string realFontName = cleanFallback;
+                    string ttfPath = CustomFontLoader.FindSystemTtfPath(cleanFallback);
+                    if (ttfPath != null)
+                    {
+                        try
+                        {
+                            var ttfBytes = System.IO.File.ReadAllBytes(ttfPath);
+                            var parser = new Rasterizer.TtfParser(ttfBytes);
+                            if (!string.IsNullOrEmpty(parser.Metrics.FontName))
+                                realFontName = parser.Metrics.FontName;
+                        }
+                        catch { }
+                    }
+
+                    // Modify the original font's fontNames
+                    bool set = UniverseLib.Runtime.TextureHelper.SetFontNames(
+                        originalGameFont, new string[] { realFontName, cleanFallback });
+                    TranslatorCore.LogInfo($"[FontManager] Modified original font '{originalFontName}' fontNames=[{realFontName}, {cleanFallback}], set={set}");
+
+                    if (set)
+                    {
+                        replacementFont = originalGameFont; // Return the same font — it now renders differently
+                    }
+                }
+
                 if (replacementFont != null)
                 {
                     _unityFallbackFonts[settings.fallback] = replacementFont;

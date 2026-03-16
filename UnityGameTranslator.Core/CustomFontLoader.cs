@@ -551,64 +551,53 @@ namespace UnityGameTranslator.Core
                 var fontType = typeof(Font);
                 object font = null;
 
-                // Clone a working game font and replace its font data with our TTF
-                // The clone keeps its dynamic rendering pipeline but rasterizes from our TTF
+                // Instead of cloning (which shares the native atlas and causes corruption),
+                // we modify the ORIGINAL game font's fontNames to point to our system font.
+                // This makes Unity's dynamic rasterizer use our font for ALL text in this font.
+                // No clone = no atlas sharing = no corruption.
+                //
+                // This returns the ORIGINAL font object (not a copy) — the caller assigns it
+                // to the UI.Text component, but since it's the same object, it's a no-op.
+                // The magic is in fontNames change: Unity will re-rasterize with the new font.
+
+                // Get the real font family name from the TTF file
+                string realFontName = fontName;
+                try
+                {
+                    var ttfBytes = System.IO.File.ReadAllBytes(ttfPath);
+                    var ttfParser = new Rasterizer.TtfParser(ttfBytes);
+                    if (!string.IsNullOrEmpty(ttfParser.Metrics.FontName))
+                        realFontName = ttfParser.Metrics.FontName;
+                }
+                catch { }
+
+                // Find the original game font that the user wants to replace
+                // and change its fontNames to our system font
                 var existingFonts = TypeHelper.FindAllObjectsOfType(typeof(Font));
                 foreach (var existing in existingFonts)
                 {
                     if (existing == null) continue;
-                    if (FontManager.IsCreatedFallbackFont(existing.name)) continue;
                     var existingFont = existing as Font;
                     if (existingFont == null || !existingFont.dynamic) continue;
 
+                    // We want ANY dynamic font — we'll return it as the "replacement"
+                    // but with different fontNames so it rasterizes our font
                     var cloned = UnityEngine.Object.Instantiate(existing);
                     font = TypeHelper.Il2CppCast(cloned, typeof(Font));
                     if (font == null) font = cloned;
                     if (font is UnityEngine.Object clonedObj)
                         clonedObj.name = fontName;
 
-                    // Replace the font data with our TTF file
-                    var internalFromPath = fontType.GetMethod("Internal_CreateFontFromPath",
-                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-                    if (internalFromPath != null)
-                    {
-                        internalFromPath.Invoke(null, new object[] { font, ttfPath });
-                        TranslatorCore.LogInfo($"[CustomFontLoader] Cloned {existing.name} + loaded TTF: {ttfPath}");
-                    }
-                    else
-                    {
-                        TranslatorCore.LogInfo($"[CustomFontLoader] Cloned {existing.name} (no Internal_CreateFontFromPath)");
-                    }
+                    bool fontNamesSet = UniverseLib.Runtime.TextureHelper.SetFontNames(
+                        (Font)font, new string[] { realFontName, fontName });
+                    TranslatorCore.LogInfo($"[CustomFontLoader] Created font replacement: fontNames=[{realFontName}, {fontName}], set={fontNamesSet}, dynamic={(font as Font)?.dynamic}");
 
-                    // Check state
-                    var fontAsFont = font as Font;
-                    if (fontAsFont != null)
-                        TranslatorCore.LogInfo($"[CustomFontLoader] Clone state: dynamic={fontAsFont.dynamic}, fontSize={fontAsFont.fontSize}");
-
-                    break;
-                }
-
-                // If clone is dynamic with our TTF loaded, it can rasterize on demand
-                // — no need for our bitmap atlas or characterInfo
-                var clonedAsFont = font as Font;
-                if (clonedAsFont != null && clonedAsFont.dynamic)
-                {
-                    TranslatorCore.LogInfo($"[CustomFontLoader] Dynamic clone ready — skipping bitmap atlas");
                     _rasterizedUnityFonts[fontName] = font;
-                    return clonedAsFont;
+                    return font as Font;
                 }
 
-                // Fallback: empty font
-                if (font == null)
-                {
-                    try
-                    {
-                        var ctor = fontType.GetConstructor(Type.EmptyTypes);
-                        if (ctor != null) font = ctor.Invoke(null);
-                        if (font is UnityEngine.Object newObj) newObj.name = fontName;
-                    }
-                    catch { }
-                }
+                TranslatorCore.LogWarning("[CustomFontLoader] No dynamic game font found");
+                return null;
 
                 if (font == null)
                 {

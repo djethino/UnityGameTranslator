@@ -961,100 +961,79 @@ namespace UnityGameTranslator.Core
                     return;
                 }
 
-                // AddComponent<TextMeshProUGUI>() — try multiple approaches for IL2CPP compatibility
+                // Clone an existing TMP GameObject from the scene and reconfigure it.
+                // AddComponent<TextMeshProUGUI>() returns null on IL2CPP.
                 object tmpComponent = null;
 
-                // ALL via reflection — direct calls crash IL2CPP JIT
-
-                // Approach 1: Generic AddComponent<T>() via reflection
                 try
                 {
+                    // Find any existing TextMeshProUGUI in the scene
+                    var existingTmpComponents = TypeHelper.FindAllObjectsOfType(tmproUGUIType);
+                    UnityEngine.Object templateObj = null;
+                    foreach (var existing in existingTmpComponents)
+                    {
+                        if (existing == null) continue;
+                        // Skip our own UI components
+                        if (existing is Component ec && TranslatorCore.ShouldSkipTranslation(ec)) continue;
+                        templateObj = existing;
+                        break;
+                    }
+
+                    if (templateObj == null)
+                    {
+                        if (!_convertedToTMP.Contains(goId))
+                        {
+                            TranslatorCore.LogWarning("[FontManager] No existing TMP component found in scene to clone");
+                            _convertedToTMP.Add(goId);
+                        }
+                        return;
+                    }
+
+                    // Clone the template's GameObject
+                    var templateGO = (templateObj as Component)?.gameObject;
+                    if (templateGO == null)
+                    {
+                        _convertedToTMP.Add(goId);
+                        return;
+                    }
+
+                    var clonedGO = UnityEngine.Object.Instantiate(templateGO, go.transform);
+                    clonedGO.name = "TMP_FontReplacement";
+
+                    // Copy RectTransform to fill parent
+                    var clonedRect = clonedGO.GetComponent<RectTransform>();
+                    if (clonedRect != null)
+                    {
+                        clonedRect.anchorMin = Vector2.zero;
+                        clonedRect.anchorMax = Vector2.one;
+                        clonedRect.offsetMin = Vector2.zero;
+                        clonedRect.offsetMax = Vector2.zero;
+                    }
+
+                    // Get the TMP component from the clone (via reflection — GetComponent(Type) is stripped on IL2CPP)
                     foreach (var m in typeof(GameObject).GetMethods(BindingFlags.Public | BindingFlags.Instance))
                     {
-                        if (m.Name != "AddComponent") continue;
+                        if (m.Name != "GetComponent") continue;
                         if (!m.IsGenericMethodDefinition) continue;
                         if (m.GetGenericArguments().Length != 1) continue;
                         if (m.GetParameters().Length != 0) continue;
-
-                        var specific = m.MakeGenericMethod(tmproUGUIType);
-                        tmpComponent = specific.Invoke(go, null);
-                        if (tmpComponent != null)
-                        {
-                            TranslatorCore.LogInfo("[FontManager] Added TMP component via generic AddComponent<T>()");
-                            break;
-                        }
+                        tmpComponent = m.MakeGenericMethod(tmproUGUIType).Invoke(clonedGO, null);
+                        break;
                     }
+                    if (tmpComponent == null)
+                    {
+                        UnityEngine.Object.Destroy(clonedGO);
+                        _convertedToTMP.Add(goId);
+                        TranslatorCore.LogWarning("[FontManager] Cloned GO has no TMP component");
+                        return;
+                    }
+
+                    TranslatorCore.LogInfo($"[FontManager] Cloned TMP component from '{templateGO.name}'");
                 }
                 catch (Exception ex)
                 {
-                    TranslatorCore.LogWarning($"[FontManager] Generic AddComponent failed: {ex.Message}");
-                }
-
-                // Approach 2: IL2CPP — AddComponent(Il2CppSystem.Type)
-                if (tmpComponent == null)
-                {
-                    try
-                    {
-                        // Get Il2CppType for TextMeshProUGUI
-                        object il2cppType = null;
-                        foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-                        {
-                            var il2cppTypeClass = asm.GetType("Il2CppInterop.Runtime.Il2CppType")
-                                ?? asm.GetType("UnhollowerRuntimeLib.Il2CppType");
-                            if (il2cppTypeClass == null) continue;
-
-                            // Try Il2CppType.From(Type)
-                            foreach (var fromM in il2cppTypeClass.GetMethods(BindingFlags.Public | BindingFlags.Static))
-                            {
-                                if (fromM.Name != "From" && fromM.Name != "Of") continue;
-                                var pars = fromM.GetParameters();
-                                if (pars.Length == 1 && pars[0].ParameterType == typeof(Type))
-                                {
-                                    il2cppType = fromM.Invoke(null, new object[] { tmproUGUIType });
-                                    break;
-                                }
-                                if (pars.Length == 0 && fromM.IsGenericMethodDefinition)
-                                {
-                                    il2cppType = fromM.MakeGenericMethod(tmproUGUIType).Invoke(null, null);
-                                    break;
-                                }
-                            }
-                            if (il2cppType != null) break;
-                        }
-
-                        if (il2cppType != null)
-                        {
-                            foreach (var m in typeof(GameObject).GetMethods(BindingFlags.Public | BindingFlags.Instance))
-                            {
-                                if (m.Name != "AddComponent") continue;
-                                if (m.IsGenericMethodDefinition) continue;
-                                var pars = m.GetParameters();
-                                if (pars.Length != 1) continue;
-                                if (!pars[0].ParameterType.IsAssignableFrom(il2cppType.GetType())) continue;
-
-                                tmpComponent = m.Invoke(go, new object[] { il2cppType });
-                                if (tmpComponent != null)
-                                {
-                                    TranslatorCore.LogInfo("[FontManager] Added TMP component via Il2CppType");
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        TranslatorCore.LogWarning($"[FontManager] IL2CPP AddComponent failed: {ex.Message}");
-                    }
-                }
-
-                if (tmpComponent == null)
-                {
-                    // Only log once per font to avoid spam
-                    if (!_convertedToTMP.Contains(goId))
-                    {
-                        TranslatorCore.LogWarning("[FontManager] Cannot add TextMeshProUGUI component on this runtime");
-                        _convertedToTMP.Add(goId); // Prevent retrying
-                    }
+                    TranslatorCore.LogWarning($"[FontManager] Clone TMP failed: {ex.Message}");
+                    _convertedToTMP.Add(goId);
                     return;
                 }
 
@@ -1413,7 +1392,64 @@ namespace UnityGameTranslator.Core
                             if (font != null)
                             {
                                 internalFromPath.Invoke(null, new object[] { font, fontPath });
+                                font.name = fontName;
                                 TranslatorCore.LogInfo($"[FontManager] Created Font via Internal_CreateFontFromPath: {fontPath}");
+
+                                // Try to make the font dynamic by setting internal properties
+                                // and calling RequestCharactersInTexture
+                                try
+                                {
+                                    // Set m_FontSize (internal field) to enable dynamic rasterization
+                                    var fontSizeProp = fontType.GetProperty("fontSize", BindingFlags.Public | BindingFlags.Instance);
+                                    if (fontSizeProp != null && fontSizeProp.CanWrite)
+                                        fontSizeProp.SetValue(font, 32, null);
+
+                                    // Dump all writable properties to understand what we can set
+                                    var allProps = fontType.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+                                    var propInfo = new List<string>();
+                                    foreach (var p in allProps)
+                                    {
+                                        try
+                                        {
+                                            var val = p.GetValue(font, null);
+                                            propInfo.Add($"{p.Name}={val}({(p.CanWrite ? "rw" : "ro")})");
+                                        }
+                                        catch { propInfo.Add($"{p.Name}=(err)"); }
+                                    }
+                                    TranslatorCore.LogInfo($"[FontManager] Font props: {string.Join(", ", propInfo)}");
+
+                                    // Try RequestCharactersInTexture
+                                    string testChars = "ABCabc";
+                                    var requestMethod = fontType.GetMethod("RequestCharactersInTexture",
+                                        BindingFlags.Public | BindingFlags.Instance);
+                                    if (requestMethod != null)
+                                    {
+                                        var reqParams = requestMethod.GetParameters();
+                                        TranslatorCore.LogInfo($"[FontManager] RequestCharactersInTexture params: {string.Join(", ", reqParams.Select(p => p.ParameterType.Name))}");
+
+                                        if (reqParams.Length == 3)
+                                            requestMethod.Invoke(font, new object[] { testChars, 32, FontStyle.Normal });
+                                        else if (reqParams.Length == 2)
+                                            requestMethod.Invoke(font, new object[] { testChars, 32 });
+                                        else if (reqParams.Length == 1)
+                                            requestMethod.Invoke(font, new object[] { testChars });
+
+                                        TranslatorCore.LogInfo($"[FontManager] After request: dynamic={font.dynamic}");
+
+                                        // Check GetCharacterInfo for 'A'
+                                        var getCharMethod = fontType.GetMethod("GetCharacterInfo",
+                                            BindingFlags.Public | BindingFlags.Instance);
+                                        if (getCharMethod != null)
+                                        {
+                                            TranslatorCore.LogInfo($"[FontManager] GetCharacterInfo params: {string.Join(", ", getCharMethod.GetParameters().Select(p => p.ParameterType.Name + " " + p.Name))}");
+                                        }
+                                    }
+                                }
+                                catch (Exception reqEx)
+                                {
+                                    TranslatorCore.LogWarning($"[FontManager] Font setup failed: {reqEx.InnerException?.Message ?? reqEx.Message}");
+                                }
+
                                 return font;
                             }
                         }

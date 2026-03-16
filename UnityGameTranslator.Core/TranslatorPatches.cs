@@ -85,6 +85,8 @@ namespace UnityGameTranslator.Core
         // Cache for original font sizes (instance ID -> original fontSize)
         // Used to apply scale without cumulative errors
         private static readonly Dictionary<int, float> _originalFontSizes = new Dictionary<int, float>();
+        // Permanent backup — never cleared. Prevents cumulative scaling.
+        private static readonly Dictionary<int, float> _trueOriginalFontSizes = new Dictionary<int, float>();
 
         // When true, ApplyFontScale bumps fontSize +1 to force font re-rasterization.
         // Set by ForceFontSizeBump(), reset by ResetFontSizeBump() after the refresh cycle.
@@ -1595,8 +1597,12 @@ namespace UnityGameTranslator.Core
             float originalSize;
             if (!_originalFontSizes.TryGetValue(instanceId, out originalSize))
             {
-                originalSize = TypeHelper.GetFontSize(instance);
-                if (originalSize < 0) return;
+                if (!_trueOriginalFontSizes.TryGetValue(instanceId, out originalSize))
+                {
+                    originalSize = TypeHelper.GetFontSize(instance);
+                    if (originalSize < 0) return;
+                    _trueOriginalFontSizes[instanceId] = originalSize;
+                }
                 _originalFontSizes[instanceId] = originalSize;
             }
 

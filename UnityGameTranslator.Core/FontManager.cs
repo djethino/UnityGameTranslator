@@ -479,26 +479,10 @@ namespace UnityGameTranslator.Core
             // Refresh all text to re-evaluate with new settings
             if (enabledChanged || fallbackChanged)
             {
-                // 1. Normal pass: apply new fontNames + correct scale
-                //    (GetUnityReplacementFont will modify fontNames during this refresh)
-                TranslatorPatches.ClearFontSizeCache();
+                // Each font switch creates a NEW clone with its own glyph cache.
+                // No bump hack needed — the new Font object has no cached glyphs.
                 TranslatorScanner.ClearProcessedCache();
                 TranslatorScanner.ForceRefreshAllText();
-
-                // 2. Bump pass: now that fontNames are updated, bump fontSize to force
-                //    Unity to re-rasterize with the NEW font
-                if (fallbackChanged)
-                {
-                    TranslatorPatches.ForceFontSizeBump();
-                    TranslatorScanner.ClearProcessedCache();
-                    TranslatorScanner.ForceRefreshAllText();
-                    TranslatorPatches.ResetFontSizeBump();
-
-                    // 3. Correction pass: apply correct size (undo the +1 bump)
-                    TranslatorPatches.ClearFontSizeCache();
-                    TranslatorScanner.ClearProcessedCache();
-                    TranslatorScanner.ForceRefreshAllText();
-                }
             }
 
             // Save changes
@@ -1321,18 +1305,22 @@ namespace UnityGameTranslator.Core
                         }
                     }
 
-                    // Now modify the font's fontNames
-                    bool set = UniverseLib.Runtime.TextureHelper.SetFontNames(
-                        originalGameFont, new string[] { realFontName, cleanFallback });
-                    TranslatorCore.LogInfo($"[FontManager] Modified original font '{originalFontName}' fontNames=[{realFontName}, {cleanFallback}], set={set}");
+                    // Clone the original font — each clone has its own glyph cache.
+                    // This avoids glyph reuse when switching between fonts at the same size.
+                    var cloned = UnityEngine.Object.Instantiate(originalGameFont);
+                    var clonedFont = TypeHelper.Il2CppCast(cloned, typeof(Font)) as Font;
+                    if (clonedFont == null) clonedFont = cloned as Font;
 
-                    if (set)
+                    if (clonedFont != null)
                     {
+                        clonedFont.name = cleanFallback;
 
-                        // Don't bump here — the first scan will rasterize naturally with the new fontNames.
-                        // ForceFontSizeBump is only needed in UpdateFontSettings for hot-swap.
+                        bool set = UniverseLib.Runtime.TextureHelper.SetFontNames(
+                            clonedFont, new string[] { realFontName, cleanFallback });
+                        TranslatorCore.LogInfo($"[FontManager] Cloned '{originalFontName}' -> '{cleanFallback}', fontNames set={set}");
 
-                        replacementFont = originalGameFont;
+                        if (set)
+                            replacementFont = clonedFont;
                     }
                 }
 

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using UnityEngine;
 
 namespace UnityGameTranslator.Core
@@ -35,6 +36,10 @@ namespace UnityGameTranslator.Core
 
         // Whether CreateDynamicFontFromOSFont is available on this runtime
         private static bool _dynamicFontCreationAvailable = true;
+
+        // Delegate for ICall to CreateDynamicFontFromOSFont native function
+        [System.Runtime.InteropServices.UnmanagedFunctionPointer(System.Runtime.InteropServices.CallingConvention.Cdecl)]
+        private delegate IntPtr CreateDynamicFontDelegate(IntPtr fontName, int size);
 
         // Game fonts (TMP_FontAsset objects already loaded in the game)
         // These work on IL2CPP without CreateDynamicFontFromOSFont
@@ -855,6 +860,12 @@ namespace UnityGameTranslator.Core
         /// <summary>
         /// Check if a font has a fallback configured in settings.
         /// </summary>
+        public static bool IsCreatedFallbackFont(string fontName)
+        {
+            if (string.IsNullOrEmpty(fontName)) return false;
+            return _createdFallbackFontNames.Contains(fontName);
+        }
+
         public static bool HasFallbackConfigured(string fontName)
         {
             if (string.IsNullOrEmpty(fontName)) return false;
@@ -1228,24 +1239,28 @@ namespace UnityGameTranslator.Core
                 }
             }
 
-            // Try CreateDynamicFontFromOSFont (works on Mono, stripped on some IL2CPP)
+            // On Mono, try CreateDynamicFontFromOSFont via reflection
             if (_dynamicFontCreationAvailable)
             {
                 try
                 {
-                    if (SystemFonts.Contains(cleanName))
+                    var method = typeof(Font).GetMethod("CreateDynamicFontFromOSFont",
+                        BindingFlags.Public | BindingFlags.Static,
+                        null, new Type[] { typeof(string), typeof(int) }, null);
+                    if (method != null)
                     {
-                        var font = Font.CreateDynamicFontFromOSFont(cleanName, 32);
+                        var font = method.Invoke(null, new object[] { cleanName, 32 }) as Font;
                         if (font != null)
                         {
-                            TranslatorCore.LogInfo($"[FontManager] Created Unity font from system: {cleanName}");
+                            TranslatorCore.LogInfo($"[FontManager] Created dynamic Unity font: {cleanName}");
                             return font;
                         }
                     }
                 }
                 catch (Exception ex)
                 {
-                    if (ex.Message.Contains("unstripping") || ex.Message.Contains("Method not found"))
+                    var msg = ex.InnerException?.Message ?? ex.Message;
+                    if (msg.Contains("unstripping") || msg.Contains("Method not found"))
                     {
                         _dynamicFontCreationAvailable = false;
                         TranslatorCore.LogWarning($"[FontManager] CreateDynamicFontFromOSFont unavailable on this runtime");
@@ -1253,7 +1268,8 @@ namespace UnityGameTranslator.Core
                 }
             }
 
-            // Last resort: rasterize TTF to bitmap Unity Font (works on all runtimes)
+            // Last resort: rasterize TTF to bitmap Unity Font
+            // Uses UniverseLib's Il2CppStructArray for CharacterInfo marshaling on IL2CPP
             var rasterizedFont = CustomFontLoader.CreateUnityFontFromTtf(cleanName);
             if (rasterizedFont != null)
             {
@@ -1389,6 +1405,9 @@ namespace UnityGameTranslator.Core
                     }
                 }
             }
+
+            // ICall for CreateDynamicFontFromOSFont was tested but crashes the game
+            // (the native function calls back into stripped managed code → crash loop)
 
             // Try 2: Font() + Internal_CreateFontFromPath — load TTF from file path
             try

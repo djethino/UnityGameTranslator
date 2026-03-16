@@ -1690,10 +1690,11 @@ namespace UnityGameTranslator.Core
                             if (currentName != replaceName)
                                 TypeHelper.SetFont(__instance, replacementFont);
                         }
-                        else if (FontManager.HasFallbackConfigured(settingsFontName))
-                        {
-                            FontManager.ConvertUITextToTMP(comp, settingsFontName, textValue);
-                        }
+                        // UI.Text → TMP conversion disabled for now (causes crashes)
+                        // else if (FontManager.HasFallbackConfigured(settingsFontName))
+                        // {
+                        //     FontManager.ConvertUITextToTMP(comp, settingsFontName, textValue);
+                        // }
                     }
                 }
 

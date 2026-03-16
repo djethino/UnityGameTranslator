@@ -546,25 +546,66 @@ namespace UnityGameTranslator.Core
 
                 TranslatorCore.LogInfo($"[CustomFontLoader] Unity Font texture loaded: {texture.width}x{texture.height}");
 
-                // Create Font via reflection only
+                // Clone an existing game Font (its internal rendering pipeline is initialized)
+                // then replace its texture + characterInfo with our rasterized data
                 var fontType = typeof(Font);
                 object font = null;
 
-                // Try Font(string) constructor
-                try
+                // Clone a working game font and replace its font data with our TTF
+                // The clone keeps its dynamic rendering pipeline but rasterizes from our TTF
+                var existingFonts = TypeHelper.FindAllObjectsOfType(typeof(Font));
+                foreach (var existing in existingFonts)
                 {
-                    var ctor = fontType.GetConstructor(new Type[] { typeof(string) });
-                    if (ctor != null) font = ctor.Invoke(new object[] { fontName });
-                }
-                catch { }
+                    if (existing == null) continue;
+                    if (FontManager.IsCreatedFallbackFont(existing.name)) continue;
+                    var existingFont = existing as Font;
+                    if (existingFont == null || !existingFont.dynamic) continue;
 
-                // Try Font() parameterless
+                    var cloned = UnityEngine.Object.Instantiate(existing);
+                    font = TypeHelper.Il2CppCast(cloned, typeof(Font));
+                    if (font == null) font = cloned;
+                    if (font is UnityEngine.Object clonedObj)
+                        clonedObj.name = fontName;
+
+                    // Replace the font data with our TTF file
+                    var internalFromPath = fontType.GetMethod("Internal_CreateFontFromPath",
+                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+                    if (internalFromPath != null)
+                    {
+                        internalFromPath.Invoke(null, new object[] { font, ttfPath });
+                        TranslatorCore.LogInfo($"[CustomFontLoader] Cloned {existing.name} + loaded TTF: {ttfPath}");
+                    }
+                    else
+                    {
+                        TranslatorCore.LogInfo($"[CustomFontLoader] Cloned {existing.name} (no Internal_CreateFontFromPath)");
+                    }
+
+                    // Check state
+                    var fontAsFont = font as Font;
+                    if (fontAsFont != null)
+                        TranslatorCore.LogInfo($"[CustomFontLoader] Clone state: dynamic={fontAsFont.dynamic}, fontSize={fontAsFont.fontSize}");
+
+                    break;
+                }
+
+                // If clone is dynamic with our TTF loaded, it can rasterize on demand
+                // — no need for our bitmap atlas or characterInfo
+                var clonedAsFont = font as Font;
+                if (clonedAsFont != null && clonedAsFont.dynamic)
+                {
+                    TranslatorCore.LogInfo($"[CustomFontLoader] Dynamic clone ready — skipping bitmap atlas");
+                    _rasterizedUnityFonts[fontName] = font;
+                    return clonedAsFont;
+                }
+
+                // Fallback: empty font
                 if (font == null)
                 {
                     try
                     {
                         var ctor = fontType.GetConstructor(Type.EmptyTypes);
                         if (ctor != null) font = ctor.Invoke(null);
+                        if (font is UnityEngine.Object newObj) newObj.name = fontName;
                     }
                     catch { }
                 }
@@ -612,18 +653,25 @@ namespace UnityGameTranslator.Core
                     TranslatorCore.LogInfo($"[CustomFontLoader] Font material set, shader: {mat.shader?.name}, tex: {texture.width}x{texture.height}");
                 }
 
-                // Build CharacterInfo array and assign to Font.
-                // On IL2CPP, Font.characterInfo property accepts a managed CharacterInfo[]
-                // and converts internally. The key is that CharacterInfo struct fields must be
-                // set BEFORE the struct is placed in the array (value type semantics).
+                // Build raw glyph data arrays and pass to UniverseLib for IL2CPP-safe CharacterInfo creation
                 float scale = renderSize / upm;
                 int ciCount = 0;
                 for (int i = 0; i < rasterizedGlyphs.Count; i++)
                     if (i < outlines.Count && outlines[i] != null) ciCount++;
 
-                // Build managed CharacterInfo[] with all values set at construction
-                var ciArray = new CharacterInfo[ciCount];
-                int ciWriteIdx = 0;
+                var indices = new int[ciCount];
+                var advances = new int[ciCount];
+                var uvLArr = new float[ciCount];
+                var uvRArr = new float[ciCount];
+                var uvTArr = new float[ciCount];
+                var uvBArr = new float[ciCount];
+                var minXArr = new int[ciCount];
+                var maxXArr = new int[ciCount];
+                var minYArr = new int[ciCount];
+                var maxYArr = new int[ciCount];
+                var glyphWArr = new int[ciCount];
+                var glyphHArr = new int[ciCount];
+                int ci = 0;
 
                 for (int i = 0; i < rasterizedGlyphs.Count; i++)
                 {
@@ -631,65 +679,48 @@ namespace UnityGameTranslator.Core
                     var outline = i < outlines.Count ? outlines[i] : null;
                     if (outline == null) continue;
 
-                    // Build the struct completely before writing to array
-                    CharacterInfo ci = default;
-
-                    // Use reflection to set each property on the boxed struct,
-                    // then unbox back before array assignment
-                    object boxed = (object)ci;
-
-                    SetPropertyOrField(boxed, typeof(CharacterInfo), "index", rg.Unicode);
-                    SetPropertyOrField(boxed, typeof(CharacterInfo), "advance", (int)(rg.AdvanceWidth * scale + 0.5f));
+                    indices[ci] = rg.Unicode;
+                    advances[ci] = (int)(rg.AdvanceWidth * scale + 0.5f);
 
                     if (rg.Bitmap != null && rg.Width > 0 && rg.Height > 0)
                     {
-                        float uvLeft = (float)rg.AtlasX / atlasW;
-                        float uvRight = (float)(rg.AtlasX + rg.Width) / atlasW;
-                        float uvTop = 1f - (float)rg.AtlasY / atlasH;
-                        float uvBottom = 1f - (float)(rg.AtlasY + rg.Height) / atlasH;
-
-                        SetPropertyOrField(boxed, typeof(CharacterInfo), "uvBottomLeft", new Vector2(uvLeft, uvBottom));
-                        SetPropertyOrField(boxed, typeof(CharacterInfo), "uvBottomRight", new Vector2(uvRight, uvBottom));
-                        SetPropertyOrField(boxed, typeof(CharacterInfo), "uvTopLeft", new Vector2(uvLeft, uvTop));
-                        SetPropertyOrField(boxed, typeof(CharacterInfo), "uvTopRight", new Vector2(uvRight, uvTop));
-                        SetPropertyOrField(boxed, typeof(CharacterInfo), "minX", (int)(outline.XMin * scale - padding));
-                        SetPropertyOrField(boxed, typeof(CharacterInfo), "maxX", (int)(outline.XMax * scale + padding));
-                        SetPropertyOrField(boxed, typeof(CharacterInfo), "minY", (int)(outline.YMin * scale - padding));
-                        SetPropertyOrField(boxed, typeof(CharacterInfo), "maxY", (int)(outline.YMax * scale + padding));
-                        SetPropertyOrField(boxed, typeof(CharacterInfo), "glyphWidth", rg.Width);
-                        SetPropertyOrField(boxed, typeof(CharacterInfo), "glyphHeight", rg.Height);
+                        uvLArr[ci] = (float)rg.AtlasX / atlasW;
+                        uvRArr[ci] = (float)(rg.AtlasX + rg.Width) / atlasW;
+                        uvTArr[ci] = 1f - (float)rg.AtlasY / atlasH;
+                        uvBArr[ci] = 1f - (float)(rg.AtlasY + rg.Height) / atlasH;
+                        minXArr[ci] = (int)(outline.XMin * scale - padding);
+                        maxXArr[ci] = (int)(outline.XMax * scale + padding);
+                        minYArr[ci] = (int)(outline.YMin * scale - padding);
+                        maxYArr[ci] = (int)(outline.YMax * scale + padding);
+                        glyphWArr[ci] = rg.Width;
+                        glyphHArr[ci] = rg.Height;
                     }
-
-                    // Unbox back to struct and assign to array
-                    ciArray[ciWriteIdx] = (CharacterInfo)boxed;
-                    ciWriteIdx++;
+                    ci++;
                 }
 
-                // Assign to Font — the property setter handles managed→IL2CPP conversion
-                var ciPropForType = fontType.GetProperty("characterInfo", BindingFlags.Public | BindingFlags.Instance);
-                bool ciSet = false;
-                if (ciPropForType != null)
+                // Debug: find first glyph with UV data
+                for (int d = 0; d < ciCount; d++)
                 {
-                    try
+                    if (uvLArr[d] != 0 || uvRArr[d] != 0)
                     {
-                        ciPropForType.SetValue(font, ciArray, null);
-                        ciSet = true;
-                    }
-                    catch (Exception ex)
-                    {
-                        TranslatorCore.LogWarning($"[CustomFontLoader] characterInfo property set failed: {ex.Message}");
+                        TranslatorCore.LogInfo($"[CustomFontLoader] First non-empty CI[{d}]: idx={indices[d]}, adv={advances[d]}, " +
+                            $"uvL={uvLArr[d]:F4}, uvR={uvRArr[d]:F4}, uvT={uvTArr[d]:F4}, uvB={uvBArr[d]:F4}, " +
+                            $"minX={minXArr[d]}, maxX={maxXArr[d]}");
+                        break;
                     }
                 }
-                if (!ciSet)
-                    ciSet = SetPropertyOrField(font, fontType, "characterInfo", ciArray);
 
-                TranslatorCore.LogInfo($"[CustomFontLoader] characterInfo set={ciSet}, length={ciWriteIdx}");
+                // Assign via UniverseLib — builds CharacterInfo structs in IL2CPP-compiled code
+                bool ciSet = UniverseLib.Runtime.TextureHelper.SetFontCharacterInfoFromRaw(
+                    (Font)font, ciCount, indices, advances,
+                    uvLArr, uvRArr, uvTArr, uvBArr,
+                    minXArr, maxXArr, minYArr, maxYArr,
+                    glyphWArr, glyphHArr);
+                TranslatorCore.LogInfo($"[CustomFontLoader] characterInfo set={ciSet}, length={ciCount}");
 
-                // If characterInfo assignment failed, this font is unusable — return null
-                // so the caller can fall back to UI.Text → TMP conversion
                 if (!ciSet)
                 {
-                    TranslatorCore.LogWarning("[CustomFontLoader] CharacterInfo not supported on this runtime — font unusable");
+                    TranslatorCore.LogWarning("[CustomFontLoader] CharacterInfo assignment failed — font unusable");
                     if (font is UnityEngine.Object fontToDestroy)
                         UnityEngine.Object.Destroy(fontToDestroy);
                     return null;
@@ -743,7 +774,7 @@ namespace UnityGameTranslator.Core
                 TranslatorCore.LogInfo($"[CustomFontLoader] material readback: {(readMat != null ? "OK" : "NULL")}, " +
                     $"texture={(readMat is Material m ? (m.mainTexture != null ? $"{m.mainTexture.width}x{m.mainTexture.height}" : "null") : "?")}");
 
-                TranslatorCore.LogInfo($"[CustomFontLoader] Created Unity Font '{fontName}': {ciWriteIdx} characters, {atlasW}x{atlasH} atlas");
+                TranslatorCore.LogInfo($"[CustomFontLoader] Created Unity Font '{fontName}': {ciCount} characters, {atlasW}x{atlasH} atlas");
 
                 _rasterizedUnityFonts[fontName] = font;
                 return font;

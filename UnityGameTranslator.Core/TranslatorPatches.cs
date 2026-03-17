@@ -175,13 +175,16 @@ namespace UnityGameTranslator.Core
                         patchCount++;
                     }
 
-                    // UI.Text.fontSize setter — intercept game/Animator fontSize overrides
-                    var uiFontSizeProp = TypeHelper.UI_TextType.GetProperty("fontSize", BindingFlags.Public | BindingFlags.Instance);
-                    if (uiFontSizeProp?.SetMethod != null)
+                    // UI.Text.fontSize setter — only on Mono (on IL2CPP, causes font atlas corruption)
+                    if (TranslatorCore.Adapter != null && !TranslatorCore.Adapter.IsIL2CPP)
                     {
-                        var prefix = typeof(TranslatorPatches).GetMethod(nameof(UIText_SetFontSize_Prefix), BindingFlags.Static | BindingFlags.Public);
-                        patcher(uiFontSizeProp.SetMethod, prefix, null);
-                        patchCount++;
+                        var uiFontSizeProp = TypeHelper.UI_TextType.GetProperty("fontSize", BindingFlags.Public | BindingFlags.Instance);
+                        if (uiFontSizeProp?.SetMethod != null)
+                        {
+                            var fsPrefix = typeof(TranslatorPatches).GetMethod(nameof(UIText_SetFontSize_Prefix), BindingFlags.Static | BindingFlags.Public);
+                            patcher(uiFontSizeProp.SetMethod, fsPrefix, null);
+                            patchCount++;
+                        }
                     }
                 }
                 else
@@ -1585,9 +1588,6 @@ namespace UnityGameTranslator.Core
             if (instance == null || string.IsNullOrEmpty(fontName)) return;
 
             float scale = FontManager.GetFontScale(fontName);
-            // Ensure LateUpdate runner for persistent fontSize override
-            if (Math.Abs(scale - 1.0f) > 0.001f)
-                TranslatorScanner.EnsureLateUpdateRunner();
             // Fast exit: if scale is 1.0 and we haven't stored an original size, nothing to do
             if (Math.Abs(scale - 1.0f) < 0.001f)
             {
@@ -1620,9 +1620,9 @@ namespace UnityGameTranslator.Core
                 _bypassFontSizePrefix = false;
             }
 
-            // Also scale resizeTextMaxSize when bestFit is enabled
-            // bestFit auto-sizes up to maxSize, so fontSize alone isn't enough
-            ApplyBestFitScale(instance, instanceId, scale);
+            // Also scale bestFit maxSize (Mono only — IL2CPP causes atlas corruption)
+            if (TranslatorCore.Adapter == null || !TranslatorCore.Adapter.IsIL2CPP)
+                ApplyBestFitScale(instance, instanceId, scale);
         }
 
         // Cache original resizeTextMaxSize per component
@@ -1776,7 +1776,14 @@ namespace UnityGameTranslator.Core
                             string currentName = (fontObj is UnityEngine.Object co) ? co.name : null;
                             string replaceName = replacementFont.name;
                             if (currentName != replaceName)
+                            {
+                                // New component getting a cloned font with scale:
+                                // Recreate the clone exactly like a manual font change does:
+                                // 1. Remove clone from cache
+                                // 2. Restore original font on all components that have this clone
+                                // 3. ForceRefreshAllText → new clone created → applied to ALL at once
                                 TypeHelper.SetFont(__instance, replacementFont);
+                            }
                         }
                     }
                 }
@@ -1847,6 +1854,7 @@ namespace UnityGameTranslator.Core
         /// This ensures the scale is applied even when the game sets fontSize AFTER set_text.
         /// </summary>
         [ThreadStatic] private static bool _bypassFontSizePrefix;
+        [ThreadStatic] private static bool _unusedField; // placeholder
         public static bool BypassFontSizePrefix { get => _bypassFontSizePrefix; set => _bypassFontSizePrefix = value; }
 
         public static void TMPText_SetFontSize_Prefix(object __instance, ref float value)
@@ -1890,34 +1898,25 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Prefix for UI.Text.fontSize setter.
-        /// Intercepts game fontSize assignments that happen after set_text and applies font scale.
+        /// Prefix for UI.Text.fontSize setter (Mono only — IL2CPP causes atlas corruption).
         /// </summary>
         public static void UIText_SetFontSize_Prefix(object __instance, ref int value)
         {
             if (_bypassFontSizePrefix) return;
             if (__instance == null) return;
-
             try
             {
                 int instanceId = TypeHelper.GetInstanceID(__instance);
                 if (instanceId == -1) return;
-
-                // Skip components we've never seen (mod's own UI, etc.)
                 if (!_fontNameCache.ContainsKey(instanceId)) return;
-
                 string fontName;
                 if (!_fontNameCache.TryGetValue(instanceId, out fontName)) return;
                 if (string.IsNullOrEmpty(fontName)) return;
-
                 string settingsFontName = FontManager.GetSettingsFontName(instanceId, fontName);
                 float scale = FontManager.GetFontScale(settingsFontName);
                 if (Math.Abs(scale - 1.0f) < 0.001f) return;
-
-                // Store the INCOMING (unscaled) value as the true original
                 _trueOriginalFontSizes[instanceId] = value;
                 _originalFontSizes[instanceId] = value;
-
                 value = (int)(value * scale);
             }
             catch { }

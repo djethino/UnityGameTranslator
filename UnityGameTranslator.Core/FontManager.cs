@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -27,6 +27,106 @@ namespace UnityGameTranslator.Core
 
         // Created Unity fonts from system fonts (for legacy UI.Text replacement)
         private static readonly Dictionary<string, Font> _unityFallbackFonts = new Dictionary<string, Font>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Check if a Font object is one of our clones (for UI.Text replacement).
+        /// Cloned fonts must NOT have their fontSize changed (causes atlas corruption).
+        /// Use localScale on the component instead.
+        /// </summary>
+        public static bool IsClonedFont(Font font)
+        {
+            if (font == null) return false;
+            foreach (var kvp in _unityFallbackFonts)
+            {
+                if (kvp.Value == font) return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Clear all UI.Text font clones from cache. They will be recreated on next use.
+        /// Combined with ForceRefreshAllText, this is equivalent to a manual font change.
+        /// </summary>
+        private static bool _textureRebuiltSubscribed = false;
+        private static bool _textureRebuiltHandling = false;
+        private static string _subscribedOriginalFont = null;
+        private static string _subscribedFallback = null;
+
+        /// <summary>
+        /// Subscribe to Font.textureRebuilt via add_textureRebuilt method (IL2CPP compatible).
+        /// When the atlas rebuilds, recreate the clone to prevent corruption.
+        /// </summary>
+        private static void SubscribeTextureRebuilt(string originalFontName, string fallbackName)
+        {
+            if (_textureRebuiltSubscribed) return;
+
+            _subscribedOriginalFont = originalFontName;
+            _subscribedFallback = fallbackName;
+
+            try
+            {
+                // Find add_textureRebuilt METHOD (not event — IL2CPP wrapping hides the event)
+                var addMethod = typeof(Font).GetMethod("add_textureRebuilt",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+                if (addMethod != null)
+                {
+                    Action<Font> handler = OnFontTextureRebuilt;
+                    addMethod.Invoke(null, new object[] { handler });
+                    _textureRebuiltSubscribed = true;
+                    TranslatorCore.LogInfo("[FontManager] Subscribed to Font.textureRebuilt via add method");
+                }
+                else
+                {
+                    TranslatorCore.LogWarning("[FontManager] add_textureRebuilt method not found");
+                }
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogWarning($"[FontManager] Failed to subscribe textureRebuilt: {ex.InnerException?.Message ?? ex.Message}");
+            }
+        }
+
+        private static void OnFontTextureRebuilt(Font rebuiltFont)
+        {
+            // Only act on our cloned fonts
+            if (_textureRebuiltHandling) return;
+            if (!IsClonedFont(rebuiltFont)) return;
+
+            _textureRebuiltHandling = true;
+            try
+            {
+                TranslatorCore.LogInfo($"[FontManager] Clone atlas rebuilt for '{rebuiltFont.name}', recreating");
+                RemoveCloneAndRestore(_subscribedOriginalFont, _subscribedFallback);
+                TranslatorScanner.ClearProcessedCache();
+                TranslatorScanner.ForceRefreshAllText();
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogWarning($"[FontManager] textureRebuilt handler error: {ex.Message}");
+            }
+            finally
+            {
+                _textureRebuiltHandling = false;
+            }
+        }
+
+        /// <summary>
+        /// Remove a clone from cache and restore all components to their original font.
+        /// Exactly what manual font change does. Next GetUnityReplacementFont creates a fresh clone.
+        /// </summary>
+        public static void RemoveCloneAndRestore(string originalFontName, string fallbackName)
+        {
+            if (!string.IsNullOrEmpty(fallbackName))
+            {
+                _unityFallbackFonts.Remove(fallbackName);
+                _failedFallbackFontNames.Remove(fallbackName);
+            }
+
+            RestoreOriginalFontNames(originalFontName);
+            RestoreAllComponentsForFont(originalFontName);
+
+            TranslatorCore.LogInfo($"[FontManager] Removed clone '{fallbackName}' and restored components for '{originalFontName}'");
+        }
 
         // Track font names we created for fallback (to exclude from detection)
         private static readonly HashSet<string> _createdFallbackFontNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -245,7 +345,47 @@ namespace UnityGameTranslator.Core
         /// fontType: "TMP", "Unity", "TextMesh", "TMP (alt)", etc.
         /// fontObj: optional font object (TMP_FontAsset or Font) for fallback injection.
         /// </summary>
+        public static void RegisterFontObject(object fontObj, string fontType)
+        {
+            if (fontObj == null) return;
 
+            string fontName = (fontObj is UnityEngine.Object uobj) ? uobj.name : null;
+            if (string.IsNullOrEmpty(fontName)) return;
+
+            // Don't register fonts we created for fallback
+            if (_createdFallbackFontNames.Contains(fontName))
+                return;
+
+            bool isTMP = fontType == "TMP" || fontType == "TMP (alt)";
+            bool isNew;
+
+            if (isTMP)
+            {
+                isNew = _detectedTMPFontNames.Add(fontName);
+                if (isNew)
+                {
+                    _detectedTMPFontObjects[fontName] = fontObj;
+                    TranslatorCore.LogInfo($"[FontManager] Detected TMP font: {fontName}");
+                    EnsureFontSettings(fontName, fontType);
+
+                    // Auto-apply fallback if configured
+                    var settings = GetFontSettings(fontName);
+                    if (!string.IsNullOrEmpty(settings?.fallback))
+                    {
+                        ApplyFallbackToFont(fontObj, settings.fallback);
+                    }
+                }
+            }
+            else
+            {
+                isNew = _detectedUnityFontNames.Add(fontName);
+                if (isNew)
+                {
+                    TranslatorCore.LogInfo($"[FontManager] Detected {fontType} font: {fontName}");
+                    EnsureFontSettings(fontName, fontType);
+                }
+            }
+        }
 
         /// <summary>
         /// Register a font by name only (when we don't have the actual Font object).
@@ -489,8 +629,6 @@ namespace UnityGameTranslator.Core
                 if (!_originalFontsPerComponent.TryGetValue(instanceId, out var originalFont))
                     continue;
 
-                // Use stored component ref (properly typed from Harmony __instance)
-                // instead of FindComponentByInstanceId which returns untyped Object on IL2CPP
                 if (_replacedComponentRefs.TryGetValue(instanceId, out var component) && component != null)
                 {
                     TypeHelper.SetFont(component, originalFont);
@@ -532,6 +670,15 @@ namespace UnityGameTranslator.Core
             {
                 TranslatorCore.LogWarning($"[FontReplace] SetFontSharedMaterial failed: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// Searches through scanner caches to find the Unity Object.
+        /// </summary>
+        private static object FindComponentByInstanceId(int instanceId)
+        {
+            // Use the scanner's unified cache (covers all registered types, works on IL2CPP)
+            return TranslatorScanner.FindCachedComponentById(instanceId);
         }
 
         /// <summary>
@@ -655,7 +802,6 @@ namespace UnityGameTranslator.Core
         /// </summary>
         // Track original fonts per component instance ID (for restore on toggle)
         private static readonly Dictionary<int, object> _originalFontsPerComponent = new Dictionary<int, object>();
-        // Track the actual component references (typed from Harmony __instance, needed for IL2CPP restore)
         private static readonly Dictionary<int, object> _replacedComponentRefs = new Dictionary<int, object>();
 
         /// <summary>
@@ -875,6 +1021,8 @@ namespace UnityGameTranslator.Core
         /// Remove fallback from a font and clear the applied cache.
         /// Call when fallback settings change.
         /// </summary>
+        // Track which GameObjects have been converted from UI.Text to TMP
+        private static readonly HashSet<int> _convertedToTMP = new HashSet<int>();
 
         // Original fontNames saved before modification (for restore)
         private static readonly Dictionary<string, string[]> _originalFontNames = new Dictionary<string, string[]>();
@@ -977,7 +1125,243 @@ namespace UnityGameTranslator.Core
             return _createdFallbackFontNames.Contains(fontName);
         }
 
+        public static bool HasFallbackConfigured(string fontName)
+        {
+            if (string.IsNullOrEmpty(fontName)) return false;
+            if (!TranslatorCore.FontSettingsMap.TryGetValue(fontName, out var settings)) return false;
+            return !string.IsNullOrEmpty(settings.fallback);
+        }
 
+        /// <summary>
+        /// Convert a UI.Text component to TextMeshProUGUI with a custom TMP font.
+        /// Used on IL2CPP where creating a Unity Font with CharacterInfo is impossible.
+        /// Disables the original UI.Text and adds a TMP component with the rasterized font.
+        /// </summary>
+        public static void ConvertUITextToTMP(Component uiTextComponent, string originalFontName, string currentText)
+        {
+            if (uiTextComponent == null) return;
+
+            var go = uiTextComponent.gameObject;
+            int goId = go.GetInstanceID();
+
+            // Don't convert twice
+            if (_convertedToTMP.Contains(goId)) return;
+
+            TranslatorCore.LogInfo($"[FontManager] ConvertUITextToTMP called: go='{go.name}', font='{originalFontName}'");
+
+            // Check if a fallback is configured
+            if (!TranslatorCore.FontSettingsMap.TryGetValue(originalFontName, out var settings))
+                return;
+            if (string.IsNullOrEmpty(settings.fallback))
+                return;
+
+            // Get the TMP font asset (via the existing TMP pipeline — works on IL2CPP)
+            string cleanFallback = settings.fallback;
+            if (cleanFallback.StartsWith("[Custom] "))
+                cleanFallback = cleanFallback.Substring(9);
+
+            object tmpFontAsset = null;
+
+            // Try custom font first
+            if (IsCustomFont(cleanFallback))
+                tmpFontAsset = CustomFontLoader.LoadCustomFont(cleanFallback);
+
+            // Try system font via TTF rasterizer
+            if (tmpFontAsset == null)
+                tmpFontAsset = CustomFontLoader.LoadSystemTtfFont(cleanFallback);
+
+            if (tmpFontAsset == null)
+            {
+                // Try CreateFallbackAsset (covers all paths including game fonts)
+                if (!_fallbackAssets.TryGetValue(settings.fallback, out tmpFontAsset))
+                {
+                    tmpFontAsset = CreateFallbackAsset(settings.fallback);
+                    if (tmpFontAsset != null)
+                        _fallbackAssets[settings.fallback] = tmpFontAsset;
+                }
+            }
+
+            if (tmpFontAsset == null) return;
+
+            try
+            {
+                // Get text properties from the UI.Text component before disabling
+                var textComp = uiTextComponent;
+                var textType = textComp.GetType();
+
+                string text = currentText;
+                Color color = Color.white;
+                int fontSize = 14;
+                int alignment = 0; // TextAnchor
+
+                try
+                {
+                    var colorProp = textType.GetProperty("color", BindingFlags.Public | BindingFlags.Instance);
+                    if (colorProp != null) color = (Color)colorProp.GetValue(textComp, null);
+                }
+                catch { }
+
+                try
+                {
+                    var sizeProp = textType.GetProperty("fontSize", BindingFlags.Public | BindingFlags.Instance);
+                    if (sizeProp != null) fontSize = (int)sizeProp.GetValue(textComp, null);
+                }
+                catch { }
+
+                try
+                {
+                    var alignProp = textType.GetProperty("alignment", BindingFlags.Public | BindingFlags.Instance);
+                    if (alignProp != null) alignment = (int)alignProp.GetValue(textComp, null);
+                }
+                catch { }
+
+                // Disable the UI.Text component
+                try
+                {
+                    var enabledProp = textType.GetProperty("enabled", BindingFlags.Public | BindingFlags.Instance);
+                    if (enabledProp != null)
+                        enabledProp.SetValue(textComp, false, null);
+                }
+                catch { }
+
+                // Add TextMeshProUGUI component to the same GameObject
+                var tmpTextType = TypeHelper.TMP_TextType;
+                if (tmpTextType == null)
+                {
+                    TranslatorCore.LogWarning("[FontManager] TMP_Text type not found, cannot convert UI.Text to TMP");
+                    return;
+                }
+
+                // Find TextMeshProUGUI type (subclass of TMP_Text for uGUI)
+                Type tmproUGUIType = null;
+                foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    tmproUGUIType = asm.GetType("TMPro.TextMeshProUGUI")
+                        ?? asm.GetType("Il2CppTMPro.TextMeshProUGUI");
+                    if (tmproUGUIType != null) break;
+                }
+
+                if (tmproUGUIType == null)
+                {
+                    TranslatorCore.LogWarning("[FontManager] TextMeshProUGUI type not found");
+                    return;
+                }
+
+                // Clone an existing TMP GameObject from the scene and reconfigure it.
+                // AddComponent<TextMeshProUGUI>() returns null on IL2CPP.
+                object tmpComponent = null;
+
+                try
+                {
+                    // Find any existing TextMeshProUGUI in the scene
+                    var existingTmpComponents = TypeHelper.FindAllObjectsOfType(tmproUGUIType);
+                    UnityEngine.Object templateObj = null;
+                    foreach (var existing in existingTmpComponents)
+                    {
+                        if (existing == null) continue;
+                        // Skip our own UI components
+                        if (existing is Component ec && TranslatorCore.ShouldSkipTranslation(ec)) continue;
+                        templateObj = existing;
+                        break;
+                    }
+
+                    if (templateObj == null)
+                    {
+                        if (!_convertedToTMP.Contains(goId))
+                        {
+                            TranslatorCore.LogWarning("[FontManager] No existing TMP component found in scene to clone");
+                            _convertedToTMP.Add(goId);
+                        }
+                        return;
+                    }
+
+                    // Clone the template's GameObject
+                    var templateGO = (templateObj as Component)?.gameObject;
+                    if (templateGO == null)
+                    {
+                        _convertedToTMP.Add(goId);
+                        return;
+                    }
+
+                    var clonedGO = UnityEngine.Object.Instantiate(templateGO, go.transform);
+                    clonedGO.name = "TMP_FontReplacement";
+
+                    // Copy RectTransform to fill parent
+                    var clonedRect = clonedGO.GetComponent<RectTransform>();
+                    if (clonedRect != null)
+                    {
+                        clonedRect.anchorMin = Vector2.zero;
+                        clonedRect.anchorMax = Vector2.one;
+                        clonedRect.offsetMin = Vector2.zero;
+                        clonedRect.offsetMax = Vector2.zero;
+                    }
+
+                    // Get the TMP component from the clone (via reflection — GetComponent(Type) is stripped on IL2CPP)
+                    foreach (var m in typeof(GameObject).GetMethods(BindingFlags.Public | BindingFlags.Instance))
+                    {
+                        if (m.Name != "GetComponent") continue;
+                        if (!m.IsGenericMethodDefinition) continue;
+                        if (m.GetGenericArguments().Length != 1) continue;
+                        if (m.GetParameters().Length != 0) continue;
+                        tmpComponent = m.MakeGenericMethod(tmproUGUIType).Invoke(clonedGO, null);
+                        break;
+                    }
+                    if (tmpComponent == null)
+                    {
+                        UnityEngine.Object.Destroy(clonedGO);
+                        _convertedToTMP.Add(goId);
+                        TranslatorCore.LogWarning("[FontManager] Cloned GO has no TMP component");
+                        return;
+                    }
+
+                    TranslatorCore.LogInfo($"[FontManager] Cloned TMP component from '{templateGO.name}'");
+                }
+                catch (Exception ex)
+                {
+                    TranslatorCore.LogWarning($"[FontManager] Clone TMP failed: {ex.Message}");
+                    _convertedToTMP.Add(goId);
+                    return;
+                }
+
+                // Set font
+                TypeHelper.SetFont(tmpComponent, tmpFontAsset);
+                SetFontSharedMaterial(tmpComponent, tmpFontAsset);
+
+                // Set text
+                var tmpCompType = tmpComponent.GetType();
+                try
+                {
+                    var textProp = tmpCompType.GetProperty("text", BindingFlags.Public | BindingFlags.Instance);
+                    if (textProp != null) textProp.SetValue(tmpComponent, text, null);
+                }
+                catch { }
+
+                // Set color
+                try
+                {
+                    var colorProp = tmpCompType.GetProperty("color", BindingFlags.Public | BindingFlags.Instance);
+                    if (colorProp != null) colorProp.SetValue(tmpComponent, color, null);
+                }
+                catch { }
+
+                // Set font size
+                try
+                {
+                    var sizeProp = tmpCompType.GetProperty("fontSize", BindingFlags.Public | BindingFlags.Instance);
+                    if (sizeProp != null) sizeProp.SetValue(tmpComponent, (float)fontSize, null);
+                }
+                catch { }
+
+                _convertedToTMP.Add(goId);
+                _createdFallbackFontNames.Add(cleanFallback);
+
+                TranslatorCore.LogInfo($"[FontManager] Converted UI.Text to TMP on '{go.name}': font='{cleanFallback}', size={fontSize}");
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogError($"[FontManager] ConvertUITextToTMP error: {ex.Message}");
+            }
+        }
 
         /// <summary>
         /// Get the replacement font for a Unity Font (UI.Text).
@@ -1080,8 +1464,7 @@ namespace UnityGameTranslator.Core
                         }
                     }
 
-                    // Clone the original font — each clone has its own glyph cache.
-                    // This avoids glyph reuse when switching between fonts at the same size.
+                    // Clone the original font — inherits dynamic=True needed for fontNames rasterization
                     var cloned = UnityEngine.Object.Instantiate(originalGameFont);
                     var clonedFont = TypeHelper.Il2CppCast(cloned, typeof(Font)) as Font;
                     if (clonedFont == null) clonedFont = cloned as Font;
@@ -1095,7 +1478,10 @@ namespace UnityGameTranslator.Core
                         TranslatorCore.LogInfo($"[FontManager] Cloned '{originalFontName}' -> '{cleanFallback}', fontNames set={set}");
 
                         if (set)
+                        {
                             replacementFont = clonedFont;
+                            SubscribeTextureRebuilt(originalFontName, settings.fallback);
+                        }
                     }
                 }
 

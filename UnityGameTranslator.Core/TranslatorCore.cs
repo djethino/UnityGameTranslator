@@ -2210,8 +2210,7 @@ namespace UnityGameTranslator.Core
         public static void QueueForTranslation(string text, object component = null, bool isOwnUI = false)
         {
             if (!Config.enable_ai) return;
-            if (string.IsNullOrEmpty(text)) return;
-            if (IsNumericOrSymbol(text)) return;
+            if (string.IsNullOrEmpty(text) || text.Length < 2) return;
 
             lock (lockObj)
             {
@@ -2250,7 +2249,7 @@ namespace UnityGameTranslator.Core
             if (!Config.enable_translations)
                 return text;
 
-            if (string.IsNullOrEmpty(text))
+            if (string.IsNullOrEmpty(text) || text.Length < 2)
                 return text;
 
             if (IsNumericOrSymbol(text))
@@ -2265,7 +2264,7 @@ namespace UnityGameTranslator.Core
 
         public static string TranslateSingleText(string text)
         {
-            if (string.IsNullOrEmpty(text))
+            if (string.IsNullOrEmpty(text) || text.Length < 2)
                 return text;
 
             if (IsNumericOrSymbol(text))
@@ -2382,7 +2381,7 @@ namespace UnityGameTranslator.Core
                 return text;
             }
 
-            if (string.IsNullOrEmpty(text))
+            if (string.IsNullOrEmpty(text) || text.Length < 2)
                 return text;
 
             // Don't split multiline - treat as single unit for proper component tracking
@@ -2395,7 +2394,7 @@ namespace UnityGameTranslator.Core
 
         private static string TranslateSingleTextWithTracking(string text, object component, bool isOwnUI = false)
         {
-            if (string.IsNullOrEmpty(text))
+            if (string.IsNullOrEmpty(text) || text.Length < 2)
                 return text;
 
             if (IsNumericOrSymbol(text))

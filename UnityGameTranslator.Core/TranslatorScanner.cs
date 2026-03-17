@@ -26,7 +26,6 @@ namespace UnityGameTranslator.Core
         // Unified list of all text component types to scan
         private static readonly List<RegisteredTextType> _registeredTypes = new List<RegisteredTextType>();
         private static bool _typesRegistered = false;
-        private static bool _initialRefreshDone = false;
 
         /// <summary>
         /// Find a component by instance ID across all registered type caches.
@@ -268,24 +267,6 @@ namespace UnityGameTranslator.Core
                 _scanProfRefreshCount++;
             }
 
-            // After first scan with components, force a refresh to apply font scale
-            // on components whose text was set before our patches were active
-            if (!_initialRefreshDone && lastComponentCacheTime > 0)
-            {
-                bool hasComponents = false;
-                foreach (var type in _registeredTypes)
-                {
-                    if (type.CachedComponents != null && type.CachedComponents.Length > 0)
-                    { hasComponents = true; break; }
-                }
-                if (hasComponents)
-                {
-                    _initialRefreshDone = true;
-                    ForceRefreshAllText();
-                    TranslatorCore.LogInfo("[Scanner] Initial refresh applied (font scale on pre-existing components)");
-                }
-            }
-
             long afterRefresh = profiling ? _scanProfSw.ElapsedTicks : 0;
 
             try
@@ -333,15 +314,19 @@ namespace UnityGameTranslator.Core
         /// Phase 2: Mutualized MonoBehaviourFilter — ONE FindAllObjectsOfType(Component) call
         ///          shared across all types that still need it. Avoids N expensive calls.
         /// </summary>
+        private static int _lastTotalComponentCount = 0;
+
         private static void RefreshAllCaches()
         {
             _lateUpdateCacheDirty = true;
             // Phase 1: Direct scans (strategies 1-3) for each type
             var needsFilterTypes = new List<RegisteredTextType>();
+            int newTotal = 0;
 
             foreach (var type in _registeredTypes)
             {
                 type.CachedComponents = RefreshTypeCacheDirect(type);
+                newTotal += type.CachedComponents?.Length ?? 0;
 
                 if (!type.LoggedOnce && type.CachedComponents != null && type.CachedComponents.Length > 0)
                 {
@@ -361,6 +346,11 @@ namespace UnityGameTranslator.Core
             {
                 RefreshViaMonoBehaviourFilterShared(needsFilterTypes);
             }
+
+            // If new components appeared, invalidate font clones to prevent atlas corruption.
+            // Cloned fonts inherit the original's atlas; when new glyphs are needed at scaled sizes,
+            // the atlas overflows. Recreating the clone gives a fresh atlas.
+            _lastTotalComponentCount = newTotal;
         }
 
         /// <summary>
@@ -1465,9 +1455,10 @@ namespace UnityGameTranslator.Core
                 }
 
                 // Pass 2: components seen by the patch but not in scanner cache
-                // (e.g., dynamically created, activated after scan, different scene timing)
-                var patchRefs = TranslatorPatches.PatchedComponentRefs;
-                foreach (var kvp in patchRefs)
+                List<KeyValuePair<int, object>> patchRefsSnapshot;
+                try { patchRefsSnapshot = new List<KeyValuePair<int, object>>(TranslatorPatches.PatchedComponentRefs); }
+                catch { patchRefsSnapshot = new List<KeyValuePair<int, object>>(); }
+                foreach (var kvp in patchRefsSnapshot)
                 {
                     if (processedIds.Contains(kvp.Key)) continue;
                     if (kvp.Value == null) continue;
@@ -1516,7 +1507,10 @@ namespace UnityGameTranslator.Core
                 }
 
                 // Restore from patch-tracked components (not in scanner cache)
-                foreach (var kvp in TranslatorPatches.PatchedComponentRefs)
+                List<KeyValuePair<int, object>> clearSnapshot;
+                try { clearSnapshot = new List<KeyValuePair<int, object>>(TranslatorPatches.PatchedComponentRefs); }
+                catch { clearSnapshot = new List<KeyValuePair<int, object>>(); }
+                foreach (var kvp in clearSnapshot)
                 {
                     if (kvp.Value == null) continue;
                     try { RestoreComponentColor(kvp.Value, kvp.Key); }
@@ -1864,36 +1858,42 @@ namespace UnityGameTranslator.Core
 
         #region LateUpdate Override (font scale + highlight after Animator)
 
-        private static GameObject _lateUpdateGO;
-        private static LateUpdateRunner _lateUpdateRunner;
+        private static bool _lateUpdateRunning = false;
         // Cached component list for LateUpdate (rebuilt periodically, reused per frame)
         private static List<KeyValuePair<int, object>> _lateUpdateComponents;
         private static bool _lateUpdateCacheDirty = true;
         private static float _lateUpdateLastRebuild = 0f;
-        private const float LATE_UPDATE_CACHE_INTERVAL = 1f; // rebuild cache every 1 second
+        private const float LATE_UPDATE_CACHE_INTERVAL = 1f;
 
         /// <summary>Mark the LateUpdate cache as dirty (call after scan refresh).</summary>
         public static void InvalidateLateUpdateCache() { _lateUpdateCacheDirty = true; }
 
-
         /// <summary>
-        /// Ensures the LateUpdate MonoBehaviour is running.
-        /// Called when font scale or highlight needs per-frame override.
+        /// Ensures the per-frame coroutine is running.
+        /// Uses a coroutine instead of MonoBehaviour to work on IL2CPP.
         /// </summary>
         public static void EnsureLateUpdateRunner()
         {
-            if (_lateUpdateRunner != null) return;
+            if (_lateUpdateRunning) return;
             try
             {
-                _lateUpdateGO = new GameObject("UGT_LateUpdate");
-                UnityEngine.Object.DontDestroyOnLoad(_lateUpdateGO);
-                _lateUpdateGO.hideFlags = HideFlags.HideAndDontSave;
-                _lateUpdateRunner = _lateUpdateGO.AddComponent<LateUpdateRunner>();
-                TranslatorCore.LogInfo("[Scanner] LateUpdate runner created");
+                UniverseLib.RuntimeHelper.StartCoroutine(LateUpdateCoroutine());
+                _lateUpdateRunning = true;
+                TranslatorCore.LogInfo("[Scanner] LateUpdate coroutine started");
             }
             catch (Exception ex)
             {
-                TranslatorCore.LogWarning($"[Scanner] Failed to create LateUpdate runner: {ex.Message}");
+                TranslatorCore.LogWarning($"[Scanner] Failed to start LateUpdate coroutine: {ex.Message}");
+            }
+        }
+
+        private static System.Collections.IEnumerator LateUpdateCoroutine()
+        {
+            var waitEndOfFrame = new WaitForEndOfFrame();
+            while (true)
+            {
+                yield return waitEndOfFrame;
+                OnLateUpdate();
             }
         }
 
@@ -1905,19 +1905,7 @@ namespace UnityGameTranslator.Core
         {
             try
             {
-                bool hasHighlight = _highlightedFontName != null;
-
-                // Quick check: any work to do?
-                if (!hasHighlight)
-                {
-                    bool hasScale = false;
-                    foreach (var kvp in TranslatorCore.FontSettingsMap)
-                    {
-                        if (Math.Abs(kvp.Value.scale - 1.0f) > 0.001f)
-                        { hasScale = true; break; }
-                    }
-                    if (!hasScale) return;
-                }
+                if (_highlightedFontName == null) return;
 
                 // Don't rebuild cache until types are registered and first scan has run
                 if (_registeredTypes.Count == 0 || lastComponentCacheTime == 0f)
@@ -1956,8 +1944,12 @@ namespace UnityGameTranslator.Core
                     }
 
                     // Patch-tracked components not in scanner cache
-                    var patchedRefs = TranslatorPatches.PatchedComponentRefs;
-                    foreach (var kvp in patchedRefs)
+                    // Snapshot to avoid "Collection was modified" if prefix fires during iteration
+                    List<KeyValuePair<int, object>> patchedSnapshot;
+                    try { patchedSnapshot = new List<KeyValuePair<int, object>>(TranslatorPatches.PatchedComponentRefs); }
+                    catch { patchedSnapshot = new List<KeyValuePair<int, object>>(); }
+
+                    foreach (var kvp in patchedSnapshot)
                     {
                         if (kvp.Value == null || !processedIds.Add(kvp.Key)) continue;
                         _lateUpdateComponents.Add(kvp);
@@ -1967,46 +1959,25 @@ namespace UnityGameTranslator.Core
                     _lateUpdateLastRebuild = now;
                 }
 
-                var fontNameCache = TranslatorPatches.FontNameCache;
+                // Snapshot fontNameCache for thread safety
+                Dictionary<int, string> fontNameSnapshot;
+                try { fontNameSnapshot = new Dictionary<int, string>(TranslatorPatches.FontNameCache); }
+                catch { fontNameSnapshot = new Dictionary<int, string>(); }
 
                 foreach (var kvp in _lateUpdateComponents)
                 {
                     int id = kvp.Key;
                     object component = kvp.Value;
 
-                    // Get font name — for fontSize, only process components seen by our prefix
+                    // Get font name from cache or component
                     string fontName;
-                    bool seenByPrefix = fontNameCache.TryGetValue(id, out fontName) && !string.IsNullOrEmpty(fontName);
-
-                    // For highlight, also resolve font name from component directly
-                    if (!seenByPrefix && _highlightedFontName != null)
+                    if (!fontNameSnapshot.TryGetValue(id, out fontName) || string.IsNullOrEmpty(fontName))
                     {
                         fontName = TypeHelper.GetFontName(component);
                         if (string.IsNullOrEmpty(fontName)) continue;
                     }
-                    else if (!seenByPrefix)
-                        continue;
 
                     string settingsFontName = FontManager.GetSettingsFontName(id, fontName);
-
-                    // Font scale: only on components seen by our prefix (avoid touching unknown components)
-                    float scale = FontManager.GetFontScale(settingsFontName);
-                    if (seenByPrefix && Math.Abs(scale - 1.0f) > 0.001f)
-                    {
-                        float currentSize = TypeHelper.GetFontSize(component);
-                        float originalSize = currentSize;
-                        var trueOriginals = TranslatorPatches.TrueOriginalFontSizes;
-                        if (trueOriginals != null && trueOriginals.TryGetValue(id, out float stored))
-                            originalSize = stored;
-                        float targetSize = originalSize * scale;
-
-                        if (currentSize >= 0 && Math.Abs(currentSize - targetSize) > 0.1f)
-                        {
-                            TranslatorPatches.BypassFontSizePrefix = true;
-                            TypeHelper.SetFontSize(component, targetSize);
-                            TranslatorPatches.BypassFontSizePrefix = false;
-                        }
-                    }
 
                     // Highlight color override (re-apply every frame to beat Animator)
                     if (_highlightedFontName != null)
@@ -2025,15 +1996,4 @@ namespace UnityGameTranslator.Core
         #endregion
     }
 
-    /// <summary>
-    /// Minimal MonoBehaviour for LateUpdate callback.
-    /// Runs after Animator to override font scale and highlight colors.
-    /// </summary>
-    internal class LateUpdateRunner : MonoBehaviour
-    {
-        void LateUpdate()
-        {
-            TranslatorScanner.OnLateUpdate();
-        }
-    }
 }

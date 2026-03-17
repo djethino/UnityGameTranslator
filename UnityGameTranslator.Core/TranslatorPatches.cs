@@ -175,15 +175,6 @@ namespace UnityGameTranslator.Core
                         patchCount++;
                     }
 
-                    // UI.Text.fontSize setter — intercept to apply font scale
-                    // Needed when Animators or game scripts override fontSize after our prefix
-                    var uiFontSizeProp = TypeHelper.UI_TextType.GetProperty("fontSize", BindingFlags.Public | BindingFlags.Instance);
-                    if (uiFontSizeProp?.SetMethod != null)
-                    {
-                        var prefix = typeof(TranslatorPatches).GetMethod(nameof(UIText_SetFontSize_Prefix), BindingFlags.Static | BindingFlags.Public);
-                        patcher(uiFontSizeProp.SetMethod, prefix, null);
-                        patchCount++;
-                    }
                 }
                 else
                 {
@@ -1586,9 +1577,6 @@ namespace UnityGameTranslator.Core
             if (instance == null || string.IsNullOrEmpty(fontName)) return;
 
             float scale = FontManager.GetFontScale(fontName);
-            // Ensure LateUpdate runner for Animator override (lazy init, one-time cost)
-            if (Math.Abs(scale - 1.0f) > 0.001f)
-                TranslatorScanner.EnsureLateUpdateRunner();
             // Fast exit: if scale is 1.0 and we haven't stored an original size, nothing to do
             if (Math.Abs(scale - 1.0f) < 0.001f)
             {
@@ -1853,48 +1841,6 @@ namespace UnityGameTranslator.Core
         public static void UIText_SetText_Prefix(object __instance, ref string value)
         {
             ProcessTextPatchPrefix(__instance, ref value, "Unity");
-        }
-
-        /// <summary>
-        /// Prefix for UI.Text.fontSize setter — same logic as TMP version.
-        /// Intercepts Animator/game fontSize overrides and applies font scale.
-        /// UI.Text.fontSize is int, but Harmony passes it as the property type.
-        /// </summary>
-        public static void UIText_SetFontSize_Prefix(object __instance, ref int value)
-        {
-            if (_bypassFontSizePrefix) return;
-            if (__instance == null) return;
-
-            try
-            {
-                int instanceId = TypeHelper.GetInstanceID(__instance);
-                if (instanceId == -1) return;
-
-                // Skip components we've never seen (mod's own UI, etc.)
-                if (!_fontNameCache.ContainsKey(instanceId)) return;
-
-                string fontName = null;
-                if (_fontNameCache.TryGetValue(instanceId, out string cached))
-                    fontName = cached;
-                else
-                {
-                    var fontObj = TypeHelper.GetFont(__instance);
-                    if (fontObj is UnityEngine.Object uobj)
-                        fontName = uobj.name;
-                }
-
-                if (string.IsNullOrEmpty(fontName)) return;
-
-                string settingsFontName = FontManager.GetSettingsFontName(instanceId, fontName);
-                float scale = FontManager.GetFontScale(settingsFontName);
-                if (Math.Abs(scale - 1.0f) < 0.001f) return;
-
-                _trueOriginalFontSizes[instanceId] = value;
-                _originalFontSizes[instanceId] = value;
-
-                value = (int)(value * scale);
-            }
-            catch { }
         }
 
         public static void TextMesh_SetText_Prefix(object __instance, ref string value)

@@ -350,10 +350,6 @@ namespace UnityGameTranslator.Core
                     TranslatorScanner.RefreshForFont(fontName);
                 }
 
-                // Ensure LateUpdate runner is active for Animator override
-                if (Math.Abs(scale - 1.0f) > 0.001f)
-                    TranslatorScanner.EnsureLateUpdateRunner();
-
                 TranslatorCore.SaveCache();
             }
         }

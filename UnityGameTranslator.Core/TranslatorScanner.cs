@@ -1876,33 +1876,22 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Called every LateUpdate (after Animator). Re-applies font scale and highlight color
-        /// on components where the game/Animator overrides our values.
+        /// Called every LateUpdate (after Animator). Re-applies highlight color
+        /// on components where the Animator overrides our color values.
         /// </summary>
         internal static void OnLateUpdate()
         {
             try
             {
-                bool hasScaleWork = false;
-                bool hasHighlightWork = _highlightedFontName != null;
+                // Only run when highlight is active
+                if (_highlightedFontName == null) return;
 
-                // Quick check: any font with non-default scale?
-                if (!hasHighlightWork)
+                // Don't rebuild cache until types are registered and first scan has run
+                if (_registeredTypes.Count == 0 || lastComponentCacheTime == 0f)
                 {
-                    foreach (var kvp in TranslatorCore.FontSettingsMap)
-                    {
-                        if (Math.Abs(kvp.Value.scale - 1.0f) > 0.001f)
-                        {
-                            hasScaleWork = true;
-                            break;
-                        }
-                    }
-                    if (!hasScaleWork) return;
+                    _lateUpdateCacheDirty = true;
+                    return; // wait for scanner to populate
                 }
-
-                // Rebuild component cache only when dirty and types are registered
-                if (_registeredTypes.Count == 0)
-                    _lateUpdateCacheDirty = true; // force rebuild next frame when types are ready
                 if (_lateUpdateCacheDirty || _lateUpdateComponents == null)
                 {
                     _lateUpdateComponents = new List<KeyValuePair<int, object>>();
@@ -1955,36 +1944,12 @@ namespace UnityGameTranslator.Core
 
                     string settingsFontName = FontManager.GetSettingsFontName(id, fontName);
 
-                    // Font scale override
-                    float scale = FontManager.GetFontScale(settingsFontName);
-                    if (Math.Abs(scale - 1.0f) > 0.001f)
-                    {
-                        float currentSize = TypeHelper.GetFontSize(component);
-                        float originalSize = currentSize;
-
-                        var trueOriginals = TranslatorPatches.TrueOriginalFontSizes;
-                        if (trueOriginals != null && trueOriginals.TryGetValue(id, out float stored))
-                            originalSize = stored;
-
-                        float targetSize = originalSize * scale;
-
-                        if (currentSize >= 0 && Math.Abs(currentSize - targetSize) > 0.1f)
-                        {
-                            TranslatorPatches.BypassFontSizePrefix = true;
-                            TypeHelper.SetFontSize(component, targetSize);
-                            TranslatorPatches.BypassFontSizePrefix = false;
-                        }
-                    }
-
-                    // Highlight color override
-                    if (_highlightedFontName != null)
-                    {
-                        bool matches = string.Equals(settingsFontName, _highlightedFontName, StringComparison.OrdinalIgnoreCase);
-                        Color target = matches ? HighlightColor : DimColor;
-                        Color current = TypeHelper.GetTextColor(component);
-                        if (current != target)
-                            TypeHelper.SetTextColor(component, target);
-                    }
+                    // Highlight color override (re-apply every frame to beat Animator)
+                    bool matches = string.Equals(settingsFontName, _highlightedFontName, StringComparison.OrdinalIgnoreCase);
+                    Color target = matches ? HighlightColor : DimColor;
+                    Color current = TypeHelper.GetTextColor(component);
+                    if (current != target)
+                        TypeHelper.SetTextColor(component, target);
                 }
             }
             catch { }

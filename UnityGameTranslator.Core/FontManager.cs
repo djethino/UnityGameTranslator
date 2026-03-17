@@ -458,6 +458,13 @@ namespace UnityGameTranslator.Core
                 _fallbackAppliedFonts.Remove(fontName);
                 _fallbackAppliedFonts.Remove(fontName + "_reverse");
 
+                // Remove old fallback from the game font's actual fallback list
+                // Without this, TMProOld keeps using the old fallback (first in list wins)
+                if (!string.IsNullOrEmpty(oldFallback))
+                {
+                    RemoveFallbackFromFont(fontName, oldFallback);
+                }
+
                 // Clear Unity font cache for this fallback so it's re-created
                 if (!string.IsNullOrEmpty(oldFallback))
                 {
@@ -471,6 +478,11 @@ namespace UnityGameTranslator.Core
                 // Restore original fonts on ALL components that had this font replaced.
                 // Without this, components keep the old replacement font forever.
                 RestoreAllComponentsForFont(fontName);
+
+                // Clear ALL font-replaced cache so components get re-evaluated on rescan.
+                // Some components may be in _fontReplacedComponentIds but NOT in
+                // _originalFontsPerComponent (e.g. already-replaced on first encounter).
+                _fontReplacedComponentIds.Clear();
 
                 TranslatorCore.LogInfo($"[FontManager] Font settings changed for '{fontName}': " +
                     $"enabled={enabled}, fallback='{fallbackFont ?? "(none)"}' (was '{oldFallback ?? "(none)"}')");
@@ -526,11 +538,11 @@ namespace UnityGameTranslator.Core
                 }
 
                 _originalFontsPerComponent.Remove(instanceId);
+                _fontReplacedComponentIds.Remove(instanceId);
             }
         }
 
         /// <summary>
-        /// Find a cached component by its instance ID.
         /// Set fontSharedMaterial on a TMP component from a font asset's material.
         /// Uses IL2CPP-safe casting for proxy objects.
         /// </summary>
@@ -554,7 +566,10 @@ namespace UnityGameTranslator.Core
                 var castedMaterial = TypeHelper.Il2CppCast(fontMaterial, fontSharedMatProp.PropertyType);
                 fontSharedMatProp.SetValue(component, castedMaterial, null);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogWarning($"[FontReplace] SetFontSharedMaterial failed: {ex.Message}");
+            }
         }
 
         /// <summary>
@@ -564,8 +579,6 @@ namespace UnityGameTranslator.Core
         {
             // Use the scanner's unified cache (covers all registered types, works on IL2CPP)
             return TranslatorScanner.FindCachedComponentById(instanceId);
-
-            return null;
         }
 
         /// <summary>
@@ -624,6 +637,42 @@ namespace UnityGameTranslator.Core
                 TranslatorCore.LogWarning($"[FontManager] Failed to add fallback to {fontName}: {ex.Message}");
             }
             return false;
+        }
+
+        /// <summary>
+        /// Remove a fallback font asset from a game font's fallback list.
+        /// Called when switching to a different fallback font.
+        /// </summary>
+        private static void RemoveFallbackFromFont(string gameFontName, string oldFallbackName)
+        {
+            if (string.IsNullOrEmpty(gameFontName) || string.IsNullOrEmpty(oldFallbackName))
+                return;
+
+            // Find the game font object
+            if (!_detectedTMPFontObjects.TryGetValue(gameFontName, out var gameFontObj))
+                return;
+
+            // Find the old fallback asset
+            if (!_fallbackAssets.TryGetValue(oldFallbackName, out var oldFallbackAsset))
+                return;
+
+            try
+            {
+                var fallbackList = GetFallbackListReflection(gameFontObj);
+                if (fallbackList == null) return;
+
+                var removeMethod = fallbackList.GetType().GetMethod("Remove");
+                if (removeMethod != null)
+                {
+                    bool removed = (bool)removeMethod.Invoke(fallbackList, new[] { oldFallbackAsset });
+                    if (removed)
+                        TranslatorCore.LogInfo($"[FontManager] Removed old fallback '{oldFallbackName}' from: {gameFontName}");
+                }
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogWarning($"[FontManager] Failed to remove fallback from {gameFontName}: {ex.Message}");
+            }
         }
 
         // Track which fonts already have our fallback added (by font name)
@@ -906,7 +955,11 @@ namespace UnityGameTranslator.Core
                     // ApplyFontScale will correct it back on the next text processing cycle.
                     float origSize = TypeHelper.GetFontSize(textObj);
                     if (origSize > 0)
+                    {
+                        TranslatorPatches.BypassFontSizePrefix = true;
                         TypeHelper.SetFontSize(textObj, origSize + 1);
+                        TranslatorPatches.BypassFontSizePrefix = false;
+                    }
 
                     setDirtyMethod?.Invoke(textObj, null);
                     setLayoutDirty?.Invoke(textObj, null);
@@ -2415,6 +2468,8 @@ namespace UnityGameTranslator.Core
             _gameTMPFonts.Clear();
             _gameFontsScanned = false;
             _fallbackAppliedFonts.Clear();
+            _fontReplacedComponentIds.Clear();
+            _originalFontsPerComponent.Clear();
         }
 
         /// <summary>

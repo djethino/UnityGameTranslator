@@ -151,6 +151,15 @@ namespace UnityGameTranslator.Core
                             patchCount++;
                         }
                     }
+                    // TMP_Text.fontSize setter — intercept to apply font scale
+                    var fontSizeProp = TypeHelper.TMP_TextType.GetProperty("fontSize", BindingFlags.Public | BindingFlags.Instance);
+                    if (fontSizeProp?.SetMethod != null)
+                    {
+                        var prefix = typeof(TranslatorPatches).GetMethod(nameof(TMPText_SetFontSize_Prefix), BindingFlags.Static | BindingFlags.Public);
+                        patcher(fontSizeProp.SetMethod, prefix, null);
+                        patchCount++;
+                    }
+
                     TranslatorCore.LogInfo($"[Patches] TMP_Text patches applied ({TypeHelper.TMP_TextType.FullName})");
                 }
                 else
@@ -1611,14 +1620,19 @@ namespace UnityGameTranslator.Core
             if (_fontSizeBumpActive)
             {
                 // Font re-rasterization hack: set originalSize+1 to force Unity re-rasterize.
-                // Persists until ResetFontSizeBump() is called after the next natural scan cycle.
+                _bypassFontSizePrefix = true;
                 TypeHelper.SetFontSize(instance, originalSize + 1);
+                _bypassFontSizePrefix = false;
                 return;
             }
 
             float currentSize = TypeHelper.GetFontSize(instance);
             if (currentSize >= 0 && Math.Abs(currentSize - targetSize) > 0.1f)
+            {
+                _bypassFontSizePrefix = true;
                 TypeHelper.SetFontSize(instance, targetSize);
+                _bypassFontSizePrefix = false;
+            }
         }
 
         /// <summary>
@@ -1699,7 +1713,19 @@ namespace UnityGameTranslator.Core
                     if (componentType == "TMP")
                     {
                         if (fontObj == null) fontObj = TypeHelper.GetFont(__instance);
-                        FontManager.ApplyFontReplacement(__instance, fontObj, settingsFontName);
+
+                        // TMProOld: use fallback approach (add custom font to game font's fallback list)
+                        // TMProOld can't render manually-created TMP_FontAssets via SetFont,
+                        // but it CAN use them as fallback fonts for missing characters.
+                        // Modern TMP: use direct replacement (SetFont) for full font swap.
+                        if (TypeHelper.UseAlternateTMP)
+                        {
+                            FontManager.EnsureFallbackApplied(fontObj, settingsFontName);
+                        }
+                        else
+                        {
+                            FontManager.ApplyFontReplacement(__instance, fontObj, settingsFontName);
+                        }
                     }
                     else if (componentType == "Unity")
                     {
@@ -1781,6 +1807,51 @@ namespace UnityGameTranslator.Core
         public static void TMPText_SetTextMethod_Prefix(object __instance, ref string __0)
         {
             ProcessTextPatchPrefix(__instance, ref __0, "TMP");
+        }
+
+        /// <summary>
+        /// Prefix for TMP_Text.fontSize setter.
+        /// Intercepts fontSize changes to apply font scale immediately.
+        /// This ensures the scale is applied even when the game sets fontSize AFTER set_text.
+        /// </summary>
+        [ThreadStatic] private static bool _bypassFontSizePrefix;
+        public static bool BypassFontSizePrefix { get => _bypassFontSizePrefix; set => _bypassFontSizePrefix = value; }
+
+        public static void TMPText_SetFontSize_Prefix(object __instance, ref float value)
+        {
+            if (_bypassFontSizePrefix) return;
+            if (__instance == null) return;
+
+            try
+            {
+                int instanceId = TypeHelper.GetInstanceID(__instance);
+                if (instanceId == -1) return;
+
+                // Get the font name for this component (from cache or reflection)
+                string fontName = null;
+                if (_fontNameCache.TryGetValue(instanceId, out string cached))
+                    fontName = cached;
+                else
+                {
+                    var fontObj = TypeHelper.GetFont(__instance);
+                    if (fontObj is UnityEngine.Object uobj)
+                        fontName = uobj.name;
+                }
+
+                if (string.IsNullOrEmpty(fontName)) return;
+
+                string settingsFontName = FontManager.GetSettingsFontName(instanceId, fontName);
+                float scale = FontManager.GetFontScale(settingsFontName);
+                if (Math.Abs(scale - 1.0f) < 0.001f) return;
+
+                // Store the incoming value as the true original size
+                _trueOriginalFontSizes[instanceId] = value;
+                _originalFontSizes[instanceId] = value;
+
+                // Apply scale to the incoming value
+                value = value * scale;
+            }
+            catch { }
         }
 
         public static void UIText_SetText_Prefix(object __instance, ref string value)

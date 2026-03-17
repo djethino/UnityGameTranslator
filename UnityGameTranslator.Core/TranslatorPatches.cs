@@ -175,6 +175,14 @@ namespace UnityGameTranslator.Core
                         patchCount++;
                     }
 
+                    // UI.Text.fontSize setter — intercept game/Animator fontSize overrides
+                    var uiFontSizeProp = TypeHelper.UI_TextType.GetProperty("fontSize", BindingFlags.Public | BindingFlags.Instance);
+                    if (uiFontSizeProp?.SetMethod != null)
+                    {
+                        var prefix = typeof(TranslatorPatches).GetMethod(nameof(UIText_SetFontSize_Prefix), BindingFlags.Static | BindingFlags.Public);
+                        patcher(uiFontSizeProp.SetMethod, prefix, null);
+                        patchCount++;
+                    }
                 }
                 else
                 {
@@ -1577,6 +1585,9 @@ namespace UnityGameTranslator.Core
             if (instance == null || string.IsNullOrEmpty(fontName)) return;
 
             float scale = FontManager.GetFontScale(fontName);
+            // Ensure LateUpdate runner for persistent fontSize override
+            if (Math.Abs(scale - 1.0f) > 0.001f)
+                TranslatorScanner.EnsureLateUpdateRunner();
             // Fast exit: if scale is 1.0 and we haven't stored an original size, nothing to do
             if (Math.Abs(scale - 1.0f) < 0.001f)
             {
@@ -1608,6 +1619,46 @@ namespace UnityGameTranslator.Core
                 TypeHelper.SetFontSize(instance, targetSize);
                 _bypassFontSizePrefix = false;
             }
+
+            // Also scale resizeTextMaxSize when bestFit is enabled
+            // bestFit auto-sizes up to maxSize, so fontSize alone isn't enough
+            ApplyBestFitScale(instance, instanceId, scale);
+        }
+
+        // Cache original resizeTextMaxSize per component
+        private static readonly Dictionary<int, int> _originalMaxFontSizes = new Dictionary<int, int>();
+
+        public static void ApplyBestFitScalePublic(object instance, int instanceId, float scale)
+            => ApplyBestFitScale(instance, instanceId, scale);
+
+        private static void ApplyBestFitScale(object instance, int instanceId, float scale)
+        {
+            try
+            {
+                var type = instance.GetType();
+                var bestFitProp = type.GetProperty("resizeTextForBestFit", BindingFlags.Public | BindingFlags.Instance);
+                if (bestFitProp == null) return;
+
+                bool bestFit = (bool)bestFitProp.GetValue(instance, null);
+                if (!bestFit) return;
+
+                var maxSizeProp = type.GetProperty("resizeTextMaxSize", BindingFlags.Public | BindingFlags.Instance);
+                if (maxSizeProp == null || !maxSizeProp.CanWrite) return;
+
+                int currentMax = (int)maxSizeProp.GetValue(instance, null);
+
+                // Store original maxSize on first encounter
+                if (!_originalMaxFontSizes.ContainsKey(instanceId))
+                    _originalMaxFontSizes[instanceId] = currentMax;
+
+                int originalMax = _originalMaxFontSizes[instanceId];
+                int targetMax = (int)(originalMax * scale);
+                if (targetMax < 1) targetMax = 1;
+
+                if (currentMax != targetMax)
+                    maxSizeProp.SetValue(instance, targetMax, null);
+            }
+            catch { }
         }
 
         /// <summary>
@@ -1834,6 +1885,40 @@ namespace UnityGameTranslator.Core
 
                 // Apply scale to the incoming value
                 value = value * scale;
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Prefix for UI.Text.fontSize setter.
+        /// Intercepts game fontSize assignments that happen after set_text and applies font scale.
+        /// </summary>
+        public static void UIText_SetFontSize_Prefix(object __instance, ref int value)
+        {
+            if (_bypassFontSizePrefix) return;
+            if (__instance == null) return;
+
+            try
+            {
+                int instanceId = TypeHelper.GetInstanceID(__instance);
+                if (instanceId == -1) return;
+
+                // Skip components we've never seen (mod's own UI, etc.)
+                if (!_fontNameCache.ContainsKey(instanceId)) return;
+
+                string fontName;
+                if (!_fontNameCache.TryGetValue(instanceId, out fontName)) return;
+                if (string.IsNullOrEmpty(fontName)) return;
+
+                string settingsFontName = FontManager.GetSettingsFontName(instanceId, fontName);
+                float scale = FontManager.GetFontScale(settingsFontName);
+                if (Math.Abs(scale - 1.0f) < 0.001f) return;
+
+                // Store the INCOMING (unscaled) value as the true original
+                _trueOriginalFontSizes[instanceId] = value;
+                _originalFontSizes[instanceId] = value;
+
+                value = (int)(value * scale);
             }
             catch { }
         }

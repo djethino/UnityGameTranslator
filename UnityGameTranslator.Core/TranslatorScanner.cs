@@ -181,6 +181,7 @@ namespace UnityGameTranslator.Core
                 }
 
                 lastComponentCacheTime = Time.time;
+                _lateUpdateCacheDirty = true;
                 TranslatorCore.LogInfo($"[Scanner] Force refreshed cache: {total} total components across {_registeredTypes.Count} types");
             }
             catch (Exception ex)
@@ -315,6 +316,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static void RefreshAllCaches()
         {
+            _lateUpdateCacheDirty = true;
             // Phase 1: Direct scans (strategies 1-3) for each type
             var needsFilterTypes = new List<RegisteredTextType>();
 
@@ -1416,11 +1418,14 @@ namespace UnityGameTranslator.Core
                 ClearHighlight();
 
             _highlightedFontName = fontName;
+            EnsureLateUpdateRunner();
+            var processedIds = new HashSet<int>();
 
             try
             {
                 ForceRefreshCache();
 
+                // Pass 1: scanner cache (FindObjectsOfType snapshot)
                 foreach (var type in _registeredTypes)
                 {
                     if (type.CachedComponents == null) continue;
@@ -1433,11 +1438,29 @@ namespace UnityGameTranslator.Core
                             if (component == null) continue;
                             int id = TypeHelper.GetInstanceID(component);
                             if (id == -1) continue;
+                            processedIds.Add(id);
                             HighlightComponent(component, id, fontName);
                         }
                         catch { }
                     }
                 }
+
+                // Pass 2: components seen by the patch but not in scanner cache
+                // (e.g., dynamically created, activated after scan, different scene timing)
+                var patchRefs = TranslatorPatches.PatchedComponentRefs;
+                foreach (var kvp in patchRefs)
+                {
+                    if (processedIds.Contains(kvp.Key)) continue;
+                    if (kvp.Value == null) continue;
+                    try
+                    {
+                        HighlightComponent(kvp.Value, kvp.Key, fontName);
+                    }
+                    catch { }
+                }
+
+                // Keep Animators disabled during highlight (diagnostic mode).
+                // They override text color every frame when enabled.
             }
             catch (Exception ex)
             {
@@ -1454,6 +1477,7 @@ namespace UnityGameTranslator.Core
 
             try
             {
+                // Restore from scanner cache
                 foreach (var type in _registeredTypes)
                 {
                     if (type.CachedComponents == null) continue;
@@ -1470,6 +1494,14 @@ namespace UnityGameTranslator.Core
                         }
                         catch { }
                     }
+                }
+
+                // Restore from patch-tracked components (not in scanner cache)
+                foreach (var kvp in TranslatorPatches.PatchedComponentRefs)
+                {
+                    if (kvp.Value == null) continue;
+                    try { RestoreComponentColor(kvp.Value, kvp.Key); }
+                    catch { }
                 }
             }
             catch { }
@@ -1810,5 +1842,166 @@ namespace UnityGameTranslator.Core
         }
 
         #endregion
+
+        #region LateUpdate Override (font scale + highlight after Animator)
+
+        private static GameObject _lateUpdateGO;
+        private static LateUpdateRunner _lateUpdateRunner;
+        // Cached component list for LateUpdate (rebuilt on scan/highlight, reused per frame)
+        private static List<KeyValuePair<int, object>> _lateUpdateComponents;
+        private static bool _lateUpdateCacheDirty = true;
+
+        /// <summary>Mark the LateUpdate cache as dirty (call after scan refresh).</summary>
+        public static void InvalidateLateUpdateCache() { _lateUpdateCacheDirty = true; }
+
+        /// <summary>
+        /// Ensures the LateUpdate MonoBehaviour is running.
+        /// Called when font scale or highlight needs per-frame override.
+        /// </summary>
+        public static void EnsureLateUpdateRunner()
+        {
+            if (_lateUpdateRunner != null) return;
+            try
+            {
+                _lateUpdateGO = new GameObject("UGT_LateUpdate");
+                UnityEngine.Object.DontDestroyOnLoad(_lateUpdateGO);
+                _lateUpdateGO.hideFlags = HideFlags.HideAndDontSave;
+                _lateUpdateRunner = _lateUpdateGO.AddComponent<LateUpdateRunner>();
+                TranslatorCore.LogInfo("[Scanner] LateUpdate runner created");
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogWarning($"[Scanner] Failed to create LateUpdate runner: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Called every LateUpdate (after Animator). Re-applies font scale and highlight color
+        /// on components where the game/Animator overrides our values.
+        /// </summary>
+        internal static void OnLateUpdate()
+        {
+            try
+            {
+                bool hasScaleWork = false;
+                bool hasHighlightWork = _highlightedFontName != null;
+
+                // Quick check: any font with non-default scale?
+                if (!hasHighlightWork)
+                {
+                    foreach (var kvp in TranslatorCore.FontSettingsMap)
+                    {
+                        if (Math.Abs(kvp.Value.scale - 1.0f) > 0.001f)
+                        {
+                            hasScaleWork = true;
+                            break;
+                        }
+                    }
+                    if (!hasScaleWork) return;
+                }
+
+                // Rebuild component cache only when dirty and types are registered
+                if (_registeredTypes.Count == 0)
+                    _lateUpdateCacheDirty = true; // force rebuild next frame when types are ready
+                if (_lateUpdateCacheDirty || _lateUpdateComponents == null)
+                {
+                    _lateUpdateComponents = new List<KeyValuePair<int, object>>();
+                    var processedIds = new HashSet<int>();
+
+                    // Scanner cache components
+                    foreach (var type in _registeredTypes)
+                    {
+                        if (type.CachedComponents == null) continue;
+                        foreach (var obj in type.CachedComponents)
+                        {
+                            if (obj == null) continue;
+                            try
+                            {
+                                object component = ResolveComponent(obj, type);
+                                if (component == null) continue;
+                                int id = TypeHelper.GetInstanceID(component);
+                                if (id == -1 || !processedIds.Add(id)) continue;
+                                _lateUpdateComponents.Add(new KeyValuePair<int, object>(id, component));
+                            }
+                            catch { }
+                        }
+                    }
+
+                    // Patch-tracked components not in scanner cache
+                    var patchedRefs = TranslatorPatches.PatchedComponentRefs;
+                    foreach (var kvp in patchedRefs)
+                    {
+                        if (kvp.Value == null || !processedIds.Add(kvp.Key)) continue;
+                        _lateUpdateComponents.Add(kvp);
+                    }
+
+                    _lateUpdateCacheDirty = false;
+                }
+
+                var fontNameCache = TranslatorPatches.FontNameCache;
+
+                foreach (var kvp in _lateUpdateComponents)
+                {
+                    int id = kvp.Key;
+                    object component = kvp.Value;
+
+                    // Get font name from cache, or read from component
+                    string fontName;
+                    if (!fontNameCache.TryGetValue(id, out fontName) || string.IsNullOrEmpty(fontName))
+                    {
+                        fontName = TypeHelper.GetFontName(component);
+                        if (string.IsNullOrEmpty(fontName)) continue;
+                    }
+
+                    string settingsFontName = FontManager.GetSettingsFontName(id, fontName);
+
+                    // Font scale override
+                    float scale = FontManager.GetFontScale(settingsFontName);
+                    if (Math.Abs(scale - 1.0f) > 0.001f)
+                    {
+                        float currentSize = TypeHelper.GetFontSize(component);
+                        float originalSize = currentSize;
+
+                        var trueOriginals = TranslatorPatches.TrueOriginalFontSizes;
+                        if (trueOriginals != null && trueOriginals.TryGetValue(id, out float stored))
+                            originalSize = stored;
+
+                        float targetSize = originalSize * scale;
+
+                        if (currentSize >= 0 && Math.Abs(currentSize - targetSize) > 0.1f)
+                        {
+                            TranslatorPatches.BypassFontSizePrefix = true;
+                            TypeHelper.SetFontSize(component, targetSize);
+                            TranslatorPatches.BypassFontSizePrefix = false;
+                        }
+                    }
+
+                    // Highlight color override
+                    if (_highlightedFontName != null)
+                    {
+                        bool matches = string.Equals(settingsFontName, _highlightedFontName, StringComparison.OrdinalIgnoreCase);
+                        Color target = matches ? HighlightColor : DimColor;
+                        Color current = TypeHelper.GetTextColor(component);
+                        if (current != target)
+                            TypeHelper.SetTextColor(component, target);
+                    }
+                }
+            }
+            catch { }
+        }
+
+        #endregion
+    }
+
+    /// <summary>
+    /// Minimal MonoBehaviour for LateUpdate callback.
+    /// Runs after Animator to override font scale and highlight colors.
+    /// </summary>
+    internal class LateUpdateRunner : MonoBehaviour
+    {
+        void LateUpdate()
+        {
+            TranslatorScanner.OnLateUpdate();
+        }
     }
 }

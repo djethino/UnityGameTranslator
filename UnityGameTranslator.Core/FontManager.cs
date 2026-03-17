@@ -350,6 +350,10 @@ namespace UnityGameTranslator.Core
                     TranslatorScanner.RefreshForFont(fontName);
                 }
 
+                // Ensure LateUpdate runner is active for Animator override
+                if (Math.Abs(scale - 1.0f) > 0.001f)
+                    TranslatorScanner.EnsureLateUpdateRunner();
+
                 TranslatorCore.SaveCache();
             }
         }
@@ -754,11 +758,15 @@ namespace UnityGameTranslator.Core
         /// Track original font for a component (used by AlternateTMP path).
         /// Only stores on first call per component (preserves true original).
         /// </summary>
-        public static void TrackOriginalFont(int instanceId, object originalFont)
+        public static void TrackOriginalFont(int instanceId, object originalFont, object component)
         {
             if (instanceId == -1 || originalFont == null) return;
             if (!_originalFontsPerComponent.ContainsKey(instanceId))
+            {
                 _originalFontsPerComponent[instanceId] = originalFont;
+                if (component != null)
+                    _replacedComponentRefs[instanceId] = component;
+            }
         }
 
         /// <summary>

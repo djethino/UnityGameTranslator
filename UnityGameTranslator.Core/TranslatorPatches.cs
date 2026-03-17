@@ -87,6 +87,7 @@ namespace UnityGameTranslator.Core
         private static readonly Dictionary<int, float> _originalFontSizes = new Dictionary<int, float>();
         // Permanent backup — never cleared. Prevents cumulative scaling.
         private static readonly Dictionary<int, float> _trueOriginalFontSizes = new Dictionary<int, float>();
+        public static Dictionary<int, float> TrueOriginalFontSizes => _trueOriginalFontSizes;
 
         // Generically detected text component types (NGUI UILabel, SuperTextMesh, etc.)
         private static readonly List<RegisteredTextType> _genericTextTypes = new List<RegisteredTextType>();
@@ -171,6 +172,16 @@ namespace UnityGameTranslator.Core
                     {
                         var prefix = typeof(TranslatorPatches).GetMethod(nameof(UIText_SetText_Prefix), BindingFlags.Static | BindingFlags.Public);
                         patcher(uiTextProp.SetMethod, prefix, null);
+                        patchCount++;
+                    }
+
+                    // UI.Text.fontSize setter — intercept to apply font scale
+                    // Needed when Animators or game scripts override fontSize after our prefix
+                    var uiFontSizeProp = TypeHelper.UI_TextType.GetProperty("fontSize", BindingFlags.Public | BindingFlags.Instance);
+                    if (uiFontSizeProp?.SetMethod != null)
+                    {
+                        var prefix = typeof(TranslatorPatches).GetMethod(nameof(UIText_SetFontSize_Prefix), BindingFlags.Static | BindingFlags.Public);
+                        patcher(uiFontSizeProp.SetMethod, prefix, null);
                         patchCount++;
                     }
                 }
@@ -1417,6 +1428,7 @@ namespace UnityGameTranslator.Core
             inputFieldTextCache.Clear();
             _altTMPFontReplacedIds.Clear();
             _fontNameCache.Clear();
+            _patchedComponentRefs.Clear();
         }
 
         /// <summary>
@@ -1574,6 +1586,9 @@ namespace UnityGameTranslator.Core
             if (instance == null || string.IsNullOrEmpty(fontName)) return;
 
             float scale = FontManager.GetFontScale(fontName);
+            // Ensure LateUpdate runner for Animator override (lazy init, one-time cost)
+            if (Math.Abs(scale - 1.0f) > 0.001f)
+                TranslatorScanner.EnsureLateUpdateRunner();
             // Fast exit: if scale is 1.0 and we haven't stored an original size, nothing to do
             if (Math.Abs(scale - 1.0f) < 0.001f)
             {
@@ -1614,6 +1629,14 @@ namespace UnityGameTranslator.Core
         // Cache font name per component instanceId (avoids GetFont reflection on every set_text)
         // Key: instanceId, Value: font name (null if no font). Cleared on scene change.
         private static readonly Dictionary<int, string> _fontNameCache = new Dictionary<int, string>();
+        // Component refs seen by the patch (for highlight — scanner cache misses some)
+        private static readonly Dictionary<int, object> _patchedComponentRefs = new Dictionary<int, object>();
+        /// <summary>
+        /// Expose font name cache and component refs for highlight/size operations.
+        /// The scanner cache may not contain all components reached by the patch.
+        /// </summary>
+        public static Dictionary<int, string> FontNameCache => _fontNameCache;
+        public static Dictionary<int, object> PatchedComponentRefs => _patchedComponentRefs;
 
         // === PROFILING (activate via debug file in plugin folder) ===
         private static readonly System.Diagnostics.Stopwatch _profSw = new System.Diagnostics.Stopwatch();
@@ -1665,7 +1688,10 @@ namespace UnityGameTranslator.Core
                     if (fontObj != null)
                         fontName = (fontObj is UnityEngine.Object uobj) ? uobj.name : null;
                     if (compId != -1)
+                    {
                         _fontNameCache[compId] = fontName;
+                        _patchedComponentRefs[compId] = __instance;
+                    }
                 }
 
                 if (profiling) { t2 = _profSw.ElapsedTicks; _profGetFont += t2 - t1; }
@@ -1707,7 +1733,7 @@ namespace UnityGameTranslator.Core
                         var replacementFont = FontManager.GetUnityReplacementFont(settingsFontName);
                         if (replacementFont != null)
                         {
-                            FontManager.TrackOriginalFont(compId, fontObj);
+                            FontManager.TrackOriginalFont(compId, fontObj, __instance);
                             string currentName = (fontObj is UnityEngine.Object co) ? co.name : null;
                             string replaceName = replacementFont.name;
                             if (currentName != replaceName)
@@ -1794,7 +1820,10 @@ namespace UnityGameTranslator.Core
                 int instanceId = TypeHelper.GetInstanceID(__instance);
                 if (instanceId == -1) return;
 
-                // Get the font name for this component (from cache or reflection)
+                // Skip components we've never seen (mod's own UI, etc.)
+                if (!_fontNameCache.ContainsKey(instanceId)) return;
+
+                // Get the font name for this component
                 string fontName = null;
                 if (_fontNameCache.TryGetValue(instanceId, out string cached))
                     fontName = cached;
@@ -1824,6 +1853,48 @@ namespace UnityGameTranslator.Core
         public static void UIText_SetText_Prefix(object __instance, ref string value)
         {
             ProcessTextPatchPrefix(__instance, ref value, "Unity");
+        }
+
+        /// <summary>
+        /// Prefix for UI.Text.fontSize setter — same logic as TMP version.
+        /// Intercepts Animator/game fontSize overrides and applies font scale.
+        /// UI.Text.fontSize is int, but Harmony passes it as the property type.
+        /// </summary>
+        public static void UIText_SetFontSize_Prefix(object __instance, ref int value)
+        {
+            if (_bypassFontSizePrefix) return;
+            if (__instance == null) return;
+
+            try
+            {
+                int instanceId = TypeHelper.GetInstanceID(__instance);
+                if (instanceId == -1) return;
+
+                // Skip components we've never seen (mod's own UI, etc.)
+                if (!_fontNameCache.ContainsKey(instanceId)) return;
+
+                string fontName = null;
+                if (_fontNameCache.TryGetValue(instanceId, out string cached))
+                    fontName = cached;
+                else
+                {
+                    var fontObj = TypeHelper.GetFont(__instance);
+                    if (fontObj is UnityEngine.Object uobj)
+                        fontName = uobj.name;
+                }
+
+                if (string.IsNullOrEmpty(fontName)) return;
+
+                string settingsFontName = FontManager.GetSettingsFontName(instanceId, fontName);
+                float scale = FontManager.GetFontScale(settingsFontName);
+                if (Math.Abs(scale - 1.0f) < 0.001f) return;
+
+                _trueOriginalFontSizes[instanceId] = value;
+                _originalFontSizes[instanceId] = value;
+
+                value = (int)(value * scale);
+            }
+            catch { }
         }
 
         public static void TextMesh_SetText_Prefix(object __instance, ref string value)
@@ -2173,9 +2244,9 @@ namespace UnityGameTranslator.Core
                 string replacementName = (replacementAsset is UnityEngine.Object repObj) ? repObj.name : null;
                 if (currentFontName == replacementName && !string.IsNullOrEmpty(currentFontName)) return;
 
-                // Store original font for restore (via FontManager tracking)
+                // Store original font and component ref for restore
                 if (instId != -1 && originalFont != null)
-                    FontManager.TrackOriginalFont(instId, originalFont);
+                    FontManager.TrackOriginalFont(instId, originalFont, instance);
 
                 // Replace the font: replacement becomes PRIMARY
                 fontProp.SetValue(instance, replacementAsset, null);

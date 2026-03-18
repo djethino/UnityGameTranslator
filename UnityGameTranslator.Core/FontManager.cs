@@ -68,6 +68,26 @@ namespace UnityGameTranslator.Core
             return null;
         }
 
+        /// <summary>
+        /// Remove dead component refs (destroyed by game, e.g., overlay closed).
+        /// Prevents stale refs from polluting tracking and causing issues on reopen.
+        /// </summary>
+        private static void CleanDeadComponentRefs()
+        {
+            // Clean _replacedComponentRefs
+            var deadIds = new List<int>();
+            foreach (var kvp in _replacedComponentRefs)
+            {
+                if (kvp.Value == null || (kvp.Value is UnityEngine.Object uobj && uobj == null))
+                    deadIds.Add(kvp.Key);
+            }
+            foreach (int id in deadIds)
+            {
+                _replacedComponentRefs.Remove(id);
+                _originalFontsPerComponent.Remove(id);
+            }
+        }
+
         // Characters seen in translated text per fallback font name
         // Used to pre-populate clone atlas and prevent runtime atlas rebuilds
         private static readonly Dictionary<string, HashSet<char>> _knownCharsPerClone =
@@ -81,9 +101,20 @@ namespace UnityGameTranslator.Core
         /// Unity purges characters not requested in the current frame during atlas rebuilds.
         /// With multiple clones, a rebuild on one clone purges the other's characters.
         /// </summary>
+        private static float _lastDeadRefCleanup = 0f;
+        private const float DEAD_REF_CLEANUP_INTERVAL = 5f;
+
         public static void ProtectCloneAtlases()
         {
             if (_unityFallbackFonts.Count == 0) return;
+
+            // Periodically clean up dead component refs (destroyed by game)
+            float now = Time.realtimeSinceStartup;
+            if (now - _lastDeadRefCleanup > DEAD_REF_CLEANUP_INTERVAL)
+            {
+                _lastDeadRefCleanup = now;
+                CleanDeadComponentRefs();
+            }
 
             // Snapshot to avoid "Collection was modified" if a clone is created during iteration
             KeyValuePair<string, Font>[] snapshot;

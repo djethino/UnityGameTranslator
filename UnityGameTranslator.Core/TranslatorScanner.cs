@@ -315,6 +315,7 @@ namespace UnityGameTranslator.Core
         ///          shared across all types that still need it. Avoids N expensive calls.
         /// </summary>
         private static int _lastTotalComponentCount = 0;
+        private static float _lastForceRefreshTime = 0f;
 
         private static void RefreshAllCaches()
         {
@@ -1713,10 +1714,15 @@ namespace UnityGameTranslator.Core
             FontManager.ProtectCloneAtlases();
 
             // After new chars were added to a clone atlas, force all components to re-render
-            // so they pick up updated glyph positions. No ClearProcessedCache (causes AI re-queue).
+            // so they pick up updated glyph positions. Debounced to max once per second.
             if (FontManager.ConsumePendingRefresh())
             {
-                ForceRefreshAllText();
+                float now = Time.realtimeSinceStartup;
+                if (now - _lastForceRefreshTime > 1f)
+                {
+                    _lastForceRefreshTime = now;
+                    ForceRefreshAllText();
+                }
             }
 
             // Process all pending updates immediately

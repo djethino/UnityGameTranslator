@@ -1734,16 +1734,23 @@ namespace UnityGameTranslator.Core
 
                     // If the component already has a clone font (inherited from template/pool),
                     // resolve back to the ORIGINAL font name so tracking stays correct
-                    if (fontObj is Font f)
+                    Font f = fontObj as Font;
+                    if (f == null) f = TypeHelper.Il2CppCast(fontObj, typeof(Font)) as Font;
+                    if (f != null)
                     {
                         string resolvedOriginal = FontManager.GetOriginalFontNameForClone(f);
                         if (resolvedOriginal != null)
                         {
                             fontName = resolvedOriginal;
-                            // Mark as inherited — ApplyFontScale should skip (already scaled)
                             if (compId != -1)
                                 _inheritedCloneComponents.Add(compId);
                         }
+                    }
+                    // DEBUG: log cache miss with font name
+                    if (_dbgCacheMissCount < 50)
+                    {
+                        _dbgCacheMissCount++;
+                        TranslatorCore.LogInfo($"[Prefix] CacheMiss id={compId} font='{fontName}' isFont={f != null} text='{(textValue?.Length > 15 ? textValue.Substring(0, 15) : textValue)}'");
                     }
 
                     if (compId != -1)
@@ -1871,6 +1878,8 @@ namespace UnityGameTranslator.Core
         [ThreadStatic] private static bool _bypassFontSizePrefix;
         // Components that inherited a clone font from template — skip ApplyFontScale (already scaled)
         private static readonly HashSet<int> _inheritedCloneComponents = new HashSet<int>();
+        // DEBUG
+        private static int _dbgCacheMissCount = 0;
         [ThreadStatic] private static bool _unusedField; // placeholder
         public static bool BypassFontSizePrefix { get => _bypassFontSizePrefix; set => _bypassFontSizePrefix = value; }
 

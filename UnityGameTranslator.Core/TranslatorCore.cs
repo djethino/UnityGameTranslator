@@ -2151,7 +2151,8 @@ namespace UnityGameTranslator.Core
             var numbersWithIndex = new List<Tuple<string, int, int>>();
             foreach (Match match in matches)
             {
-                if (!IsPartOfHexColor(text, match.Index, match.Length))
+                if (!IsPartOfHexColor(text, match.Index, match.Length)
+                    && !IsInsidePlaceholder(text, match.Index))
                 {
                     numbersWithIndex.Add(Tuple.Create(match.Value, match.Index, match.Length));
                 }
@@ -2205,6 +2206,28 @@ namespace UnityGameTranslator.Core
         private static bool IsHexChar(char c)
         {
             return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+        }
+
+        /// <summary>
+        /// Check if a number at the given index is inside a [vN] placeholder.
+        /// Handles [v0] through [v99].
+        /// </summary>
+        private static bool IsInsidePlaceholder(string text, int index)
+        {
+            // Look backwards for "[v" pattern
+            for (int i = index - 1; i >= Math.Max(0, index - 3); i--)
+            {
+                if (i >= 1 && text[i] == 'v' && text[i - 1] == '[')
+                {
+                    // Found "[v" before the number — check if there's a "]" after
+                    for (int j = index; j < Math.Min(text.Length, index + 4); j++)
+                    {
+                        if (text[j] == ']') return true;
+                        if (!char.IsDigit(text[j])) break;
+                    }
+                }
+            }
+            return false;
         }
 
         public static void QueueForTranslation(string text, object component = null, bool isOwnUI = false)
@@ -2525,6 +2548,13 @@ namespace UnityGameTranslator.Core
                 if (translatedTexts.Contains(trimmedNormalized))
                 {
                     skippedAlreadyTranslated++;
+                    return text;
+                }
+
+                // Own UI text that's already translated (displayed result) — don't re-queue
+                // The mod UI shows translated text; re-queueing it creates an infinite loop
+                if (isOwnUI)
+                {
                     return text;
                 }
 

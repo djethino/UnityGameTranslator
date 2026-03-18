@@ -258,7 +258,12 @@ namespace UnityGameTranslator.Core
         public static void RegisterPanelRoot(GameObject panelRoot)
         {
             if (panelRoot != null)
+            {
                 ownUIPanelRoots.Add(panelRoot.GetInstanceID());
+                // Clear hierarchy cache — components checked before this registration
+                // may have been cached as "not own UI" and need re-evaluation
+                _ownUIHierarchyCache.Clear();
+            }
         }
 
         // Cache for IsOwnUIByHierarchy results (avoids repeated hierarchy traversal)
@@ -291,7 +296,9 @@ namespace UnityGameTranslator.Core
                 current = current.parent;
             }
 
-            _ownUIHierarchyCache[id] = result;
+            // Only cache positive results — negative can change when new panel roots are registered
+            if (result)
+                _ownUIHierarchyCache[id] = true;
             return result;
         }
 
@@ -562,16 +569,14 @@ namespace UnityGameTranslator.Core
         }
 
         // Security: Maximum text length for AI translation requests (prevents DoS)
-        private const int MaxAITextLength = 5000;
+        private const int MaxAITextLength = 15000;
 
         // Marker for skipped translations (text not in expected source language)
         private const string SkipTranslationMarker = "AxNoTranslateXa";
 
-        // Security: Regex with timeout to prevent ReDoS attacks
         private static readonly Regex NumberPattern = new Regex(
             @"(?<!\[v)(-?\d+(?:[.,]\d+)?%?)",
-            RegexOptions.Compiled,
-            TimeSpan.FromMilliseconds(100));
+            RegexOptions.Compiled);
 
         public class PatternEntry
         {
@@ -1814,8 +1819,9 @@ namespace UnityGameTranslator.Core
             // Security: Reject text that's too long (prevents DoS via large requests)
             if (textWithPlaceholders.Length > MaxAITextLength)
             {
-                if (Config.debug_ai)
-                    Adapter?.LogWarning($"[AI] Text too long ({textWithPlaceholders.Length} chars), skipping translation");
+                Adapter?.LogWarning($"[AI] Text too long ({textWithPlaceholders.Length} chars), skipping");
+                // Cache as skipped so it's not re-queued endlessly
+                AddToCache(textWithPlaceholders, textWithPlaceholders, "S");
                 return null;
             }
 
@@ -2233,7 +2239,8 @@ namespace UnityGameTranslator.Core
         public static void QueueForTranslation(string text, object component = null, bool isOwnUI = false)
         {
             if (!Config.enable_ai) return;
-            if (string.IsNullOrEmpty(text) || text.Length < 2) return;
+            if (string.IsNullOrEmpty(text)) return;
+            if (IsNumericOrSymbol(text)) return;
 
             lock (lockObj)
             {
@@ -2272,7 +2279,7 @@ namespace UnityGameTranslator.Core
             if (!Config.enable_translations)
                 return text;
 
-            if (string.IsNullOrEmpty(text) || text.Length < 2)
+            if (string.IsNullOrEmpty(text))
                 return text;
 
             if (IsNumericOrSymbol(text))
@@ -2281,13 +2288,21 @@ namespace UnityGameTranslator.Core
             // No line splitting - treat multiline as single unit for context preservation
             string result = TranslateSingleText(text);
             if (result != text)
+            {
                 translatedCount++;
+                string normalizedResult = NormalizeLineEndings(result);
+                if (Config.normalize_numbers)
+                    normalizedResult = ExtractNumbersToPlaceholders(normalizedResult, out _);
+                normalizedResult = normalizedResult.TrimEnd();
+                if (!translatedTexts.Contains(normalizedResult))
+                    translatedTexts.Add(normalizedResult);
+            }
             return result;
         }
 
         public static string TranslateSingleText(string text)
         {
-            if (string.IsNullOrEmpty(text) || text.Length < 2)
+            if (string.IsNullOrEmpty(text))
                 return text;
 
             if (IsNumericOrSymbol(text))
@@ -2361,7 +2376,7 @@ namespace UnityGameTranslator.Core
                 return patternResult;
             }
 
-            if (Config.enable_ai && !string.IsNullOrEmpty(text) && text.Length >= 2)
+            if (Config.enable_ai && !string.IsNullOrEmpty(text))
             {
                 // Check reverse cache with NORMALIZED text (translations are stored normalized + trimmed)
                 // TrimEnd because TMP often strips trailing whitespace/newlines when displaying
@@ -2404,7 +2419,7 @@ namespace UnityGameTranslator.Core
                 return text;
             }
 
-            if (string.IsNullOrEmpty(text) || text.Length < 2)
+            if (string.IsNullOrEmpty(text))
                 return text;
 
             // Don't split multiline - treat as single unit for proper component tracking
@@ -2413,16 +2428,23 @@ namespace UnityGameTranslator.Core
             if (result != text)
             {
                 translatedCount++;
-                // Pre-populate clone atlas with new translated characters
-                // Pass component so we only update the relevant clone (not all)
                 FontManager.EnsureCharsInCloneAtlas(result, component);
+
+                // Add the displayed translation to reverse cache with SAME normalization
+                // as the lookup (NormalizeLineEndings + ExtractNumbersToPlaceholders + TrimEnd)
+                string normalizedResult = NormalizeLineEndings(result);
+                if (Config.normalize_numbers)
+                    normalizedResult = ExtractNumbersToPlaceholders(normalizedResult, out _);
+                normalizedResult = normalizedResult.TrimEnd();
+                if (!translatedTexts.Contains(normalizedResult))
+                    translatedTexts.Add(normalizedResult);
             }
             return result;
         }
 
         private static string TranslateSingleTextWithTracking(string text, object component, bool isOwnUI = false)
         {
-            if (string.IsNullOrEmpty(text) || text.Length < 2)
+            if (string.IsNullOrEmpty(text))
                 return text;
 
             if (IsNumericOrSymbol(text))
@@ -2540,7 +2562,7 @@ namespace UnityGameTranslator.Core
             }
 
             // No cache hit - queue for AI if enabled
-            if (Config.enable_ai && !string.IsNullOrEmpty(text) && text.Length >= 2)
+            if (Config.enable_ai && !string.IsNullOrEmpty(text))
             {
                 // Check reverse cache with NORMALIZED text (translations are stored normalized + trimmed)
                 // TrimEnd because TMP often strips trailing whitespace/newlines when displaying

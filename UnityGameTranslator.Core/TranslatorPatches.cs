@@ -1253,6 +1253,10 @@ namespace UnityGameTranslator.Core
             if (type == null || type.IsInterface || type.IsAbstract)
                 return false;
 
+            // Never patch our own types
+            if (type.Namespace != null && type.Namespace.StartsWith("UnityGameTranslator"))
+                return false;
+
             string typeName = type.Name;
 
             // Check if excluded
@@ -1693,9 +1697,29 @@ namespace UnityGameTranslator.Core
         private static long _profTotal = 0;
         private static float _profLastLog = 0f;
 
+        private static bool _dbgLongTextLogged = false;
+
         private static void ProcessTextPatchPrefix(object __instance, ref string textValue, string componentType)
         {
             if (string.IsNullOrEmpty(textValue)) return;
+
+            // DEBUG: dump full text for the changelog
+            if (!_dbgLongTextLogged && textValue.Length > 500 && (textValue.Contains("更新日志") || textValue.Contains("assurer") || textValue.Contains("garantir")))
+            {
+                _dbgLongTextLogged = true;
+                TranslatorCore.LogInfo($"[DBG FULLTEXT] Length={textValue.Length} chars");
+                // Write to a file since logs truncate
+                try
+                {
+                    string path = System.IO.Path.Combine(TranslatorCore.ModFolder, "debug_fulltext.txt");
+                    System.IO.File.WriteAllText(path, textValue);
+                    TranslatorCore.LogInfo($"[DBG FULLTEXT] Written to {path}");
+                }
+                catch (Exception ex)
+                {
+                    TranslatorCore.LogWarning($"[DBG FULLTEXT] Write failed: {ex.Message}");
+                }
+            }
 
             // Early exit: translations globally disabled → zero overhead
             if (!TranslatorCore.Config.enable_translations) return;
@@ -1713,6 +1737,18 @@ namespace UnityGameTranslator.Core
 
                 // Skip if part of our own UI and should not be translated (uses hierarchy check)
                 if (TranslatorCore.ShouldSkipTranslation(comp)) return;
+
+                // DEBUG: check own UI detection for specific text
+                if (textValue != null && textValue.Contains("assurer") && _dbgOwnUICount < 3)
+                {
+                    _dbgOwnUICount++;
+                    bool isOwn = TranslatorCore.IsOwnUI(comp);
+                    bool isOwnTranslatable = TranslatorCore.IsOwnUITranslatable(comp);
+                    bool isOwnHierarchy = TranslatorCore.IsOwnUIByHierarchy(comp);
+                    string goName = comp.gameObject?.name ?? "?";
+                    string parentName = comp.transform.parent?.name ?? "root";
+                    TranslatorCore.LogWarning($"[DBG OwnUI] '{goName}' parent='{parentName}' isOwn={isOwn} translatable={isOwnTranslatable} hierarchy={isOwnHierarchy}");
+                }
 
                 if (profiling) { t1 = _profSw.ElapsedTicks; _profSkipTranslation += t1 - t0; }
 
@@ -1880,6 +1916,7 @@ namespace UnityGameTranslator.Core
         private static readonly HashSet<int> _inheritedCloneComponents = new HashSet<int>();
         // DEBUG
         private static int _dbgCacheMissCount = 0;
+        private static int _dbgOwnUICount = 0;
         [ThreadStatic] private static bool _unusedField; // placeholder
         public static bool BypassFontSizePrefix { get => _bypassFontSizePrefix; set => _bypassFontSizePrefix = value; }
 

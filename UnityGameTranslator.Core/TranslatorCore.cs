@@ -2388,7 +2388,12 @@ namespace UnityGameTranslator.Core
             // (IsNumericOrSymbol check is in TranslateSingleTextWithTracking — no need to call twice)
             string result = TranslateSingleTextWithTracking(text, component, isOwnUI);
             if (result != text)
+            {
                 translatedCount++;
+                // Pre-populate clone atlas with new translated characters
+                // Pass component so we only update the relevant clone (not all)
+                FontManager.EnsureCharsInCloneAtlas(result, component);
+            }
             return result;
         }
 

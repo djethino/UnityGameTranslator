@@ -43,10 +43,201 @@ namespace UnityGameTranslator.Core
             return false;
         }
 
+        // Characters seen in translated text per fallback font name
+        // Used to pre-populate clone atlas and prevent runtime atlas rebuilds
+        private static readonly Dictionary<string, HashSet<char>> _knownCharsPerClone =
+            new Dictionary<string, HashSet<char>>(StringComparer.OrdinalIgnoreCase);
+
         /// <summary>
-        /// Clear all UI.Text font clones from cache. They will be recreated on next use.
-        /// Combined with ForceRefreshAllText, this is equivalent to a manual font change.
+        /// Called after translation. Checks if new characters appeared and pre-populates
+        /// the clone's atlas so Unity doesn't need to rebuild incrementally.
         /// </summary>
+        private static bool _ensuringChars = false;
+
+        public static void EnsureCharsInCloneAtlas(string translatedText, object component = null)
+        {
+            if (string.IsNullOrEmpty(translatedText)) return;
+            if (_ensuringChars) return;
+
+            // Find which clone THIS component uses (if any)
+            Font componentClone = null;
+            string componentFallback = null;
+            if (component != null)
+            {
+                var font = TypeHelper.GetFont(component);
+                if (font is Font f && IsClonedFont(f))
+                {
+                    componentClone = f;
+                    foreach (var kvp in _unityFallbackFonts)
+                    {
+                        if (kvp.Value == f) { componentFallback = kvp.Key; break; }
+                    }
+                }
+            }
+
+            // Only process the clone relevant to this component (not all clones)
+            if (componentClone == null || componentFallback == null) return;
+
+            // Check if this clone has scale
+            bool hasScale = false;
+            foreach (var fs in TranslatorCore.FontSettingsMap)
+            {
+                if (string.Equals(fs.Value.fallback, componentFallback, StringComparison.OrdinalIgnoreCase)
+                    && Math.Abs(fs.Value.scale - 1.0f) > 0.001f)
+                { hasScale = true; break; }
+            }
+            if (!hasScale) return;
+
+            _ensuringChars = true;
+
+            if (!_knownCharsPerClone.ContainsKey(componentFallback))
+                _knownCharsPerClone[componentFallback] = new HashSet<char>();
+
+            var known = _knownCharsPerClone[componentFallback];
+            bool hasNew = false;
+            foreach (char c in translatedText)
+            {
+                if (c > 31 && known.Add(c))
+                    hasNew = true;
+            }
+
+            if (hasNew)
+            {
+                var allChars = new string(new System.Collections.Generic.List<char>(known).ToArray());
+                try
+                {
+                    componentClone.RequestCharactersInTexture(allChars);
+                }
+                catch (Exception ex)
+                {
+                    TranslatorCore.LogWarning($"[FontManager] RequestCharactersInTexture failed: {ex.Message}");
+                }
+            }
+
+            _ensuringChars = false;
+        }
+
+        /// <summary>
+        /// Force Unity to re-render all components using a specific cloned font.
+        /// Uses SetAllDirty instead of set_text to avoid breaking font name tracking.
+        /// </summary>
+        /// <summary>
+        /// Called when a new component just received a cloned font.
+        /// Ensures all known chars are in the atlas, then forces the component to redraw.
+        /// </summary>
+        public static void EnsureComponentGlyphs(object component, Font clone, string settingsFontName)
+        {
+            if (clone == null) return;
+
+            string fallback = null;
+            foreach (var kvp in _unityFallbackFonts)
+            {
+                if (kvp.Value == clone) { fallback = kvp.Key; break; }
+            }
+            if (fallback == null) return;
+
+            // Get all known chars for this clone
+            if (_knownCharsPerClone.TryGetValue(fallback, out var known) && known.Count > 0)
+            {
+                try
+                {
+                    var allChars = new string(new System.Collections.Generic.List<char>(known).ToArray());
+                    clone.RequestCharactersInTexture(allChars);
+                }
+                catch { }
+            }
+
+            // Force this specific component to redraw with updated atlas
+            var comp = component as Component;
+            if (comp != null)
+            {
+                try
+                {
+                    var setDirty = comp.GetType().GetMethod("SetAllDirty", BindingFlags.Public | BindingFlags.Instance);
+                    setDirty?.Invoke(comp, null);
+                }
+                catch { }
+            }
+        }
+
+        private static void ForceRedrawCloneComponents(Font clone)
+        {
+            int count = 0;
+            foreach (var kvp in _replacedComponentRefs)
+            {
+                var comp = kvp.Value as Component;
+                if (comp == null) continue;
+
+                var font = TypeHelper.GetFont(comp) as Font;
+                if (font != clone) continue;
+
+                count++;
+                try
+                {
+                    var setDirtyMethod = comp.GetType().GetMethod("SetAllDirty",
+                        BindingFlags.Public | BindingFlags.Instance);
+                    if (setDirtyMethod != null)
+                        setDirtyMethod.Invoke(comp, null);
+                    else
+                    {
+                        // Fallback: SetVerticesDirty
+                        var vertDirty = comp.GetType().GetMethod("SetVerticesDirty",
+                            BindingFlags.Public | BindingFlags.Instance);
+                        vertDirty?.Invoke(comp, null);
+                    }
+                }
+                catch { }
+            }
+            TranslatorCore.LogInfo($"[FontManager] ForceRedraw: {count} components with clone '{clone?.name}'");
+        }
+
+        /// <summary>
+        /// Pre-populate clone atlas from translation cache at startup.
+        /// </summary>
+        public static void PrePopulateCloneAtlasFromCache()
+        {
+            if (_unityFallbackFonts.Count == 0) return;
+
+            var allChars = new HashSet<char>();
+            try
+            {
+                foreach (var entry in TranslatorCore.TranslationCache)
+                {
+                    if (entry.Value?.Value != null)
+                        foreach (char c in entry.Value.Value)
+                            if (c > 31) allChars.Add(c);
+                }
+            }
+            catch { }
+
+            if (allChars.Count == 0) return;
+
+            var charString = new string(new System.Collections.Generic.List<char>(allChars).ToArray());
+
+            foreach (var kvp in _unityFallbackFonts)
+            {
+                Font clone = kvp.Value;
+                if (clone == null) continue;
+
+                bool hasScale = false;
+                foreach (var fs in TranslatorCore.FontSettingsMap)
+                {
+                    if (string.Equals(fs.Value.fallback, kvp.Key, StringComparison.OrdinalIgnoreCase)
+                        && Math.Abs(fs.Value.scale - 1.0f) > 0.001f)
+                    { hasScale = true; break; }
+                }
+                if (!hasScale) continue;
+
+                _knownCharsPerClone[kvp.Key] = new HashSet<char>(allChars);
+                try
+                {
+                    clone.RequestCharactersInTexture(charString);
+                    TranslatorCore.LogInfo($"[FontManager] Pre-populated atlas for '{kvp.Key}' with {allChars.Count} chars from cache");
+                }
+                catch { }
+            }
+        }
+
         private static bool _textureRebuiltSubscribed = false;
         private static bool _textureRebuiltHandling = false;
         private static string _subscribedOriginalFont = null;
@@ -68,17 +259,44 @@ namespace UnityGameTranslator.Core
                 // Find add_textureRebuilt METHOD (not event — IL2CPP wrapping hides the event)
                 var addMethod = typeof(Font).GetMethod("add_textureRebuilt",
                     BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-                if (addMethod != null)
-                {
-                    Action<Font> handler = OnFontTextureRebuilt;
-                    addMethod.Invoke(null, new object[] { handler });
-                    _textureRebuiltSubscribed = true;
-                    TranslatorCore.LogInfo("[FontManager] Subscribed to Font.textureRebuilt via add method");
-                }
-                else
+                if (addMethod == null)
                 {
                     TranslatorCore.LogWarning("[FontManager] add_textureRebuilt method not found");
+                    return;
                 }
+
+                // On IL2CPP, the method expects Il2CppSystem.Action<Font>, not System.Action<Font>.
+                // Use DelegateSupport.ConvertDelegate to wrap our managed delegate.
+                Action<Font> managedHandler = OnFontTextureRebuilt;
+                object il2cppHandler = managedHandler;
+
+                if (TranslatorCore.Adapter?.IsIL2CPP == true)
+                {
+                    // Find DelegateSupport.ConvertDelegate<T> via reflection
+                    Type delegateSupportType = null;
+                    foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+                    {
+                        delegateSupportType = asm.GetType("Il2CppInterop.Runtime.DelegateSupport");
+                        if (delegateSupportType != null) break;
+                    }
+
+                    if (delegateSupportType != null)
+                    {
+                        // Get the parameter type that add_textureRebuilt expects
+                        var paramType = addMethod.GetParameters()[0].ParameterType;
+                        var convertMethod = delegateSupportType.GetMethod("ConvertDelegate",
+                            BindingFlags.Public | BindingFlags.Static);
+                        if (convertMethod != null)
+                        {
+                            var genericConvert = convertMethod.MakeGenericMethod(paramType);
+                            il2cppHandler = genericConvert.Invoke(null, new object[] { managedHandler });
+                        }
+                    }
+                }
+
+                addMethod.Invoke(null, new object[] { il2cppHandler });
+                _textureRebuiltSubscribed = true;
+                TranslatorCore.LogInfo("[FontManager] Subscribed to Font.textureRebuilt");
             }
             catch (Exception ex)
             {
@@ -88,9 +306,25 @@ namespace UnityGameTranslator.Core
 
         private static void OnFontTextureRebuilt(Font rebuiltFont)
         {
-            // Only act on our cloned fonts
             if (_textureRebuiltHandling) return;
-            if (!IsClonedFont(rebuiltFont)) return;
+            if (rebuiltFont == null) return;
+
+            // Check if the rebuilt font is related to any of our clones
+            // Unity fires textureRebuilt for the SYSTEM font (via fontNames), not the clone object
+            string rebuiltName = rebuiltFont.name;
+            bool isRelated = false;
+            foreach (var kvp in _unityFallbackFonts)
+            {
+                if (kvp.Value == rebuiltFont
+                    || string.Equals(kvp.Key, rebuiltName, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(kvp.Value?.name, rebuiltName, StringComparison.OrdinalIgnoreCase))
+                {
+                    isRelated = true;
+                    break;
+                }
+            }
+
+            if (!isRelated) return;
 
             _textureRebuiltHandling = true;
             try
@@ -1481,6 +1715,8 @@ namespace UnityGameTranslator.Core
                         {
                             replacementFont = clonedFont;
                             SubscribeTextureRebuilt(originalFontName, settings.fallback);
+                            // Pre-populate atlas from translation cache (clean atlas before any component uses it)
+                            PrePopulateCloneAtlasFromCache();
                         }
                     }
                 }

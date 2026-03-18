@@ -1777,11 +1777,6 @@ namespace UnityGameTranslator.Core
                             string replaceName = replacementFont.name;
                             if (currentName != replaceName)
                             {
-                                // New component getting a cloned font with scale:
-                                // Recreate the clone exactly like a manual font change does:
-                                // 1. Remove clone from cache
-                                // 2. Restore original font on all components that have this clone
-                                // 3. ForceRefreshAllText → new clone created → applied to ALL at once
                                 TypeHelper.SetFont(__instance, replacementFont);
                             }
                         }

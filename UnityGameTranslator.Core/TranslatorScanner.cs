@@ -1525,9 +1525,9 @@ namespace UnityGameTranslator.Core
 
         private static void HighlightComponent(object component, int id, string targetFontName)
         {
-            // Skip our own UI components
+            // Always skip our own UI components for highlight (regardless of translate_mod_ui)
             var comp = component as Component;
-            if (comp != null && TranslatorCore.ShouldSkipTranslation(comp)) return;
+            if (comp != null && TranslatorCore.IsOwnUI(comp)) return;
 
             // Match by settings font name (always the original, not the replacement)
             string compFont = TypeHelper.GetFontName(component);
@@ -1984,6 +1984,10 @@ namespace UnityGameTranslator.Core
                     // Highlight color override (re-apply every frame to beat Animator)
                     if (_highlightedFontName != null)
                     {
+                        // Skip own UI
+                        var hlComp = component as Component;
+                        if (hlComp != null && TranslatorCore.IsOwnUI(hlComp)) continue;
+
                         bool matches = string.Equals(settingsFontName, _highlightedFontName, StringComparison.OrdinalIgnoreCase);
                         Color target = matches ? HighlightColor : DimColor;
                         Color current = TypeHelper.GetTextColor(component);

@@ -47,6 +47,45 @@ namespace UnityGameTranslator.Core
         // Used to pre-populate clone atlas and prevent runtime atlas rebuilds
         private static readonly Dictionary<string, HashSet<char>> _knownCharsPerClone =
             new Dictionary<string, HashSet<char>>(StringComparer.OrdinalIgnoreCase);
+        // Cached char strings per clone (avoid rebuilding every frame)
+        private static readonly Dictionary<string, string> _knownCharsStringCache =
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Must be called every frame to prevent font atlas purging.
+        /// Unity purges characters not requested in the current frame during atlas rebuilds.
+        /// With multiple clones, a rebuild on one clone purges the other's characters.
+        /// </summary>
+        public static void ProtectCloneAtlases()
+        {
+            if (_unityFallbackFonts.Count == 0) return;
+
+            // Snapshot to avoid "Collection was modified" if a clone is created during iteration
+            KeyValuePair<string, Font>[] snapshot;
+            try
+            {
+                snapshot = new KeyValuePair<string, Font>[_unityFallbackFonts.Count];
+                int i = 0;
+                foreach (var kvp in _unityFallbackFonts)
+                    snapshot[i++] = new KeyValuePair<string, Font>(kvp.Key, kvp.Value);
+            }
+            catch { return; }
+
+            foreach (var kvp in snapshot)
+            {
+                if (kvp.Value == null) continue;
+
+                string charString;
+                if (!_knownCharsStringCache.TryGetValue(kvp.Key, out charString) || charString == null)
+                    continue;
+
+                try
+                {
+                    kvp.Value.RequestCharactersInTexture(charString);
+                }
+                catch { }
+            }
+        }
 
         /// <summary>
         /// Called after translation. Checks if new characters appeared and pre-populates
@@ -75,18 +114,7 @@ namespace UnityGameTranslator.Core
                 }
             }
 
-            // Only process the clone relevant to this component (not all clones)
             if (componentClone == null || componentFallback == null) return;
-
-            // Check if this clone has scale
-            bool hasScale = false;
-            foreach (var fs in TranslatorCore.FontSettingsMap)
-            {
-                if (string.Equals(fs.Value.fallback, componentFallback, StringComparison.OrdinalIgnoreCase)
-                    && Math.Abs(fs.Value.scale - 1.0f) > 0.001f)
-                { hasScale = true; break; }
-            }
-            if (!hasScale) return;
 
             _ensuringChars = true;
 
@@ -104,14 +132,9 @@ namespace UnityGameTranslator.Core
             if (hasNew)
             {
                 var allChars = new string(new System.Collections.Generic.List<char>(known).ToArray());
-                try
-                {
-                    componentClone.RequestCharactersInTexture(allChars);
-                }
-                catch (Exception ex)
-                {
-                    TranslatorCore.LogWarning($"[FontManager] RequestCharactersInTexture failed: {ex.Message}");
-                }
+                _knownCharsStringCache[componentFallback] = allChars;
+                // Don't set _pendingRefresh — ProtectCloneAtlases handles per-frame protection.
+                // ClearProcessedCache causes re-queueing to AI in a loop.
             }
 
             _ensuringChars = false;
@@ -219,16 +242,8 @@ namespace UnityGameTranslator.Core
                 Font clone = kvp.Value;
                 if (clone == null) continue;
 
-                bool hasScale = false;
-                foreach (var fs in TranslatorCore.FontSettingsMap)
-                {
-                    if (string.Equals(fs.Value.fallback, kvp.Key, StringComparison.OrdinalIgnoreCase)
-                        && Math.Abs(fs.Value.scale - 1.0f) > 0.001f)
-                    { hasScale = true; break; }
-                }
-                if (!hasScale) continue;
-
                 _knownCharsPerClone[kvp.Key] = new HashSet<char>(allChars);
+                _knownCharsStringCache[kvp.Key] = charString;
                 try
                 {
                     clone.RequestCharactersInTexture(charString);
@@ -1779,7 +1794,7 @@ namespace UnityGameTranslator.Core
                     if (replacementFont is UnityEngine.Object uobj && !_gameTMPFonts.ContainsKey(uobj.name))
                         _createdFallbackFontNames.Add(uobj.name);
 
-                    // Font just created — schedule refresh on next scan cycle
+                    // Font just created — schedule ONE refresh on next scan cycle
                     _pendingRefresh = true;
                 }
                 else

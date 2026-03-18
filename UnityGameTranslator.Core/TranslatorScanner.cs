@@ -1708,11 +1708,13 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static void ProcessPendingUpdates()
         {
-            // Check if a font was just created - clear processed cache
-            if (FontManager.ConsumePendingRefresh())
-            {
-                ClearProcessedCache();
-            }
+            // Protect clone atlases every frame — prevents character purging
+            // when multiple cloned fonts share the native font rasterizer
+            FontManager.ProtectCloneAtlases();
+
+            // Consume pending refresh flag (font was just created)
+            // Don't ClearProcessedCache here — it causes AI re-queue loops
+            FontManager.ConsumePendingRefresh();
 
             // Process all pending updates immediately
             while (true)

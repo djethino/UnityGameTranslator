@@ -158,7 +158,14 @@ namespace UnityGameTranslator.Core
             {
                 var allChars = new string(new System.Collections.Generic.List<char>(known).ToArray());
                 _knownCharsStringCache[componentFallback] = allChars;
-                try { componentClone.RequestCharactersInTexture(allChars); } catch { }
+                try
+                {
+                    componentClone.RequestCharactersInTexture(allChars);
+                    // Immediately protect ALL clones so their chars aren't purged
+                    // by this clone's atlas rebuild (same frame)
+                    ProtectCloneAtlases();
+                }
+                catch { }
                 // Schedule refresh so all components re-render with updated atlas positions
                 _pendingRefresh = true;
             }

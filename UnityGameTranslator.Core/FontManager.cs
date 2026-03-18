@@ -33,15 +33,30 @@ namespace UnityGameTranslator.Core
         /// Cloned fonts must NOT have their fontSize changed (causes atlas corruption).
         /// Use localScale on the component instead.
         /// </summary>
+        // Instance IDs of clones we created (stored at creation time — reliable on IL2CPP)
+        private static readonly HashSet<int> _cloneInstanceIds = new HashSet<int>();
+
         public static bool IsClonedFont(Font font)
         {
             if (font == null) return false;
-            foreach (var kvp in _unityFallbackFonts)
+            int id = font.GetInstanceID();
+            bool result = _cloneInstanceIds.Contains(id);
+            // DEBUG: log mismatches for clone-named fonts
+            if (!result && font.name != null && _dbgCloneCheckCount < 20)
             {
-                if (kvp.Value == font) return true;
+                foreach (var kvp in _unityFallbackFonts)
+                {
+                    if (kvp.Value != null && kvp.Value.name == font.name)
+                    {
+                        _dbgCloneCheckCount++;
+                        TranslatorCore.LogWarning($"[IsClonedFont] Name '{font.name}' matches but ID {id} != stored {kvp.Value.GetInstanceID()}, cloneIds=[{string.Join(",", _cloneInstanceIds)}]");
+                        break;
+                    }
+                }
             }
-            return false;
+            return result;
         }
+        private static int _dbgCloneCheckCount = 0;
 
         /// <summary>
         /// Reverse lookup: given a clone font, find the original game font name
@@ -51,11 +66,15 @@ namespace UnityGameTranslator.Core
         {
             if (clone == null) return null;
 
-            // Find the fallback name for this clone
+            // Use name comparison for fallback lookup (instance ID works for IsClonedFont
+            // but _unityFallbackFonts may have been recreated with a different proxy)
+            string cloneName = clone.name;
+            if (string.IsNullOrEmpty(cloneName)) return null;
             string fallbackName = null;
             foreach (var kvp in _unityFallbackFonts)
             {
-                if (kvp.Value == clone) { fallbackName = kvp.Key; break; }
+                if (kvp.Value != null && string.Equals(kvp.Value.name, cloneName, StringComparison.OrdinalIgnoreCase))
+                { fallbackName = kvp.Key; break; }
             }
             if (fallbackName == null) return null;
 
@@ -160,17 +179,36 @@ namespace UnityGameTranslator.Core
             if (component != null)
             {
                 var font = TypeHelper.GetFont(component);
-                if (font is Font f && IsClonedFont(f))
+                Font f = font as Font;
+                if (f == null && font != null) f = TypeHelper.Il2CppCast(font, typeof(Font)) as Font;
+                if (f != null && IsClonedFont(f))
                 {
                     componentClone = f;
+                    string cloneName = f.name;
                     foreach (var kvp in _unityFallbackFonts)
                     {
-                        if (kvp.Value == f) { componentFallback = kvp.Key; break; }
+                        if (kvp.Value != null && string.Equals(kvp.Value.name, cloneName, StringComparison.OrdinalIgnoreCase))
+                        { componentFallback = kvp.Key; break; }
                     }
                 }
             }
 
-            if (componentClone == null || componentFallback == null) return;
+            if (componentClone == null || componentFallback == null)
+            {
+                // DEBUG: log why we skipped
+                if (component != null)
+                {
+                    var rawFont = TypeHelper.GetFont(component);
+                    string rawName = (rawFont is UnityEngine.Object uo) ? uo.name : rawFont?.GetType().Name;
+                    bool isFontType = rawFont is Font;
+                    Font castFont = rawFont as Font;
+                    if (castFont == null && rawFont != null) castFont = TypeHelper.Il2CppCast(rawFont, typeof(Font)) as Font;
+                    bool isClone = castFont != null && IsClonedFont(castFont);
+                    if (rawName != null && (rawName.Contains("comic") || rawName.Contains("consola")))
+                        TranslatorCore.LogWarning($"[EnsureChars] SKIPPED: font='{rawName}' isFontType={isFontType} castOk={castFont != null} isClone={isClone}");
+                }
+                return;
+            }
 
             _ensuringChars = true;
 
@@ -187,14 +225,47 @@ namespace UnityGameTranslator.Core
 
             if (hasNew)
             {
-                // Just update the cache string. ProtectCloneAtlases (running every frame)
-                // will call RequestCharactersInTexture with ALL chars for ALL clones
-                // in one synchronized pass — no separate rebuild that could desync glyph positions.
+                // Update the cache string. ProtectCloneAtlases (per-frame) will include these chars.
                 var allChars = new string(new System.Collections.Generic.List<char>(known).ToArray());
                 _knownCharsStringCache[componentFallback] = allChars;
+
+                // Mark ALL components using this clone as dirty so they re-render
+                // with the updated atlas (including inactive/invisible components).
+                // This is what Unity's Font.textureRebuilt does internally for active components,
+                // but inactive ones are missed — we handle them explicitly.
+                MarkCloneComponentsDirty(componentClone);
             }
 
             _ensuringChars = false;
+        }
+
+        /// <summary>
+        /// Mark all components using a clone font as dirty so they re-render with the updated atlas.
+        /// Covers both _replacedComponentRefs (tracked by our font replacement) and scanner cache.
+        /// </summary>
+        private static void MarkCloneComponentsDirty(Font clone)
+        {
+            if (clone == null) return;
+
+            try
+            {
+                foreach (var kvp in _replacedComponentRefs)
+                {
+                    var comp = kvp.Value as Component;
+                    if (comp == null) continue;
+                    try
+                    {
+                        var font = TypeHelper.GetFont(comp) as Font;
+                        if (font != clone) continue;
+                        // SetAllDirty via reflection (no direct UI.Text dependency)
+                        var method = comp.GetType().GetMethod("SetAllDirty",
+                            BindingFlags.Public | BindingFlags.Instance);
+                        method?.Invoke(comp, null);
+                    }
+                    catch { }
+                }
+            }
+            catch { }
         }
 
         /// <summary>
@@ -1798,6 +1869,7 @@ namespace UnityGameTranslator.Core
 
                         if (set)
                         {
+                            _cloneInstanceIds.Add(clonedFont.GetInstanceID());
                             replacementFont = clonedFont;
                             SubscribeTextureRebuilt(originalFontName, settings.fallback);
                             // Pre-populate atlas from translation cache (clean atlas before any component uses it)

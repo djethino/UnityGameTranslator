@@ -1802,10 +1802,10 @@ namespace UnityGameTranslator.Core
                             FontManager.TrackOriginalFont(compId, fontObj, __instance);
                             string currentName = (fontObj is UnityEngine.Object co) ? co.name : null;
                             string replaceName = replacementFont.name;
-                            if (currentName != replaceName)
-                            {
-                                TypeHelper.SetFont(__instance, replacementFont);
-                            }
+                            // Always re-set the font (even if same name) to refresh atlas texture reference.
+                            // After atlas rebuilds (new chars), the texture changes but components keep
+                            // stale references. Re-setting forces Unity to pick up the current texture.
+                            TypeHelper.SetFont(__instance, replacementFont);
                         }
                     }
                 }

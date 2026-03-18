@@ -187,18 +187,11 @@ namespace UnityGameTranslator.Core
 
             if (hasNew)
             {
+                // Just update the cache string. ProtectCloneAtlases (running every frame)
+                // will call RequestCharactersInTexture with ALL chars for ALL clones
+                // in one synchronized pass — no separate rebuild that could desync glyph positions.
                 var allChars = new string(new System.Collections.Generic.List<char>(known).ToArray());
                 _knownCharsStringCache[componentFallback] = allChars;
-                try
-                {
-                    componentClone.RequestCharactersInTexture(allChars);
-                    // Immediately protect ALL clones so their chars aren't purged
-                    // by this clone's atlas rebuild (same frame)
-                    ProtectCloneAtlases();
-                }
-                catch { }
-                // Schedule refresh so all components re-render with updated atlas positions
-                _pendingRefresh = true;
             }
 
             _ensuringChars = false;

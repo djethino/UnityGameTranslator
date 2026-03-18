@@ -43,6 +43,31 @@ namespace UnityGameTranslator.Core
             return false;
         }
 
+        /// <summary>
+        /// Reverse lookup: given a clone font, find the original game font name
+        /// that has this clone as its fallback. Returns null if not found.
+        /// </summary>
+        public static string GetOriginalFontNameForClone(Font clone)
+        {
+            if (clone == null) return null;
+
+            // Find the fallback name for this clone
+            string fallbackName = null;
+            foreach (var kvp in _unityFallbackFonts)
+            {
+                if (kvp.Value == clone) { fallbackName = kvp.Key; break; }
+            }
+            if (fallbackName == null) return null;
+
+            // Find which original font has this fallback configured
+            foreach (var kvp in TranslatorCore.FontSettingsMap)
+            {
+                if (string.Equals(kvp.Value.fallback, fallbackName, StringComparison.OrdinalIgnoreCase))
+                    return kvp.Key;
+            }
+            return null;
+        }
+
         // Characters seen in translated text per fallback font name
         // Used to pre-populate clone atlas and prevent runtime atlas rebuilds
         private static readonly Dictionary<string, HashSet<char>> _knownCharsPerClone =
@@ -133,8 +158,9 @@ namespace UnityGameTranslator.Core
             {
                 var allChars = new string(new System.Collections.Generic.List<char>(known).ToArray());
                 _knownCharsStringCache[componentFallback] = allChars;
-                // Don't set _pendingRefresh — ProtectCloneAtlases handles per-frame protection.
-                // ClearProcessedCache causes re-queueing to AI in a loop.
+                try { componentClone.RequestCharactersInTexture(allChars); } catch { }
+                // Schedule refresh so all components re-render with updated atlas positions
+                _pendingRefresh = true;
             }
 
             _ensuringChars = false;
@@ -1154,6 +1180,19 @@ namespace UnityGameTranslator.Core
             if (instanceId == -1 || originalFont == null) return;
             if (!_originalFontsPerComponent.ContainsKey(instanceId))
             {
+                // If the "original" is actually our clone (component inherited it from template),
+                // find the real original game font instead
+                if (originalFont is Font f)
+                {
+                    string realOrigName = GetOriginalFontNameForClone(f);
+                    if (realOrigName != null)
+                    {
+                        // Look up the actual game font object
+                        if (_gameUnityFonts.TryGetValue(realOrigName, out var realOrigFont))
+                            originalFont = realOrigFont;
+                    }
+                }
+
                 _originalFontsPerComponent[instanceId] = originalFont;
                 if (component != null)
                     _replacedComponentRefs[instanceId] = component;

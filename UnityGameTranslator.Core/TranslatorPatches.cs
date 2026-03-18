@@ -1603,6 +1603,11 @@ namespace UnityGameTranslator.Core
             {
                 if (!_trueOriginalFontSizes.TryGetValue(instanceId, out originalSize))
                 {
+                    // Skip components that inherited the clone from template
+                    // Their fontSize is already scaled — re-scaling would double it
+                    if (_inheritedCloneComponents.Contains(instanceId))
+                        return;
+
                     originalSize = TypeHelper.GetFontSize(instance);
                     if (originalSize < 0) return;
                     _trueOriginalFontSizes[instanceId] = originalSize;
@@ -1726,6 +1731,21 @@ namespace UnityGameTranslator.Core
                     fontObj = TypeHelper.GetFont(__instance);
                     if (fontObj != null)
                         fontName = (fontObj is UnityEngine.Object uobj) ? uobj.name : null;
+
+                    // If the component already has a clone font (inherited from template/pool),
+                    // resolve back to the ORIGINAL font name so tracking stays correct
+                    if (fontObj is Font f)
+                    {
+                        string resolvedOriginal = FontManager.GetOriginalFontNameForClone(f);
+                        if (resolvedOriginal != null)
+                        {
+                            fontName = resolvedOriginal;
+                            // Mark as inherited — ApplyFontScale should skip (already scaled)
+                            if (compId != -1)
+                                _inheritedCloneComponents.Add(compId);
+                        }
+                    }
+
                     if (compId != -1)
                     {
                         _fontNameCache[compId] = fontName;
@@ -1849,6 +1869,8 @@ namespace UnityGameTranslator.Core
         /// This ensures the scale is applied even when the game sets fontSize AFTER set_text.
         /// </summary>
         [ThreadStatic] private static bool _bypassFontSizePrefix;
+        // Components that inherited a clone font from template — skip ApplyFontScale (already scaled)
+        private static readonly HashSet<int> _inheritedCloneComponents = new HashSet<int>();
         [ThreadStatic] private static bool _unusedField; // placeholder
         public static bool BypassFontSizePrefix { get => _bypassFontSizePrefix; set => _bypassFontSizePrefix = value; }
 

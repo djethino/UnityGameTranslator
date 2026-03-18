@@ -1712,9 +1712,12 @@ namespace UnityGameTranslator.Core
             // when multiple cloned fonts share the native font rasterizer
             FontManager.ProtectCloneAtlases();
 
-            // Consume pending refresh flag (font was just created)
-            // Don't ClearProcessedCache here — it causes AI re-queue loops
-            FontManager.ConsumePendingRefresh();
+            // After new chars were added to a clone atlas, force all components to re-render
+            // so they pick up updated glyph positions. No ClearProcessedCache (causes AI re-queue).
+            if (FontManager.ConsumePendingRefresh())
+            {
+                ForceRefreshAllText();
+            }
 
             // Process all pending updates immediately
             while (true)

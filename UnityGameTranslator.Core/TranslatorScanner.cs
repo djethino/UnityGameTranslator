@@ -1745,6 +1745,9 @@ namespace UnityGameTranslator.Core
             {
                 try
                 {
+                    // Skip destroyed components (IL2CPP proxy still exists but Unity object is gone)
+                    if (comp is UnityEngine.Object uobj && uobj == null) continue;
+
                     string actualText = TypeHelper.GetText(comp);
                     if (actualText == null) continue;
 

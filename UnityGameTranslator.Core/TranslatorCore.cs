@@ -1394,10 +1394,22 @@ namespace UnityGameTranslator.Core
 
         public static void BuildPatternEntries()
         {
-            PatternEntries.Clear();
+            // Build into a NEW list, then swap atomically.
+            // TryPatternMatch iterates PatternEntries on the main thread while
+            // this can be called from the worker thread (via AddToCache).
+            var newEntries = new List<PatternEntry>();
             var placeholderRegex = new Regex(@"\[v(\d+)\]", RegexOptions.None, TimeSpan.FromMilliseconds(100));
 
-            foreach (var kv in TranslationCache)
+            // Snapshot to avoid "Collection was modified" if AddToCache runs concurrently
+            KeyValuePair<string, TranslationEntry>[] cacheSnapshot;
+            try
+            {
+                var list = new List<KeyValuePair<string, TranslationEntry>>(TranslationCache);
+                cacheSnapshot = list.ToArray();
+            }
+            catch { return; } // Collection changed during snapshot — next call will succeed
+
+            foreach (var kv in cacheSnapshot)
             {
                 // Skip if key equals value (no translation)
                 if (kv.Key == kv.Value.Value) continue;
@@ -1418,7 +1430,7 @@ namespace UnityGameTranslator.Core
                         pattern = pattern.Replace(placeholder, @"(-?\d+(?:[.,]\d+)?%?)");
                     }
 
-                    PatternEntries.Add(new PatternEntry
+                    newEntries.Add(new PatternEntry
                     {
                         OriginalPattern = kv.Key,
                         TranslatedPattern = kv.Value.Value,
@@ -1428,6 +1440,9 @@ namespace UnityGameTranslator.Core
                 }
                 catch { }
             }
+
+            // Atomic swap — main thread sees either the old or the new list, never a half-built one
+            PatternEntries = newEntries;
 
             if (DebugMode)
                 Adapter?.LogInfo($"Built {PatternEntries.Count} pattern entries");

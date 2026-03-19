@@ -1853,7 +1853,7 @@ namespace UnityGameTranslator.Core
             }
             catch (Exception ex)
             {
-                TranslatorCore.LogError($"[Patches] ProcessTextPatchPrefix error ({componentType}): {ex.Message}");
+                TranslatorCore.LogError($"[Patches] ProcessTextPatchPrefix error ({componentType}): {ex.Message}\n{ex.StackTrace}");
             }
         }
 

@@ -1873,6 +1873,7 @@ namespace UnityGameTranslator.Core
         #region LateUpdate Override (font scale + highlight after Animator)
 
         private static bool _lateUpdateRunning = false;
+        private static Coroutine _lateUpdateCoroutine;
         // Cached component list for LateUpdate (rebuilt periodically, reused per frame)
         private static List<KeyValuePair<int, object>> _lateUpdateComponents;
         private static bool _lateUpdateCacheDirty = true;
@@ -1891,7 +1892,7 @@ namespace UnityGameTranslator.Core
             if (_lateUpdateRunning) return;
             try
             {
-                UniverseLib.RuntimeHelper.StartCoroutine(LateUpdateCoroutine());
+                _lateUpdateCoroutine = UniverseLib.RuntimeHelper.StartCoroutine(LateUpdateCoroutine());
                 _lateUpdateRunning = true;
                 TranslatorCore.LogInfo("[Scanner] LateUpdate coroutine started");
             }
@@ -1901,14 +1902,28 @@ namespace UnityGameTranslator.Core
             }
         }
 
+        /// <summary>
+        /// Stop the LateUpdate coroutine. Called during shutdown to prevent IL2CPP hangs.
+        /// </summary>
+        public static void StopLateUpdateRunner()
+        {
+            if (_lateUpdateCoroutine != null)
+            {
+                try { UniverseLib.RuntimeHelper.StopCoroutine(_lateUpdateCoroutine); } catch { }
+                _lateUpdateCoroutine = null;
+            }
+            _lateUpdateRunning = false;
+        }
+
         private static System.Collections.IEnumerator LateUpdateCoroutine()
         {
             var waitEndOfFrame = new WaitForEndOfFrame();
-            while (true)
+            while (!TranslatorCore.ShuttingDown)
             {
                 yield return waitEndOfFrame;
                 OnLateUpdate();
             }
+            _lateUpdateRunning = false;
         }
 
         /// <summary>

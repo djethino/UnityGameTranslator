@@ -10,6 +10,7 @@ using System.Threading;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
+using UnityGameTranslator.Core.UI;
 
 namespace UnityGameTranslator.Core
 {
@@ -43,6 +44,7 @@ namespace UnityGameTranslator.Core
     {
         public static TranslatorCore Instance { get; private set; }
         public static IModLoaderAdapter Adapter { get; private set; }
+        public static volatile bool ShuttingDown;
         public static ModConfig Config { get; private set; } = new ModConfig();
         public static Dictionary<string, TranslationEntry> TranslationCache { get; private set; } = new Dictionary<string, TranslationEntry>();
         public static List<PatternEntry> PatternEntries { get; private set; } = new List<PatternEntry>();
@@ -666,6 +668,26 @@ namespace UnityGameTranslator.Core
 
         public static void OnShutdown()
         {
+            ShuttingDown = true;
+            Adapter?.LogInfo("[Shutdown] Starting cleanup...");
+
+            // Stop SSE streams (background tasks with HTTP connections)
+            try { TranslatorUIManager.StopSyncStream(); } catch { }
+            try { TranslatorUIManager.StopMergeCompletionListener(); } catch { }
+
+            // Stop the LateUpdate coroutine
+            try { TranslatorScanner.StopLateUpdateRunner(); } catch { }
+
+            // Wait briefly for worker thread to notice ShuttingDown flag and exit
+            if (workerRunning)
+            {
+                for (int i = 0; i < 20 && workerRunning; i++)
+                    Thread.Sleep(10);
+            }
+
+            // Dispose HttpClient (cancels in-flight requests)
+            try { httpClient?.Dispose(); } catch { }
+
             if (cacheModified)
             {
                 try { SaveCache(); } catch { }
@@ -673,6 +695,7 @@ namespace UnityGameTranslator.Core
 
             Adapter?.LogInfo($"Session: {translatedCount} translations, {cacheHitCount} cache hits, {aiTranslationCount} AI calls");
             Adapter?.LogInfo($"Skipped: {skippedTargetLang} (target lang heuristic), {skippedAlreadyTranslated} (reverse cache)");
+            Adapter?.LogInfo("[Shutdown] Cleanup complete");
         }
 
         public static void OnUpdate(float currentTime)
@@ -1655,7 +1678,7 @@ namespace UnityGameTranslator.Core
 
             Adapter?.LogInfo("[Worker] Thread started, waiting for translations...");
 
-            while (true)
+            while (!ShuttingDown)
             {
                 // Stop if AI was disabled
                 if (!Config.enable_ai)
@@ -1813,9 +1836,14 @@ namespace UnityGameTranslator.Core
                 }
                 else
                 {
-                    Thread.Sleep(100);
+                    // Sleep in small increments to respond quickly to shutdown
+                    for (int i = 0; i < 10 && !ShuttingDown; i++)
+                        Thread.Sleep(10);
                 }
             }
+
+            workerRunning = false;
+            Adapter?.LogInfo("[Worker] Thread exiting (shutdown)");
         }
 
         /// <summary>

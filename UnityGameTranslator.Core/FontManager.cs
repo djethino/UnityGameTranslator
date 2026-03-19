@@ -167,6 +167,7 @@ namespace UnityGameTranslator.Core
         /// the clone's atlas so Unity doesn't need to rebuild incrementally.
         /// </summary>
         private static bool _ensuringChars = false;
+        private static int _ensureSkipLogCount = 0;
 
         public static void EnsureCharsInCloneAtlas(string translatedText, object component = null)
         {
@@ -196,12 +197,31 @@ namespace UnityGameTranslator.Core
             if (componentClone == null || componentFallback == null)
                 return;
 
+            EnsureCharsInCloneAtlasInternal(translatedText, componentClone, componentFallback);
+        }
+
+        /// <summary>
+        /// Direct version: caller already knows which clone and fallback to use.
+        /// Called from prefix when SetFont was just applied (GetFont may not reflect it yet on IL2CPP).
+        /// </summary>
+        public static void EnsureCharsInCloneAtlasDirect(string translatedText, Font clone, string fallbackName)
+        {
+            if (string.IsNullOrEmpty(translatedText) || clone == null || string.IsNullOrEmpty(fallbackName)) return;
+            if (_ensuringChars) return;
+            EnsureCharsInCloneAtlasInternal(translatedText, clone, fallbackName);
+        }
+
+        private static void EnsureCharsInCloneAtlasInternal(string translatedText, Font componentClone, string componentFallback)
+        {
+
             _ensuringChars = true;
 
-            if (!_knownCharsPerClone.ContainsKey(componentFallback))
+            bool isNewSet = !_knownCharsPerClone.ContainsKey(componentFallback);
+            if (isNewSet)
                 _knownCharsPerClone[componentFallback] = new HashSet<char>();
 
             var known = _knownCharsPerClone[componentFallback];
+            int prevCount = known.Count;
             bool hasNew = false;
             foreach (char c in translatedText)
             {
@@ -215,10 +235,15 @@ namespace UnityGameTranslator.Core
                 var allChars = new string(new System.Collections.Generic.List<char>(known).ToArray());
                 _knownCharsStringCache[componentFallback] = allChars;
 
+                if (isNewSet || prevCount == 0)
+                    TranslatorCore.LogInfo($"[EnsureChars] FIRST chars for '{componentFallback}': {prevCount}->{known.Count} chars, RequestChars + MarkDirty");
+
+                // Immediately request chars in the clone's atlas
+                try { componentClone.RequestCharactersInTexture(allChars); }
+                catch { }
+
                 // Mark ALL components using this clone as dirty so they re-render
                 // with the updated atlas (including inactive/invisible components).
-                // This is what Unity's Font.textureRebuilt does internally for active components,
-                // but inactive ones are missed — we handle them explicitly.
                 MarkCloneComponentsDirty(componentClone);
             }
 
@@ -233,25 +258,40 @@ namespace UnityGameTranslator.Core
         {
             if (clone == null) return;
 
+            // Use name comparison instead of reference comparison.
+            // On IL2CPP, different proxy objects can represent the same native font.
+            // Reference comparison (font != clone) fails → components not marked dirty
+            // → stale UV coordinates after atlas rebuild → partial glyph corruption.
+            string cloneName = clone.name;
+            if (string.IsNullOrEmpty(cloneName)) return;
+
+            int marked = 0;
+            int total = 0;
             try
             {
                 foreach (var kvp in _replacedComponentRefs)
                 {
                     var comp = kvp.Value as Component;
                     if (comp == null) continue;
+                    total++;
                     try
                     {
                         var font = TypeHelper.GetFont(comp) as Font;
-                        if (font != clone) continue;
+                        if (font == null) continue;
+                        string fontName = font.name;
+                        if (!string.Equals(fontName, cloneName, StringComparison.OrdinalIgnoreCase)) continue;
                         // SetAllDirty via reflection (no direct UI.Text dependency)
                         var method = comp.GetType().GetMethod("SetAllDirty",
                             BindingFlags.Public | BindingFlags.Instance);
                         method?.Invoke(comp, null);
+                        marked++;
                     }
                     catch { }
                 }
             }
             catch { }
+            if (marked > 0)
+                TranslatorCore.LogInfo($"[MarkDirty] '{cloneName}': {marked}/{total} components marked dirty");
         }
 
         /// <summary>
@@ -460,6 +500,11 @@ namespace UnityGameTranslator.Core
             {
                 _unityFallbackFonts.Remove(fallbackName);
                 _failedFallbackFontNames.Remove(fallbackName);
+                // Clear known chars so EnsureCharsInCloneAtlas treats all chars as NEW
+                // on the next clone. Without this, chars are "known" but the new clone's
+                // native atlas is empty → transparent text.
+                _knownCharsPerClone.Remove(fallbackName);
+                _knownCharsStringCache.Remove(fallbackName);
             }
 
             RestoreOriginalFontNames(originalFontName);
@@ -910,6 +955,9 @@ namespace UnityGameTranslator.Core
                 {
                     _unityFallbackFonts.Remove(oldFallback);
                     _failedFallbackFontNames.Remove(oldFallback);
+                    // Clear known chars so EnsureCharsInCloneAtlas re-populates the new clone
+                    _knownCharsPerClone.Remove(oldFallback);
+                    _knownCharsStringCache.Remove(oldFallback);
                 }
 
                 // Restore original fontNames if we modified the game font

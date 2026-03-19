@@ -1724,6 +1724,8 @@ namespace UnityGameTranslator.Core
                 string fontName = null;
                 string settingsFontName = null;
                 object fontObj = null;
+                Font unityCloneFont = null;  // Track the clone applied to this component
+                string unityCloneFallback = null;
 
                 // Get font name (cached to avoid GetFont reflection on every call)
                 if (compId != -1 && _fontNameCache.TryGetValue(compId, out string cachedFontName))
@@ -1803,6 +1805,10 @@ namespace UnityGameTranslator.Core
                             {
                                 TypeHelper.SetFont(__instance, replacementFont);
                             }
+                            // Remember the clone for EnsureCharsInCloneAtlasDirect later
+                            // (GetFont may not reflect SetFont yet on IL2CPP)
+                            unityCloneFont = replacementFont;
+                            unityCloneFallback = replaceName; // fallback name = clone's name (e.g. "comic")
                         }
                     }
                 }
@@ -1814,7 +1820,18 @@ namespace UnityGameTranslator.Core
 
                 // Check if own UI (use UI-specific prompt) - uses hierarchy check
                 bool isOwnUI = TranslatorCore.IsOwnUITranslatable(comp);
+                string preTranslateText = textValue;
                 textValue = TranslatorCore.TranslateTextWithTracking(textValue, comp, isOwnUI);
+
+                // Ensure chars are in the clone's atlas — always when a clone is active.
+                // Uses the known clone directly because on IL2CPP, GetFont() may still return
+                // the OLD font after SetFont (deferred update), causing EnsureCharsInCloneAtlas to skip.
+                // Must run even when text didn't change: the clone may be new with an empty atlas
+                // but the text is already translated from cache.
+                if (unityCloneFont != null && !string.IsNullOrEmpty(textValue))
+                {
+                    FontManager.EnsureCharsInCloneAtlasDirect(textValue, unityCloneFont, unityCloneFallback);
+                }
 
                 if (profiling) { t4 = _profSw.ElapsedTicks; _profTranslate += t4 - t3; }
 

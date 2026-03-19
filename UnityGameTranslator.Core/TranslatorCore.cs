@@ -1615,6 +1615,44 @@ namespace UnityGameTranslator.Core
 
         private static void TranslationWorkerLoop()
         {
+            // On IL2CPP, register this thread with the GC to prevent
+            // "fatal error in GC: Collecting from unknown thread" crashes.
+            // The Boehm GC used by IL2CPP doesn't know about .NET threads.
+            if (Adapter?.IsIL2CPP == true)
+            {
+                try
+                {
+                    // Find IL2CPP class (Il2CppInterop.Runtime.IL2CPP)
+                    Type il2cppType = null;
+                    foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+                    {
+                        il2cppType = asm.GetType("Il2CppInterop.Runtime.IL2CPP");
+                        if (il2cppType != null) break;
+                    }
+
+                    if (il2cppType != null)
+                    {
+                        // il2cpp_domain_get() returns the current domain pointer
+                        var domainGet = il2cppType.GetMethod("il2cpp_domain_get",
+                            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+                        // il2cpp_thread_attach(domain) attaches current thread to GC
+                        var threadAttach = il2cppType.GetMethod("il2cpp_thread_attach",
+                            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+
+                        if (domainGet != null && threadAttach != null)
+                        {
+                            var domain = domainGet.Invoke(null, null);
+                            threadAttach.Invoke(null, new object[] { domain });
+                            Adapter?.LogInfo("[Worker] Thread attached to IL2CPP GC domain");
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Adapter?.LogWarning($"[Worker] Failed to attach thread to IL2CPP GC: {ex.Message}");
+                }
+            }
+
             Adapter?.LogInfo("[Worker] Thread started, waiting for translations...");
 
             while (true)

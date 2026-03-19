@@ -953,7 +953,7 @@ namespace UnityGameTranslator.Core
             var toRestore = new List<int>();
             foreach (var kvp in _originalFontsPerComponent)
             {
-                string origName = (kvp.Value is UnityEngine.Object uobj) ? uobj.name : null;
+                string origName = (kvp.Value is UnityEngine.Object uobj && uobj != null) ? uobj.name : null;
                 if (origName == fontName)
                 {
                     toRestore.Add(kvp.Key);
@@ -1272,7 +1272,8 @@ namespace UnityGameTranslator.Core
         {
             if (_originalFontsPerComponent.TryGetValue(instanceId, out var fontObj))
             {
-                return (fontObj is UnityEngine.Object uobj) ? uobj.name : null;
+                if (fontObj is UnityEngine.Object uobj && uobj != null)
+                    return uobj.name;
             }
             return null;
         }

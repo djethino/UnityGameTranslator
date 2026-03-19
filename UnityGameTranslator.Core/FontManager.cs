@@ -383,19 +383,14 @@ namespace UnityGameTranslator.Core
 
         private static bool _textureRebuiltSubscribed = false;
         private static bool _textureRebuiltHandling = false;
-        private static string _subscribedOriginalFont = null;
-        private static string _subscribedFallback = null;
 
         /// <summary>
         /// Subscribe to Font.textureRebuilt via add_textureRebuilt method (IL2CPP compatible).
-        /// When the atlas rebuilds, recreate the clone to prevent corruption.
+        /// When the atlas rebuilds, re-request all known chars and mark components dirty.
         /// </summary>
         private static void SubscribeTextureRebuilt(string originalFontName, string fallbackName)
         {
             if (_textureRebuiltSubscribed) return;
-
-            _subscribedOriginalFont = originalFontName;
-            _subscribedFallback = fallbackName;
 
             try
             {
@@ -455,27 +450,40 @@ namespace UnityGameTranslator.Core
             // Check if the rebuilt font is related to any of our clones
             // Unity fires textureRebuilt for the SYSTEM font (via fontNames), not the clone object
             string rebuiltName = rebuiltFont.name;
-            bool isRelated = false;
+            Font affectedClone = null;
+            string affectedFallback = null;
             foreach (var kvp in _unityFallbackFonts)
             {
                 if (kvp.Value == rebuiltFont
                     || string.Equals(kvp.Key, rebuiltName, StringComparison.OrdinalIgnoreCase)
                     || string.Equals(kvp.Value?.name, rebuiltName, StringComparison.OrdinalIgnoreCase))
                 {
-                    isRelated = true;
+                    affectedClone = kvp.Value;
+                    affectedFallback = kvp.Key;
                     break;
                 }
             }
 
-            if (!isRelated) return;
+            if (affectedClone == null) return;
 
             _textureRebuiltHandling = true;
             try
             {
-                TranslatorCore.LogInfo($"[FontManager] Clone atlas rebuilt for '{rebuiltFont.name}', recreating");
-                RemoveCloneAndRestore(_subscribedOriginalFont, _subscribedFallback);
-                TranslatorScanner.ClearProcessedCache();
-                TranslatorScanner.ForceRefreshAllText();
+                // Don't destroy/recreate — just re-request chars and mark components dirty.
+                // ProtectCloneAtlases runs every frame to keep chars alive,
+                // but we need an immediate re-request + dirty mark after this rebuild.
+                TranslatorCore.LogInfo($"[FontManager] Atlas rebuilt for '{rebuiltName}', re-protecting '{affectedFallback}'");
+
+                // Re-request all known chars for this clone immediately
+                if (_knownCharsStringCache.TryGetValue(affectedFallback, out string charString) && charString != null)
+                {
+                    try { affectedClone.RequestCharactersInTexture(charString); }
+                    catch { }
+                }
+
+                // Mark all components using this clone as dirty so they re-render
+                // with the updated atlas texture
+                MarkCloneComponentsDirty(affectedClone);
             }
             catch (Exception ex)
             {

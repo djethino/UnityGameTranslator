@@ -1804,11 +1804,12 @@ namespace UnityGameTranslator.Core
                             if (currentName != replaceName)
                             {
                                 TypeHelper.SetFont(__instance, replacementFont);
+                                FontManager.PreWarmCloneAtlas(replaceName, replacementFont);
                             }
                             // Remember the clone for EnsureCharsInCloneAtlasDirect later
                             // (GetFont may not reflect SetFont yet on IL2CPP)
                             unityCloneFont = replacementFont;
-                            unityCloneFallback = replaceName; // fallback name = clone's name (e.g. "comic")
+                            unityCloneFallback = replaceName;
                         }
                     }
                 }

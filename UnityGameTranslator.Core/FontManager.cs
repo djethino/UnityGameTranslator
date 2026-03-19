@@ -123,6 +123,8 @@ namespace UnityGameTranslator.Core
         private static float _lastDeadRefCleanup = 0f;
         private const float DEAD_REF_CLEANUP_INTERVAL = 5f;
 
+        private static int _markDirtyWarnCount = 0;
+
         public static void ProtectCloneAtlases()
         {
             if (_unityFallbackFonts.Count == 0) return;
@@ -167,7 +169,6 @@ namespace UnityGameTranslator.Core
         /// the clone's atlas so Unity doesn't need to rebuild incrementally.
         /// </summary>
         private static bool _ensuringChars = false;
-        private static int _ensureSkipLogCount = 0;
 
         public static void EnsureCharsInCloneAtlas(string translatedText, object component = null)
         {
@@ -213,15 +214,12 @@ namespace UnityGameTranslator.Core
 
         private static void EnsureCharsInCloneAtlasInternal(string translatedText, Font componentClone, string componentFallback)
         {
-
             _ensuringChars = true;
 
-            bool isNewSet = !_knownCharsPerClone.ContainsKey(componentFallback);
-            if (isNewSet)
+            if (!_knownCharsPerClone.ContainsKey(componentFallback))
                 _knownCharsPerClone[componentFallback] = new HashSet<char>();
 
             var known = _knownCharsPerClone[componentFallback];
-            int prevCount = known.Count;
             bool hasNew = false;
             foreach (char c in translatedText)
             {
@@ -231,19 +229,12 @@ namespace UnityGameTranslator.Core
 
             if (hasNew)
             {
-                // Update the cache string. ProtectCloneAtlases (per-frame) will include these chars.
                 var allChars = new string(new System.Collections.Generic.List<char>(known).ToArray());
                 _knownCharsStringCache[componentFallback] = allChars;
 
-                if (isNewSet || prevCount == 0)
-                    TranslatorCore.LogInfo($"[EnsureChars] FIRST chars for '{componentFallback}': {prevCount}->{known.Count} chars, RequestChars + MarkDirty");
-
-                // Immediately request chars in the clone's atlas
                 try { componentClone.RequestCharactersInTexture(allChars); }
                 catch { }
 
-                // Mark ALL components using this clone as dirty so they re-render
-                // with the updated atlas (including inactive/invisible components).
                 MarkCloneComponentsDirty(componentClone);
             }
 
@@ -283,8 +274,16 @@ namespace UnityGameTranslator.Core
                         // SetAllDirty via reflection (no direct UI.Text dependency)
                         var method = comp.GetType().GetMethod("SetAllDirty",
                             BindingFlags.Public | BindingFlags.Instance);
-                        method?.Invoke(comp, null);
-                        marked++;
+                        if (method != null)
+                        {
+                            method.Invoke(comp, null);
+                            marked++;
+                        }
+                        else if (_markDirtyWarnCount < 3)
+                        {
+                            _markDirtyWarnCount++;
+                            TranslatorCore.LogWarning($"[MarkDirty] SetAllDirty NOT FOUND on {comp.GetType().FullName}");
+                        }
                     }
                     catch { }
                 }
@@ -335,6 +334,65 @@ namespace UnityGameTranslator.Core
                 }
                 catch { }
             }
+        }
+
+        // Track which clones have been pre-warmed (by font name) — only do it once per clone lifetime
+        private static readonly HashSet<string> _preWarmedClones = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Pre-warm a clone's atlas with ALL chars from the translation cache.
+        /// Called on first SetFont for each clone. Only runs once per clone lifetime.
+        /// This ensures the atlas has all needed chars BEFORE any component renders.
+        /// </summary>
+        public static void PreWarmCloneAtlas(string fallbackName, Font clone)
+        {
+            if (clone == null || string.IsNullOrEmpty(fallbackName)) return;
+            if (_preWarmedClones.Contains(fallbackName)) return;
+            _preWarmedClones.Add(fallbackName);
+
+            // If we already have known chars in the cache, use those
+            if (_knownCharsStringCache.TryGetValue(fallbackName, out string existing) && !string.IsNullOrEmpty(existing))
+            {
+                try
+                {
+                    clone.RequestCharactersInTexture(existing);
+                    CharacterInfo ci;
+                    bool hasA = clone.GetCharacterInfo('A', out ci);
+                    bool hasE = clone.GetCharacterInfo('é', out ci);
+                    TranslatorCore.LogInfo($"[FontManager] PreWarm '{fallbackName}' with {existing.Length} known chars");
+                }
+                catch { }
+                return;
+            }
+
+            // Otherwise build from translation cache
+            var allChars = new HashSet<char>();
+            try
+            {
+                foreach (var entry in TranslatorCore.TranslationCache)
+                {
+                    if (entry.Value?.Value != null)
+                        foreach (char c in entry.Value.Value)
+                            if (c > 31) allChars.Add(c);
+                }
+            }
+            catch { return; }
+
+            if (allChars.Count == 0) return;
+
+            var charString = new string(new System.Collections.Generic.List<char>(allChars).ToArray());
+            _knownCharsPerClone[fallbackName] = allChars;
+            _knownCharsStringCache[fallbackName] = charString;
+            try
+            {
+                clone.RequestCharactersInTexture(charString);
+                // Verify: check if chars are actually in the atlas
+                CharacterInfo ci;
+                bool hasA = clone.GetCharacterInfo('A', out ci);
+                bool hasE = clone.GetCharacterInfo('é', out ci);
+                TranslatorCore.LogInfo($"[FontManager] PreWarm '{fallbackName}' with {allChars.Count} chars from cache");
+            }
+            catch { }
         }
 
         /// <summary>
@@ -439,46 +497,55 @@ namespace UnityGameTranslator.Core
 
         private static void OnFontTextureRebuilt(Font rebuiltFont)
         {
+
             if (_textureRebuiltHandling) return;
             if (rebuiltFont == null) return;
 
-            // Check if the rebuilt font is related to any of our clones
-            // Unity fires textureRebuilt for the SYSTEM font (via fontNames), not the clone object
+            // Check if the rebuilt font is related to any of our clones.
+            // Unity fires textureRebuilt for SYSTEM fonts AND original game fonts,
+            // not just our clone objects. Since our clones are Instantiate() of game fonts,
+            // a rebuild of the original can affect shared atlas state.
+            // Also: fonts we cloned FROM (字体家AI造字剑客 etc.) fire here.
             string rebuiltName = rebuiltFont.name;
-            Font affectedClone = null;
-            string affectedFallback = null;
+
+            // Strategy: find directly matching clones, OR if the rebuilt font is a game font
+            // we cloned from, mark ALL clones dirty (safe — textureRebuilt is infrequent).
+            var matchedClones = new List<KeyValuePair<string, Font>>();
+            bool isGameFontWeCloned = _gameUnityFonts.ContainsKey(rebuiltName)
+                || _originalFontNames.ContainsKey(rebuiltName);
+
             foreach (var kvp in _unityFallbackFonts)
             {
+                if (kvp.Value == null) continue;
                 if (kvp.Value == rebuiltFont
                     || string.Equals(kvp.Key, rebuiltName, StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(kvp.Value?.name, rebuiltName, StringComparison.OrdinalIgnoreCase))
+                    || string.Equals(kvp.Value.name, rebuiltName, StringComparison.OrdinalIgnoreCase)
+                    || isGameFontWeCloned)  // Rebuilt font is one we cloned from → affect all clones
                 {
-                    affectedClone = kvp.Value;
-                    affectedFallback = kvp.Key;
-                    break;
+                    matchedClones.Add(kvp);
+                    if (!isGameFontWeCloned) break; // Direct match → only one clone
                 }
             }
 
-            if (affectedClone == null) return;
+            if (matchedClones.Count == 0) return;
 
             _textureRebuiltHandling = true;
             try
             {
-                // Don't destroy/recreate — just re-request chars and mark components dirty.
-                // ProtectCloneAtlases runs every frame to keep chars alive,
-                // but we need an immediate re-request + dirty mark after this rebuild.
-                TranslatorCore.LogInfo($"[FontManager] Atlas rebuilt for '{rebuiltName}', re-protecting '{affectedFallback}'");
-
-                // Re-request all known chars for this clone immediately
-                if (_knownCharsStringCache.TryGetValue(affectedFallback, out string charString) && charString != null)
+                foreach (var match in matchedClones)
                 {
-                    try { affectedClone.RequestCharactersInTexture(charString); }
-                    catch { }
-                }
+                    TranslatorCore.LogInfo($"[FontManager] Atlas rebuilt for '{rebuiltName}', re-protecting '{match.Key}'");
 
-                // Mark all components using this clone as dirty so they re-render
-                // with the updated atlas texture
-                MarkCloneComponentsDirty(affectedClone);
+                    // Re-request all known chars for this clone immediately
+                    if (_knownCharsStringCache.TryGetValue(match.Key, out string charString) && charString != null)
+                    {
+                        try { match.Value.RequestCharactersInTexture(charString); }
+                        catch { }
+                    }
+
+                    // Mark all components using this clone as dirty so they re-render
+                    MarkCloneComponentsDirty(match.Value);
+                }
             }
             catch (Exception ex)
             {
@@ -505,6 +572,7 @@ namespace UnityGameTranslator.Core
                 // native atlas is empty → transparent text.
                 _knownCharsPerClone.Remove(fallbackName);
                 _knownCharsStringCache.Remove(fallbackName);
+                _preWarmedClones.Remove(fallbackName);
             }
 
             RestoreOriginalFontNames(originalFontName);
@@ -958,6 +1026,7 @@ namespace UnityGameTranslator.Core
                     // Clear known chars so EnsureCharsInCloneAtlas re-populates the new clone
                     _knownCharsPerClone.Remove(oldFallback);
                     _knownCharsStringCache.Remove(oldFallback);
+                    _preWarmedClones.Remove(oldFallback);
                 }
 
                 // Restore original fontNames if we modified the game font

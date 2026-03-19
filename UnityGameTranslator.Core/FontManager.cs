@@ -194,21 +194,7 @@ namespace UnityGameTranslator.Core
             }
 
             if (componentClone == null || componentFallback == null)
-            {
-                // DEBUG: log why we skipped
-                if (component != null)
-                {
-                    var rawFont = TypeHelper.GetFont(component);
-                    string rawName = (rawFont is UnityEngine.Object uo) ? uo.name : rawFont?.GetType().Name;
-                    bool isFontType = rawFont is Font;
-                    Font castFont = rawFont as Font;
-                    if (castFont == null && rawFont != null) castFont = TypeHelper.Il2CppCast(rawFont, typeof(Font)) as Font;
-                    bool isClone = castFont != null && IsClonedFont(castFont);
-                    if (rawName != null && (rawName.Contains("comic") || rawName.Contains("consola")))
-                        TranslatorCore.LogWarning($"[EnsureChars] SKIPPED: font='{rawName}' isFontType={isFontType} castOk={castFont != null} isClone={isClone}");
-                }
                 return;
-            }
 
             _ensuringChars = true;
 
@@ -309,37 +295,6 @@ namespace UnityGameTranslator.Core
                 }
                 catch { }
             }
-        }
-
-        private static void ForceRedrawCloneComponents(Font clone)
-        {
-            int count = 0;
-            foreach (var kvp in _replacedComponentRefs)
-            {
-                var comp = kvp.Value as Component;
-                if (comp == null) continue;
-
-                var font = TypeHelper.GetFont(comp) as Font;
-                if (font != clone) continue;
-
-                count++;
-                try
-                {
-                    var setDirtyMethod = comp.GetType().GetMethod("SetAllDirty",
-                        BindingFlags.Public | BindingFlags.Instance);
-                    if (setDirtyMethod != null)
-                        setDirtyMethod.Invoke(comp, null);
-                    else
-                    {
-                        // Fallback: SetVerticesDirty
-                        var vertDirty = comp.GetType().GetMethod("SetVerticesDirty",
-                            BindingFlags.Public | BindingFlags.Instance);
-                        vertDirty?.Invoke(comp, null);
-                    }
-                }
-                catch { }
-            }
-            TranslatorCore.LogInfo($"[FontManager] ForceRedraw: {count} components with clone '{clone?.name}'");
         }
 
         /// <summary>

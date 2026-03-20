@@ -1713,6 +1713,9 @@ namespace UnityGameTranslator.Core
             // when multiple cloned fonts share the native font rasterizer
             FontManager.ProtectCloneAtlases();
 
+            // Check for stabilized typewriting texts and trigger their translation
+            TranslatorPatches.ProcessStabilizedTypewriting();
+
             // After new chars were added to a clone atlas, force all components to re-render
             // so they pick up updated glyph positions. Debounced to max once per second.
             if (FontManager.ConsumePendingRefresh())

@@ -250,6 +250,10 @@ namespace UnityGameTranslator.Core
                 {
                     patchCount += PatchCustomLocalizationType(locType, patcher);
                 }
+
+                // Graphic.OnEnable postfix — detect when text components are activated
+                // and re-apply clone font + warm atlas (fixes transparent text on inactive→active)
+                patchCount += PatchGraphicOnEnable(patcher);
             }
             catch (Exception e)
             {
@@ -1435,6 +1439,8 @@ namespace UnityGameTranslator.Core
             _altTMPFontReplacedIds.Clear();
             _fontNameCache.Clear();
             _patchedComponentRefs.Clear();
+            _typewritingState.Clear();
+            _activeTypewriting.Clear();
         }
 
         /// <summary>
@@ -1583,6 +1589,139 @@ namespace UnityGameTranslator.Core
             catch { }
         }
 
+        #region OnEnable Hook
+
+        /// <summary>
+        /// Patch Graphic.OnEnable to detect when text components transition from inactive to active.
+        /// When a UI.Text with a clone font is enabled, Unity needs a fresh font bind + atlas warm.
+        /// </summary>
+        private static int PatchGraphicOnEnable(Action<MethodInfo, MethodInfo, MethodInfo> patcher)
+        {
+            try
+            {
+                // Find Graphic type (base class of UI.Text, MaskableGraphic)
+                // OnEnable is defined on Graphic (protected virtual)
+                Type graphicType = null;
+                if (TypeHelper.UI_TextType != null)
+                {
+                    // Walk up: Text → MaskableGraphic → Graphic
+                    graphicType = TypeHelper.UI_TextType.BaseType?.BaseType;
+                }
+                if (graphicType == null)
+                {
+                    // Fallback: find by name
+                    foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+                    {
+                        graphicType = asm.GetType("UnityEngine.UI.Graphic");
+                        if (graphicType != null) break;
+                    }
+                }
+
+                if (graphicType == null)
+                {
+                    TranslatorCore.LogWarning("[Patches] Graphic type not found, OnEnable hook skipped");
+                    return 0;
+                }
+
+                var onEnableMethod = graphicType.GetMethod("OnEnable",
+                    BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance);
+                if (onEnableMethod == null)
+                {
+                    TranslatorCore.LogWarning("[Patches] Graphic.OnEnable not found, hook skipped");
+                    return 0;
+                }
+
+                var postfix = typeof(TranslatorPatches).GetMethod(nameof(Graphic_OnEnable_Postfix),
+                    BindingFlags.Static | BindingFlags.Public);
+                patcher(onEnableMethod, null, postfix);
+                TranslatorCore.LogInfo("[Patches] Graphic.OnEnable postfix applied");
+                return 1;
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogWarning($"[Patches] Failed to patch Graphic.OnEnable: {ex.Message}");
+                return 0;
+            }
+        }
+
+        /// <summary>
+        /// Postfix for Graphic.OnEnable. Fires for ALL graphics (Image, RawImage, Text...).
+        /// Must exit fast for non-text components.
+        /// For text components with clone fonts: re-apply font + warm atlas.
+        /// </summary>
+        public static void Graphic_OnEnable_Postfix(object __instance)
+        {
+            try
+            {
+                // Skip during shutdown or if not initialized
+                if (TranslatorCore.Adapter == null || TranslatorCore.Config == null) return;
+                if (!TranslatorCore.Config.enable_translations) return;
+
+                _onEnableFireCount++;
+                if (_onEnableFireCount == 1 || _onEnableFireCount == 100 || _onEnableFireCount == 1000)
+                    TranslatorCore.LogInfo($"[OnEnable] Fire count: {_onEnableFireCount}");
+
+                // Fast exit: only process types we know are text components
+                if (__instance == null) return;
+                var type = __instance.GetType();
+                bool isText = (TypeHelper.UI_TextType != null && TypeHelper.UI_TextType.IsAssignableFrom(type));
+                if (!isText) return;
+
+                var comp = __instance as Component;
+                if (comp == null) return;
+
+                int compId = TypeHelper.GetInstanceID(__instance);
+                if (compId == -1) return;
+
+                // Check if this component has a tracked original font (= we replaced its font before)
+                string originalFontName = FontManager.GetOriginalFontName(compId);
+                if (originalFontName == null) return;
+
+                // Get the settings font name and check if a replacement is configured
+                string settingsFontName = FontManager.GetSettingsFontName(compId, originalFontName);
+                var replacementFont = FontManager.GetUnityReplacementFont(settingsFontName);
+                if (replacementFont == null) return;
+
+                // Re-apply the clone font — this is the moment Unity sets up the CanvasRenderer,
+                // so the font binding will be complete (unlike when set on inactive components).
+                TypeHelper.SetFont(__instance, replacementFont);
+
+                // Ensure the clone's atlas has all chars for this component's text
+                string text = TypeHelper.GetText(__instance);
+                if (!string.IsNullOrEmpty(text))
+                {
+                    string replaceName = replacementFont.name;
+                    FontManager.EnsureCharsInCloneAtlasDirect(text, replacementFont, replaceName);
+
+                    // Force complete mesh regeneration — SetFont alone doesn't rebuild
+                    // the vertex mesh on IL2CPP. We need to trigger the full dirty chain.
+                    try
+                    {
+                        var compType = __instance.GetType();
+                        var setVertsDirty = compType.GetMethod("SetVerticesDirty", BindingFlags.Public | BindingFlags.Instance);
+                        var setLayoutDirty = compType.GetMethod("SetLayoutDirty", BindingFlags.Public | BindingFlags.Instance);
+                        var setMatDirty = compType.GetMethod("SetMaterialDirty", BindingFlags.Public | BindingFlags.Instance);
+                        setVertsDirty?.Invoke(__instance, null);
+                        setLayoutDirty?.Invoke(__instance, null);
+                        setMatDirty?.Invoke(__instance, null);
+                    }
+                    catch { }
+                }
+
+                if (_onEnableLogCount < 10)
+                {
+                    _onEnableLogCount++;
+                    // After SetFont, immediately verify what font the component actually has
+                    object verifyFont = TypeHelper.GetFont(__instance);
+                    string verifyName = (verifyFont is UnityEngine.Object vfo) ? vfo.name : "null";
+                    TranslatorCore.LogInfo($"[OnEnable] compId={compId} settings='{settingsFontName}' clone='{replacementFont.name}' actualAfter='{verifyName}' text='{(text != null && text.Length > 20 ? text.Substring(0,20) : text)}'");
+                }
+            }
+            catch { }
+        }
+
+        #endregion
+
         /// <summary>
         /// Apply font scale to a text component (TMP or UI.Text).
         /// Stores original size on first call and applies scale relative to it.
@@ -1685,6 +1824,109 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static Dictionary<int, string> FontNameCache => _fontNameCache;
         public static Dictionary<int, object> PatchedComponentRefs => _patchedComponentRefs;
+
+        // === TYPEWRITING DETECTION ===
+        // Per-component tracking to detect typewriting effects (text growing char by char).
+        // When detected, skip translation until the text stabilizes.
+        private struct TypewritingState
+        {
+            public string Text;
+            public float Timestamp;
+        }
+        private static readonly Dictionary<int, TypewritingState> _typewritingState = new Dictionary<int, TypewritingState>();
+        private const float TYPEWRITING_STABILIZE_MS = 500f; // ms without change = text is final
+
+        /// <summary>
+        /// Check if a set_text call looks like a typewriting effect (text growing on same component).
+        /// Returns true if we should skip translation for this call.
+        /// </summary>
+        private static bool IsTypewritingInProgress(int compId, string newText)
+        {
+            if (compId == -1 || string.IsNullOrEmpty(newText)) return false;
+
+            float now = Time.realtimeSinceStartup;
+
+            if (!_typewritingState.TryGetValue(compId, out var state))
+            {
+                // First time — just record for comparison, allow translation
+                _typewritingState[compId] = new TypewritingState { Text = newText, Timestamp = now };
+                return false;
+            }
+
+            // Same text as before — not typewriting, just a refresh
+            if (state.Text == newText)
+            {
+                state.Timestamp = now;
+                _typewritingState[compId] = state;
+                return false;
+            }
+
+            float elapsed = (now - state.Timestamp) * 1000f;
+            bool isGrowing = newText.Length > state.Text.Length && newText.StartsWith(state.Text);
+            bool isShrinking = newText.Length < state.Text.Length && state.Text.StartsWith(newText);
+
+            if ((isGrowing || isShrinking) && elapsed < TYPEWRITING_STABILIZE_MS)
+            {
+                // Text is growing/shrinking rapidly — typewriting detected, skip translation
+                _typewritingState[compId] = new TypewritingState { Text = newText, Timestamp = now };
+                _activeTypewriting.Add(compId);
+                return true;
+            }
+
+            // Either: text changed completely (not typewriting), or typewriting stabilized
+            // In both cases, allow translation and update state
+            _typewritingState[compId] = new TypewritingState { Text = newText, Timestamp = now };
+            return false;
+        }
+
+        /// <summary>
+        /// Check for stabilized typewriting texts and queue them for translation.
+        /// Called from ProcessPendingUpdates (main thread, periodic).
+        /// </summary>
+        // Track which compIds are actually in a typewriting sequence (had a skip)
+        private static readonly HashSet<int> _activeTypewriting = new HashSet<int>();
+
+        public static void ProcessStabilizedTypewriting()
+        {
+            if (_activeTypewriting.Count == 0) return;
+
+            float now = Time.realtimeSinceStartup;
+            var stabilized = new List<int>();
+
+            foreach (int compId in _activeTypewriting)
+            {
+                if (!_typewritingState.TryGetValue(compId, out var state)) continue;
+                float elapsed = (now - state.Timestamp) * 1000f;
+                if (elapsed >= TYPEWRITING_STABILIZE_MS)
+                    stabilized.Add(compId);
+            }
+
+            foreach (int compId in stabilized)
+            {
+                _activeTypewriting.Remove(compId);
+
+                if (!_typewritingState.TryGetValue(compId, out var state)) continue;
+                _typewritingState.Remove(compId);
+
+                // Re-trigger set_text with the final text to force translation
+                if (_patchedComponentRefs.TryGetValue(compId, out var comp) && comp != null)
+                {
+                    try
+                    {
+                        TypeHelper.SetText(comp, state.Text);
+                    }
+                    catch { }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Clear typewriting state (on scene change, settings change, etc.)
+        /// </summary>
+        public static void ClearTypewritingState()
+        {
+            _typewritingState.Clear();
+        }
 
         // === PROFILING (activate via debug file in plugin folder) ===
         private static readonly System.Diagnostics.Stopwatch _profSw = new System.Diagnostics.Stopwatch();
@@ -1819,6 +2061,11 @@ namespace UnityGameTranslator.Core
                 // Don't translate InputField textComponent (user's typed text)
                 if (componentType != "TextMesh" && IsInputFieldTextComponentCached(__instance)) return;
 
+                // Skip typewriting effects — text growing char by char on the same component.
+                // Wait for the text to stabilize before translating.
+                // ProcessStabilizedTypewriting() will re-trigger set_text with final text.
+                if (IsTypewritingInProgress(compId, textValue)) return;
+
                 // Check if own UI (use UI-specific prompt) - uses hierarchy check
                 bool isOwnUI = TranslatorCore.IsOwnUITranslatable(comp);
                 string preTranslateText = textValue;
@@ -1893,6 +2140,8 @@ namespace UnityGameTranslator.Core
         [ThreadStatic] private static bool _bypassFontSizePrefix;
         // Components that inherited a clone font from template — skip ApplyFontScale (already scaled)
         private static readonly HashSet<int> _inheritedCloneComponents = new HashSet<int>();
+        private static int _onEnableLogCount = 0;
+        private static int _onEnableFireCount = 0;
         public static bool BypassFontSizePrefix { get => _bypassFontSizePrefix; set => _bypassFontSizePrefix = value; }
 
         public static void TMPText_SetFontSize_Prefix(object __instance, ref float value)

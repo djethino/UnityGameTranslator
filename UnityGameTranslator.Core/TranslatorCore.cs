@@ -576,8 +576,15 @@ namespace UnityGameTranslator.Core
         // Marker for skipped translations (text not in expected source language)
         private const string SkipTranslationMarker = "AxNoTranslateXa";
 
+        // Placeholder format for extracted numbers: [!v*0], [!v*1], etc.
+        // Exotic format to avoid collision with game text (e.g. [v0] used by some games).
+        private const string PlaceholderPrefix = "[!v*";
+        private const string PlaceholderSuffix = "]";
+        // Current engine version for migration support
+        private const int CurrentEngineVersion = 1;
+
         private static readonly Regex NumberPattern = new Regex(
-            @"(?<!\[v)(-?\d+(?:[.,]\d+)?%?)",
+            @"(?<!\[!v\*)(-?\d+(?:[.,]\d+)?%?)",
             RegexOptions.Compiled);
 
         public class PatternEntry
@@ -877,11 +884,16 @@ namespace UnityGameTranslator.Core
 
                 // Track saved _game.steam_id to compare with current detection
                 string savedSteamId = null;
+                int engineVersion = 0;
 
                 // Extract metadata and translations
                 foreach (var prop in parsed.Properties())
                 {
-                    if (prop.Name == "_uuid")
+                    if (prop.Name == "_engine_version")
+                    {
+                        engineVersion = prop.Value.Value<int>();
+                    }
+                    else if (prop.Name == "_uuid")
                     {
                         FileUuid = prop.Value.ToString();
                     }
@@ -1024,6 +1036,17 @@ namespace UnityGameTranslator.Core
                 // Load ancestor cache if exists (for 3-way merge support)
                 LoadAncestorCache();
 
+                // Migrate old placeholder format [vN] → [!v*N] if needed
+                if (engineVersion < CurrentEngineVersion)
+                {
+                    int migrated = MigratePlaceholderFormat(TranslationCache);
+                    if (migrated > 0)
+                    {
+                        Adapter?.LogInfo($"[LoadCache] Migrated {migrated} entries from [vN] to [!v*N] format (v{engineVersion} → v{CurrentEngineVersion})");
+                        cacheModified = true; // Will trigger save
+                    }
+                }
+
                 // Recalculate LocalChangesCount based on actual differences (always, even if no ancestor)
                 RecalculateLocalChanges();
 
@@ -1035,13 +1058,11 @@ namespace UnityGameTranslator.Core
                 {
                     if (kv.Key != kv.Value.Value && !string.IsNullOrEmpty(kv.Value.Value))
                     {
-                        // Normalize the value the same way we normalize incoming text
                         string normalizedValue = NormalizeLineEndings(kv.Value.Value);
                         if (Config.normalize_numbers)
                         {
                             normalizedValue = ExtractNumbersToPlaceholders(normalizedValue, out _);
                         }
-                        // Trim trailing whitespace - TMP strips these when displaying
                         normalizedValue = normalizedValue.TrimEnd();
                         translatedTexts.Add(normalizedValue);
                     }
@@ -1261,6 +1282,42 @@ namespace UnityGameTranslator.Core
         /// Recalculate LocalChangesCount based on actual differences between TranslationCache and AncestorCache.
         /// Call this after loading caches or after a merge.
         /// </summary>
+        /// <summary>
+        /// Migrate old placeholder format [vN] to new format [!v*N] in all cache entries.
+        /// Returns the number of entries migrated.
+        /// </summary>
+        private static int MigratePlaceholderFormat(Dictionary<string, TranslationEntry> cache)
+        {
+            var oldPattern = new Regex(@"\[v(\d+)\]");
+            var toMigrate = new List<KeyValuePair<string, TranslationEntry>>();
+
+            foreach (var kv in cache)
+            {
+                bool keyHasOld = oldPattern.IsMatch(kv.Key);
+                bool valHasOld = kv.Value?.Value != null && oldPattern.IsMatch(kv.Value.Value);
+                if (keyHasOld || valHasOld)
+                    toMigrate.Add(kv);
+            }
+
+            foreach (var kv in toMigrate)
+            {
+                string newKey = oldPattern.Replace(kv.Key, "[!v*$1]");
+                string newVal = kv.Value?.Value != null ? oldPattern.Replace(kv.Value.Value, "[!v*$1]") : kv.Value?.Value;
+
+                // Remove old key if it changed
+                if (newKey != kv.Key)
+                    cache.Remove(kv.Key);
+
+                cache[newKey] = new TranslationEntry
+                {
+                    Value = newVal,
+                    Tag = kv.Value.Tag
+                };
+            }
+
+            return toMigrate.Count;
+        }
+
         public static void RecalculateLocalChanges()
         {
             if (AncestorCache.Count == 0)
@@ -1421,7 +1478,7 @@ namespace UnityGameTranslator.Core
             // TryPatternMatch iterates PatternEntries on the main thread while
             // this can be called from the worker thread (via AddToCache).
             var newEntries = new List<PatternEntry>();
-            var placeholderRegex = new Regex(@"\[v(\d+)\]", RegexOptions.None, TimeSpan.FromMilliseconds(100));
+            var placeholderRegex = new Regex(@"\[!v\*(\d+)\]", RegexOptions.None, TimeSpan.FromMilliseconds(100));
 
             // Snapshot to avoid "Collection was modified" if AddToCache runs concurrently
             KeyValuePair<string, TranslationEntry>[] cacheSnapshot;
@@ -1933,7 +1990,7 @@ namespace UnityGameTranslator.Core
                     if (extractedNumbers != null && extractedNumbers.Count > 0)
                     {
                         promptBuilder.AppendLine("- Preserve original formatting tags and special characters");
-                        promptBuilder.AppendLine("- IMPORTANT: Keep [v0], [v1], etc. placeholders exactly as-is");
+                        promptBuilder.AppendLine("- IMPORTANT: Keep [!v*0], [!v*1], etc. placeholders exactly as-is, do not modify them");
                     }
 
                     if (textType == TextType.SingleWord)
@@ -1977,7 +2034,7 @@ namespace UnityGameTranslator.Core
                     if (extractedNumbers != null && extractedNumbers.Count > 0)
                     {
                         promptBuilder.AppendLine("- Preserve original formatting tags and special characters");
-                        promptBuilder.AppendLine("- IMPORTANT: Keep [v0], [v1], etc. placeholders exactly as-is");
+                        promptBuilder.AppendLine("- IMPORTANT: Keep [!v*0], [!v*1], etc. placeholders exactly as-is, do not modify them");
                     }
 
                     if (textType == TextType.SingleWord)
@@ -2199,7 +2256,6 @@ namespace UnityGameTranslator.Core
                 }
 
                 // Add to reverse cache (only if value is non-empty and different from key)
-                // Must normalize the same way as in LoadCache and TranslateTextWithTracking
                 if (normalizedKey != entry.Value && !string.IsNullOrEmpty(entry.Value))
                 {
                     string normalizedTranslation = NormalizeLineEndings(entry.Value);
@@ -2207,7 +2263,6 @@ namespace UnityGameTranslator.Core
                     {
                         normalizedTranslation = ExtractNumbersToPlaceholders(normalizedTranslation, out _);
                     }
-                    // Trim trailing whitespace - TMP strips these when displaying
                     normalizedTranslation = normalizedTranslation.TrimEnd();
                     translatedTexts.Add(normalizedTranslation);
                 }
@@ -2216,7 +2271,7 @@ namespace UnityGameTranslator.Core
                 // OnTranslationComplete updates tracked components directly.
                 // New components will be translated on their next scan cycle.
 
-                if (normalizedKey.Contains("[v"))
+                if (normalizedKey.Contains(PlaceholderPrefix))
                 {
                     BuildPatternEntries();
                 }
@@ -2260,7 +2315,7 @@ namespace UnityGameTranslator.Core
             {
                 var num = numbersWithIndex[i];
                 result.Remove(num.Item2, num.Item3);
-                result.Insert(num.Item2, $"[v{i}]");
+                result.Insert(num.Item2, $"{PlaceholderPrefix}{i}{PlaceholderSuffix}");
             }
 
             return result.ToString();
@@ -2274,7 +2329,7 @@ namespace UnityGameTranslator.Core
             string result = text;
             for (int i = 0; i < numbers.Count; i++)
             {
-                result = result.Replace($"[v{i}]", numbers[i]);
+                result = result.Replace($"{PlaceholderPrefix}{i}{PlaceholderSuffix}", numbers[i]);
             }
             return result;
         }
@@ -2298,17 +2353,17 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Check if a number at the given index is inside a [vN] placeholder.
-        /// Handles [v0] through [v99].
+        /// Check if a number at the given index is inside a [!v*N] placeholder.
         /// </summary>
         private static bool IsInsidePlaceholder(string text, int index)
         {
-            // Look backwards for "[v" pattern
-            for (int i = index - 1; i >= Math.Max(0, index - 3); i--)
+            // Look backwards for "[!v*" pattern (PlaceholderPrefix)
+            // PlaceholderPrefix is "[!v*" (4 chars)
+            for (int i = index - 1; i >= Math.Max(0, index - 5); i--)
             {
-                if (i >= 1 && text[i] == 'v' && text[i - 1] == '[')
+                if (i >= 3 && text[i] == '*' && text[i - 1] == 'v' && text[i - 2] == '!' && text[i - 3] == '[')
                 {
-                    // Found "[v" before the number — check if there's a "]" after
+                    // Found "[!v*" before the number — check if there's a "]" after
                     for (int j = index; j < Math.Min(text.Length, index + 4); j++)
                     {
                         if (text[j] == ']') return true;
@@ -2513,8 +2568,6 @@ namespace UnityGameTranslator.Core
                 translatedCount++;
                 FontManager.EnsureCharsInCloneAtlas(result, component);
 
-                // Add the displayed translation to reverse cache with SAME normalization
-                // as the lookup (NormalizeLineEndings + ExtractNumbersToPlaceholders + TrimEnd)
                 string normalizedResult = NormalizeLineEndings(result);
                 if (Config.normalize_numbers)
                     normalizedResult = ExtractNumbersToPlaceholders(normalizedResult, out _);
@@ -2707,7 +2760,7 @@ namespace UnityGameTranslator.Core
                         for (int i = 0; i < entry.PlaceholderIndices.Count && i < capturedValues.Count; i++)
                         {
                             int placeholderIndex = entry.PlaceholderIndices[i];
-                            result = result.Replace($"[v{placeholderIndex}]", capturedValues[i]);
+                            result = result.Replace($"{PlaceholderPrefix}{placeholderIndex}{PlaceholderSuffix}", capturedValues[i]);
                         }
 
                         return result;
@@ -2802,6 +2855,7 @@ namespace UnityGameTranslator.Core
                     var output = new JObject();
 
                     // Metadata
+                    output["_engine_version"] = CurrentEngineVersion;
                     output["_uuid"] = FileUuid;
 
                     if (CurrentGame != null)

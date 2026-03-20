@@ -1867,40 +1867,65 @@ namespace UnityGameTranslator.Core
             {
                 if (state.Text == newText)
                 {
+                    // Same text, still pending
                     return true;
                 }
 
                 float elapsed = (now - state.Timestamp) * 1000f;
                 bool isGrowing = newText.Length > state.Text.Length && newText.StartsWith(state.Text);
-                int charsAdded = isGrowing ? newText.Length - state.Text.Length : -1;
 
-                if (_twLogCount < 50)
+                if (isGrowing && elapsed < TYPEWRITING_STABILIZE_MS)
                 {
-                    _twLogCount++;
-                    string action;
-                    if (isGrowing && elapsed < TYPEWRITING_STABILIZE_MS)
-                        action = "SKIP(typewriting)";
-                    else if (isGrowing)
-                        action = $"ALLOW(elapsed={elapsed:F0}ms)";
-                    else
-                        action = $"ALLOW(notGrowing)";
-                    TranslatorCore.LogInfo($"[TW] comp={compId} prev={state.Text.Length}c new={newText.Length}c added={charsAdded} elapsed={elapsed:F0}ms → {action}");
+                    // Text growing rapidly — typewriting in progress, defer
+                    _typewritingState[compId] = new TypewritingState { Text = newText, Timestamp = now, Queued = false };
+                    _activeTypewriting.Add(compId);
+                    return true;
                 }
 
-                // Any text change on a known component (growing, shrinking, or replaced)
-                // within the time window → defer. The game may be erasing and restarting
-                // typewriting, or buffering multiple chars. Always wait for stabilization.
+                // Text changed completely (not StartsWith) or grew after long pause.
+                // The PREVIOUS text is final — process it before handling the new one.
+                if (!state.Queued)
+                {
+                    ProcessFinalizedText(compId, state.Text);
+                }
+
+                // Store new text as new start, defer it
                 _typewritingState[compId] = new TypewritingState { Text = newText, Timestamp = now, Queued = false };
                 _activeTypewriting.Add(compId);
                 return true;
             }
 
-            // First time — defer for stabilization. We can't know yet if this is
-            // typewriting or a normal text. ProcessStabilizedTypewriting will queue
-            // for translation after 500ms if the text doesn't change.
+            // First time — defer for stabilization
             _typewritingState[compId] = new TypewritingState { Text = newText, Timestamp = now };
             _activeTypewriting.Add(compId);
             return true;
+        }
+
+        /// <summary>
+        /// Process a finalized typewriting text: queue for AI if not in cache,
+        /// or re-trigger SetText if already cached.
+        /// </summary>
+        private static void ProcessFinalizedText(int compId, string text)
+        {
+            if (string.IsNullOrEmpty(text)) return;
+
+            string normalizedText = TranslatorCore.NormalizeForCacheLookup(text);
+            if (TranslatorCore.TranslationCache.ContainsKey(normalizedText))
+            {
+                // Already cached — apply translation by re-triggering SetText
+                if (_patchedComponentRefs.TryGetValue(compId, out var comp) && comp != null)
+                {
+                    try { TypeHelper.SetText(comp, text); }
+                    catch { }
+                }
+            }
+            else
+            {
+                // Not cached — queue for AI
+                object comp = null;
+                _patchedComponentRefs.TryGetValue(compId, out comp);
+                TranslatorCore.QueueForTranslation(text, comp);
+            }
         }
 
         /// <summary>
@@ -1941,53 +1966,8 @@ namespace UnityGameTranslator.Core
                     Queued = true
                 };
 
-                object comp = null;
-                _patchedComponentRefs.TryGetValue(compId, out comp);
-
-                string normalizedText = TranslatorCore.NormalizeForCacheLookup(state.Text);
-
-                // Check if this text is already cached (exact match)
-                if (TranslatorCore.TranslationCache.ContainsKey(normalizedText))
-                {
-                    // Already cached — re-trigger SetText to apply translation via prefix
-                    if (comp != null)
-                    {
-                        try { TypeHelper.SetText(comp, state.Text); }
-                        catch { }
-                    }
-                }
-                // Check if this text is a PREFIX of an existing cache key
-                // (= partial text from an accumulating dialogue already translated)
-                else if (IsPrefixOfCachedKey(normalizedText))
-                {
-                    // Partial text of a known dialogue — don't queue, don't notify.
-                    // The full text will arrive later and be translated from cache.
-                }
-                else
-                {
-                    // Not cached — queue for AI translation
-                    TranslatorCore.QueueForTranslation(state.Text, comp);
-                }
+                ProcessFinalizedText(compId, state.Text);
             }
-        }
-
-        /// <summary>
-        /// Check if a normalized text is a prefix of any existing cache key.
-        /// Used to detect partial dialogue text that will be completed later.
-        /// </summary>
-        private static bool IsPrefixOfCachedKey(string normalizedText)
-        {
-            if (string.IsNullOrEmpty(normalizedText) || normalizedText.Length < 3) return false;
-            try
-            {
-                foreach (var key in TranslatorCore.TranslationCache.Keys)
-                {
-                    if (key.Length > normalizedText.Length && key.StartsWith(normalizedText))
-                        return true;
-                }
-            }
-            catch { }
-            return false;
         }
 
         /// <summary>

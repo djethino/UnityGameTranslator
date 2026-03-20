@@ -1832,6 +1832,7 @@ namespace UnityGameTranslator.Core
         {
             public string Text;
             public float Timestamp;
+            public bool Queued; // true = already queued for translation, don't re-queue
         }
         private static readonly Dictionary<int, TypewritingState> _typewritingState = new Dictionary<int, TypewritingState>();
         private const float TYPEWRITING_STABILIZE_MS = 500f; // ms without change = text is final
@@ -1840,43 +1841,66 @@ namespace UnityGameTranslator.Core
         /// Check if a set_text call looks like a typewriting effect (text growing on same component).
         /// Returns true if we should skip translation for this call.
         /// </summary>
-        private static bool IsTypewritingInProgress(int compId, string newText)
+        /// <summary>
+        /// Debounce cache-miss translations. ALL new texts (cache miss) are held for
+        /// TYPEWRITING_STABILIZE_MS before being queued for AI. This catches typewriting
+        /// effects where the text grows char by char. Cache hits bypass this entirely.
+        /// Returns true if the text should be skipped (still stabilizing).
+        /// </summary>
+        // If text grows AND is within this time window, it's typewriting (regardless of chars added)
+        // The key indicator is RAPID growth on the same component, not the size of each addition
+        private static int _twLogCount = 0;
+
+        /// <summary>
+        /// Detect typewriting effects: text growing by a few chars at a time on the same component.
+        /// Only defers if the text grows by 1-5 chars (typewriting). Larger additions (dialogue
+        /// accumulation, paragraph appends) are allowed through immediately.
+        /// Returns true if the text should NOT be queued yet (typewriting in progress).
+        /// </summary>
+        public static bool IsTypewritingInProgress(int compId, string newText)
         {
             if (compId == -1 || string.IsNullOrEmpty(newText)) return false;
 
             float now = Time.realtimeSinceStartup;
 
-            if (!_typewritingState.TryGetValue(compId, out var state))
+            if (_typewritingState.TryGetValue(compId, out var state))
             {
-                // First time — just record for comparison, allow translation
-                _typewritingState[compId] = new TypewritingState { Text = newText, Timestamp = now };
-                return false;
-            }
+                if (state.Text == newText)
+                {
+                    return true;
+                }
 
-            // Same text as before — not typewriting, just a refresh
-            if (state.Text == newText)
-            {
-                state.Timestamp = now;
-                _typewritingState[compId] = state;
-                return false;
-            }
+                float elapsed = (now - state.Timestamp) * 1000f;
+                bool isGrowing = newText.Length > state.Text.Length && newText.StartsWith(state.Text);
+                int charsAdded = isGrowing ? newText.Length - state.Text.Length : -1;
 
-            float elapsed = (now - state.Timestamp) * 1000f;
-            bool isGrowing = newText.Length > state.Text.Length && newText.StartsWith(state.Text);
-            bool isShrinking = newText.Length < state.Text.Length && state.Text.StartsWith(newText);
+                if (_twLogCount < 50)
+                {
+                    _twLogCount++;
+                    string action;
+                    if (isGrowing && elapsed < TYPEWRITING_STABILIZE_MS)
+                        action = "SKIP(typewriting)";
+                    else if (isGrowing)
+                        action = $"ALLOW(elapsed={elapsed:F0}ms)";
+                    else
+                        action = $"ALLOW(notGrowing)";
+                    TranslatorCore.LogInfo($"[TW] comp={compId} prev={state.Text.Length}c new={newText.Length}c added={charsAdded} elapsed={elapsed:F0}ms → {action}");
+                }
 
-            if ((isGrowing || isShrinking) && elapsed < TYPEWRITING_STABILIZE_MS)
-            {
-                // Text is growing/shrinking rapidly — typewriting detected, skip translation
-                _typewritingState[compId] = new TypewritingState { Text = newText, Timestamp = now };
+                // Any text change on a known component (growing, shrinking, or replaced)
+                // within the time window → defer. The game may be erasing and restarting
+                // typewriting, or buffering multiple chars. Always wait for stabilization.
+                _typewritingState[compId] = new TypewritingState { Text = newText, Timestamp = now, Queued = false };
                 _activeTypewriting.Add(compId);
                 return true;
             }
 
-            // Either: text changed completely (not typewriting), or typewriting stabilized
-            // In both cases, allow translation and update state
+            // First time — defer for stabilization. We can't know yet if this is
+            // typewriting or a normal text. ProcessStabilizedTypewriting will queue
+            // for translation after 500ms if the text doesn't change.
             _typewritingState[compId] = new TypewritingState { Text = newText, Timestamp = now };
-            return false;
+            _activeTypewriting.Add(compId);
+            return true;
         }
 
         /// <summary>
@@ -1906,18 +1930,64 @@ namespace UnityGameTranslator.Core
                 _activeTypewriting.Remove(compId);
 
                 if (!_typewritingState.TryGetValue(compId, out var state)) continue;
-                _typewritingState.Remove(compId);
+                if (state.Queued) continue; // Already processed this stabilized text
 
-                // Re-trigger set_text with the final text to force translation
-                if (_patchedComponentRefs.TryGetValue(compId, out var comp) && comp != null)
+                // Mark as queued but keep in state — if more chars are added,
+                // IsTypewritingInProgress will detect it and reset.
+                _typewritingState[compId] = new TypewritingState
                 {
-                    try
+                    Text = state.Text,
+                    Timestamp = state.Timestamp,
+                    Queued = true
+                };
+
+                object comp = null;
+                _patchedComponentRefs.TryGetValue(compId, out comp);
+
+                string normalizedText = TranslatorCore.NormalizeForCacheLookup(state.Text);
+
+                // Check if this text is already cached (exact match)
+                if (TranslatorCore.TranslationCache.ContainsKey(normalizedText))
+                {
+                    // Already cached — re-trigger SetText to apply translation via prefix
+                    if (comp != null)
                     {
-                        TypeHelper.SetText(comp, state.Text);
+                        try { TypeHelper.SetText(comp, state.Text); }
+                        catch { }
                     }
-                    catch { }
+                }
+                // Check if this text is a PREFIX of an existing cache key
+                // (= partial text from an accumulating dialogue already translated)
+                else if (IsPrefixOfCachedKey(normalizedText))
+                {
+                    // Partial text of a known dialogue — don't queue, don't notify.
+                    // The full text will arrive later and be translated from cache.
+                }
+                else
+                {
+                    // Not cached — queue for AI translation
+                    TranslatorCore.QueueForTranslation(state.Text, comp);
                 }
             }
+        }
+
+        /// <summary>
+        /// Check if a normalized text is a prefix of any existing cache key.
+        /// Used to detect partial dialogue text that will be completed later.
+        /// </summary>
+        private static bool IsPrefixOfCachedKey(string normalizedText)
+        {
+            if (string.IsNullOrEmpty(normalizedText) || normalizedText.Length < 3) return false;
+            try
+            {
+                foreach (var key in TranslatorCore.TranslationCache.Keys)
+                {
+                    if (key.Length > normalizedText.Length && key.StartsWith(normalizedText))
+                        return true;
+                }
+            }
+            catch { }
+            return false;
         }
 
         /// <summary>
@@ -2060,11 +2130,6 @@ namespace UnityGameTranslator.Core
 
                 // Don't translate InputField textComponent (user's typed text)
                 if (componentType != "TextMesh" && IsInputFieldTextComponentCached(__instance)) return;
-
-                // Skip typewriting effects — text growing char by char on the same component.
-                // Wait for the text to stabilize before translating.
-                // ProcessStabilizedTypewriting() will re-trigger set_text with final text.
-                if (IsTypewritingInProgress(compId, textValue)) return;
 
                 // Check if own UI (use UI-specific prompt) - uses hierarchy check
                 bool isOwnUI = TranslatorCore.IsOwnUITranslatable(comp);

@@ -2374,6 +2374,19 @@ namespace UnityGameTranslator.Core
             return false;
         }
 
+        /// <summary>
+        /// Normalize text for cache lookup (line endings + number extraction).
+        /// Used by typewriting stabilizer to check if text is already cached.
+        /// </summary>
+        public static string NormalizeForCacheLookup(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return text;
+            string normalized = NormalizeLineEndings(text);
+            if (Config.normalize_numbers)
+                normalized = ExtractNumbersToPlaceholders(normalized, out _);
+            return normalized;
+        }
+
         public static void QueueForTranslation(string text, object component = null, bool isOwnUI = false)
         {
             if (!Config.enable_ai) return;
@@ -2396,6 +2409,11 @@ namespace UnityGameTranslator.Core
 
                 pendingTranslations.Add(text);
                 translationQueue.Enqueue(text);
+
+                // Log with caller to find who queues
+                string qPreview = text.Length > 40 ? text.Substring(0, 40) + "..." : text;
+                string caller = new System.Diagnostics.StackTrace(1, false).GetFrame(0)?.GetMethod()?.Name ?? "?";
+                Adapter?.LogInfo($"[QUEUE FROM] '{caller}': {qPreview}");
 
                 // Log first queued item always, then every 10th
                 int queueSize = translationQueue.Count;
@@ -2712,6 +2730,15 @@ namespace UnityGameTranslator.Core
                 // Own UI text that's already translated (displayed result) — don't re-queue
                 // The mod UI shows translated text; re-queueing it creates an infinite loop
                 if (isOwnUI)
+                {
+                    return text;
+                }
+
+                // Typewriting detection: skip queuing if text is growing char by char
+                // on the same component. Only for cache MISSES — cache hits are returned above.
+                // This prevents partial typewriting text from being sent to AI.
+                int compId = (component is Component comp2) ? TypeHelper.GetInstanceID(comp2) : -1;
+                if (TranslatorPatches.IsTypewritingInProgress(compId, text))
                 {
                     return text;
                 }

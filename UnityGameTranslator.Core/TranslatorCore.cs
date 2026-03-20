@@ -1927,12 +1927,12 @@ namespace UnityGameTranslator.Core
                     promptBuilder.AppendLine("- Output the translation only, no explanation");
                     promptBuilder.AppendLine("- Translation must be understandable and correct in target language");
                     promptBuilder.AppendLine("- Keep it concise for UI");
-                    promptBuilder.AppendLine("- Preserve ALL markup tags exactly: <b>, </b>, <color=#xxx>, </color>, <size=x>, etc.");
                     promptBuilder.AppendLine("- Do not add punctuation if not in the source to translate");
                     promptBuilder.AppendLine("- Keep technical terms unchanged: API, URL, UUID, JSON, AI");
                     promptBuilder.AppendLine("- Keep keyboard shortcuts as-is: Ctrl, Alt, Shift, F1-F12, Tab, Esc");
                     if (extractedNumbers != null && extractedNumbers.Count > 0)
                     {
+                        promptBuilder.AppendLine("- Preserve original formatting tags and special characters");
                         promptBuilder.AppendLine("- IMPORTANT: Keep [v0], [v1], etc. placeholders exactly as-is");
                     }
 
@@ -1972,11 +1972,11 @@ namespace UnityGameTranslator.Core
                     promptBuilder.AppendLine("- Output the translation only, no explanation");
                     promptBuilder.AppendLine("- Translation must be correct in target language");
                     promptBuilder.AppendLine("- Keep it concise for UI");
-                    promptBuilder.AppendLine("- Preserve ALL markup tags exactly: <b>, </b>, <color=#xxx>, </color>, <size=x>, etc.");
                     promptBuilder.AppendLine("- Do not add punctuation if not in the source to translate");
                     promptBuilder.AppendLine("- Keep unchanged: keyboard keys (Tab, Esc, Space...), technical settings (VSync, Auto)");
                     if (extractedNumbers != null && extractedNumbers.Count > 0)
                     {
+                        promptBuilder.AppendLine("- Preserve original formatting tags and special characters");
                         promptBuilder.AppendLine("- IMPORTANT: Keep [v0], [v1], etc. placeholders exactly as-is");
                     }
 

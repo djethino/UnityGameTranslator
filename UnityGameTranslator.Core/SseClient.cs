@@ -164,7 +164,8 @@ namespace UnityGameTranslator.Core
                 }
                 catch (Exception ex)
                 {
-                    TranslatorCore.LogWarning($"[SSE] Connection error: {ex.Message}");
+                    // "stream already in use" is normal during reconnection, not a real error
+                    TranslatorCore.LogDebug($"[SSE] Connection error: {ex.Message}");
                 }
 
                 if (ct.IsCancellationRequested) return;

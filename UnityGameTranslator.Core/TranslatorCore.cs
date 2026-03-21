@@ -341,7 +341,7 @@ namespace UnityGameTranslator.Core
             userExclusionCache[id] = excluded;
 
             if (excluded)
-                Adapter?.LogInfo($"[Exclusion] Matched: {path}");
+                LogDebug($"[Exclusion] Matched: {path}");
 
             return excluded;
         }
@@ -441,7 +441,7 @@ namespace UnityGameTranslator.Core
                 userExclusions.Add(pattern);
                 userExclusionCache.Clear();
                 SaveCache(); // Auto-save
-                Adapter?.LogInfo($"[Exclusion] Added: {pattern}");
+                LogDebug($"[Exclusion] Added: {pattern}");
             }
         }
 
@@ -454,7 +454,7 @@ namespace UnityGameTranslator.Core
             {
                 userExclusionCache.Clear();
                 SaveCache(); // Auto-save
-                Adapter?.LogInfo($"[Exclusion] Removed: {pattern}");
+                LogDebug($"[Exclusion] Removed: {pattern}");
                 return true;
             }
             return false;
@@ -468,7 +468,7 @@ namespace UnityGameTranslator.Core
             userExclusions.Clear();
             userExclusionCache.Clear();
             SaveCache();
-            Adapter?.LogInfo("[Exclusion] Cleared all exclusions");
+            LogDebug("[Exclusion] Cleared all exclusions");
         }
 
         /// <summary>
@@ -765,7 +765,7 @@ namespace UnityGameTranslator.Core
                         {
                             Config.api_token = decryptedToken;
                             SaveConfig(); // Will encrypt on save
-                            Adapter.LogInfo("Migrated legacy token to encrypted storage");
+                            LogDebug("Migrated legacy token to encrypted storage");
                         }
                         else
                         {
@@ -808,10 +808,10 @@ namespace UnityGameTranslator.Core
 
                 if (Config._configMigrated)
                 {
-                    Adapter.LogInfo($"[Config] Migrated old Ollama config -> AI config (enable_ai={Config.enable_ai}, ai_url={Config.ai_url}, ai_model={Config.ai_model})");
+                    LogDebug($"[Config] Migrated old Ollama config -> AI config (enable_ai={Config.enable_ai}, ai_url={Config.ai_url}, ai_model={Config.ai_model})");
                     SaveConfig(); // Persist migrated config with new field names
                 }
-                Adapter.LogInfo($"Loaded config (enable_translations={Config.enable_translations}, enable_ai={Config.enable_ai}, ai_url={Config.ai_url}, ai_model={Config.ai_model})");
+                LogDebug($"Loaded config (enable_translations={Config.enable_translations}, enable_ai={Config.enable_ai}, ai_url={Config.ai_url}, ai_model={Config.ai_model})");
             }
             catch (Exception e)
             {
@@ -837,6 +837,7 @@ namespace UnityGameTranslator.Core
                     enable_ai = Config.enable_ai,
                     cache_new_translations = Config.cache_new_translations,
                     normalize_numbers = Config.normalize_numbers,
+                    debug = Config.debug,
                     debug_ai = Config.debug_ai,
                     preload_model = Config.preload_model,
                     // Encrypt AI API key before saving
@@ -867,7 +868,7 @@ namespace UnityGameTranslator.Core
 
                 string json = JsonConvert.SerializeObject(configToSave, Formatting.Indented);
                 File.WriteAllText(ConfigPath, json);
-                Adapter?.LogInfo("Config saved");
+                LogDebug("Config saved");
             }
             catch (Exception e)
             {
@@ -942,7 +943,7 @@ namespace UnityGameTranslator.Core
                                 userExclusions.Add(pattern);
                             }
                         }
-                        Adapter?.LogInfo($"[LoadCache] Loaded {userExclusions.Count} user exclusions");
+                        LogDebug($"[LoadCache] Loaded {userExclusions.Count} user exclusions");
                     }
                     else if (prop.Name == "_fonts" && prop.Value.Type == JTokenType.Object)
                     {
@@ -961,7 +962,7 @@ namespace UnityGameTranslator.Core
                             }
                             FontSettingsMap[fontProp.Name] = settings;
                         }
-                        Adapter?.LogInfo($"[LoadCache] Loaded {FontSettingsMap.Count} font settings");
+                        LogDebug($"[LoadCache] Loaded {FontSettingsMap.Count} font settings");
                     }
                     else if (prop.Name == "_settings" && prop.Value.Type == JTokenType.Object)
                     {
@@ -970,7 +971,7 @@ namespace UnityGameTranslator.Core
                         if (settingsObj != null)
                         {
                             DisableEventSystemOverride = settingsObj["disable_eventsystem_override"]?.Value<bool>() ?? false;
-                            Adapter?.LogInfo($"[LoadCache] Loaded settings: DisableEventSystemOverride={DisableEventSystemOverride}");
+                            LogDebug($"[LoadCache] Loaded settings: DisableEventSystemOverride={DisableEventSystemOverride}");
                         }
                     }
                     else if (!prop.Name.StartsWith("_"))
@@ -1037,7 +1038,7 @@ namespace UnityGameTranslator.Core
                 {
                     FileUuid = Guid.NewGuid().ToString();
                     cacheModified = true;
-                    Adapter.LogInfo($"Legacy cache file, generated UUID: {FileUuid}");
+                    LogDebug($"Legacy cache file, generated UUID: {FileUuid}");
                 }
 
                 // Update _game.steam_id if we detected one but file didn't have it
@@ -1046,7 +1047,7 @@ namespace UnityGameTranslator.Core
                     if (string.IsNullOrEmpty(savedSteamId) || savedSteamId != CurrentGame.steam_id)
                     {
                         cacheModified = true;
-                        Adapter.LogInfo($"[LoadCache] Detected steam_id ({CurrentGame.steam_id}) differs from saved ({savedSteamId ?? "null"}), will update file");
+                        LogDebug($"[LoadCache] Detected steam_id ({CurrentGame.steam_id}) differs from saved ({savedSteamId ?? "null"}), will update file");
                     }
                 }
 
@@ -1059,7 +1060,7 @@ namespace UnityGameTranslator.Core
                     int migrated = MigratePlaceholderFormat(TranslationCache);
                     if (migrated > 0)
                     {
-                        Adapter?.LogInfo($"[LoadCache] Migrated {migrated} entries from [vN] to [!v*N] format (v{engineVersion} → v{CurrentEngineVersion})");
+                        LogDebug($"[LoadCache] Migrated {migrated} entries from [vN] to [!v*N] format (v{engineVersion} → v{CurrentEngineVersion})");
                         cacheModified = true; // Will trigger save
                     }
                 }
@@ -1157,7 +1158,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static void ReloadCache()
         {
-            Adapter?.LogInfo("[TranslatorCore] Reloading cache from disk...");
+            LogDebug("[TranslatorCore] Reloading cache from disk...");
             LoadCache();
 
             // Clear processing caches so scanner re-evaluates all text with new translations
@@ -1199,7 +1200,7 @@ namespace UnityGameTranslator.Core
                 }
 
                 LocalChangesCount = 0;
-                Adapter.LogInfo($"Saved ancestor cache with {AncestorCache.Count} entries");
+                LogDebug($"Saved ancestor cache with {AncestorCache.Count} entries");
             }
             catch (Exception e)
             {
@@ -1244,7 +1245,7 @@ namespace UnityGameTranslator.Core
                     };
                 }
 
-                Adapter.LogInfo($"Saved ancestor from remote with {AncestorCache.Count} entries");
+                LogDebug($"Saved ancestor from remote with {AncestorCache.Count} entries");
             }
             catch (Exception e)
             {
@@ -1287,7 +1288,7 @@ namespace UnityGameTranslator.Core
                     };
                 }
 
-                Adapter.LogInfo($"Saved ancestor from remote with {AncestorCache.Count} entries");
+                LogDebug($"Saved ancestor from remote with {AncestorCache.Count} entries");
             }
             catch (Exception e)
             {
@@ -1360,7 +1361,7 @@ namespace UnityGameTranslator.Core
             }
 
             LocalChangesCount = changes;
-            Adapter?.LogInfo($"[LocalChanges] Recalculated: {changes} local changes");
+            LogDebug($"[LocalChanges] Recalculated: {changes} local changes");
         }
 
         /// <summary>
@@ -1559,7 +1560,7 @@ namespace UnityGameTranslator.Core
             if (workerRunning) return; // Already running
 
             workerRunning = true;
-            Adapter?.LogInfo("[Worker] Starting translation worker thread");
+            LogDebug("[Worker] Starting translation worker thread");
             Thread workerThread = new Thread(TranslationWorkerLoop);
             workerThread.IsBackground = true;
             workerThread.Start();
@@ -1573,7 +1574,7 @@ namespace UnityGameTranslator.Core
         {
             if (Config.enable_ai && !workerRunning)
             {
-                Adapter?.LogInfo("[TranslatorCore] Starting AI worker thread...");
+                LogDebug("[TranslatorCore] Starting AI worker thread...");
                 StartTranslationWorker();
             }
         }
@@ -1593,7 +1594,7 @@ namespace UnityGameTranslator.Core
                 currentlyTranslating = null;
                 if (count > 0)
                 {
-                    Adapter?.LogInfo($"[TranslatorCore] Cleared {count} items from translation queue");
+                    LogDebug($"[TranslatorCore] Cleared {count} items from translation queue");
                 }
             }
         }
@@ -1742,7 +1743,7 @@ namespace UnityGameTranslator.Core
                         {
                             var domain = domainGet.Invoke(null, null);
                             threadAttach.Invoke(null, new object[] { domain });
-                            Adapter?.LogInfo("[Worker] Thread attached to IL2CPP GC domain");
+                            LogDebug("[Worker] Thread attached to IL2CPP GC domain");
                         }
                     }
                 }
@@ -1752,14 +1753,14 @@ namespace UnityGameTranslator.Core
                 }
             }
 
-            Adapter?.LogInfo("[Worker] Thread started, waiting for translations...");
+            LogDebug("[Worker] Thread started, waiting for translations...");
 
             while (!ShuttingDown)
             {
                 // Stop if AI was disabled
                 if (!Config.enable_ai)
                 {
-                    Adapter?.LogInfo("[Worker] AI disabled, stopping worker thread");
+                    LogDebug("[Worker] AI disabled, stopping worker thread");
                     workerRunning = false;
                     return;
                 }
@@ -1919,7 +1920,7 @@ namespace UnityGameTranslator.Core
             }
 
             workerRunning = false;
-            Adapter?.LogInfo("[Worker] Thread exiting (shutdown)");
+            LogDebug("[Worker] Thread exiting (shutdown)");
         }
 
         /// <summary>
@@ -2124,7 +2125,7 @@ namespace UnityGameTranslator.Core
                     {
                         // This provider doesn't support "think" param — cache and retry without it
                         _providerSupportsThinkParam = false;
-                        Adapter?.LogInfo("[AI] Provider does not support 'think' parameter, retrying without it");
+                        LogDebug("[AI] Provider does not support 'think' parameter, retrying without it");
 
                         requestObj.Remove("think");
                         jsonRequest = requestObj.ToString(Newtonsoft.Json.Formatting.None);
@@ -2868,7 +2869,7 @@ namespace UnityGameTranslator.Core
             // Clear user exclusion cache (instance IDs change between scenes)
             ClearUserExclusionCache();
 
-            Adapter?.LogInfo("[TranslatorCore] Processing caches cleared - text will be re-evaluated");
+            LogDebug("[TranslatorCore] Processing caches cleared - text will be re-evaluated");
         }
 
         public static bool HasSeenText(int id, string text, out string lastText)
@@ -3011,7 +3012,7 @@ namespace UnityGameTranslator.Core
                 Game = CurrentGame
             };
 
-            Adapter?.LogInfo($"[Fork] Context saved: {PendingFork.SourceLanguage} -> {PendingFork.TargetLanguage}, game={PendingFork.Game?.name}");
+            LogDebug($"[Fork] Context saved: {PendingFork.SourceLanguage} -> {PendingFork.TargetLanguage}, game={PendingFork.Game?.name}");
 
             // Generate new UUID for the fork
             FileUuid = Guid.NewGuid().ToString();

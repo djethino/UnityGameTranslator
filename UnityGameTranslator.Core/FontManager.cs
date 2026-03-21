@@ -290,7 +290,7 @@ namespace UnityGameTranslator.Core
             }
             catch { }
             if (marked > 0)
-                TranslatorCore.LogInfo($"[MarkDirty] '{cloneName}': {marked}/{total} components marked dirty");
+                TranslatorCore.LogDebug($"[MarkDirty] '{cloneName}': {marked}/{total} components marked dirty");
         }
 
         /// <summary>
@@ -359,7 +359,7 @@ namespace UnityGameTranslator.Core
                     CharacterInfo ci;
                     bool hasA = clone.GetCharacterInfo('A', out ci);
                     bool hasE = clone.GetCharacterInfo('é', out ci);
-                    TranslatorCore.LogInfo($"[FontManager] PreWarm '{fallbackName}' with {existing.Length} known chars");
+                    TranslatorCore.LogDebug($"[FontManager] PreWarm '{fallbackName}' with {existing.Length} known chars");
                 }
                 catch { }
                 return;
@@ -390,7 +390,7 @@ namespace UnityGameTranslator.Core
                 CharacterInfo ci;
                 bool hasA = clone.GetCharacterInfo('A', out ci);
                 bool hasE = clone.GetCharacterInfo('é', out ci);
-                TranslatorCore.LogInfo($"[FontManager] PreWarm '{fallbackName}' with {allChars.Count} chars from cache");
+                TranslatorCore.LogDebug($"[FontManager] PreWarm '{fallbackName}' with {allChars.Count} chars from cache");
             }
             catch { }
         }
@@ -428,7 +428,7 @@ namespace UnityGameTranslator.Core
                 try
                 {
                     clone.RequestCharactersInTexture(charString);
-                    TranslatorCore.LogInfo($"[FontManager] Pre-populated atlas for '{kvp.Key}' with {allChars.Count} chars from cache");
+                    TranslatorCore.LogDebug($"[FontManager] Pre-populated atlas for '{kvp.Key}' with {allChars.Count} chars from cache");
                 }
                 catch { }
             }
@@ -487,7 +487,7 @@ namespace UnityGameTranslator.Core
 
                 addMethod.Invoke(null, new object[] { il2cppHandler });
                 _textureRebuiltSubscribed = true;
-                TranslatorCore.LogInfo("[FontManager] Subscribed to Font.textureRebuilt");
+                TranslatorCore.LogDebug("[FontManager] Subscribed to Font.textureRebuilt");
             }
             catch (Exception ex)
             {
@@ -534,7 +534,7 @@ namespace UnityGameTranslator.Core
             {
                 foreach (var match in matchedClones)
                 {
-                    TranslatorCore.LogInfo($"[FontManager] Atlas rebuilt for '{rebuiltName}', re-protecting '{match.Key}'");
+                    TranslatorCore.LogDebug($"[FontManager] Atlas rebuilt for '{rebuiltName}', re-protecting '{match.Key}'");
 
                     // Re-request all known chars for this clone immediately
                     if (_knownCharsStringCache.TryGetValue(match.Key, out string charString) && charString != null)
@@ -578,7 +578,7 @@ namespace UnityGameTranslator.Core
             RestoreOriginalFontNames(originalFontName);
             RestoreAllComponentsForFont(originalFontName);
 
-            TranslatorCore.LogInfo($"[FontManager] Removed clone '{fallbackName}' and restored components for '{originalFontName}'");
+            TranslatorCore.LogDebug($"[FontManager] Removed clone '{fallbackName}' and restored components for '{originalFontName}'");
         }
 
         // Track font names we created for fallback (to exclude from detection)
@@ -667,19 +667,19 @@ namespace UnityGameTranslator.Core
                                                 _systemFontPaths[names[i]] = paths[i];
                                         }
                                     }
-                                    TranslatorCore.LogInfo($"[FontManager] Built font path mapping: {_systemFontPaths.Count} entries");
+                                    TranslatorCore.LogDebug($"[FontManager] Built font path mapping: {_systemFontPaths.Count} entries");
                                 }
                             }
                         }
                         catch (Exception ex)
                         {
-                            TranslatorCore.LogInfo($"[FontManager] GetPathsToOSFonts unavailable: {ex.Message}");
+                            TranslatorCore.LogDebug($"[FontManager] GetPathsToOSFonts unavailable: {ex.Message}");
                         }
 
                         return names;
                     }
                 }
-                TranslatorCore.LogInfo("[FontManager] GetOSInstalledFontNames returned empty, trying filesystem fallback");
+                TranslatorCore.LogDebug("[FontManager] GetOSInstalledFontNames returned empty, trying filesystem fallback");
             }
             catch (Exception ex)
             {
@@ -760,7 +760,7 @@ namespace UnityGameTranslator.Core
                 }
 
                 if (fontNames.Count > 0)
-                    TranslatorCore.LogInfo($"[FontManager] Found {fontNames.Count} fonts via filesystem scan");
+                    TranslatorCore.LogDebug($"[FontManager] Found {fontNames.Count} fonts via filesystem scan");
             }
             catch (Exception ex)
             {
@@ -818,7 +818,7 @@ namespace UnityGameTranslator.Core
                 if (isNew)
                 {
                     _detectedTMPFontObjects[fontName] = fontObj;
-                    TranslatorCore.LogInfo($"[FontManager] Detected TMP font: {fontName}");
+                    TranslatorCore.LogDebug($"[FontManager] Detected TMP font: {fontName}");
                     EnsureFontSettings(fontName, fontType);
 
                     // Auto-apply fallback if configured
@@ -834,7 +834,7 @@ namespace UnityGameTranslator.Core
                 isNew = _detectedUnityFontNames.Add(fontName);
                 if (isNew)
                 {
-                    TranslatorCore.LogInfo($"[FontManager] Detected {fontType} font: {fontName}");
+                    TranslatorCore.LogDebug($"[FontManager] Detected {fontType} font: {fontName}");
                     EnsureFontSettings(fontName, fontType);
                 }
             }
@@ -876,12 +876,12 @@ namespace UnityGameTranslator.Core
                 {
                     string oldType = existing.type ?? "null";
                     existing.type = fontType;
-                    TranslatorCore.LogInfo($"[FontManager] Updated {fontName} type: {oldType} -> {fontType}");
+                    TranslatorCore.LogDebug($"[FontManager] Updated {fontName} type: {oldType} -> {fontType}");
                 }
                 return;
             }
 
-            TranslatorCore.LogInfo($"[FontManager] Detected {fontType} font: {fontName}");
+            TranslatorCore.LogDebug($"[FontManager] Detected {fontType} font: {fontName}");
             EnsureFontSettings(fontName, fontType);
         }
 
@@ -932,7 +932,7 @@ namespace UnityGameTranslator.Core
             if (Math.Abs(settings.scale - scale) > 0.001f)
             {
                 settings.scale = scale;
-                TranslatorCore.LogInfo($"[FontManager] Updated scale for '{fontName}' to {scale:F2}");
+                TranslatorCore.LogDebug($"[FontManager] Updated scale for '{fontName}' to {scale:F2}");
 
                 // DON'T clear font size cache — it stores TRUE originals
                 // Clearing would cause the scaled size to be read as "original"
@@ -1041,7 +1041,7 @@ namespace UnityGameTranslator.Core
                 // _originalFontsPerComponent (e.g. already-replaced on first encounter).
                 _fontReplacedComponentIds.Clear();
 
-                TranslatorCore.LogInfo($"[FontManager] Font settings changed for '{fontName}': " +
+                TranslatorCore.LogDebug($"[FontManager] Font settings changed for '{fontName}': " +
                     $"enabled={enabled}, fallback='{fallbackFont ?? "(none)"}' (was '{oldFallback ?? "(none)"}')");
             }
 
@@ -1079,7 +1079,7 @@ namespace UnityGameTranslator.Core
 
             if (toRestore.Count == 0) return;
 
-            TranslatorCore.LogInfo($"[FontManager] Restoring {toRestore.Count} components to original font '{fontName}'");
+            TranslatorCore.LogDebug($"[FontManager] Restoring {toRestore.Count} components to original font '{fontName}'");
 
             foreach (int instanceId in toRestore)
             {
@@ -1184,7 +1184,7 @@ namespace UnityGameTranslator.Core
                 if (addMethod != null)
                 {
                     addMethod.Invoke(fallbackList, new[] { fallbackAsset });
-                    TranslatorCore.LogInfo($"[FontManager] Added fallback '{systemFontName}' to: {fontName}");
+                    TranslatorCore.LogDebug($"[FontManager] Added fallback '{systemFontName}' to: {fontName}");
                     return true;
                 }
             }
@@ -1223,7 +1223,7 @@ namespace UnityGameTranslator.Core
                 {
                     bool removed = (bool)removeMethod.Invoke(fallbackList, new[] { oldFallbackAsset });
                     if (removed)
-                        TranslatorCore.LogInfo($"[FontManager] Removed old fallback '{oldFallbackName}' from: {gameFontName}");
+                        TranslatorCore.LogDebug($"[FontManager] Removed old fallback '{oldFallbackName}' from: {gameFontName}");
                 }
             }
             catch (Exception ex)
@@ -1481,7 +1481,7 @@ namespace UnityGameTranslator.Core
             if (ApplyFallbackToFont(fontObj, settings.fallback))
             {
                 _fallbackAppliedFonts.Add(fontName);
-                TranslatorCore.LogInfo($"[FontManager] Applied fallback '{settings.fallback}' to font '{fontName}'");
+                TranslatorCore.LogDebug($"[FontManager] Applied fallback '{settings.fallback}' to font '{fontName}'");
 
                 // Refresh all text so components pick up the new fallback
                 TranslatorScanner.ClearProcessedCache();
@@ -1545,7 +1545,7 @@ namespace UnityGameTranslator.Core
 
                 // Clear font size cache so ApplyFontScale re-reads and corrects sizes
                 TranslatorPatches.ClearFontSizeCache();
-                TranslatorCore.LogInfo($"[FontManager] Force-refreshed {refreshed} UI.Text components for '{fontName}'");
+                TranslatorCore.LogDebug($"[FontManager] Force-refreshed {refreshed} UI.Text components for '{fontName}'");
             }
             catch (Exception ex)
             {
@@ -1583,7 +1583,7 @@ namespace UnityGameTranslator.Core
                 {
                     UniverseLib.Runtime.TextureHelper.SetFontNames(gameFont, originalNames);
                     ForceRefreshUITextFont(gameFont, fontName);
-                    TranslatorCore.LogInfo($"[FontManager] Restored fontNames for '{fontName}': [{string.Join(", ", originalNames)}]");
+                    TranslatorCore.LogDebug($"[FontManager] Restored fontNames for '{fontName}': [{string.Join(", ", originalNames)}]");
                 }
             }
 
@@ -1618,7 +1618,7 @@ namespace UnityGameTranslator.Core
             // Don't convert twice
             if (_convertedToTMP.Contains(goId)) return;
 
-            TranslatorCore.LogInfo($"[FontManager] ConvertUITextToTMP called: go='{go.name}', font='{originalFontName}'");
+            TranslatorCore.LogDebug($"[FontManager] ConvertUITextToTMP called: go='{go.name}', font='{originalFontName}'");
 
             // Check if a fallback is configured
             if (!TranslatorCore.FontSettingsMap.TryGetValue(originalFontName, out var settings))
@@ -1785,7 +1785,7 @@ namespace UnityGameTranslator.Core
                         return;
                     }
 
-                    TranslatorCore.LogInfo($"[FontManager] Cloned TMP component from '{templateGO.name}'");
+                    TranslatorCore.LogDebug($"[FontManager] Cloned TMP component from '{templateGO.name}'");
                 }
                 catch (Exception ex)
                 {
@@ -1826,7 +1826,7 @@ namespace UnityGameTranslator.Core
                 _convertedToTMP.Add(goId);
                 _createdFallbackFontNames.Add(cleanFallback);
 
-                TranslatorCore.LogInfo($"[FontManager] Converted UI.Text to TMP on '{go.name}': font='{cleanFallback}', size={fontSize}");
+                TranslatorCore.LogDebug($"[FontManager] Converted UI.Text to TMP on '{go.name}': font='{cleanFallback}', size={fontSize}");
             }
             catch (Exception ex)
             {
@@ -1925,7 +1925,7 @@ namespace UnityGameTranslator.Core
                                             saved[fn] = strArr[fn];
                                     }
                                     _originalFontNames[originalFontName] = saved;
-                                    TranslatorCore.LogInfo($"[FontManager] Saved original fontNames for '{originalFontName}': [{string.Join(", ", saved)}]");
+                                    TranslatorCore.LogDebug($"[FontManager] Saved original fontNames for '{originalFontName}': [{string.Join(", ", saved)}]");
                                 }
                             }
                         }
@@ -1946,7 +1946,7 @@ namespace UnityGameTranslator.Core
 
                         bool set = UniverseLib.Runtime.TextureHelper.SetFontNames(
                             clonedFont, new string[] { realFontName, cleanFallback });
-                        TranslatorCore.LogInfo($"[FontManager] Cloned '{originalFontName}' -> '{cleanFallback}', fontNames set={set}");
+                        TranslatorCore.LogDebug($"[FontManager] Cloned '{originalFontName}' -> '{cleanFallback}', fontNames set={set}");
 
                         if (set)
                         {
@@ -2058,7 +2058,7 @@ namespace UnityGameTranslator.Core
             if (!_gameFontsScanned) ScanGameFonts();
             if (_gameUnityFonts.TryGetValue(cleanName, out var gameFont))
             {
-                TranslatorCore.LogInfo($"[FontManager] Using game Unity font: {cleanName}");
+                TranslatorCore.LogDebug($"[FontManager] Using game Unity font: {cleanName}");
                 return gameFont;
             }
 
@@ -2068,7 +2068,7 @@ namespace UnityGameTranslator.Core
                 if (kvp.Key.IndexOf(cleanName, StringComparison.OrdinalIgnoreCase) >= 0 ||
                     cleanName.IndexOf(kvp.Key, StringComparison.OrdinalIgnoreCase) >= 0)
                 {
-                    TranslatorCore.LogInfo($"[FontManager] Using game Unity font (partial match): {kvp.Key} for {cleanName}");
+                    TranslatorCore.LogDebug($"[FontManager] Using game Unity font (partial match): {kvp.Key} for {cleanName}");
                     return kvp.Value;
                 }
             }
@@ -2086,7 +2086,7 @@ namespace UnityGameTranslator.Core
                         var font = method.Invoke(null, new object[] { cleanName, 32 }) as Font;
                         if (font != null)
                         {
-                            TranslatorCore.LogInfo($"[FontManager] Created dynamic Unity font: {cleanName}");
+                            TranslatorCore.LogDebug($"[FontManager] Created dynamic Unity font: {cleanName}");
                             return font;
                         }
                     }
@@ -2128,7 +2128,7 @@ namespace UnityGameTranslator.Core
                         // Track the created asset name to exclude from game font detection
                         if (customAsset is UnityEngine.Object uobj2)
                             _createdFallbackFontNames.Add(uobj2.name);
-                        TranslatorCore.LogInfo($"[FontManager] Created fallback from custom font: {cleanName}");
+                        TranslatorCore.LogDebug($"[FontManager] Created fallback from custom font: {cleanName}");
                         return customAsset;
                     }
                     TranslatorCore.LogWarning($"[FontManager] Failed to load custom font: {cleanName}");
@@ -2139,7 +2139,7 @@ namespace UnityGameTranslator.Core
                 var gameFont = GetGameFont(cleanName);
                 if (gameFont != null)
                 {
-                    TranslatorCore.LogInfo($"[FontManager] Using game font as fallback: {cleanName}");
+                    TranslatorCore.LogDebug($"[FontManager] Using game font as fallback: {cleanName}");
                     return gameFont;
                 }
 
@@ -2156,7 +2156,7 @@ namespace UnityGameTranslator.Core
                 var tmpAsset = CreateTMPFontAssetFromFont(unityFont);
                 if (tmpAsset != null)
                 {
-                    TranslatorCore.LogInfo($"[FontManager] Created TMP_FontAsset from system font: {cleanName}");
+                    TranslatorCore.LogDebug($"[FontManager] Created TMP_FontAsset from system font: {cleanName}");
                     return tmpAsset;
                 }
 
@@ -2164,7 +2164,7 @@ namespace UnityGameTranslator.Core
                 var legacyAsset = CreateTMPFontAsset(unityFont);
                 if (legacyAsset != null)
                 {
-                    TranslatorCore.LogInfo($"[FontManager] Created legacy TMP_FontAsset from: {cleanName}");
+                    TranslatorCore.LogDebug($"[FontManager] Created legacy TMP_FontAsset from: {cleanName}");
                     return legacyAsset;
                 }
 
@@ -2172,7 +2172,7 @@ namespace UnityGameTranslator.Core
                 var rasterizedAsset = CustomFontLoader.LoadSystemTtfFont(cleanName);
                 if (rasterizedAsset != null)
                 {
-                    TranslatorCore.LogInfo($"[FontManager] Created TMP_FontAsset via TTF rasterizer: {cleanName}");
+                    TranslatorCore.LogDebug($"[FontManager] Created TMP_FontAsset via TTF rasterizer: {cleanName}");
                     return rasterizedAsset;
                 }
 
@@ -2217,7 +2217,7 @@ namespace UnityGameTranslator.Core
                         var font = method.Invoke(null, new object[] { fontName, 32 }) as Font;
                         if (font != null)
                         {
-                            TranslatorCore.LogInfo($"[FontManager] Created Font via CreateDynamicFontFromOSFont: {fontName}");
+                            TranslatorCore.LogDebug($"[FontManager] Created Font via CreateDynamicFontFromOSFont: {fontName}");
                             return font;
                         }
                     }
@@ -2228,7 +2228,7 @@ namespace UnityGameTranslator.Core
                     if (msg.Contains("unstripping") || msg.Contains("Method not found"))
                     {
                         _dynamicFontCreationAvailable = false;
-                        TranslatorCore.LogInfo($"[FontManager] CreateDynamicFontFromOSFont unavailable: {msg}");
+                        TranslatorCore.LogDebug($"[FontManager] CreateDynamicFontFromOSFont unavailable: {msg}");
                     }
                 }
             }
@@ -2255,7 +2255,7 @@ namespace UnityGameTranslator.Core
                             {
                                 internalFromPath.Invoke(null, new object[] { font, fontPath });
                                 font.name = fontName;
-                                TranslatorCore.LogInfo($"[FontManager] Created Font via Internal_CreateFontFromPath: {fontPath}");
+                                TranslatorCore.LogDebug($"[FontManager] Created Font via Internal_CreateFontFromPath: {fontPath}");
 
                                 // Try to make the font dynamic by setting internal properties
                                 // and calling RequestCharactersInTexture
@@ -2278,7 +2278,7 @@ namespace UnityGameTranslator.Core
                                         }
                                         catch { propInfo.Add($"{p.Name}=(err)"); }
                                     }
-                                    TranslatorCore.LogInfo($"[FontManager] Font props: {string.Join(", ", propInfo)}");
+                                    TranslatorCore.LogDebug($"[FontManager] Font props: {string.Join(", ", propInfo)}");
 
                                     // Try RequestCharactersInTexture
                                     string testChars = "ABCabc";
@@ -2287,7 +2287,7 @@ namespace UnityGameTranslator.Core
                                     if (requestMethod != null)
                                     {
                                         var reqParams = requestMethod.GetParameters();
-                                        TranslatorCore.LogInfo($"[FontManager] RequestCharactersInTexture params: {string.Join(", ", reqParams.Select(p => p.ParameterType.Name))}");
+                                        TranslatorCore.LogDebug($"[FontManager] RequestCharactersInTexture params: {string.Join(", ", reqParams.Select(p => p.ParameterType.Name))}");
 
                                         if (reqParams.Length == 3)
                                             requestMethod.Invoke(font, new object[] { testChars, 32, FontStyle.Normal });
@@ -2296,20 +2296,20 @@ namespace UnityGameTranslator.Core
                                         else if (reqParams.Length == 1)
                                             requestMethod.Invoke(font, new object[] { testChars });
 
-                                        TranslatorCore.LogInfo($"[FontManager] After request: dynamic={font.dynamic}");
+                                        TranslatorCore.LogDebug($"[FontManager] After request: dynamic={font.dynamic}");
 
                                         // Check GetCharacterInfo for 'A'
                                         var getCharMethod = fontType.GetMethod("GetCharacterInfo",
                                             BindingFlags.Public | BindingFlags.Instance);
                                         if (getCharMethod != null)
                                         {
-                                            TranslatorCore.LogInfo($"[FontManager] GetCharacterInfo params: {string.Join(", ", getCharMethod.GetParameters().Select(p => p.ParameterType.Name + " " + p.Name))}");
+                                            TranslatorCore.LogDebug($"[FontManager] GetCharacterInfo params: {string.Join(", ", getCharMethod.GetParameters().Select(p => p.ParameterType.Name + " " + p.Name))}");
                                         }
                                     }
                                 }
                                 catch (Exception reqEx)
                                 {
-                                    TranslatorCore.LogWarning($"[FontManager] Font setup failed: {reqEx.InnerException?.Message ?? reqEx.Message}");
+                                    TranslatorCore.LogDebug($"[FontManager] Font setup failed (trying fallback): {reqEx.InnerException?.Message ?? reqEx.Message}");
                                 }
 
                                 return font;
@@ -2337,7 +2337,7 @@ namespace UnityGameTranslator.Core
                         if (font != null)
                         {
                             internalCreate.Invoke(null, new object[] { font, fontName });
-                            TranslatorCore.LogInfo($"[FontManager] Created Font via Internal_CreateFont: {fontName}");
+                            TranslatorCore.LogDebug($"[FontManager] Created Font via Internal_CreateFont: {fontName}");
                             return font;
                         }
                     }
@@ -2393,7 +2393,7 @@ namespace UnityGameTranslator.Core
                             if (fontNamesArray != null)
                             {
                                 internalDynamic.Invoke(null, new object[] { font, fontNamesArray, 32 });
-                                TranslatorCore.LogInfo($"[FontManager] Created Font via Internal_CreateDynamicFont: {fontName}");
+                                TranslatorCore.LogDebug($"[FontManager] Created Font via Internal_CreateDynamicFont: {fontName}");
                                 return font;
                             }
                         }
@@ -2461,7 +2461,7 @@ namespace UnityGameTranslator.Core
                         string path = System.IO.Path.Combine(dir, fontName + ext);
                         if (System.IO.File.Exists(path))
                         {
-                            TranslatorCore.LogInfo($"[FontManager] Found font file: {path}");
+                            TranslatorCore.LogDebug($"[FontManager] Found font file: {path}");
                             return path;
                         }
                     }
@@ -2475,7 +2475,7 @@ namespace UnityGameTranslator.Core
 
                         if (string.Equals(fileName, fontName, StringComparison.OrdinalIgnoreCase))
                         {
-                            TranslatorCore.LogInfo($"[FontManager] Found font file: {file}");
+                            TranslatorCore.LogDebug($"[FontManager] Found font file: {file}");
                             return file;
                         }
                     }
@@ -2514,7 +2514,7 @@ namespace UnityGameTranslator.Core
                         || parameters[0].ParameterType.Name.Contains("Font");
                     if (!firstParamIsFont) continue;
 
-                    TranslatorCore.LogInfo($"[FontManager] Trying CreateFontAsset overload: {parameters.Length} params ({string.Join(",", parameters.Select(p => p.ParameterType.Name))})");
+                    TranslatorCore.LogDebug($"[FontManager] Trying CreateFontAsset overload: {parameters.Length} params ({string.Join(",", parameters.Select(p => p.ParameterType.Name))})");
 
                     // Simple version: CreateFontAsset(Font)
                     if (parameters.Length == 1)
@@ -2526,7 +2526,7 @@ namespace UnityGameTranslator.Core
                             {
                                 if (result is UnityEngine.Object uobj && string.IsNullOrEmpty(uobj.name))
                                     uobj.name = font.name + " SDF";
-                                TranslatorCore.LogInfo($"[FontManager] TMP_FontAsset.CreateFontAsset(Font) succeeded!");
+                                TranslatorCore.LogDebug($"[FontManager] TMP_FontAsset.CreateFontAsset(Font) succeeded!");
                                 return result;
                             }
                             TranslatorCore.LogWarning($"[FontManager] CreateFontAsset(Font) returned null — font may not have valid data");
@@ -2578,13 +2578,13 @@ namespace UnityGameTranslator.Core
                                 }
                             }
 
-                            TranslatorCore.LogInfo($"[FontManager] Calling CreateFontAsset with {args.Length} args");
+                            TranslatorCore.LogDebug($"[FontManager] Calling CreateFontAsset with {args.Length} args");
                             var result = method.Invoke(null, args);
                             if (result != null)
                             {
                                 if (result is UnityEngine.Object uobj && string.IsNullOrEmpty(uobj.name))
                                     uobj.name = font.name + " SDF";
-                                TranslatorCore.LogInfo($"[FontManager] TMP_FontAsset.CreateFontAsset(Font, advanced) succeeded!");
+                                TranslatorCore.LogDebug($"[FontManager] TMP_FontAsset.CreateFontAsset(Font, advanced) succeeded!");
                                 return result;
                             }
                             TranslatorCore.LogWarning($"[FontManager] CreateFontAsset advanced returned null");
@@ -2720,7 +2720,7 @@ namespace UnityGameTranslator.Core
                         // Ensure the asset has a proper name
                         if (result is UnityEngine.Object uobj && string.IsNullOrEmpty(uobj.name))
                             uobj.name = font.name + " SDF";
-                        TranslatorCore.LogInfo($"[FontManager] Created TMP font via CreateFontAsset(Font)");
+                        TranslatorCore.LogDebug($"[FontManager] Created TMP font via CreateFontAsset(Font)");
                         return result;
                     }
                 }
@@ -2738,7 +2738,7 @@ namespace UnityGameTranslator.Core
                     var (familyName, styleName) = ParseFontName(font.name);
 
                     // Try with parsed family/style first
-                    TranslatorCore.LogInfo($"[FontManager] Trying CreateFontAsset(\"{familyName}\", \"{styleName}\", 90)");
+                    TranslatorCore.LogDebug($"[FontManager] Trying CreateFontAsset(\"{familyName}\", \"{styleName}\", 90)");
                     try
                     {
                         var result = createMethodByName.Invoke(null, new object[] { familyName, styleName, 90 }) ;
@@ -2754,7 +2754,7 @@ namespace UnityGameTranslator.Core
                     // If that failed and we had a style, try with just family name + "Regular"
                     if (styleName != "Regular")
                     {
-                        TranslatorCore.LogInfo($"[FontManager] Trying CreateFontAsset(\"{familyName}\", \"Regular\", 90)");
+                        TranslatorCore.LogDebug($"[FontManager] Trying CreateFontAsset(\"{familyName}\", \"Regular\", 90)");
                         try
                         {
                             var result = createMethodByName.Invoke(null, new object[] { familyName, "Regular", 90 }) ;
@@ -2771,7 +2771,7 @@ namespace UnityGameTranslator.Core
                     // Last resort: try original name as family with Regular
                     if (familyName != font.name)
                     {
-                        TranslatorCore.LogInfo($"[FontManager] Trying CreateFontAsset(\"{font.name}\", \"Regular\", 90)");
+                        TranslatorCore.LogDebug($"[FontManager] Trying CreateFontAsset(\"{font.name}\", \"Regular\", 90)");
                         try
                         {
                             var result = createMethodByName.Invoke(null, new object[] { font.name, "Regular", 90 }) ;
@@ -2802,7 +2802,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static void Initialize()
         {
-            TranslatorCore.LogInfo("[FontManager] Initialized");
+            TranslatorCore.LogDebug("[FontManager] Initialized");
             // Settings are loaded with translations.json, fallbacks applied when fonts are registered
         }
 
@@ -2835,7 +2835,7 @@ namespace UnityGameTranslator.Core
             }
 
             if (preloaded > 0)
-                TranslatorCore.LogInfo($"[FontManager] Pre-loaded {preloaded} fallback font(s)");
+                TranslatorCore.LogDebug($"[FontManager] Pre-loaded {preloaded} fallback font(s)");
         }
 
         /// <summary>
@@ -2859,7 +2859,7 @@ namespace UnityGameTranslator.Core
                 var allFonts = TypeHelper.FindAllObjectsOfType(TypeHelper.TMP_FontAssetType);
                 if (allFonts == null || allFonts.Length == 0)
                 {
-                    TranslatorCore.LogInfo("[FontManager] No game TMP fonts found");
+                    TranslatorCore.LogDebug("[FontManager] No game TMP fonts found");
                     return;
                 }
 
@@ -2878,7 +2878,7 @@ namespace UnityGameTranslator.Core
                     }
                 }
 
-                TranslatorCore.LogInfo($"[FontManager] Found {_gameTMPFonts.Count} game TMP fonts: {string.Join(", ", GetGameFontNames())}");
+                TranslatorCore.LogDebug($"[FontManager] Found {_gameTMPFonts.Count} game TMP fonts: {string.Join(", ", GetGameFontNames())}");
             }
             catch (Exception ex)
             {
@@ -2902,7 +2902,7 @@ namespace UnityGameTranslator.Core
                             _gameUnityFonts[font.name] = font;
                     }
                     if (_gameUnityFonts.Count > 0)
-                        TranslatorCore.LogInfo($"[FontManager] Found {_gameUnityFonts.Count} game Unity fonts: {string.Join(", ", _gameUnityFonts.Keys)}");
+                        TranslatorCore.LogDebug($"[FontManager] Found {_gameUnityFonts.Count} game Unity fonts: {string.Join(", ", _gameUnityFonts.Keys)}");
                 }
             }
             catch { }

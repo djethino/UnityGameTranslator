@@ -157,7 +157,7 @@ namespace UnityGameTranslator.Core
                         patchCount++;
                     }
 
-                    TranslatorCore.LogInfo($"[Patches] TMP_Text patches applied ({TypeHelper.TMP_TextType.FullName})");
+                    TranslatorCore.LogDebug($"[Patches] TMP_Text patches applied ({TypeHelper.TMP_TextType.FullName})");
                 }
                 else
                 {
@@ -441,7 +441,7 @@ namespace UnityGameTranslator.Core
                             };
 
                             results.Add(info);
-                            TranslatorCore.LogInfo($"[Patches] Detected generic text type: {type.FullName} ({framework})" +
+                            TranslatorCore.LogDebug($"[Patches] Detected generic text type: {type.FullName} ({framework})" +
                                 $" font={fontProp?.Name ?? "none"}, fontSize={fontSizeProp?.Name ?? "none"}");
                         }
                         catch { }
@@ -484,7 +484,7 @@ namespace UnityGameTranslator.Core
                         BindingFlags.Static | BindingFlags.Public);
                     patcher(setMethod, prefix, null);
                     patched++;
-                    TranslatorCore.LogInfo($"[Patches] Patched {typeInfo.Category}: {typeInfo.ComponentType.Name}.set_text");
+                    TranslatorCore.LogDebug($"[Patches] Patched {typeInfo.Category}: {typeInfo.ComponentType.Name}.set_text");
                 }
 
                 // Also patch get_text for scanner (catches pre-loaded text)
@@ -821,7 +821,7 @@ namespace UnityGameTranslator.Core
 
             if (count > 0)
             {
-                TranslatorCore.LogInfo($"[Patches] Patched alternate TMP: {altTmpType.FullName} ({count} methods)");
+                TranslatorCore.LogDebug($"[Patches] Patched alternate TMP: {altTmpType.FullName} ({count} methods)");
             }
 
             return count;
@@ -871,7 +871,7 @@ namespace UnityGameTranslator.Core
 
             if (count > 0)
             {
-                TranslatorCore.LogInfo($"[Patches] Patched {count} tk2dTextMesh methods");
+                TranslatorCore.LogDebug($"[Patches] Patched {count} tk2dTextMesh methods");
             }
 
             return count;
@@ -1033,7 +1033,7 @@ namespace UnityGameTranslator.Core
 
             if (count > 0)
             {
-                TranslatorCore.LogInfo($"[Patches] Found localization bridge: {bridgeType.FullName} ({count} methods patched)");
+                TranslatorCore.LogDebug($"[Patches] Found localization bridge: {bridgeType.FullName} ({count} methods patched)");
             }
 
             return count;
@@ -1356,7 +1356,7 @@ namespace UnityGameTranslator.Core
 
             if (count > 0)
             {
-                TranslatorCore.LogInfo($"[Patches] Found custom localization: {locType.FullName} ({count} methods patched)");
+                TranslatorCore.LogDebug($"[Patches] Found custom localization: {locType.FullName} ({count} methods patched)");
             }
 
             return count;
@@ -1506,7 +1506,7 @@ namespace UnityGameTranslator.Core
         {
             if (_alternateTMPFontAssetType == null)
             {
-                TranslatorCore.LogInfo("[FontScan] No alternate TMP type found, skipping scan");
+                TranslatorCore.LogDebug("[FontScan] No alternate TMP type found, skipping scan");
                 return;
             }
 
@@ -1566,7 +1566,7 @@ namespace UnityGameTranslator.Core
 
                 if (appliedCount > 0)
                 {
-                    TranslatorCore.LogInfo($"[FontScan] Applied font replacement to {appliedCount} components");
+                    TranslatorCore.LogDebug($"[FontScan] Applied font replacement to {appliedCount} components");
                 }
             }
             catch (Exception ex)
@@ -1656,7 +1656,7 @@ namespace UnityGameTranslator.Core
                 var postfix = typeof(TranslatorPatches).GetMethod(nameof(Graphic_OnEnable_Postfix),
                     BindingFlags.Static | BindingFlags.Public);
                 patcher(onEnableMethod, null, postfix);
-                TranslatorCore.LogInfo("[Patches] Graphic.OnEnable postfix applied");
+                TranslatorCore.LogDebug("[Patches] Graphic.OnEnable postfix applied");
                 return 1;
             }
             catch (Exception ex)
@@ -2150,7 +2150,7 @@ namespace UnityGameTranslator.Core
                     {
                         _profLastLog = now;
                         double freq = System.Diagnostics.Stopwatch.Frequency;
-                        TranslatorCore.LogInfo($"[PERF] {_profCallCount} calls in 5s | " +
+                        TranslatorCore.LogDebug($"[PERF] {_profCallCount} calls in 5s | " +
                             $"ShouldSkip={_profSkipTranslation/freq*1000:F1}ms | " +
                             $"GetFont={_profGetFont/freq*1000:F1}ms | " +
                             $"FontOps={_profFontOps/freq*1000:F1}ms | " +
@@ -2393,7 +2393,7 @@ namespace UnityGameTranslator.Core
             _initCallbackRegistered = true;
 
             UI.TranslatorUIManager.OnInitialized += OnUIInitialized;
-            TranslatorCore.LogInfo("[AlternateTMP] Registered init callback for pending font replacements");
+            TranslatorCore.LogDebug("[AlternateTMP] Registered init callback for pending font replacements");
         }
 
         /// <summary>
@@ -2402,7 +2402,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static void OnUIInitialized()
         {
-            TranslatorCore.LogInfo($"[AlternateTMP] UI initialized - scheduling {_pendingFontReplacements.Count} pending text operations");
+            TranslatorCore.LogDebug($"[AlternateTMP] UI initialized - scheduling {_pendingFontReplacements.Count} pending text operations");
 
             // Collect pending items
             var toProcess = new List<(object instance, string fontName, string originalText)>();
@@ -2431,7 +2431,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static void ProcessPendingFontReplacements(List<(object instance, string fontName, string originalText)> toProcess)
         {
-            TranslatorCore.LogInfo($"[AlternateTMP] Processing {toProcess.Count} pending font replacements");
+            TranslatorCore.LogDebug($"[AlternateTMP] Processing {toProcess.Count} pending font replacements");
 
             foreach (var (instance, fontName, originalText) in toProcess)
             {
@@ -2445,7 +2445,7 @@ namespace UnityGameTranslator.Core
                         continue;
                     }
 
-                    TranslatorCore.LogInfo($"[AlternateTMP] Processing: '{(originalText.Length > 40 ? originalText.Substring(0, 40) + "..." : originalText)}' with font '{fontName}'");
+                    TranslatorCore.LogDebug($"[AlternateTMP] Processing: '{(originalText.Length > 40 ? originalText.Substring(0, 40) + "..." : originalText)}' with font '{fontName}'");
 
                     // Step 1: Apply font replacement
                     TryApplyAlternateTMPReplacementFont(instance, fontName);
@@ -2459,7 +2459,7 @@ namespace UnityGameTranslator.Core
 
                         // Check result
                         var resultText = textProp.GetValue(instance, null) as string ?? "(null)";
-                        TranslatorCore.LogInfo($"[AlternateTMP] After processing, text is: '{(resultText.Length > 40 ? resultText.Substring(0, 40) + "..." : resultText)}'");
+                        TranslatorCore.LogDebug($"[AlternateTMP] After processing, text is: '{(resultText.Length > 40 ? resultText.Substring(0, 40) + "..." : resultText)}'");
                     }
                 }
                 catch (Exception ex)
@@ -2468,7 +2468,7 @@ namespace UnityGameTranslator.Core
                 }
             }
 
-            TranslatorCore.LogInfo($"[AlternateTMP] Completed processing {toProcess.Count} pending text operations");
+            TranslatorCore.LogDebug($"[AlternateTMP] Completed processing {toProcess.Count} pending text operations");
         }
 
         /// <summary>
@@ -2678,7 +2678,7 @@ namespace UnityGameTranslator.Core
                 int fontId = originalFont.GetHashCode();
                 if (_fontsWithFallbackAdded.Contains(fontId))
                 {
-                    TranslatorCore.LogInfo("[AlternateTMP] Fallback already added to this font");
+                    TranslatorCore.LogDebug("[AlternateTMP] Fallback already added to this font");
                     return true; // Already done
                 }
 
@@ -2721,7 +2721,7 @@ namespace UnityGameTranslator.Core
                     {
                         addMethod.Invoke(fallbackList, new[] { customFont });
                         _fontsWithFallbackAdded.Add(fontId);
-                        TranslatorCore.LogInfo($"[AlternateTMP] Added custom font to fallbackFontAssets list");
+                        TranslatorCore.LogDebug($"[AlternateTMP] Added custom font to fallbackFontAssets list");
                         return true;
                     }
                 }
@@ -2748,7 +2748,7 @@ namespace UnityGameTranslator.Core
                     {
                         addMethod.Invoke(fallbackTable, new[] { customFont });
                         _fontsWithFallbackAdded.Add(fontId);
-                        TranslatorCore.LogInfo($"[AlternateTMP] Added custom font to fallbackFontAssetTable");
+                        TranslatorCore.LogDebug($"[AlternateTMP] Added custom font to fallbackFontAssetTable");
                         return true;
                     }
                 }
@@ -2859,7 +2859,7 @@ namespace UnityGameTranslator.Core
                         if (!_alternateTMPFontCache.ContainsKey(unityObj.name))
                         {
                             _alternateTMPFontCache[unityObj.name] = font;
-                            TranslatorCore.LogInfo($"[FontManager] Found alternate TMP font: {unityObj.name}");
+                            TranslatorCore.LogDebug($"[FontManager] Found alternate TMP font: {unityObj.name}");
                         }
                     }
                 }
@@ -2926,7 +2926,7 @@ namespace UnityGameTranslator.Core
                             if (!_pendingFontReplacements.ContainsKey(instanceId))
                             {
                                 _pendingFontReplacements[instanceId] = (new WeakReference(__instance), fontName, __0);
-                                TranslatorCore.LogInfo($"[AlternateTMP] Queued for font+translation after init: '{fontName}'");
+                                TranslatorCore.LogDebug($"[AlternateTMP] Queued for font+translation after init: '{fontName}'");
                             }
                             // Skip font and translation - let original set_text run with English
                             // We'll do everything after UI init

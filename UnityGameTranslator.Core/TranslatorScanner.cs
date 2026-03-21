@@ -79,7 +79,7 @@ namespace UnityGameTranslator.Core
             }
 
             _registeredTypes.Add(type);
-            TranslatorCore.LogInfo($"[Scanner] Registered type: {type.Name} (Category={type.Category})");
+            TranslatorCore.LogDebug($"[Scanner] Registered type: {type.Name} (Category={type.Category})");
         }
 
         #endregion
@@ -182,7 +182,7 @@ namespace UnityGameTranslator.Core
 
                 lastComponentCacheTime = Time.time;
                 _lateUpdateCacheDirty = true;
-                TranslatorCore.LogInfo($"[Scanner] Force refreshed cache: {total} total components across {_registeredTypes.Count} types");
+                TranslatorCore.LogDebug($"[Scanner] Force refreshed cache: {total} total components across {_registeredTypes.Count} types");
             }
             catch (Exception ex)
             {
@@ -297,7 +297,7 @@ namespace UnityGameTranslator.Core
                 {
                     _scanProfLastLog = currentTime;
                     double freq = System.Diagnostics.Stopwatch.Frequency;
-                    TranslatorCore.LogInfo($"[SCAN-PERF] {_scanProfCount} scans in 5s ({_scanProfRefreshCount} refreshes) | " +
+                    TranslatorCore.LogDebug($"[SCAN-PERF] {_scanProfCount} scans in 5s ({_scanProfRefreshCount} refreshes) | " +
                         $"Refresh={_scanProfRefreshTicks/freq*1000:F1}ms | " +
                         $"Batch={_scanProfBatchTicks/freq*1000:F1}ms");
                     _scanProfCount = 0;
@@ -331,7 +331,7 @@ namespace UnityGameTranslator.Core
 
                 if (!type.LoggedOnce && type.CachedComponents != null && type.CachedComponents.Length > 0)
                 {
-                    TranslatorCore.LogInfo($"Scan: Found {type.CachedComponents.Length} {type.Name} components");
+                    TranslatorCore.LogDebug($"Scan: Found {type.CachedComponents.Length} {type.Name} components");
                     type.LoggedOnce = true;
                 }
 
@@ -468,7 +468,7 @@ namespace UnityGameTranslator.Core
                 RegisterType(genericType);
             }
 
-            TranslatorCore.LogInfo($"[Scanner] Registered {_registeredTypes.Count} text component types");
+            TranslatorCore.LogDebug($"[Scanner] Registered {_registeredTypes.Count} text component types");
         }
 
         /// <summary>
@@ -745,7 +745,7 @@ namespace UnityGameTranslator.Core
 
                     if (!type.LoggedOnce)
                     {
-                        TranslatorCore.LogInfo($"Scan: Found {results.Count} {type.Name} via MonoBehaviourFilter (shared scan)");
+                        TranslatorCore.LogDebug($"Scan: Found {results.Count} {type.Name} via MonoBehaviourFilter (shared scan)");
                         type.LoggedOnce = true;
                     }
                 }
@@ -1037,7 +1037,7 @@ namespace UnityGameTranslator.Core
                 if (type.Category != "TextMesh" && TypeHelper.IsInputFieldTextComponent(component))
                 {
                     inputFieldTextIds.Add(instanceId);
-                    TranslatorCore.LogInfo($"[Scanner] Excluded InputField textComponent: {comp.gameObject.name}");
+                    TranslatorCore.LogDebug($"[Scanner] Excluded InputField textComponent: {comp.gameObject.name}");
                     return;
                 }
 
@@ -1112,9 +1112,9 @@ namespace UnityGameTranslator.Core
                 }
 
                 if (restored > 0)
-                    TranslatorCore.LogInfo($"[Scanner] Restored {restored} original texts, refreshed {refreshed} components");
+                    TranslatorCore.LogDebug($"[Scanner] Restored {restored} original texts, refreshed {refreshed} components");
                 else
-                    TranslatorCore.LogInfo($"[Scanner] Force refreshed {refreshed} text components");
+                    TranslatorCore.LogDebug($"[Scanner] Force refreshed {refreshed} text components");
             }
             catch (Exception ex)
             {
@@ -1284,7 +1284,7 @@ namespace UnityGameTranslator.Core
                 }
 
                 if (restored > 0)
-                    TranslatorCore.LogInfo($"[Scanner] Restored {restored} originals for font: {fontName}");
+                    TranslatorCore.LogDebug($"[Scanner] Restored {restored} originals for font: {fontName}");
             }
             catch (Exception ex)
             {
@@ -1343,7 +1343,7 @@ namespace UnityGameTranslator.Core
                 if (!string.IsNullOrEmpty(oldFallback))
                     fontNamesToMatch.Add(oldFallback);
 
-                TranslatorCore.LogInfo($"[Scanner] RefreshForFont: matching fonts [{string.Join(", ", fontNamesToMatch)}]");
+                TranslatorCore.LogDebug($"[Scanner] RefreshForFont: matching fonts [{string.Join(", ", fontNamesToMatch)}]");
 
                 foreach (var type in _registeredTypes)
                 {
@@ -1355,7 +1355,7 @@ namespace UnityGameTranslator.Core
                     }
                 }
 
-                TranslatorCore.LogInfo($"[Scanner] Refreshed {refreshed} components for font: {fontName}");
+                TranslatorCore.LogDebug($"[Scanner] Refreshed {refreshed} components for font: {fontName}");
             }
             catch (Exception ex)
             {
@@ -1602,7 +1602,7 @@ namespace UnityGameTranslator.Core
                         if (method.Name == "Of" && method.IsGenericMethodDefinition && method.GetParameters().Length == 0)
                         {
                             il2cppTypeOfMethod = method;
-                            TranslatorCore.LogInfo("Found Il2CppType.Of<T>() method");
+                            TranslatorCore.LogDebug("Found Il2CppType.Of<T>() method");
                             break;
                         }
                     }
@@ -1618,7 +1618,7 @@ namespace UnityGameTranslator.Core
                         if (paramType.FullName?.Contains("Il2Cpp") == true)
                         {
                             resourcesFindAllMethod = method;
-                            TranslatorCore.LogInfo($"Found Resources.FindObjectsOfTypeAll({paramType.Name})");
+                            TranslatorCore.LogDebug($"Found Resources.FindObjectsOfTypeAll({paramType.Name})");
                             break;
                         }
                     }
@@ -1633,7 +1633,7 @@ namespace UnityGameTranslator.Core
                         if (method.Name == "TryCast" && method.IsGenericMethodDefinition)
                         {
                             tryCastMethod = method;
-                            TranslatorCore.LogInfo("Found IL2CPP.TryCast<T>() method");
+                            TranslatorCore.LogDebug("Found IL2CPP.TryCast<T>() method");
                             break;
                         }
                     }
@@ -1650,7 +1650,7 @@ namespace UnityGameTranslator.Core
                             if (method.Name == "TryCast" && method.IsGenericMethodDefinition)
                             {
                                 tryCastMethod = method;
-                                TranslatorCore.LogInfo("Found Il2CppObjectBase.TryCast<T>() method");
+                                TranslatorCore.LogDebug("Found Il2CppObjectBase.TryCast<T>() method");
                                 break;
                             }
                         }
@@ -1665,7 +1665,7 @@ namespace UnityGameTranslator.Core
                         tryCastMethod, tryCastMethod != null && tryCastMethod.IsStatic);
 
                 if (il2cppScanAvailable)
-                    TranslatorCore.LogInfo($"IL2CPP scan initialized (TryCast={tryCastMethod != null})");
+                    TranslatorCore.LogDebug($"IL2CPP scan initialized (TryCast={tryCastMethod != null})");
                 else
                     TranslatorCore.LogWarning($"IL2CPP scan not available");
             }
@@ -1897,7 +1897,7 @@ namespace UnityGameTranslator.Core
             {
                 _lateUpdateCoroutine = UniverseLib.RuntimeHelper.StartCoroutine(LateUpdateCoroutine());
                 _lateUpdateRunning = true;
-                TranslatorCore.LogInfo("[Scanner] LateUpdate coroutine started");
+                TranslatorCore.LogDebug("[Scanner] LateUpdate coroutine started");
             }
             catch (Exception ex)
             {

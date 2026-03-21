@@ -664,7 +664,6 @@ namespace UnityGameTranslator.Core
             TranslatorScanner.OnSceneChange();
             TranslatorPatches.ClearCache();
 
-            // Re-warm clone atlases for the new scene
             FontManager.OnSceneChanged();
 
             if (DebugMode)

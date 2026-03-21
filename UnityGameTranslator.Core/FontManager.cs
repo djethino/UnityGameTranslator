@@ -350,19 +350,100 @@ namespace UnityGameTranslator.Core
         /// Also resets _preWarmedClones so PreWarmCloneAtlas runs again if needed.
         /// </summary>
         /// <summary>
-        /// Re-warm all clone atlases after scene change.
-        /// Clones persist (DontDestroyOnLoad) but their atlas needs re-population.
+        /// Called on scene change. Marks that clones need refresh before next render.
+        /// The actual refresh happens in the willRenderCanvases callback, which fires
+        /// JUST BEFORE Unity renders — ensuring components have the right fonts.
         /// </summary>
+        private static bool _pendingSceneRefresh = false;
+        private static bool _willRenderSubscribed = false;
+
         public static void OnSceneChanged()
         {
+            _pendingSceneRefresh = true;
+            SubscribeWillRenderCanvases();
+        }
+
+        /// <summary>
+        /// Subscribe to Canvas.willRenderCanvases — fires just before Unity renders all canvases.
+        /// </summary>
+        private static void SubscribeWillRenderCanvases()
+        {
+            if (_willRenderSubscribed) return;
+
+            try
+            {
+                // Canvas.willRenderCanvases is a static event
+                var canvasType = typeof(Canvas);
+                var addMethod = canvasType.GetMethod("add_willRenderCanvases",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+
+                if (addMethod == null)
+                {
+                    // Try event directly
+                    var evt = canvasType.GetEvent("willRenderCanvases",
+                        BindingFlags.Public | BindingFlags.Static);
+                    if (evt != null)
+                        addMethod = evt.GetAddMethod(true);
+                }
+
+                if (addMethod != null)
+                {
+                    // On IL2CPP, may need DelegateSupport wrapping
+                    Action handler = OnWillRenderCanvases;
+                    object wrappedHandler = handler;
+
+                    if (TranslatorCore.Adapter?.IsIL2CPP == true)
+                    {
+                        try
+                        {
+                            Type delegateSupportType = null;
+                            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+                            {
+                                delegateSupportType = asm.GetType("Il2CppInterop.Runtime.DelegateSupport");
+                                if (delegateSupportType != null) break;
+                            }
+                            if (delegateSupportType != null)
+                            {
+                                var paramType = addMethod.GetParameters()[0].ParameterType;
+                                var convertMethod = delegateSupportType.GetMethod("ConvertDelegate",
+                                    BindingFlags.Public | BindingFlags.Static);
+                                if (convertMethod != null)
+                                {
+                                    var genericConvert = convertMethod.MakeGenericMethod(paramType);
+                                    wrappedHandler = genericConvert.Invoke(null, new object[] { handler });
+                                }
+                            }
+                        }
+                        catch { }
+                    }
+
+                    addMethod.Invoke(null, new object[] { wrappedHandler });
+                    _willRenderSubscribed = true;
+                    TranslatorCore.LogDebug("[FontManager] Subscribed to Canvas.willRenderCanvases");
+                }
+                else
+                {
+                    TranslatorCore.LogDebug("[FontManager] Canvas.willRenderCanvases not found");
+                }
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogDebug($"[FontManager] Failed to subscribe willRenderCanvases: {ex.Message}");
+            }
+        }
+
+        private static void OnWillRenderCanvases()
+        {
+            if (!_pendingSceneRefresh) return;
+            _pendingSceneRefresh = false;
+
             if (_unityFallbackFonts.Count == 0) return;
 
-            // Reset pre-warm tracking and known chars
+            // Re-warm all clone atlases
             _preWarmedClones.Clear();
             _knownCharsPerClone.Clear();
             _knownCharsStringCache.Clear();
 
-            // Re-warm each clone
             foreach (var kvp in _unityFallbackFonts)
             {
                 if (kvp.Value == null) continue;
@@ -370,7 +451,10 @@ namespace UnityGameTranslator.Core
                 PreWarmCloneAtlas(kvp.Key, kvp.Value);
             }
 
-            TranslatorCore.LogDebug($"[FontManager] Re-warmed {_unityFallbackFonts.Count} clone atlases after scene change");
+            // Force all text components to re-render with the warmed clones
+            TranslatorScanner.ForceRefreshAllText();
+
+            TranslatorCore.LogDebug($"[FontManager] willRenderCanvases: re-warmed {_unityFallbackFonts.Count} clones + ForceRefreshAllText");
         }
 
         public static void PreWarmCloneAtlas(string fallbackName, Font clone)
@@ -1972,7 +2056,6 @@ namespace UnityGameTranslator.Core
                     if (clonedFont != null)
                     {
                         clonedFont.name = cleanFallback;
-                        // Prevent Unity from destroying the clone when scenes change
                         UnityEngine.Object.DontDestroyOnLoad(clonedFont);
 
                         bool set = UniverseLib.Runtime.TextureHelper.SetFontNames(

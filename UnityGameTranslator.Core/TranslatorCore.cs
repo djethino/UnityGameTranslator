@@ -664,8 +664,8 @@ namespace UnityGameTranslator.Core
             TranslatorScanner.OnSceneChange();
             TranslatorPatches.ClearCache();
 
-            // Disabled: causes text to become empty - need deeper investigation
-            // TranslatorPatches.ScheduleDelayedFontScan(0.5f);
+            // Re-warm clone atlases for the new scene
+            FontManager.OnSceneChanged();
 
             if (DebugMode)
                 Adapter?.LogInfo($"Scene: {sceneName}");

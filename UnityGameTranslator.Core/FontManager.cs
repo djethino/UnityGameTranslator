@@ -344,6 +344,35 @@ namespace UnityGameTranslator.Core
         /// Called on first SetFont for each clone. Only runs once per clone lifetime.
         /// This ensures the atlas has all needed chars BEFORE any component renders.
         /// </summary>
+        /// <summary>
+        /// Re-warm ALL existing clone atlases. Called on scene change to ensure
+        /// clones are ready for the new scene's components.
+        /// Also resets _preWarmedClones so PreWarmCloneAtlas runs again if needed.
+        /// </summary>
+        /// <summary>
+        /// Re-warm all clone atlases after scene change.
+        /// Clones persist (DontDestroyOnLoad) but their atlas needs re-population.
+        /// </summary>
+        public static void OnSceneChanged()
+        {
+            if (_unityFallbackFonts.Count == 0) return;
+
+            // Reset pre-warm tracking and known chars
+            _preWarmedClones.Clear();
+            _knownCharsPerClone.Clear();
+            _knownCharsStringCache.Clear();
+
+            // Re-warm each clone
+            foreach (var kvp in _unityFallbackFonts)
+            {
+                if (kvp.Value == null) continue;
+                try { var _ = kvp.Value.name; } catch { continue; }
+                PreWarmCloneAtlas(kvp.Key, kvp.Value);
+            }
+
+            TranslatorCore.LogDebug($"[FontManager] Re-warmed {_unityFallbackFonts.Count} clone atlases after scene change");
+        }
+
         public static void PreWarmCloneAtlas(string fallbackName, Font clone)
         {
             if (clone == null || string.IsNullOrEmpty(fallbackName)) return;
@@ -1943,6 +1972,8 @@ namespace UnityGameTranslator.Core
                     if (clonedFont != null)
                     {
                         clonedFont.name = cleanFallback;
+                        // Prevent Unity from destroying the clone when scenes change
+                        UnityEngine.Object.DontDestroyOnLoad(clonedFont);
 
                         bool set = UniverseLib.Runtime.TextureHelper.SetFontNames(
                             clonedFont, new string[] { realFontName, cleanFallback });

@@ -119,6 +119,7 @@ namespace UnityGameTranslator.BepInEx6IL2CPP
         public class TranslatorUpdateBehaviour : MonoBehaviour
         {
             private string lastSceneName = "";
+            private string previousSceneName = "";
 
             void Update()
             {
@@ -127,9 +128,14 @@ namespace UnityGameTranslator.BepInEx6IL2CPP
                 var activeScene = SceneManager.GetActiveScene();
                 if (activeScene.name != lastSceneName)
                 {
+                    // Scene changed — the previous scene was effectively "unloaded"
+                    if (!string.IsNullOrEmpty(previousSceneName))
+                    {
+                        TranslatorCore.OnSceneUnloaded(previousSceneName);
+                    }
+                    previousSceneName = lastSceneName;
                     lastSceneName = activeScene.name;
                     TranslatorCore.OnSceneChanged(activeScene.name);
-                    TranslatorScanner.OnSceneChange();
                     Instance.lastScanTime = Time.realtimeSinceStartup - 0.04f;
                 }
             }

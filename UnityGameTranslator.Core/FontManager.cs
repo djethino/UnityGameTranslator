@@ -91,7 +91,7 @@ namespace UnityGameTranslator.Core
         /// Remove dead component refs (destroyed by game, e.g., overlay closed).
         /// Prevents stale refs from polluting tracking and causing issues on reopen.
         /// </summary>
-        private static void CleanDeadComponentRefs()
+        public static void CleanDeadComponentRefs()
         {
             // Clean _replacedComponentRefs
             var deadIds = new List<int>();

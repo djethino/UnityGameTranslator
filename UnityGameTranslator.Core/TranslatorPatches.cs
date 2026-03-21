@@ -1444,6 +1444,28 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Clean up dead component refs (destroyed by scene unload).
+        /// Less aggressive than ClearCache — only removes dead entries.
+        /// </summary>
+        public static void CleanDeadRefs()
+        {
+            var deadIds = new List<int>();
+            foreach (var kvp in _patchedComponentRefs)
+            {
+                if (kvp.Value == null || (kvp.Value is UnityEngine.Object uobj && uobj == null))
+                    deadIds.Add(kvp.Key);
+            }
+            foreach (int id in deadIds)
+            {
+                _patchedComponentRefs.Remove(id);
+                _fontNameCache.Remove(id);
+                _originalFontSizes.Remove(id);
+                _trueOriginalFontSizes.Remove(id);
+                _inheritedCloneComponents.Remove(id);
+            }
+        }
+
+        /// <summary>
         /// Clear cached original font sizes.
         /// Only call on scene change — NOT on scale change, because
         /// clearing causes the scaled size to be read as "original".
@@ -1876,16 +1898,25 @@ namespace UnityGameTranslator.Core
 
                 if (isGrowing && elapsed < TYPEWRITING_STABILIZE_MS)
                 {
-                    // Text growing rapidly — typewriting in progress, defer
+                    int charsAdded = newText.Length - state.Text.Length;
+                    if (_twLogCount < 100 && charsAdded > 5)
+                    {
+                        _twLogCount++;
+                        TranslatorCore.LogInfo($"[TW] comp={compId} SKIP(growing +{charsAdded}c in {elapsed:F0}ms) total={newText.Length}c text='{newText}'");
+                    }
                     _typewritingState[compId] = new TypewritingState { Text = newText, Timestamp = now, Queued = false };
                     _activeTypewriting.Add(compId);
                     return true;
                 }
 
                 // Text changed completely (not StartsWith) or grew after long pause.
-                // The PREVIOUS text is final — process it before handling the new one.
                 if (!state.Queued)
                 {
+                    if (_twLogCount < 100)
+                    {
+                        _twLogCount++;
+                        TranslatorCore.LogInfo($"[TW] comp={compId} FINALIZE prev={state.Text.Length}c new={newText.Length}c isGrowing={isGrowing} elapsed={elapsed:F0}ms prevText='{state.Text}'");
+                    }
                     ProcessFinalizedText(compId, state.Text);
                 }
 
@@ -1912,7 +1943,13 @@ namespace UnityGameTranslator.Core
             string normalizedText = TranslatorCore.NormalizeForCacheLookup(text);
             if (TranslatorCore.TranslationCache.ContainsKey(normalizedText))
             {
-                // Already cached — apply translation by re-triggering SetText
+                if (_twLogCount < 100)
+                {
+                    _twLogCount++;
+                    string goName = "?";
+                    try { if (_patchedComponentRefs.TryGetValue(compId, out var c) && c is Component co) goName = co.gameObject?.name ?? "?"; } catch { }
+                    TranslatorCore.LogInfo($"[FINALIZED] comp={compId} go='{goName}' CACHED ({text.Length}c): '{text}'");
+                }
                 if (_patchedComponentRefs.TryGetValue(compId, out var comp) && comp != null)
                 {
                     try { TypeHelper.SetText(comp, text); }
@@ -1921,7 +1958,13 @@ namespace UnityGameTranslator.Core
             }
             else
             {
-                // Not cached — queue for AI
+                if (_twLogCount < 100)
+                {
+                    _twLogCount++;
+                    string goName = "?";
+                    try { if (_patchedComponentRefs.TryGetValue(compId, out var c2) && c2 is Component co2) goName = co2.gameObject?.name ?? "?"; } catch { }
+                    TranslatorCore.LogInfo($"[FINALIZED] comp={compId} go='{goName}' QUEUE ({text.Length}c): '{text}'");
+                }
                 object comp = null;
                 _patchedComponentRefs.TryGetValue(compId, out comp);
                 TranslatorCore.QueueForTranslation(text, comp);

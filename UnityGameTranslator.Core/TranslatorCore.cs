@@ -673,6 +673,20 @@ namespace UnityGameTranslator.Core
                 Adapter?.LogInfo($"Scene: {sceneName}");
         }
 
+        /// <summary>
+        /// Called when a scene is unloaded. Cleans up stale references from the old scene.
+        /// </summary>
+        public static void OnSceneUnloaded(string sceneName)
+        {
+            // Clean dead refs immediately (don't wait for periodic cleanup)
+            FontManager.CleanDeadComponentRefs();
+            TranslatorPatches.CleanDeadRefs();
+            TranslatorPatches.ClearTypewritingState();
+
+            if (DebugMode)
+                Adapter?.LogInfo($"Scene unloaded: {sceneName}");
+        }
+
         public static void OnShutdown()
         {
             ShuttingDown = true;

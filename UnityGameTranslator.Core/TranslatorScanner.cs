@@ -1773,7 +1773,7 @@ namespace UnityGameTranslator.Core
                             TranslatorCore.UpdateSeenText(id, translation);
                             processedTextHashes[id] = translation.GetHashCode();
                         }
-                        TranslatorCore.LogInfo($"[Apply OK] {expectedPreview}");
+                        TranslatorCore.LogDebug($"[Apply OK] {expectedPreview}");
                     }
                     else
                     {
@@ -1784,7 +1784,7 @@ namespace UnityGameTranslator.Core
                             processedTextHashes.Remove(skipId);
                             TranslatorCore.ClearSeenText(skipId);
                         }
-                        TranslatorCore.LogWarning($"[Apply SKIP] expected='{expectedPreview}' actual='{actualPreview}'");
+                        TranslatorCore.LogDebug($"[Apply SKIP] expected='{expectedPreview}' actual='{actualPreview}'");
                     }
                 }
                 catch { }

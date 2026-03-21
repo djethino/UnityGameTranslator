@@ -886,7 +886,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             var serverState = TranslatorCore.ServerState;
             bool existsOnServer = serverState != null && serverState.Exists && serverState.SiteId.HasValue;
 
-            TranslatorCore.LogInfo($"[MainPanel] RefreshTranslationInfo: entries={entryCount}, target={targetLang}, serverState={(serverState == null ? "null" : $"checked={serverState.Checked}")}");
+            TranslatorCore.LogDebug($"[MainPanel] RefreshTranslationInfo: entries={entryCount}, target={targetLang}, serverState={(serverState == null ? "null" : $"checked={serverState.Checked}")}");
 
             _entriesLabel.text = $"Entries: {entryCount}";
             _targetLabel.text = $"Target: {targetLang}";

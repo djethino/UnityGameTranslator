@@ -416,7 +416,7 @@ namespace UnityGameTranslator.Core.UI
 
                 TranslatorCore.ServerState = serverState;
 
-                TranslatorCore.LogInfo($"[SyncSSE] State: exists={exists}, role={role}, siteId={serverState.SiteId}");
+                TranslatorCore.LogDebug($"[SyncSSE] State: exists={exists}, role={role}, siteId={serverState.SiteId}");
 
                 // Client-side update detection (URL hash may be stale after reconnection)
                 string serverHash = serverState.Hash;

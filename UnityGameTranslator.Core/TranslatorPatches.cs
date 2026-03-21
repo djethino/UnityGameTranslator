@@ -1679,9 +1679,6 @@ namespace UnityGameTranslator.Core
                 if (TranslatorCore.Adapter == null || TranslatorCore.Config == null) return;
                 if (!TranslatorCore.Config.enable_translations) return;
 
-                _onEnableFireCount++;
-                if (_onEnableFireCount == 1 || _onEnableFireCount == 100 || _onEnableFireCount == 1000)
-                    TranslatorCore.LogInfo($"[OnEnable] Fire count: {_onEnableFireCount}");
 
                 // Fast exit: only process types we know are text components
                 if (__instance == null) return;
@@ -1730,14 +1727,6 @@ namespace UnityGameTranslator.Core
                     catch { }
                 }
 
-                if (_onEnableLogCount < 10)
-                {
-                    _onEnableLogCount++;
-                    // After SetFont, immediately verify what font the component actually has
-                    object verifyFont = TypeHelper.GetFont(__instance);
-                    string verifyName = (verifyFont is UnityEngine.Object vfo) ? vfo.name : "null";
-                    TranslatorCore.LogInfo($"[OnEnable] compId={compId} settings='{settingsFontName}' clone='{replacementFont.name}' actualAfter='{verifyName}' text='{(text != null && text.Length > 20 ? text.Substring(0,20) : text)}'");
-                }
             }
             catch { }
         }
@@ -1871,7 +1860,6 @@ namespace UnityGameTranslator.Core
         /// </summary>
         // If text grows AND is within this time window, it's typewriting (regardless of chars added)
         // The key indicator is RAPID growth on the same component, not the size of each addition
-        private static int _twLogCount = 0;
 
         /// <summary>
         /// Detect typewriting effects: text growing by a few chars at a time on the same component.
@@ -1898,12 +1886,6 @@ namespace UnityGameTranslator.Core
 
                 if (isGrowing && elapsed < TYPEWRITING_STABILIZE_MS)
                 {
-                    int charsAdded = newText.Length - state.Text.Length;
-                    if (_twLogCount < 100 && charsAdded > 5)
-                    {
-                        _twLogCount++;
-                        TranslatorCore.LogInfo($"[TW] comp={compId} SKIP(growing +{charsAdded}c in {elapsed:F0}ms) total={newText.Length}c text='{newText}'");
-                    }
                     _typewritingState[compId] = new TypewritingState { Text = newText, Timestamp = now, Queued = false };
                     _activeTypewriting.Add(compId);
                     return true;
@@ -1912,11 +1894,6 @@ namespace UnityGameTranslator.Core
                 // Text changed completely (not StartsWith) or grew after long pause.
                 if (!state.Queued)
                 {
-                    if (_twLogCount < 100)
-                    {
-                        _twLogCount++;
-                        TranslatorCore.LogInfo($"[TW] comp={compId} FINALIZE prev={state.Text.Length}c new={newText.Length}c isGrowing={isGrowing} elapsed={elapsed:F0}ms prevText='{state.Text}'");
-                    }
                     ProcessFinalizedText(compId, state.Text);
                 }
 
@@ -1943,13 +1920,6 @@ namespace UnityGameTranslator.Core
             string normalizedText = TranslatorCore.NormalizeForCacheLookup(text);
             if (TranslatorCore.TranslationCache.ContainsKey(normalizedText))
             {
-                if (_twLogCount < 100)
-                {
-                    _twLogCount++;
-                    string goName = "?";
-                    try { if (_patchedComponentRefs.TryGetValue(compId, out var c) && c is Component co) goName = co.gameObject?.name ?? "?"; } catch { }
-                    TranslatorCore.LogInfo($"[FINALIZED] comp={compId} go='{goName}' CACHED ({text.Length}c): '{text}'");
-                }
                 if (_patchedComponentRefs.TryGetValue(compId, out var comp) && comp != null)
                 {
                     try { TypeHelper.SetText(comp, text); }
@@ -1958,13 +1928,6 @@ namespace UnityGameTranslator.Core
             }
             else
             {
-                if (_twLogCount < 100)
-                {
-                    _twLogCount++;
-                    string goName = "?";
-                    try { if (_patchedComponentRefs.TryGetValue(compId, out var c2) && c2 is Component co2) goName = co2.gameObject?.name ?? "?"; } catch { }
-                    TranslatorCore.LogInfo($"[FINALIZED] comp={compId} go='{goName}' QUEUE ({text.Length}c): '{text}'");
-                }
                 object comp = null;
                 _patchedComponentRefs.TryGetValue(compId, out comp);
                 TranslatorCore.QueueForTranslation(text, comp);
@@ -2228,8 +2191,6 @@ namespace UnityGameTranslator.Core
         [ThreadStatic] private static bool _bypassFontSizePrefix;
         // Components that inherited a clone font from template — skip ApplyFontScale (already scaled)
         private static readonly HashSet<int> _inheritedCloneComponents = new HashSet<int>();
-        private static int _onEnableLogCount = 0;
-        private static int _onEnableFireCount = 0;
         public static bool BypassFontSizePrefix { get => _bypassFontSizePrefix; set => _bypassFontSizePrefix = value; }
 
         public static void TMPText_SetFontSize_Prefix(object __instance, ref float value)

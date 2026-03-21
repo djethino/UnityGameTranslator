@@ -612,10 +612,8 @@ namespace UnityGameTranslator.Core
             CachePath = Path.Combine(ModFolder, "translations.json");
             ConfigPath = Path.Combine(ModFolder, "config.json");
 
-            string debugPath = Path.Combine(ModFolder, "debug.txt");
-            DebugMode = File.Exists(debugPath);
-
             LoadConfig();
+            DebugMode = Config.debug;
 
             // Initialize type resolution (must be before patches and scanning)
             TypeHelper.Initialize();
@@ -733,6 +731,11 @@ namespace UnityGameTranslator.Core
         public static void LogInfo(string message) => Adapter?.LogInfo(message);
         public static void LogWarning(string message) => Adapter?.LogWarning(message);
         public static void LogError(string message) => Adapter?.LogError(message);
+        /// <summary>
+        /// Log only when debug mode is enabled (config.debug=true or debug.txt exists).
+        /// Use for verbose/diagnostic messages that normal users don't need.
+        /// </summary>
+        public static void LogDebug(string message) { if (DebugMode) Adapter?.LogInfo(message); }
 
         #endregion
 
@@ -1467,10 +1470,12 @@ namespace UnityGameTranslator.Core
                 // Newtonsoft.Json by default doesn't escape unicode, same as PHP
                 string content = JsonConvert.SerializeObject(sortedDict, Formatting.None);
 
-                // Always log for debugging hash issues
-                string preview = content.Length > 100 ? content.Substring(0, 100) + "..." : content;
-                Adapter?.LogInfo($"[HashDebug] Local JSON preview: {preview}");
-                Adapter?.LogInfo($"[HashDebug] Local entry count: {sortedDict.Count}, length: {content.Length}");
+                if (DebugMode)
+                {
+                    string preview = content.Length > 100 ? content.Substring(0, 100) + "..." : content;
+                    LogDebug($"[HashDebug] Local JSON preview: {preview}");
+                    LogDebug($"[HashDebug] Local entry count: {sortedDict.Count}, length: {content.Length}");
+                }
 
                 using (var sha256 = SHA256.Create())
                 {
@@ -2424,17 +2429,12 @@ namespace UnityGameTranslator.Core
                 pendingTranslations.Add(text);
                 translationQueue.Enqueue(text);
 
-                // Log with caller to find who queues
-                string qPreview = text.Length > 40 ? text.Substring(0, 40) + "..." : text;
-                string caller = new System.Diagnostics.StackTrace(1, false).GetFrame(0)?.GetMethod()?.Name ?? "?";
-                Adapter?.LogInfo($"[QUEUE FROM] '{caller}': {qPreview}");
-
                 // Log first queued item always, then every 10th
                 int queueSize = translationQueue.Count;
-                if (queueSize == 1 || queueSize % 10 == 0 || Config.debug_ai)
+                if (DebugMode || Config.debug_ai)
                 {
                     string preview = text.Length > 40 ? text.Substring(0, 40) + "..." : text;
-                    Adapter?.LogInfo($"[Queue] #{queueSize}: {preview}{(isOwnUI ? " (UI)" : "")}");
+                    LogDebug($"[Queue] #{queueSize}: {preview}{(isOwnUI ? " (UI)" : "")}");
                 }
             }
         }
@@ -3066,6 +3066,7 @@ namespace UnityGameTranslator.Core
         public bool enable_ai { get; set; } = false;
         public bool cache_new_translations { get; set; } = true;
         public bool normalize_numbers { get; set; } = true;
+        public bool debug { get; set; } = false;
         public bool debug_ai { get; set; } = false;
         public bool preload_model { get; set; } = true;
         public string ai_api_key { get; set; } = null;

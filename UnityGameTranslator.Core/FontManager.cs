@@ -478,19 +478,29 @@ namespace UnityGameTranslator.Core
                 return;
             }
 
-            // Pre-warm with ASCII only. Loading all cache chars at once (200+)
-            // in a single RequestCharactersInTexture corrupts the atlas.
-            // Additional chars are added incrementally by EnsureCharsInCloneAtlas.
-            var essentialChars = new HashSet<char>();
-            for (char c = ' '; c <= '~'; c++) essentialChars.Add(c);
+            // Build chars from translation cache VALUES only where text was actually
+            // translated (value != key). This excludes CJK chars from untranslated entries.
+            var cacheChars = new HashSet<char>();
+            try
+            {
+                foreach (var entry in TranslatorCore.TranslationCache)
+                {
+                    if (entry.Value?.Value != null && entry.Value.Value != entry.Key)
+                        foreach (char c in entry.Value.Value)
+                            if (c > 31) cacheChars.Add(c);
+                }
+            }
+            catch { return; }
 
-            var charString = new string(new System.Collections.Generic.List<char>(essentialChars).ToArray());
-            _knownCharsPerClone[fallbackName] = essentialChars;
+            if (cacheChars.Count == 0) return;
+
+            var charString = new string(new System.Collections.Generic.List<char>(cacheChars).ToArray());
+            _knownCharsPerClone[fallbackName] = cacheChars;
             _knownCharsStringCache[fallbackName] = charString;
             try
             {
                 clone.RequestCharactersInTexture(charString);
-                TranslatorCore.LogDebug($"[FontManager] PreWarm '{fallbackName}' with {essentialChars.Count} ASCII chars");
+                TranslatorCore.LogInfo($"[FontManager] PreWarm '{fallbackName}' with {cacheChars.Count} translated chars");
             }
             catch { }
         }

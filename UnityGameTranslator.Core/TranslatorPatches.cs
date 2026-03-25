@@ -2099,13 +2099,14 @@ namespace UnityGameTranslator.Core
                             FontManager.TrackOriginalFont(compId, fontObj, __instance);
                             string currentName = (fontObj is UnityEngine.Object co) ? co.name : null;
                             string replaceName = replacementFont.name;
-                            if (currentName != replaceName)
+                            // Only apply clone if the text will be translated (has a cache entry).
+                            // Untranslated CJK text keeps the original game font.
+                            bool willTranslate = TranslatorCore.HasCachedTranslation(textValue);
+                            if (willTranslate && currentName != replaceName)
                             {
                                 TypeHelper.SetFont(__instance, replacementFont);
                                 FontManager.PreWarmCloneAtlas(replaceName, replacementFont);
                             }
-                            // Remember the clone for EnsureCharsInCloneAtlasDirect later
-                            // (GetFont may not reflect SetFont yet on IL2CPP)
                             unityCloneFont = replacementFont;
                             unityCloneFallback = replaceName;
                         }
@@ -2123,10 +2124,6 @@ namespace UnityGameTranslator.Core
                 textValue = TranslatorCore.TranslateTextWithTracking(textValue, comp, isOwnUI);
 
                 // Ensure chars are in the clone's atlas — always when a clone is active.
-                // Uses the known clone directly because on IL2CPP, GetFont() may still return
-                // the OLD font after SetFont (deferred update), causing EnsureCharsInCloneAtlas to skip.
-                // Must run even when text didn't change: the clone may be new with an empty atlas
-                // but the text is already translated from cache.
                 if (unityCloneFont != null && !string.IsNullOrEmpty(textValue))
                 {
                     FontManager.EnsureCharsInCloneAtlasDirect(textValue, unityCloneFont, unityCloneFallback);
@@ -2134,8 +2131,20 @@ namespace UnityGameTranslator.Core
 
                 if (profiling) { t4 = _profSw.ElapsedTicks; _profTranslate += t4 - t3; }
 
-                // Apply font scale if configured for this font
-                ApplyFontScale(__instance, settingsFontName ?? fontName);
+                // Apply font scale only if the component has the clone font.
+                // Scaling on the original font before clone is applied causes size
+                // cumulation when the clone is applied later.
+                if (unityCloneFont != null)
+                {
+                    object curFont = TypeHelper.GetFont(__instance);
+                    string curFontName = (curFont is UnityEngine.Object cfo) ? cfo.name : null;
+                    if (curFontName == unityCloneFallback)
+                        ApplyFontScale(__instance, settingsFontName ?? fontName);
+                }
+                else
+                {
+                    ApplyFontScale(__instance, settingsFontName ?? fontName);
+                }
 
                 if (profiling)
                 {

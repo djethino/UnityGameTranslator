@@ -2397,6 +2397,26 @@ namespace UnityGameTranslator.Core
         /// Normalize text for cache lookup (line endings + number extraction).
         /// Used by typewriting stabilizer to check if text is already cached.
         /// </summary>
+        /// <summary>
+        /// Quick check if a text has a cached translation (without doing the full translation).
+        /// Used to decide whether to apply the clone font before translation.
+        /// </summary>
+        public static bool HasCachedTranslation(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return false;
+
+            // Exact match
+            if (TranslationCache.TryGetValue(text, out var exact))
+                return exact.Value != text && !exact.IsHumanEmpty && exact.Tag != "S";
+
+            // Normalized match
+            string normalized = NormalizeForCacheLookup(text);
+            if (TranslationCache.TryGetValue(normalized, out var norm))
+                return norm.Value != normalized && !norm.IsHumanEmpty && norm.Tag != "S";
+
+            return false;
+        }
+
         public static string NormalizeForCacheLookup(string text)
         {
             if (string.IsNullOrEmpty(text)) return text;

@@ -1497,7 +1497,7 @@ namespace UnityGameTranslator.Core
             // TryPatternMatch iterates PatternEntries on the main thread while
             // this can be called from the worker thread (via AddToCache).
             var newEntries = new List<PatternEntry>();
-            var placeholderRegex = new Regex(@"\[!v\*(\d+)\]", RegexOptions.None, TimeSpan.FromMilliseconds(100));
+            var placeholderRegex = new Regex(@"\[!v\*(\d+)\]", RegexOptions.None);
 
             // Snapshot to avoid "Collection was modified" if AddToCache runs concurrently
             KeyValuePair<string, TranslationEntry>[] cacheSnapshot;
@@ -1533,7 +1533,7 @@ namespace UnityGameTranslator.Core
                     {
                         OriginalPattern = kv.Key,
                         TranslatedPattern = kv.Value.Value,
-                        MatchRegex = new Regex("^" + pattern + "$", RegexOptions.Compiled, TimeSpan.FromMilliseconds(100)),
+                        MatchRegex = new Regex("^" + pattern + "$", RegexOptions.Compiled),
                         PlaceholderIndices = placeholderIndices
                     });
                 }

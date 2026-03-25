@@ -2006,9 +2006,16 @@ namespace UnityGameTranslator.Core
                     promptBuilder.AppendLine("- Do not add punctuation if not in the source to translate");
                     promptBuilder.AppendLine("- Keep technical terms unchanged: API, URL, UUID, JSON, AI");
                     promptBuilder.AppendLine("- Keep keyboard shortcuts as-is: Ctrl, Alt, Shift, F1-F12, Tab, Esc");
+                    if (textWithPlaceholders.Contains("<"))
+                    {
+                        promptBuilder.AppendLine("- Preserve formatting tags and special characters from the source text as-is");
+                    }
+                    if (textWithPlaceholders.Contains("\n"))
+                    {
+                        promptBuilder.AppendLine("- IMPORTANT: Keep [!nl] placeholders exactly where they are, do not remove or move them");
+                    }
                     if (extractedNumbers != null && extractedNumbers.Count > 0)
                     {
-                        promptBuilder.AppendLine("- Preserve original formatting tags and special characters");
                         promptBuilder.AppendLine("- IMPORTANT: Keep [!v*0], [!v*1], etc. placeholders exactly as-is, do not modify them");
                     }
 
@@ -2050,9 +2057,16 @@ namespace UnityGameTranslator.Core
                     promptBuilder.AppendLine("- Keep it concise for UI");
                     promptBuilder.AppendLine("- Do not add punctuation if not in the source to translate");
                     promptBuilder.AppendLine("- Keep unchanged: keyboard keys (Tab, Esc, Space...), technical settings (VSync, Auto)");
+                    if (textWithPlaceholders.Contains("<"))
+                    {
+                        promptBuilder.AppendLine("- Preserve formatting tags and special characters from the source text as-is");
+                    }
+                    if (textWithPlaceholders.Contains("\n"))
+                    {
+                        promptBuilder.AppendLine("- IMPORTANT: Keep [!nl] placeholders exactly where they are, do not remove or move them");
+                    }
                     if (extractedNumbers != null && extractedNumbers.Count > 0)
                     {
-                        promptBuilder.AppendLine("- Preserve original formatting tags and special characters");
                         promptBuilder.AppendLine("- IMPORTANT: Keep [!v*0], [!v*1], etc. placeholders exactly as-is, do not modify them");
                     }
 
@@ -2073,7 +2087,10 @@ namespace UnityGameTranslator.Core
 
                 // Build messages list
                 bool isThinkingModel = IsThinkingModel(Config.ai_model);
-                string userContent = isThinkingModel ? textToTranslate + " /no_think" : textToTranslate;
+                // Replace \n with placeholder so the AI preserves them as structural elements.
+                // Without this, the AI often drops \n or merges lines during translation.
+                string textForAI = textToTranslate.Replace("\n", "[!nl]");
+                string userContent = isThinkingModel ? textForAI + " /no_think" : textForAI;
 
                 var messagesArray = new JArray
                 {
@@ -2163,6 +2180,8 @@ namespace UnityGameTranslator.Core
 
                 if (!string.IsNullOrEmpty(translation))
                 {
+                    // Restore \n from placeholder
+                    translation = translation.Replace("[!nl]", "\n");
                     translation = CleanTranslation(translation);
                     if (Config.debug_ai)
                     {
@@ -2405,14 +2424,20 @@ namespace UnityGameTranslator.Core
         {
             if (string.IsNullOrEmpty(text)) return false;
 
-            // Exact match
+            // Exact match as key
             if (TranslationCache.TryGetValue(text, out var exact))
                 return exact.Value != text && !exact.IsHumanEmpty && exact.Tag != "S";
 
-            // Normalized match
+            // Normalized match as key
             string normalized = NormalizeForCacheLookup(text);
             if (TranslationCache.TryGetValue(normalized, out var norm))
                 return norm.Value != normalized && !norm.IsHumanEmpty && norm.Tag != "S";
+
+            // Text is already a known translation (reverse cache) — the component
+            // already shows translated text and should have the clone font.
+            string trimmed = normalized.TrimEnd();
+            if (translatedTexts.Contains(trimmed))
+                return true;
 
             return false;
         }

@@ -538,6 +538,27 @@ namespace UnityGameTranslator.Core.UI.Panels
                 };
             }
 
+            // Include per-font settings (fallback, scale, enabled, type)
+            if (TranslatorCore.FontSettingsMap.Count > 0)
+            {
+                var fontsObj = new System.Collections.Generic.Dictionary<string, object>();
+                foreach (var kvp in TranslatorCore.FontSettingsMap)
+                {
+                    var fontObj = new System.Collections.Generic.Dictionary<string, object>
+                    {
+                        ["enabled"] = kvp.Value.enabled,
+                        ["fallback"] = kvp.Value.fallback,
+                        ["type"] = kvp.Value.type
+                    };
+                    if (System.Math.Abs(kvp.Value.scale - 1.0f) > 0.001f)
+                    {
+                        fontObj["scale"] = kvp.Value.scale;
+                    }
+                    fontsObj[kvp.Key] = fontObj;
+                }
+                output["_fonts"] = fontsObj;
+            }
+
             // Use same format as SaveCache: {"v": "value", "t": "tag"}
             foreach (var kv in TranslatorCore.TranslationCache)
             {

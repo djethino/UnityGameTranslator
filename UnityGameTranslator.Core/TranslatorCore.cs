@@ -2420,6 +2420,8 @@ namespace UnityGameTranslator.Core
         /// Quick check if a text has a cached translation (without doing the full translation).
         /// Used to decide whether to apply the clone font before translation.
         /// </summary>
+        private static int _dbgTwCacheHit = 0;
+
         public static bool HasCachedTranslation(string text)
         {
             if (string.IsNullOrEmpty(text)) return false;
@@ -2666,6 +2668,15 @@ namespace UnityGameTranslator.Core
             // Fast path: try exact text lookup BEFORE any normalization (avoids allocations for cache hits)
             if (TranslationCache.TryGetValue(text, out var exactEntry))
             {
+                // If this component is in typewriting state, touch the timestamp
+                // so the stabilizer doesn't think the typewriting stopped.
+                // Cache hits bypass IsTypewritingInProgress, leaving the timestamp stale.
+                if (component is Component twComp2)
+                {
+                    int twId2 = TypeHelper.GetInstanceID(twComp2);
+                    TranslatorPatches.TouchTypewritingTimestamp(twId2, text);
+                }
+
                 if (exactEntry.IsHumanEmpty || exactEntry.Tag == "S")
                 {
                     cacheHitCount++;
@@ -2675,6 +2686,16 @@ namespace UnityGameTranslator.Core
                 {
                     cacheHitCount++;
                     translatedCount++;
+                    // TEMP LOG: detect if typewriting text gets a cache hit before typewriting check
+                    if (_dbgTwCacheHit < 20 && component is Component twComp)
+                    {
+                        int twId = TypeHelper.GetInstanceID(twComp);
+                        if (TranslatorPatches.IsInTypewritingState(twId))
+                        {
+                            _dbgTwCacheHit++;
+                            LogInfo($"[TW-CACHEHIT] comp={twId} text='{(text.Length > 40 ? text.Substring(0,40) : text)}' → cache hit BYPASSES typewriting check");
+                        }
+                    }
                     if (component != null)
                         TranslatorScanner.StoreOriginalText(component, text);
                     return exactEntry.Value;

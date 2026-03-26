@@ -1867,6 +1867,38 @@ namespace UnityGameTranslator.Core
         /// accumulation, paragraph appends) are allowed through immediately.
         /// Returns true if the text should NOT be queued yet (typewriting in progress).
         /// </summary>
+        /// <summary>Check if a component is currently being tracked for typewriting.</summary>
+        public static bool IsInTypewritingState(int compId)
+        {
+            return compId != -1 && _typewritingState.ContainsKey(compId);
+        }
+
+        /// <summary>
+        /// Touch the typewriting timestamp for a component. Called on cache hits
+        /// to prevent the stabilizer from thinking the typewriting stopped.
+        /// Also updates the stored text if it grew (StartsWith).
+        /// </summary>
+        public static void TouchTypewritingTimestamp(int compId, string currentText)
+        {
+            if (compId == -1 || string.IsNullOrEmpty(currentText)) return;
+            if (!_typewritingState.TryGetValue(compId, out var state)) return;
+            if (state.Queued) return; // Already finalized, don't touch
+
+            // Only touch if the text is growing (typewriting continuation) or same text.
+            // Do NOT update state.Text with unrelated text (e.g. translations set via
+            // ApplyTranslationToComponents that are not part of the typewriting sequence).
+            bool isGrowing = currentText.Length > state.Text.Length && currentText.StartsWith(state.Text);
+            bool isSame = currentText == state.Text;
+            if (!isGrowing && !isSame) return; // Unrelated text, don't touch
+
+            _typewritingState[compId] = new TypewritingState
+            {
+                Text = isGrowing ? currentText : state.Text, // Only update text if growing
+                Timestamp = Time.realtimeSinceStartup,
+                Queued = false
+            };
+        }
+
         public static bool IsTypewritingInProgress(int compId, string newText)
         {
             if (compId == -1 || string.IsNullOrEmpty(newText)) return false;
@@ -1894,6 +1926,7 @@ namespace UnityGameTranslator.Core
                 // Text changed completely (not StartsWith) or grew after long pause.
                 if (!state.Queued)
                 {
+                    TranslatorCore.LogInfo($"[TW-FINAL] comp={compId} isGrowing={isGrowing} elapsed={elapsed:F0}ms prev='{(state.Text.Length > 40 ? state.Text.Substring(0,40) : state.Text)}' new='{(newText.Length > 40 ? newText.Substring(0,40) : newText)}'");
                     ProcessFinalizedText(compId, state.Text);
                 }
 
@@ -1972,6 +2005,7 @@ namespace UnityGameTranslator.Core
                     Queued = true
                 };
 
+                TranslatorCore.LogInfo($"[TW-STAB] comp={compId} stabilized after {(now - state.Timestamp)*1000:F0}ms text='{(state.Text.Length > 40 ? state.Text.Substring(0,40) : state.Text)}'");
                 ProcessFinalizedText(compId, state.Text);
             }
         }

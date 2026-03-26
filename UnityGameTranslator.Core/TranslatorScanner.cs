@@ -1076,6 +1076,18 @@ namespace UnityGameTranslator.Core
                 }
                 else
                 {
+                    // Text unchanged (key==value) but the component might still need
+                    // font replacement. Trigger SetText to fire the Harmony prefix
+                    // which handles font clone/fallback application.
+                    if (TranslatorCore.HasCachedTranslation(currentText))
+                    {
+                        SetTextForType(component, type, currentText);
+                        if (type.NeedsForceMeshUpdate)
+                            TypeHelper.ForceMeshUpdate(component);
+                        else if (type.NeedsSetAllDirty)
+                            TypeHelper.SetAllDirty(component);
+                    }
+
                     TranslatorCore.UpdateSeenText(instanceId, currentText);
                     processedTextHashes[instanceId] = textHash;
                 }

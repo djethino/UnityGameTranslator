@@ -2242,10 +2242,15 @@ namespace UnityGameTranslator.Core
                             // Only apply clone if the text will be translated (has a cache entry).
                             // Untranslated CJK text keeps the original game font.
                             bool willTranslate = TranslatorCore.HasCachedTranslation(textValue);
+                            if (TranslatorCore.DebugMode)
+                                TranslatorCore.LogDebug($"[FONT-DEBUG] comp={compId} text='{textValue}' type={componentType} font='{currentName}' clone='{replaceName}' willTranslate={willTranslate} needsChange={currentName != replaceName}");
                             if (willTranslate && currentName != replaceName)
                             {
                                 TypeHelper.SetFont(__instance, replacementFont);
                                 FontManager.PreWarmCloneAtlas(replaceName, replacementFont);
+                                // Force visual refresh: if the text won't change (key==value),
+                                // Unity skips re-render. SetAllDirty forces it to pick up the new font.
+                                TypeHelper.SetAllDirty(__instance);
                             }
                             unityCloneFont = replacementFont;
                             unityCloneFallback = replaceName;

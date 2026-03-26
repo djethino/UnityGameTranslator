@@ -2152,6 +2152,21 @@ namespace UnityGameTranslator.Core
                 // 2. Markup tags (<color=...>, </b>, etc.) → [!t*N]
                 List<string> extractedTags = null;
                 textForAI = ExtractMarkupTags(textForAI, out extractedTags);
+                // 3. Trim leading/trailing whitespace (visual padding confuses AI)
+                string leadingWS = "";
+                string trailingWS = "";
+                string trimmed = textForAI.TrimStart();
+                if (trimmed.Length < textForAI.Length)
+                {
+                    leadingWS = textForAI.Substring(0, textForAI.Length - trimmed.Length);
+                    textForAI = trimmed;
+                }
+                trimmed = textForAI.TrimEnd();
+                if (trimmed.Length < textForAI.Length)
+                {
+                    trailingWS = textForAI.Substring(trimmed.Length);
+                    textForAI = trimmed;
+                }
 
                 if (Config.debug_ai && extractedTags != null && extractedTags.Count > 0)
                     Adapter?.LogInfo($"[AI] Extracted {extractedTags.Count} markup tags from text");
@@ -2255,6 +2270,9 @@ namespace UnityGameTranslator.Core
                     translation = RestoreMarkupTags(translation, extractedTags);
                     // 2. Line breaks [!nl] → \n
                     translation = translation.Replace("[!nl]", "\n");
+                    // 3. Restore leading/trailing whitespace
+                    if (leadingWS.Length > 0 || trailingWS.Length > 0)
+                        translation = leadingWS + translation + trailingWS;
                     translation = CleanTranslation(translation);
                     if (Config.debug_ai)
                     {

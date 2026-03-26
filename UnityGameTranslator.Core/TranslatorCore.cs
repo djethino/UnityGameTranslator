@@ -2534,16 +2534,25 @@ namespace UnityGameTranslator.Core
         {
             if (string.IsNullOrEmpty(text)) return false;
 
-            // Exact match as key — includes FR→FR entries (value == key, tag "A")
-            // which are texts already in target language. They should still get the
-            // clone font because they contain Latin chars the clone CAN render.
+            // Exact match as key
             if (TranslationCache.TryGetValue(text, out var exact))
-                return !exact.IsHumanEmpty && exact.Tag != "S";
+            {
+                if (exact.IsHumanEmpty || exact.Tag == "S") return false;
+                // key==value with tag "A" = AI couldn't translate (source language text).
+                // Don't apply clone font — it may not have the right glyphs (e.g., CJK).
+                // key==value with tag "V"/"H" = human validated, intentionally same text.
+                if (exact.Value == text && exact.Tag == "A") return false;
+                return true;
+            }
 
             // Normalized match as key
             string normalized = NormalizeForCacheLookup(text);
             if (TranslationCache.TryGetValue(normalized, out var norm))
-                return !norm.IsHumanEmpty && norm.Tag != "S";
+            {
+                if (norm.IsHumanEmpty || norm.Tag == "S") return false;
+                if (norm.Value == normalized && norm.Tag == "A") return false;
+                return true;
+            }
 
             // Text is already a known translation (reverse cache) — the component
             // already shows translated text and should have the clone font.

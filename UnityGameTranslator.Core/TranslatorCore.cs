@@ -2153,6 +2153,8 @@ namespace UnityGameTranslator.Core
                 List<string> extractedTags = null;
                 textForAI = ExtractMarkupTags(textForAI, out extractedTags);
                 // 3. Trim leading/trailing whitespace (visual padding confuses AI)
+                //    Both are restored after AI returns — trailing spaces can be
+                //    intentional (e.g., game concatenates strings with pre-spaced parts).
                 string leadingWS = "";
                 string trailingWS = "";
                 string trimmed = textForAI.TrimStart();
@@ -2270,10 +2272,11 @@ namespace UnityGameTranslator.Core
                     translation = RestoreMarkupTags(translation, extractedTags);
                     // 2. Line breaks [!nl] → \n
                     translation = translation.Replace("[!nl]", "\n");
-                    // 3. Restore leading/trailing whitespace
+                    // 3. Clean AI artifacts (removes quotes, thinking blocks, etc.)
+                    translation = CleanTranslation(translation);
+                    // 4. Restore leading/trailing whitespace AFTER clean (clean does Trim)
                     if (leadingWS.Length > 0 || trailingWS.Length > 0)
                         translation = leadingWS + translation + trailingWS;
-                    translation = CleanTranslation(translation);
                     if (Config.debug_ai)
                     {
                         Adapter?.LogInfo($"[AI Clean] {translation?.Substring(0, Math.Min(80, translation?.Length ?? 0))}");

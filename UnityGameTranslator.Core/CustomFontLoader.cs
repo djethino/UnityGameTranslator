@@ -1808,6 +1808,7 @@ namespace UnityGameTranslator.Core
                 glyphListField.SetValue(fontAsset, glyphList);
 
             BuildCharacterDictionary(fontAsset, glyphList);
+            InitializeTMProOldFields(fontAsset);
             TranslatorCore.LogInfo($"[CustomFontLoader] Added {glyphs.Count} legacy glyphs");
         }
 
@@ -1935,6 +1936,80 @@ namespace UnityGameTranslator.Core
             catch (Exception ex)
             {
                 TranslatorCore.LogWarning($"[CustomFontLoader] Failed to build character dictionary: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Ensure all fields that TMProOld.GenerateTextMesh accesses are non-null.
+        /// When we clone a game font and replace its glyphs/atlas, the cloned
+        /// kerning/character data may reference stale objects. Initialize them
+        /// to empty collections so GenerateTextMesh doesn't NullRef.
+        /// </summary>
+        private static void InitializeTMProOldFields(object fontAsset)
+        {
+            if (fontAsset == null) return;
+            var type = fontAsset.GetType();
+            var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+
+            try
+            {
+                // m_kerningDictionary — Dictionary<int, KerningPair>
+                var kerningDictField = type.GetField("m_kerningDictionary", flags);
+                if (kerningDictField != null && kerningDictField.GetValue(fontAsset) == null)
+                {
+                    // Find the KerningPair type from the field's generic type
+                    var kerningPairType = kerningDictField.FieldType.GetGenericArguments();
+                    if (kerningPairType.Length == 2)
+                    {
+                        var emptyDict = Activator.CreateInstance(kerningDictField.FieldType);
+                        kerningDictField.SetValue(fontAsset, emptyDict);
+                    }
+                }
+
+                // m_kerningInfo — KerningTable (has kerningPairs list)
+                var kerningInfoField = type.GetField("m_kerningInfo", flags);
+                if (kerningInfoField != null && kerningInfoField.GetValue(fontAsset) == null)
+                {
+                    var kerningTable = Activator.CreateInstance(kerningInfoField.FieldType);
+                    kerningInfoField.SetValue(fontAsset, kerningTable);
+                }
+
+                // m_characterSet — int[]
+                var charSetField = type.GetField("m_characterSet", flags);
+                if (charSetField != null)
+                {
+                    charSetField.SetValue(fontAsset, new int[0]);
+                }
+
+                // fallbackFontAssets — List<TMP_FontAsset>
+                var fallbackField = type.GetField("fallbackFontAssets", flags);
+                if (fallbackField != null && fallbackField.GetValue(fontAsset) == null)
+                {
+                    var listType = typeof(List<>).MakeGenericType(_tmpFontAssetType);
+                    fallbackField.SetValue(fontAsset, Activator.CreateInstance(listType));
+                }
+
+                // fontWeights — TMP_FontWeights[] (array of 10)
+                var weightsField = type.GetField("fontWeights", flags);
+                if (weightsField != null && weightsField.GetValue(fontAsset) == null)
+                {
+                    var elemType = weightsField.FieldType.GetElementType();
+                    if (elemType != null)
+                    {
+                        var arr = Array.CreateInstance(elemType, 10);
+                        // Initialize each element
+                        for (int i = 0; i < 10; i++)
+                        {
+                            try { arr.SetValue(Activator.CreateInstance(elemType), i); }
+                            catch { }
+                        }
+                        weightsField.SetValue(fontAsset, arr);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogWarning($"[CustomFontLoader] InitializeTMProOldFields warning: {ex.Message}");
             }
         }
 

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -160,7 +161,7 @@ namespace UnityGameTranslator.Core
         private static bool _enableTranslationsLogOnce = true; // Log once when translations disabled
 
         // Reverse cache: all translated values (to detect already-translated text)
-        private static HashSet<string> translatedTexts = new HashSet<string>();
+        private static ConcurrentDictionary<string, byte> translatedTexts = new ConcurrentDictionary<string, byte>();
 
         // Component tracking: components waiting for a translation (using object to avoid Unity dependencies)
         private static Dictionary<string, List<object>> pendingComponents = new Dictionary<string, List<object>>();
@@ -1081,7 +1082,7 @@ namespace UnityGameTranslator.Core
                             normalizedValue = ExtractNumbersToPlaceholders(normalizedValue, out _);
                         }
                         normalizedValue = normalizedValue.TrimEnd();
-                        translatedTexts.Add(normalizedValue);
+                        translatedTexts.TryAdd(normalizedValue, 0);
                     }
                 }
 
@@ -2302,7 +2303,7 @@ namespace UnityGameTranslator.Core
                         normalizedTranslation = ExtractNumbersToPlaceholders(normalizedTranslation, out _);
                     }
                     normalizedTranslation = normalizedTranslation.TrimEnd();
-                    translatedTexts.Add(normalizedTranslation);
+                    translatedTexts.TryAdd(normalizedTranslation, 0);
                 }
 
                 // Note: No longer clearing lastSeenText here.
@@ -2427,19 +2428,21 @@ namespace UnityGameTranslator.Core
         {
             if (string.IsNullOrEmpty(text)) return false;
 
-            // Exact match as key
+            // Exact match as key — includes FR→FR entries (value == key, tag "A")
+            // which are texts already in target language. They should still get the
+            // clone font because they contain Latin chars the clone CAN render.
             if (TranslationCache.TryGetValue(text, out var exact))
-                return exact.Value != text && !exact.IsHumanEmpty && exact.Tag != "S";
+                return !exact.IsHumanEmpty && exact.Tag != "S";
 
             // Normalized match as key
             string normalized = NormalizeForCacheLookup(text);
             if (TranslationCache.TryGetValue(normalized, out var norm))
-                return norm.Value != normalized && !norm.IsHumanEmpty && norm.Tag != "S";
+                return !norm.IsHumanEmpty && norm.Tag != "S";
 
             // Text is already a known translation (reverse cache) — the component
             // already shows translated text and should have the clone font.
             string trimmed = normalized.TrimEnd();
-            if (translatedTexts.Contains(trimmed))
+            if (translatedTexts.ContainsKey(trimmed))
                 return true;
 
             return false;
@@ -2512,8 +2515,8 @@ namespace UnityGameTranslator.Core
                 if (Config.normalize_numbers)
                     normalizedResult = ExtractNumbersToPlaceholders(normalizedResult, out _);
                 normalizedResult = normalizedResult.TrimEnd();
-                if (!translatedTexts.Contains(normalizedResult))
-                    translatedTexts.Add(normalizedResult);
+                if (!translatedTexts.ContainsKey(normalizedResult))
+                    translatedTexts.TryAdd(normalizedResult, 0);
             }
             return result;
         }
@@ -2599,7 +2602,7 @@ namespace UnityGameTranslator.Core
                 // Check reverse cache with NORMALIZED text (translations are stored normalized + trimmed)
                 // TrimEnd because TMP often strips trailing whitespace/newlines when displaying
                 string trimmedNormalized = normalizedText.TrimEnd();
-                if (translatedTexts.Contains(trimmedNormalized))
+                if (translatedTexts.ContainsKey(trimmedNormalized))
                 {
                     skippedAlreadyTranslated++;
                     return text;
@@ -2652,8 +2655,8 @@ namespace UnityGameTranslator.Core
                 if (Config.normalize_numbers)
                     normalizedResult = ExtractNumbersToPlaceholders(normalizedResult, out _);
                 normalizedResult = normalizedResult.TrimEnd();
-                if (!translatedTexts.Contains(normalizedResult))
-                    translatedTexts.Add(normalizedResult);
+                if (!translatedTexts.ContainsKey(normalizedResult))
+                    translatedTexts.TryAdd(normalizedResult, 0);
             }
             return result;
         }
@@ -2665,6 +2668,16 @@ namespace UnityGameTranslator.Core
 
             if (IsNumericOrSymbol(text))
                 return text;
+
+            // Read-back detection: if the game read translated text and appended
+            // untranslated content, reconstruct the source-language text.
+            if (component is Component rbComp)
+            {
+                int rbId = TypeHelper.GetInstanceID(rbComp);
+                string reconstructed = TranslatorPatches.DetectReadBack(rbId, text);
+                if (reconstructed != null)
+                    text = reconstructed;
+            }
 
             // Fast path: try exact text lookup BEFORE any normalization (avoids allocations for cache hits)
             if (TranslationCache.TryGetValue(text, out var exactEntry))
@@ -2694,15 +2707,29 @@ namespace UnityGameTranslator.Core
                         if (TranslatorPatches.IsInTypewritingState(twId))
                         {
                             _dbgTwCacheHit++;
-                            LogInfo($"[TW-CACHEHIT] comp={twId} text='{(text.Length > 40 ? text.Substring(0,40) : text)}' → cache hit BYPASSES typewriting check");
+                            LogDebug($"[TW-CACHEHIT] comp={twId} text='{(text.Length > 40 ? text.Substring(0,40) : text)}' → cache hit BYPASSES typewriting check");
                         }
                     }
+                    if (DebugMode && text.Length > 100)
+                    {
+                        int cId = (component is Component dc) ? TypeHelper.GetInstanceID(dc) : -1;
+                        LogDebug($"[CACHE-HIT-LONG] comp={cId}\n  key({text.Length}c)='{text}'\n  val({exactEntry.Value.Length}c)='{exactEntry.Value}'");
+                    }
                     if (component != null)
+                    {
                         TranslatorScanner.StoreOriginalText(component, text);
+                        int trackId = TypeHelper.GetInstanceID(component);
+                        TranslatorPatches.TrackTranslation(trackId, text, exactEntry.Value);
+                    }
                     return exactEntry.Value;
                 }
                 // key == value: no translation needed, return as-is
                 cacheHitCount++;
+                if (DebugMode && text.Length > 100)
+                {
+                    int cId = (component is Component dc2) ? TypeHelper.GetInstanceID(dc2) : -1;
+                    LogDebug($"[CACHE-HIT-SAME] comp={cId} key==val({text.Length}c)='{text}'");
+                }
                 return text;
             }
 
@@ -2735,6 +2762,11 @@ namespace UnityGameTranslator.Core
                 {
                     cacheHitCount++;
                     translatedCount++;
+                    if (DebugMode && text.Length > 100)
+                    {
+                        int cId = (component is Component dc3) ? TypeHelper.GetInstanceID(dc3) : -1;
+                        LogDebug($"[CACHE-HIT-NORM] comp={cId} orig({text.Length}c) norm→key({normalizedText.Length}c)\n  orig='{text}'\n  norm='{normalizedText}'");
+                    }
                     // Restore numbers in the translation
                     translation = (extractedNumbers != null && extractedNumbers.Count > 0)
                         ? RestoreNumbersFromPlaceholders(cachedEntry.Value, extractedNumbers)
@@ -2786,6 +2818,8 @@ namespace UnityGameTranslator.Core
                 if (component != null)
                 {
                     TranslatorScanner.StoreOriginalText(component, text);
+                    int trackId = (component is Component tc) ? TypeHelper.GetInstanceID(tc) : -1;
+                    TranslatorPatches.TrackTranslation(trackId, text, translation);
                 }
                 return translation;
             }
@@ -2802,26 +2836,10 @@ namespace UnityGameTranslator.Core
                 // Check reverse cache with NORMALIZED text (translations are stored normalized + trimmed)
                 // TrimEnd because TMP often strips trailing whitespace/newlines when displaying
                 string trimmedNormalized = normalizedText.TrimEnd();
-                if (translatedTexts.Contains(trimmedNormalized))
+                if (translatedTexts.ContainsKey(trimmedNormalized))
                 {
                     skippedAlreadyTranslated++;
                     return text;
-                }
-
-                // TEMP LOG: if text contains Latin chars and wasn't caught by reverse cache
-                if (_dbgReverseMiss < 10 && text.Length > 5)
-                {
-                    bool hasLatin = false;
-                    foreach (char c in text)
-                    {
-                        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'))
-                        { hasLatin = true; break; }
-                    }
-                    if (hasLatin)
-                    {
-                        _dbgReverseMiss++;
-                        LogInfo($"[REVERSE-MISS] orig({text.Length}c)='{text}'\n  norm({trimmedNormalized.Length}c)='{trimmedNormalized}'");
-                    }
                 }
 
                 // Own UI text that's already translated (displayed result) — don't re-queue
@@ -2857,6 +2875,23 @@ namespace UnityGameTranslator.Core
 
                 if (!IsTargetLanguage(text))
                 {
+                    // DEBUG LOG: if text contains Latin chars and wasn't caught by reverse cache
+                    // Log AFTER all skip checks so we only see texts actually queued
+                    if (_dbgReverseMiss < 20 && text.Length > 5)
+                    {
+                        bool hasLatin = false;
+                        foreach (char c in text)
+                        {
+                            if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'))
+                            { hasLatin = true; break; }
+                        }
+                        if (hasLatin)
+                        {
+                            _dbgReverseMiss++;
+                            LogDebug($"[REVERSE-MISS] orig({text.Length}c)='{text}'\n  norm({trimmedNormalized.Length}c)='{trimmedNormalized}'");
+                        }
+                    }
+
                     QueueForTranslation(text, component, isOwnUI);
                 }
                 else

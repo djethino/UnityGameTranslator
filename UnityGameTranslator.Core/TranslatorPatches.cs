@@ -175,6 +175,7 @@ namespace UnityGameTranslator.Core
                         patchCount++;
                     }
 
+
                     // UI.Text.fontSize setter — only on Mono (on IL2CPP, causes font atlas corruption)
                     if (TranslatorCore.Adapter != null && !TranslatorCore.Adapter.IsIL2CPP)
                     {
@@ -202,6 +203,7 @@ namespace UnityGameTranslator.Core
                         patcher(textMeshProp.SetMethod, prefix, null);
                         patchCount++;
                     }
+
                 }
 
                 // Unity.Localization.StringTableEntry (optional)
@@ -1836,6 +1838,69 @@ namespace UnityGameTranslator.Core
         public static Dictionary<int, string> FontNameCache => _fontNameCache;
         public static Dictionary<int, object> PatchedComponentRefs => _patchedComponentRefs;
 
+        // === READ-BACK DETECTION ===
+        // Track the last translation applied to each component. When the game reads back
+        // translated text and appends untranslated content, we detect it and reconstruct
+        // the source-language text for proper cache lookup.
+        // Key: instanceId, Value: (original source text, translated text)
+        private static readonly Dictionary<int, KeyValuePair<string, string>> _lastTranslation = new Dictionary<int, KeyValuePair<string, string>>();
+
+        /// <summary>
+        /// Record the translation applied to a component (called after successful translation).
+        /// </summary>
+        public static void TrackTranslation(int compId, string original, string translated)
+        {
+            if (compId == -1 || string.IsNullOrEmpty(original) || string.IsNullOrEmpty(translated)) return;
+            _lastTranslation[compId] = new KeyValuePair<string, string>(original, translated);
+        }
+
+        /// <summary>
+        /// Detect if incoming text is a game read-back of translated text with appended content.
+        /// If so, reconstruct the source-language equivalent and VERIFY it exists in cache.
+        /// Returns null if not a read-back or if reconstructed text has no cache hit.
+        /// </summary>
+        public static string DetectReadBack(int compId, string incomingText)
+        {
+            if (compId == -1 || string.IsNullOrEmpty(incomingText)) return null;
+            if (!_lastTranslation.TryGetValue(compId, out var pair)) return null;
+
+            string original = pair.Key;
+            string translated = pair.Value;
+
+            // The incoming text must START WITH the translated text but be LONGER
+            // (the game appended something to the read-back)
+            if (incomingText.Length > translated.Length && incomingText.StartsWith(translated))
+            {
+                // Reconstruct: original source text + the appended suffix
+                string suffix = incomingText.Substring(translated.Length);
+                string reconstructed = original + suffix;
+
+                // SAFETY: only accept the reconstruction if it produces a cache hit.
+                // If the reconstructed text doesn't match any known key, this is NOT
+                // a read-back — it's a legitimate new text that happens to start with
+                // a previous translation. Return null to let normal flow handle it.
+                string normalizedReconstructed = TranslatorCore.NormalizeForCacheLookup(reconstructed);
+                if (!TranslatorCore.TranslationCache.ContainsKey(normalizedReconstructed))
+                {
+                    if (TranslatorCore.DebugMode)
+                        TranslatorCore.LogDebug($"[READBACK-REJECT] comp={compId} reconstructed text has no cache hit, treating as new text\n  reconstructed({reconstructed.Length}c)='{reconstructed}'");
+                    return null;
+                }
+
+                if (TranslatorCore.DebugMode)
+                    TranslatorCore.LogDebug($"[READBACK] comp={compId} detected read-back+append → cache hit!\n  incoming({incomingText.Length}c)='{incomingText}'\n  reconstructed({reconstructed.Length}c)='{reconstructed}'");
+
+                return reconstructed;
+            }
+
+            return null;
+        }
+
+        public static void ClearReadBackTracking()
+        {
+            _lastTranslation.Clear();
+        }
+
         // === TYPEWRITING DETECTION ===
         // Per-component tracking to detect typewriting effects (text growing char by char).
         // When detected, skip translation until the text stabilizes.
@@ -1940,11 +2005,10 @@ namespace UnityGameTranslator.Core
                 float elapsed = (now - state.Timestamp) * 1000f;
                 bool isGrowing = newText.Length > state.Text.Length && newText.StartsWith(state.Text);
 
-                // Log every call for typewriting components with growing text
-                if (_dbgTwProgress < 30 && newText.Length <= 40)
+                // Log every call for typewriting components
+                if (TranslatorCore.DebugMode)
                 {
-                    _dbgTwProgress++;
-                    TranslatorCore.LogInfo($"[TW-CHECK] comp={compId} prev={state.Text.Length}c new={newText.Length}c growing={isGrowing} elapsed={elapsed:F0}ms queued={state.Queued} text='{(newText.Length > 30 ? newText.Substring(0,30) : newText)}'");
+                    TranslatorCore.LogDebug($"[TW-CHECK] comp={compId} prev={state.Text.Length}c new={newText.Length}c growing={isGrowing} elapsed={elapsed:F0}ms queued={state.Queued}\n  prevText='{state.Text}'\n  newText='{newText}'");
                 }
 
                 if (isGrowing && elapsed < TYPEWRITING_STABILIZE_MS)
@@ -1957,7 +2021,7 @@ namespace UnityGameTranslator.Core
                 // Text changed completely (not StartsWith) or grew after long pause.
                 if (!state.Queued)
                 {
-                    TranslatorCore.LogInfo($"[TW-FINAL] comp={compId} isGrowing={isGrowing} elapsed={elapsed:F0}ms prev='{(state.Text.Length > 40 ? state.Text.Substring(0,40) : state.Text)}' new='{(newText.Length > 40 ? newText.Substring(0,40) : newText)}'");
+                    TranslatorCore.LogDebug($"[TW-FINAL] comp={compId} isGrowing={isGrowing} elapsed={elapsed:F0}ms\n  prev({state.Text.Length}c)='{state.Text}'\n  new({newText.Length}c)='{newText}'");
                     ProcessFinalizedText(compId, state.Text);
                 }
 
@@ -1968,10 +2032,9 @@ namespace UnityGameTranslator.Core
             }
 
             // First time — defer for stabilization
-            if (_dbgTwProgress < 30 && newText.Length <= 40)
+            if (TranslatorCore.DebugMode)
             {
-                _dbgTwProgress++;
-                TranslatorCore.LogInfo($"[TW-NEW] comp={compId} FIRST text='{(newText.Length > 30 ? newText.Substring(0,30) : newText)}'");
+                TranslatorCore.LogDebug($"[TW-NEW] comp={compId} FIRST text({newText.Length}c)='{newText}'");
             }
             _typewritingState[compId] = new TypewritingState { Text = newText, Timestamp = now };
             _activeTypewriting.Add(compId);
@@ -1987,7 +2050,14 @@ namespace UnityGameTranslator.Core
             if (string.IsNullOrEmpty(text)) return;
 
             string normalizedText = TranslatorCore.NormalizeForCacheLookup(text);
-            if (TranslatorCore.TranslationCache.ContainsKey(normalizedText))
+            bool inCache = TranslatorCore.TranslationCache.ContainsKey(normalizedText);
+
+            if (TranslatorCore.DebugMode)
+            {
+                TranslatorCore.LogDebug($"[TW-FINALIZE] comp={compId} inCache={inCache} text({text.Length}c)='{text}'");
+            }
+
+            if (inCache)
             {
                 if (_patchedComponentRefs.TryGetValue(compId, out var comp) && comp != null)
                 {
@@ -2041,7 +2111,7 @@ namespace UnityGameTranslator.Core
                     Queued = true
                 };
 
-                TranslatorCore.LogInfo($"[TW-STAB] comp={compId} stabilized after {(now - state.Timestamp)*1000:F0}ms text='{(state.Text.Length > 40 ? state.Text.Substring(0,40) : state.Text)}'");
+                TranslatorCore.LogDebug($"[TW-STAB] comp={compId} stabilized after {(now - state.Timestamp)*1000:F0}ms text='{(state.Text.Length > 40 ? state.Text.Substring(0,40) : state.Text)}'");
                 ProcessFinalizedText(compId, state.Text);
             }
         }
@@ -2365,6 +2435,7 @@ namespace UnityGameTranslator.Core
         {
             ProcessTextPatchPrefix(__instance, ref value, "TextMesh");
         }
+
 
         /// <summary>
         /// Try to get the font name from a tk2dTextMesh instance via reflection.

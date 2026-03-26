@@ -1201,11 +1201,10 @@ namespace UnityGameTranslator.Core
             int instanceId = GetComponentInstanceId(component);
             if (instanceId == -1) return;
 
-            // Only store if not already stored (first translation wins - preserves true original)
-            if (!componentOriginals.ContainsKey(instanceId))
-            {
-                componentOriginals[instanceId] = originalText;
-            }
+            // Always update: the same component can show different texts over time
+            // (e.g., tooltip reused for different items). The get_text patch needs
+            // the CURRENT original, not the first one ever seen.
+            componentOriginals[instanceId] = originalText;
         }
 
         /// <summary>

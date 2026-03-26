@@ -1918,11 +1918,18 @@ namespace UnityGameTranslator.Core
                         string translation = null;
                         if (TranslationCache.TryGetValue(normalizedOriginal, out var cachedEntry))
                         {
-                            if (cachedEntry.Value != normalizedOriginal)
+                            if (cachedEntry.Value != normalizedOriginal && !cachedEntry.IsHumanEmpty && cachedEntry.Tag != "S")
                             {
                                 translation = cachedEntry.Value;
                                 if (Config.debug_ai)
                                     Adapter?.LogInfo($"[Worker] Cache hit for normalized text, skipping AI");
+
+                                // Notify components even for cache hits — the text was re-queued
+                                // with different components that didn't get the first Apply.
+                                string cachedTranslation = (extractedNumbers != null && extractedNumbers.Count > 0)
+                                    ? RestoreNumbersFromPlaceholders(translation, extractedNumbers)
+                                    : translation;
+                                OnTranslationComplete?.Invoke(originalText, cachedTranslation, componentsToUpdate);
                             }
                         }
 
@@ -2066,95 +2073,14 @@ namespace UnityGameTranslator.Core
                 string textToTranslate = textWithPlaceholders;
                 TextType textType = DetectTextType(textToTranslate);
 
-                // Build system prompt based on text type
-                var promptBuilder = new StringBuilder();
-                string targetLang = Config.GetTargetLanguage();
-                string sourceLang = Config.GetSourceLanguage();
-
-                if (isOwnUI)
-                {
-                    // UI-specific prompt for mod interface (source is always English)
-                    promptBuilder.AppendLine("=== CONTEXT ===");
-                    promptBuilder.AppendLine($"Translating a game translation tool interface from English to {targetLang}.");
-                    promptBuilder.AppendLine("Technical UI with terms: AI, cache, merge, sync, upload, download, API, hotkey, config, JSON.");
-                    promptBuilder.AppendLine();
-                    promptBuilder.AppendLine("=== TRANSLATION RULES ===");
-                    promptBuilder.AppendLine("- Output the translation only, no explanation");
-                    promptBuilder.AppendLine("- Translation must be understandable and correct in target language");
-                    promptBuilder.AppendLine("- Keep it concise for UI");
-                    promptBuilder.AppendLine("- Do not add punctuation if not in the source to translate");
-                    promptBuilder.AppendLine("- Keep technical terms unchanged: API, URL, UUID, JSON, AI");
-                    promptBuilder.AppendLine("- Keep keyboard shortcuts as-is: Ctrl, Alt, Shift, F1-F12, Tab, Esc");
-                    promptBuilder.AppendLine("- All [!...] markers (like [!v*0], [!t*1], [!nl]) are internal placeholders — keep them exactly as-is, do not translate, modify or remove them");
-
-                    if (textType == TextType.SingleWord)
-                    {
-                        promptBuilder.AppendLine();
-                        promptBuilder.Append("Now, translate this word:");
-                    }
-                }
-                else
-                {
-                    // Game context prompt - default to generic game context if not specified
-                    string gameCtx = !string.IsNullOrEmpty(Config.game_context)
-                        ? Config.game_context
-                        : "video game UI, menus and dialogues";
-
-                    // Strict source language filter: add CRITICAL RULE section first
-                    if (Config.strict_source_language && sourceLang != null)
-                    {
-                        promptBuilder.AppendLine("=== CRITICAL RULE ===");
-                        promptBuilder.AppendLine($"Source language: {sourceLang}");
-                        promptBuilder.AppendLine($"- If text is NOT in {sourceLang}: reply ONLY with exactly: {SkipTranslationMarker}");
-                        promptBuilder.AppendLine($"- If text IS in {sourceLang}: translate to {targetLang}");
-                        promptBuilder.AppendLine();
-                    }
-
-                    // Context section
-                    promptBuilder.AppendLine("=== CONTEXT ===");
-                    if (sourceLang != null)
-                        promptBuilder.AppendLine($"Translating video game ({gameCtx}) from {sourceLang} to {targetLang}.");
-                    else
-                        promptBuilder.AppendLine($"Translating video game ({gameCtx}) to {targetLang}.");
-                    promptBuilder.AppendLine();
-
-                    // Translation rules section
-                    promptBuilder.AppendLine("=== TRANSLATION RULES ===");
-                    promptBuilder.AppendLine("- Output the translation only, no explanation");
-                    promptBuilder.AppendLine("- Translation must be correct in target language");
-                    promptBuilder.AppendLine("- Keep it concise for UI");
-                    promptBuilder.AppendLine("- Do not add punctuation if not in the source to translate");
-                    promptBuilder.AppendLine("- Keep unchanged: keyboard keys (Tab, Esc, Space...), technical settings (VSync, Auto)");
-                    promptBuilder.AppendLine("- All [!...] markers (like [!v*0], [!t*1], [!nl]) are internal placeholders — keep them exactly as-is, do not translate, modify or remove them");
-
-                    if (textType == TextType.SingleWord)
-                    {
-                        promptBuilder.AppendLine();
-                        promptBuilder.Append("Now, translate this word:");
-                    }
-                }
-
-                string systemPrompt = promptBuilder.ToString();
-
-                // Debug: log the full system prompt being sent
-                if (Config.debug_ai)
-                {
-                    Adapter?.LogInfo($"[AI] System prompt:\n{systemPrompt}");
-                }
-
-                // Build messages list
-                bool isThinkingModel = IsThinkingModel(Config.ai_model);
-
-                // Pre-process text: replace structural elements with placeholders
-                // so the AI only sees translatable text.
+                // === PRE-PROCESS text before prompt building ===
+                // Replace structural elements with placeholders so the AI only sees translatable text.
                 // 1. Line breaks → [!nl]
                 string textForAI = textToTranslate.Replace("\n", "[!nl]");
                 // 2. Markup tags (<color=...>, </b>, etc.) → [!t*N]
                 List<string> extractedTags = null;
                 textForAI = ExtractMarkupTags(textForAI, out extractedTags);
                 // 3. Trim leading/trailing whitespace (visual padding confuses AI)
-                //    Both are restored after AI returns — trailing spaces can be
-                //    intentional (e.g., game concatenates strings with pre-spaced parts).
                 string leadingWS = "";
                 string trailingWS = "";
                 string trimmed = textForAI.TrimStart();
@@ -2173,6 +2099,93 @@ namespace UnityGameTranslator.Core
                 if (Config.debug_ai && extractedTags != null && extractedTags.Count > 0)
                     Adapter?.LogInfo($"[AI] Extracted {extractedTags.Count} markup tags from text");
 
+                // Detect which placeholder types are in the PROCESSED text
+                bool hasNlPlaceholders = textForAI.Contains("[!nl]");
+                bool hasTagPlaceholders = extractedTags != null && extractedTags.Count > 0;
+                bool hasNumberPlaceholders = extractedNumbers != null && extractedNumbers.Count > 0;
+
+                // === BUILD PROMPT based on processed text ===
+                var promptBuilder = new StringBuilder();
+                string targetLang = Config.GetTargetLanguage();
+                string sourceLang = Config.GetSourceLanguage();
+
+                if (isOwnUI)
+                {
+                    promptBuilder.AppendLine("=== CONTEXT ===");
+                    promptBuilder.AppendLine($"Translating a game translation tool interface from English to {targetLang}.");
+                    promptBuilder.AppendLine("Technical UI with terms: AI, cache, merge, sync, upload, download, API, hotkey, config, JSON.");
+                    promptBuilder.AppendLine();
+                    promptBuilder.AppendLine("=== TRANSLATION RULES ===");
+                    promptBuilder.AppendLine("- Output the translation only, no explanation");
+                    promptBuilder.AppendLine("- Translation must be understandable and correct in target language");
+                    promptBuilder.AppendLine("- Keep it concise for UI");
+                    promptBuilder.AppendLine("- Do not add punctuation if not in the source to translate");
+                    promptBuilder.AppendLine("- Keep technical terms unchanged: API, URL, UUID, JSON, AI");
+                    promptBuilder.AppendLine("- Keep keyboard shortcuts as-is: Ctrl, Alt, Shift, F1-F12, Tab, Esc");
+                    if (hasNlPlaceholders)
+                        promptBuilder.AppendLine("- IMPORTANT: Keep [!nl] placeholders exactly where they are, do not remove or move them");
+                    if (hasTagPlaceholders)
+                        promptBuilder.AppendLine("- IMPORTANT: Keep [!t*0], [!t*1], etc. tag placeholders exactly as-is, do not modify or remove them");
+                    if (hasNumberPlaceholders)
+                        promptBuilder.AppendLine("- IMPORTANT: Keep [!v*0], [!v*1], etc. placeholders exactly as-is, do not modify them");
+
+                    if (textType == TextType.SingleWord)
+                    {
+                        promptBuilder.AppendLine();
+                        promptBuilder.Append("Now, translate this word:");
+                    }
+                }
+                else
+                {
+                    string gameCtx = !string.IsNullOrEmpty(Config.game_context)
+                        ? Config.game_context
+                        : "video game UI, menus and dialogues";
+
+                    if (Config.strict_source_language && sourceLang != null)
+                    {
+                        promptBuilder.AppendLine("=== CRITICAL RULE ===");
+                        promptBuilder.AppendLine($"Source language: {sourceLang}");
+                        promptBuilder.AppendLine($"- If text is NOT in {sourceLang}: reply ONLY with exactly: {SkipTranslationMarker}");
+                        promptBuilder.AppendLine($"- If text IS in {sourceLang}: translate to {targetLang}");
+                        promptBuilder.AppendLine();
+                    }
+
+                    promptBuilder.AppendLine("=== CONTEXT ===");
+                    if (sourceLang != null)
+                        promptBuilder.AppendLine($"Translating video game ({gameCtx}) from {sourceLang} to {targetLang}.");
+                    else
+                        promptBuilder.AppendLine($"Translating video game ({gameCtx}) to {targetLang}.");
+                    promptBuilder.AppendLine();
+
+                    promptBuilder.AppendLine("=== TRANSLATION RULES ===");
+                    promptBuilder.AppendLine("- Output the translation only, no explanation");
+                    promptBuilder.AppendLine("- Translation must be correct in target language");
+                    promptBuilder.AppendLine("- Keep it concise for UI");
+                    promptBuilder.AppendLine("- Do not add punctuation if not in the source to translate");
+                    promptBuilder.AppendLine("- Keep unchanged: keyboard keys (Tab, Esc, Space...), technical settings (VSync, Auto)");
+                    if (hasNlPlaceholders)
+                        promptBuilder.AppendLine("- IMPORTANT: Keep [!nl] placeholders exactly where they are, do not remove or move them");
+                    if (hasTagPlaceholders)
+                        promptBuilder.AppendLine("- IMPORTANT: Keep [!t*0], [!t*1], etc. tag placeholders exactly as-is, do not modify or remove them");
+                    if (hasNumberPlaceholders)
+                        promptBuilder.AppendLine("- IMPORTANT: Keep [!v*0], [!v*1], etc. placeholders exactly as-is, do not modify them");
+
+                    if (textType == TextType.SingleWord)
+                    {
+                        promptBuilder.AppendLine();
+                        promptBuilder.Append("Now, translate this word:");
+                    }
+                }
+
+                string systemPrompt = promptBuilder.ToString();
+
+                if (Config.debug_ai)
+                {
+                    Adapter?.LogInfo($"[AI] System prompt:\n{systemPrompt}");
+                }
+
+                // === BUILD REQUEST ===
+                bool isThinkingModel = IsThinkingModel(Config.ai_model);
                 string userContent = isThinkingModel ? textForAI + " /no_think" : textForAI;
 
                 var messagesArray = new JArray
@@ -2942,16 +2955,21 @@ namespace UnityGameTranslator.Core
                     return text;
                 }
 
-                // Skip invisible components — don't waste AI calls on hidden text.
-                // Cache hits are handled above (invisible components still get cached translations).
-                // If the component becomes visible later, OnEnable or set_text will translate it.
+                // Skip invisible components ONLY if they're also in typewriting state
+                // (likely an accumulator: hidden component with growing text).
+                // Inactive components with STABLE text (tab panels, menus) are allowed
+                // through so they get translated before the user opens them.
                 if (component is Component visComp)
                 {
                     try
                     {
                         if (visComp.gameObject != null && !visComp.gameObject.activeInHierarchy)
                         {
-                            return text;
+                            int visCompId = TypeHelper.GetInstanceID(visComp);
+                            if (TranslatorPatches.IsInTypewritingState(visCompId))
+                            {
+                                return text;
+                            }
                         }
                     }
                     catch { }

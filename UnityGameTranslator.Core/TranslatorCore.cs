@@ -666,32 +666,6 @@ namespace UnityGameTranslator.Core
             }
         }
 
-        /// <summary>
-        /// Detect hallucination: same fragment repeated more than threshold times.
-        /// </summary>
-        private static bool DetectHallucination(string text, int threshold = 3)
-        {
-            if (string.IsNullOrEmpty(text) || text.Length < 30) return false;
-
-            // Check for repeated substrings of length 15+
-            for (int len = 15; len <= Math.Min(50, text.Length / 3); len++)
-            {
-                for (int start = 0; start <= text.Length - len * threshold; start++)
-                {
-                    string fragment = text.Substring(start, len);
-                    int count = 0;
-                    int idx = 0;
-                    while ((idx = text.IndexOf(fragment, idx)) != -1)
-                    {
-                        count++;
-                        idx += 1;
-                        if (count >= threshold) return true;
-                    }
-                }
-            }
-            return false;
-        }
-
         public class PatternEntry
         {
             public string OriginalPattern;
@@ -2272,13 +2246,6 @@ namespace UnityGameTranslator.Core
 
                 if (!string.IsNullOrEmpty(translation))
                 {
-                    // Post-validate: check for hallucination (repeated fragments)
-                    if (DetectHallucination(translation))
-                    {
-                        Adapter?.LogWarning($"[AI] Hallucination detected (repeated fragments), discarding: {translation.Substring(0, Math.Min(80, translation.Length))}...");
-                        return null;
-                    }
-
                     // Validate tag placeholders are preserved
                     if (extractedTags != null && extractedTags.Count > 0)
                         ValidateMarkupTags(translation, extractedTags.Count, textToTranslate);

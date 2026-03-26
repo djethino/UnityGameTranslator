@@ -588,6 +588,110 @@ namespace UnityGameTranslator.Core
             @"(?<!\[!v\*)(-?\d+(?:[.,]\d+)?%?)",
             RegexOptions.Compiled);
 
+        // Matches any XML/HTML-like tag: <tag>, </tag>, <tag attr="val">, <tag/>, etc.
+        private static readonly Regex MarkupTagPattern = new Regex(
+            @"<[^>]+>",
+            RegexOptions.Compiled);
+
+        private const string TagPlaceholderPrefix = "[!t*";
+        private const string TagPlaceholderSuffix = "]";
+
+        /// <summary>
+        /// Extract markup tags from text, replacing them with [!t*N] placeholders.
+        /// Returns the processed text and the list of extracted tags.
+        /// </summary>
+        public static string ExtractMarkupTags(string text, out List<string> extractedTags)
+        {
+            extractedTags = new List<string>();
+            if (string.IsNullOrEmpty(text))
+                return text;
+
+            var matches = MarkupTagPattern.Matches(text);
+            if (matches.Count == 0)
+                return text;
+
+            var result = new StringBuilder(text.Length);
+            int lastIndex = 0;
+
+            foreach (Match match in matches)
+            {
+                // Append text before this tag
+                result.Append(text, lastIndex, match.Index - lastIndex);
+                // Replace tag with placeholder
+                int tagIndex = extractedTags.Count;
+                extractedTags.Add(match.Value);
+                result.Append(TagPlaceholderPrefix).Append(tagIndex).Append(TagPlaceholderSuffix);
+                lastIndex = match.Index + match.Length;
+            }
+
+            // Append remaining text after last tag
+            result.Append(text, lastIndex, text.Length - lastIndex);
+            return result.ToString();
+        }
+
+        /// <summary>
+        /// Restore [!t*N] placeholders back to their original markup tags.
+        /// </summary>
+        public static string RestoreMarkupTags(string text, List<string> tags)
+        {
+            if (string.IsNullOrEmpty(text) || tags == null || tags.Count == 0)
+                return text;
+
+            string result = text;
+            for (int i = 0; i < tags.Count; i++)
+            {
+                result = result.Replace($"{TagPlaceholderPrefix}{i}{TagPlaceholderSuffix}", tags[i]);
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// Validate that all [!t*N] placeholders are present in the AI response.
+        /// Logs warnings for missing tags but does not reject the translation.
+        /// </summary>
+        private static void ValidateMarkupTags(string translation, int expectedCount, string originalText)
+        {
+            if (expectedCount == 0) return;
+
+            int missing = 0;
+            for (int i = 0; i < expectedCount; i++)
+            {
+                if (!translation.Contains($"{TagPlaceholderPrefix}{i}{TagPlaceholderSuffix}"))
+                    missing++;
+            }
+
+            if (missing > 0)
+            {
+                Adapter?.LogWarning($"[AI] Translation missing {missing}/{expectedCount} tag placeholders for: {originalText.Substring(0, Math.Min(60, originalText.Length))}...");
+            }
+        }
+
+        /// <summary>
+        /// Detect hallucination: same fragment repeated more than threshold times.
+        /// </summary>
+        private static bool DetectHallucination(string text, int threshold = 3)
+        {
+            if (string.IsNullOrEmpty(text) || text.Length < 30) return false;
+
+            // Check for repeated substrings of length 15+
+            for (int len = 15; len <= Math.Min(50, text.Length / 3); len++)
+            {
+                for (int start = 0; start <= text.Length - len * threshold; start++)
+                {
+                    string fragment = text.Substring(start, len);
+                    int count = 0;
+                    int idx = 0;
+                    while ((idx = text.IndexOf(fragment, idx)) != -1)
+                    {
+                        count++;
+                        idx += 1;
+                        if (count >= threshold) return true;
+                    }
+                }
+            }
+            return false;
+        }
+
         public class PatternEntry
         {
             public string OriginalPattern;
@@ -2007,18 +2111,7 @@ namespace UnityGameTranslator.Core
                     promptBuilder.AppendLine("- Do not add punctuation if not in the source to translate");
                     promptBuilder.AppendLine("- Keep technical terms unchanged: API, URL, UUID, JSON, AI");
                     promptBuilder.AppendLine("- Keep keyboard shortcuts as-is: Ctrl, Alt, Shift, F1-F12, Tab, Esc");
-                    if (textWithPlaceholders.Contains("<"))
-                    {
-                        promptBuilder.AppendLine("- Preserve formatting tags and special characters from the source text as-is");
-                    }
-                    if (textWithPlaceholders.Contains("\n"))
-                    {
-                        promptBuilder.AppendLine("- IMPORTANT: Keep [!nl] placeholders exactly where they are, do not remove or move them");
-                    }
-                    if (extractedNumbers != null && extractedNumbers.Count > 0)
-                    {
-                        promptBuilder.AppendLine("- IMPORTANT: Keep [!v*0], [!v*1], etc. placeholders exactly as-is, do not modify them");
-                    }
+                    promptBuilder.AppendLine("- All [!...] markers (like [!v*0], [!t*1], [!nl]) are internal placeholders — keep them exactly as-is, do not translate, modify or remove them");
 
                     if (textType == TextType.SingleWord)
                     {
@@ -2058,18 +2151,7 @@ namespace UnityGameTranslator.Core
                     promptBuilder.AppendLine("- Keep it concise for UI");
                     promptBuilder.AppendLine("- Do not add punctuation if not in the source to translate");
                     promptBuilder.AppendLine("- Keep unchanged: keyboard keys (Tab, Esc, Space...), technical settings (VSync, Auto)");
-                    if (textWithPlaceholders.Contains("<"))
-                    {
-                        promptBuilder.AppendLine("- Preserve formatting tags and special characters from the source text as-is");
-                    }
-                    if (textWithPlaceholders.Contains("\n"))
-                    {
-                        promptBuilder.AppendLine("- IMPORTANT: Keep [!nl] placeholders exactly where they are, do not remove or move them");
-                    }
-                    if (extractedNumbers != null && extractedNumbers.Count > 0)
-                    {
-                        promptBuilder.AppendLine("- IMPORTANT: Keep [!v*0], [!v*1], etc. placeholders exactly as-is, do not modify them");
-                    }
+                    promptBuilder.AppendLine("- All [!...] markers (like [!v*0], [!t*1], [!nl]) are internal placeholders — keep them exactly as-is, do not translate, modify or remove them");
 
                     if (textType == TextType.SingleWord)
                     {
@@ -2088,9 +2170,18 @@ namespace UnityGameTranslator.Core
 
                 // Build messages list
                 bool isThinkingModel = IsThinkingModel(Config.ai_model);
-                // Replace \n with placeholder so the AI preserves them as structural elements.
-                // Without this, the AI often drops \n or merges lines during translation.
+
+                // Pre-process text: replace structural elements with placeholders
+                // so the AI only sees translatable text.
+                // 1. Line breaks → [!nl]
                 string textForAI = textToTranslate.Replace("\n", "[!nl]");
+                // 2. Markup tags (<color=...>, </b>, etc.) → [!t*N]
+                List<string> extractedTags = null;
+                textForAI = ExtractMarkupTags(textForAI, out extractedTags);
+
+                if (Config.debug_ai && extractedTags != null && extractedTags.Count > 0)
+                    Adapter?.LogInfo($"[AI] Extracted {extractedTags.Count} markup tags from text");
+
                 string userContent = isThinkingModel ? textForAI + " /no_think" : textForAI;
 
                 var messagesArray = new JArray
@@ -2181,12 +2272,26 @@ namespace UnityGameTranslator.Core
 
                 if (!string.IsNullOrEmpty(translation))
                 {
-                    // Restore \n from placeholder
+                    // Post-validate: check for hallucination (repeated fragments)
+                    if (DetectHallucination(translation))
+                    {
+                        Adapter?.LogWarning($"[AI] Hallucination detected (repeated fragments), discarding: {translation.Substring(0, Math.Min(80, translation.Length))}...");
+                        return null;
+                    }
+
+                    // Validate tag placeholders are preserved
+                    if (extractedTags != null && extractedTags.Count > 0)
+                        ValidateMarkupTags(translation, extractedTags.Count, textToTranslate);
+
+                    // Restore placeholders in reverse order of extraction:
+                    // 1. Markup tags [!t*N] → original tags
+                    translation = RestoreMarkupTags(translation, extractedTags);
+                    // 2. Line breaks [!nl] → \n
                     translation = translation.Replace("[!nl]", "\n");
                     translation = CleanTranslation(translation);
                     if (Config.debug_ai)
                     {
-                        Adapter?.LogInfo($"[AI Clean] {translation?.Substring(0, Math.Min(50, translation?.Length ?? 0))}");
+                        Adapter?.LogInfo($"[AI Clean] {translation?.Substring(0, Math.Min(80, translation?.Length ?? 0))}");
                     }
                 }
 

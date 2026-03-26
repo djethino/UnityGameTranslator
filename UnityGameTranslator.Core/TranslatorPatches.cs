@@ -1882,22 +1882,46 @@ namespace UnityGameTranslator.Core
         {
             if (compId == -1 || string.IsNullOrEmpty(currentText)) return;
             if (!_typewritingState.TryGetValue(compId, out var state)) return;
-            if (state.Queued) return; // Already finalized, don't touch
 
-            // Only touch if the text is growing (typewriting continuation) or same text.
-            // Do NOT update state.Text with unrelated text (e.g. translations set via
-            // ApplyTranslationToComponents that are not part of the typewriting sequence).
             bool isGrowing = currentText.Length > state.Text.Length && currentText.StartsWith(state.Text);
             bool isSame = currentText == state.Text;
-            if (!isGrowing && !isSame) return; // Unrelated text, don't touch
+
+            if (state.Queued)
+            {
+                if (_dbgTouchLog < 10 && (isGrowing || isSame))
+                {
+                    _dbgTouchLog++;
+                    TranslatorCore.LogInfo($"[TW-TOUCH] comp={compId} BLOCKED by Queued=true, isGrowing={isGrowing} isSame={isSame} stateText='{(state.Text.Length > 30 ? state.Text.Substring(0,30) : state.Text)}' curText='{(currentText.Length > 30 ? currentText.Substring(0,30) : currentText)}'");
+                }
+                return;
+            }
+
+            if (!isGrowing && !isSame)
+            {
+                if (_dbgTouchLog < 10)
+                {
+                    _dbgTouchLog++;
+                    TranslatorCore.LogInfo($"[TW-TOUCH] comp={compId} SKIP unrelated stateText='{(state.Text.Length > 30 ? state.Text.Substring(0,30) : state.Text)}' curText='{(currentText.Length > 30 ? currentText.Substring(0,30) : currentText)}'");
+                }
+                return;
+            }
+
+            if (_dbgTouchLog < 10)
+            {
+                _dbgTouchLog++;
+                TranslatorCore.LogInfo($"[TW-TOUCH] comp={compId} OK isGrowing={isGrowing} text='{(currentText.Length > 30 ? currentText.Substring(0,30) : currentText)}'");
+            }
 
             _typewritingState[compId] = new TypewritingState
             {
-                Text = isGrowing ? currentText : state.Text, // Only update text if growing
+                Text = isGrowing ? currentText : state.Text,
                 Timestamp = Time.realtimeSinceStartup,
                 Queued = false
             };
+            _activeTypewriting.Add(compId);
         }
+
+        private static int _dbgTwProgress = 0;
 
         public static bool IsTypewritingInProgress(int compId, string newText)
         {
@@ -1915,6 +1939,13 @@ namespace UnityGameTranslator.Core
 
                 float elapsed = (now - state.Timestamp) * 1000f;
                 bool isGrowing = newText.Length > state.Text.Length && newText.StartsWith(state.Text);
+
+                // Log every call for typewriting components with growing text
+                if (_dbgTwProgress < 30 && newText.Length <= 40)
+                {
+                    _dbgTwProgress++;
+                    TranslatorCore.LogInfo($"[TW-CHECK] comp={compId} prev={state.Text.Length}c new={newText.Length}c growing={isGrowing} elapsed={elapsed:F0}ms queued={state.Queued} text='{(newText.Length > 30 ? newText.Substring(0,30) : newText)}'");
+                }
 
                 if (isGrowing && elapsed < TYPEWRITING_STABILIZE_MS)
                 {
@@ -1937,6 +1968,11 @@ namespace UnityGameTranslator.Core
             }
 
             // First time — defer for stabilization
+            if (_dbgTwProgress < 30 && newText.Length <= 40)
+            {
+                _dbgTwProgress++;
+                TranslatorCore.LogInfo($"[TW-NEW] comp={compId} FIRST text='{(newText.Length > 30 ? newText.Substring(0,30) : newText)}'");
+            }
             _typewritingState[compId] = new TypewritingState { Text = newText, Timestamp = now };
             _activeTypewriting.Add(compId);
             return true;
@@ -2157,6 +2193,23 @@ namespace UnityGameTranslator.Core
                 string preTranslateText = textValue;
                 textValue = TranslatorCore.TranslateTextWithTracking(textValue, comp, isOwnUI);
 
+                // Detect missed SetFont: text was translated but HasCachedTranslation said no
+                if (unityCloneFont != null && textValue != preTranslateText && componentType == "Unity")
+                {
+                    object curFont = TypeHelper.GetFont(__instance);
+                    string curFontName = (curFont is UnityEngine.Object cfo) ? cfo.name : null;
+                    if (curFontName != unityCloneFallback)
+                    {
+                        // SetFont was missed — apply it now
+                        TypeHelper.SetFont(__instance, unityCloneFont);
+                        if (_dbgMissedSetFont < 10)
+                        {
+                            _dbgMissedSetFont++;
+                            TranslatorCore.LogInfo($"[MISSED-SETFONT] comp={compId} text='{(preTranslateText.Length > 30 ? preTranslateText.Substring(0,30) : preTranslateText)}' HasCached was false but translated!");
+                        }
+                    }
+                }
+
                 // Ensure chars are in the clone's atlas — always when a clone is active.
                 if (unityCloneFont != null && !string.IsNullOrEmpty(textValue))
                 {
@@ -2234,6 +2287,8 @@ namespace UnityGameTranslator.Core
         [ThreadStatic] private static bool _bypassFontSizePrefix;
         // Components that inherited a clone font from template — skip ApplyFontScale (already scaled)
         private static readonly HashSet<int> _inheritedCloneComponents = new HashSet<int>();
+        private static int _dbgMissedSetFont = 0;
+        private static int _dbgTouchLog = 0;
         public static bool BypassFontSizePrefix { get => _bypassFontSizePrefix; set => _bypassFontSizePrefix = value; }
 
         public static void TMPText_SetFontSize_Prefix(object __instance, ref float value)

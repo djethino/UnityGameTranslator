@@ -2421,6 +2421,7 @@ namespace UnityGameTranslator.Core
         /// Used to decide whether to apply the clone font before translation.
         /// </summary>
         private static int _dbgTwCacheHit = 0;
+        private static int _dbgReverseMiss = 0;
 
         public static bool HasCachedTranslation(string text)
         {
@@ -2807,11 +2808,42 @@ namespace UnityGameTranslator.Core
                     return text;
                 }
 
+                // TEMP LOG: if text contains Latin chars and wasn't caught by reverse cache
+                if (_dbgReverseMiss < 10 && text.Length > 5)
+                {
+                    bool hasLatin = false;
+                    foreach (char c in text)
+                    {
+                        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'))
+                        { hasLatin = true; break; }
+                    }
+                    if (hasLatin)
+                    {
+                        _dbgReverseMiss++;
+                        LogInfo($"[REVERSE-MISS] orig({text.Length}c)='{text}'\n  norm({trimmedNormalized.Length}c)='{trimmedNormalized}'");
+                    }
+                }
+
                 // Own UI text that's already translated (displayed result) — don't re-queue
                 // The mod UI shows translated text; re-queueing it creates an infinite loop
                 if (isOwnUI)
                 {
                     return text;
+                }
+
+                // Skip invisible components — don't waste AI calls on hidden text.
+                // Cache hits are handled above (invisible components still get cached translations).
+                // If the component becomes visible later, OnEnable or set_text will translate it.
+                if (component is Component visComp)
+                {
+                    try
+                    {
+                        if (visComp.gameObject != null && !visComp.gameObject.activeInHierarchy)
+                        {
+                            return text;
+                        }
+                    }
+                    catch { }
                 }
 
                 // Typewriting detection: skip queuing if text is growing char by char

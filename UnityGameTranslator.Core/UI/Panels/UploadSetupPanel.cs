@@ -171,13 +171,22 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             SetActive(true);
 
-            // Pre-search with detected game name to help user confirm the correct game
+            // Auto-select detected game: search by steam_id first, fall back to local detection.
+            // Server creates the game on upload if it doesn't exist yet.
             var currentGame = TranslatorCore.CurrentGame;
-            if (currentGame != null && !string.IsNullOrEmpty(currentGame.name) && _gameSearchInput != null)
+            if (currentGame != null && !string.IsNullOrEmpty(currentGame.name))
             {
-                _gameSearchInput.Text = currentGame.name;
-                // Trigger search automatically
-                PerformGameSearch();
+                if (!string.IsNullOrEmpty(currentGame.steam_id))
+                {
+                    // Search server by steam_id to get the canonical name/image if it exists
+                    AutoSelectBySteamId(currentGame);
+                }
+                else if (_gameSearchInput != null)
+                {
+                    // No steam_id — help user find the game via search
+                    _gameSearchInput.Text = currentGame.name;
+                    PerformGameSearch();
+                }
             }
         }
 
@@ -334,6 +343,48 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
 
             UpdateValidation();
+        }
+
+        private async void AutoSelectBySteamId(GameInfo detectedGame)
+        {
+            try
+            {
+                // Search server by steam_id to get canonical info (name, image)
+                var result = await ApiClient.SearchGamesExternal(null, detectedGame.steam_id);
+
+                TranslatorUIManager.RunOnMainThread(() =>
+                {
+                    if (result.Success && result.Games != null && result.Games.Count > 0)
+                    {
+                        // Game exists on server — use the server's canonical info
+                        var serverGame = result.Games[0];
+                        _selectedGame = new GameInfo
+                        {
+                            name = serverGame.Name,
+                            steam_id = serverGame.SteamId
+                        };
+                    }
+                    else
+                    {
+                        // Game not on server yet — use local detection.
+                        // Server will create it on upload via findOrCreateGame.
+                        _selectedGame = detectedGame;
+                    }
+
+                    RefreshGameDisplay();
+                    UpdateValidation();
+                });
+            }
+            catch
+            {
+                // Network error — fall back to local detection
+                TranslatorUIManager.RunOnMainThread(() =>
+                {
+                    _selectedGame = detectedGame;
+                    RefreshGameDisplay();
+                    UpdateValidation();
+                });
+            }
         }
 
         private async void PerformGameSearch()

@@ -82,6 +82,9 @@ namespace UnityGameTranslator.Core.UI.Panels
         private Toggle _deeplUseFreeToggle;
         private Text _deeplTestStatusLabel;
 
+        // Rate limit
+        private InputFieldRef _rateLimitDelayInput;
+
         // Online section
         private Toggle _onlineModeToggle;
         private Toggle _checkUpdatesToggle;
@@ -139,6 +142,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             public string google_api_key;
             public string deepl_api_key;
             public bool deepl_use_free;
+            public float rate_limit_retry_delay;
             public bool online_mode;
             public bool check_update_on_start;
             public bool notify_updates;
@@ -167,6 +171,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     google_api_key = TranslatorCore.Config.google_api_key ?? "",
                     deepl_api_key = TranslatorCore.Config.deepl_api_key ?? "",
                     deepl_use_free = TranslatorCore.Config.deepl_use_free,
+                    rate_limit_retry_delay = TranslatorCore.Config.rate_limit_retry_delay,
                     online_mode = TranslatorCore.Config.online_mode,
                     check_update_on_start = TranslatorCore.Config.sync.check_update_on_start,
                     notify_updates = TranslatorCore.Config.sync.notify_updates,
@@ -649,6 +654,27 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             var deeplHint = UIStyles.CreateHint(_deeplSection, "DeepLHint", "Uncheck for Pro API (api.deepl.com). Free plan: 500k chars/month");
             RegisterUIText(deeplHint);
+
+            // Rate limit retry delay (shared across all backends)
+            UIStyles.CreateSpacer(_backendTypeSection, 10);
+            var rateLimitRow = UIStyles.CreateFormRow(_backendTypeSection, "RateLimitRow", UIStyles.InputHeight, 5);
+            var rateLimitLabel = UIFactory.CreateLabel(rateLimitRow, "RateLimitLabel", "Rate limit retry:", TextAnchor.MiddleLeft);
+            rateLimitLabel.color = UIStyles.TextSecondary;
+            UIFactory.SetLayoutElement(rateLimitLabel.gameObject, minWidth: 110);
+            RegisterUIText(rateLimitLabel);
+
+            _rateLimitDelayInput = UIFactory.CreateInputField(rateLimitRow, "RateLimitDelay", "3");
+            _rateLimitDelayInput.Component.contentType = UnityEngine.UI.InputField.ContentType.DecimalNumber;
+            UIFactory.SetLayoutElement(_rateLimitDelayInput.Component.gameObject, minWidth: 50, minHeight: UIStyles.InputHeight);
+            UIStyles.SetBackground(_rateLimitDelayInput.Component.gameObject, UIStyles.InputBackground);
+
+            var rateLimitUnit = UIFactory.CreateLabel(rateLimitRow, "RateLimitUnit", "seconds", TextAnchor.MiddleLeft);
+            rateLimitUnit.color = UIStyles.TextMuted;
+            UIFactory.SetLayoutElement(rateLimitUnit.gameObject, flexibleWidth: 9999);
+            RegisterUIText(rateLimitUnit);
+
+            var rateLimitHint = UIStyles.CreateHint(_backendTypeSection, "RateLimitHint", "Delay before retrying after a rate limit error (HTTP 429)");
+            RegisterUIText(rateLimitHint);
 
             // Initial visibility - all hidden until UpdateBackendSections
             _backendTypeSection.SetActive(false);
@@ -1559,6 +1585,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _googleApiKeyInput.Text = TranslatorCore.Config.google_api_key ?? "";
             _deeplApiKeyInput.Text = TranslatorCore.Config.deepl_api_key ?? "";
             _deeplUseFreeToggle.isOn = TranslatorCore.Config.deepl_use_free;
+            _rateLimitDelayInput.Text = TranslatorCore.Config.rate_limit_retry_delay.ToString();
             string currentModel = TranslatorCore.Config.ai_model ?? "";
             if (!string.IsNullOrEmpty(currentModel))
             {
@@ -2027,6 +2054,11 @@ namespace UnityGameTranslator.Core.UI.Panels
                 string deeplKey = _deeplApiKeyInput?.Text;
                 TranslatorCore.Config.deepl_api_key = !string.IsNullOrEmpty(deeplKey) ? deeplKey : null;
                 TranslatorCore.Config.deepl_use_free = _deeplUseFreeToggle.isOn;
+                float rateLimitDelay;
+                if (float.TryParse(_rateLimitDelayInput?.Text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out rateLimitDelay) && rateLimitDelay >= 0.1f)
+                    TranslatorCore.Config.rate_limit_retry_delay = rateLimitDelay;
+                else
+                    TranslatorCore.Config.rate_limit_retry_delay = 3f;
 
                 // Online mode - detect transition for sync stream management
                 bool wasOnline = TranslatorCore.Config.online_mode;
@@ -2187,6 +2219,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _gameContextInput.OnValueChanged += _ => UpdateApplyButtonText();
             _googleApiKeyInput.OnValueChanged += _ => UpdateApplyButtonText();
             _deeplApiKeyInput.OnValueChanged += _ => UpdateApplyButtonText();
+            _rateLimitDelayInput.OnValueChanged += _ => UpdateApplyButtonText();
 
             // Language dropdowns - hook into their change events
             _sourceLanguageDropdown.OnSelectionChanged += _ => UpdateApplyButtonText();
@@ -2232,6 +2265,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             if ((_googleApiKeyInput?.Text ?? "") != _initialSnapshot.google_api_key) count++;
             if ((_deeplApiKeyInput?.Text ?? "") != _initialSnapshot.deepl_api_key) count++;
             if (_deeplUseFreeToggle.isOn != _initialSnapshot.deepl_use_free) count++;
+            float parsedDelay;
+            float currentDelay = (float.TryParse(_rateLimitDelayInput?.Text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out parsedDelay) && parsedDelay >= 0.1f) ? parsedDelay : 3f;
+            if (Math.Abs(currentDelay - _initialSnapshot.rate_limit_retry_delay) > 0.01f) count++;
 
             // Online
             if (_onlineModeToggle.isOn != _initialSnapshot.online_mode) count++;

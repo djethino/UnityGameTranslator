@@ -969,6 +969,7 @@ namespace UnityGameTranslator.Core
                         ? TokenProtection.EncryptToken(Config.deepl_api_key)
                         : null,
                     deepl_use_free = Config.deepl_use_free,
+                    rate_limit_retry_delay = Config.rate_limit_retry_delay,
 
                     // General settings
                     capture_keys_only = Config.capture_keys_only,
@@ -2094,10 +2095,12 @@ namespace UnityGameTranslator.Core
                                         translationQueue.Enqueue(originalText);
                                     }
                                 }
-                                Adapter?.LogWarning($"[Worker] Rate limited — re-queued, backing off 5s ({translationQueue.Count} pending)");
-                                // Backoff: wait before retrying
-                                for (int i = 0; i < 50 && !ShuttingDown; i++)
-                                    Thread.Sleep(100);
+                                float delaySec = Math.Max(0.1f, Config.rate_limit_retry_delay);
+                                Adapter?.LogWarning($"[Worker] Rate limited — re-queued, backing off {delaySec:F1}s ({translationQueue.Count} pending)");
+                                // Backoff: wait before retrying (in small increments to respond to shutdown)
+                                int delayMs = (int)(delaySec * 1000);
+                                for (int i = 0; i < delayMs && !ShuttingDown; i += 100)
+                                    Thread.Sleep(Math.Min(100, delayMs - i));
                             }
 
                             if (!string.IsNullOrEmpty(translation))
@@ -3729,6 +3732,12 @@ namespace UnityGameTranslator.Core
         // DeepL API settings
         public string deepl_api_key { get; set; } = null;
         public bool deepl_use_free { get; set; } = true;
+
+        /// <summary>
+        /// Delay in seconds before retrying after a rate limit (HTTP 429).
+        /// Applies to all backends (LLM, Google, DeepL). Supports decimals (e.g., 0.5).
+        /// </summary>
+        public float rate_limit_retry_delay { get; set; } = 3f;
 
         /// <summary>
         /// Returns true if any translation backend is enabled (LLM, Google, or DeepL).

@@ -1752,7 +1752,7 @@ namespace UnityGameTranslator.Core
                 string jsonRequest = JsonConvert.SerializeObject(requestBody);
                 var content = new StringContent(jsonRequest, Encoding.UTF8, "application/json");
 
-                var request = new HttpRequestMessage(HttpMethod.Post, $"{Config.ai_url.TrimEnd('/')}/v1/chat/completions");
+                var request = new HttpRequestMessage(HttpMethod.Post, ResolveAIEndpoint(Config.ai_url, "chat/completions"));
                 request.Content = content;
                 AddAIAuthHeader(request);
 
@@ -1785,6 +1785,36 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Resolve an OpenAI-compatible endpoint from the user's base URL.
+        /// Handles various URL formats:
+        ///   "http://localhost:11434"                              + "/chat/completions" → .../v1/chat/completions
+        ///   "https://api.groq.com/openai/v1"                     + "/chat/completions" → .../v1/chat/completions
+        ///   "https://generativelanguage.googleapis.com/.../openai" + "/chat/completions" → .../openai/chat/completions
+        ///   "https://example.com/v1/chat/completions"            + "/chat/completions" → unchanged
+        /// </summary>
+        private static string ResolveAIEndpoint(string baseUrl, string path)
+        {
+            string url = baseUrl.TrimEnd('/');
+            string trimmedPath = path.TrimStart('/');
+
+            // Already contains the full path (user pasted the complete endpoint)
+            if (url.EndsWith("/" + trimmedPath) || url.EndsWith(trimmedPath))
+                return url;
+
+            // URL contains /v1/ somewhere (e.g., .../openai/v1/something) — strip back to /v1 and append path
+            int v1Index = url.LastIndexOf("/v1/");
+            if (v1Index >= 0)
+                return url.Substring(0, v1Index + 3) + "/" + trimmedPath;
+
+            // URL ends with /v1 — just append the path (e.g., /chat/completions)
+            if (url.EndsWith("/v1"))
+                return url + "/" + trimmedPath;
+
+            // Default — add /v1/ prefix to path (backwards compatible: Ollama, etc.)
+            return url + "/v1/" + trimmedPath;
+        }
+
+        /// <summary>
         /// Test connection to AI server via OpenAI-compatible /v1/models endpoint.
         /// </summary>
         /// <param name="url">The server URL to test</param>
@@ -1794,7 +1824,7 @@ namespace UnityGameTranslator.Core
         {
             try
             {
-                var request = new HttpRequestMessage(HttpMethod.Get, url.TrimEnd('/') + "/v1/models");
+                var request = new HttpRequestMessage(HttpMethod.Get, ResolveAIEndpoint(url, "models"));
                 if (!string.IsNullOrEmpty(apiKey))
                 {
                     request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
@@ -1884,7 +1914,7 @@ namespace UnityGameTranslator.Core
         {
             try
             {
-                var request = new HttpRequestMessage(HttpMethod.Get, url.TrimEnd('/') + "/v1/models");
+                var request = new HttpRequestMessage(HttpMethod.Get, ResolveAIEndpoint(url, "models"));
                 if (!string.IsNullOrEmpty(apiKey))
                 {
                     request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
@@ -2379,7 +2409,7 @@ namespace UnityGameTranslator.Core
                     requestObj["think"] = false;
                 }
 
-                string aiEndpoint = $"{Config.ai_url.TrimEnd('/')}/v1/chat/completions";
+                string aiEndpoint = ResolveAIEndpoint(Config.ai_url, "chat/completions");
                 string jsonRequest = requestObj.ToString(Newtonsoft.Json.Formatting.None);
                 var httpContent = new StringContent(jsonRequest, Encoding.UTF8, "application/json");
 

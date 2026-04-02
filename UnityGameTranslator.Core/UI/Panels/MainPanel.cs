@@ -736,9 +736,9 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 case LayoutState.NoLocal:
                     // No local translation - guide user
-                    if (TranslatorCore.Config.enable_ai)
+                    if (TranslatorCore.Config.IsTranslationEnabled)
                     {
-                        message = "Use AI to translate captured text, or download a community translation.";
+                        message = "Auto-translation active. Captured text will be translated, or download a community translation.";
                     }
                     else
                     {
@@ -977,10 +977,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
 
             // AI status
-            if (TranslatorCore.Config.enable_ai)
+            if (TranslatorCore.Config.IsTranslationEnabled)
             {
                 int queueCount = TranslatorCore.QueueCount;
-                _aiStatusLabel.text = queueCount > 0 ? $"AI: {queueCount} in queue" : "AI: Ready";
+                string backendLabel = TranslatorCore.Config.translation_backend == "llm" ? "AI" :
+                    TranslatorCore.Config.translation_backend == "google" ? "Google" : "DeepL";
+                _aiStatusLabel.text = queueCount > 0 ? $"{backendLabel}: {queueCount} in queue" : $"{backendLabel}: Ready";
             }
             else
             {

@@ -315,7 +315,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 !TranslatorUIManager.NotificationDismissed;
 
             // 3. AI queue status
-            bool aiEnabled = TranslatorCore.Config.enable_ai;
+            bool aiEnabled = TranslatorCore.Config.IsTranslationEnabled;
             int queueCount = TranslatorCore.QueueCount;
             bool isTranslating = TranslatorCore.IsTranslating;
             bool showAI = aiEnabled && (queueCount > 0 || isTranslating);
@@ -458,7 +458,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
 
             // 3. AI queue status
-            bool aiEnabled = TranslatorCore.Config.enable_ai;
+            bool aiEnabled = TranslatorCore.Config.IsTranslationEnabled;
             int queueCount = TranslatorCore.QueueCount;
             bool isTranslating = TranslatorCore.IsTranslating;
             bool showAI = aiEnabled && (queueCount > 0 || isTranslating);

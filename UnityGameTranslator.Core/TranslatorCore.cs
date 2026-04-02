@@ -720,15 +720,22 @@ namespace UnityGameTranslator.Core
 
             StartTranslationWorker();
 
-            if (Config.preload_model && Config.enable_ai)
+            if (Config.preload_model && Config.enable_ai && Config.translation_backend == "llm")
             {
                 PreloadModel();
             }
 
             Adapter.LogInfo($"UnityGameTranslator v{PluginInfo.Version} initialized!");
-            if (Config.enable_ai)
+            if (Config.IsTranslationEnabled)
             {
-                Adapter.LogInfo($"AI: ENABLED - Model: {Config.ai_model} - URL: {Config.ai_url}");
+                string backendName = Config.translation_backend == "llm"
+                    ? $"LLM ({Config.ai_model} @ {Config.ai_url})"
+                    : Config.translation_backend == "google"
+                        ? "Google Translate"
+                        : Config.translation_backend == "deepl"
+                            ? $"DeepL ({(Config.deepl_use_free ? "Free" : "Pro")})"
+                            : Config.translation_backend;
+                Adapter.LogInfo($"Translation: ENABLED - Backend: {backendName}");
             }
             string srcLang = Config.GetSourceLanguage() ?? "auto-detect";
             string tgtLang = Config.GetTargetLanguage();
@@ -884,12 +891,38 @@ namespace UnityGameTranslator.Core
                     }
                 }
 
+                // Decrypt Google API key if present
+                if (!string.IsNullOrEmpty(Config.google_api_key))
+                {
+                    string decryptedKey = TokenProtection.DecryptToken(Config.google_api_key);
+                    if (decryptedKey != null)
+                        Config.google_api_key = decryptedKey;
+                    else
+                    {
+                        Adapter.LogWarning("Failed to decrypt Google API key - clearing it");
+                        Config.google_api_key = null;
+                    }
+                }
+
+                // Decrypt DeepL API key if present
+                if (!string.IsNullOrEmpty(Config.deepl_api_key))
+                {
+                    string decryptedKey = TokenProtection.DecryptToken(Config.deepl_api_key);
+                    if (decryptedKey != null)
+                        Config.deepl_api_key = decryptedKey;
+                    else
+                    {
+                        Adapter.LogWarning("Failed to decrypt DeepL API key - clearing it");
+                        Config.deepl_api_key = null;
+                    }
+                }
+
                 if (Config._configMigrated)
                 {
                     LogDebug($"[Config] Migrated old Ollama config -> AI config (enable_ai={Config.enable_ai}, ai_url={Config.ai_url}, ai_model={Config.ai_model})");
                     SaveConfig(); // Persist migrated config with new field names
                 }
-                LogDebug($"Loaded config (enable_translations={Config.enable_translations}, enable_ai={Config.enable_ai}, ai_url={Config.ai_url}, ai_model={Config.ai_model})");
+                LogDebug($"Loaded config (enable_translations={Config.enable_translations}, backend={Config.translation_backend}, ai_url={Config.ai_url}, ai_model={Config.ai_model})");
             }
             catch (Exception e)
             {
@@ -904,7 +937,10 @@ namespace UnityGameTranslator.Core
                 // Create a copy for serialization with encrypted tokens
                 var configToSave = new ModConfig
                 {
-                    // AI Translation settings
+                    // Translation backend
+                    translation_backend = Config.translation_backend,
+
+                    // LLM Translation settings
                     ai_url = Config.ai_url,
                     ai_model = Config.ai_model,
                     target_language = Config.target_language,
@@ -923,9 +959,21 @@ namespace UnityGameTranslator.Core
                         ? TokenProtection.EncryptToken(Config.ai_api_key)
                         : null,
 
+                    // Google Translate settings
+                    google_api_key = !string.IsNullOrEmpty(Config.google_api_key)
+                        ? TokenProtection.EncryptToken(Config.google_api_key)
+                        : null,
+
+                    // DeepL settings
+                    deepl_api_key = !string.IsNullOrEmpty(Config.deepl_api_key)
+                        ? TokenProtection.EncryptToken(Config.deepl_api_key)
+                        : null,
+                    deepl_use_free = Config.deepl_use_free,
+
                     // General settings
                     capture_keys_only = Config.capture_keys_only,
                     translate_mod_ui = Config.translate_mod_ui,
+                    translate_localization_fallback = Config.translate_localization_fallback,
                     first_run_completed = Config.first_run_completed,
                     online_mode = Config.online_mode,
                     enable_translations = Config.enable_translations,
@@ -936,6 +984,7 @@ namespace UnityGameTranslator.Core
                     api_token_server = Config.api_token_server,
                     api_base_url = Config.api_base_url,
                     website_base_url = Config.website_base_url,
+                    sse_base_url = Config.sse_base_url,
                     sync = Config.sync,
                     window_preferences = Config.window_preferences,
                     // Encrypt API token before saving
@@ -1627,12 +1676,22 @@ namespace UnityGameTranslator.Core
         }
 
         private static bool workerRunning = false;
+        /// <summary>
+        /// Set to true by the worker thread when new translations are cached.
+        /// Consumed by the scanner to trigger a visual refresh on the main thread.
+        /// </summary>
+        public static volatile bool PendingVisualRefresh = false;
+        /// <summary>
+        /// Set to true by API translation methods when a rate limit (429) is received.
+        /// The worker checks this to re-queue the text and backoff.
+        /// </summary>
+        private static volatile bool _apiRateLimited = false;
 
         private static void StartTranslationWorker()
         {
-            if (!Config.enable_ai)
+            if (!Config.IsTranslationEnabled)
             {
-                Adapter?.LogWarning("[Worker] Cannot start: enable_ai is false");
+                Adapter?.LogWarning("[Worker] Cannot start: no translation backend enabled");
                 return;
             }
             if (workerRunning) return; // Already running
@@ -1650,9 +1709,9 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static void EnsureWorkerRunning()
         {
-            if (Config.enable_ai && !workerRunning)
+            if (Config.IsTranslationEnabled && !workerRunning)
             {
-                LogDebug("[TranslatorCore] Starting AI worker thread...");
+                LogDebug("[TranslatorCore] Starting translation worker thread...");
                 StartTranslationWorker();
             }
         }
@@ -1750,6 +1809,71 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Test Google Translate API connection by translating a sample word.
+        /// </summary>
+        public static async System.Threading.Tasks.Task<bool> TestGoogleConnection(string apiKey)
+        {
+            try
+            {
+                var requestObj = new JObject
+                {
+                    ["q"] = "Hello",
+                    ["target"] = "fr",
+                    ["format"] = "text"
+                };
+
+                string jsonRequest = requestObj.ToString(Newtonsoft.Json.Formatting.None);
+                var httpContent = new StringContent(jsonRequest, Encoding.UTF8, "application/json");
+
+                var request = new HttpRequestMessage(HttpMethod.Post, "https://translation.googleapis.com/language/translate/v2");
+                request.Content = httpContent;
+                request.Headers.Add("X-Goog-Api-Key", apiKey);
+
+                var response = await httpClient.SendAsync(request);
+                return response.IsSuccessStatusCode;
+            }
+            catch (Exception e)
+            {
+                Adapter?.LogWarning($"[Google] Connection test failed: {e.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Test DeepL API connection by translating a sample word.
+        /// </summary>
+        public static async System.Threading.Tasks.Task<bool> TestDeepLConnection(string apiKey, bool useFree)
+        {
+            try
+            {
+                var requestObj = new JObject
+                {
+                    ["text"] = new JArray { "Hello" },
+                    ["target_lang"] = "FR"
+                };
+
+                string endpoint = useFree
+                    ? "https://api-free.deepl.com/v2/translate"
+                    : "https://api.deepl.com/v2/translate";
+
+                string jsonRequest = requestObj.ToString(Newtonsoft.Json.Formatting.None);
+                var httpContent = new StringContent(jsonRequest, Encoding.UTF8, "application/json");
+
+                var request = new HttpRequestMessage(HttpMethod.Post, endpoint);
+                request.Content = httpContent;
+                request.Headers.Add("Authorization", $"DeepL-Auth-Key {apiKey}");
+
+                var response = await httpClient.SendAsync(request);
+                return response.IsSuccessStatusCode;
+            }
+            catch (Exception e)
+            {
+                Adapter?.LogWarning($"[DeepL] Connection test failed: {e.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
         /// Fetch available models from AI server via OpenAI-compatible /v1/models endpoint.
         /// </summary>
         /// <param name="url">The server URL</param>
@@ -1836,9 +1960,9 @@ namespace UnityGameTranslator.Core
             while (!ShuttingDown)
             {
                 // Stop if AI was disabled
-                if (!Config.enable_ai)
+                if (!Config.IsTranslationEnabled)
                 {
-                    LogDebug("[Worker] AI disabled, stopping worker thread");
+                    LogDebug("[Worker] Translation disabled, stopping worker thread");
                     workerRunning = false;
                     return;
                 }
@@ -1940,16 +2064,46 @@ namespace UnityGameTranslator.Core
                             if (Config.debug_ai)
                                 Adapter?.LogInfo($"[Worker] Captured key (no translation): {normalizedOriginal.Substring(0, Math.Min(30, normalizedOriginal.Length))}...");
                         }
-                        // Only call AI if not in cache
+                        // Only call translation backend if not in cache
                         else if (translation == null)
                         {
-                            translation = TranslateWithAI(normalizedOriginal, extractedNumbers, isOwnUI);
+                            // Dispatch to the appropriate backend
+                            string backend = Config.translation_backend;
+                            if (backend == "google" || backend == "deepl")
+                            {
+                                translation = TranslateWithAPI(normalizedOriginal, extractedNumbers);
+                            }
+                            else
+                            {
+                                // LLM backend (default)
+                                translation = TranslateWithAI(normalizedOriginal, extractedNumbers, isOwnUI);
+                            }
+
                             if (Config.debug_ai)
-                                Adapter?.LogInfo($"[Worker] AI returned: {(translation == null ? "(null)" : translation.Substring(0, Math.Min(40, translation.Length)))}");
+                                Adapter?.LogInfo($"[Worker] {backend} returned: {(translation == null ? "(null)" : translation.Substring(0, Math.Min(40, translation.Length)))}");
+
+                            // Handle rate limit: re-queue the text and backoff
+                            if (translation == null && _apiRateLimited)
+                            {
+                                _apiRateLimited = false;
+                                lock (lockObj)
+                                {
+                                    if (!pendingTranslations.Contains(originalText))
+                                    {
+                                        pendingTranslations.Add(originalText);
+                                        translationQueue.Enqueue(originalText);
+                                    }
+                                }
+                                Adapter?.LogWarning($"[Worker] Rate limited — re-queued, backing off 5s ({translationQueue.Count} pending)");
+                                // Backoff: wait before retrying
+                                for (int i = 0; i < 50 && !ShuttingDown; i++)
+                                    Thread.Sleep(100);
+                            }
 
                             if (!string.IsNullOrEmpty(translation))
                             {
                                 // Check if AI returned the skip marker (text not in expected source language)
+                                // Note: Google/DeepL don't return skip markers, so this only applies to LLM
                                 bool isSkipped = translation.Contains(SkipTranslationMarker);
 
                                 // Cache with appropriate tag: S=Skipped, M=Mod UI, A=AI-translated
@@ -1969,6 +2123,9 @@ namespace UnityGameTranslator.Core
 
                                     // Notify mod loader to update components
                                     OnTranslationComplete?.Invoke(originalText, translationWithNumbers, componentsToUpdate);
+
+                                    // Request visual refresh so static text picks up the new translation
+                                    PendingVisualRefresh = true;
 
                                     if (DebugMode || Config.debug_ai)
                                     {
@@ -1993,6 +2150,8 @@ namespace UnityGameTranslator.Core
                         isTranslating = false;
                         currentlyTranslating = null;
                     }
+
+                    // Note: pendingTranslations and pendingComponents already cleaned at dequeue time
 
                     // Note: pendingTranslations and pendingComponents already cleaned at dequeue time
                 }
@@ -2259,9 +2418,12 @@ namespace UnityGameTranslator.Core
 
                 if (!response.IsSuccessStatusCode)
                 {
+                    int statusCode = (int)response.StatusCode;
+                    if (statusCode == 429)
+                        _apiRateLimited = true;
                     string errorBody = "";
                     try { errorBody = response.Content.ReadAsStringAsync().Result; } catch { }
-                    Adapter?.LogWarning($"[AI] HTTP {(int)response.StatusCode} {response.StatusCode}: {errorBody}");
+                    Adapter?.LogWarning($"[AI] HTTP {statusCode} {response.StatusCode}: {errorBody}");
                     return null;
                 }
 
@@ -2301,6 +2463,238 @@ namespace UnityGameTranslator.Core
             catch (Exception e)
             {
                 Adapter?.LogWarning($"[AI] Translation error: {e.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Translate text using Google Translate API v2.
+        /// Simpler than LLM: no prompt, no thinking, no artifacts.
+        /// Pre-processing (placeholders, tags, whitespace) is done by the caller.
+        /// </summary>
+        private static string TranslateWithGoogle(string textToTranslate)
+        {
+            if (string.IsNullOrEmpty(Config.google_api_key))
+            {
+                Adapter?.LogWarning("[Google] No API key configured");
+                return null;
+            }
+
+            try
+            {
+                string targetLang = Config.GetTargetLanguage();
+                string targetCode = LanguageHelper.GetGoogleLanguageCode(targetLang);
+                if (string.IsNullOrEmpty(targetCode))
+                {
+                    Adapter?.LogWarning($"[Google] Unsupported target language: {targetLang}");
+                    return null;
+                }
+
+                var requestObj = new JObject
+                {
+                    ["q"] = textToTranslate,
+                    ["target"] = targetCode,
+                    ["format"] = "text"
+                };
+
+                // Add source language if specified
+                string sourceLang = Config.GetSourceLanguage();
+                if (!string.IsNullOrEmpty(sourceLang))
+                {
+                    string sourceCode = LanguageHelper.GetGoogleLanguageCode(sourceLang);
+                    if (!string.IsNullOrEmpty(sourceCode))
+                        requestObj["source"] = sourceCode;
+                }
+
+                string endpoint = "https://translation.googleapis.com/language/translate/v2";
+                string jsonRequest = requestObj.ToString(Newtonsoft.Json.Formatting.None);
+                var httpContent = new StringContent(jsonRequest, Encoding.UTF8, "application/json");
+
+                var request = new HttpRequestMessage(HttpMethod.Post, endpoint);
+                request.Content = httpContent;
+                request.Headers.Add("X-Goog-Api-Key", Config.google_api_key);
+
+                var response = httpClient.SendAsync(request).Result;
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    int statusCode = (int)response.StatusCode;
+                    if (statusCode == 429)
+                        _apiRateLimited = true;
+                    string errorBody = "";
+                    try { errorBody = response.Content.ReadAsStringAsync().Result; } catch { }
+                    Adapter?.LogWarning($"[Google] HTTP {statusCode}: {errorBody}");
+                    return null;
+                }
+
+                string responseJson = response.Content.ReadAsStringAsync().Result;
+                var responseObj = JObject.Parse(responseJson);
+                string translation = responseObj["data"]?["translations"]?[0]?["translatedText"]?.ToString();
+
+                if (Config.debug_ai)
+                    Adapter?.LogInfo($"[Google] '{textToTranslate}' -> '{translation}'");
+
+                return translation;
+            }
+            catch (Exception e)
+            {
+                Adapter?.LogWarning($"[Google] Translation error: {e.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Translate text using DeepL API v2.
+        /// Simpler than LLM: no prompt, no thinking, no artifacts.
+        /// Pre-processing (placeholders, tags, whitespace) is done by the caller.
+        /// </summary>
+        private static string TranslateWithDeepL(string textToTranslate)
+        {
+            if (string.IsNullOrEmpty(Config.deepl_api_key))
+            {
+                Adapter?.LogWarning("[DeepL] No API key configured");
+                return null;
+            }
+
+            try
+            {
+                string targetLang = Config.GetTargetLanguage();
+                string targetCode = LanguageHelper.GetDeepLLanguageCode(targetLang, isTarget: true);
+                if (string.IsNullOrEmpty(targetCode))
+                {
+                    Adapter?.LogWarning($"[DeepL] Unsupported target language: {targetLang}");
+                    return null;
+                }
+
+                var requestObj = new JObject
+                {
+                    ["text"] = new JArray { textToTranslate },
+                    ["target_lang"] = targetCode
+                };
+
+                // Add source language if specified
+                string sourceLang = Config.GetSourceLanguage();
+                if (!string.IsNullOrEmpty(sourceLang))
+                {
+                    string sourceCode = LanguageHelper.GetDeepLLanguageCode(sourceLang, isTarget: false);
+                    if (!string.IsNullOrEmpty(sourceCode))
+                        requestObj["source_lang"] = sourceCode;
+                }
+
+                string endpoint = Config.deepl_use_free
+                    ? "https://api-free.deepl.com/v2/translate"
+                    : "https://api.deepl.com/v2/translate";
+
+                string jsonRequest = requestObj.ToString(Newtonsoft.Json.Formatting.None);
+                var httpContent = new StringContent(jsonRequest, Encoding.UTF8, "application/json");
+
+                var request = new HttpRequestMessage(HttpMethod.Post, endpoint);
+                request.Content = httpContent;
+                request.Headers.Add("Authorization", $"DeepL-Auth-Key {Config.deepl_api_key}");
+
+                var response = httpClient.SendAsync(request).Result;
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    int statusCode = (int)response.StatusCode;
+                    if (statusCode == 429)
+                        _apiRateLimited = true;
+                    string errorBody = "";
+                    try { errorBody = response.Content.ReadAsStringAsync().Result; } catch { }
+                    Adapter?.LogWarning($"[DeepL] HTTP {statusCode}: {errorBody}");
+                    return null;
+                }
+
+                string responseJson = response.Content.ReadAsStringAsync().Result;
+                var responseObj = JObject.Parse(responseJson);
+                string translation = responseObj["translations"]?[0]?["text"]?.ToString();
+
+                if (Config.debug_ai)
+                    Adapter?.LogInfo($"[DeepL] '{textToTranslate}' -> '{translation}'");
+
+                return translation;
+            }
+            catch (Exception e)
+            {
+                Adapter?.LogWarning($"[DeepL] Translation error: {e.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Translate text using a translation API (Google or DeepL).
+        /// Handles pre/post-processing (placeholders, tags, whitespace) like TranslateWithAI but without prompts.
+        /// </summary>
+        private static string TranslateWithAPI(string textWithPlaceholders, List<string> extractedNumbers)
+        {
+            if (textWithPlaceholders.Length > MaxAITextLength)
+            {
+                Adapter?.LogWarning($"[API] Text too long ({textWithPlaceholders.Length} chars), skipping");
+                AddToCache(textWithPlaceholders, textWithPlaceholders, "S");
+                return null;
+            }
+
+            try
+            {
+                string textToTranslate = textWithPlaceholders;
+
+                // === PRE-PROCESS: same placeholder extraction as LLM ===
+                // 1. Line breaks → [!nl]
+                string textForAPI = textToTranslate.Replace("\n", "[!nl]");
+                // 2. Markup tags → [!t*N]
+                List<string> extractedTags = null;
+                textForAPI = ExtractMarkupTags(textForAPI, out extractedTags);
+                // 3. Trim whitespace
+                string leadingWS = "";
+                string trailingWS = "";
+                string trimmed = textForAPI.TrimStart();
+                if (trimmed.Length < textForAPI.Length)
+                {
+                    leadingWS = textForAPI.Substring(0, textForAPI.Length - trimmed.Length);
+                    textForAPI = trimmed;
+                }
+                trimmed = textForAPI.TrimEnd();
+                if (trimmed.Length < textForAPI.Length)
+                {
+                    trailingWS = textForAPI.Substring(trimmed.Length);
+                    textForAPI = trimmed;
+                }
+
+                // Skip empty text after pre-processing
+                if (string.IsNullOrWhiteSpace(textForAPI))
+                    return null;
+
+                // === CALL THE API ===
+                string translation = null;
+                switch (Config.translation_backend)
+                {
+                    case "google":
+                        translation = TranslateWithGoogle(textForAPI);
+                        break;
+                    case "deepl":
+                        translation = TranslateWithDeepL(textForAPI);
+                        break;
+                }
+
+                if (string.IsNullOrEmpty(translation))
+                    return null;
+
+                // === POST-PROCESS: restore placeholders ===
+                // Validate and restore markup tags
+                if (extractedTags != null && extractedTags.Count > 0)
+                {
+                    translation = RestoreMarkupTags(translation, extractedTags);
+                }
+                // Restore [!nl] → \n
+                translation = translation.Replace("[!nl]", "\n");
+                // Restore whitespace
+                translation = leadingWS + translation + trailingWS;
+
+                return translation;
+            }
+            catch (Exception e)
+            {
+                Adapter?.LogWarning($"[API] Translation error: {e.Message}");
                 return null;
             }
         }
@@ -2574,7 +2968,9 @@ namespace UnityGameTranslator.Core
 
         public static void QueueForTranslation(string text, object component = null, bool isOwnUI = false)
         {
-            if (!Config.enable_ai) return;
+            if (!Config.IsTranslationEnabled) return;
+            // Google/DeepL require online mode
+            if (Config.ActiveBackendRequiresOnline && !Config.online_mode) return;
             if (string.IsNullOrEmpty(text)) return;
             if (IsNumericOrSymbol(text)) return;
 
@@ -2712,7 +3108,7 @@ namespace UnityGameTranslator.Core
                 return patternResult;
             }
 
-            if (Config.enable_ai && !string.IsNullOrEmpty(text))
+            if (Config.IsTranslationEnabled && !string.IsNullOrEmpty(text))
             {
                 // Check reverse cache with NORMALIZED text (translations are stored normalized + trimmed)
                 // TrimEnd because TMP often strips trailing whitespace/newlines when displaying
@@ -2946,7 +3342,7 @@ namespace UnityGameTranslator.Core
             }
 
             // No cache hit - queue for AI if enabled
-            if (Config.enable_ai && !string.IsNullOrEmpty(text))
+            if (Config.IsTranslationEnabled && !string.IsNullOrEmpty(text))
             {
                 // Check reverse cache with NORMALIZED text (translations are stored normalized + trimmed)
                 // TrimEnd because TMP often strips trailing whitespace/newlines when displaying
@@ -3308,7 +3704,10 @@ namespace UnityGameTranslator.Core
 
     public class ModConfig
     {
-        // AI Translation settings (universal OpenAI-compatible)
+        // Translation backend: "llm", "google", "deepl" (or "none" / enable_ai=false for disabled)
+        public string translation_backend { get; set; } = "none";
+
+        // LLM Translation settings (universal OpenAI-compatible)
         public string ai_url { get; set; } = "http://localhost:11434";
         public string ai_model { get; set; } = "";
         public string target_language { get; set; } = "auto";
@@ -3324,6 +3723,29 @@ namespace UnityGameTranslator.Core
         public bool preload_model { get; set; } = true;
         public string ai_api_key { get; set; } = null;
 
+        // Google Translate API settings
+        public string google_api_key { get; set; } = null;
+
+        // DeepL API settings
+        public string deepl_api_key { get; set; } = null;
+        public bool deepl_use_free { get; set; } = true;
+
+        /// <summary>
+        /// Returns true if any translation backend is enabled (LLM, Google, or DeepL).
+        /// This replaces the old enable_ai check for general "is translation active" guards.
+        /// </summary>
+        [JsonIgnore]
+        public bool IsTranslationEnabled =>
+            enable_ai || translation_backend == "google" || translation_backend == "deepl";
+
+        /// <summary>
+        /// Returns true if the active backend requires online mode.
+        /// LLM can be local (Ollama), Google and DeepL always need internet.
+        /// </summary>
+        [JsonIgnore]
+        public bool ActiveBackendRequiresOnline =>
+            translation_backend == "google" || translation_backend == "deepl";
+
         // Backward-compatible migration from old config format
         [JsonExtensionData]
         private IDictionary<string, JToken> _extraData;
@@ -3331,34 +3753,44 @@ namespace UnityGameTranslator.Core
         [System.Runtime.Serialization.OnDeserialized]
         private void OnDeserialized(System.Runtime.Serialization.StreamingContext context)
         {
-            if (_extraData == null) return;
-            bool migrated = false;
-            if (_extraData.TryGetValue("ollama_url", out var url))
+            // Migrate old Ollama config fields (if present as unknown keys)
+            if (_extraData != null)
             {
-                ai_url = url.ToString();
-                migrated = true;
+                bool migrated = false;
+                if (_extraData.TryGetValue("ollama_url", out var url))
+                {
+                    ai_url = url.ToString();
+                    migrated = true;
+                }
+                if (_extraData.TryGetValue("enable_ollama", out var eo))
+                {
+                    enable_ai = eo.Value<bool>();
+                    migrated = true;
+                }
+                if (_extraData.TryGetValue("debug_ollama", out var dbg))
+                {
+                    debug_ai = dbg.Value<bool>();
+                    migrated = true;
+                }
+                if (_extraData.TryGetValue("model", out var m) && string.IsNullOrEmpty(ai_model))
+                {
+                    ai_model = m.ToString();
+                    migrated = true;
+                }
+                if (migrated)
+                {
+                    _configMigrated = true;
+                }
+                _extraData = null;
             }
-            if (_extraData.TryGetValue("enable_ollama", out var eo))
+
+            // Migrate: if enable_ai is true but translation_backend is still "none",
+            // the user had AI enabled before the backend system was added
+            if (enable_ai && translation_backend == "none")
             {
-                enable_ai = eo.Value<bool>();
-                migrated = true;
-            }
-            if (_extraData.TryGetValue("debug_ollama", out var dbg))
-            {
-                debug_ai = dbg.Value<bool>();
-                migrated = true;
-            }
-            if (_extraData.TryGetValue("model", out var m) && string.IsNullOrEmpty(ai_model))
-            {
-                ai_model = m.ToString();
-                migrated = true;
-            }
-            if (migrated)
-            {
-                // Log will be visible once Adapter is set - store flag for post-load log
+                translation_backend = "llm";
                 _configMigrated = true;
             }
-            _extraData = null;
         }
 
         [JsonIgnore]

@@ -1424,7 +1424,7 @@ namespace UnityGameTranslator.Core.UI
             bool firstRunDone = TranslatorCore.Config.first_run_completed;
 
             // AI queue is ALWAYS visible when translating (even with panels open)
-            bool aiActive = TranslatorCore.Config.enable_ai &&
+            bool aiActive = TranslatorCore.Config.IsTranslationEnabled &&
                            (TranslatorCore.QueueCount > 0 || TranslatorCore.IsTranslating);
 
             // Other notifications only show when no panels are open

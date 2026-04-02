@@ -1578,7 +1578,7 @@ namespace UnityGameTranslator.Core
             if (TranslatorCore.TranslationCache.Count > 0)
                 return false;
 
-            if (TranslatorCore.Config.enable_ai)
+            if (TranslatorCore.Config.IsTranslationEnabled)
                 return false;
 
             if (TranslatorCore.Config.capture_keys_only)
@@ -1726,6 +1726,18 @@ namespace UnityGameTranslator.Core
 
             // Check for stabilized typewriting texts and trigger their translation
             TranslatorPatches.ProcessStabilizedTypewriting();
+
+            // After API translations complete, refresh all text so static components pick up cached translations
+            if (TranslatorCore.PendingVisualRefresh)
+            {
+                TranslatorCore.PendingVisualRefresh = false;
+                float now2 = Time.realtimeSinceStartup;
+                if (now2 - _lastForceRefreshTime > 1f)
+                {
+                    _lastForceRefreshTime = now2;
+                    ForceRefreshAllText();
+                }
+            }
 
             // After new chars were added to a clone atlas, force all components to re-render
             // so they pick up updated glyph positions. Debounced to max once per second.

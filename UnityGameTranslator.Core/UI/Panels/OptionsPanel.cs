@@ -50,15 +50,37 @@ namespace UnityGameTranslator.Core.UI.Panels
         // Hotkey section
         private HotkeyCapture _hotkeyCapture;
 
-        // Translation section (AI + Capture)
+        // Translation section
         private Toggle _captureKeysOnlyToggle;
-        private Toggle _enableAIToggle;
+        private SearchableDropdown _backendTypeDropdown; // "LLM (AI)" / "Translation API"
+        private static readonly string[] BackendTypeOptions = { "LLM (AI)", "Translation API" };
+        private Toggle _enableTranslationBackendToggle;
+        private GameObject _backendTypeSection;
+
+        // LLM section
+        private GameObject _llmSection;
         private InputFieldRef _aiUrlInput;
         private InputFieldRef _aiApiKeyInput;
         private SearchableDropdown _modelDropdown;
         private InputFieldRef _gameContextInput;
         private Toggle _strictSourceToggle;
         private Text _aiTestStatusLabel;
+
+        // Translation API section (contains provider dropdown + Google/DeepL sub-sections)
+        private GameObject _translationApiSection;
+        private SearchableDropdown _providerDropdown;
+        private static readonly string[] ProviderOptions = { "Google Translate", "DeepL" };
+
+        // Google section
+        private GameObject _googleSection;
+        private InputFieldRef _googleApiKeyInput;
+        private Text _googleTestStatusLabel;
+
+        // DeepL section
+        private GameObject _deeplSection;
+        private InputFieldRef _deeplApiKeyInput;
+        private Toggle _deeplUseFreeToggle;
+        private Text _deeplTestStatusLabel;
 
         // Online section
         private Toggle _onlineModeToggle;
@@ -94,6 +116,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         // Apply button tracking
         private ButtonRef _applyBtn;
         private ConfigSnapshot _initialSnapshot;
+        private bool _isLoadingSettings;
 
         /// <summary>
         /// Snapshot of config values taken when panel opens.
@@ -107,12 +130,15 @@ namespace UnityGameTranslator.Core.UI.Panels
             public string target_language;
             public string settings_hotkey;
             public bool capture_keys_only;
-            public bool enable_ai;
+            public string translation_backend;
             public string ai_url;
             public string ai_api_key;
             public string ai_model;
             public string game_context;
             public bool strict_source_language;
+            public string google_api_key;
+            public string deepl_api_key;
+            public bool deepl_use_free;
             public bool online_mode;
             public bool check_update_on_start;
             public bool notify_updates;
@@ -132,12 +158,15 @@ namespace UnityGameTranslator.Core.UI.Panels
                     target_language = TranslatorCore.Config.target_language ?? "auto",
                     settings_hotkey = TranslatorCore.Config.settings_hotkey ?? "F10",
                     capture_keys_only = TranslatorCore.Config.capture_keys_only,
-                    enable_ai = TranslatorCore.Config.enable_ai,
+                    translation_backend = TranslatorCore.Config.translation_backend ?? "none",
                     ai_url = TranslatorCore.Config.ai_url ?? "http://localhost:11434",
                     ai_api_key = TranslatorCore.Config.ai_api_key ?? "",
                     ai_model = TranslatorCore.Config.ai_model ?? "",
                     game_context = TranslatorCore.Config.game_context ?? "",
                     strict_source_language = TranslatorCore.Config.strict_source_language,
+                    google_api_key = TranslatorCore.Config.google_api_key ?? "",
+                    deepl_api_key = TranslatorCore.Config.deepl_api_key ?? "",
+                    deepl_use_free = TranslatorCore.Config.deepl_use_free,
                     online_mode = TranslatorCore.Config.online_mode,
                     check_update_on_start = TranslatorCore.Config.sync.check_update_on_start,
                     notify_updates = TranslatorCore.Config.sync.notify_updates,
@@ -430,22 +459,42 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             UIStyles.CreateSpacer(card, 15);
 
-            // AI Translation section
-            var aiSectionTitle = UIStyles.CreateSectionTitle(card, "AILabel", "AI Translation");
-            RegisterUIText(aiSectionTitle);
+            // === AUTO-TRANSLATION ===
+            var backendSectionTitle = UIStyles.CreateSectionTitle(card, "BackendLabel", "Auto-Translation");
+            RegisterUIText(backendSectionTitle);
 
-            var enableAIObj = UIFactory.CreateToggle(card, "EnableAIToggle", out _enableAIToggle, out var enableLabel);
-            enableLabel.text = " Enable AI Translation";
+            // Enable toggle
+            var enableObj = UIFactory.CreateToggle(card, "EnableTransBackendToggle", out _enableTranslationBackendToggle, out var enableLabel);
+            enableLabel.text = " Enable auto-translation";
             enableLabel.color = UIStyles.TextPrimary;
-            UIHelpers.AddToggleListener(_enableAIToggle, OnAIToggleChanged);
-            UIFactory.SetLayoutElement(enableAIObj, minHeight: UIStyles.RowHeightMedium);
+            UIHelpers.AddToggleListener(_enableTranslationBackendToggle, OnEnableTranslationBackendChanged);
+            UIFactory.SetLayoutElement(enableObj, minHeight: UIStyles.RowHeightMedium);
             RegisterUIText(enableLabel);
 
-            UIStyles.CreateSpacer(card, 5);
+            // Backend type section (shown when enabled)
+            _backendTypeSection = UIFactory.CreateVerticalGroup(card, "BackendTypeSection", false, false, true, true, 5);
+            UIFactory.SetLayoutElement(_backendTypeSection, flexibleWidth: 9999);
+
+            // Backend type dropdown: LLM (AI) / Translation API
+            var typeRow = UIStyles.CreateFormRow(_backendTypeSection, "TypeRow", UIStyles.RowHeightMedium, 5);
+            var typeLabel = UIFactory.CreateLabel(typeRow, "TypeLabel", "Type:", TextAnchor.MiddleLeft);
+            typeLabel.color = UIStyles.TextSecondary;
+            UIFactory.SetLayoutElement(typeLabel.gameObject, minWidth: 40);
+            RegisterUIText(typeLabel);
+
+            _backendTypeDropdown = new SearchableDropdown(
+                "BackendTypeDropdown", BackendTypeOptions, "LLM (AI)", popupHeight: 100, showSearch: false);
+            var typeObj = _backendTypeDropdown.CreateUI(typeRow, OnBackendTypeChanged);
+            UIFactory.SetLayoutElement(typeObj, minWidth: 160, minHeight: UIStyles.InputHeight);
+
+            UIStyles.CreateSpacer(_backendTypeSection, 5);
+
+            // === LLM SECTION ===
+            _llmSection = UIFactory.CreateVerticalGroup(_backendTypeSection, "LLMSection", false, false, true, true, 3);
+            UIFactory.SetLayoutElement(_llmSection, flexibleWidth: 9999);
 
             // URL row
-            var urlRow = UIStyles.CreateFormRow(card, "UrlRow", UIStyles.InputHeight, 5);
-
+            var urlRow = UIStyles.CreateFormRow(_llmSection, "UrlRow", UIStyles.InputHeight, 5);
             var urlLabel = UIFactory.CreateLabel(urlRow, "UrlLabel", "URL:", TextAnchor.MiddleLeft);
             urlLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(urlLabel.gameObject, minWidth: 45);
@@ -459,14 +508,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             testBtn.OnClick += TestAIConnection;
             RegisterUIText(testBtn.ButtonText);
 
-            _aiTestStatusLabel = UIFactory.CreateLabel(card, "TestStatus", "", TextAnchor.MiddleLeft);
+            _aiTestStatusLabel = UIFactory.CreateLabel(_llmSection, "TestStatus", "", TextAnchor.MiddleLeft);
             _aiTestStatusLabel.fontSize = UIStyles.FontSizeSmall;
             UIFactory.SetLayoutElement(_aiTestStatusLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
             RegisterUIText(_aiTestStatusLabel);
 
             // API Key row
-            var keyRow = UIStyles.CreateFormRow(card, "KeyRow", UIStyles.InputHeight, 5);
-
+            var keyRow = UIStyles.CreateFormRow(_llmSection, "KeyRow", UIStyles.InputHeight, 5);
             var keyLabel = UIFactory.CreateLabel(keyRow, "KeyLabel", "API Key:", TextAnchor.MiddleLeft);
             keyLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(keyLabel.gameObject, minWidth: 55);
@@ -477,55 +525,137 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.SetLayoutElement(_aiApiKeyInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
             UIStyles.SetBackground(_aiApiKeyInput.Component.gameObject, UIStyles.InputBackground);
 
-            var keyHint = UIStyles.CreateHint(card, "KeyHint", "Optional for local servers");
+            var keyHint = UIStyles.CreateHint(_llmSection, "KeyHint", "Optional for local servers (Ollama, LM Studio)");
             RegisterUIText(keyHint);
 
             // Model row
-            var modelRow = UIStyles.CreateFormRow(card, "ModelRow", UIStyles.InputHeight, 5);
-
+            var modelRow = UIStyles.CreateFormRow(_llmSection, "ModelRow", UIStyles.InputHeight, 5);
             var modelLabel = UIFactory.CreateLabel(modelRow, "ModelLabel", "Model:", TextAnchor.MiddleLeft);
             modelLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(modelLabel.gameObject, minWidth: 50);
             RegisterUIText(modelLabel);
 
             _modelDropdown = new SearchableDropdown("ModelDropdown", new string[0], null, 200, false);
-            var modelObj = _modelDropdown.CreateUI(modelRow, (val) => { /* value tracked via SelectedValue */ });
+            var modelObj = _modelDropdown.CreateUI(modelRow, (val) => { });
             UIFactory.SetLayoutElement(modelObj, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
 
             var refreshBtn = CreateSecondaryButton(modelRow, "RefreshBtn", "Refresh", 60);
             refreshBtn.OnClick += RefreshModels;
             RegisterUIText(refreshBtn.ButtonText);
 
-            var modelHint = UIStyles.CreateHint(card, "ModelHint", "Select a model from your server");
+            var modelHint = UIStyles.CreateHint(_llmSection, "ModelHint", "Select a model from your server");
             RegisterUIText(modelHint);
 
-            UIStyles.CreateSpacer(card, 5);
+            UIStyles.CreateSpacer(_llmSection, 5);
 
             // Game context
-            var contextLabel = UIFactory.CreateLabel(card, "ContextLabel", "Game Context (optional):", TextAnchor.MiddleLeft);
+            var contextLabel = UIFactory.CreateLabel(_llmSection, "ContextLabel", "Game Context (optional):", TextAnchor.MiddleLeft);
             contextLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(contextLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
             RegisterUIText(contextLabel);
 
-            _gameContextInput = UIFactory.CreateInputField(card, "ContextInput", "e.g., RPG game with medieval setting");
+            _gameContextInput = UIFactory.CreateInputField(_llmSection, "ContextInput", "e.g., RPG game with medieval setting");
             _gameContextInput.Component.lineType = UnityEngine.UI.InputField.LineType.MultiLineNewline;
             UIFactory.SetLayoutElement(_gameContextInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.MultiLineMedium);
             UIStyles.SetBackground(_gameContextInput.Component.gameObject, UIStyles.InputBackground);
 
-            var contextHint = UIStyles.CreateHint(card, "ContextHint", "Helps the AI understand game vocabulary");
+            var contextHint = UIStyles.CreateHint(_llmSection, "ContextHint", "Helps the AI understand game vocabulary");
             RegisterUIText(contextHint);
 
-            UIStyles.CreateSpacer(card, 5);
+            UIStyles.CreateSpacer(_llmSection, 5);
 
             // Strict source language toggle
-            var strictObj = UIFactory.CreateToggle(card, "StrictSourceToggle", out _strictSourceToggle, out var strictLabel);
+            var strictObj = UIFactory.CreateToggle(_llmSection, "StrictSourceToggle", out _strictSourceToggle, out var strictLabel);
             strictLabel.text = " Strict source language detection";
             strictLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(strictObj, minHeight: UIStyles.RowHeightNormal);
             RegisterUIText(strictLabel);
 
-            var strictHint = UIStyles.CreateHint(card, "StrictHint", "Skip texts not matching source language");
+            var strictHint = UIStyles.CreateHint(_llmSection, "StrictHint", "Skip texts not matching source language (LLM only)");
             RegisterUIText(strictHint);
+
+            // === TRANSLATION API SECTION (contains provider dropdown + sub-sections) ===
+            _translationApiSection = UIFactory.CreateVerticalGroup(_backendTypeSection, "TranslationApiSection", false, false, true, true, 3);
+            UIFactory.SetLayoutElement(_translationApiSection, flexibleWidth: 9999);
+
+            // Provider dropdown
+            var providerRow = UIStyles.CreateFormRow(_translationApiSection, "ProviderRow", UIStyles.RowHeightMedium, 5);
+            var providerLabel = UIFactory.CreateLabel(providerRow, "ProviderLabel", "Provider:", TextAnchor.MiddleLeft);
+            providerLabel.color = UIStyles.TextSecondary;
+            UIFactory.SetLayoutElement(providerLabel.gameObject, minWidth: 55);
+            RegisterUIText(providerLabel);
+
+            _providerDropdown = new SearchableDropdown(
+                "ProviderDropdown", ProviderOptions, "Google Translate", popupHeight: 100, showSearch: false);
+            var providerObj = _providerDropdown.CreateUI(providerRow, OnProviderChanged);
+            UIFactory.SetLayoutElement(providerObj, minWidth: 160, minHeight: UIStyles.InputHeight);
+
+            UIStyles.CreateSpacer(_translationApiSection, 5);
+
+            // === GOOGLE SECTION ===
+            _googleSection = UIFactory.CreateVerticalGroup(_translationApiSection, "GoogleSection", false, false, true, true, 3);
+            UIFactory.SetLayoutElement(_googleSection, flexibleWidth: 9999);
+
+            var googleKeyRow = UIStyles.CreateFormRow(_googleSection, "GoogleKeyRow", UIStyles.InputHeight, 5);
+            var googleKeyLabel = UIFactory.CreateLabel(googleKeyRow, "GoogleKeyLabel", "API Key:", TextAnchor.MiddleLeft);
+            googleKeyLabel.color = UIStyles.TextSecondary;
+            UIFactory.SetLayoutElement(googleKeyLabel.gameObject, minWidth: 55);
+            RegisterExcluded(googleKeyLabel);
+
+            _googleApiKeyInput = UIFactory.CreateInputField(googleKeyRow, "GoogleApiKey", "");
+            _googleApiKeyInput.Component.contentType = UnityEngine.UI.InputField.ContentType.Password;
+            UIFactory.SetLayoutElement(_googleApiKeyInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
+            UIStyles.SetBackground(_googleApiKeyInput.Component.gameObject, UIStyles.InputBackground);
+
+            var googleTestBtn = CreateSecondaryButton(googleKeyRow, "GoogleTestBtn", "Test", 60);
+            googleTestBtn.OnClick += TestGoogleConnection;
+            RegisterUIText(googleTestBtn.ButtonText);
+
+            _googleTestStatusLabel = UIFactory.CreateLabel(_googleSection, "GoogleTestStatus", "", TextAnchor.MiddleLeft);
+            _googleTestStatusLabel.fontSize = UIStyles.FontSizeSmall;
+            UIFactory.SetLayoutElement(_googleTestStatusLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+
+            var googleHint = UIStyles.CreateHint(_googleSection, "GoogleHint", "Requires a Google Cloud API key with Translation API enabled");
+            RegisterUIText(googleHint);
+
+            // === DEEPL SECTION ===
+            _deeplSection = UIFactory.CreateVerticalGroup(_translationApiSection, "DeepLSection", false, false, true, true, 3);
+            UIFactory.SetLayoutElement(_deeplSection, flexibleWidth: 9999);
+
+            var deeplKeyRow = UIStyles.CreateFormRow(_deeplSection, "DeepLKeyRow", UIStyles.InputHeight, 5);
+            var deeplKeyLabel = UIFactory.CreateLabel(deeplKeyRow, "DeepLKeyLabel", "API Key:", TextAnchor.MiddleLeft);
+            deeplKeyLabel.color = UIStyles.TextSecondary;
+            UIFactory.SetLayoutElement(deeplKeyLabel.gameObject, minWidth: 55);
+            RegisterExcluded(deeplKeyLabel);
+
+            _deeplApiKeyInput = UIFactory.CreateInputField(deeplKeyRow, "DeepLApiKey", "");
+            _deeplApiKeyInput.Component.contentType = UnityEngine.UI.InputField.ContentType.Password;
+            UIFactory.SetLayoutElement(_deeplApiKeyInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
+            UIStyles.SetBackground(_deeplApiKeyInput.Component.gameObject, UIStyles.InputBackground);
+
+            var deeplTestBtn = CreateSecondaryButton(deeplKeyRow, "DeepLTestBtn", "Test", 60);
+            deeplTestBtn.OnClick += TestDeepLConnection;
+            RegisterUIText(deeplTestBtn.ButtonText);
+
+            _deeplTestStatusLabel = UIFactory.CreateLabel(_deeplSection, "DeepLTestStatus", "", TextAnchor.MiddleLeft);
+            _deeplTestStatusLabel.fontSize = UIStyles.FontSizeSmall;
+            UIFactory.SetLayoutElement(_deeplTestStatusLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+
+            var deeplFreeObj = UIFactory.CreateToggle(_deeplSection, "DeepLFreeToggle", out _deeplUseFreeToggle, out var deeplFreeLabel);
+            deeplFreeLabel.text = " Use Free API (api-free.deepl.com)";
+            deeplFreeLabel.color = UIStyles.TextSecondary;
+            UIFactory.SetLayoutElement(deeplFreeObj, minHeight: UIStyles.RowHeightNormal);
+            RegisterUIText(deeplFreeLabel);
+
+            var deeplHint = UIStyles.CreateHint(_deeplSection, "DeepLHint", "Uncheck for Pro API (api.deepl.com). Free plan: 500k chars/month");
+            RegisterUIText(deeplHint);
+
+            // Initial visibility - all hidden until UpdateBackendSections
+            _backendTypeSection.SetActive(false);
+            _llmSection.SetActive(false);
+            _translationApiSection.SetActive(false);
+            _googleSection.SetActive(false);
+            _deeplSection.SetActive(false);
         }
 
         private void CreateFontsTabContent(GameObject parent)
@@ -564,6 +694,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             var scrollObj = UIFactory.CreateScrollView(card, "FontsScroll", out var scrollContent, out var scrollbar);
             UIFactory.SetLayoutElement(scrollObj, minHeight: 180, flexibleHeight: 9999, flexibleWidth: 9999);
             UIStyles.SetBackground(scrollObj, UIStyles.InputBackground);
+            UIFactory.ConfigureAutoHideScrollbar(scrollObj);
 
             _fontsListContainer = scrollContent;
         }
@@ -636,24 +767,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Header row: font name + type + enable toggle
             var headerRow = UIStyles.CreateFormRow(row, "HeaderRow", UIStyles.RowHeightNormal, 5);
 
+            // Capture values for closure
+            string capturedFontName = fontInfo.Name;
+
             // Font name and type
             var fontLabel = UIFactory.CreateLabel(headerRow, "FontLabel", $"{fontInfo.Name} ({fontInfo.Type})", TextAnchor.MiddleLeft);
             fontLabel.color = UIStyles.TextPrimary;
             fontLabel.fontSize = UIStyles.FontSizeNormal;
             UIFactory.SetLayoutElement(fontLabel.gameObject, flexibleWidth: 9999);
-
-            // Enable toggle
-            var toggleObj = UIFactory.CreateToggle(headerRow, "EnableToggle", out var enableToggle, out var toggleLabel);
-            toggleLabel.text = " Translate";
-            toggleLabel.color = UIStyles.TextSecondary;
-            toggleLabel.fontSize = UIStyles.FontSizeSmall;
-            UIFactory.SetLayoutElement(toggleObj, minWidth: 80);
-            enableToggle.isOn = fontInfo.Enabled;
-
-            // Capture values for closure
-            string capturedFontName = fontInfo.Name;
-            TranslatorCore.LogInfo($"[OptionsPanel] Adding toggle listener for font: {capturedFontName}");
-            UIHelpers.AddToggleListener(enableToggle, (isOn) => OnFontEnableChanged(capturedFontName, isOn));
 
             // Identify button: highlight in-game texts using this font
             var identifyBtn = UIFactory.CreateButton(headerRow, "IdentifyBtn", "?");
@@ -666,6 +787,17 @@ namespace UnityGameTranslator.Core.UI.Panels
                 identifyBg.color = UIStyles.ButtonSecondary;
             }
             identifyBtn.OnClick += () => ToggleFontHighlight(capturedFontName, identifyBtn);
+
+            // Enable toggle
+            var toggleObj = UIFactory.CreateToggle(headerRow, "EnableToggle", out var enableToggle, out var toggleLabel);
+            toggleLabel.text = " Translate";
+            toggleLabel.color = UIStyles.TextSecondary;
+            toggleLabel.fontSize = UIStyles.FontSizeSmall;
+            UIFactory.SetLayoutElement(toggleObj, minWidth: 80);
+            enableToggle.isOn = fontInfo.Enabled;
+
+            TranslatorCore.LogInfo($"[OptionsPanel] Adding toggle listener for font: {capturedFontName}");
+            UIHelpers.AddToggleListener(enableToggle, (isOn) => OnFontEnableChanged(capturedFontName, isOn));
 
             // Fallback row (only for fonts that support it)
             if (fontInfo.SupportsFallback)
@@ -1084,6 +1216,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             var scrollObj = UIFactory.CreateScrollView(card, "ExclusionsScroll", out var scrollContent, out var scrollbar);
             UIFactory.SetLayoutElement(scrollObj, minHeight: 120, flexibleHeight: 9999, flexibleWidth: 9999);
             UIStyles.SetBackground(scrollObj, UIStyles.InputBackground);
+            UIFactory.ConfigureAutoHideScrollbar(scrollObj);
 
             _exclusionsListContainer = scrollContent;
 
@@ -1309,7 +1442,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void OnSourceLanguageChanged(string newSource)
         {
             bool isAuto = newSource == "auto (Detect)";
-            _strictSourceToggle.interactable = !isAuto && _enableAIToggle.isOn && !_captureKeysOnlyToggle.isOn;
+            _strictSourceToggle.interactable = !isAuto && GetSelectedBackendConfig() == "llm" &&
+                _enableTranslationBackendToggle.isOn && !_captureKeysOnlyToggle.isOn;
             if (isAuto && _strictSourceToggle.isOn)
             {
                 _strictSourceToggle.isOn = false;
@@ -1377,6 +1511,8 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private void LoadCurrentSettings()
         {
+            _isLoadingSettings = true;
+
             // General
             _enableTranslationsToggle.isOn = TranslatorCore.Config.enable_translations;
             _translateModUIToggle.isOn = TranslatorCore.Config.translate_mod_ui;
@@ -1406,11 +1542,23 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Hotkey
             _hotkeyCapture.SetHotkey(TranslatorCore.Config.settings_hotkey ?? "F10");
 
-            // Translation (Capture + AI)
+            // Online mode (must be loaded BEFORE translation backend — UpdateBackendSections checks online state)
+            _onlineModeToggle.isOn = TranslatorCore.Config.online_mode;
+            _checkUpdatesToggle.isOn = TranslatorCore.Config.sync.check_update_on_start;
+            _notifyUpdatesToggle.isOn = TranslatorCore.Config.sync.notify_updates;
+            _autoDownloadToggle.isOn = TranslatorCore.Config.sync.auto_download;
+            _checkModUpdatesToggle.isOn = TranslatorCore.Config.sync.check_mod_updates;
+            _notificationsEnabledToggle.isOn = TranslatorCore.Config.sync.notifications_enabled;
+            _notificationPositionDropdown.SelectedValue = PositionConfigToDisplay(TranslatorCore.Config.sync.notification_position);
+            OnOnlineModeChanged(_onlineModeToggle.isOn);
+
+            // Translation (Backend + Capture) — after online mode so UpdateBackendSections sees correct online state
             _captureKeysOnlyToggle.isOn = TranslatorCore.Config.capture_keys_only;
-            _enableAIToggle.isOn = TranslatorCore.Config.enable_ai;
             _aiUrlInput.Text = TranslatorCore.Config.ai_url ?? "http://localhost:11434";
             _aiApiKeyInput.Text = TranslatorCore.Config.ai_api_key ?? "";
+            _googleApiKeyInput.Text = TranslatorCore.Config.google_api_key ?? "";
+            _deeplApiKeyInput.Text = TranslatorCore.Config.deepl_api_key ?? "";
+            _deeplUseFreeToggle.isOn = TranslatorCore.Config.deepl_use_free;
             string currentModel = TranslatorCore.Config.ai_model ?? "";
             if (!string.IsNullOrEmpty(currentModel))
             {
@@ -1420,17 +1568,15 @@ namespace UnityGameTranslator.Core.UI.Panels
             _gameContextInput.Text = TranslatorCore.Config.game_context ?? "";
             _strictSourceToggle.isOn = TranslatorCore.Config.strict_source_language;
             _aiTestStatusLabel.text = "";
-            UpdateAIInteractable();
+            // Set dropdowns BEFORE the enable toggle (which triggers UpdateBackendSections)
+            string backend = TranslatorCore.Config.translation_backend ?? "none";
+            _backendTypeDropdown.SelectedValue = (backend == "google" || backend == "deepl") ? "Translation API" : "LLM (AI)";
+            _providerDropdown.SelectedValue = backend == "deepl" ? "DeepL" : "Google Translate";
+            _enableTranslationBackendToggle.isOn = (backend != "none");
 
-            // Online mode
-            _onlineModeToggle.isOn = TranslatorCore.Config.online_mode;
-            _checkUpdatesToggle.isOn = TranslatorCore.Config.sync.check_update_on_start;
-            _notifyUpdatesToggle.isOn = TranslatorCore.Config.sync.notify_updates;
-            _autoDownloadToggle.isOn = TranslatorCore.Config.sync.auto_download;
-            _checkModUpdatesToggle.isOn = TranslatorCore.Config.sync.check_mod_updates;
-            _notificationsEnabledToggle.isOn = TranslatorCore.Config.sync.notifications_enabled;
-            _notificationPositionDropdown.SelectedValue = PositionConfigToDisplay(TranslatorCore.Config.sync.notification_position);
-            OnOnlineModeChanged(_onlineModeToggle.isOn);
+            // Done loading — enable listeners and apply section visibility once
+            _isLoadingSettings = false;
+            UpdateBackendSections();
 
             // Advanced settings (per-game, stored in translations.json)
             _disableEventSystemOverrideToggle.isOn = TranslatorCore.DisableEventSystemOverride;
@@ -1515,6 +1661,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             _autoDownloadToggle.interactable = enabled;
             _checkModUpdatesToggle.interactable = enabled;
             _checkModUpdatesNowBtn.Component.interactable = enabled;
+
+            // Translation API availability depends on online mode
+            if (!_isLoadingSettings) UpdateBackendSections();
         }
 
         private void OnNotificationsEnabledChanged(bool enabled)
@@ -1569,26 +1718,146 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private void OnCaptureKeysOnlyChanged(bool captureOnly)
         {
-            UpdateAIInteractable();
+            if (_isLoadingSettings) return;
+            UpdateBackendSections();
         }
 
-        private void OnAIToggleChanged(bool enabled)
+        private void OnEnableTranslationBackendChanged(bool enabled)
         {
-            UpdateAIInteractable();
+            if (_isLoadingSettings) return;
+            UpdateBackendSections();
+            UpdateApplyButtonText();
         }
 
-        private void UpdateAIInteractable()
+        private void OnBackendTypeChanged(string selectedType)
         {
-            bool usable = _enableAIToggle.isOn && !_captureKeysOnlyToggle.isOn;
-            _aiUrlInput.Component.interactable = usable;
-            _aiApiKeyInput.Component.interactable = usable;
-            _modelDropdown.SetInteractable(usable);
-            _gameContextInput.Component.interactable = usable;
+            if (_isLoadingSettings) return;
+            UpdateBackendSections();
+            UpdateApplyButtonText();
+        }
 
-            bool sourceIsAuto = _sourceLanguageDropdown.SelectedValue == "auto (Detect)";
-            _strictSourceToggle.interactable = usable && !sourceIsAuto;
+        private void OnProviderChanged(string selectedProvider)
+        {
+            if (_isLoadingSettings) return;
+            UpdateBackendSections();
+            UpdateApplyButtonText();
+        }
 
-            _enableAIToggle.interactable = !_captureKeysOnlyToggle.isOn;
+        private string GetSelectedBackendConfig()
+        {
+            if (_enableTranslationBackendToggle == null || !_enableTranslationBackendToggle.isOn)
+                return "none";
+
+            string type = _backendTypeDropdown?.SelectedValue ?? "LLM (AI)";
+            if (type == "LLM (AI)") return "llm";
+
+            // Translation API → check provider
+            string provider = _providerDropdown?.SelectedValue ?? "Google Translate";
+            return provider == "DeepL" ? "deepl" : "google";
+        }
+
+        private void UpdateBackendSections()
+        {
+            bool captureOnly = _captureKeysOnlyToggle.isOn;
+            bool enabled = _enableTranslationBackendToggle != null && _enableTranslationBackendToggle.isOn;
+
+            _enableTranslationBackendToggle.interactable = !captureOnly;
+            _backendTypeSection?.SetActive(!captureOnly && enabled);
+
+            if (!enabled || captureOnly)
+            {
+                _llmSection?.SetActive(false);
+                _translationApiSection?.SetActive(false);
+                return;
+            }
+
+            // Translation APIs require online mode
+            bool canUseTransApi = _onlineModeToggle != null && _onlineModeToggle.isOn;
+            _backendTypeDropdown?.SetInteractable(canUseTransApi);
+            if (!canUseTransApi && _backendTypeDropdown?.SelectedValue == "Translation API")
+            {
+                _backendTypeDropdown.SelectedValue = "LLM (AI)";
+            }
+
+            string type = _backendTypeDropdown?.SelectedValue ?? "LLM (AI)";
+            bool isLLM = type == "LLM (AI)";
+
+            _llmSection?.SetActive(isLLM);
+            _translationApiSection?.SetActive(!isLLM);
+
+            if (isLLM)
+            {
+                bool sourceIsAuto = _sourceLanguageDropdown.SelectedValue == "auto (Detect)";
+                _strictSourceToggle.interactable = !sourceIsAuto;
+            }
+
+            if (!isLLM)
+            {
+                string provider = _providerDropdown?.SelectedValue ?? "Google Translate";
+                _googleSection?.SetActive(provider == "Google Translate");
+                _deeplSection?.SetActive(provider == "DeepL");
+            }
+        }
+
+        private async void TestGoogleConnection()
+        {
+            string apiKey = _googleApiKeyInput?.Text;
+            if (string.IsNullOrEmpty(apiKey))
+            {
+                _googleTestStatusLabel.text = "Enter an API key first";
+                _googleTestStatusLabel.color = UIStyles.StatusWarning;
+                return;
+            }
+
+            _googleTestStatusLabel.text = "Testing...";
+            _googleTestStatusLabel.color = UIStyles.TextSecondary;
+
+            bool success = await TranslatorCore.TestGoogleConnection(apiKey);
+
+            TranslatorUIManager.RunOnMainThread(() =>
+            {
+                if (success)
+                {
+                    _googleTestStatusLabel.text = "Connected!";
+                    _googleTestStatusLabel.color = UIStyles.StatusSuccess;
+                }
+                else
+                {
+                    _googleTestStatusLabel.text = "Failed - check API key";
+                    _googleTestStatusLabel.color = UIStyles.StatusError;
+                }
+            });
+        }
+
+        private async void TestDeepLConnection()
+        {
+            string apiKey = _deeplApiKeyInput?.Text;
+            if (string.IsNullOrEmpty(apiKey))
+            {
+                _deeplTestStatusLabel.text = "Enter an API key first";
+                _deeplTestStatusLabel.color = UIStyles.StatusWarning;
+                return;
+            }
+
+            _deeplTestStatusLabel.text = "Testing...";
+            _deeplTestStatusLabel.color = UIStyles.TextSecondary;
+
+            bool useFree = _deeplUseFreeToggle.isOn;
+            bool success = await TranslatorCore.TestDeepLConnection(apiKey, useFree);
+
+            TranslatorUIManager.RunOnMainThread(() =>
+            {
+                if (success)
+                {
+                    _deeplTestStatusLabel.text = "Connected!";
+                    _deeplTestStatusLabel.color = UIStyles.StatusSuccess;
+                }
+                else
+                {
+                    _deeplTestStatusLabel.text = "Failed - check API key and plan type";
+                    _deeplTestStatusLabel.color = UIStyles.StatusError;
+                }
+            });
         }
 
         private async void OnCheckModUpdatesNowClicked()
@@ -1742,15 +2011,22 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // Hotkey
                 TranslatorCore.Config.settings_hotkey = _hotkeyCapture.HotkeyString;
 
-                // Translation (Capture + AI)
+                // Translation (Backend + Capture)
                 TranslatorCore.Config.capture_keys_only = _captureKeysOnlyToggle.isOn;
-                TranslatorCore.Config.enable_ai = _enableAIToggle.isOn;
+                string newBackend = GetSelectedBackendConfig();
+                TranslatorCore.Config.translation_backend = newBackend;
+                TranslatorCore.Config.enable_ai = (newBackend == "llm"); // Keep enable_ai in sync
                 TranslatorCore.Config.ai_url = _aiUrlInput.Text;
                 string apiKeyValue = _aiApiKeyInput.Text;
                 TranslatorCore.Config.ai_api_key = !string.IsNullOrEmpty(apiKeyValue) ? apiKeyValue : null;
                 TranslatorCore.Config.ai_model = _modelDropdown.SelectedValue ?? "";
                 TranslatorCore.Config.game_context = _gameContextInput.Text;
                 TranslatorCore.Config.strict_source_language = _strictSourceToggle.isOn;
+                string googleKey = _googleApiKeyInput?.Text;
+                TranslatorCore.Config.google_api_key = !string.IsNullOrEmpty(googleKey) ? googleKey : null;
+                string deeplKey = _deeplApiKeyInput?.Text;
+                TranslatorCore.Config.deepl_api_key = !string.IsNullOrEmpty(deeplKey) ? deeplKey : null;
+                TranslatorCore.Config.deepl_use_free = _deeplUseFreeToggle.isOn;
 
                 // Online mode - detect transition for sync stream management
                 bool wasOnline = TranslatorCore.Config.online_mode;
@@ -1803,7 +2079,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // Force refresh all text to apply new settings (fonts, translations)
                 TranslatorScanner.ForceRefreshAllText();
 
-                if (_enableAIToggle.isOn)
+                if (TranslatorCore.Config.IsTranslationEnabled)
                 {
                     TranslatorCore.EnsureWorkerRunning();
                 }
@@ -1909,6 +2185,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             _aiUrlInput.OnValueChanged += _ => UpdateApplyButtonText();
             _aiApiKeyInput.OnValueChanged += _ => UpdateApplyButtonText();
             _gameContextInput.OnValueChanged += _ => UpdateApplyButtonText();
+            _googleApiKeyInput.OnValueChanged += _ => UpdateApplyButtonText();
+            _deeplApiKeyInput.OnValueChanged += _ => UpdateApplyButtonText();
 
             // Language dropdowns - hook into their change events
             _sourceLanguageDropdown.OnSelectionChanged += _ => UpdateApplyButtonText();
@@ -1943,14 +2221,17 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Hotkey
             if (_hotkeyCapture.HotkeyString != _initialSnapshot.settings_hotkey) count++;
 
-            // Translation (Capture + AI)
+            // Translation (Backend + Capture)
             if (_captureKeysOnlyToggle.isOn != _initialSnapshot.capture_keys_only) count++;
-            if (_enableAIToggle.isOn != _initialSnapshot.enable_ai) count++;
+            if (GetSelectedBackendConfig() != _initialSnapshot.translation_backend) count++;
             if (_aiUrlInput.Text != _initialSnapshot.ai_url) count++;
             if ((_aiApiKeyInput.Text ?? "") != _initialSnapshot.ai_api_key) count++;
             if ((_modelDropdown.SelectedValue ?? "") != _initialSnapshot.ai_model) count++;
             if (_gameContextInput.Text != _initialSnapshot.game_context) count++;
             if (_strictSourceToggle.isOn != _initialSnapshot.strict_source_language) count++;
+            if ((_googleApiKeyInput?.Text ?? "") != _initialSnapshot.google_api_key) count++;
+            if ((_deeplApiKeyInput?.Text ?? "") != _initialSnapshot.deepl_api_key) count++;
+            if (_deeplUseFreeToggle.isOn != _initialSnapshot.deepl_use_free) count++;
 
             // Online
             if (_onlineModeToggle.isOn != _initialSnapshot.online_mode) count++;

@@ -145,6 +145,113 @@ namespace UnityGameTranslator.Core
         };
 
         /// <summary>
+        /// Reverse lookup: full language name to ISO 639-1 code.
+        /// Built lazily from IsoToName dictionary.
+        /// </summary>
+        private static Dictionary<string, string> _nameToIso;
+
+        private static Dictionary<string, string> NameToIso
+        {
+            get
+            {
+                if (_nameToIso == null)
+                {
+                    _nameToIso = new Dictionary<string, string>(System.StringComparer.OrdinalIgnoreCase);
+                    foreach (var kvp in IsoToName)
+                    {
+                        // Only keep the shortest code for each name (prefer "zh" over "zh-cn")
+                        if (!_nameToIso.ContainsKey(kvp.Value) || kvp.Key.Length < _nameToIso[kvp.Value].Length)
+                        {
+                            _nameToIso[kvp.Value] = kvp.Key;
+                        }
+                    }
+                }
+                return _nameToIso;
+            }
+        }
+
+        /// <summary>
+        /// Get ISO 639-1 code from a full language name (e.g., "French" → "fr").
+        /// Returns null if not found.
+        /// </summary>
+        public static string NameToIsoCode(string languageName)
+        {
+            if (string.IsNullOrEmpty(languageName))
+                return null;
+
+            if (NameToIso.TryGetValue(languageName, out string code))
+                return code;
+
+            // If it's already a code, return as-is
+            string lower = languageName.ToLowerInvariant();
+            if (IsoToName.ContainsKey(lower))
+                return lower;
+
+            return null;
+        }
+
+        /// <summary>
+        /// Get the Google Translate API language code from a language name.
+        /// Google uses lowercase ISO 639-1 codes (e.g., "fr", "zh" for Simplified Chinese, "zh-TW" for Traditional).
+        /// </summary>
+        public static string GetGoogleLanguageCode(string languageName)
+        {
+            if (string.IsNullOrEmpty(languageName))
+                return null;
+
+            // Special cases for Google
+            switch (languageName)
+            {
+                case "Simplified Chinese": return "zh-CN";
+                case "Traditional Chinese": return "zh-TW";
+                case "Norwegian Bokmål": return "no";
+                case "Norwegian Nynorsk": return "no"; // Google doesn't distinguish
+            }
+
+            return NameToIsoCode(languageName);
+        }
+
+        /// <summary>
+        /// Get the DeepL API language code from a language name.
+        /// DeepL uses uppercase codes with some special target variants (e.g., "EN-US", "PT-BR").
+        /// </summary>
+        public static string GetDeepLLanguageCode(string languageName, bool isTarget = true)
+        {
+            if (string.IsNullOrEmpty(languageName))
+                return null;
+
+            // DeepL special cases for target language
+            if (isTarget)
+            {
+                switch (languageName)
+                {
+                    case "English": return "EN-US";
+                    case "Portuguese": return "PT-BR";
+                    case "Simplified Chinese": return "ZH-HANS";
+                    case "Traditional Chinese": return "ZH-HANT";
+                    case "Norwegian Bokmål": return "NB";
+                    case "Norwegian Nynorsk": return "NB"; // DeepL only supports Bokmål
+                }
+            }
+            else
+            {
+                // Source language: DeepL uses simpler codes
+                switch (languageName)
+                {
+                    case "English": return "EN";
+                    case "Portuguese": return "PT";
+                    case "Simplified Chinese": return "ZH";
+                    case "Traditional Chinese": return "ZH";
+                    case "Norwegian Bokmål": return "NB";
+                    case "Norwegian Nynorsk": return "NB";
+                }
+            }
+
+            string code = NameToIsoCode(languageName);
+            return code?.ToUpperInvariant();
+        }
+
+        /// <summary>
         /// Convert ISO 639-1 code to full language name.
         /// If already a full name or unknown, returns as-is.
         /// </summary>

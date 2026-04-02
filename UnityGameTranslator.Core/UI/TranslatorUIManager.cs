@@ -1409,6 +1409,16 @@ namespace UnityGameTranslator.Core.UI
         {
             if (StatusOverlay == null) return;
 
+            // User can disable the entire notification overlay
+            if (!TranslatorCore.Config.sync.notifications_enabled)
+            {
+                if (StatusOverlay.Enabled)
+                {
+                    StatusOverlay.SetActive(false);
+                }
+                return;
+            }
+
             // Determine what should be shown
             bool panelsOpen = AnyPanelVisible();
             bool firstRunDone = TranslatorCore.Config.first_run_completed;

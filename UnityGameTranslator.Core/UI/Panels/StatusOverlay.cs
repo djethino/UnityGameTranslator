@@ -18,7 +18,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         public override int PanelWidth => 350;
         public override int PanelHeight => 180;
 
-        // Override anchors to position in top-right corner
+        // Override anchors - actual position set dynamically via ApplyPositionFromConfig()
         public override Vector2 DefaultAnchorMin => new(1f, 1f);
         public override Vector2 DefaultAnchorMax => new(1f, 1f);
 
@@ -100,14 +100,50 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         public override void SetDefaultSizeAndPosition()
         {
-            // Position in top-right corner with padding
-            Rect.anchorMin = new Vector2(1f, 1f);
-            Rect.anchorMax = new Vector2(1f, 1f);
-            Rect.pivot = new Vector2(1f, 1f);
             Rect.sizeDelta = new Vector2(PanelWidth, PanelHeight);
-            Rect.anchoredPosition = new Vector2(-10, -10); // 10px padding from corner
-
+            ApplyPositionFromConfig();
             EnsureValidPosition();
+        }
+
+        /// <summary>
+        /// Applies the notification position from config to the overlay anchors/pivot.
+        /// Called at init and when the user changes the position setting.
+        /// </summary>
+        public void ApplyPositionFromConfig()
+        {
+            if (Rect == null) return;
+
+            string position = TranslatorCore.Config?.sync?.notification_position ?? "top-right";
+            float anchorX, anchorY, pivotX, pivotY, posX, posY;
+
+            switch (position)
+            {
+                case "top-left":
+                    anchorX = 0f; anchorY = 1f;
+                    pivotX = 0f; pivotY = 1f;
+                    posX = 10f; posY = -10f;
+                    break;
+                case "bottom-right":
+                    anchorX = 1f; anchorY = 0f;
+                    pivotX = 1f; pivotY = 0f;
+                    posX = -10f; posY = 10f;
+                    break;
+                case "bottom-left":
+                    anchorX = 0f; anchorY = 0f;
+                    pivotX = 0f; pivotY = 0f;
+                    posX = 10f; posY = 10f;
+                    break;
+                default: // "top-right"
+                    anchorX = 1f; anchorY = 1f;
+                    pivotX = 1f; pivotY = 1f;
+                    posX = -10f; posY = -10f;
+                    break;
+            }
+
+            Rect.anchorMin = new Vector2(anchorX, anchorY);
+            Rect.anchorMax = new Vector2(anchorX, anchorY);
+            Rect.pivot = new Vector2(pivotX, pivotY);
+            Rect.anchoredPosition = new Vector2(posX, posY);
         }
 
         protected override void ConstructPanelContent()

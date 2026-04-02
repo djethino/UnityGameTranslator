@@ -2233,7 +2233,7 @@ namespace UnityGameTranslator.Core
                     string errorBody = "";
                     try { errorBody = response.Content.ReadAsStringAsync().Result; } catch { }
 
-                    if (errorBody.Contains("Unrecognized request argument") && errorBody.Contains("think"))
+                    if (errorBody.Contains("think"))
                     {
                         // This provider doesn't support "think" param — cache and retry without it
                         _providerSupportsThinkParam = false;
@@ -3418,6 +3418,19 @@ namespace UnityGameTranslator.Core
         public bool check_update_on_start { get; set; } = true;
         public bool auto_download { get; set; } = false;
         public bool notify_updates { get; set; } = true;
+
+        /// <summary>
+        /// Enable the corner notification overlay (mod updates, sync, AI queue).
+        /// When false, all overlay notifications are hidden.
+        /// </summary>
+        public bool notifications_enabled { get; set; } = true;
+
+        /// <summary>
+        /// Screen corner for notification overlay.
+        /// Values: "top-right", "top-left", "bottom-right", "bottom-left"
+        /// </summary>
+        public string notification_position { get; set; } = "top-right";
+
         public string merge_strategy { get; set; } = "ask";
         public List<string> ignored_uuids { get; set; } = new List<string>();
 

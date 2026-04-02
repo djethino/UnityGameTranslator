@@ -65,6 +65,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         private Toggle _checkUpdatesToggle;
         private Toggle _notifyUpdatesToggle;
         private Toggle _autoDownloadToggle;
+        private Toggle _notificationsEnabledToggle;
+        private SearchableDropdown _notificationPositionDropdown;
         private Toggle _checkModUpdatesToggle;
         private ButtonRef _checkModUpdatesNowBtn;
         private Text _checkModUpdatesStatusLabel;
@@ -114,6 +116,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             public bool online_mode;
             public bool check_update_on_start;
             public bool notify_updates;
+            public bool notifications_enabled;
+            public string notification_position;
             public bool auto_download;
             public bool check_mod_updates;
             public bool disable_eventsystem_override;
@@ -137,6 +141,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                     online_mode = TranslatorCore.Config.online_mode,
                     check_update_on_start = TranslatorCore.Config.sync.check_update_on_start,
                     notify_updates = TranslatorCore.Config.sync.notify_updates,
+                    notifications_enabled = TranslatorCore.Config.sync.notifications_enabled,
+                    notification_position = TranslatorCore.Config.sync.notification_position ?? "top-right",
                     auto_download = TranslatorCore.Config.sync.auto_download,
                     check_mod_updates = TranslatorCore.Config.sync.check_mod_updates,
                     disable_eventsystem_override = TranslatorCore.DisableEventSystemOverride
@@ -257,6 +263,35 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             var modUIHint = UIStyles.CreateHint(card, "ModUIHint", "Translate this mod's own buttons and labels");
             RegisterUIText(modUIHint);
+
+            UIStyles.CreateSpacer(card, 10);
+
+            // === NOTIFICATION OVERLAY SECTION ===
+            var notifSectionTitle = UIStyles.CreateSectionTitle(card, "NotificationsLabel", "Notification Overlay");
+            RegisterUIText(notifSectionTitle);
+
+            var notifEnabledObj = UIFactory.CreateToggle(card, "NotifEnabledToggle", out _notificationsEnabledToggle, out var notifEnabledLabel);
+            notifEnabledLabel.text = " Show notification overlay";
+            notifEnabledLabel.color = UIStyles.TextSecondary;
+            UIHelpers.AddToggleListener(_notificationsEnabledToggle, OnNotificationsEnabledChanged);
+            UIFactory.SetLayoutElement(notifEnabledObj, minHeight: UIStyles.RowHeightNormal);
+            RegisterUIText(notifEnabledLabel);
+
+            var posRow = UIStyles.CreateFormRow(card, "NotifPosRow", UIStyles.RowHeightMedium, 5);
+            var posLabel = UIFactory.CreateLabel(posRow, "NotifPosLabel", "Position:", TextAnchor.MiddleLeft);
+            posLabel.color = UIStyles.TextSecondary;
+            UIFactory.SetLayoutElement(posLabel.gameObject, minWidth: 60);
+            RegisterUIText(posLabel);
+
+            _notificationPositionDropdown = new SearchableDropdown(
+                "NotifPosition",
+                new[] { "Top-Right", "Top-Left", "Bottom-Right", "Bottom-Left" },
+                "Top-Right",
+                popupHeight: 150,
+                showSearch: false
+            );
+            var posDropdownObj = _notificationPositionDropdown.CreateUI(posRow, (_) => { UpdateApplyButtonText(); });
+            UIFactory.SetLayoutElement(posDropdownObj, minWidth: 140, minHeight: UIStyles.InputHeight);
 
             UIStyles.CreateSpacer(card, 10);
 
@@ -1393,6 +1428,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             _notifyUpdatesToggle.isOn = TranslatorCore.Config.sync.notify_updates;
             _autoDownloadToggle.isOn = TranslatorCore.Config.sync.auto_download;
             _checkModUpdatesToggle.isOn = TranslatorCore.Config.sync.check_mod_updates;
+            _notificationsEnabledToggle.isOn = TranslatorCore.Config.sync.notifications_enabled;
+            _notificationPositionDropdown.SelectedValue = PositionConfigToDisplay(TranslatorCore.Config.sync.notification_position);
             OnOnlineModeChanged(_onlineModeToggle.isOn);
 
             // Advanced settings (per-game, stored in translations.json)
@@ -1478,6 +1515,34 @@ namespace UnityGameTranslator.Core.UI.Panels
             _autoDownloadToggle.interactable = enabled;
             _checkModUpdatesToggle.interactable = enabled;
             _checkModUpdatesNowBtn.Component.interactable = enabled;
+        }
+
+        private void OnNotificationsEnabledChanged(bool enabled)
+        {
+            _notificationPositionDropdown.SetInteractable(enabled);
+            UpdateApplyButtonText();
+        }
+
+        private static string PositionConfigToDisplay(string config)
+        {
+            switch (config)
+            {
+                case "top-left": return "Top-Left";
+                case "bottom-right": return "Bottom-Right";
+                case "bottom-left": return "Bottom-Left";
+                default: return "Top-Right";
+            }
+        }
+
+        private static string PositionDisplayToConfig(string display)
+        {
+            switch (display)
+            {
+                case "Top-Left": return "top-left";
+                case "Bottom-Right": return "bottom-right";
+                case "Bottom-Left": return "bottom-left";
+                default: return "top-right";
+            }
         }
 
         private void OnResetWindowPositionsClicked()
@@ -1695,6 +1760,11 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TranslatorCore.Config.sync.notify_updates = _notifyUpdatesToggle.isOn;
                 TranslatorCore.Config.sync.auto_download = _autoDownloadToggle.isOn;
                 TranslatorCore.Config.sync.check_mod_updates = _checkModUpdatesToggle.isOn;
+                TranslatorCore.Config.sync.notifications_enabled = _notificationsEnabledToggle.isOn;
+                TranslatorCore.Config.sync.notification_position = PositionDisplayToConfig(_notificationPositionDropdown.SelectedValue);
+
+                // Apply notification position change immediately
+                TranslatorUIManager.StatusOverlay?.ApplyPositionFromConfig();
 
                 // Advanced settings (per-game, stored in translations.json, requires restart)
                 bool eventSystemChanged = TranslatorCore.DisableEventSystemOverride != _disableEventSystemOverrideToggle.isOn;
@@ -1888,6 +1958,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_notifyUpdatesToggle.isOn != _initialSnapshot.notify_updates) count++;
             if (_autoDownloadToggle.isOn != _initialSnapshot.auto_download) count++;
             if (_checkModUpdatesToggle.isOn != _initialSnapshot.check_mod_updates) count++;
+            if (_notificationsEnabledToggle.isOn != _initialSnapshot.notifications_enabled) count++;
+            if (PositionDisplayToConfig(_notificationPositionDropdown.SelectedValue) != _initialSnapshot.notification_position) count++;
 
             // Advanced (per-game settings)
             if (_disableEventSystemOverrideToggle.isOn != _initialSnapshot.disable_eventsystem_override) count++;

@@ -364,12 +364,27 @@ namespace UnityGameTranslator.Core
         /// <summary>
         /// Match a path against an exclusion pattern.
         /// Patterns: "Canvas/Chat/**" matches any child, "**/PlayerName" matches at any depth.
+        /// An exact path also matches all children (excluding "Canvas/Panel" excludes "Canvas/Panel/Text").
         /// </summary>
         private static bool MatchesExclusionPattern(string path, string pattern)
         {
             if (string.IsNullOrEmpty(pattern)) return false;
 
-            // Convert pattern to regex-like matching
+            // Exact path exclusions implicitly exclude all children:
+            // Pattern "Canvas/Panel" should match "Canvas/Panel", "Canvas/Panel/Child", "Canvas/Panel/Child/Text"
+            // Only apply this when pattern has no wildcards (pure path exclusion)
+            if (!pattern.Contains("*"))
+            {
+                if (string.Equals(path, pattern, StringComparison.OrdinalIgnoreCase))
+                    return true;
+                // Check if path is a child of the excluded path
+                if (path.Length > pattern.Length && path[pattern.Length] == '/' &&
+                    path.StartsWith(pattern, StringComparison.OrdinalIgnoreCase))
+                    return true;
+                return false;
+            }
+
+            // Wildcard pattern matching
             // ** = any number of path segments (including zero)
             // * = any single path segment name
 

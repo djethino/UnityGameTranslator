@@ -40,6 +40,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private string _lastSelectedPath = "";
         private GameObject _lastSelectedObject = null;
         private int _frameSkip = 0;
+        private bool _mainPanelWasOpen = false;
 
         // Highlight overlay
         private GameObject _highlightCanvas;
@@ -564,6 +565,12 @@ namespace UnityGameTranslator.Core.UI.Panels
                     ClearSelection();
                     ClearHover();
                     _statusLabel.text = "";
+
+                    // Hide MainPanel during inspection to clear the view
+                    var mainPanel = TranslatorUIManager.MainPanel;
+                    _mainPanelWasOpen = mainPanel != null && mainPanel.Enabled;
+                    if (_mainPanelWasOpen)
+                        mainPanel.SetActive(false);
                 }
                 if (_highlightCanvas != null)
                     _highlightCanvas.SetActive(true);
@@ -574,6 +581,13 @@ namespace UnityGameTranslator.Core.UI.Panels
                 HideAllHighlights();
                 if (_highlightCanvas != null)
                     _highlightCanvas.SetActive(false);
+
+                // Restore MainPanel if it was open before inspection
+                if (_mainPanelWasOpen)
+                {
+                    TranslatorUIManager.MainPanel?.SetActive(true);
+                    _mainPanelWasOpen = false;
+                }
             }
         }
 

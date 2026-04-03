@@ -670,35 +670,22 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         /// <summary>
         /// Check if a GameObject is part of our mod UI (IL2CPP-safe).
+        /// Uses hierarchy name check — no generic Unity methods that crash on IL2CPP JIT.
         /// </summary>
         private bool IsOwnUI(GameObject obj)
         {
             if (obj == null) return false;
 
-            // Try getting any Component to check via hierarchy
-            // Use reflection-safe approach: GetComponents(typeof(Component))
-            try
+            // Check hierarchy by name — works on both Mono and IL2CPP without any
+            // generic method calls (GetComponents<T>() crashes at JIT on IL2CPP)
+            var current = obj.transform;
+            while (current != null)
             {
-                var components = obj.GetComponents<Component>();
-                if (components != null)
-                {
-                    foreach (var comp in components)
-                    {
-                        if (comp != null && TranslatorCore.IsOwnUIByHierarchy(comp))
-                            return true;
-                    }
-                }
-            }
-            catch
-            {
-                // Fallback: check hierarchy by name (our panels have known prefixes)
-                var current = obj.transform;
-                while (current != null)
-                {
-                    if (current.name.StartsWith("UGT_") || current.name.Contains("UniverseLib"))
-                        return true;
-                    current = current.parent;
-                }
+                string name = current.name;
+                if (name.StartsWith("UGT_") || name.StartsWith("UniverseLibCanvas")
+                    || name.StartsWith("UniverseLib_") || name == "UGT_InspectorHighlight")
+                    return true;
+                current = current.parent;
             }
 
             return false;

@@ -502,6 +502,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         /// <summary>
         /// Position a highlight rect over a target GameObject's RectTransform bounds.
+        /// Uses TransformPoint instead of GetWorldCorners (IL2CPP-safe: no array params).
         /// </summary>
         private void PositionHighlight(RectTransform highlightRect, Image highlightImage, GameObject target)
         {
@@ -518,27 +519,17 @@ namespace UnityGameTranslator.Core.UI.Panels
                 return;
             }
 
-            // Get world corners of the target
-            Vector3[] corners = new Vector3[4];
-            targetRect.GetWorldCorners(corners);
-
-            // Convert to screen space if the target's canvas is not ScreenSpaceOverlay
-            var targetCanvas = target.GetComponentInParent<Canvas>();
-            if (targetCanvas != null && targetCanvas.renderMode != RenderMode.ScreenSpaceOverlay && targetCanvas.worldCamera != null)
+            // Get screen-space bounds using TransformPoint on local rect corners
+            // TransformPoint takes Vector3 (value type) — IL2CPP-safe, unlike GetWorldCorners(Vector3[])
+            Vector2 screenMin, screenMax;
+            if (!GetScreenBounds(targetRect, out screenMin, out screenMax))
             {
-                var cam = targetCanvas.worldCamera;
-                for (int i = 0; i < 4; i++)
-                    corners[i] = cam.WorldToScreenPoint(corners[i]);
+                highlightImage.gameObject.SetActive(false);
+                return;
             }
 
-            // Calculate screen-space rect
-            float minX = Mathf.Min(corners[0].x, corners[1].x, corners[2].x, corners[3].x);
-            float maxX = Mathf.Max(corners[0].x, corners[1].x, corners[2].x, corners[3].x);
-            float minY = Mathf.Min(corners[0].y, corners[1].y, corners[2].y, corners[3].y);
-            float maxY = Mathf.Max(corners[0].y, corners[1].y, corners[2].y, corners[3].y);
-
-            float width = maxX - minX;
-            float height = maxY - minY;
+            float width = screenMax.x - screenMin.x;
+            float height = screenMax.y - screenMin.y;
 
             // Skip degenerate rects
             if (width < 1f || height < 1f)
@@ -547,7 +538,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 return;
             }
 
-            highlightRect.anchoredPosition = new Vector2(minX, minY);
+            highlightRect.anchoredPosition = screenMin;
             highlightRect.sizeDelta = new Vector2(width, height);
             highlightImage.gameObject.SetActive(true);
         }
@@ -715,22 +706,88 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         /// <summary>
         /// Check if mouse position is over this panel's rect.
-        /// UniverseLib uses ScreenSpaceOverlay, so world corners = screen coords.
+        /// Uses TransformPoint instead of GetWorldCorners (IL2CPP-safe).
         /// </summary>
         private bool IsMouseOverPanel(Vector3 screenPos)
         {
             if (Rect == null) return false;
 
-            Vector3[] corners = new Vector3[4];
-            Rect.GetWorldCorners(corners);
+            Vector2 screenMin, screenMax;
+            if (!GetScreenBounds(Rect, out screenMin, out screenMax))
+                return false;
 
-            float minX = Mathf.Min(corners[0].x, corners[1].x, corners[2].x, corners[3].x);
-            float maxX = Mathf.Max(corners[0].x, corners[1].x, corners[2].x, corners[3].x);
-            float minY = Mathf.Min(corners[0].y, corners[1].y, corners[2].y, corners[3].y);
-            float maxY = Mathf.Max(corners[0].y, corners[1].y, corners[2].y, corners[3].y);
+            return screenPos.x >= screenMin.x && screenPos.x <= screenMax.x &&
+                   screenPos.y >= screenMin.y && screenPos.y <= screenMax.y;
+        }
 
-            return screenPos.x >= minX && screenPos.x <= maxX &&
-                   screenPos.y >= minY && screenPos.y <= maxY;
+        /// <summary>
+        /// Get screen-space bounds of a RectTransform using TransformPoint (IL2CPP-safe).
+        /// GetWorldCorners(Vector3[]) crashes on IL2CPP because the array param becomes
+        /// Il2CppStructArray — using TransformPoint(Vector3) avoids this entirely.
+        /// </summary>
+        private static bool GetScreenBounds(RectTransform rect, out Vector2 screenMin, out Vector2 screenMax)
+        {
+            screenMin = Vector2.zero;
+            screenMax = Vector2.zero;
+
+            if (rect == null) return false;
+
+            try
+            {
+                // Get the local rect (x, y, width, height in local space)
+                Rect localRect = rect.rect;
+
+                // Transform the 4 corners from local to world space
+                // TransformPoint takes a Vector3 value type — no IL2CPP array issues
+                Vector3 c0 = rect.TransformPoint(new Vector3(localRect.xMin, localRect.yMin, 0));
+                Vector3 c1 = rect.TransformPoint(new Vector3(localRect.xMin, localRect.yMax, 0));
+                Vector3 c2 = rect.TransformPoint(new Vector3(localRect.xMax, localRect.yMax, 0));
+                Vector3 c3 = rect.TransformPoint(new Vector3(localRect.xMax, localRect.yMin, 0));
+
+                // For ScreenSpaceOverlay canvases, world coords = screen coords
+                // For other render modes, we'd need camera conversion
+                float minX = Mathf.Min(c0.x, c1.x, c2.x, c3.x);
+                float maxX = Mathf.Max(c0.x, c1.x, c2.x, c3.x);
+                float minY = Mathf.Min(c0.y, c1.y, c2.y, c3.y);
+                float maxY = Mathf.Max(c0.y, c1.y, c2.y, c3.y);
+
+                // Check if the target might be on a non-Overlay canvas — convert via camera
+                // Walk up to find the root Canvas
+                Canvas rootCanvas = null;
+                try
+                {
+                    // GetComponentInParent<Canvas>() should be safe on IL2CPP (single generic param, no arrays)
+                    rootCanvas = rect.GetComponentInParent<Canvas>();
+                    if (rootCanvas != null) rootCanvas = rootCanvas.rootCanvas;
+                }
+                catch { }
+
+                if (rootCanvas != null && rootCanvas.renderMode != RenderMode.ScreenSpaceOverlay)
+                {
+                    var cam = rootCanvas.worldCamera;
+                    if (cam != null)
+                    {
+                        Vector3 s0 = cam.WorldToScreenPoint(c0);
+                        Vector3 s1 = cam.WorldToScreenPoint(c1);
+                        Vector3 s2 = cam.WorldToScreenPoint(c2);
+                        Vector3 s3 = cam.WorldToScreenPoint(c3);
+
+                        minX = Mathf.Min(s0.x, s1.x, s2.x, s3.x);
+                        maxX = Mathf.Max(s0.x, s1.x, s2.x, s3.x);
+                        minY = Mathf.Min(s0.y, s1.y, s2.y, s3.y);
+                        maxY = Mathf.Max(s0.y, s1.y, s2.y, s3.y);
+                    }
+                }
+
+                screenMin = new Vector2(minX, minY);
+                screenMax = new Vector2(maxX, maxY);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogDebug($"[Inspector] GetScreenBounds failed: {ex.Message}");
+                return false;
+            }
         }
 
         private void ClearHoverLabel()

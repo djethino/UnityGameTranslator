@@ -844,6 +844,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void OnStopClicked()
         {
             SetActive(false);
+            // Return to OptionsPanel on the Exclusions tab
+            TranslatorUIManager.OptionsPanel?.OpenOnExclusionsTab();
         }
     }
 }

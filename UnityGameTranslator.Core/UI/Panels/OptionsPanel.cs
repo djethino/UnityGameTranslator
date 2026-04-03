@@ -1252,6 +1252,16 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.SetLayoutElement(_exclusionsStatusLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
         }
 
+        /// <summary>
+        /// Open OptionsPanel and switch directly to the Exclusions tab.
+        /// Called when returning from InspectorPanel.
+        /// </summary>
+        public void OpenOnExclusionsTab()
+        {
+            SetActive(true);
+            _tabBar?.SelectTab("Exclusions");
+        }
+
         private void OnStartInspectorClicked()
         {
             // Close options panel and open inspector panel

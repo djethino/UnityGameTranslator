@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.UI;
 using UniverseLib.UI;
@@ -35,6 +36,12 @@ namespace UnityGameTranslator.Core.UI.Panels
         private GameObject _conflictListContent;
         private Text _summaryLabel;
 
+        // Button references for dynamic state
+        private ButtonRef _applyBtn;
+        private ButtonRef _keepMineBtn;
+        private ButtonRef _takeServerBtn;
+        private bool _userMadeChoice = false;
+
         public MergePanel(UIBase owner) : base(owner)
         {
         }
@@ -51,6 +58,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             _remoteTranslationsWithTags = null;
             _serverHash = serverHash ?? TranslatorCore.ServerState?.Hash;
             _resolutions.Clear();
+            _userMadeChoice = false;
+            SetApplyButtonEnabled(false);
+            ResetBulkButtonStyles();
 
             // Initialize resolutions to use remote by default
             foreach (var conflict in mergeResult.Conflicts)
@@ -66,6 +76,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         public void SetMergeDataWithTags(MergeResultWithTags mergeResult, Dictionary<string, TranslationEntry> remoteTranslations, string serverHash = null)
         {
+            TranslatorCore.LogInfo($"[MergePanel] SetMergeDataWithTags called - conflicts={mergeResult?.Conflicts?.Count ?? -1}");
             _useTagAwareMerge = true;
             _pendingMergeWithTags = mergeResult;
             _remoteTranslationsWithTags = remoteTranslations;
@@ -73,6 +84,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             _remoteTranslations = null;
             _serverHash = serverHash ?? TranslatorCore.ServerState?.Hash;
             _resolutions.Clear();
+            _userMadeChoice = false;
+            SetApplyButtonEnabled(false);
+            ResetBulkButtonStyles();
 
             // Initialize resolutions to use remote by default
             foreach (var conflict in mergeResult.Conflicts)
@@ -126,36 +140,38 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Bulk action row
             var bulkRow = UIStyles.CreateFormRow(card, "BulkRow", UIStyles.RowHeightXLarge);
             var bulkLayout = bulkRow.GetComponent<HorizontalLayoutGroup>();
-            if (bulkLayout != null) bulkLayout.childAlignment = TextAnchor.MiddleCenter; // Center the buttons
+            if (bulkLayout != null) bulkLayout.childAlignment = TextAnchor.MiddleCenter;
 
-            var useAllLocalBtn = CreateSecondaryButton(bulkRow, "UseAllLocalBtn", "Keep My Changes", 120);
-            useAllLocalBtn.OnClick += UseAllLocal;
-            RegisterUIText(useAllLocalBtn.ButtonText);
+            // All button callbacks use the static singleton to avoid IL2CPP 'this' capture issues
+            _keepMineBtn = CreateSecondaryButton(bulkRow, "UseAllLocalBtn", "Keep My Changes", 120);
+            _keepMineBtn.OnClick += () => TranslatorUIManager.MergePanel?.UseAllLocal();
+            RegisterUIText(_keepMineBtn.ButtonText);
 
-            var useAllRemoteBtn = CreateSecondaryButton(bulkRow, "UseAllRemoteBtn", "Take Server", 100);
-            useAllRemoteBtn.OnClick += UseAllRemote;
-            RegisterUIText(useAllRemoteBtn.ButtonText);
+            _takeServerBtn = CreateSecondaryButton(bulkRow, "UseAllRemoteBtn", "Take Server", 100);
+            _takeServerBtn.OnClick += () => TranslatorUIManager.MergePanel?.UseAllRemote();
+            RegisterUIText(_takeServerBtn.ButtonText);
 
-            // Review on website button (Main only - useful for comparing branches)
-            var reviewBtn = CreateSecondaryButton(bulkRow, "ReviewBtn", "Review on Website", 140);
-            UIStyles.SetBackground(reviewBtn.Component.gameObject, UIStyles.ButtonLink);
-            reviewBtn.OnClick += OpenReviewPage;
-            RegisterUIText(reviewBtn.ButtonText);
+            // Apply Merge - starts disabled until user makes a choice
+            _applyBtn = CreatePrimaryButton(bulkRow, "ApplyBtn", "Apply Merge");
+            _applyBtn.OnClick += () => TranslatorUIManager.MergePanel?.ApplyMerge();
+            RegisterUIText(_applyBtn.ButtonText);
+            SetApplyButtonEnabled(false);
 
             // Bottom buttons - in fixed footer (outside scroll)
             var cancelBtn = CreateSecondaryButton(buttonRow, "CancelBtn", "Cancel");
-            cancelBtn.OnClick += CancelMerge;
+            cancelBtn.OnClick += () => TranslatorUIManager.MergePanel?.CancelMerge();
             RegisterUIText(cancelBtn.ButtonText);
 
             var replaceBtn = CreateSecondaryButton(buttonRow, "ReplaceBtn", "Replace with Remote", 155);
             UIStyles.SetBackground(replaceBtn.Component.gameObject, UIStyles.ButtonDanger);
-            replaceBtn.OnClick += ReplaceWithRemote;
+            replaceBtn.OnClick += () => TranslatorUIManager.MergePanel?.ReplaceWithRemote();
             RegisterUIText(replaceBtn.ButtonText);
 
-            var applyBtn = CreatePrimaryButton(buttonRow, "ApplyBtn", "Apply Merge");
-            UIStyles.SetBackground(applyBtn.Component.gameObject, UIStyles.ButtonSuccess);
-            applyBtn.OnClick += ApplyMerge;
-            RegisterUIText(applyBtn.ButtonText);
+            // Review on Website in the footer (secondary action)
+            var reviewBtn = CreateSecondaryButton(buttonRow, "ReviewBtn", "Review on Website", 140);
+            UIStyles.SetBackground(reviewBtn.Component.gameObject, UIStyles.ButtonLink);
+            reviewBtn.OnClick += () => TranslatorUIManager.MergePanel?.OpenReviewPage();
+            RegisterUIText(reviewBtn.ButtonText);
         }
 
         private void RefreshConflictList()
@@ -172,22 +188,42 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             if (_useTagAwareMerge)
             {
-                int count = _pendingMergeWithTags.Conflicts.Count;
-                _summaryLabel.text = $"{count} conflict(s) to resolve:";
+                var stats = _pendingMergeWithTags.Statistics;
+                int conflictCount = _pendingMergeWithTags.Conflicts.Count;
 
-                foreach (var conflict in _pendingMergeWithTags.Conflicts)
+                if (conflictCount > 0)
                 {
-                    CreateConflictRowWithTags(conflict);
+                    _summaryLabel.text = $"{conflictCount} conflict(s) to resolve  |  {stats.GetSummary()}";
+                }
+                else
+                {
+                    _summaryLabel.text = $"No conflicts! All changes merged automatically.  |  {stats.GetSummary()}";
+                }
+
+                var conflicts = _pendingMergeWithTags.Conflicts;
+                for (int i = 0; i < conflicts.Count; i++)
+                {
+                    CreateConflictRowWithTags(conflicts[i]);
                 }
             }
             else
             {
-                int count = _pendingMerge.Conflicts.Count;
-                _summaryLabel.text = $"{count} conflict(s) to resolve:";
+                var stats = _pendingMerge.Statistics;
+                int conflictCount = _pendingMerge.Conflicts.Count;
 
-                foreach (var conflict in _pendingMerge.Conflicts)
+                if (conflictCount > 0)
                 {
-                    CreateConflictRow(conflict);
+                    _summaryLabel.text = $"{conflictCount} conflict(s) to resolve  |  {stats.GetSummary()}";
+                }
+                else
+                {
+                    _summaryLabel.text = $"No conflicts! All changes merged automatically.  |  {stats.GetSummary()}";
+                }
+
+                var conflicts = _pendingMerge.Conflicts;
+                for (int i = 0; i < conflicts.Count; i++)
+                {
+                    CreateConflictRow(conflicts[i]);
                 }
             }
         }
@@ -271,79 +307,198 @@ namespace UnityGameTranslator.Core.UI.Panels
             remoteValueLbl.fontSize = UIStyles.FontSizeSmall;
             remoteValueLbl.color = UIStyles.StatusSuccess;
 
-            // Choice toggles
-            var choiceRow = UIFactory.CreateHorizontalGroup(row, "Choices", false, false, true, true, 20);
+            // Choice buttons (using ButtonRef instead of Toggle for IL2CPP compatibility)
+            var choiceRow = UIFactory.CreateHorizontalGroup(row, "Choices", false, false, true, true, 10);
             UIFactory.SetLayoutElement(choiceRow, minHeight: UIStyles.RowHeightMedium);
 
-            var localToggleObj = UIFactory.CreateToggle(choiceRow, "LocalToggle", out var localToggle, out var localToggleLabel);
-            localToggleLabel.text = "Use Local";
-            localToggle.isOn = _resolutions.TryGetValue(key, out var res) && res == ConflictResolution.KeepLocal;
-            UIFactory.SetLayoutElement(localToggleObj, minWidth: 100);
+            bool isLocal = _resolutions.TryGetValue(key, out var res) && res == ConflictResolution.KeepLocal;
 
-            var remoteToggleObj = UIFactory.CreateToggle(choiceRow, "RemoteToggle", out var remoteToggle, out var remoteToggleLabel);
-            remoteToggleLabel.text = "Use Remote";
-            remoteToggle.isOn = !localToggle.isOn;
-            UIFactory.SetLayoutElement(remoteToggleObj, minWidth: 100);
+            var localBtn = UIFactory.CreateButton(choiceRow, "UseLocalBtn", "Use Local");
+            UIFactory.SetLayoutElement(localBtn.Component.gameObject, minWidth: 100, minHeight: UIStyles.RowHeightNormal);
 
-            UIHelpers.AddToggleListener(localToggle, (val) =>
+            var remoteBtn = UIFactory.CreateButton(choiceRow, "UseRemoteBtn", "Use Remote");
+            UIFactory.SetLayoutElement(remoteBtn.Component.gameObject, minWidth: 100, minHeight: UIStyles.RowHeightNormal);
+
+            // Style the active button
+            UpdateChoiceButtonStyles(localBtn, remoteBtn, isLocal);
+
+            // Capture key by value for closures
+            string capturedKey = key;
+
+            localBtn.OnClick += () =>
             {
-                if (val)
-                {
-                    remoteToggle.isOn = false;
-                    _resolutions[key] = ConflictResolution.KeepLocal;
-                }
-            });
+                var self = TranslatorUIManager.MergePanel;
+                if (self == null) return;
+                self._resolutions[capturedKey] = ConflictResolution.KeepLocal;
+                self.UpdateChoiceButtonStyles(localBtn, remoteBtn, true);
+                self.OnUserMadeChoice();
+            };
 
-            UIHelpers.AddToggleListener(remoteToggle, (val) =>
+            remoteBtn.OnClick += () =>
             {
-                if (val)
-                {
-                    localToggle.isOn = false;
-                    _resolutions[key] = ConflictResolution.TakeRemote;
-                }
-            });
+                var self = TranslatorUIManager.MergePanel;
+                if (self == null) return;
+                self._resolutions[capturedKey] = ConflictResolution.TakeRemote;
+                self.UpdateChoiceButtonStyles(localBtn, remoteBtn, false);
+                self.OnUserMadeChoice();
+            };
         }
 
-        private void UseAllLocal()
+        /// <summary>
+        /// Update visual styling for choice buttons to show which is selected.
+        /// </summary>
+        private void UpdateChoiceButtonStyles(ButtonRef localBtn, ButtonRef remoteBtn, bool isLocalSelected)
         {
-            if (_useTagAwareMerge)
+            if (isLocalSelected)
             {
-                foreach (var conflict in _pendingMergeWithTags.Conflicts)
-                {
-                    _resolutions[conflict.Key] = ConflictResolution.KeepLocal;
-                }
+                UIStyles.SetBackground(localBtn.Component.gameObject, UIStyles.TextAccent);
+                localBtn.ButtonText.fontStyle = FontStyle.Bold;
+                UIStyles.SetBackground(remoteBtn.Component.gameObject, UIStyles.InputBackground);
+                remoteBtn.ButtonText.fontStyle = FontStyle.Normal;
             }
             else
             {
-                foreach (var conflict in _pendingMerge.Conflicts)
-                {
-                    _resolutions[conflict.Key] = ConflictResolution.KeepLocal;
-                }
+                UIStyles.SetBackground(localBtn.Component.gameObject, UIStyles.InputBackground);
+                localBtn.ButtonText.fontStyle = FontStyle.Normal;
+                UIStyles.SetBackground(remoteBtn.Component.gameObject, UIStyles.StatusSuccess);
+                remoteBtn.ButtonText.fontStyle = FontStyle.Bold;
             }
-            RefreshConflictList();
         }
 
-        private void UseAllRemote()
+        internal void UseAllLocal()
         {
-            if (_useTagAwareMerge)
+            try
             {
-                foreach (var conflict in _pendingMergeWithTags.Conflicts)
-                {
-                    _resolutions[conflict.Key] = ConflictResolution.TakeRemote;
-                }
+                SetAllResolutions(ConflictResolution.KeepLocal);
+                HighlightBulkButton(true);
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogError($"[MergePanel] UseAllLocal failed: {e}");
+            }
+        }
+
+        internal void UseAllRemote()
+        {
+            try
+            {
+                SetAllResolutions(ConflictResolution.TakeRemote);
+                HighlightBulkButton(false);
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogError($"[MergePanel] UseAllRemote failed: {e}");
+            }
+        }
+
+        /// <summary>
+        /// Called when user makes any choice (bulk or individual). Enables Apply Merge.
+        /// </summary>
+        private void OnUserMadeChoice()
+        {
+            if (!_userMadeChoice)
+            {
+                _userMadeChoice = true;
+                SetApplyButtonEnabled(true);
+            }
+        }
+
+        private void SetApplyButtonEnabled(bool enabled)
+        {
+            if (_applyBtn == null) return;
+            if (enabled)
+            {
+                UIStyles.SetBackground(_applyBtn.Component.gameObject, UIStyles.ButtonSuccess);
+                _applyBtn.ButtonText.color = Color.white;
             }
             else
             {
-                foreach (var conflict in _pendingMerge.Conflicts)
-                {
-                    _resolutions[conflict.Key] = ConflictResolution.TakeRemote;
-                }
+                UIStyles.SetBackground(_applyBtn.Component.gameObject, UIStyles.InputBackground);
+                _applyBtn.ButtonText.color = UIStyles.TextMuted;
             }
+        }
+
+        private void ResetBulkButtonStyles()
+        {
+            if (_keepMineBtn != null)
+            {
+                UIStyles.SetBackground(_keepMineBtn.Component.gameObject, UIStyles.CardBackground);
+                _keepMineBtn.ButtonText.fontStyle = FontStyle.Normal;
+            }
+            if (_takeServerBtn != null)
+            {
+                UIStyles.SetBackground(_takeServerBtn.Component.gameObject, UIStyles.CardBackground);
+                _takeServerBtn.ButtonText.fontStyle = FontStyle.Normal;
+            }
+        }
+
+        private void HighlightBulkButton(bool isLocal)
+        {
+            if (_keepMineBtn != null)
+            {
+                UIStyles.SetBackground(_keepMineBtn.Component.gameObject,
+                    isLocal ? UIStyles.TextAccent : UIStyles.CardBackground);
+                _keepMineBtn.ButtonText.fontStyle = isLocal ? FontStyle.Bold : FontStyle.Normal;
+            }
+            if (_takeServerBtn != null)
+            {
+                UIStyles.SetBackground(_takeServerBtn.Component.gameObject,
+                    !isLocal ? UIStyles.StatusSuccess : UIStyles.CardBackground);
+                _takeServerBtn.ButtonText.fontStyle = !isLocal ? FontStyle.Bold : FontStyle.Normal;
+            }
+            OnUserMadeChoice();
+        }
+
+        private void SetAllResolutions(ConflictResolution resolution)
+        {
+            TranslatorCore.LogInfo($"[MergePanel] SetAllResolutions({resolution}) - _useTagAwareMerge={_useTagAwareMerge}, " +
+                $"_pendingMergeWithTags null={_pendingMergeWithTags == null}, _pendingMerge null={_pendingMerge == null}, " +
+                $"_resolutions null={_resolutions == null}, _resolutions count={_resolutions?.Count ?? -1}");
+
+            if (_resolutions == null)
+            {
+                _resolutions = new Dictionary<string, ConflictResolution>();
+            }
+
+            // Determine conflicts source - check both since _useTagAwareMerge might not be reliable on IL2CPP
+            List<string> conflictKeys = new List<string>();
+
+            if (_pendingMergeWithTags != null && _pendingMergeWithTags.Conflicts != null && _pendingMergeWithTags.Conflicts.Count > 0)
+            {
+                var conflicts = _pendingMergeWithTags.Conflicts;
+                for (int i = 0; i < conflicts.Count; i++)
+                {
+                    conflictKeys.Add(conflicts[i].Key);
+                }
+                TranslatorCore.LogInfo($"[MergePanel] Using tag-aware conflicts: {conflictKeys.Count} keys");
+            }
+            else if (_pendingMerge != null && _pendingMerge.Conflicts != null && _pendingMerge.Conflicts.Count > 0)
+            {
+                var conflicts = _pendingMerge.Conflicts;
+                for (int i = 0; i < conflicts.Count; i++)
+                {
+                    conflictKeys.Add(conflicts[i].Key);
+                }
+                TranslatorCore.LogInfo($"[MergePanel] Using legacy conflicts: {conflictKeys.Count} keys");
+            }
+            else
+            {
+                TranslatorCore.LogError("[MergePanel] No conflicts found in either merge result");
+                return;
+            }
+
+            for (int i = 0; i < conflictKeys.Count; i++)
+            {
+                _resolutions[conflictKeys[i]] = resolution;
+            }
+
             RefreshConflictList();
         }
 
-        private void ApplyMerge()
+        internal void ApplyMerge()
         {
+            if (!_userMadeChoice) return;
+
             if (_useTagAwareMerge)
             {
                 if (_pendingMergeWithTags == null) return;
@@ -413,7 +568,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
         }
 
-        private void ReplaceWithRemote()
+        internal void ReplaceWithRemote()
         {
             int localChanges = TranslatorCore.LocalChangesCount;
             string message = localChanges > 0
@@ -424,37 +579,85 @@ namespace UnityGameTranslator.Core.UI.Panels
                 "Replace with Remote",
                 message,
                 "Replace",
-                async () =>
+                () =>
                 {
                     // Clear pending merge state
                     _pendingMerge = null;
                     _resolutions.Clear();
 
                     // Download and apply remote directly (discards local changes)
-                    await TranslatorUIManager.DownloadUpdate();
-
-                    SetActive(false);
+                    // Use async void method to avoid IL2CPP issues with async lambdas passed as Action
+                    PerformReplaceWithRemote();
                 },
                 isDanger: true
             );
         }
 
-        private void OpenReviewPage()
+        private async void PerformReplaceWithRemote()
         {
-            // Open the website merge review page for this translation
-            string uuid = TranslatorCore.FileUuid;
-            if (string.IsNullOrEmpty(uuid))
+            try
             {
-                TranslatorCore.LogWarning("[MergePanel] Cannot open review page: no UUID");
+                await TranslatorUIManager.DownloadUpdate();
+                TranslatorUIManager.RunOnMainThread(() => SetActive(false));
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogError($"[MergePanel] Replace with remote failed: {e.Message}");
+            }
+        }
+
+        internal void OpenReviewPage()
+        {
+            var serverState = TranslatorCore.ServerState;
+            if (serverState?.SiteId == null)
+            {
+                TranslatorCore.LogWarning("[MergePanel] Cannot open review page: no server translation");
                 return;
             }
 
-            string url = ApiClient.GetMergeReviewUrl(uuid);
-            TranslatorCore.LogInfo($"[MergePanel] Opening review page: {url}");
-            Application.OpenURL(url);
+            // Use merge-preview flow: send local content to server, open returned URL
+            PerformOpenReviewPage(serverState.SiteId.Value);
         }
 
-        private void CancelMerge()
+        private async void PerformOpenReviewPage(int translationId)
+        {
+            try
+            {
+                var result = await ApiClient.InitMergePreview(translationId, TranslatorCore.TranslationCache);
+
+                // After await, we may be on a background thread (IL2CPP)
+                var success = result.Success;
+                var token = result.Token;
+                var relativeUrl = result.Url;
+                var error = result.Error;
+
+                TranslatorUIManager.RunOnMainThread(() =>
+                {
+                    if (success && !string.IsNullOrEmpty(relativeUrl))
+                    {
+                        string fullUrl = ApiClient.GetMergePreviewFullUrl(relativeUrl);
+                        TranslatorCore.LogInfo($"[MergePanel] Opening merge preview: {fullUrl}");
+                        Application.OpenURL(fullUrl);
+
+                        // Listen for merge completion via SSE (auto-download result)
+                        if (!string.IsNullOrEmpty(token))
+                        {
+                            TranslatorUIManager.StartMergeCompletionListener(token, translationId);
+                        }
+                    }
+                    else
+                    {
+                        TranslatorCore.LogWarning($"[MergePanel] Failed to init merge preview: {error}");
+                    }
+                });
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogError($"[MergePanel] Open review page failed: {e.Message}");
+            }
+        }
+
+        internal void CancelMerge()
         {
             // Clear pending state
             _pendingMerge = null;

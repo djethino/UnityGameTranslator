@@ -387,15 +387,13 @@ namespace UnityGameTranslator.Core.UI.Panels
                 {
                     if (isOwner)
                     {
-                        // Owner: standard merge message
-                        message = "Conflict: Both local and server changed!";
+                        message = "Both local and server changed. Sync needed!";
                     }
                     else
                     {
-                        // Non-owner: after merge, they'll need to choose Branch/Fork
-                        message = $"Conflict with @{ownerName}'s update! Merge first.";
+                        message = $"@{ownerName}'s translation updated. Sync needed!";
                     }
-                    actionText = "Merge";
+                    actionText = "Sync";
                 }
                 else if (hasServerUpdate)
                 {
@@ -581,8 +579,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                     break;
 
                 case UpdateDirection.Merge:
-                    // Start merge flow
-                    TranslatorUIManager.MergePanel?.SetActive(true);
+                    // Download remote and start 3-way merge flow
+                    ApplyPendingUpdate();
                     break;
 
                 default:

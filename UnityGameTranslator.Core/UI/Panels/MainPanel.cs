@@ -801,7 +801,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             if (needsMerge)
             {
-                syncStatus = SyncStatusType.Conflict;
+                syncStatus = SyncStatusType.OutOfSync;
             }
             else if (localChanges > 0 || hasServerUpdate)
             {
@@ -931,8 +931,8 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 if (needsMerge)
                 {
-                    _syncStatusLabel.text = $"CONFLICT - Both local ({localChanges}) and server changed!";
-                    _syncStatusLabel.color = UIStyles.StatusError;
+                    _syncStatusLabel.text = $"SYNC NEEDED - Both local ({localChanges}) and server changed";
+                    _syncStatusLabel.color = UIStyles.StatusWarning;
                 }
                 else if (localChanges > 0)
                 {
@@ -1018,9 +1018,9 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             if (needsMerge)
             {
-                // Merge needed - show merge button with clear explanation
-                uploadAction = "Merge Translation";
-                uploadHint = $"Conflict detected! You have {TranslatorCore.LocalChangesCount} local changes AND server was updated. Click to resolve.";
+                // Merge needed - show sync button with clear explanation
+                uploadAction = "Sync Translation";
+                uploadHint = $"Both local ({TranslatorCore.LocalChangesCount} changes) and server were updated. Click to sync.";
             }
             else if (isInSync)
             {

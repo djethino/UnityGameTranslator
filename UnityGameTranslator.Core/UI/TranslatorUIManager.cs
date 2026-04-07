@@ -915,14 +915,16 @@ namespace UnityGameTranslator.Core.UI
 
                         if (mergeResult.ConflictCount > 0)
                         {
-                            // Show merge panel for user to resolve conflicts
-                            MergePanel?.SetMergeDataWithTags(mergeResult, remoteTranslations, fileHash);
+                            // Real conflicts - show merge panel for user to resolve
+                            // SetActive first to ensure UI is constructed before setting data
                             MergePanel?.SetActive(true);
+                            MergePanel?.SetMergeDataWithTags(mergeResult, remoteTranslations, fileHash);
                         }
                         else
                         {
-                            // No conflicts - apply merge directly
+                            // No real conflicts - auto-apply and notify
                             ApplyMergeWithTags(mergeResult, fileHash, remoteTranslations);
+                            TranslatorCore.LogInfo($"[Merge] Auto-merged: {mergeResult.Statistics.GetSummary()}");
                         }
                     }
                     else
@@ -1232,8 +1234,9 @@ namespace UnityGameTranslator.Core.UI
                         if (mergeResult.ConflictCount > 0)
                         {
                             // Show merge panel for user to resolve conflicts
-                            MergePanel?.SetMergeData(mergeResult, remoteTranslations, fileHash);
+                            // SetActive first to ensure UI is constructed before setting data
                             MergePanel?.SetActive(true);
+                            MergePanel?.SetMergeData(mergeResult, remoteTranslations, fileHash);
                             // Don't call onComplete - MergePanel handles the rest
                         }
                         else

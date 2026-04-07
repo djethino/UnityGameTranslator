@@ -2050,306 +2050,26 @@ namespace UnityGameTranslator.Core
             }
         }
 
-        // Cached LoadImage method
-        private static MethodInfo _loadImageMethod;
-        private static bool _loadImageMethodSearched;
+        // Texture utility methods have been extracted to TextureUtils.cs
+        // The following are thin wrappers for backward compatibility within this class.
 
-        /// <summary>
-        /// Loads image data into a Texture2D using reflection to call ImageConversion.LoadImage.
-        /// This avoids compile-time dependency on ImageConversionModule.
-        /// </summary>
-        /// <summary>
-        /// Encode a Texture2D to PNG via reflection (handles IL2CPP where EncodeToPNG may differ).
-        /// </summary>
-        /// <summary>
-        /// SetPixels32 via reflection for IL2CPP compatibility.
-        /// On IL2CPP, Color32[] may need conversion to Il2CppStructArray.
-        /// </summary>
         private static bool SetPixels32Safe(Texture2D texture, Color32[] colors)
-        {
-            if (texture == null || colors == null) return false;
-
-            // ALL access via reflection to avoid IL2CPP JIT crashes on stripped methods
-            var texType = texture.GetType();
-            foreach (var method in texType.GetMethods(BindingFlags.Public | BindingFlags.Instance))
-            {
-                if (method.Name != "SetPixels32") continue;
-                var parameters = method.GetParameters();
-                if (parameters.Length != 1) continue;
-
-                var paramType = parameters[0].ParameterType;
-                try
-                {
-                    // If it accepts Color32[], call directly
-                    if (paramType == typeof(Color32[]))
-                    {
-                        method.Invoke(texture, new object[] { colors });
-                        return true;
-                    }
-
-                    // IL2CPP: try to construct the expected array type from Color32[]
-                    var ctor = paramType.GetConstructor(new Type[] { typeof(int) });
-                    if (ctor != null)
-                    {
-                        var il2cppArray = ctor.Invoke(new object[] { colors.Length });
-                        var indexer = paramType.GetProperty("Item");
-                        if (indexer != null)
-                        {
-                            for (int i = 0; i < colors.Length; i++)
-                                indexer.SetValue(il2cppArray, colors[i], new object[] { i });
-                            method.Invoke(texture, new object[] { il2cppArray });
-                            return true;
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    TranslatorCore.LogWarning($"[CustomFontLoader] SetPixels32 reflection failed: {ex.Message}");
-                }
-            }
-
-            // Last resort: set pixels one by one via SetPixel
-            try
-            {
-                int w = texture.width;
-                int h = texture.height;
-                for (int i = 0; i < colors.Length && i < w * h; i++)
-                {
-                    int x = i % w;
-                    int y = i / w;
-                    texture.SetPixel(x, y, colors[i]);
-                }
-                return true;
-            }
-            catch (Exception ex)
-            {
-                TranslatorCore.LogWarning($"[CustomFontLoader] SetPixel fallback failed: {ex.Message}");
-            }
-
-            return false;
-        }
+            => TextureUtils.SetPixels32Safe(texture, colors);
 
         private static byte[] EncodeToPngSafe(Texture2D texture)
-        {
-            if (texture == null) return null;
-
-            // Try ImageConversion.EncodeToPNG(texture) — newer Unity
-            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                var imageConvType = asm.GetType("UnityEngine.ImageConversion");
-                if (imageConvType == null) continue;
-
-                foreach (var method in imageConvType.GetMethods(BindingFlags.Public | BindingFlags.Static))
-                {
-                    if (method.Name != "EncodeToPNG") continue;
-                    var parameters = method.GetParameters();
-                    if (parameters.Length == 1)
-                    {
-                        try
-                        {
-                            var result = method.Invoke(null, new object[] { texture });
-                            if (result is byte[] bytes) return bytes;
-
-                            // IL2CPP: might return Il2CppStructArray<byte>
-                            if (result != null)
-                            {
-                                var resultType = result.GetType();
-                                var lengthProp = resultType.GetProperty("Length") ?? resultType.GetProperty("Count");
-                                if (lengthProp != null)
-                                {
-                                    int length = (int)lengthProp.GetValue(result, null);
-                                    var indexer = resultType.GetProperty("Item");
-                                    if (indexer != null && length > 0)
-                                    {
-                                        byte[] data = new byte[length];
-                                        for (int i = 0; i < length; i++)
-                                            data[i] = (byte)indexer.GetValue(result, new object[] { i });
-                                        return data;
-                                    }
-                                }
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            TranslatorCore.LogWarning($"[CustomFontLoader] EncodeToPNG failed: {ex.Message}");
-                        }
-                    }
-                }
-            }
-
-            // Try Texture2D.EncodeToPNG() — older Unity (instance method)
-            try
-            {
-                var method = texture.GetType().GetMethod("EncodeToPNG", BindingFlags.Public | BindingFlags.Instance);
-                if (method != null)
-                {
-                    var result = method.Invoke(texture, null);
-                    if (result is byte[] bytes) return bytes;
-                }
-            }
-            catch { }
-
-            return null;
-        }
+            => TextureUtils.EncodeToPngSafe(texture);
 
         private static bool LoadImageToTexture(Texture2D texture, byte[] data)
-        {
-            if (texture == null || data == null || data.Length == 0)
-                return false;
+            => TextureUtils.LoadImageToTexture(texture, data);
 
-            // Find the LoadImage method once
-            if (!_loadImageMethodSearched)
-            {
-                _loadImageMethodSearched = true;
-                FindLoadImageMethod();
-            }
+        private static byte[] GetRawTextureDataSafe(Texture2D texture)
+            => TextureUtils.GetRawTextureDataSafe(texture);
 
-            if (_loadImageMethod == null)
-                return false;
+        private static bool LoadRawTextureDataSafe(Texture2D texture, byte[] data)
+            => TextureUtils.LoadRawTextureDataSafe(texture, data);
 
-            try
-            {
-                // Convert byte[] to the expected parameter type if needed (IL2CPP)
-                object dataArg = ConvertByteArrayForMethod(_loadImageMethod, data);
-
-                object result;
-                if (_loadImageMethod.IsStatic)
-                {
-                    result = _loadImageMethod.Invoke(null, new object[] { texture, dataArg });
-                }
-                else
-                {
-                    result = _loadImageMethod.Invoke(texture, new object[] { dataArg });
-                }
-
-                return result is bool b && b;
-            }
-            catch (Exception ex)
-            {
-                TranslatorCore.LogWarning($"[CustomFontLoader] LoadImage failed: {ex.Message}");
-                return false;
-            }
-        }
-
-        /// <summary>
-        /// Find the LoadImage method, handling IL2CPP where parameter types differ.
-        /// On IL2CPP, byte[] parameters become Il2CppStructArray&lt;byte&gt;.
-        /// </summary>
-        private static void FindLoadImageMethod()
-        {
-            // Strategy: search by name, accept any overload with 2 params (static) or 1 param (instance)
-            // that has a byte-array-like second/first parameter
-
-            // Try ImageConversion.LoadImage first (newer Unity)
-            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                var imageConvType = asm.GetType("UnityEngine.ImageConversion");
-                if (imageConvType == null) continue;
-
-                foreach (var method in imageConvType.GetMethods(BindingFlags.Public | BindingFlags.Static))
-                {
-                    if (method.Name != "LoadImage") continue;
-                    var parameters = method.GetParameters();
-                    // Looking for LoadImage(Texture2D, byte[]) — 2 params, second is byte-array-like
-                    if (parameters.Length == 2 && IsTextureType(parameters[0].ParameterType) && IsByteArrayType(parameters[1].ParameterType))
-                    {
-                        _loadImageMethod = method;
-                        TranslatorCore.LogInfo($"[CustomFontLoader] Found ImageConversion.LoadImage({parameters[0].ParameterType.Name}, {parameters[1].ParameterType.Name})");
-                        return;
-                    }
-                }
-            }
-
-            // Try Texture2D.LoadImage(byte[]) (older Unity or instance method)
-            var texType = typeof(Texture2D);
-            // On IL2CPP, the actual runtime type may be different
-            foreach (var method in texType.GetMethods(BindingFlags.Public | BindingFlags.Instance))
-            {
-                if (method.Name != "LoadImage") continue;
-                var parameters = method.GetParameters();
-                if (parameters.Length == 1 && IsByteArrayType(parameters[0].ParameterType))
-                {
-                    _loadImageMethod = method;
-                    TranslatorCore.LogInfo($"[CustomFontLoader] Found Texture2D.LoadImage({parameters[0].ParameterType.Name})");
-                    return;
-                }
-            }
-
-            TranslatorCore.LogWarning("[CustomFontLoader] No LoadImage method found");
-        }
-
-        /// <summary>
-        /// Check if a type is a Texture2D or IL2CPP equivalent.
-        /// </summary>
-        private static bool IsTextureType(Type type)
-        {
-            return typeof(Texture2D).IsAssignableFrom(type) || type.Name.Contains("Texture2D");
-        }
-
-        /// <summary>
-        /// Check if a type is byte[] or an IL2CPP byte array equivalent.
-        /// </summary>
-        private static bool IsByteArrayType(Type type)
-        {
-            if (type == typeof(byte[])) return true;
-            // IL2CPP: Il2CppStructArray<byte>, Il2CppInterop.Runtime.InteropTypes.Arrays.Il2CppStructArray`1[System.Byte]
-            if (type.Name.Contains("Array") && type.FullName != null && type.FullName.Contains("Byte")) return true;
-            return false;
-        }
-
-        /// <summary>
-        /// Convert a byte[] to the type expected by the method parameter (handles IL2CPP array types).
-        /// </summary>
-        private static object ConvertByteArrayForMethod(MethodInfo method, byte[] data)
-        {
-            var parameters = method.GetParameters();
-            // Find the byte-array parameter
-            Type expectedType = null;
-            foreach (var param in parameters)
-            {
-                if (IsByteArrayType(param.ParameterType))
-                {
-                    expectedType = param.ParameterType;
-                    break;
-                }
-            }
-
-            if (expectedType == null || expectedType == typeof(byte[]))
-                return data; // Direct byte[] works
-
-            // Need to convert to IL2CPP array type
-            try
-            {
-                // Try constructor that accepts byte[]
-                var ctor = expectedType.GetConstructor(new Type[] { typeof(byte[]) });
-                if (ctor != null)
-                {
-                    return ctor.Invoke(new object[] { data });
-                }
-
-                // Try constructor(int) + indexer copy
-                ctor = expectedType.GetConstructor(new Type[] { typeof(int) });
-                if (ctor != null)
-                {
-                    var il2cppArray = ctor.Invoke(new object[] { data.Length });
-                    var indexer = expectedType.GetProperty("Item");
-                    if (indexer != null)
-                    {
-                        for (int i = 0; i < data.Length; i++)
-                            indexer.SetValue(il2cppArray, data[i], new object[] { i });
-                        return il2cppArray;
-                    }
-                }
-
-                TranslatorCore.LogWarning($"[CustomFontLoader] Cannot convert byte[] to {expectedType.Name}");
-            }
-            catch (Exception ex)
-            {
-                TranslatorCore.LogWarning($"[CustomFontLoader] byte[] conversion failed: {ex.Message}");
-            }
-
-            return data; // Fallback, may fail
-        }
+        private static int GetBytesPerPixel(TextureFormat format)
+            => TextureUtils.GetBytesPerPixel(format);
 
         /// <summary>
         /// Converts an SDF texture for TMP compatibility.
@@ -2362,8 +2082,6 @@ namespace UnityGameTranslator.Core
 
             try
             {
-                // Use reflection-safe GetRawTextureData for IL2CPP compatibility
-                // On IL2CPP, the method returns Il2CppStructArray<byte> instead of byte[]
                 byte[] rawData = GetRawTextureDataSafe(texture);
                 if (rawData == null || rawData.Length == 0)
                 {
@@ -2371,7 +2089,6 @@ namespace UnityGameTranslator.Core
                     return;
                 }
 
-                // Determine bytes per pixel from format
                 int bpp = GetBytesPerPixel(texture.format);
                 if (bpp < 3)
                 {
@@ -2382,10 +2099,6 @@ namespace UnityGameTranslator.Core
                 int pixelCount = rawData.Length / bpp;
                 bool needsConversion = false;
 
-                // Determine channel offsets based on texture format
-                // RGBA32: R=0, G=1, B=2, A=3
-                // ARGB32: A=0, R=1, G=2, B=3
-                // BGRA32: B=0, G=1, R=2, A=3
                 int rOffset, gOffset, bOffset, alphaOffset;
                 switch (texture.format)
                 {
@@ -2395,14 +2108,13 @@ namespace UnityGameTranslator.Core
                     case TextureFormat.BGRA32:
                         bOffset = 0; gOffset = 1; rOffset = 2; alphaOffset = 3;
                         break;
-                    default: // RGBA32 and others
+                    default:
                         rOffset = 0; gOffset = 1; bOffset = 2; alphaOffset = bpp >= 4 ? 3 : -1;
                         break;
                 }
 
                 TranslatorCore.LogInfo($"[CustomFontLoader] Texture format: {texture.format}, offsets: R={rOffset} G={gOffset} B={bOffset} A={alphaOffset}");
 
-                // Sample check: if alpha is mostly max but R varies, we need to copy R to A
                 int sampleCount = Math.Min(100, pixelCount);
                 int alphaOnes = 0;
                 int rVariation = 0;
@@ -2431,10 +2143,10 @@ namespace UnityGameTranslator.Core
                         int idx = i * bpp;
                         if (idx + bpp > rawData.Length) break;
                         byte r = rawData[idx + rOffset];
-                        rawData[idx + rOffset] = 255;  // R = white
-                        rawData[idx + gOffset] = 255;   // G = white
-                        rawData[idx + bOffset] = 255;   // B = white
-                        rawData[idx + alphaOffset] = r;  // A = original R (SDF distance)
+                        rawData[idx + rOffset] = 255;
+                        rawData[idx + gOffset] = 255;
+                        rawData[idx + bOffset] = 255;
+                        rawData[idx + alphaOffset] = r;
                     }
                     if (!LoadRawTextureDataSafe(texture, rawData))
                     {
@@ -2452,174 +2164,6 @@ namespace UnityGameTranslator.Core
             catch (Exception ex)
             {
                 TranslatorCore.LogWarning($"[CustomFontLoader] Failed to convert SDF texture: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// Get raw texture data via reflection.
-        /// On IL2CPP, GetRawTextureData() returns Il2CppStructArray&lt;byte&gt; instead of byte[].
-        /// This method handles both cases.
-        /// </summary>
-        private static byte[] GetRawTextureDataSafe(Texture2D texture)
-        {
-            if (texture == null) return null;
-
-            var type = texture.GetType();
-
-            // Try all GetRawTextureData overloads via reflection
-            foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.Instance))
-            {
-                if (method.Name != "GetRawTextureData") continue;
-                if (method.GetParameters().Length != 0) continue;
-                if (method.IsGenericMethod) continue;
-
-                try
-                {
-                    var result = method.Invoke(texture, null);
-                    if (result == null) continue;
-
-                    // Direct byte[] (Mono)
-                    if (result is byte[] bytes)
-                        return bytes;
-
-                    // IL2CPP: result is Il2CppStructArray<byte> or similar
-                    // It implements IEnumerable and has a Length property
-                    var resultType = result.GetType();
-
-                    // Try to get Length
-                    var lengthProp = resultType.GetProperty("Length") ?? resultType.GetProperty("Count");
-                    if (lengthProp == null) continue;
-
-                    int length = (int)lengthProp.GetValue(result, null);
-                    if (length == 0) continue;
-
-                    // Try indexer access
-                    var indexer = resultType.GetProperty("Item");
-                    if (indexer != null)
-                    {
-                        byte[] data = new byte[length];
-                        for (int i = 0; i < length; i++)
-                        {
-                            data[i] = (byte)indexer.GetValue(result, new object[] { i });
-                        }
-                        return data;
-                    }
-
-                    // Try as IList<byte> or IEnumerable
-                    if (result is System.Collections.IEnumerable enumerable)
-                    {
-                        var list = new List<byte>();
-                        foreach (var item in enumerable)
-                        {
-                            if (item is byte b)
-                                list.Add(b);
-                        }
-                        if (list.Count > 0)
-                            return list.ToArray();
-                    }
-                }
-                catch (Exception ex)
-                {
-                    TranslatorCore.LogWarning($"[CustomFontLoader] GetRawTextureData reflection failed: {ex.Message}");
-                }
-            }
-
-            return null;
-        }
-
-        /// <summary>
-        /// Load raw texture data via reflection.
-        /// On IL2CPP, LoadRawTextureData may expect Il2CppStructArray&lt;byte&gt; instead of byte[].
-        /// </summary>
-        private static bool LoadRawTextureDataSafe(Texture2D texture, byte[] data)
-        {
-            if (texture == null || data == null) return false;
-
-            var type = texture.GetType();
-
-            // Always use reflection to avoid MissingMethodException on IL2CPP
-            // (direct call to LoadRawTextureData(byte[]) crashes on IL2CPP with unstripped methods)
-            // Try via reflection, find a LoadRawTextureData that accepts our data
-            foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.Instance))
-            {
-                if (method.Name != "LoadRawTextureData") continue;
-                var parameters = method.GetParameters();
-                if (parameters.Length != 1) continue;
-
-                var paramType = parameters[0].ParameterType;
-
-                // If it accepts byte[], call directly
-                if (paramType == typeof(byte[]))
-                {
-                    try
-                    {
-                        method.Invoke(texture, new object[] { data });
-                        return true;
-                    }
-                    catch { continue; }
-                }
-
-                // If it accepts Il2CppStructArray<byte> or similar, try to construct one
-                try
-                {
-                    // Try to create an instance of the expected type from byte[]
-                    var ctor = paramType.GetConstructor(new Type[] { typeof(byte[]) });
-                    if (ctor != null)
-                    {
-                        var il2cppArray = ctor.Invoke(new object[] { data });
-                        method.Invoke(texture, new object[] { il2cppArray });
-                        return true;
-                    }
-
-                    // Try with int length constructor + copy
-                    ctor = paramType.GetConstructor(new Type[] { typeof(int) });
-                    if (ctor != null)
-                    {
-                        var il2cppArray = ctor.Invoke(new object[] { data.Length });
-                        var indexer = paramType.GetProperty("Item");
-                        if (indexer != null)
-                        {
-                            for (int i = 0; i < data.Length; i++)
-                                indexer.SetValue(il2cppArray, data[i], new object[] { i });
-                            method.Invoke(texture, new object[] { il2cppArray });
-                            return true;
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    TranslatorCore.LogWarning($"[CustomFontLoader] LoadRawTextureData IL2CPP conversion failed: {ex.Message}");
-                }
-            }
-
-            return false;
-        }
-
-        /// <summary>
-        /// Get bytes per pixel for a texture format.
-        /// </summary>
-        private static int GetBytesPerPixel(TextureFormat format)
-        {
-            switch (format)
-            {
-                case TextureFormat.RGBA32:
-                case TextureFormat.BGRA32:
-                case TextureFormat.ARGB32:
-                    return 4;
-                case TextureFormat.RGB24:
-                    return 3;
-                case TextureFormat.Alpha8:
-                case TextureFormat.R8:
-                    return 1;
-                case TextureFormat.RG16:
-                case TextureFormat.R16:
-                    return 2;
-                case TextureFormat.RGBAFloat:
-                    return 16;
-                case TextureFormat.RGBAHalf:
-                    return 8;
-                default:
-                    return 4; // Assume RGBA32 as default
             }
         }
     }

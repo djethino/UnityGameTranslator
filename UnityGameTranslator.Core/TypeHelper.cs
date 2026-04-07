@@ -550,19 +550,33 @@ namespace UnityGameTranslator.Core
 
                 if (TMP_TextType != null && TMP_TextType.IsAssignableFrom(type) && TMP_TextProp != null && TMP_TextProp.CanWrite)
                 {
-                    TMP_TextProp.SetValue(component, text, null);
+                    var setter = TMP_TextProp.SetMethod ?? TMP_TextProp.GetSetMethod();
+                    if (setter != null)
+                        setter.Invoke(component, new object[] { text });
+                    else
+                        TMP_TextProp.SetValue(component, text, null);
                     return;
                 }
 
                 if (UI_TextType != null && UI_TextType.IsAssignableFrom(type) && UI_TextProp != null && UI_TextProp.CanWrite)
                 {
-                    UI_TextProp.SetValue(component, text, null);
+                    // Use SetMethod.Invoke instead of SetValue to trigger Harmony patches on IL2CPP.
+                    // PropertyInfo.SetValue can bypass IL2CPP managed wrappers → Harmony prefix not called.
+                    var setter = UI_TextProp.SetMethod ?? UI_TextProp.GetSetMethod();
+                    if (setter != null)
+                        setter.Invoke(component, new object[] { text });
+                    else
+                        UI_TextProp.SetValue(component, text, null);
                     return;
                 }
 
                 if (TextMeshType != null && TextMeshType.IsAssignableFrom(type) && TextMesh_TextProp != null && TextMesh_TextProp.CanWrite)
                 {
-                    TextMesh_TextProp.SetValue(component, text, null);
+                    var setter = TextMesh_TextProp.SetMethod ?? TextMesh_TextProp.GetSetMethod();
+                    if (setter != null)
+                        setter.Invoke(component, new object[] { text });
+                    else
+                        TextMesh_TextProp.SetValue(component, text, null);
                     return;
                 }
 

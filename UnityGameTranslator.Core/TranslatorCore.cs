@@ -77,6 +77,12 @@ namespace UnityGameTranslator.Core
         public static ForkContext PendingFork { get; set; }
 
         public static int LocalChangesCount { get; private set; } = 0;
+
+        /// <summary>
+        /// True when metadata (fonts, images, exclusions) has been modified locally since last upload.
+        /// Included in sync direction calculation so metadata changes trigger an upload prompt.
+        /// </summary>
+        public static bool MetadataDirty { get; private set; } = false;
         public static Dictionary<string, TranslationEntry> AncestorCache { get; private set; } = new Dictionary<string, TranslationEntry>();
 
         /// <summary>
@@ -93,6 +99,11 @@ namespace UnityGameTranslator.Core
         /// Requires game restart to take effect.
         /// </summary>
         public static bool DisableEventSystemOverride { get; set; } = false;
+
+        /// <summary>Detect typewriting effects (text appearing letter by letter). Stored in translations.json.</summary>
+        public static bool TypewritingDetection { get; set; } = true;
+        /// <summary>Detect procedural text building (tooltips, item descriptions). Stored in translations.json.</summary>
+        public static bool ConcatDetection { get; set; } = true;
 
         /// <summary>
         /// Cached flag for whether the current AI provider supports the "think" parameter.
@@ -445,6 +456,27 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Mark metadata as modified (fonts, images, exclusions).
+        /// Triggers upload detection on next sync check.
+        /// </summary>
+        public static void SetMetadataDirty()
+        {
+            if (!MetadataDirty)
+            {
+                MetadataDirty = true;
+                LogDebug("[Sync] Metadata marked dirty");
+            }
+        }
+
+        /// <summary>
+        /// Reset metadata dirty flag after successful upload.
+        /// </summary>
+        public static void ResetMetadataDirty()
+        {
+            MetadataDirty = false;
+        }
+
+        /// <summary>
         /// Add a new exclusion pattern. Clears the cache.
         /// </summary>
         public static void AddExclusion(string pattern)
@@ -456,7 +488,8 @@ namespace UnityGameTranslator.Core
             {
                 userExclusions.Add(pattern);
                 userExclusionCache.Clear();
-                SaveCache(); // Auto-save
+                SetMetadataDirty();
+                SaveCache();
                 LogDebug($"[Exclusion] Added: {pattern}");
             }
         }
@@ -469,7 +502,8 @@ namespace UnityGameTranslator.Core
             if (userExclusions.Remove(pattern))
             {
                 userExclusionCache.Clear();
-                SaveCache(); // Auto-save
+                SetMetadataDirty();
+                SaveCache();
                 LogDebug($"[Exclusion] Removed: {pattern}");
                 return true;
             }
@@ -718,6 +752,9 @@ namespace UnityGameTranslator.Core
             // Initialize custom font loader (user-provided SDF fonts)
             CustomFontLoader.Initialize(ModFolder);
 
+            // Initialize image replacer for bitmap text translation
+            ImageReplacer.Initialize(ModFolder);
+
             httpClient = new HttpClient();
             httpClient.Timeout = TimeSpan.FromMinutes(5);
 
@@ -766,6 +803,13 @@ namespace UnityGameTranslator.Core
             TranslatorPatches.ClearCache();
 
             FontManager.OnSceneChanged();
+
+            // Load/reload image replacements for the new scene
+            ImageReplacer.OnSceneChange();
+
+            // Flag variables for refresh on next text request
+            // (instances don't exist yet at scene change time)
+            VariableManager.MarkNeedsRefresh();
 
             if (DebugMode)
                 Adapter?.LogInfo($"Scene: {sceneName}");
@@ -1062,6 +1106,10 @@ namespace UnityGameTranslator.Core
                     {
                         LocalChangesCount = prop.Value.Value<int>();
                     }
+                    else if (prop.Name == "_metadata_dirty")
+                    {
+                        MetadataDirty = prop.Value.Value<bool>();
+                    }
                     else if (prop.Name == "_source" && prop.Value.Type == JTokenType.Object)
                     {
                         // Load source info for sync detection
@@ -1087,6 +1135,14 @@ namespace UnityGameTranslator.Core
                             }
                         }
                         LogDebug($"[LoadCache] Loaded {userExclusions.Count} user exclusions");
+                    }
+                    else if (prop.Name == "_image_replacements")
+                    {
+                        ImageReplacer.LoadFromJson(prop.Value);
+                    }
+                    else if (prop.Name == "_variables")
+                    {
+                        VariableManager.LoadFromJson(prop.Value);
                     }
                     else if (prop.Name == "_fonts" && prop.Value.Type == JTokenType.Object)
                     {
@@ -1114,7 +1170,9 @@ namespace UnityGameTranslator.Core
                         if (settingsObj != null)
                         {
                             DisableEventSystemOverride = settingsObj["disable_eventsystem_override"]?.Value<bool>() ?? false;
-                            LogDebug($"[LoadCache] Loaded settings: DisableEventSystemOverride={DisableEventSystemOverride}");
+                            TypewritingDetection = settingsObj["typewriting_detection"]?.Value<bool>() ?? true;
+                            ConcatDetection = settingsObj["concat_detection"]?.Value<bool>() ?? true;
+                            LogDebug($"[LoadCache] Loaded settings: DisableEventSystemOverride={DisableEventSystemOverride}, TW={TypewritingDetection}, Concat={ConcatDetection}");
                         }
                     }
                     else if (!prop.Name.StartsWith("_"))
@@ -1302,6 +1360,12 @@ namespace UnityGameTranslator.Core
         public static void ReloadCache()
         {
             LogDebug("[TranslatorCore] Reloading cache from disk...");
+
+            // Restore all displayed text to originals BEFORE loading new cache,
+            // so the scanner doesn't see stale translated text from the old JSON
+            // and try to re-translate it
+            TranslatorScanner.RestoreAllOriginals();
+
             LoadCache();
 
             // Clear processing caches so scanner re-evaluates all text with new translations
@@ -2076,12 +2140,17 @@ namespace UnityGameTranslator.Core
                         if (Config.debug_ai)
                             Adapter?.LogInfo($"[Worker] Calling AI...{(isOwnUI ? " (UI prompt)" : "")}");
 
-                        // Extract numbers BEFORE sending to AI
+                        // Extract variables then numbers BEFORE sending to AI
                         string normalizedOriginal = textToTranslate;
+                        List<KeyValuePair<int, string>> workerExtractedVars = null;
+                        if (VariableManager.HasVariables)
+                        {
+                            normalizedOriginal = VariableManager.ExtractVariables(normalizedOriginal, out workerExtractedVars);
+                        }
                         List<string> extractedNumbers = null;
                         if (Config.normalize_numbers)
                         {
-                            normalizedOriginal = ExtractNumbersToPlaceholders(textToTranslate, out extractedNumbers);
+                            normalizedOriginal = ExtractNumbersToPlaceholders(normalizedOriginal, out extractedNumbers);
                         }
 
                         // Check cache first (another request might have already translated this)
@@ -2099,6 +2168,7 @@ namespace UnityGameTranslator.Core
                                 string cachedTranslation = (extractedNumbers != null && extractedNumbers.Count > 0)
                                     ? RestoreNumbersFromPlaceholders(translation, extractedNumbers)
                                     : translation;
+                                cachedTranslation = VariableManager.RestoreVariables(cachedTranslation, workerExtractedVars);
                                 OnTranslationComplete?.Invoke(originalText, cachedTranslation, componentsToUpdate);
                             }
                         }
@@ -2162,12 +2232,13 @@ namespace UnityGameTranslator.Core
                                 {
                                     aiTranslationCount++;
 
-                                    // For updating components, restore actual numbers
+                                    // For updating components, restore actual numbers then variables
                                     string translationWithNumbers = translation;
                                     if (extractedNumbers != null)
                                     {
                                         translationWithNumbers = RestoreNumbersFromPlaceholders(translation, extractedNumbers);
                                     }
+                                    translationWithNumbers = VariableManager.RestoreVariables(translationWithNumbers, workerExtractedVars);
 
                                     // Notify mod loader to update components
                                     OnTranslationComplete?.Invoke(originalText, translationWithNumbers, componentsToUpdate);
@@ -2335,6 +2406,8 @@ namespace UnityGameTranslator.Core
                         promptBuilder.AppendLine("- IMPORTANT: Keep [!t*0], [!t*1], etc. tag placeholders exactly as-is, do not modify or remove them");
                     if (hasNumberPlaceholders)
                         promptBuilder.AppendLine("- IMPORTANT: Keep [!v*0], [!v*1], etc. placeholders exactly as-is, do not modify them");
+                    if (VariableManager.HasVariables)
+                        promptBuilder.AppendLine("- IMPORTANT: Keep [!STR*0], [!STR*1], etc. string variable placeholders exactly as-is, do not translate or modify them");
 
                     if (textType == TextType.SingleWord)
                     {
@@ -2376,6 +2449,8 @@ namespace UnityGameTranslator.Core
                         promptBuilder.AppendLine("- IMPORTANT: Keep [!t*0], [!t*1], etc. tag placeholders exactly as-is, do not modify or remove them");
                     if (hasNumberPlaceholders)
                         promptBuilder.AppendLine("- IMPORTANT: Keep [!v*0], [!v*1], etc. placeholders exactly as-is, do not modify them");
+                    if (VariableManager.HasVariables)
+                        promptBuilder.AppendLine("- IMPORTANT: Keep [!STR*0], [!STR*1], etc. string variable placeholders exactly as-is, do not translate or modify them");
 
                     if (textType == TextType.SingleWord)
                     {
@@ -2944,13 +3019,32 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static bool IsInsidePlaceholder(string text, int index)
         {
-            // Look backwards for "[!v*" pattern (PlaceholderPrefix)
-            // PlaceholderPrefix is "[!v*" (4 chars)
-            for (int i = index - 1; i >= Math.Max(0, index - 5); i--)
+            // Look backwards for "[!v*" or "[!STR*" patterns
+            // Protects numbers inside [!v*0], [!STR*0], [!t*0] from being extracted
+            for (int i = index - 1; i >= Math.Max(0, index - 8); i--)
             {
+                // Check for [!v* (4 chars)
                 if (i >= 3 && text[i] == '*' && text[i - 1] == 'v' && text[i - 2] == '!' && text[i - 3] == '[')
                 {
-                    // Found "[!v*" before the number — check if there's a "]" after
+                    for (int j = index; j < Math.Min(text.Length, index + 4); j++)
+                    {
+                        if (text[j] == ']') return true;
+                        if (!char.IsDigit(text[j])) break;
+                    }
+                }
+                // Check for [!STR* (6 chars)
+                if (i >= 5 && text[i] == '*' && text[i - 1] == 'R' && text[i - 2] == 'T' && text[i - 3] == 'S'
+                    && text[i - 4] == '!' && text[i - 5] == '[')
+                {
+                    for (int j = index; j < Math.Min(text.Length, index + 4); j++)
+                    {
+                        if (text[j] == ']') return true;
+                        if (!char.IsDigit(text[j])) break;
+                    }
+                }
+                // Check for [!t* (4 chars)
+                if (i >= 3 && text[i] == '*' && text[i - 1] == 't' && text[i - 2] == '!' && text[i - 3] == '[')
+                {
                     for (int j = index; j < Math.Min(text.Length, index + 4); j++)
                     {
                         if (text[j] == ']') return true;
@@ -2972,6 +3066,38 @@ namespace UnityGameTranslator.Core
         private static int _dbgTwCacheHit = 0;
         private static int _dbgReverseMiss = 0;
 
+        /// <summary>
+        /// Check if a normalized text is a "natural identity" — contains only digits,
+        /// punctuation, whitespace, placeholders and rich text tags. Such text is the
+        /// same in any language and an identity translation (key==value) is expected,
+        /// not an AI failure.
+        /// </summary>
+        private static bool IsNaturalIdentity(string normalizedText)
+        {
+            if (string.IsNullOrEmpty(normalizedText)) return true;
+
+            // Strip placeholders [!v*N] [!STR*N] and rich text tags <...>
+            // then check if remaining text has any letters
+            var stripped = new System.Text.StringBuilder(normalizedText.Length);
+            for (int i = 0; i < normalizedText.Length; i++)
+            {
+                char c = normalizedText[i];
+                if (c == '[' && i + 1 < normalizedText.Length && normalizedText[i + 1] == '!')
+                {
+                    int end = normalizedText.IndexOf(']', i);
+                    if (end > i) { i = end; continue; }
+                }
+                if (c == '<')
+                {
+                    int end = normalizedText.IndexOf('>', i);
+                    if (end > i) { i = end; continue; }
+                }
+                stripped.Append(c);
+            }
+
+            return IsNumericOrSymbol(stripped.ToString());
+        }
+
         public static bool HasCachedTranslation(string text)
         {
             if (string.IsNullOrEmpty(text)) return false;
@@ -2981,9 +3107,10 @@ namespace UnityGameTranslator.Core
             {
                 if (exact.IsHumanEmpty || exact.Tag == "S") return false;
                 // key==value with tag "A" = AI couldn't translate (source language text).
-                // Don't apply clone font — it may not have the right glyphs (e.g., CJK).
+                // Exception: natural identity (only digits/punctuation/placeholders) is expected
+                // to be identical — not an AI failure.
                 // key==value with tag "V"/"H" = human validated, intentionally same text.
-                if (exact.Value == text && exact.Tag == "A") return false;
+                if (exact.Value == text && exact.Tag == "A" && !IsNaturalIdentity(text)) return false;
                 return true;
             }
 
@@ -2992,7 +3119,7 @@ namespace UnityGameTranslator.Core
             if (TranslationCache.TryGetValue(normalized, out var norm))
             {
                 if (norm.IsHumanEmpty || norm.Tag == "S") return false;
-                if (norm.Value == normalized && norm.Tag == "A") return false;
+                if (norm.Value == normalized && norm.Tag == "A" && !IsNaturalIdentity(normalized)) return false;
                 return true;
             }
 
@@ -3009,6 +3136,9 @@ namespace UnityGameTranslator.Core
         {
             if (string.IsNullOrEmpty(text)) return text;
             string normalized = NormalizeLineEndings(text);
+            // Variables BEFORE numbers (variables may contain digits)
+            if (VariableManager.HasVariables)
+                normalized = VariableManager.ExtractVariables(normalized, out _);
             if (Config.normalize_numbers)
                 normalized = ExtractNumbersToPlaceholders(normalized, out _);
             return normalized;
@@ -3092,12 +3222,20 @@ namespace UnityGameTranslator.Core
             // Cache keys are stored with normalized line endings (\n only)
             string lineNormalized = NormalizeLineEndings(text);
 
+            // Extract string variables BEFORE numbers (variables may contain digits)
+            string afterVars = lineNormalized;
+            List<KeyValuePair<int, string>> extractedVars = null;
+            if (VariableManager.HasVariables)
+            {
+                afterVars = VariableManager.ExtractVariables(lineNormalized, out extractedVars);
+            }
+
             // Then extract numbers to placeholders (if enabled)
-            string normalizedText = lineNormalized;
+            string normalizedText = afterVars;
             List<string> extractedNumbers = null;
             if (Config.normalize_numbers)
             {
-                normalizedText = ExtractNumbersToPlaceholders(lineNormalized, out extractedNumbers);
+                normalizedText = ExtractNumbersToPlaceholders(afterVars, out extractedNumbers);
             }
 
             // Check cache with NORMALIZED key
@@ -3115,9 +3253,11 @@ namespace UnityGameTranslator.Core
                 {
                     cacheHitCount++;
                     translatedCount++;
-                    return (extractedNumbers != null && extractedNumbers.Count > 0)
+                    // Restore numbers first, then variables
+                    string result = (extractedNumbers != null && extractedNumbers.Count > 0)
                         ? RestoreNumbersFromPlaceholders(cachedEntry.Value, extractedNumbers)
                         : cachedEntry.Value;
+                    return VariableManager.RestoreVariables(result, extractedVars);
                 }
                 // If cached == normalizedText, it means "no translation needed", still a cache hit
             }
@@ -3136,9 +3276,10 @@ namespace UnityGameTranslator.Core
                 if (cachedTrimmedEntry.Value != trimmed)
                 {
                     cacheHitCount++;
-                    return (extractedNumbers != null && extractedNumbers.Count > 0)
+                    string trimResult = (extractedNumbers != null && extractedNumbers.Count > 0)
                         ? RestoreNumbersFromPlaceholders(cachedTrimmedEntry.Value, extractedNumbers)
                         : cachedTrimmedEntry.Value;
+                    return VariableManager.RestoreVariables(trimResult, extractedVars);
                 }
             }
 
@@ -3185,7 +3326,7 @@ namespace UnityGameTranslator.Core
         /// Treats multiline text as a single unit to ensure proper component tracking.
         /// </summary>
         /// <param name="isOwnUI">If true, use UI-specific prompt for mod interface translation.</param>
-        public static string TranslateTextWithTracking(string text, object component, bool isOwnUI = false)
+        public static string TranslateTextWithTracking(string text, object component, bool isOwnUI = false, bool skipTypewriting = false, bool skipQueueing = false)
         {
             // Check if translations are disabled
             if (!Config.enable_translations)
@@ -3204,7 +3345,7 @@ namespace UnityGameTranslator.Core
 
             // Don't split multiline - treat as single unit for proper component tracking
             // (IsNumericOrSymbol check is in TranslateSingleTextWithTracking — no need to call twice)
-            string result = TranslateSingleTextWithTracking(text, component, isOwnUI);
+            string result = TranslateSingleTextWithTracking(text, component, isOwnUI, skipTypewriting, skipQueueing);
             if (result != text)
             {
                 translatedCount++;
@@ -3220,7 +3361,7 @@ namespace UnityGameTranslator.Core
             return result;
         }
 
-        private static string TranslateSingleTextWithTracking(string text, object component, bool isOwnUI = false)
+        private static string TranslateSingleTextWithTracking(string text, object component, bool isOwnUI = false, bool skipTypewriting = false, bool skipQueueing = false)
         {
             if (string.IsNullOrEmpty(text))
                 return text;
@@ -3236,6 +3377,20 @@ namespace UnityGameTranslator.Core
                 string reconstructed = TranslatorPatches.DetectReadBack(rbId, text);
                 if (reconstructed != null)
                     text = reconstructed;
+            }
+
+            // Fast path: check concat assembled cache (runtime only, not JSON)
+            // Catches full tooltip texts that were assembled from translated deltas.
+            string concatResult = TranslatorPatches.GetConcatCacheResult(text);
+            if (concatResult != null)
+            {
+                translatedCount++;
+                return concatResult;
+            }
+            // Also skip if the text is a known concat translation result (FR text)
+            if (TranslatorPatches.IsConcatTranslatedValue(text))
+            {
+                return text; // already translated, don't re-process
             }
 
             // Fast path: try exact text lookup BEFORE any normalization (avoids allocations for cache hits)
@@ -3296,12 +3451,20 @@ namespace UnityGameTranslator.Core
             // Cache keys are stored with normalized line endings (\n only)
             string lineNormalized = NormalizeLineEndings(text);
 
+            // Extract string variables BEFORE numbers
+            string afterVars = lineNormalized;
+            List<KeyValuePair<int, string>> extractedVars = null;
+            if (VariableManager.HasVariables)
+            {
+                afterVars = VariableManager.ExtractVariables(lineNormalized, out extractedVars);
+            }
+
             // Then extract numbers to placeholders (if enabled)
-            string normalizedText = lineNormalized;
+            string normalizedText = afterVars;
             List<string> extractedNumbers = null;
             if (Config.normalize_numbers)
             {
-                normalizedText = ExtractNumbersToPlaceholders(lineNormalized, out extractedNumbers);
+                normalizedText = ExtractNumbersToPlaceholders(afterVars, out extractedNumbers);
             }
 
             string translation = null;
@@ -3326,10 +3489,11 @@ namespace UnityGameTranslator.Core
                         int cId = (component is Component dc3) ? TypeHelper.GetInstanceID(dc3) : -1;
                         LogDebug($"[CACHE-HIT-NORM] comp={cId} orig({text.Length}c) norm→key({normalizedText.Length}c)\n  orig='{text}'\n  norm='{normalizedText}'");
                     }
-                    // Restore numbers in the translation
-                    translation = (extractedNumbers != null && extractedNumbers.Count > 0)
+                    // Restore numbers then variables in the translation
+                    string rawTranslation = (extractedNumbers != null && extractedNumbers.Count > 0)
                         ? RestoreNumbersFromPlaceholders(cachedEntry.Value, extractedNumbers)
                         : cachedEntry.Value;
+                    translation = VariableManager.RestoreVariables(rawTranslation, extractedVars);
                 }
                 // If cached == normalizedText, it means "no translation needed", still a cache hit
             }
@@ -3350,9 +3514,10 @@ namespace UnityGameTranslator.Core
                     if (cachedTrimmedEntry.Value != trimmed)
                     {
                         cacheHitCount++;
-                        translation = (extractedNumbers != null && extractedNumbers.Count > 0)
+                        string rawTrimTranslation = (extractedNumbers != null && extractedNumbers.Count > 0)
                             ? RestoreNumbersFromPlaceholders(cachedTrimmedEntry.Value, extractedNumbers)
                             : cachedTrimmedEntry.Value;
+                        translation = VariableManager.RestoreVariables(rawTrimTranslation, extractedVars);
                     }
                 }
             }
@@ -3431,8 +3596,9 @@ namespace UnityGameTranslator.Core
                 // Typewriting detection: skip queuing if text is growing char by char
                 // on the same component. Only for cache MISSES — cache hits are returned above.
                 // This prevents partial typewriting text from being sent to AI.
+                // Skip for concat deltas (they should be queued immediately, not deferred).
                 int compId = (component is Component comp2) ? TypeHelper.GetInstanceID(comp2) : -1;
-                if (TranslatorPatches.IsTypewritingInProgress(compId, text))
+                if (!skipTypewriting && TranslatorPatches.IsTypewritingInProgress(compId, text))
                 {
                     return text;
                 }
@@ -3456,7 +3622,9 @@ namespace UnityGameTranslator.Core
                         }
                     }
 
-                    QueueForTranslation(text, component, isOwnUI);
+                    if (!skipQueueing)
+                        QueueForTranslation(text, component, isOwnUI);
+                    // else: concat component — deltas are queued individually, skip full text queue
                 }
                 else
                 {
@@ -3619,6 +3787,11 @@ namespace UnityGameTranslator.Core
                         output["_local_changes"] = LocalChangesCount;
                     }
 
+                    if (MetadataDirty)
+                    {
+                        output["_metadata_dirty"] = true;
+                    }
+
                     // Save user exclusion patterns
                     if (userExclusions.Count > 0)
                     {
@@ -3629,6 +3802,16 @@ namespace UnityGameTranslator.Core
                         }
                         output["_exclusions"] = exclusionsArray;
                     }
+
+                    // Save image replacement definitions
+                    var imgReplacements = ImageReplacer.SaveToJson();
+                    if (imgReplacements != null)
+                        output["_image_replacements"] = imgReplacements;
+
+                    // Save variable definitions
+                    var variables = VariableManager.SaveToJson();
+                    if (variables != null)
+                        output["_variables"] = variables;
 
                     // Save per-font settings
                     if (FontSettingsMap.Count > 0)
@@ -3653,12 +3836,16 @@ namespace UnityGameTranslator.Core
                     }
 
                     // Save game-specific settings (only if non-default values)
-                    if (DisableEventSystemOverride)
                     {
-                        output["_settings"] = new JObject
-                        {
-                            ["disable_eventsystem_override"] = DisableEventSystemOverride
-                        };
+                        var settingsObj = new JObject();
+                        if (DisableEventSystemOverride)
+                            settingsObj["disable_eventsystem_override"] = true;
+                        if (!TypewritingDetection)
+                            settingsObj["typewriting_detection"] = false;
+                        if (!ConcatDetection)
+                            settingsObj["concat_detection"] = false;
+                        if (settingsObj.Count > 0)
+                            output["_settings"] = settingsObj;
                     }
 
                     // Sorted translations with new format {"v": "value", "t": "tag"}
@@ -3999,6 +4186,8 @@ namespace UnityGameTranslator.Core
         public string Type { get; set; }
         /// <summary>Translation notes</summary>
         public string Notes { get; set; }
+        /// <summary>URL to external resources (fonts, images)</summary>
+        public string ResourcesUrl { get; set; }
 
         /// <summary>User's role for this translation</summary>
         public TranslationRole Role { get; set; } = TranslationRole.None;
@@ -4173,5 +4362,12 @@ namespace UnityGameTranslator.Core
         /// Used to sort fonts by usage in the UI.
         /// </summary>
         public int usageCount { get; set; } = 0;
+
+        /// <summary>
+        /// Origin of this font: "game", "system", "custom", or null for legacy entries.
+        /// Used to distinguish fonts with the same name from different sources.
+        /// Null/missing in JSON is treated as legacy (unknown origin).
+        /// </summary>
+        public string origin { get; set; }
     }
 }

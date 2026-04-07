@@ -25,6 +25,9 @@ namespace UnityGameTranslator.Core
 
         // Unified list of all text component types to scan
         private static readonly List<RegisteredTextType> _registeredTypes = new List<RegisteredTextType>();
+
+        /// <summary>Public read-only access to registered types (for Find by Value).</summary>
+        public static IReadOnlyList<RegisteredTextType> RegisteredTypes => _registeredTypes;
         private static bool _typesRegistered = false;
 
         /// <summary>
@@ -972,6 +975,10 @@ namespace UnityGameTranslator.Core
             return type.TextProp?.GetValue(component, null) as string;
         }
 
+        /// <summary>Public wrapper for GetTextForType (used by Find by Value).</summary>
+        public static string GetTextForTypePublic(object component, RegisteredTextType type)
+            => GetTextForType(component, type);
+
         /// <summary>
         /// Set text on a component using the appropriate method for its type.
         /// </summary>
@@ -1100,6 +1107,58 @@ namespace UnityGameTranslator.Core
         #region ForceRefreshAllText
 
         /// <summary>
+        /// Restore all displayed text to their original (pre-translation) values.
+        /// Call this before reloading translations from a different JSON, so the scanner
+        /// doesn't see stale translated text and try to re-translate it via AI.
+        /// </summary>
+        public static void RestoreAllOriginals()
+        {
+            int restored = 0;
+            try
+            {
+                foreach (var type in _registeredTypes)
+                {
+                    if (type.CachedComponents == null) continue;
+                    foreach (var obj in type.CachedComponents)
+                    {
+                        if (obj == null) continue;
+                        try
+                        {
+                            object component = obj;
+                            if (type.TryCastMethod != null && TranslatorCore.Adapter?.IsIL2CPP == true)
+                            {
+                                if (!type.ComponentType.IsInstanceOfType(obj))
+                                {
+                                    component = TryCastToType(obj, type.TryCastMethod);
+                                    if (component == null) continue;
+                                }
+                            }
+
+                            int instanceId = TypeHelper.GetInstanceID(component);
+                            if (instanceId == -1) continue;
+
+                            string original = GetOriginalText(instanceId);
+                            if (original != null)
+                            {
+                                SetTextForType(component, type, original);
+                                ClearOriginalText(instanceId);
+                                restored++;
+                            }
+                        }
+                        catch { }
+                    }
+                }
+
+                if (restored > 0)
+                    TranslatorCore.LogInfo($"[Scanner] Restored {restored} texts to originals before cache reload");
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogWarning($"[Scanner] RestoreAllOriginals error: {ex.Message}");
+            }
+        }
+
+        /// <summary>
         /// Force refresh all text components by re-assigning their text.
         /// If translations are disabled, restores original texts from cache.
         /// This triggers Harmony patches to re-process and apply translations/fonts.
@@ -1111,22 +1170,56 @@ namespace UnityGameTranslator.Core
 
             bool globalRestore = !TranslatorCore.Config.enable_translations;
 
+            var processedIds = new HashSet<int>();
+
             try
             {
+                // Pass 1: scanner cache
                 foreach (var type in _registeredTypes)
                 {
                     if (type.CachedComponents == null) continue;
                     foreach (var obj in type.CachedComponents)
                     {
                         if (obj == null) continue;
+                        int id = GetComponentInstanceId(obj);
+                        if (id != -1) processedIds.Add(id);
                         RefreshComponent(obj, type, globalRestore, ref refreshed, ref restored);
                     }
                 }
 
+                // Pass 2: components seen by the patch but not in scanner cache.
+                // These are components in inactive GameObjects that got their text set
+                // before becoming visible — the setter prefix saw them but the scanner didn't.
+                List<KeyValuePair<int, object>> patchRefs;
+                try { patchRefs = new List<KeyValuePair<int, object>>(TranslatorPatches.PatchedComponentRefs); }
+                catch { patchRefs = new List<KeyValuePair<int, object>>(); }
+
+                foreach (var kvp in patchRefs)
+                {
+                    if (processedIds.Contains(kvp.Key)) continue;
+                    if (kvp.Value == null) continue;
+                    try
+                    {
+                        // Re-set text via property to trigger the setter prefix (translation + font + scale)
+                        var textProp = kvp.Value.GetType().GetProperty("text",
+                            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                        if (textProp?.GetMethod != null && textProp?.SetMethod != null)
+                        {
+                            string currentText = textProp.GetValue(kvp.Value, null) as string;
+                            if (!string.IsNullOrEmpty(currentText))
+                            {
+                                textProp.SetValue(kvp.Value, currentText, null);
+                                refreshed++;
+                            }
+                        }
+                    }
+                    catch { }
+                }
+
                 if (restored > 0)
-                    TranslatorCore.LogDebug($"[Scanner] Restored {restored} original texts, refreshed {refreshed} components");
+                    TranslatorCore.LogDebug($"[Scanner] Restored {restored} original texts, refreshed {refreshed} components (incl. patch refs)");
                 else
-                    TranslatorCore.LogDebug($"[Scanner] Force refreshed {refreshed} text components");
+                    TranslatorCore.LogDebug($"[Scanner] Force refreshed {refreshed} text components (incl. patch refs)");
             }
             catch (Exception ex)
             {
@@ -1806,6 +1899,18 @@ namespace UnityGameTranslator.Core
                         {
                             processedTextHashes.Remove(skipId);
                             TranslatorCore.ClearSeenText(skipId);
+
+                            // For concat components: the delta doesn't match the full text.
+                            // Re-assemble using stored deltas + current cache translations.
+                            if (TranslatorPatches.IsConcatComponent(skipId))
+                            {
+                                string reassembled = TranslatorPatches.ReassembleConcat(skipId, comp);
+                                if (reassembled != null)
+                                {
+                                    try { TypeHelper.SetText(comp, reassembled); }
+                                    catch { }
+                                }
+                            }
                         }
                         TranslatorCore.LogDebug($"[Apply SKIP] comp={skipId} expected='{expectedPreview}' actual='{actualPreview}'");
                     }

@@ -12,13 +12,23 @@ using UniverseLib.UI.Models;
 namespace UnityGameTranslator.Core.UI.Panels
 {
     /// <summary>
-    /// Inspector panel for visually selecting UI elements to exclude from translation.
+    /// Inspector mode: determines behavior for exclusion or bitmap replacement.
+    /// </summary>
+    public enum InspectorMode
+    {
+        Exclusion,
+        BitmapReplace
+    }
+
+    /// <summary>
+    /// Inspector panel for visually selecting UI elements.
+    /// Dual mode: Exclusion (select text to exclude) or BitmapReplace (select images to replace).
     /// DevTools-style: hover preview with highlight overlay, click to select.
     /// All Unity API calls use reflection for IL2CPP compatibility.
     /// </summary>
     public class InspectorPanel : TranslatorPanelBase
     {
-        public override string Name => "Element Inspector";
+        public override string Name => _currentMode == InspectorMode.BitmapReplace ? "Image Inspector" : "Element Inspector";
         public override int MinWidth => 420;
         public override int MinHeight => 360;
         public override int PanelWidth => 480;
@@ -26,19 +36,39 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         protected override int MinPanelHeight => 360;
 
-        // UI elements
+        // Mode
+        private InspectorMode _currentMode = InspectorMode.Exclusion;
+
+        // UI elements — shared
         private Text _hoveredPathLabel;
         private Text _selectedPathLabel;
         private Text _statusLabel;
+        private ButtonRef _cancelBtn;
+        private Text _titleLabel;
+
+        // UI elements — Exclusion mode
         private ButtonRef _excludeThisBtn;
         private ButtonRef _excludePatternBtn;
-        private ButtonRef _cancelBtn;
+        private GameObject _exclusionActionsRow;
+
+        // UI elements — BitmapReplace mode
+        private ButtonRef _exportOriginalBtn;
+        private ButtonRef _markReplaceBtn;
+        private GameObject _imageActionsRow;
+        private Text _spriteInfoLabel;
+
+        // Camera selection for world-space raycast
+        private Components.SearchableDropdown _cameraDropdown;
+        private Camera _selectedCamera = null; // null = UI Only mode
+        private Camera[] _sceneCameras = new Camera[0];
+        private string[] _cameraNames = new string[0];
 
         // State
         private bool _isInspecting = false;
         private string _lastHoveredPath = "";
         private string _lastSelectedPath = "";
         private GameObject _lastSelectedObject = null;
+        private object _lastSelectedSpriteObj = null;
         private int _frameSkip = 0;
         private bool _mainPanelWasOpen = false;
 
@@ -262,6 +292,11 @@ namespace UnityGameTranslator.Core.UI.Panels
         [MethodImpl(MethodImplOptions.NoInlining)]
         private GameObject RaycastUIElement(Vector3 screenPosition)
         {
+            // If a camera is selected, raycast via that camera (world-space)
+            if (_selectedCamera != null)
+                return RaycastViaCamera(_selectedCamera, screenPosition);
+
+            // Default: UI Only mode via GraphicRaycasters
             if (!_raycastAvailable) return null;
 
             try
@@ -277,6 +312,13 @@ namespace UnityGameTranslator.Core.UI.Panels
                 foreach (var raycasterObj in raycasters)
                 {
                     if (raycasterObj == null) continue;
+
+                    // Skip our own highlight canvas raycaster
+                    var raycasterComp = raycasterObj as Component;
+                    if (raycasterComp == null)
+                        raycasterComp = TypeHelper.Il2CppCast(raycasterObj, typeof(Component)) as Component;
+                    if (raycasterComp != null && raycasterComp.gameObject != null && IsOwnUI(raycasterComp.gameObject))
+                        continue;
 
                     // IL2CPP: cast to the proper type
                     var raycaster = TypeHelper.Il2CppCast(raycasterObj, _graphicRaycasterType);
@@ -302,21 +344,31 @@ namespace UnityGameTranslator.Core.UI.Panels
                         int count = (int)_listCountProp.Invoke(resultsList, null);
                         if (count == 0) continue;
 
-                        // Get first result
-                        var firstResult = _listGetItem.Invoke(resultsList, new object[] { 0 });
-                        if (firstResult == null) continue;
-
-                        // Get gameObject from RaycastResult
-                        var gameObj = _raycastResultGameObjectProp.GetValue(firstResult, null);
-                        if (gameObj is GameObject go)
-                            return go;
-
-                        // IL2CPP: may need cast
-                        if (gameObj != null)
+                        // Iterate results — in BitmapReplace mode, skip non-image components
+                        for (int i = 0; i < count; i++)
                         {
-                            var casted = TypeHelper.Il2CppCast(gameObj, typeof(GameObject));
-                            if (casted is GameObject go2)
-                                return go2;
+                            var resultItem = _listGetItem.Invoke(resultsList, new object[] { i });
+                            if (resultItem == null) continue;
+
+                            var gameObj = _raycastResultGameObjectProp.GetValue(resultItem, null);
+                            GameObject go = gameObj as GameObject;
+
+                            // IL2CPP: may need cast
+                            if (go == null && gameObj != null)
+                            {
+                                var casted = TypeHelper.Il2CppCast(gameObj, typeof(GameObject));
+                                go = casted as GameObject;
+                            }
+
+                            if (go == null) continue;
+
+                            // In BitmapReplace mode, only accept GameObjects with image components
+                            if (_currentMode == InspectorMode.BitmapReplace)
+                            {
+                                if (!ImageReplacer.HasImageComponent(go)) continue;
+                            }
+
+                            return go;
                         }
                     }
                     catch (Exception ex)
@@ -331,6 +383,177 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// Raycast World Space Canvases that use a specific camera.
+        /// Uses GraphicRaycaster on each matching Canvas.
+        /// </summary>
+        private GameObject RaycastWorldSpaceCanvases(Camera camera, Vector3 screenPosition)
+        {
+            if (camera == null || !_raycastAvailable) return null;
+
+            try
+            {
+                var eventSystem = _eventSystemCurrentProp.GetValue(null, null);
+                if (eventSystem == null) return null;
+
+                var raycasters = TypeHelper.FindAllObjectsOfType(_graphicRaycasterType);
+                if (raycasters == null) return null;
+
+                foreach (var raycasterObj in raycasters)
+                {
+                    if (raycasterObj == null) continue;
+
+                    // Get the Canvas of this raycaster
+                    var raycasterComp = raycasterObj as Component;
+                    if (raycasterComp == null)
+                        raycasterComp = TypeHelper.Il2CppCast(raycasterObj, typeof(Component)) as Component;
+                    if (raycasterComp == null || raycasterComp.gameObject == null) continue;
+                    if (IsOwnUI(raycasterComp.gameObject)) continue;
+
+                    // Check if this Canvas is World Space and uses our selected camera
+                    var canvas = raycasterComp.gameObject.GetComponent<Canvas>();
+                    if (canvas == null) continue;
+                    // Match canvases that use this camera (WorldSpace or ScreenSpaceCamera)
+                    if (canvas.renderMode == RenderMode.ScreenSpaceOverlay) continue;
+                    if (canvas.worldCamera != camera) continue;
+
+                    // This Canvas uses our camera — raycast through it
+                    var raycaster = TypeHelper.Il2CppCast(raycasterObj, _graphicRaycasterType);
+                    if (raycaster == null) continue;
+
+                    try
+                    {
+                        var pointer = _pointerEventDataCtor.Invoke(new[] { eventSystem });
+                        if (pointer == null) continue;
+                        _pointerEventDataPositionProp.SetValue(pointer, (Vector2)screenPosition, null);
+
+                        var resultsList = Activator.CreateInstance(_listType);
+                        if (resultsList == null) continue;
+
+                        _raycasterRaycastMethod.Invoke(raycaster, new[] { pointer, resultsList });
+
+                        int count = (int)_listCountProp.Invoke(resultsList, null);
+                        for (int i = 0; i < count; i++)
+                        {
+                            var resultItem = _listGetItem.Invoke(resultsList, new object[] { i });
+                            if (resultItem == null) continue;
+
+                            var gameObj = _raycastResultGameObjectProp.GetValue(resultItem, null);
+                            GameObject go = gameObj as GameObject;
+                            if (go == null && gameObj != null)
+                                go = TypeHelper.Il2CppCast(gameObj, typeof(GameObject)) as GameObject;
+                            if (go == null || IsOwnUI(go)) continue;
+
+                            if (_currentMode == InspectorMode.BitmapReplace)
+                            {
+                                if (!ImageReplacer.HasImageComponent(go)) continue;
+                            }
+
+                            return go;
+                        }
+                    }
+                    catch { }
+                }
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogDebug($"[Inspector] RaycastWorldSpaceCanvases error: {ex.Message}");
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Raycast via a specific Camera for world-space Renderers.
+        /// Only checks renderers visible to this camera (via cullingMask).
+        /// </summary>
+        private GameObject RaycastViaCamera(Camera camera, Vector3 screenPosition)
+        {
+            if (camera == null) return null;
+
+            // First: check World Space Canvases that use this camera
+            // (these have GraphicRaycasters but aren't found by "UI Only" mode
+            // because their GraphicRaycaster needs the correct camera context)
+            var canvasHit = RaycastWorldSpaceCanvases(camera, screenPosition);
+            if (canvasHit != null) return canvasHit;
+
+            // Then: bounds check for renderers visible to this camera
+            try
+            {
+                int cullingMask = camera.cullingMask;
+                var all = TypeHelper.FindAllObjectsOfType(typeof(Renderer));
+                if (all == null) return null;
+
+                GameObject bestHit = null;
+                float bestArea = float.MaxValue;
+
+                foreach (var obj in all)
+                {
+                    if (obj == null) continue;
+
+                    Renderer rend = obj as Renderer;
+                    if (rend == null)
+                    {
+                        var casted = TypeHelper.Il2CppCast(obj, typeof(Renderer));
+                        rend = casted as Renderer;
+                    }
+                    if (rend == null || rend.gameObject == null) continue;
+                    if (!rend.enabled || !rend.isVisible) continue;
+                    if (!rend.gameObject.activeInHierarchy) continue;
+
+                    // Filter by camera culling mask
+                    if ((cullingMask & (1 << rend.gameObject.layer)) == 0) continue;
+
+                    if (IsOwnUI(rend.gameObject)) continue;
+
+                    if (_currentMode == InspectorMode.BitmapReplace)
+                    {
+                        if (!ImageReplacer.HasImageComponent(rend.gameObject)) continue;
+                    }
+
+                    try
+                    {
+                        var bounds = rend.bounds;
+                        if (bounds.size == Vector3.zero) continue;
+
+                        Vector3 center = bounds.center;
+                        Vector3 extents = bounds.extents;
+
+                        Vector3 screenCenter = camera.WorldToScreenPoint(center);
+                        // Only filter by Z for perspective cameras (orthographic can have negative Z)
+                        if (!camera.orthographic && screenCenter.z < 0) continue;
+
+                        Vector3 s0 = camera.WorldToScreenPoint(center - extents);
+                        Vector3 s1 = camera.WorldToScreenPoint(center + extents);
+
+                        float minX = Mathf.Min(s0.x, s1.x);
+                        float maxX = Mathf.Max(s0.x, s1.x);
+                        float minY = Mathf.Min(s0.y, s1.y);
+                        float maxY = Mathf.Max(s0.y, s1.y);
+
+                        if (screenPosition.x >= minX && screenPosition.x <= maxX &&
+                            screenPosition.y >= minY && screenPosition.y <= maxY)
+                        {
+                            float hitArea = (maxX - minX) * (maxY - minY);
+                            if (hitArea < bestArea)
+                            {
+                                bestArea = hitArea;
+                                bestHit = rend.gameObject;
+                            }
+                        }
+                    }
+                    catch { }
+                }
+
+                return bestHit;
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogDebug($"[Inspector] RaycastViaCamera error: {ex.Message}");
+                return null;
+            }
         }
 
         /// <summary>
@@ -370,8 +593,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             CreateScrollablePanelLayout(out var scrollContent, out var buttonRow, PanelWidth - 40);
 
             // Title
-            var title = CreateTitle(scrollContent, "Title", "Element Inspector");
-            RegisterUIText(title);
+            _titleLabel = CreateTitle(scrollContent, "Title", "Element Inspector");
+            RegisterUIText(_titleLabel);
 
             UIStyles.CreateSpacer(scrollContent, 5);
 
@@ -383,8 +606,19 @@ namespace UnityGameTranslator.Core.UI.Panels
             RegisterUIText(instructionTitle);
 
             var instructionHint = UIStyles.CreateHint(card, "InstructionsHint",
-                "Hover over any UI element to preview it. Click to select and exclude from translation.");
+                "Hover over any UI element to preview it. Click to select.");
             RegisterUIText(instructionHint);
+
+            UIStyles.CreateSpacer(card, 8);
+
+            // --- Camera selection ---
+            var cameraTitle = UIStyles.CreateSectionTitle(card, "CameraLabel", "Target");
+            RegisterUIText(cameraTitle);
+
+            _cameraDropdown = new Components.SearchableDropdown("CameraTarget",
+                new[] { "UI Only" }, "UI Only", popupHeight: 150, showSearch: false);
+            var cameraObj = _cameraDropdown.CreateUI(card, OnCameraSelected, PanelWidth - 80);
+            UIFactory.SetLayoutElement(cameraObj, minHeight: UIStyles.RowHeightNormal, flexibleWidth: 9999);
 
             UIStyles.CreateSpacer(card, 8);
 
@@ -416,24 +650,52 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             UIStyles.CreateSpacer(card, 8);
 
+            // --- Sprite info (BitmapReplace mode only) ---
+            _spriteInfoLabel = UIFactory.CreateLabel(card, "SpriteInfo", "", TextAnchor.MiddleLeft);
+            _spriteInfoLabel.fontSize = UIStyles.FontSizeSmall;
+            _spriteInfoLabel.color = UIStyles.TextSecondary;
+            UIFactory.SetLayoutElement(_spriteInfoLabel.gameObject, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999);
+            _spriteInfoLabel.gameObject.SetActive(false);
+
+            UIStyles.CreateSpacer(card, 4);
+
             // --- Action buttons ---
             var actionsTitle = UIStyles.CreateSectionTitle(card, "ActionsLabel", "Actions");
             RegisterUIText(actionsTitle);
 
-            var actionRow1 = UIStyles.CreateFormRow(card, "ActionRow1", UIStyles.ButtonHeight, 5);
+            // Exclusion mode actions
+            _exclusionActionsRow = UIStyles.CreateFormRow(card, "ExclusionActionRow", UIStyles.ButtonHeight, 5);
 
-            _excludeThisBtn = CreatePrimaryButton(actionRow1, "ExcludeThisBtn", "Exclude This Element");
+            _excludeThisBtn = CreatePrimaryButton(_exclusionActionsRow, "ExcludeThisBtn", "Exclude This Element");
             _excludeThisBtn.OnClick += OnExcludeThisClicked;
             _excludeThisBtn.Component.interactable = false;
             UIFactory.SetLayoutElement(_excludeThisBtn.Component.gameObject, flexibleWidth: 9999);
             RegisterUIText(_excludeThisBtn.ButtonText);
 
-            _excludePatternBtn = CreateSecondaryButton(actionRow1, "ExcludePatternBtn", "Exclude Pattern");
+            _excludePatternBtn = CreateSecondaryButton(_exclusionActionsRow, "ExcludePatternBtn", "Exclude Pattern");
             _excludePatternBtn.OnClick += OnExcludePatternClicked;
             _excludePatternBtn.Component.interactable = false;
             UIFactory.SetLayoutElement(_excludePatternBtn.Component.gameObject, flexibleWidth: 9999);
             RegisterUIText(_excludePatternBtn.ButtonText);
 
+            // BitmapReplace mode actions
+            _imageActionsRow = UIStyles.CreateFormRow(card, "ImageActionRow", UIStyles.ButtonHeight, 5);
+
+            _exportOriginalBtn = CreatePrimaryButton(_imageActionsRow, "ExportOriginalBtn", "Export Original");
+            _exportOriginalBtn.OnClick += OnExportOriginalClicked;
+            _exportOriginalBtn.Component.interactable = false;
+            UIFactory.SetLayoutElement(_exportOriginalBtn.Component.gameObject, flexibleWidth: 9999);
+            RegisterUIText(_exportOriginalBtn.ButtonText);
+
+            _markReplaceBtn = CreateSecondaryButton(_imageActionsRow, "MarkReplaceBtn", "Mark for Replace");
+            _markReplaceBtn.OnClick += OnMarkReplaceClicked;
+            _markReplaceBtn.Component.interactable = false;
+            UIFactory.SetLayoutElement(_markReplaceBtn.Component.gameObject, flexibleWidth: 9999);
+            RegisterUIText(_markReplaceBtn.ButtonText);
+
+            _imageActionsRow.SetActive(false); // Hidden by default (exclusion mode)
+
+            // Shared clear selection button
             var actionRow2 = UIStyles.CreateFormRow(card, "ActionRow2", UIStyles.ButtonHeight, 5);
 
             _cancelBtn = CreateSecondaryButton(actionRow2, "CancelBtn", "Clear Selection");
@@ -473,12 +735,16 @@ namespace UnityGameTranslator.Core.UI.Panels
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
             canvas.sortingOrder = 31000; // High but below our UI (UniverseLib uses 32000+)
 
-            // Hover highlight
+            // GraphicRaycaster needed so the EventSystem sees our highlights
+            // and they can block clicks from reaching game elements below
+            _highlightCanvas.AddComponent<UnityEngine.UI.GraphicRaycaster>();
+
+            // Hover highlight — raycastTarget=true to block game clicks on the hovered element
             var hoverObj = new GameObject("HoverHighlight");
             hoverObj.transform.SetParent(_highlightCanvas.transform, false);
             _hoverHighlight = hoverObj.AddComponent<Image>();
             _hoverHighlight.color = HoverHighlightColor;
-            _hoverHighlight.raycastTarget = false; // Don't intercept clicks
+            _hoverHighlight.raycastTarget = true;
             _hoverHighlightRect = hoverObj.GetComponent<RectTransform>();
             _hoverHighlightRect.anchorMin = Vector2.zero;
             _hoverHighlightRect.anchorMax = Vector2.zero;
@@ -490,7 +756,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             selectedObj.transform.SetParent(_highlightCanvas.transform, false);
             _selectedHighlight = selectedObj.AddComponent<Image>();
             _selectedHighlight.color = SelectedHighlightColor;
-            _selectedHighlight.raycastTarget = false;
+            _selectedHighlight.raycastTarget = true;
             _selectedHighlightRect = selectedObj.GetComponent<RectTransform>();
             _selectedHighlightRect.anchorMin = Vector2.zero;
             _selectedHighlightRect.anchorMax = Vector2.zero;
@@ -513,20 +779,26 @@ namespace UnityGameTranslator.Core.UI.Panels
                 return;
             }
 
-            var targetRect = target.GetComponent<RectTransform>();
-            if (targetRect == null)
-            {
-                highlightImage.gameObject.SetActive(false);
-                return;
-            }
-
-            // Get screen-space bounds using TransformPoint on local rect corners
-            // TransformPoint takes Vector3 (value type) — IL2CPP-safe, unlike GetWorldCorners(Vector3[])
             Vector2 screenMin, screenMax;
-            if (!GetScreenBounds(targetRect, out screenMin, out screenMax))
+
+            var targetRect = target.GetComponent<RectTransform>();
+            if (targetRect != null)
             {
-                highlightImage.gameObject.SetActive(false);
-                return;
+                // Canvas UI: use RectTransform bounds
+                if (!GetScreenBounds(targetRect, out screenMin, out screenMax))
+                {
+                    highlightImage.gameObject.SetActive(false);
+                    return;
+                }
+            }
+            else
+            {
+                // World-space object (SpriteRenderer): project bounds to screen
+                if (!GetScreenBoundsFromRenderer(target, out screenMin, out screenMax))
+                {
+                    highlightImage.gameObject.SetActive(false);
+                    return;
+                }
             }
 
             float width = screenMax.x - screenMin.x;
@@ -552,6 +824,95 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         #endregion
 
+        /// <summary>
+        /// Set the inspector mode. Must be called before SetActive(true).
+        /// </summary>
+        public void SetMode(InspectorMode mode)
+        {
+            _currentMode = mode;
+        }
+
+        private void UpdateUIForMode()
+        {
+            bool isImage = _currentMode == InspectorMode.BitmapReplace;
+
+            // Update title
+            if (_titleLabel != null)
+                _titleLabel.text = isImage ? "Image Inspector" : "Element Inspector";
+
+            // Toggle action button visibility
+            if (_exclusionActionsRow != null) _exclusionActionsRow.SetActive(!isImage);
+            if (_imageActionsRow != null) _imageActionsRow.SetActive(isImage);
+            if (_spriteInfoLabel != null) _spriteInfoLabel.gameObject.SetActive(isImage);
+
+            // Refresh camera list
+            RefreshCameraList();
+        }
+
+        private void RefreshCameraList()
+        {
+            if (_cameraDropdown == null) return;
+
+            var options = new List<string> { "UI Only" };
+            var cameraList = new List<Camera>();
+
+            try
+            {
+                var allCams = TypeHelper.FindAllObjectsOfType(typeof(Camera));
+                if (allCams != null)
+                {
+                    foreach (var obj in allCams)
+                    {
+                        Camera cam = obj as Camera;
+                        if (cam == null)
+                            cam = TypeHelper.Il2CppCast(obj, typeof(Camera)) as Camera;
+                        if (cam != null && cam.gameObject.activeInHierarchy)
+                            cameraList.Add(cam);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogDebug($"[Inspector] RefreshCameraList error: {ex.Message}");
+            }
+
+            _sceneCameras = cameraList.ToArray();
+            foreach (var cam in _sceneCameras)
+            {
+                string type = cam.orthographic ? "ortho" : "persp";
+                options.Add($"{cam.name} ({type})");
+            }
+
+            _cameraNames = options.ToArray();
+            _cameraDropdown.SetOptions(_cameraNames);
+            _cameraDropdown.SelectedValue = "UI Only";
+            _selectedCamera = null;
+
+        }
+
+        private void OnCameraSelected(string value)
+        {
+            if (value == "UI Only" || string.IsNullOrEmpty(value))
+            {
+                _selectedCamera = null;
+            }
+            else
+            {
+                _selectedCamera = null;
+                foreach (var cam in _sceneCameras)
+                {
+                    if (cam != null && value.StartsWith(cam.name))
+                    {
+                        _selectedCamera = cam;
+                        break;
+                    }
+                }
+            }
+
+            ClearSelection();
+            ClearHover();
+        }
+
         public override void SetActive(bool active)
         {
             bool wasActive = Enabled;
@@ -565,6 +926,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     ClearSelection();
                     ClearHover();
                     _statusLabel.text = "";
+                    UpdateUIForMode();
 
                     // Hide MainPanel during inspection to clear the view
                     var mainPanel = TranslatorUIManager.MainPanel;
@@ -657,13 +1019,37 @@ namespace UnityGameTranslator.Core.UI.Panels
                     string path = TranslatorCore.GetGameObjectPath(hitObject);
                     _lastSelectedPath = path;
                     _lastSelectedObject = hitObject;
+                    _lastSelectedSpriteObj = null;
 
                     _selectedPathLabel.text = path;
                     _selectedPathLabel.color = UIStyles.TextPrimary;
                     _selectedPathLabel.fontStyle = FontStyle.Normal;
-                    _excludeThisBtn.Component.interactable = true;
-                    _excludePatternBtn.Component.interactable = true;
                     _cancelBtn.Component.interactable = true;
+
+                    if (_currentMode == InspectorMode.BitmapReplace)
+                    {
+                        try
+                        {
+                            _lastSelectedSpriteObj = ImageReplacer.GetSpriteFromComponent(hitObject);
+                            var spriteName = ImageReplacer.GetSpriteName(_lastSelectedSpriteObj) ?? "(unnamed)";
+                            var size = ImageReplacer.GetSpriteSize(_lastSelectedSpriteObj);
+                            var compType = ImageReplacer.GetComponentTypeName(hitObject);
+                            _spriteInfoLabel.text = $"{compType}: \"{spriteName}\" ({size.x}x{size.y})";
+                            _spriteInfoLabel.color = UIStyles.TextPrimary;
+
+                            _exportOriginalBtn.Component.interactable = _lastSelectedSpriteObj != null;
+                            _markReplaceBtn.Component.interactable = _lastSelectedSpriteObj != null;
+                        }
+                        catch (Exception ex)
+                        {
+                            TranslatorCore.LogDebug($"[Inspector] BitmapReplace click handler error: {ex}");
+                        }
+                    }
+                    else
+                    {
+                        _excludeThisBtn.Component.interactable = true;
+                        _excludePatternBtn.Component.interactable = true;
+                    }
 
                     _statusLabel.text = "Element selected";
                     _statusLabel.color = UIStyles.StatusSuccess;
@@ -791,6 +1177,51 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
         }
 
+        /// <summary>
+        /// Get screen-space bounds for a world-space object (SpriteRenderer).
+        /// Uses Renderer.bounds projected to screen via Camera.main.
+        /// </summary>
+        private static bool GetScreenBoundsFromRenderer(GameObject target, out Vector2 screenMin, out Vector2 screenMax)
+        {
+            screenMin = screenMax = Vector2.zero;
+            try
+            {
+                var camera = Camera.main;
+                if (camera == null) return false;
+
+                // Try to get Renderer.bounds via reflection
+                var renderer = target.GetComponent<Renderer>();
+                if (renderer == null) return false;
+
+                var bounds = renderer.bounds;
+                if (bounds.size == Vector3.zero) return false;
+
+                Vector3 center = bounds.center;
+                Vector3 extents = bounds.extents;
+
+                // Project 4 corners to screen space
+                Vector3 s0 = camera.WorldToScreenPoint(center + new Vector3(-extents.x, -extents.y, 0));
+                Vector3 s1 = camera.WorldToScreenPoint(center + new Vector3(extents.x, -extents.y, 0));
+                Vector3 s2 = camera.WorldToScreenPoint(center + new Vector3(-extents.x, extents.y, 0));
+                Vector3 s3 = camera.WorldToScreenPoint(center + new Vector3(extents.x, extents.y, 0));
+
+                if (!camera.orthographic && s0.z < 0) return false; // Behind perspective camera
+
+                float minX = Mathf.Min(Mathf.Min(s0.x, s1.x), Mathf.Min(s2.x, s3.x));
+                float maxX = Mathf.Max(Mathf.Max(s0.x, s1.x), Mathf.Max(s2.x, s3.x));
+                float minY = Mathf.Min(Mathf.Min(s0.y, s1.y), Mathf.Min(s2.y, s3.y));
+                float maxY = Mathf.Max(Mathf.Max(s0.y, s1.y), Mathf.Max(s2.y, s3.y));
+
+                screenMin = new Vector2(minX, minY);
+                screenMax = new Vector2(maxX, maxY);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         private void ClearHoverLabel()
         {
             if (_lastHoveredPath != "")
@@ -812,12 +1243,16 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             _lastSelectedPath = "";
             _lastSelectedObject = null;
+            _lastSelectedSpriteObj = null;
             _selectedPathLabel.text = "(click to select)";
             _selectedPathLabel.color = UIStyles.TextMuted;
             _selectedPathLabel.fontStyle = FontStyle.Italic;
             _excludeThisBtn.Component.interactable = false;
             _excludePatternBtn.Component.interactable = false;
+            _exportOriginalBtn.Component.interactable = false;
+            _markReplaceBtn.Component.interactable = false;
             _cancelBtn.Component.interactable = false;
+            if (_spriteInfoLabel != null) _spriteInfoLabel.text = "";
             if (_selectedHighlight != null) _selectedHighlight.gameObject.SetActive(false);
         }
 
@@ -855,11 +1290,85 @@ namespace UnityGameTranslator.Core.UI.Panels
             _statusLabel.text = "";
         }
 
+        #region BitmapReplace Actions
+
+        private void OnExportOriginalClicked()
+        {
+            if (_lastSelectedSpriteObj == null) return;
+
+            var spriteName = ImageReplacer.GetSpriteName(_lastSelectedSpriteObj);
+            if (string.IsNullOrEmpty(spriteName))
+            {
+                _statusLabel.text = "Cannot export: sprite has no name";
+                _statusLabel.color = UIStyles.StatusError;
+                return;
+            }
+
+            // If not already marked, mark it first
+            if (!ImageReplacer.GetAll().ContainsKey(spriteName))
+            {
+                MarkCurrentForReplace(spriteName);
+            }
+
+            var exportedPath = ImageReplacer.ExportOriginal(_lastSelectedSpriteObj, spriteName);
+            if (exportedPath != null)
+            {
+                _statusLabel.text = $"Exported: {System.IO.Path.GetFileName(exportedPath)}";
+                _statusLabel.color = UIStyles.StatusSuccess;
+                TranslatorCore.SaveCache();
+            }
+            else
+            {
+                _statusLabel.text = "Export failed (check log)";
+                _statusLabel.color = UIStyles.StatusError;
+            }
+        }
+
+        private void OnMarkReplaceClicked()
+        {
+            if (_lastSelectedSpriteObj == null) return;
+
+            var spriteName = ImageReplacer.GetSpriteName(_lastSelectedSpriteObj);
+            if (string.IsNullOrEmpty(spriteName))
+            {
+                _statusLabel.text = "Cannot mark: sprite has no name";
+                _statusLabel.color = UIStyles.StatusError;
+                return;
+            }
+
+            MarkCurrentForReplace(spriteName);
+
+            _statusLabel.text = $"Marked: {spriteName}";
+            _statusLabel.color = UIStyles.StatusSuccess;
+
+            TranslatorCore.SaveCache();
+            ClearSelection();
+        }
+
+        private void MarkCurrentForReplace(string spriteName)
+        {
+            var size = ImageReplacer.GetSpriteSize(_lastSelectedSpriteObj);
+
+            Vector2 pivot = new Vector2(0.5f, 0.5f);
+            float ppu = 100f;
+            Vector4 border = Vector4.zero;
+            TextureUtils.GetSpriteProperties(_lastSelectedSpriteObj, out pivot, out ppu, out border);
+
+            ImageReplacer.AddReplacement(spriteName, _lastSelectedPath,
+                size.x, size.y, pivot, border, ppu);
+        }
+
+        #endregion
+
         private void OnStopClicked()
         {
             SetActive(false);
-            // Return to OptionsPanel on the Exclusions tab
-            TranslatorUIManager.OptionsPanel?.OpenOnExclusionsTab();
+
+            // Return to the appropriate TranslationParametersPanel tab
+            if (_currentMode == InspectorMode.BitmapReplace)
+                TranslatorUIManager.TranslationParamsPanel?.OpenOnBitmapReplaceTab();
+            else
+                TranslatorUIManager.TranslationParamsPanel?.OpenOnExclusionsTab();
         }
     }
 }

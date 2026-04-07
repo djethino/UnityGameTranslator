@@ -256,6 +256,9 @@ namespace UnityGameTranslator.Core
                 // Graphic.OnEnable postfix — detect when text components are activated
                 // and re-apply clone font + warm atlas (fixes transparent text on inactive→active)
                 patchCount += PatchGraphicOnEnable(patcher);
+
+                // Image replacement patches — intercept sprite/texture assignments
+                patchCount += PatchImageComponents(patcher);
             }
             catch (Exception e)
             {
@@ -264,6 +267,136 @@ namespace UnityGameTranslator.Core
 
             return patchCount;
         }
+
+        #region Image Replacement Patches
+
+        private static int PatchImageComponents(Action<MethodInfo, MethodInfo, MethodInfo> patcher)
+        {
+            int count = 0;
+
+            try
+            {
+                ImageReplacer.ResolveTypes();
+
+                // Patch Image.sprite setter
+                var imageType = ImageReplacer.ImageType;
+                if (imageType != null)
+                {
+                    var spriteProp = imageType.GetProperty("sprite", BindingFlags.Public | BindingFlags.Instance);
+                    if (spriteProp != null && spriteProp.SetMethod != null)
+                    {
+                        var prefix = typeof(TranslatorPatches).GetMethod(nameof(Image_SetSprite_Prefix),
+                            BindingFlags.Static | BindingFlags.Public);
+                        if (prefix != null)
+                        {
+                            patcher(spriteProp.SetMethod, prefix, null);
+                            count++;
+                            TranslatorCore.LogInfo("[Patches] Patched Image.sprite setter");
+                        }
+                    }
+                }
+
+                // Patch RawImage.texture setter
+                var rawImageType = ImageReplacer.RawImageType;
+                if (rawImageType != null)
+                {
+                    var textureProp = rawImageType.GetProperty("texture", BindingFlags.Public | BindingFlags.Instance);
+                    if (textureProp != null && textureProp.SetMethod != null)
+                    {
+                        var prefix = typeof(TranslatorPatches).GetMethod(nameof(RawImage_SetTexture_Prefix),
+                            BindingFlags.Static | BindingFlags.Public);
+                        if (prefix != null)
+                        {
+                            patcher(textureProp.SetMethod, prefix, null);
+                            count++;
+                            TranslatorCore.LogInfo("[Patches] Patched RawImage.texture setter");
+                        }
+                    }
+                }
+
+                // Patch SpriteRenderer.sprite setter
+                var spriteRendType = ImageReplacer.SpriteRendererType;
+                if (spriteRendType != null)
+                {
+                    var spriteProp = spriteRendType.GetProperty("sprite", BindingFlags.Public | BindingFlags.Instance);
+                    if (spriteProp != null && spriteProp.SetMethod != null)
+                    {
+                        var prefix = typeof(TranslatorPatches).GetMethod(nameof(SpriteRenderer_SetSprite_Prefix),
+                            BindingFlags.Static | BindingFlags.Public);
+                        if (prefix != null)
+                        {
+                            patcher(spriteProp.SetMethod, prefix, null);
+                            count++;
+                            TranslatorCore.LogInfo("[Patches] Patched SpriteRenderer.sprite setter");
+                        }
+                    }
+                }
+
+                if (count > 0)
+                    TranslatorCore.LogInfo($"[Patches] Applied {count} image replacement patches");
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogWarning($"[Patches] Failed to apply image patches: {ex.Message}");
+            }
+
+            return count;
+        }
+
+        /// <summary>
+        /// Prefix for Image.sprite setter. Replaces the sprite value if a replacement is loaded.
+        /// Uses 'object' type for IL2CPP compatibility (avoids type mismatch with Il2CppSprite).
+        /// </summary>
+        public static void Image_SetSprite_Prefix(object __instance, ref object __0)
+        {
+            if (__0 == null) return;
+            try
+            {
+                var name = ImageReplacer.GetSpriteName(__0);
+                if (name == null) return;
+                var replacement = ImageReplacer.GetReplacement(name);
+                if (replacement != null)
+                {
+                    TranslatorCore.LogDebug($"[ImagePatch] Replacing sprite \"{name}\"");
+                    __0 = replacement;
+                }
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Prefix for RawImage.texture setter.
+        /// </summary>
+        public static void RawImage_SetTexture_Prefix(object __instance, ref object __0)
+        {
+            if (__0 == null) return;
+            try
+            {
+                var name = ImageReplacer.GetSpriteName(__0);
+                if (name == null) return;
+                var replacement = ImageReplacer.GetReplacement(name);
+                if (replacement != null && replacement.texture != null) __0 = replacement.texture;
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Prefix for SpriteRenderer.sprite setter.
+        /// </summary>
+        public static void SpriteRenderer_SetSprite_Prefix(object __instance, ref object __0)
+        {
+            if (__0 == null) return;
+            try
+            {
+                var name = ImageReplacer.GetSpriteName(__0);
+                if (name == null) return;
+                var replacement = ImageReplacer.GetReplacement(name);
+                if (replacement != null) __0 = replacement;
+            }
+            catch { }
+        }
+
+        #endregion
 
         private static Type FindStringTableEntryType()
         {
@@ -549,6 +682,7 @@ namespace UnityGameTranslator.Core
 
                 // Translate
                 bool isOwnUI = TranslatorCore.IsOwnUITranslatable(component);
+                string preVal = value;
                 value = TranslatorCore.TranslateTextWithTracking(value, component, isOwnUI);
 
                 // Apply font scale
@@ -556,6 +690,7 @@ namespace UnityGameTranslator.Core
                 {
                     ApplyGenericFontScale(__instance, typeInfo, settingsFontName ?? fontName);
                 }
+
             }
             catch { }
         }
@@ -1432,6 +1567,114 @@ namespace UnityGameTranslator.Core
             return result;
         }
 
+        // === CONCATENATION DETECTION ===
+        // Games build text procedurally: text = "title"; then text = "title\nattr"; etc.
+        // Each set_text contains the FULL text so far (pure source language, no FR/CN mix).
+        // We detect this by tracking the raw (pre-translation) text per component.
+        // When new text starts with the previous raw text → it's growing → extract delta.
+        // Each delta is translated separately (cache-friendly: same parts across items).
+        //
+        // Concat vs Typewriting:
+        // - Concat: 2+ set_text calls in the SAME frame → translate deltas immediately
+        // - TW: 1 set_text per frame, text grows → defer for 500ms stabilization
+        // Detection: track set_text count per frame per component.
+
+        // Last RAW text per component (pre-translation, for delta computation)
+        private static readonly Dictionary<int, string> _lastRawText = new Dictionary<int, string>();
+        // Last TRANSLATED text per component (for display: translatedBase + translatedDelta)
+        private static readonly Dictionary<int, string> _lastTranslatedText = new Dictionary<int, string>();
+        // Frame tracking: detect multiple set_text in same frame
+        private static readonly Dictionary<int, int> _compLastFrame = new Dictionary<int, int>();
+        private static readonly Dictionary<int, int> _compFrameCallCount = new Dictionary<int, int>();
+        // Runtime cache for concat-assembled texts (not saved to JSON).
+        // Key = full raw CN text, Value = full assembled FR text.
+        // Prevents re-queuing of assembled texts on scanner refresh.
+        private static readonly Dictionary<string, string> _concatAssembledCache = new Dictionary<string, string>();
+        // Fast lookup for translated values (to skip FR text that comes back)
+        private static readonly HashSet<string> _concatTranslatedValues = new HashSet<string>();
+        // Stored deltas per concat component (for re-assembly when AI translations arrive)
+        // Key = compId, Value = ordered list of (rawDelta, includesLeadingNL, includesTrailingNL)
+        private static readonly Dictionary<int, List<string>> _concatDeltas = new Dictionary<int, List<string>>();
+
+        // Components flagged as concat (2+ set_text in same frame seen at least once)
+        private static readonly HashSet<int> _concatComponents = new HashSet<int>();
+
+        /// <summary>Check if a component is in concat mode.</summary>
+        public static bool IsConcatComponent(int compId)
+        {
+            return compId != -1 && _concatComponents.Contains(compId);
+        }
+
+        /// <summary>Look up a text in the concat assembled cache. Returns FR translation or null.</summary>
+        public static string GetConcatCacheResult(string rawText)
+        {
+            if (string.IsNullOrEmpty(rawText)) return null;
+            string result;
+            return _concatAssembledCache.TryGetValue(rawText, out result) ? result : null;
+        }
+
+        /// <summary>
+        /// Re-assemble a concat component's text using stored deltas and current cache.
+        /// Returns the assembled FR text, or null if no deltas stored.
+        /// </summary>
+        public static string ReassembleConcat(int compId, object component)
+        {
+            List<string> deltas;
+            if (!_concatDeltas.TryGetValue(compId, out deltas) || deltas.Count == 0)
+                return null;
+
+            var result = new System.Text.StringBuilder();
+            foreach (string part in deltas)
+            {
+                // Preserve newlines
+                string leading = "", trailing = "";
+                string core = part;
+                while (core.Length > 0 && core[0] == '\n') { leading += "\n"; core = core.Substring(1); }
+                while (core.Length > 0 && core[core.Length - 1] == '\n') { trailing = "\n" + trailing; core = core.Substring(0, core.Length - 1); }
+
+                string translated = string.IsNullOrEmpty(core) ? "" :
+                    TranslatorCore.TranslateTextWithTracking(core, component, false, skipTypewriting: true, skipQueueing: true);
+                result.Append(leading);
+                result.Append(translated);
+                result.Append(trailing);
+            }
+
+            string assembled = result.ToString();
+            // Update caches
+            string rawKey = string.Join("", deltas);
+            _concatAssembledCache[rawKey] = assembled;
+            _concatTranslatedValues.Add(assembled);
+
+            return assembled;
+        }
+
+        /// <summary>Invalidate a concat cache entry so it gets re-assembled with fresh translations.</summary>
+        public static void InvalidateConcatCache(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return;
+            string oldValue;
+            if (_concatAssembledCache.TryGetValue(text, out oldValue))
+            {
+                _concatAssembledCache.Remove(text);
+                _concatTranslatedValues.Remove(oldValue);
+            }
+        }
+
+        /// <summary>Check if a text is a known concat translated value (FR result).</summary>
+        public static bool IsConcatTranslatedValue(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return false;
+            return _concatTranslatedValues.Contains(text);
+        }
+
+        /// <summary>
+        /// Getter postfix stub — kept for the Harmony patches already applied.
+        /// </summary>
+        public static void Text_GetText_Postfix(object __instance, ref string __result)
+        {
+            // No-op: getter returns the actual property value.
+        }
+
         /// <summary>
         /// Clear the InputField cache (call on scene change).
         /// </summary>
@@ -1443,6 +1686,14 @@ namespace UnityGameTranslator.Core
             _patchedComponentRefs.Clear();
             _typewritingState.Clear();
             _activeTypewriting.Clear();
+            _lastTranslatedText.Clear();
+            _lastRawText.Clear();
+            _compLastFrame.Clear();
+            _compFrameCallCount.Clear();
+            _concatComponents.Clear();
+            _concatAssembledCache.Clear();
+            _concatTranslatedValues.Clear();
+            _concatDeltas.Clear();
         }
 
         /// <summary>
@@ -1464,6 +1715,9 @@ namespace UnityGameTranslator.Core
                 _originalFontSizes.Remove(id);
                 _trueOriginalFontSizes.Remove(id);
                 _inheritedCloneComponents.Remove(id);
+                _lastTranslatedText.Remove(id);
+                _lastRawText.Remove(id);
+                _concatComponents.Remove(id);
             }
         }
 
@@ -1711,8 +1965,8 @@ namespace UnityGameTranslator.Core
                 string text = TypeHelper.GetText(__instance);
                 if (!string.IsNullOrEmpty(text))
                 {
-                    string replaceName = replacementFont.name;
-                    FontManager.EnsureCharsInCloneAtlasDirect(text, replacementFont, replaceName);
+                    // Pass settingsFontName (original game font name) as cache key, not clone display name
+                    FontManager.EnsureCharsInCloneAtlasDirect(text, replacementFont, settingsFontName);
 
                     // Force complete mesh regeneration — SetFont alone doesn't rebuild
                     // the vertex mesh on IL2CPP. We need to trigger the full dirty chain.
@@ -1744,8 +1998,9 @@ namespace UnityGameTranslator.Core
             if (instance == null || string.IsNullOrEmpty(fontName)) return;
 
             float scale = FontManager.GetFontScale(fontName);
-            // Fast exit: if scale is 1.0 and we haven't stored an original size, nothing to do
-            if (Math.Abs(scale - 1.0f) < 0.001f)
+            int bump = FontManager.GetFontSizeBump(fontName);
+            // Fast exit: if scale is 1.0, no bump, and we haven't stored an original size, nothing to do
+            if (Math.Abs(scale - 1.0f) < 0.001f && bump == 0)
             {
                 int quickId = TypeHelper.GetInstanceID(instance);
                 if (quickId == -1 || !_originalFontSizes.ContainsKey(quickId))
@@ -1771,7 +2026,10 @@ namespace UnityGameTranslator.Core
                 _originalFontSizes[instanceId] = originalSize;
             }
 
-            float targetSize = originalSize * scale;
+            // Apply font size bump for runtime font changes.
+            // Bumping fontSize by ±1 creates new atlas cache entries → forces re-rasterization
+            // with updated fontNames. 1px difference during runtime testing, resets on restart.
+            float targetSize = (originalSize + bump) * scale;
 
             float currentSize = TypeHelper.GetFontSize(instance);
             if (currentSize >= 0 && Math.Abs(currentSize - targetSize) > 0.1f)
@@ -1946,6 +2204,7 @@ namespace UnityGameTranslator.Core
         public static void TouchTypewritingTimestamp(int compId, string currentText)
         {
             if (compId == -1 || string.IsNullOrEmpty(currentText)) return;
+            if (_concatComponents.Contains(compId)) return; // concat handled separately
             if (!_typewritingState.TryGetValue(compId, out var state)) return;
 
             bool isGrowing = currentText.Length > state.Text.Length && currentText.StartsWith(state.Text);
@@ -1987,10 +2246,15 @@ namespace UnityGameTranslator.Core
         }
 
         private static int _dbgTwProgress = 0;
+        private static int _fontDebugOnce = 0;
 
         public static bool IsTypewritingInProgress(int compId, string newText)
         {
             if (compId == -1 || string.IsNullOrEmpty(newText)) return false;
+            if (!TranslatorCore.TypewritingDetection) return false;
+
+            // Concat components are handled by the concat system, not TW
+            if (_concatComponents.Contains(compId)) return false;
 
             float now = Time.realtimeSinceStartup;
 
@@ -2013,6 +2277,18 @@ namespace UnityGameTranslator.Core
 
                 if (isGrowing && elapsed < TYPEWRITING_STABILIZE_MS)
                 {
+                    _typewritingState[compId] = new TypewritingState { Text = newText, Timestamp = now, Queued = false };
+                    _activeTypewriting.Add(compId);
+                    return true;
+                }
+
+                // Detect TW overwrite: game is writing new text OVER our translation.
+                // Pattern: text shrinks or changes while previous state was already queued/translated.
+                // Each intermediate state is a mix CN/FR → DO NOT finalize, just keep deferring.
+                bool isShrinkingOverwrite = !isGrowing && state.Queued && newText.Length < state.Text.Length;
+                if (isShrinkingOverwrite)
+                {
+                    // Don't finalize the mixed state. Just update tracking and keep deferring.
                     _typewritingState[compId] = new TypewritingState { Text = newText, Timestamp = now, Queued = false };
                     _activeTypewriting.Add(compId);
                     return true;
@@ -2051,10 +2327,12 @@ namespace UnityGameTranslator.Core
 
             string normalizedText = TranslatorCore.NormalizeForCacheLookup(text);
             bool inCache = TranslatorCore.TranslationCache.ContainsKey(normalizedText);
+            // Also check reverse cache — text might already be translated (FR re-set by game)
+            bool alreadyTranslated = !inCache && TranslatorCore.HasCachedTranslation(text);
 
             if (TranslatorCore.DebugMode)
             {
-                TranslatorCore.LogDebug($"[TW-FINALIZE] comp={compId} inCache={inCache} text({text.Length}c)='{text}'");
+                TranslatorCore.LogDebug($"[TW-FINALIZE] comp={compId} inCache={inCache} alreadyTranslated={alreadyTranslated} text({text.Length}c)='{text}'");
             }
 
             if (inCache)
@@ -2064,6 +2342,12 @@ namespace UnityGameTranslator.Core
                     try { TypeHelper.SetText(comp, text); }
                     catch { }
                 }
+            }
+            else if (alreadyTranslated)
+            {
+                // Text is already in target language (reverse cache hit) — skip
+                if (TranslatorCore.DebugMode)
+                    TranslatorCore.LogDebug($"[TW-FINALIZE] SKIP already translated: '{(text.Length > 40 ? text.Substring(0,40) : text)}'");
             }
             else
             {
@@ -2098,6 +2382,13 @@ namespace UnityGameTranslator.Core
             foreach (int compId in stabilized)
             {
                 _activeTypewriting.Remove(compId);
+
+                // Skip concat components — their text is handled by the concat system, not TW
+                if (_concatComponents.Contains(compId))
+                {
+                    _typewritingState.Remove(compId);
+                    continue;
+                }
 
                 if (!_typewritingState.TryGetValue(compId, out var state)) continue;
                 if (state.Queued) continue; // Already processed this stabilized text
@@ -2163,7 +2454,8 @@ namespace UnityGameTranslator.Core
                 string settingsFontName = null;
                 object fontObj = null;
                 Font unityCloneFont = null;  // Track the clone applied to this component
-                string unityCloneFallback = null;
+                string unityCloneName = null;      // Clone's display name (e.g., "calibri") — for font NAME comparisons
+                string unityCloneFallback = null;   // Original game font name — for CACHE KEY lookups
 
                 // Get font name (cached to avoid GetFont reflection on every call)
                 if (compId != -1 && _fontNameCache.TryGetValue(compId, out string cachedFontName))
@@ -2182,12 +2474,25 @@ namespace UnityGameTranslator.Core
                     if (f == null) f = TypeHelper.Il2CppCast(fontObj, typeof(Font)) as Font;
                     if (f != null)
                     {
-                        string resolvedOriginal = FontManager.GetOriginalFontNameForClone(f);
+                        string resolvedOriginal = FontManager.GetOriginalForClone(f);
                         if (resolvedOriginal != null)
                         {
+                            // Clone resolved to original by instance ID
                             fontName = resolvedOriginal;
                             if (compId != -1)
                                 _inheritedCloneComponents.Add(compId);
+                        }
+                        else
+                        {
+                            // Not a clone — check if we already tracked an original for this component.
+                            // This handles external fonts (Unity built-in, system fontNames fallback)
+                            // that replaced the original game font on the component.
+                            string trackedOriginal = FontManager.GetOriginalFontName(compId);
+                            if (trackedOriginal != null)
+                                fontName = trackedOriginal;
+                            // Otherwise keep fontName as-is — it's either a game font we haven't
+                            // seen yet (first pass), or an external we can't resolve.
+                            // RegisterUnityFontObject will categorize it.
                         }
                     }
                     if (compId != -1)
@@ -2242,18 +2547,35 @@ namespace UnityGameTranslator.Core
                             // Only apply clone if the text will be translated (has a cache entry).
                             // Untranslated CJK text keeps the original game font.
                             bool willTranslate = TranslatorCore.HasCachedTranslation(textValue);
-                            if (TranslatorCore.DebugMode)
-                                TranslatorCore.LogDebug($"[FONT-DEBUG] comp={compId} text='{textValue}' type={componentType} font='{currentName}' clone='{replaceName}' willTranslate={willTranslate} needsChange={currentName != replaceName}");
-                            if (willTranslate && currentName != replaceName)
+                            if (willTranslate && !string.Equals(currentName, replaceName, StringComparison.OrdinalIgnoreCase))
                             {
                                 TypeHelper.SetFont(__instance, replacementFont);
-                                FontManager.PreWarmCloneAtlas(replaceName, replacementFont);
-                                // Force visual refresh: if the text won't change (key==value),
-                                // Unity skips re-render. SetAllDirty forces it to pick up the new font.
+                                FontManager.PreWarmCloneAtlas(settingsFontName, replacementFont);
                                 TypeHelper.SetAllDirty(__instance);
+
+                                // Toggle enabled to rebind CanvasRenderer to clone texture,
+                                // but ONLY if atlas is ready (willRenderCanvases already fired).
+                                // Before willRenderCanvases: skip toggle (atlas not warmed yet,
+                                // would bind to empty texture → transparent on Continue).
+                                // After willRenderCanvases: toggle safe (atlas warmed).
+                                try
+                                {
+                                    var c = __instance as Component;
+                                    if (c != null)
+                                    {
+                                        var enabledProp = c.GetType().GetProperty("enabled", BindingFlags.Public | BindingFlags.Instance);
+                                        if (enabledProp != null)
+                                        {
+                                            enabledProp.SetValue(c, false, null);
+                                            enabledProp.SetValue(c, true, null);
+                                        }
+                                    }
+                                }
+                                catch { }
                             }
                             unityCloneFont = replacementFont;
-                            unityCloneFallback = replaceName;
+                            unityCloneName = replaceName;          // Clone's display name for font comparisons
+                            unityCloneFallback = settingsFontName;  // Original game font name for cache key lookups
                         }
                     }
                 }
@@ -2266,14 +2588,257 @@ namespace UnityGameTranslator.Core
                 // Check if own UI (use UI-specific prompt) - uses hierarchy check
                 bool isOwnUI = TranslatorCore.IsOwnUITranslatable(comp);
                 string preTranslateText = textValue;
-                textValue = TranslatorCore.TranslateTextWithTracking(textValue, comp, isOwnUI);
+
+                // Check concat assembled cache: if this exact text was already assembled
+                // by the concat system, apply the cached translation immediately.
+                // This prevents scanner refresh from re-queuing assembled texts.
+                bool concatCacheHit = false;
+                string concatCached;
+                if (_concatAssembledCache.TryGetValue(textValue, out concatCached))
+                {
+                    // CN text matched → apply FR translation, skip all translate logic
+                    textValue = concatCached;
+                    concatCacheHit = true;
+                }
+                else if (_concatTranslatedValues.Contains(textValue))
+                {
+                    // Text IS already a translated result → keep as-is
+                    concatCacheHit = true;
+                }
+
+              if (!concatCacheHit)
+              {
+                // Skip if text is exactly our last translated output (scanner refresh, etc.)
+                if (compId != -1)
+                {
+                    string lastTransCheck;
+                    if (_lastTranslatedText.TryGetValue(compId, out lastTransCheck)
+                        && textValue == lastTransCheck)
+                    {
+                        return;
+                    }
+                }
+
+                // === Frame tracking for concat detection ===
+                // Count set_text calls per component per frame.
+                // 2+ calls in same frame → concat mode (procedural text building).
+                if (compId != -1)
+                {
+                    int currentFrame = Time.frameCount;
+                    int lastFrame;
+                    if (_compLastFrame.TryGetValue(compId, out lastFrame) && lastFrame == currentFrame)
+                    {
+                        int count;
+                        _compFrameCallCount.TryGetValue(compId, out count);
+                        _compFrameCallCount[compId] = count + 1;
+
+                        // Flag as concat ONLY if the text is GROWING (prefix match).
+                        // Without this, game init (default→real value = 2 set_text) false-positives.
+                        if (count + 1 >= 2 && TranslatorCore.ConcatDetection && !_concatComponents.Contains(compId))
+                        {
+                            string prevRaw;
+                            if (_lastRawText.TryGetValue(compId, out prevRaw)
+                                && !string.IsNullOrEmpty(prevRaw)
+                                && textValue.Length > prevRaw.Length
+                                && textValue.StartsWith(prevRaw))
+                            {
+                                // Only flag if the delta contains non-whitespace content.
+                                // A delta of just "\n" is not concat (e.g., Hollow Knight adds trailing newline at init).
+                                string candidateDelta = textValue.Substring(prevRaw.Length);
+                                bool hasContent = false;
+                                foreach (char ch in candidateDelta)
+                                {
+                                    if (ch != '\n' && ch != '\r' && ch != ' ' && ch != '\t')
+                                    { hasContent = true; break; }
+                                }
+
+                                if (hasContent)
+                                {
+                                    _concatComponents.Add(compId);
+
+                                    // Cancel any pending TW for this component.
+                                    _typewritingState.Remove(compId);
+                                    _activeTypewriting.Remove(compId);
+
+                                    TranslatorCore.LogDebug($"[CONCAT-DETECT] comp={compId} flagged (text grew {prevRaw.Length}c→{textValue.Length}c in frame {currentFrame})");
+                                }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        _compLastFrame[compId] = currentFrame;
+                        _compFrameCallCount[compId] = 1;
+
+                        // Detect TW pattern on a concat-flagged component:
+                        // single set_text per frame with text growing by 1-3 chars = typewriting.
+                        // Unflag concat and let TW handle it.
+                        if (_concatComponents.Contains(compId))
+                        {
+                            string prevRaw2;
+                            if (_lastRawText.TryGetValue(compId, out prevRaw2)
+                                && !string.IsNullOrEmpty(prevRaw2)
+                                && textValue.Length > prevRaw2.Length
+                                && textValue.Length - prevRaw2.Length <= 3
+                                && textValue.StartsWith(prevRaw2))
+                            {
+                                _concatComponents.Remove(compId);
+                                _concatDeltas.Remove(compId);
+                                TranslatorCore.LogDebug($"[CONCAT-UNFLAG] comp={compId} reverted to TW (grew by {textValue.Length - prevRaw2.Length} chars in separate frame)");
+                            }
+                        }
+                    }
+
+                    // Raw text update happens AFTER the concat handling block below,
+                    // so the concat block can compare against the PREVIOUS raw text.
+                }
+
+                // === Concat handling ===
+                // For concat components: track raw text, extract deltas, translate each separately.
+                // For non-concat: use existing flow (TranslateTextWithTracking with TW detection).
+                bool handledAsConcat = false;
+                bool isConcatComp = compId != -1 && _concatComponents.Contains(compId);
+
+                if (isConcatComp && compId != -1)
+                {
+                    string lastRaw;
+                    _lastRawText.TryGetValue(compId, out lastRaw);
+
+                    if (!string.IsNullOrEmpty(lastRaw)
+                        && textValue.Length > lastRaw.Length
+                        && textValue.StartsWith(lastRaw))
+                    {
+                        // Text grew — extract delta (pure source language)
+                        string delta = textValue.Substring(lastRaw.Length);
+
+                        // Store delta for re-assembly later (when AI translations arrive)
+                        List<string> deltas;
+                        if (!_concatDeltas.TryGetValue(compId, out deltas))
+                        {
+                            deltas = new List<string>();
+                            // First delta: also store the base text
+                            deltas.Add(lastRaw);
+                            _concatDeltas[compId] = deltas;
+                        }
+                        deltas.Add(delta);
+
+                        // Preserve leading/trailing newlines: AI may strip them during translation.
+                        // Extract \n before/after, translate the core, then re-add.
+                        string leadingNL = "", trailingNL = "";
+                        string deltaCore = delta;
+                        while (deltaCore.Length > 0 && deltaCore[0] == '\n') { leadingNL += "\n"; deltaCore = deltaCore.Substring(1); }
+                        while (deltaCore.Length > 0 && deltaCore[deltaCore.Length - 1] == '\n') { trailingNL = "\n" + trailingNL; deltaCore = deltaCore.Substring(0, deltaCore.Length - 1); }
+
+                        // Translate core delta directly (skip TW — concat deltas are immediate)
+                        string translatedCore = string.IsNullOrEmpty(deltaCore) ? "" : TranslatorCore.TranslateTextWithTracking(deltaCore, comp, isOwnUI, skipTypewriting: true);
+                        string translatedDelta = leadingNL + translatedCore + trailingNL;
+
+                        // Build display: previous translated + translated delta
+                        string lastTrans;
+                        _lastTranslatedText.TryGetValue(compId, out lastTrans);
+                        if (string.IsNullOrEmpty(lastTrans))
+                        {
+                            // First part wasn't translated yet (TW was capturing it before concat was detected).
+                            // Translate it now.
+                            lastTrans = TranslatorCore.TranslateTextWithTracking(lastRaw, comp, isOwnUI, skipTypewriting: true);
+                            if (string.IsNullOrEmpty(lastTrans)) lastTrans = lastRaw;
+                        }
+
+                        textValue = lastTrans + translatedDelta;
+                        _lastRawText[compId] = preTranslateText; // full raw text so far
+                        _lastTranslatedText[compId] = textValue;
+                        // Cache the assembled result: raw CN → assembled FR (runtime only, not JSON)
+                        _concatAssembledCache[preTranslateText] = textValue;
+                        _concatTranslatedValues.Add(textValue);
+                        handledAsConcat = true;
+
+                        if (TranslatorCore.DebugMode)
+                            TranslatorCore.LogDebug($"[CONCAT] comp={compId} delta({delta.Length}c)='{(delta.Length > 40 ? delta.Substring(0, 40) + "..." : delta)}'");
+                    }
+                    else if (!string.IsNullOrEmpty(lastRaw) && textValue.Length <= lastRaw.Length
+                             && !textValue.StartsWith(lastRaw))
+                    {
+                        // Text shrunk or changed completely — component likely reused for different content.
+                        // Unflag concat so the new text is treated normally (queued for AI if cache miss).
+                        // If the game does concat again (2+ set_text same frame), it'll be re-flagged.
+                        _lastRawText.Remove(compId);
+                        _concatComponents.Remove(compId);
+                        _concatDeltas.Remove(compId);
+                        isConcatComp = false; // update local flag for rest of this prefix call
+                        TranslatorCore.LogDebug($"[CONCAT-RESET] comp={compId} unflagged, text changed from {lastRaw.Length}c to {textValue.Length}c");
+                    }
+
+                    // Raw text tracking is done in the frame tracking block above
+                }
+
+                // Also detect concat for non-flagged components (FR+CN mix from text += on translated text)
+                if (!handledAsConcat && compId != -1
+                    && _lastTranslatedText.TryGetValue(compId, out string lastTranslatedFR)
+                    && !string.IsNullOrEmpty(lastTranslatedFR)
+                    && textValue.Length > lastTranslatedFR.Length
+                    && textValue.StartsWith(lastTranslatedFR))
+                {
+                    // Game did text += "CN" on our FR text → extract CN delta
+                    string delta = textValue.Substring(lastTranslatedFR.Length);
+
+                    // Preserve leading/trailing newlines
+                    string leadNL = "", trailNL = "";
+                    string dCore = delta;
+                    while (dCore.Length > 0 && dCore[0] == '\n') { leadNL += "\n"; dCore = dCore.Substring(1); }
+                    while (dCore.Length > 0 && dCore[dCore.Length - 1] == '\n') { trailNL = "\n" + trailNL; dCore = dCore.Substring(0, dCore.Length - 1); }
+
+                    string transCore = string.IsNullOrEmpty(dCore) ? "" : TranslatorCore.TranslateTextWithTracking(dCore, comp, isOwnUI, skipTypewriting: true, skipQueueing: true);
+                    string translatedDelta = leadNL + transCore + trailNL;
+                    textValue = lastTranslatedFR + translatedDelta;
+                    _lastTranslatedText[compId] = textValue;
+                    // Also cache with the raw text as key (for scanner refresh lookups)
+                    _concatAssembledCache[preTranslateText] = textValue;
+                    _concatTranslatedValues.Add(textValue);
+                    handledAsConcat = true;
+
+                    if (TranslatorCore.DebugMode)
+                        TranslatorCore.LogDebug($"[CONCAT-FR] comp={compId} delta({delta.Length}c)='{(delta.Length > 40 ? delta.Substring(0, 40) + "..." : delta)}'");
+                }
+
+                if (!handledAsConcat)
+                {
+                    // For concat components: check cache but do NOT queue full text to AI.
+                    // Deltas are already queued individually by the concat handler above.
+                    // For non-concat: normal flow (cache check + queue if miss).
+                    textValue = TranslatorCore.TranslateTextWithTracking(textValue, comp, isOwnUI,
+                        skipQueueing: isConcatComp);
+
+                    // Track translated text for concat detection (FR prefix matching)
+                    if (compId != -1 && textValue != preTranslateText)
+                    {
+                        _lastTranslatedText[compId] = textValue;
+                        // For concat components: also remember the translated text so
+                        // different FR versions (AI vs concat-assembled) are all recognized.
+                        if (isConcatComp)
+                            _concatTranslatedValues.Add(textValue);
+                    }
+                    else if (compId != -1 && textValue == preTranslateText)
+                    {
+                        _lastTranslatedText.Remove(compId);
+                        // For concat components: the unchanged text might be an AI translation
+                        // (from Apply OK) that we don't recognize. Remember it to prevent re-queue.
+                        if (isConcatComp && textValue.Length > 20)
+                            _concatTranslatedValues.Add(textValue);
+                    }
+                }
+
+                // Update raw text tracking AFTER concat/translate blocks
+                // (so next set_text can compare against this value)
+                if (compId != -1)
+                    _lastRawText[compId] = preTranslateText;
+              } // end if (!concatCacheHit)
 
                 // Detect missed SetFont: text was translated but HasCachedTranslation said no
                 if (unityCloneFont != null && textValue != preTranslateText && componentType == "Unity")
                 {
                     object curFont = TypeHelper.GetFont(__instance);
                     string curFontName = (curFont is UnityEngine.Object cfo) ? cfo.name : null;
-                    if (curFontName != unityCloneFallback)
+                    if (!string.Equals(curFontName, unityCloneName, StringComparison.OrdinalIgnoreCase))
                     {
                         // SetFont was missed — apply it now
                         TypeHelper.SetFont(__instance, unityCloneFont);
@@ -2300,7 +2865,7 @@ namespace UnityGameTranslator.Core
                 {
                     object curFont = TypeHelper.GetFont(__instance);
                     string curFontName = (curFont is UnityEngine.Object cfo) ? cfo.name : null;
-                    if (curFontName == unityCloneFallback)
+                    if (string.Equals(curFontName, unityCloneName, StringComparison.OrdinalIgnoreCase))
                         ApplyFontScale(__instance, settingsFontName ?? fontName);
                 }
                 else
@@ -2740,9 +3305,7 @@ namespace UnityGameTranslator.Core
 
                 if (FontManager.IsCustomFont(fallbackName))
                 {
-                    string customFontName = fallbackName;
-                    if (fallbackName.StartsWith("[Custom] "))
-                        customFontName = fallbackName.Substring(9);
+                    string customFontName = FontManager.StripFontPrefix(fallbackName);
 
                     replacementAsset = CustomFontLoader.LoadCustomFont(customFontName);
                     if (replacementAsset == null)

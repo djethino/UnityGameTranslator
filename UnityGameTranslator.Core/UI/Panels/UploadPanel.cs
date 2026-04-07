@@ -36,6 +36,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private Text _modeInfoLabel;
         private Text _statusLabel;
         private InputFieldRef _notesInput;
+        private InputFieldRef _resourcesUrlInput;
         private ButtonRef _backBtn;
         private ButtonRef _uploadBtn;
 
@@ -98,6 +99,15 @@ namespace UnityGameTranslator.Core.UI.Panels
             RegisterUIText(notesLabel);
 
             _notesInput = CreateStyledInputField(card, "NotesInput", "Add any notes about this translation...", UIStyles.MultiLineSmall);
+
+            // Resources URL
+            var urlLabel = CreateSmallLabel(card, "UrlLabel", "Resources URL (optional):");
+            RegisterUIText(urlLabel);
+
+            _resourcesUrlInput = CreateStyledInputField(card, "ResourcesUrlInput", "https://... (link to fonts/images)");
+
+            var urlHint = UIStyles.CreateHint(card, "UrlHint", "External link to custom fonts or replacement images. Not hosted by us.");
+            RegisterUIText(urlHint);
 
             // Status
             _statusLabel = CreateStatusLabel(card, "Status");
@@ -257,6 +267,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                         // Capture for closure
                         var siteId = TranslatorCore.ServerState.SiteId;
                         var existingNotes = result.ExistingTranslation?.Notes ?? "";
+                        var existingUrl = result.ExistingTranslation?.ResourcesUrl ?? "";
 
                         TranslatorUIManager.RunOnMainThread(() =>
                         {
@@ -267,6 +278,8 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                             // Note: Type is now auto-calculated by server from HVASM tags
                             _notesInput.Text = existingNotes;
+                            if (_resourcesUrlInput != null)
+                                _resourcesUrlInput.Text = existingUrl;
 
                             _statusLabel.text = "";
                             _isChecking = false;
@@ -411,6 +424,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Capture values before async (for use in RunOnMainThread callbacks)
             var uploadMode = _uploadMode;
             string notes = _notesInput.Text;
+            string resourcesUrl = _resourcesUrlInput?.Text?.Trim();
 
             try
             {
@@ -439,7 +453,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                     TargetLanguage = tgtLang,
                     Status = "in_progress",
                     Content = BuildTranslationContent(),
-                    Notes = notes
+                    Notes = notes,
+                    ResourcesUrl = string.IsNullOrEmpty(resourcesUrl) ? null : resourcesUrl
                 };
 
                 TranslatorCore.LogInfo($"[UploadPanel] Calling ApiClient.UploadTranslation...");
@@ -464,6 +479,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                         Notes = notes
                     };
                     TranslatorCore.LastSyncedHash = result.FileHash;
+                    TranslatorCore.ResetMetadataDirty();
                     TranslatorCore.SaveCache();
                     TranslatorCore.SaveAncestorCache();
                     TranslatorUIManager.HasPendingUpdate = false;
@@ -558,6 +574,26 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
                 output["_fonts"] = fontsObj;
             }
+
+            // Include exclusions
+            var exclusions = TranslatorCore.UserExclusions;
+            if (exclusions.Count > 0)
+            {
+                var exclusionsArray = new System.Collections.Generic.List<string>();
+                foreach (var pattern in exclusions)
+                    exclusionsArray.Add(pattern);
+                output["_exclusions"] = exclusionsArray;
+            }
+
+            // Include image replacements
+            var imgReplacements = ImageReplacer.SaveToJson();
+            if (imgReplacements != null)
+                output["_image_replacements"] = imgReplacements;
+
+            // Include variable definitions
+            var variables = VariableManager.SaveToJson();
+            if (variables != null)
+                output["_variables"] = variables;
 
             // Use same format as SaveCache: {"v": "value", "t": "tag"}
             foreach (var kv in TranslatorCore.TranslationCache)

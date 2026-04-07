@@ -66,6 +66,7 @@ namespace UnityGameTranslator.Core.UI
         public static Panels.StatusOverlay StatusOverlay { get; private set; }
         public static Panels.ConfirmationPanel ConfirmationPanel { get; private set; }
         public static Panels.InspectorPanel InspectorPanel { get; private set; }
+        public static Panels.TranslationParametersPanel TranslationParamsPanel { get; private set; }
 
         /// <summary>
         /// List of all interactive panels (excludes StatusOverlay which is a notification overlay).
@@ -197,6 +198,7 @@ namespace UnityGameTranslator.Core.UI
             StatusOverlay = new Panels.StatusOverlay(UiBase);
             ConfirmationPanel = new Panels.ConfirmationPanel(UiBase);
             InspectorPanel = new Panels.InspectorPanel(UiBase);
+            TranslationParamsPanel = new Panels.TranslationParametersPanel(UiBase);
 
             // Register interactive panels (excludes StatusOverlay which is a notification overlay)
             _interactivePanels.Clear();
@@ -210,6 +212,7 @@ namespace UnityGameTranslator.Core.UI
             _interactivePanels.Add(LanguagePanel);
             _interactivePanels.Add(ConfirmationPanel);
             _interactivePanels.Add(InspectorPanel);
+            _interactivePanels.Add(TranslationParamsPanel);
 
             // Hide all panels initially (using centralized list + StatusOverlay)
             CloseAllPanels();
@@ -503,7 +506,7 @@ namespace UnityGameTranslator.Core.UI
         /// </summary>
         private static void DetermineAndApplyUpdateDirection(string serverHash, int lineCount, int voteCount)
         {
-            bool hasLocalChanges = TranslatorCore.LocalChangesCount > 0;
+            bool hasLocalChanges = TranslatorCore.LocalChangesCount > 0 || TranslatorCore.MetadataDirty;
 
             // Check if server changed since our last sync
             string lastSyncedHash = TranslatorCore.LastSyncedHash;
@@ -1117,11 +1120,14 @@ namespace UnityGameTranslator.Core.UI
                             TargetLanguage = translationTargetLang
                         };
 
+                        // Update sync state before saving (so SaveCache persists the hash)
+                        TranslatorCore.LastSyncedHash = fileHash ?? translationFileHash;
+
+                        // Save cache (reformats JSON with Formatting.Indented)
+                        TranslatorCore.SaveCache();
+
                         // Save as ancestor for sync tracking
                         TranslatorCore.SaveAncestorCache();
-
-                        // Update sync state
-                        TranslatorCore.LastSyncedHash = fileHash ?? translationFileHash;
                         HasPendingUpdate = false;
                         PendingUpdateDirection = UpdateDirection.None;
 
@@ -1300,12 +1306,15 @@ namespace UnityGameTranslator.Core.UI
         }
 
         /// <summary>
-        /// Open the Inspector Panel for selecting UI elements to exclude.
+        /// Open the Inspector Panel in the specified mode.
+        /// Exclusion mode: select elements to exclude from translation.
+        /// BitmapReplace mode: select images to replace with translated versions.
         /// </summary>
-        public static void OpenInspectorPanel()
+        public static void OpenInspectorPanel(Panels.InspectorMode mode = Panels.InspectorMode.Exclusion)
         {
             if (InspectorPanel == null) return;
             ShowUI = true;
+            InspectorPanel.SetMode(mode);
             InspectorPanel.SetActive(true);
         }
 

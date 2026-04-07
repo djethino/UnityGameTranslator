@@ -162,6 +162,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             CreateCommunitySection(communityCard);
 
             // Bottom buttons - in fixed footer (outside scroll)
+            var transParamsBtn = CreateSecondaryButton(buttonRow, "TransParamsBtn", "Parameters");
+            transParamsBtn.OnClick += () => TranslatorUIManager.TranslationParamsPanel?.SetActive(true);
+            RegisterUIText(transParamsBtn.ButtonText);
+
             var optionsBtn = CreateSecondaryButton(buttonRow, "OptionsBtn", "Options");
             optionsBtn.OnClick += () => TranslatorUIManager.OptionsPanel?.SetActive(true);
             RegisterUIText(optionsBtn.ButtonText);

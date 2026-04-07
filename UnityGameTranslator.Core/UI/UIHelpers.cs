@@ -183,6 +183,39 @@ namespace UnityGameTranslator.Core.UI
         }
 
         /// <summary>
+        /// Adds a value change listener to a Slider.
+        /// Works on both Mono and IL2CPP by using reflection with delegate conversion.
+        /// </summary>
+        public static void AddSliderListener(UnityEngine.UI.Slider slider, Action<float> callback)
+        {
+            if (slider == null) return;
+
+            bool isIL2CPP = TranslatorCore.Adapter?.IsIL2CPP ?? false;
+
+            if (isIL2CPP)
+            {
+                AddListenerViaReflection(slider, "onValueChanged", callback, "Slider");
+            }
+            else
+            {
+                AddSliderListenerDirect(slider, callback);
+            }
+        }
+
+        private static void AddSliderListenerDirect(UnityEngine.UI.Slider slider, Action<float> callback)
+        {
+            try
+            {
+                slider.onValueChanged.AddListener((val) => callback(val));
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.Adapter?.LogWarning($"[UIHelpers] Direct slider listener failed, trying reflection: {ex.Message}");
+                AddListenerViaReflection(slider, "onValueChanged", callback, "Slider");
+            }
+        }
+
+        /// <summary>
         /// Direct toggle listener for Mono builds. Isolated to prevent IL2CPP JIT field resolution.
         /// </summary>
         private static void AddToggleListenerDirect(Toggle toggle, Action<bool> callback)

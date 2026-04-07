@@ -268,6 +268,7 @@ namespace UnityGameTranslator.Core
                 Status = t["status"]?.Value<string>(),
                 Type = t["type"]?.Value<string>(),
                 Notes = t["notes"]?.Value<string>(),
+                ResourcesUrl = t["resources_url"]?.Value<string>(),
                 VoteCount = t["vote_count"]?.Value<int>() ?? 0,
                 DownloadCount = t["download_count"]?.Value<int>() ?? 0,
                 HumanCount = t["human_count"]?.Value<int>() ?? 0,
@@ -432,6 +433,7 @@ namespace UnityGameTranslator.Core
                         TargetLanguage = t["target_language"]?.Value<string>(),
                         Type = t["type"]?.Value<string>(),
                         Notes = t["notes"]?.Value<string>(),
+                        ResourcesUrl = t["resources_url"]?.Value<string>(),
                         LineCount = t["line_count"]?.Value<int>() ?? 0,
                         FileHash = t["file_hash"]?.Value<string>(),
                         UpdatedAt = t["updated_at"]?.Value<string>()
@@ -880,7 +882,8 @@ namespace UnityGameTranslator.Core
                     target_language = request.TargetLanguage,
                     status = request.Status,
                     content = request.Content,
-                    notes = request.Notes
+                    notes = request.Notes,
+                    resources_url = request.ResourcesUrl
                 };
 
                 var jsonPayload = JsonConvert.SerializeObject(payload);
@@ -1140,6 +1143,7 @@ namespace UnityGameTranslator.Core
         public string Status { get; set; }
         public string Type { get; set; }
         public string Notes { get; set; }
+        public string ResourcesUrl { get; set; }
         public int VoteCount { get; set; }
         public int DownloadCount { get; set; }
         public int HumanCount { get; set; }
@@ -1242,6 +1246,7 @@ namespace UnityGameTranslator.Core
         public string Status { get; set; }
         public string Content { get; set; }
         public string Notes { get; set; }
+        public string ResourcesUrl { get; set; }
     }
 
     public class UploadResult
@@ -1280,6 +1285,7 @@ namespace UnityGameTranslator.Core
         public string TargetLanguage { get; set; }
         public string Type { get; set; }
         public string Notes { get; set; }
+        public string ResourcesUrl { get; set; }
         public int LineCount { get; set; }
         public string FileHash { get; set; }
         public string UpdatedAt { get; set; }

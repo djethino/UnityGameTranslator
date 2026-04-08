@@ -733,7 +733,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             var canvas = _highlightCanvas.AddComponent<Canvas>();
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-            canvas.sortingOrder = 31000; // High but below our UI (UniverseLib uses 32000+)
+            canvas.sortingOrder = 29000; // Below our UI (UniverseLib uses 30000)
 
             // GraphicRaycaster needed so the EventSystem sees our highlights
             // and they can block clicks from reaching game elements below

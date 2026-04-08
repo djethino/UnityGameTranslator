@@ -204,6 +204,114 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static IReadOnlyList<string> UserExclusions => userExclusions;
 
+        // Font overrides (per-pattern font/size rules) - stored in translations.json as _font_overrides
+        private static List<FontOverrideRule> fontOverrides = new List<FontOverrideRule>();
+        private static Dictionary<int, FontOverrideRule> fontOverrideCache = new Dictionary<int, FontOverrideRule>();
+
+        /// <summary>
+        /// Current font override rules. Read-only access for UI.
+        /// </summary>
+        public static IReadOnlyList<FontOverrideRule> FontOverrides => fontOverrides;
+
+        /// <summary>
+        /// Find the first matching font override rule for a component.
+        /// Uses caching by component instance ID. Returns null if no override matches.
+        /// </summary>
+        /// <param name="componentId">Component instance ID for caching</param>
+        /// <param name="gameObjectPath">Hierarchy path (e.g. "Canvas/Panel/Text")</param>
+        /// <param name="fontName">Current font name</param>
+        /// <param name="textContent">Current text content</param>
+        public static FontOverrideRule FindFontOverride(int componentId, string gameObjectPath, string fontName, string textContent)
+        {
+            // Check cache first
+            if (fontOverrideCache.TryGetValue(componentId, out var cached))
+                return cached;
+
+            FontOverrideRule matched = null;
+            for (int i = 0; i < fontOverrides.Count; i++)
+            {
+                var rule = fontOverrides[i];
+                if (!rule.enabled) continue;
+                if (MatchesFontOverride(rule, gameObjectPath, fontName, textContent))
+                {
+                    matched = rule;
+                    break; // First match wins
+                }
+            }
+
+            fontOverrideCache[componentId] = matched;
+            return matched;
+        }
+
+        /// <summary>
+        /// Test if a font override rule matches the given context.
+        /// </summary>
+        private static bool MatchesFontOverride(FontOverrideRule rule, string path, string fontName, string text)
+        {
+            string match = rule.match;
+            if (string.IsNullOrEmpty(match)) return false;
+
+            // Prefix-based matching
+            if (match.StartsWith("path:", StringComparison.OrdinalIgnoreCase))
+            {
+                string pattern = match.Substring(5);
+                return !string.IsNullOrEmpty(path) && MatchesExclusionPattern(path, pattern);
+            }
+            if (match.StartsWith("font:", StringComparison.OrdinalIgnoreCase))
+            {
+                string pattern = match.Substring(5);
+                return !string.IsNullOrEmpty(fontName) &&
+                       string.Equals(fontName, pattern, StringComparison.OrdinalIgnoreCase);
+            }
+            if (match.StartsWith("text:", StringComparison.OrdinalIgnoreCase))
+            {
+                string pattern = match.Substring(5);
+                if (string.IsNullOrEmpty(text)) return false;
+                // Regex if wrapped in /.../
+                if (pattern.StartsWith("/") && pattern.EndsWith("/") && pattern.Length > 2)
+                {
+                    string regex = pattern.Substring(1, pattern.Length - 2);
+                    try { return System.Text.RegularExpressions.Regex.IsMatch(text, regex, System.Text.RegularExpressions.RegexOptions.IgnoreCase); }
+                    catch { return false; }
+                }
+                return text.IndexOf(pattern, StringComparison.OrdinalIgnoreCase) >= 0;
+            }
+
+            // No prefix: try path first, then text substring
+            if (!string.IsNullOrEmpty(path) && MatchesExclusionPattern(path, match))
+                return true;
+            if (!string.IsNullOrEmpty(text) && text.IndexOf(match, StringComparison.OrdinalIgnoreCase) >= 0)
+                return true;
+
+            return false;
+        }
+
+        /// <summary>
+        /// Replace all font override rules at once (called by Apply in UI).
+        /// Marks metadata dirty but does NOT save — caller should save after all changes.
+        /// </summary>
+        public static void SetFontOverrides(List<FontOverrideRule> rules)
+        {
+            fontOverrides.Clear();
+            fontOverrides.AddRange(rules);
+            fontOverrideCache.Clear();
+            FontManager.ClearComponentScaleOverrides();
+            // Clear font size caches so ApplyFontScale re-reads from true originals
+            TranslatorPatches.ClearFontSizeCache();
+            // Clear last-translated cache so ForceRefreshAllText doesn't early-return
+            // before reaching ApplyFontScale (the "already translated" check skips font scale)
+            TranslatorPatches.ClearLastTranslatedCache();
+            SetMetadataDirty();
+        }
+
+        /// <summary>
+        /// Clear the font override cache (call on scene change).
+        /// </summary>
+        public static void ClearFontOverrideCache()
+        {
+            fontOverrideCache.Clear();
+        }
+
         // Panel construction mode: when true, all translations are skipped
         // This prevents texts created during panel construction from being queued before we can register them
         private static int _constructionModeCount = 0;
@@ -377,7 +485,7 @@ namespace UnityGameTranslator.Core
         /// Patterns: "Canvas/Chat/**" matches any child, "**/PlayerName" matches at any depth.
         /// An exact path also matches all children (excluding "Canvas/Panel" excludes "Canvas/Panel/Text").
         /// </summary>
-        private static bool MatchesExclusionPattern(string path, string pattern)
+        public static bool MatchesExclusionPattern(string path, string pattern)
         {
             if (string.IsNullOrEmpty(pattern)) return false;
 
@@ -1162,6 +1270,30 @@ namespace UnityGameTranslator.Core
                             FontSettingsMap[fontProp.Name] = settings;
                         }
                         LogDebug($"[LoadCache] Loaded {FontSettingsMap.Count} font settings");
+                    }
+                    else if (prop.Name == "_font_overrides" && prop.Value.Type == JTokenType.Array)
+                    {
+                        // Load font override rules
+                        fontOverrides.Clear();
+                        fontOverrideCache.Clear();
+                        foreach (var item in prop.Value)
+                        {
+                            var ruleObj = item as JObject;
+                            if (ruleObj == null) continue;
+                            var rule = new FontOverrideRule
+                            {
+                                match = ruleObj["match"]?.Value<string>(),
+                                replacement = ruleObj["replacement"]?.Value<string>(),
+                                size_multiplier = ruleObj["size_multiplier"]?.Value<float>() ?? 0f,
+                                enabled = ruleObj["enabled"]?.Value<bool>() ?? true,
+                                comment = ruleObj["comment"]?.Value<string>()
+                            };
+                            if (!string.IsNullOrEmpty(rule.match))
+                            {
+                                fontOverrides.Add(rule);
+                            }
+                        }
+                        LogDebug($"[LoadCache] Loaded {fontOverrides.Count} font override rules");
                     }
                     else if (prop.Name == "_settings" && prop.Value.Type == JTokenType.Object)
                     {
@@ -3835,6 +3967,26 @@ namespace UnityGameTranslator.Core
                         output["_fonts"] = fontsObj;
                     }
 
+                    // Save font override rules
+                    if (fontOverrides.Count > 0)
+                    {
+                        var overridesArray = new JArray();
+                        foreach (var rule in fontOverrides)
+                        {
+                            var ruleObj = new JObject { ["match"] = rule.match };
+                            if (!string.IsNullOrEmpty(rule.replacement))
+                                ruleObj["replacement"] = rule.replacement;
+                            if (Math.Abs(rule.size_multiplier) > 0.001f)
+                                ruleObj["size_multiplier"] = rule.size_multiplier;
+                            if (!rule.enabled)
+                                ruleObj["enabled"] = false;
+                            if (!string.IsNullOrEmpty(rule.comment))
+                                ruleObj["comment"] = rule.comment;
+                            overridesArray.Add(ruleObj);
+                        }
+                        output["_font_overrides"] = overridesArray;
+                    }
+
                     // Save game-specific settings (only if non-default values)
                     {
                         var settingsObj = new JObject();
@@ -4330,6 +4482,41 @@ namespace UnityGameTranslator.Core
 
     /// <summary>
     /// Per-font settings for translation control and fallback fonts.
+    /// Stored in translations.json as _font_overrides.
+    /// Rules are evaluated in order — first match wins.
+    /// </summary>
+    public class FontOverrideRule
+    {
+        /// <summary>
+        /// Pattern to match. Prefixes: "path:" (hierarchy glob), "font:" (font name), "text:" (content, regex if /.../).
+        /// Without prefix: tries path first, then text substring.
+        /// </summary>
+        public string match { get; set; }
+
+        /// <summary>
+        /// Replacement font name. Null = keep current font (only override size).
+        /// </summary>
+        public string replacement { get; set; }
+
+        /// <summary>
+        /// Size multiplier override. 0 = don't override (use global setting).
+        /// Example: 1.0 = original size, 1.5 = 150%, 0.7 = 70%.
+        /// </summary>
+        public float size_multiplier { get; set; } = 0f;
+
+        /// <summary>
+        /// Whether this rule is active.
+        /// </summary>
+        public bool enabled { get; set; } = true;
+
+        /// <summary>
+        /// User comment for identifying the rule purpose.
+        /// </summary>
+        public string comment { get; set; }
+    }
+
+    /// <summary>
+    /// Per-font settings for translation.
     /// Stored in translations.json as _fonts for sharing with translations.
     /// </summary>
     public class FontSettings

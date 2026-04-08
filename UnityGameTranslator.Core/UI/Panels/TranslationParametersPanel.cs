@@ -294,6 +294,17 @@ namespace UnityGameTranslator.Core.UI.Panels
             RefreshImageReplacementsList();
         }
 
+        public void OpenOnFontOverridesTab()
+        {
+            SetActive(true);
+            _tabBar?.SelectTab("Fonts");
+            _fontsSubTabBar?.SelectTab("Overrides");
+            RefreshFontOverridesList();
+            // Bring to front (MainPanel may have been restored by inspector closing)
+            if (UIRoot != null)
+                UIRoot.transform.SetAsLastSibling();
+        }
+
         private void OnStartInspectorClicked()
         {
             // Close panel and open inspector panel (exclusion mode)
@@ -565,7 +576,27 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         #region Fonts Tab
 
+        // Font overrides UI
+        private GameObject _fontOverridesListContainer;
+        private TabBar _fontsSubTabBar;
+
         private void CreateFontsTabContent(GameObject parent)
+        {
+            // Sub-tab bar for Global / Overrides
+            _fontsSubTabBar = new TabBar();
+            _fontsSubTabBar.CreateUI(parent, 26); // Compact height for sub-tabs
+
+            var globalTab = _fontsSubTabBar.AddTab("Global");
+            var overridesTab = _fontsSubTabBar.AddTab("Overrides");
+
+            foreach (var text in _fontsSubTabBar.GetTabButtonTexts())
+                RegisterUIText(text);
+
+            CreateFontsGlobalSubTab(globalTab);
+            CreateFontsOverridesSubTab(overridesTab);
+        }
+
+        private void CreateFontsGlobalSubTab(GameObject parent)
         {
             var card = CreateAdaptiveCard(parent, "FontsCard", PanelWidth - 60, stretchVertically: true);
 
@@ -604,6 +635,377 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.ConfigureAutoHideScrollbar(scrollObj);
 
             _fontsListContainer = scrollContent;
+        }
+
+        private void CreateFontsOverridesSubTab(GameObject parent)
+        {
+            var card = CreateAdaptiveCard(parent, "OverridesCard", PanelWidth - 60, stretchVertically: true);
+
+            var sectionTitle = UIStyles.CreateSectionTitle(card, "OverridesLabel", "Font Overrides");
+            RegisterUIText(sectionTitle);
+
+            var explainHint = UIStyles.CreateHint(card, "OverridesHint",
+                "Override font size for specific UI elements. Use inspector, search, or manual pattern.");
+            RegisterUIText(explainHint);
+
+            UIStyles.CreateSpacer(card, 5);
+
+            // Inspector button — click on element to add override
+            var inspectorBtn = CreatePrimaryButton(card, "FontOverrideInspectorBtn", "Inspect Element", PanelWidth - 100);
+            inspectorBtn.OnClick += OnStartFontOverrideInspector;
+            RegisterUIText(inspectorBtn.ButtonText);
+
+            var inspectorHint = UIStyles.CreateHint(card, "InspectorHint", "Click on a UI element to create an override for it");
+            RegisterUIText(inspectorHint);
+
+            UIStyles.CreateSpacer(card, 5);
+
+            // Find by content
+            var findLabel = UIFactory.CreateLabel(card, "FindLabel", "Find by text content:", TextAnchor.MiddleLeft);
+            findLabel.color = UIStyles.TextSecondary;
+            UIFactory.SetLayoutElement(findLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+            RegisterUIText(findLabel);
+
+            var findRow = UIStyles.CreateFormRow(card, "FindOverrideRow", UIStyles.InputHeight, 5);
+
+            _fontOverrideFindInput = UIFactory.CreateInputField(findRow, "FindOverrideInput", "Enter text visible in-game...");
+            UIFactory.SetLayoutElement(_fontOverrideFindInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
+            UIStyles.SetBackground(_fontOverrideFindInput.Component.gameObject, UIStyles.InputBackground);
+
+            var findBtn = CreateSecondaryButton(findRow, "FindOverrideBtn", "Find", 60);
+            findBtn.OnClick += OnFindForFontOverride;
+            RegisterUIText(findBtn.ButtonText);
+
+            // Find results (hidden until search)
+            var findResultsScroll = UIFactory.CreateScrollView(card, "OverrideFindResults", out var findResultsContent, out _);
+            UIFactory.SetLayoutElement(findResultsScroll, minHeight: 0, preferredHeight: 80, flexibleHeight: 0);
+            _fontOverrideFindResultsContainer = findResultsContent;
+            _fontOverrideFindResultsScroll = findResultsScroll;
+            findResultsScroll.SetActive(false);
+
+            UIStyles.CreateSpacer(card, 5);
+
+            // Manual add
+            var manualLabel = UIFactory.CreateLabel(card, "ManualLabel", "Add pattern manually:", TextAnchor.MiddleLeft);
+            manualLabel.color = UIStyles.TextSecondary;
+            UIFactory.SetLayoutElement(manualLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+            RegisterUIText(manualLabel);
+
+            var addRow = UIStyles.CreateFormRow(card, "AddOverrideRow", UIStyles.InputHeight, 5);
+            _fontOverrideManualInput = UIFactory.CreateInputField(addRow, "ManualOverrideInput", "path:**/TablePanel/**");
+            UIFactory.SetLayoutElement(_fontOverrideManualInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
+            UIStyles.SetBackground(_fontOverrideManualInput.Component.gameObject, UIStyles.InputBackground);
+
+            var addBtn = CreateSecondaryButton(addRow, "AddOverrideBtn", "Add", 60);
+            addBtn.OnClick += OnAddManualFontOverride;
+            RegisterUIText(addBtn.ButtonText);
+
+            var patternHint = UIStyles.CreateHint(card, "PatternHint", "Prefixes: path: (hierarchy), font: (name), text: (content)");
+            RegisterUIText(patternHint);
+
+            UIStyles.CreateSpacer(card, 5);
+
+            // Count label
+            _overridesCountLabel = UIFactory.CreateLabel(card, "OverridesCount", "", TextAnchor.MiddleLeft);
+            _overridesCountLabel.fontSize = UIStyles.FontSizeSmall;
+            _overridesCountLabel.color = UIStyles.TextMuted;
+            UIFactory.SetLayoutElement(_overridesCountLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+
+            // Scrollable list of overrides
+            var scrollObj = UIFactory.CreateScrollView(card, "OverridesScroll", out var scrollContent, out var scrollbar);
+            UIFactory.SetLayoutElement(scrollObj, minHeight: 120, flexibleHeight: 9999, flexibleWidth: 9999);
+            UIStyles.SetBackground(scrollObj, UIStyles.InputBackground);
+            UIFactory.ConfigureAutoHideScrollbar(scrollObj);
+
+            _fontOverridesListContainer = scrollContent;
+
+            // Status label
+            _fontOverrideStatusLabel = UIFactory.CreateLabel(card, "OverrideStatus", "", TextAnchor.MiddleLeft);
+            _fontOverrideStatusLabel.fontSize = UIStyles.FontSizeSmall;
+            UIFactory.SetLayoutElement(_fontOverrideStatusLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+
+            RefreshFontOverridesList();
+        }
+
+        // Font override UI fields
+        private Text _overridesCountLabel;
+        private Text _fontOverrideStatusLabel;
+        private InputFieldRef _fontOverrideFindInput;
+        private InputFieldRef _fontOverrideManualInput;
+        private GameObject _fontOverrideFindResultsContainer;
+        private GameObject _fontOverrideFindResultsScroll;
+
+        // Pending font overrides (local copy, applied on Apply button)
+        private List<FontOverrideRule> _pendingFontOverrides = new List<FontOverrideRule>();
+        private List<FontOverrideRule> _initialFontOverrides = new List<FontOverrideRule>();
+
+        private void InitPendingFontOverrides()
+        {
+            _pendingFontOverrides.Clear();
+            _initialFontOverrides.Clear();
+            foreach (var rule in TranslatorCore.FontOverrides)
+            {
+                _pendingFontOverrides.Add(CloneRule(rule));
+                _initialFontOverrides.Add(CloneRule(rule));
+            }
+        }
+
+        private static FontOverrideRule CloneRule(FontOverrideRule r)
+        {
+            return new FontOverrideRule
+            {
+                match = r.match,
+                replacement = r.replacement,
+                size_multiplier = r.size_multiplier,
+                enabled = r.enabled,
+                comment = r.comment
+            };
+        }
+
+        private void OnStartFontOverrideInspector()
+        {
+            SetActive(false);
+            TranslatorUIManager.OpenInspectorPanel(InspectorMode.FontOverride);
+        }
+
+        /// <summary>
+        /// Called from InspectorPanel when a font override target is selected.
+        /// </summary>
+        public void AddFontOverrideFromInspector(string path)
+        {
+            // SetActive FIRST so LoadCurrentState initializes _pendingFontOverrides
+            SetActive(true);
+            _tabBar?.SelectTab("Fonts");
+            _fontsSubTabBar?.SelectTab("Overrides");
+            // THEN add the new rule (on top of initialized state)
+            AddFontOverrideForPath(path);
+            // Bring ourselves to front (MainPanel may have been restored by inspector's SetActive(false))
+            if (UIRoot != null)
+                UIRoot.transform.SetAsLastSibling();
+        }
+
+        private void OnAddManualFontOverride()
+        {
+            string pattern = _fontOverrideManualInput?.Text?.Trim();
+            if (string.IsNullOrEmpty(pattern))
+            {
+                _fontOverrideStatusLabel.text = "Enter a pattern first";
+                _fontOverrideStatusLabel.color = UIStyles.StatusWarning;
+                return;
+            }
+
+            AddFontOverrideForPath(pattern);
+            _fontOverrideManualInput.Text = "";
+        }
+
+        private void OnFindForFontOverride()
+        {
+            string searchValue = _fontOverrideFindInput?.Text?.Trim();
+            if (string.IsNullOrEmpty(searchValue))
+            {
+                _fontOverrideStatusLabel.text = "Enter text to search for";
+                _fontOverrideStatusLabel.color = UIStyles.StatusWarning;
+                return;
+            }
+
+            _fontOverrideFindResultsScroll.SetActive(true);
+
+            // Clear previous results
+            for (int i = _fontOverrideFindResultsContainer.transform.childCount - 1; i >= 0; i--)
+                UnityEngine.Object.Destroy(_fontOverrideFindResultsContainer.transform.GetChild(i).gameObject);
+
+            // Search text components (same logic as exclusions find)
+            var found = new List<KeyValuePair<string, string>>();
+            var seenPaths = new HashSet<string>();
+
+            try
+            {
+                var textTypes = new List<Type>();
+                if (TypeHelper.UI_TextType != null) textTypes.Add(TypeHelper.UI_TextType);
+                if (TypeHelper.TMP_TextType != null) textTypes.Add(TypeHelper.TMP_TextType);
+
+                foreach (var textType in textTypes)
+                {
+                    var allComponents = TypeHelper.FindAllObjectsOfType(textType);
+                    if (allComponents == null) continue;
+
+                    foreach (var obj in allComponents)
+                    {
+                        if (obj == null) continue;
+                        try
+                        {
+                            string text = TypeHelper.GetText(obj);
+                            if (string.IsNullOrEmpty(text)) continue;
+                            if (text.IndexOf(searchValue, StringComparison.OrdinalIgnoreCase) < 0) continue;
+
+                            Component comp = obj as Component;
+                            if (comp == null)
+                                comp = TypeHelper.Il2CppCast(obj, typeof(Component)) as Component;
+                            if (comp == null || comp.gameObject == null) continue;
+                            if (TranslatorCore.ShouldSkipTranslation(comp)) continue;
+
+                            string path = TranslatorCore.GetGameObjectPath(comp.gameObject);
+                            if (seenPaths.Contains(path)) continue;
+                            seenPaths.Add(path);
+
+                            string snippet = text.Length > 50 ? text.Substring(0, 50) + "..." : text;
+                            found.Add(new KeyValuePair<string, string>(path, snippet));
+                        }
+                        catch { }
+                    }
+                }
+            }
+            catch { }
+
+            if (found.Count == 0)
+            {
+                var emptyLabel = UIFactory.CreateLabel(_fontOverrideFindResultsContainer, "NoResults",
+                    "No UI component found with this text.", TextAnchor.MiddleCenter);
+                emptyLabel.color = UIStyles.TextMuted;
+                emptyLabel.fontStyle = FontStyle.Italic;
+                UIFactory.SetLayoutElement(emptyLabel.gameObject, minHeight: 30, flexibleWidth: 9999);
+                _fontOverrideStatusLabel.text = "No results";
+                _fontOverrideStatusLabel.color = UIStyles.StatusWarning;
+                return;
+            }
+
+            foreach (var kvp in found)
+            {
+                var row = UIFactory.CreateUIObject("FindResult", _fontOverrideFindResultsContainer);
+                UIFactory.SetLayoutGroup<HorizontalLayoutGroup>(row, false, false, true, true, 5, 2, 2, 2, 2);
+                UIFactory.SetLayoutElement(row, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999);
+
+                var label = UIFactory.CreateLabel(row, "Path", kvp.Key, TextAnchor.MiddleLeft);
+                label.fontSize = UIStyles.FontSizeSmall;
+                UIFactory.SetLayoutElement(label.gameObject, flexibleWidth: 9999);
+
+                var capturedPath = kvp.Key;
+                var addPathBtn = CreateSecondaryButton(row, "AddOverride", "+");
+                UIFactory.SetLayoutElement(addPathBtn.Component.gameObject, minWidth: 30);
+                addPathBtn.OnClick += () => AddFontOverrideForPath("path:" + capturedPath);
+            }
+
+            _fontOverrideStatusLabel.text = $"Found {found.Count} component(s)";
+            _fontOverrideStatusLabel.color = UIStyles.StatusSuccess;
+        }
+
+        private void AddFontOverrideForPath(string match)
+        {
+            var rule = new FontOverrideRule
+            {
+                match = match,
+                size_multiplier = 1.0f,
+                enabled = true
+            };
+            _pendingFontOverrides.Add(rule);
+            RefreshFontOverridesList();
+            UpdateApplyButtonText();
+            if (_fontOverrideStatusLabel != null)
+            {
+                _fontOverrideStatusLabel.text = $"Added: {match} (Apply to save)";
+                _fontOverrideStatusLabel.color = UIStyles.StatusSuccess;
+            }
+        }
+
+        private void RefreshFontOverridesList()
+        {
+            if (_fontOverridesListContainer == null) return;
+
+            // Clear existing rows
+            for (int i = _fontOverridesListContainer.transform.childCount - 1; i >= 0; i--)
+            {
+                UnityEngine.Object.Destroy(_fontOverridesListContainer.transform.GetChild(i).gameObject);
+            }
+
+            if (_overridesCountLabel != null)
+            {
+                _overridesCountLabel.text = _pendingFontOverrides.Count > 0
+                    ? $"{_pendingFontOverrides.Count} rule(s)"
+                    : "No rules defined";
+            }
+
+            for (int i = 0; i < _pendingFontOverrides.Count; i++)
+            {
+                CreateFontOverrideRow(i, _pendingFontOverrides[i]);
+            }
+        }
+
+        private void CreateFontOverrideRow(int index, FontOverrideRule rule)
+        {
+            var row = UIFactory.CreateVerticalGroup(_fontOverridesListContainer, $"Override_{index}",
+                false, false, true, true, 3);
+            UIFactory.SetLayoutElement(row, minHeight: UIStyles.MultiLineMedium, flexibleWidth: 9999);
+            UIStyles.SetBackground(row, UIStyles.CardBackground);
+
+            // Row 1: Match pattern (editable) + enabled toggle + delete button
+            var topRow = UIFactory.CreateHorizontalGroup(row, "TopRow", false, false, true, true, 5);
+            UIFactory.SetLayoutElement(topRow, minHeight: UIStyles.RowHeightNormal, flexibleWidth: 9999);
+
+            var matchLabel = UIFactory.CreateLabel(topRow, "MatchLabel", "Match:", TextAnchor.MiddleLeft);
+            matchLabel.fontSize = UIStyles.FontSizeSmall;
+            UIFactory.SetLayoutElement(matchLabel.gameObject, minWidth: 45);
+
+            var matchInput = UIFactory.CreateInputField(topRow, "MatchInput", "path:*Pattern*");
+            UIFactory.SetLayoutElement(matchInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.RowHeightNormal);
+            matchInput.Text = rule.match ?? "";
+
+            int capturedIndex = index;
+
+            matchInput.OnValueChanged += (val) =>
+            {
+                if (capturedIndex < _pendingFontOverrides.Count)
+                {
+                    _pendingFontOverrides[capturedIndex].match = val;
+                    UpdateApplyButtonText();
+                }
+            };
+
+            // Delete button
+            var deleteBtn = UIFactory.CreateButton(topRow, "DeleteBtn", "X");
+            UIFactory.SetLayoutElement(deleteBtn.Component.gameObject, minWidth: 28, minHeight: UIStyles.RowHeightNormal);
+            UIStyles.SetBackground(deleteBtn.Component.gameObject, UIStyles.ButtonDanger);
+            deleteBtn.OnClick += () =>
+            {
+                if (capturedIndex < _pendingFontOverrides.Count)
+                {
+                    _pendingFontOverrides.RemoveAt(capturedIndex);
+                    RefreshFontOverridesList();
+                    UpdateApplyButtonText();
+                }
+            };
+
+            // Row 2: Size multiplier slider + comment
+            var bottomRow = UIFactory.CreateHorizontalGroup(row, "BottomRow", false, false, true, true, 5);
+            UIFactory.SetLayoutElement(bottomRow, minHeight: UIStyles.RowHeightNormal, flexibleWidth: 9999);
+
+            var sizeLabel = UIFactory.CreateLabel(bottomRow, "SizeLabel", "Size:", TextAnchor.MiddleLeft);
+            sizeLabel.fontSize = UIStyles.FontSizeSmall;
+            UIFactory.SetLayoutElement(sizeLabel.gameObject, minWidth: 35);
+
+            var sizeValueLabel = UIFactory.CreateLabel(bottomRow, "SizeValue",
+                rule.size_multiplier > 0.001f ? $"{(int)(rule.size_multiplier * 100)}%" : "default",
+                TextAnchor.MiddleCenter);
+            sizeValueLabel.fontSize = UIStyles.FontSizeSmall;
+            UIFactory.SetLayoutElement(sizeValueLabel.gameObject, minWidth: 45);
+
+            var sizeSliderObj = UIFactory.CreateSlider(bottomRow, "SizeSlider", out var sizeSlider);
+            UIFactory.SetLayoutElement(sizeSliderObj, flexibleWidth: 9999, minHeight: UIStyles.RowHeightNormal);
+            sizeSlider.minValue = 0f;
+            sizeSlider.maxValue = 3f;
+            sizeSlider.value = rule.size_multiplier > 0.001f ? rule.size_multiplier : 1.0f;
+
+            UIHelpers.AddSliderListener(sizeSlider, (val) =>
+            {
+                // Round to nearest 5%
+                float rounded = (float)Math.Round(val * 20) / 20f;
+                sizeValueLabel.text = $"{(int)(rounded * 100)}%";
+
+                if (capturedIndex < _pendingFontOverrides.Count)
+                {
+                    _pendingFontOverrides[capturedIndex].size_multiplier = rounded;
+                    UpdateApplyButtonText();
+                }
+            });
         }
 
         private void RefreshFontsList()
@@ -1534,6 +1936,11 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _initialExclusions.Add(pattern);
             }
 
+            // Capture initial font overrides for change tracking
+            InitPendingFontOverrides();
+            try { RefreshFontOverridesList(); }
+            catch (Exception ex) { TranslatorCore.LogWarning($"[TranslationParametersPanel] RefreshFontOverridesList failed: {ex.Message}"); }
+
             UpdateApplyButtonText();
         }
 
@@ -1579,6 +1986,13 @@ namespace UnityGameTranslator.Core.UI.Panels
                     TranslatorCore.RemoveExclusion(pattern);
                 }
 
+                // Apply font overrides
+                bool fontOverridesChanged = HasFontOverrideChanges();
+                if (fontOverridesChanged)
+                {
+                    TranslatorCore.SetFontOverrides(new List<FontOverrideRule>(_pendingFontOverrides));
+                }
+
                 // Apply behavior settings
                 if (_typewritingDetectionToggle != null)
                     TranslatorCore.TypewritingDetection = _typewritingDetectionToggle.isOn;
@@ -1588,7 +2002,10 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TranslatorCore.SaveConfig();
                 TranslatorCore.SaveCache(); // saves _settings to translations.json
 
-                // Force refresh all text to apply new settings (fonts, translations)
+                // Force refresh all text to apply new settings (fonts, translations, overrides)
+                // This re-triggers ProcessTextPatchPrefix for all components, which:
+                // - Re-evaluates font override patterns (ApplyTemporaryScale)
+                // - Re-applies font scale via ApplyFontScale (uses per-component overrides)
                 TranslatorScanner.ForceRefreshAllText();
 
                 // Update initial font settings
@@ -1609,9 +2026,13 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _pendingExclusionAdds.Clear();
                 _pendingExclusionRemoves.Clear();
 
+                // Update initial font overrides
+                InitPendingFontOverrides();
+
                 // Refresh lists to show applied state
                 RefreshFontsList();
                 RefreshExclusionsList();
+                RefreshFontOverridesList();
 
                 UpdateApplyButtonText();
 
@@ -1654,6 +2075,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             count += _pendingExclusionAdds.Count;
             count += _pendingExclusionRemoves.Count;
 
+            // Font overrides
+            if (HasFontOverrideChanges()) count++;
+
             // Behavior settings
             if (_typewritingDetectionToggle != null && _typewritingDetectionToggle.isOn != TranslatorCore.TypewritingDetection) count++;
             if (_concatDetectionToggle != null && _concatDetectionToggle.isOn != TranslatorCore.ConcatDetection) count++;
@@ -1665,6 +2089,24 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// Updates the Apply button text based on pending changes count.
         /// Shows "Apply (x)" when there are changes, "Close" when there are none.
         /// </summary>
+        private bool HasFontOverrideChanges()
+        {
+            if (_pendingFontOverrides.Count != _initialFontOverrides.Count)
+                return true;
+
+            for (int i = 0; i < _pendingFontOverrides.Count; i++)
+            {
+                var p = _pendingFontOverrides[i];
+                var o = _initialFontOverrides[i];
+                if (p.match != o.match ||
+                    p.replacement != o.replacement ||
+                    Math.Abs(p.size_multiplier - o.size_multiplier) > 0.001f ||
+                    p.enabled != o.enabled)
+                    return true;
+            }
+            return false;
+        }
+
         private void UpdateApplyButtonText()
         {
             if (_applyBtn == null) return;

@@ -756,8 +756,8 @@ namespace UnityGameTranslator.Core
         {
             if (typeInfo.FontSizeProp == null || string.IsNullOrEmpty(fontName)) return;
 
-            float scale = FontManager.GetFontScale(fontName);
             int instanceId = TypeHelper.GetInstanceID(instance);
+            float scale = FontManager.GetFontScale(fontName, instanceId);
             if (instanceId == -1) return;
 
             float originalSize;
@@ -1733,6 +1733,58 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Clear the last-translated-text cache so ForceRefreshAllText re-processes
+        /// all components fully (including ApplyFontScale). Call when font overrides change.
+        /// </summary>
+        public static void ClearLastTranslatedCache()
+        {
+            _lastTranslatedText.Clear();
+        }
+
+        /// <summary>
+        /// Re-apply font sizes for all tracked components using their true original sizes.
+        /// Call after font override rules change to force size recalculation.
+        /// </summary>
+        public static void ReapplyAllFontSizes()
+        {
+            // DON'T clear componentScaleOverrides here — they were already
+            // cleared by SetFontOverrides() and re-populated by ForceRefreshAllText()
+
+            // Clear the applied-size cache so fontSize setters re-apply from true originals
+            _originalFontSizes.Clear();
+
+            // Re-set fontSize from true originals to trigger the fontSize setter prefix
+            var refs = new List<KeyValuePair<int, object>>(PatchedComponentRefs);
+            int count = 0;
+
+            foreach (var kvp in refs)
+            {
+                if (kvp.Value == null) continue;
+                try
+                {
+                    float trueOriginal;
+                    if (!_trueOriginalFontSizes.TryGetValue(kvp.Key, out trueOriginal))
+                        continue;
+
+                    var fontSizeProp = kvp.Value.GetType().GetProperty("fontSize",
+                        System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                    if (fontSizeProp == null || !fontSizeProp.CanWrite) continue;
+
+                    // Set the true original size — the fontSize prefix will re-apply the correct scale
+                    if (fontSizeProp.PropertyType == typeof(float))
+                        fontSizeProp.SetValue(kvp.Value, trueOriginal, null);
+                    else if (fontSizeProp.PropertyType == typeof(int))
+                        fontSizeProp.SetValue(kvp.Value, (int)trueOriginal, null);
+
+                    count++;
+                }
+                catch { }
+            }
+
+            TranslatorCore.LogDebug($"[Patches] ReapplyAllFontSizes: re-applied {count} components");
+        }
+
+        /// <summary>
         /// Schedule a delayed scan to apply font replacements to TMP components.
         /// Called after scene change to catch early-initialized text.
         /// </summary>
@@ -1997,16 +2049,18 @@ namespace UnityGameTranslator.Core
         {
             if (instance == null || string.IsNullOrEmpty(fontName)) return;
 
-            float scale = FontManager.GetFontScale(fontName);
+            int instanceId = TypeHelper.GetInstanceID(instance);
+            float scale = FontManager.GetFontScale(fontName, instanceId);
             int bump = FontManager.GetFontSizeBump(fontName);
-            // Fast exit: if scale is 1.0, no bump, and we haven't stored an original size, nothing to do
+            // Fast exit: if scale is 1.0, no bump, and we've never tracked this component, nothing to do
+            // But if we HAVE a true original stored, we must continue to potentially restore the original size
+            // (e.g., component was previously scaled by global, now overridden to 1.0)
             if (Math.Abs(scale - 1.0f) < 0.001f && bump == 0)
             {
-                int quickId = TypeHelper.GetInstanceID(instance);
-                if (quickId == -1 || !_originalFontSizes.ContainsKey(quickId))
+                if (instanceId == -1 ||
+                    (!_originalFontSizes.ContainsKey(instanceId) && !_trueOriginalFontSizes.ContainsKey(instanceId)))
                     return;
             }
-            int instanceId = TypeHelper.GetInstanceID(instance);
             if (instanceId == -1) return;
 
             float originalSize;
@@ -2515,6 +2569,26 @@ namespace UnityGameTranslator.Core
                     if (!FontManager.IsTranslationEnabled(settingsFontName))
                         return;
 
+                    // Check font override rules (pattern-based font/size overrides)
+                    if (TranslatorCore.FontOverrides.Count > 0)
+                    {
+                        string goPath = comp != null ? TranslatorCore.GetGameObjectPath(comp.gameObject) : null;
+                        var fontOverride = TranslatorCore.FindFontOverride(compId, goPath, settingsFontName, textValue);
+                        if (fontOverride != null)
+                        {
+                            // Override font replacement if specified
+                            if (!string.IsNullOrEmpty(fontOverride.replacement))
+                            {
+                                settingsFontName = fontOverride.replacement;
+                            }
+                            // Override scale if specified (> 0)
+                            if (fontOverride.size_multiplier > 0.001f)
+                            {
+                                FontManager.ApplyTemporaryScale(compId, fontOverride.size_multiplier);
+                            }
+                        }
+                    }
+
                     // Font replacement operations
                     if (componentType == "TMP")
                     {
@@ -2958,7 +3032,7 @@ namespace UnityGameTranslator.Core
                 if (string.IsNullOrEmpty(fontName)) return;
 
                 string settingsFontName = FontManager.GetSettingsFontName(instanceId, fontName);
-                float scale = FontManager.GetFontScale(settingsFontName);
+                float scale = FontManager.GetFontScale(settingsFontName, instanceId);
                 if (Math.Abs(scale - 1.0f) < 0.001f) return;
 
                 // Store the incoming value as the true original size
@@ -2987,7 +3061,7 @@ namespace UnityGameTranslator.Core
                 if (!_fontNameCache.TryGetValue(instanceId, out fontName)) return;
                 if (string.IsNullOrEmpty(fontName)) return;
                 string settingsFontName = FontManager.GetSettingsFontName(instanceId, fontName);
-                float scale = FontManager.GetFontScale(settingsFontName);
+                float scale = FontManager.GetFontScale(settingsFontName, instanceId);
                 if (Math.Abs(scale - 1.0f) < 0.001f) return;
                 _trueOriginalFontSizes[instanceId] = value;
                 _originalFontSizes[instanceId] = value;
@@ -3237,7 +3311,7 @@ namespace UnityGameTranslator.Core
                 int instId = TypeHelper.GetInstanceID(instance);
 
                 // Apply font scale if configured (use cached PropertyInfo)
-                float scale = FontManager.GetFontScale(originalFontName);
+                float scale = FontManager.GetFontScale(originalFontName, instId);
                 if (Math.Abs(scale - 1.0f) > 0.01f)
                 {
                     PropertyInfo fontSizeProp;

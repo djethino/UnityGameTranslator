@@ -1317,6 +1317,9 @@ namespace UnityGameTranslator.Core
             return settings;
         }
 
+        // Per-component scale overrides from font override rules
+        private static Dictionary<int, float> _componentScaleOverrides = new Dictionary<int, float>();
+
         /// <summary>
         /// Get the font scale factor for a font.
         /// Returns 1.0 if no scale is set.
@@ -1330,6 +1333,42 @@ namespace UnityGameTranslator.Core
                 return settings.scale;
 
             return 1.0f;
+        }
+
+        /// <summary>
+        /// Get the font scale for a specific component, checking per-component overrides first.
+        /// </summary>
+        public static float GetFontScale(string fontName, int componentId)
+        {
+            // Per-component override takes priority (from font override rules)
+            if (_componentScaleOverrides.TryGetValue(componentId, out float overrideScale))
+                return overrideScale;
+
+            return GetFontScale(fontName);
+        }
+
+        /// <summary>
+        /// Set a per-component scale override (from font override rules).
+        /// </summary>
+        public static void ApplyTemporaryScale(int componentId, float scale)
+        {
+            _componentScaleOverrides[componentId] = scale;
+        }
+
+        /// <summary>
+        /// Check if a component has a scale override.
+        /// </summary>
+        public static bool HasComponentScaleOverride(int componentId)
+        {
+            return _componentScaleOverrides.ContainsKey(componentId);
+        }
+
+        /// <summary>
+        /// Clear all per-component scale overrides (call on scene change or rule update).
+        /// </summary>
+        public static void ClearComponentScaleOverrides()
+        {
+            _componentScaleOverrides.Clear();
         }
 
         /// <summary>

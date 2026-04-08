@@ -17,7 +17,8 @@ namespace UnityGameTranslator.Core.UI.Panels
     public enum InspectorMode
     {
         Exclusion,
-        BitmapReplace
+        BitmapReplace,
+        FontOverride
     }
 
     /// <summary>
@@ -28,7 +29,9 @@ namespace UnityGameTranslator.Core.UI.Panels
     /// </summary>
     public class InspectorPanel : TranslatorPanelBase
     {
-        public override string Name => _currentMode == InspectorMode.BitmapReplace ? "Image Inspector" : "Element Inspector";
+        public override string Name => _currentMode == InspectorMode.BitmapReplace ? "Image Inspector"
+            : _currentMode == InspectorMode.FontOverride ? "Font Override Inspector"
+            : "Element Inspector";
         public override int MinWidth => 420;
         public override int MinHeight => 360;
         public override int PanelWidth => 480;
@@ -835,13 +838,17 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void UpdateUIForMode()
         {
             bool isImage = _currentMode == InspectorMode.BitmapReplace;
+            bool isFontOverride = _currentMode == InspectorMode.FontOverride;
 
             // Update title
             if (_titleLabel != null)
-                _titleLabel.text = isImage ? "Image Inspector" : "Element Inspector";
+                _titleLabel.text = isImage ? "Image Inspector"
+                    : isFontOverride ? "Font Override — Click on an element"
+                    : "Element Inspector";
 
             // Toggle action button visibility
-            if (_exclusionActionsRow != null) _exclusionActionsRow.SetActive(!isImage);
+            // FontOverride mode: hide both exclusion and image actions (click auto-adds and returns)
+            if (_exclusionActionsRow != null) _exclusionActionsRow.SetActive(!isImage && !isFontOverride);
             if (_imageActionsRow != null) _imageActionsRow.SetActive(isImage);
             if (_spriteInfoLabel != null) _spriteInfoLabel.gameObject.SetActive(isImage);
 
@@ -1026,7 +1033,21 @@ namespace UnityGameTranslator.Core.UI.Panels
                     _selectedPathLabel.fontStyle = FontStyle.Normal;
                     _cancelBtn.Component.interactable = true;
 
-                    if (_currentMode == InspectorMode.BitmapReplace)
+                    if (_currentMode == InspectorMode.FontOverride)
+                    {
+                        // Font override mode: add override for parent path with /** to cover siblings
+                        // e.g. "Canvas/Panel/Table/Text" → "path:Canvas/Panel/Table/**"
+                        string overridePath = path;
+                        int lastSlash = path.LastIndexOf('/');
+                        if (lastSlash > 0)
+                            overridePath = path.Substring(0, lastSlash) + "/**";
+                        // Close inspector FIRST (restores MainPanel if it was open)
+                        SetActive(false);
+                        // THEN open TranslationParamsPanel (SetAsLastSibling puts it on top)
+                        TranslatorUIManager.TranslationParamsPanel?.AddFontOverrideFromInspector("path:" + overridePath);
+                        return;
+                    }
+                    else if (_currentMode == InspectorMode.BitmapReplace)
                     {
                         try
                         {
@@ -1367,6 +1388,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Return to the appropriate TranslationParametersPanel tab
             if (_currentMode == InspectorMode.BitmapReplace)
                 TranslatorUIManager.TranslationParamsPanel?.OpenOnBitmapReplaceTab();
+            else if (_currentMode == InspectorMode.FontOverride)
+                TranslatorUIManager.TranslationParamsPanel?.OpenOnFontOverridesTab();
             else
                 TranslatorUIManager.TranslationParamsPanel?.OpenOnExclusionsTab();
         }

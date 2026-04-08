@@ -155,7 +155,7 @@ The mod works with **any server that exposes the OpenAI-compatible API** (`/v1/c
 | [Groq](https://groq.com/) | `https://api.groq.com/openai` | Required (free tier) |
 | [OpenRouter](https://openrouter.ai/) | `https://openrouter.ai/api` | Required (free tier) |
 | [OpenAI](https://platform.openai.com/) | `https://api.openai.com` | Required |
-| [Google Gemini](https://ai.google.dev/) | `https://generativelanguage.googleapis.com/v1beta/openai` | Required (free tier) |
+| [Google Gemini](https://ai.google.dev/) | `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions` | Required (free tier) |
 
 > **URL resolution:** The mod auto-appends `/v1/chat/completions` if the URL doesn't already end with `/completions`. If your provider has a non-standard URL, enter the full path up to `/chat/completions`.
 

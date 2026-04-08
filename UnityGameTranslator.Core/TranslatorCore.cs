@@ -2015,10 +2015,10 @@ namespace UnityGameTranslator.Core
         /// <summary>
         /// Resolve an OpenAI-compatible endpoint from the user's base URL.
         /// Handles various URL formats:
-        ///   "http://localhost:11434"                              + "/chat/completions" → .../v1/chat/completions
-        ///   "https://api.groq.com/openai/v1"                     + "/chat/completions" → .../v1/chat/completions
-        ///   "https://generativelanguage.googleapis.com/.../openai" + "/chat/completions" → .../openai/chat/completions
-        ///   "https://example.com/v1/chat/completions"            + "/chat/completions" → unchanged
+        ///   "http://localhost:11434"                                              → .../v1/chat/completions
+        ///   "https://api.groq.com/openai/v1"                                     → .../openai/v1/chat/completions
+        ///   "https://generativelanguage.googleapis.com/.../openai/chat/completions" → unchanged (full URL)
+        ///   "https://example.com/v1/chat/completions"                            → unchanged (full URL)
         /// </summary>
         private static string ResolveAIEndpoint(string baseUrl, string path)
         {
@@ -2038,12 +2038,9 @@ namespace UnityGameTranslator.Core
             if (url.EndsWith("/v1"))
                 return url + "/" + trimmedPath;
 
-            // URL ends with /openai (e.g., Gemini: .../v1beta/openai) — append path directly
-            // These providers expose the OpenAI-compatible API without a /v1 prefix
-            if (url.EndsWith("/openai"))
-                return url + "/" + trimmedPath;
-
             // Default — add /v1/ prefix to path (backwards compatible: Ollama, etc.)
+            // Providers with non-standard paths (e.g., Gemini) should use the full URL
+            // including /chat/completions, or ending with /v1
             return url + "/v1/" + trimmedPath;
         }
 

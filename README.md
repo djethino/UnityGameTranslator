@@ -2,34 +2,106 @@
 
 **Website:** [unitygametranslator.asymptomatikgames.com](https://unitygametranslator.asymptomatikgames.com)
 
-A universal translation mod for Unity games with AI translation (any OpenAI-compatible server — local or cloud) and online community translations. Works fully offline with a local AI server like Ollama or LM Studio — no API key, no internet, no cost.
+A universal translation mod for Unity games. Supports AI translation (any OpenAI-compatible server), Google Translate, DeepL, and community-shared translations. Works fully offline with a local AI server like Ollama or LM Studio — no API key, no internet, no cost.
 
 ## Features
 
 ### Translation Engine
-- **Runtime translation** - text is translated as you encounter it in-game
-- **AI translation** via any OpenAI-compatible server — run locally (Ollama, LM Studio) for free, offline translation or use cloud providers (Groq, OpenRouter, OpenAI)
-- **Instant cache hits** - cached translations apply synchronously
-- **Number normalization** - "Kill 5 enemies" and "Kill 10 enemies" share the same translation
-- **Auto language detection** - detects system language as target
-- **Cross-platform** - works on Windows, macOS, Linux
+- **Runtime translation** — text is translated as you encounter it in-game
+- **Multiple backends** — AI (OpenAI-compatible), Google Translate, DeepL, or community downloads only
+- **Instant cache hits** — cached translations apply synchronously with zero latency
+- **Number normalization** — "Kill 5 enemies" and "Kill 10 enemies" share the same translation
+- **Auto language detection** — detects system language as default target
+- **Cross-platform** — Windows, macOS, Linux
 
-### Online Sync
-- **Community translations** - download translations from the community website
-- **Automatic game detection** - detects game via Steam ID or product name
-- **Update notifications** - get notified when translations are updated
-- **Mod update checker** - get notified when a new mod version is available on GitHub
-- **Upload your work** - share translations with the community
-- **3-way merge** - intelligently merge updates while keeping your local changes
-- **Device Flow login** - secure authentication without entering passwords in-game
+### Translation Backends
+
+| Backend | Description |
+|---------|-------------|
+| **AI (LLM)** | Any OpenAI-compatible server — local (Ollama, LM Studio) or cloud (Groq, OpenRouter, OpenAI) |
+| **Google Translate** | Google Cloud Translation API |
+| **DeepL** | DeepL API (Free and Pro tiers) |
+| **None** | Only use cached/downloaded translations |
+
+### In-Game Text Editor
+- Click on any UI element to see all text in that area
+- Edit translations directly in-game — saves immediately with Human (H) tag
+- Retranslate with AI if the current translation isn't good enough
+- Found in **Translation Parameters → Tools → Start Text Editor**
+
+### Font System
+- Automatic font detection (TextMeshPro, Unity UI.Text)
+- Fallback fonts for non-Latin scripts (Chinese, Arabic, Hindi, etc.)
+- Per-font scaling and enable/disable
+- **Font overrides by pattern** — override size for specific UI elements (tables, titles, tooltips)
+  - Add overrides via inspector click, text search, or manual pattern
+  - Supports recursive patterns (`path:**/TablePanel/**`)
+  - Changes apply at runtime
+
+### UI Exclusions
+- Pattern-based exclusion system for text that shouldn't be translated (chat, player names, etc.)
+- Visual inspector to click and exclude elements
+- Find by text content search
+- Wildcard patterns (`**/ChatPanel/**`, `*/PlayerName`)
+
+### Image/Sprite Replacement
+- Replace text embedded in sprites/images with translated versions
+- Visual inspector to select and export original images
+- Import translated images as replacement
+- Sprite metadata (pivot, borders, PPU) preserved
+
+### Dynamic Variables
+- Extract player name, item stats, and other dynamic values from game objects
+- Placeholder substitution for better cache reuse
+- Variable scanner to discover candidates
+
+### Online Community Features
+- **Community translations** — download translations from the website
+- **Automatic game detection** — via Steam ID, product name, or folder
+- **Real-time sync** via SSE (Server-Sent Events) — get updates without restarting
+- **3-way merge** — intelligently merge remote updates with your local changes
+- **Device Flow login** — secure authentication without entering passwords in-game
+- **Upload & share** — share your translations with the community
+- **Mod update checker** — notifications when a new mod version is available
+
+### Collaboration System (Main/Branch/Fork)
+
+| Term | Description |
+|------|-------------|
+| **Main** | The original translation. First uploader becomes the owner. |
+| **Branch** | A contributor's version, linked to the Main. One per user per UUID. |
+| **Fork** | Copying a translation to create your own Branch. |
+
+**Upload behavior:**
+
+| Situation | Result |
+|-----------|--------|
+| UUID doesn't exist on server | Creates **new Main** |
+| UUID exists, you're the owner | **Updates** your Main |
+| UUID exists, owned by someone else | **Forks** → creates your **Branch** |
+
+### Translation Quality System (H/V/A Tags)
+
+| Tag | Name | Score | Description |
+|-----|------|-------|-------------|
+| **H** | Human | 3 pts | Written by a human |
+| **V** | Validated | 2 pts | AI translation approved by human |
+| **A** | AI | 1 pt | Translated by AI |
+| **S** | Skip | — | Intentionally not translated |
+| **M** | Mod | — | Mod UI translations (internal) |
+
+**Quality Score** (0-3): `(H×3 + V×2 + A×1) / (H + V + A)`
+
+**Capture Keys Only mode** — play without translating, capture all text, then translate manually on the website for 100% human translations.
 
 ### In-Game Overlay
-- **Settings hotkey** - press F10 (configurable) to open settings
-- **First-run wizard** - guided setup on first launch
-- **AI configuration** - test connection, select model, set game context, optional API key
-- **Sync options** - configure update checking and merge behavior
-- **Translation info** - view current translation source and local changes
-- **Login/Upload** - authenticate and upload translations without leaving the game
+
+- **First-run wizard** — guided setup on first launch
+- **Settings hotkey** — F10 (configurable) opens the full settings panel
+- **Translation info** — H/V/A distribution, quality score, sync status
+- **Translation parameters** — tabs for Tools, Exclusions, Fonts (Global + Overrides), Images, Variables
+- **Merge panel** — resolve conflicts with per-entry Keep Mine / Take Server choices
+- **Status overlay** — corner notifications for updates, sync, and AI queue
 
 > **Note:** Only text displayed during gameplay is translated. Play through the game to build the translation cache.
 
@@ -43,74 +115,58 @@ A universal translation mod for Unity games with AI translation (any OpenAI-comp
 | BepInEx 6 | Mono or IL2CPP | [Bleeding Edge](https://builds.bepinex.dev/projects/bepinex_be) |
 | MelonLoader | Mono or IL2CPP | [GitHub](https://github.com/LavaGang/MelonLoader/releases) |
 
-> **BepInEx 6** is in beta but supports both Mono and IL2CPP games. Use the version matching your game type.
-
-> **Cross-platform:** UnityGameTranslator DLLs are .NET assemblies that work on Windows, macOS, and Linux. The same release package works on all platforms. Install the mod loader version matching your OS and architecture, then use the same UnityGameTranslator plugin.
-
-**How to know your game type:**
+**How to identify your game type:**
 - `GameAssembly.dll` in game folder → **IL2CPP**
 - `<Game>_Data/Managed/Assembly-CSharp.dll` → **Mono**
 
+> **Cross-platform:** The mod's DLLs are .NET assemblies that work on Windows, macOS, and Linux.
+
 ### 2. Install UnityGameTranslator
 
-**First run:** Launch the game once with the mod loader installed, then quit. This creates the required folder structure for plugins.
-
-- [BepInEx installation guide](https://docs.bepinex.dev/articles/user_guide/installation/index.html)
-- [MelonLoader installation guide](https://melonwiki.xyz/#/?id=requirements)
-
-Download the release matching your mod loader and extract to:
+Download the release matching your mod loader from [GitHub Releases](https://github.com/djethino/UnityGameTranslator/releases) and extract to:
 
 | Mod Loader | Extract to |
 |------------|------------|
 | BepInEx | `<Game>/BepInEx/plugins/UnityGameTranslator/` |
 | MelonLoader | `<Game>/Mods/` |
 
-The zip contains:
-- `UnityGameTranslator.dll` - main plugin
-- `UnityGameTranslator.Core.dll` - translation engine
-- `UniverseLib.*.dll` - UI framework (variant depends on mod loader)
-- `Newtonsoft.Json.dll` - JSON library
-- (BepInEx 5 only) `System.Buffers.dll`, `System.Memory.dll`, etc. - .NET Standard polyfills
-
 ### 3. First Launch
 
-On first launch, the mod displays a setup wizard:
-1. **Welcome screen** - introduction to the mod
-2. **Online mode** - choose to enable community features or stay offline
-3. **Settings hotkey** - pick a key to open settings (default: F10)
-4. **Translation search** - if online, search for existing translations
-5. **AI setup** - configure AI translation server and model (optional)
+The mod displays a setup wizard:
+1. **Online mode** — enable community features or stay offline
+2. **Settings hotkey** — pick a key to open settings (default: F10)
+3. **Translation search** — search for existing community translations
+4. **AI setup** — configure translation backend and model (optional)
 
-After setup, press the hotkey anytime to open settings.
+### 4. Enable translation backend (optional)
 
-### 4. Enable AI translation (optional)
+By default, the mod only uses cached/downloaded translations. To enable live translation:
 
-By default, the plugin only uses cached/downloaded translations. To enable live AI translation, you need any server that exposes the OpenAI-compatible API (`/v1/chat/completions`, `/v1/models`).
-
-#### Local servers (free, offline)
+#### Local AI servers (free, offline)
 
 | Server | Description |
 |--------|-------------|
-| [Ollama](https://ollama.ai/) | Easy to install, run `ollama pull qwen3:8b` to get started |
+| [Ollama](https://ollama.ai/) | Run `ollama pull qwen3:8b` to get started |
 | [LM Studio](https://lmstudio.ai/) | Desktop app with model browser |
 
-#### Cloud providers (requires API key)
+#### Cloud AI providers (requires API key)
 
 | Provider | Description |
 |----------|-------------|
-| [Groq](https://groq.com/) | Free tier available, very fast inference |
-| [OpenRouter](https://openrouter.ai/) | Aggregator with many models, free tier available |
+| [Groq](https://groq.com/) | Free tier available, fast inference |
+| [OpenRouter](https://openrouter.ai/) | Aggregator with many models |
 | [OpenAI](https://platform.openai.com/) | GPT models |
 
-**Setup:**
-1. Open settings (F10) → AI Translation tab
-2. Enter the server URL (e.g., `http://localhost:11434` for Ollama)
-3. Add an API key if required (cloud providers)
-4. Click **Test** to verify the connection
-5. Select a model from the dropdown
-6. Enable AI translation
+#### Commercial translation APIs
 
-> **Recommended local model:** `qwen3:8b` provides the best balance of speed, quality, and multilingual support (requires ~6-8 GB VRAM).
+| Provider | Description |
+|----------|-------------|
+| [Google Translate](https://cloud.google.com/translate) | Cloud Translation API |
+| [DeepL](https://www.deepl.com/pro-api) | Free and Pro tiers |
+
+**Setup:** Open settings (F10) → Translation tab → select backend → enter URL/key → Test → Enable.
+
+> **Recommended local model:** `qwen3:8b` — best balance of speed, quality, and multilingual support (~6-8 GB VRAM).
 
 ## Configuration
 
@@ -118,290 +174,45 @@ Config file location:
 - BepInEx: `<Game>/BepInEx/plugins/UnityGameTranslator/config.json`
 - MelonLoader: `<Game>/UserData/UnityGameTranslator/config.json`
 
+Translation cache: `translations.json` in the same folder.
+
+### Key Options
+
+| Option | Description |
+|--------|-------------|
+| `translation_backend` | `"llm"`, `"google"`, `"deepl"`, or `"none"` |
+| `target_language` | `"auto"` (system language) or specific (e.g., `"French"`) |
+| `game_context` | Game description for better AI translations (e.g., `"Medieval fantasy RPG"`) |
+| `settings_hotkey` | Key to open settings (default: `"F10"`) |
+| `online_mode` | Enable community features (sync, upload) |
+| `sync.merge_strategy` | `"ask"`, `"merge"`, or `"replace"` |
+
+### Self-Hosting
+
+Deploy your own [website instance](https://github.com/djethino/UnityGameTranslator-website), then update `Directory.Build.props` before building:
+
+```xml
+<ApiBaseUrl>https://your-server.com/api/v1</ApiBaseUrl>
+<WebsiteBaseUrl>https://your-server.com</WebsiteBaseUrl>
+<SseBaseUrl>https://sse.your-server.com</SseBaseUrl>
+```
+
+Or override at runtime in `config.json`:
 ```json
 {
-  "ai_url": "http://localhost:11434",
-  "ai_model": "",
-  "ai_api_key": null,
-  "target_language": "auto",
-  "source_language": "auto",
-  "game_context": "",
-  "enable_ai": false,
-  "normalize_numbers": true,
-  "preload_model": true,
-  "debug_ai": false,
-
-  "settings_hotkey": "F10",
-  "first_run_completed": true,
-  "online_mode": true,
-
-  "api_token": null,
-  "api_user": null,
-
-  "sync": {
-    "check_update_on_start": true,
-    "auto_download": false,
-    "notify_updates": true,
-    "check_mod_updates": true,
-    "merge_strategy": "ask",
-    "ignored_uuids": []
-  }
+  "api_base_url": "https://your-server.com/api/v1",
+  "website_base_url": "https://your-server.com"
 }
 ```
 
-> **Upgrading from v0.9.53 or earlier:** Old config fields (`ollama_url`, `enable_ollama`, `model`, `debug_ollama`) are automatically migrated on first load.
+> **Security:** Your API token is sent to the configured server. Only use trusted instances.
 
-### Translation Options
-
-| Option | Description |
-|--------|-------------|
-| `target_language` | Target language (`"auto"` = system language, or `"French"`, `"German"`, etc.) |
-| `source_language` | Source language (`"auto"` = let AI detect) |
-| `game_context` | Game description for better translations (e.g., `"Medieval fantasy RPG"`) |
-| `enable_ai` | `true` to enable live AI translation |
-| `ai_url` | URL of your OpenAI-compatible server (e.g., `"http://localhost:11434"`) |
-| `ai_model` | Model name (selected from server's `/v1/models` endpoint) |
-| `ai_api_key` | API key for cloud providers (encrypted at rest, optional for local servers) |
-| `normalize_numbers` | `true` to replace numbers with placeholders for better cache reuse |
-| `debug_ai` | `true` to log detailed AI requests/responses |
-
-### UI Options
-
-| Option | Description |
-|--------|-------------|
-| `settings_hotkey` | Key to open settings overlay (default: `F10`) |
-| `first_run_completed` | `true` after completing the setup wizard |
-| `online_mode` | `true` to enable community features (sync, upload) |
-
-### Sync Options
-
-| Option | Description |
-|--------|-------------|
-| `check_update_on_start` | Check for translation updates when game starts |
-| `auto_download` | Automatically download updates (if no conflicts) |
-| `notify_updates` | Show notification when updates are available |
-| `check_mod_updates` | Check for new mod versions on GitHub at startup |
-| `merge_strategy` | How to handle updates: `"ask"`, `"merge"`, or `"replace"` |
-| `ignored_uuids` | List of translation UUIDs to ignore updates for |
-
-### Authentication
-
-| Option | Description |
-|--------|-------------|
-| `api_token` | API token for authenticated actions (set via login flow) |
-| `api_user` | Username of logged-in user |
-
-## Community Features
-
-### Downloading Translations
-
-1. Press F10 to open settings
-2. Click "Search translations" or enable "Check updates on start"
-3. The mod searches for translations matching your game and language
-4. Select a translation to download
-
-### Uploading Translations
-
-1. Press F10 to open settings
-2. Click "Login" to authenticate via the website
-3. Enter the displayed code at the website
-4. Once logged in, click "Upload" to share your translation
-
-### Collaboration System (Main/Branch/Fork)
-
-UnityGameTranslator uses a **Main/Branch** model for collaborative translation:
-
-#### Terminology
-
-| Term | Description |
-|------|-------------|
-| **Main** | The original translation. First uploader becomes the Main owner. |
-| **Branch** | A contributor's version, linked to the Main. Each contributor has one Branch per UUID. |
-| **Fork** | The action of copying a translation to create your own Branch. |
-
-#### Roles
-
-| Role | Description |
-|------|-------------|
-| **Main owner** | You created this translation. You can update it and merge contributions from Branches. |
-| **Branch contributor** | You downloaded a translation, improved it, and uploaded your changes as a Branch. |
-| **None** | You haven't uploaded yet. Your first upload will create a Main or Branch. |
-
-#### How it works
-
-1. **First upload** → Your translation becomes the **Main** for that UUID
-2. **Download + modify + upload** → You **fork** the translation, creating your **Branch**
-3. **Main owner** can view all Branches on the website and merge contributions
-4. **Languages are locked** after first upload - source/target cannot be changed
-
-#### Upload behavior
-
-| Situation | Result |
-|-----------|--------|
-| UUID doesn't exist on server | Creates **new Main** translation |
-| UUID exists, you're the Main owner | **Updates** your Main translation |
-| UUID exists, owned by someone else | **Forks** it → creates your **Branch** |
-
-#### In the mod
-
-- Your role is shown in the main panel: "Main translation" or "Branch of @username"
-- Branch count is displayed if you're the Main owner
-- Languages become read-only in Options after your first upload
-
-### Merging Updates
-
-When a translation you downloaded has updates:
-- **Merge** - keeps your local changes + adds new entries from remote
-- **Replace** - overwrites everything with the new version
-- **Ignore** - keep your version, don't ask again for this translation
-
-The mod uses 3-way merge logic to intelligently combine changes.
-
-### Translation Quality System (H/V/A Tags)
-
-Each translation entry has a **quality tag** indicating how it was created:
-
-| Tag | Name | Description | Score Weight |
-|-----|------|-------------|--------------|
-| **H** | Human | Manually written by a human | 3 points |
-| **V** | Validated | AI translation reviewed and approved by human | 2 points |
-| **A** | AI | Automatically translated by AI | 1 point |
-
-> **Note:** Entries with tag `H` but empty value are displayed as "C" (Capture) in stats and count as 0 points until translated.
-
-**Additional tags (excluded from quality score):**
-
-| Tag | Name | Description |
-|-----|------|-------------|
-| **S** | Skip | Text intentionally not translated (e.g., alien language, Klingon, foreign text meant to stay foreign). AI decides when to skip. *Experimental.* |
-| **M** | Mod | Mod UI translations (settings panel, buttons). *Optional, internal use.* |
-
-#### Quality Score (0-3 scale)
-
-The quality score is calculated from the H/V/A distribution:
-
-```
-Score = (H×3 + V×2 + A×1) / (H + V + A)
-```
-
-| Score | Label | Meaning |
-|-------|-------|---------|
-| 2.5 - 3.0 | **Excellent** | Mostly human translations |
-| 2.0 - 2.5 | **Good** | Mix of human and validated |
-| 1.5 - 2.0 | **Fair** | Balanced mix |
-| 1.0 - 1.5 | **Basic** | Mostly AI with some review |
-| 0.0 - 1.0 | **Raw AI** | Unreviewed AI translations |
-
-#### How tags are assigned
-
-- **Capture mode**: Text saved with empty value, tag `H` (shows as `C` in stats until translated)
-- **AI translation**: AI server translates → tag `A`
-- **Manual edit**: User edits a translation in-game or on website → tag `H`
-- **Validation**: User approves AI translation on website → tag `V`
-
-#### Capture Keys Only Mode (100% Human Translation)
-
-For translators who want full control without AI:
-
-1. Open Settings (F10) → enable **"Capture keys only"**
-2. Play through the game - all text is captured but NOT translated
-3. Upload the captured file to the website
-4. Edit translations manually on the website → all entries become `H` (Human)
-5. Result: 100% human translation with **Excellent** quality score
-
-This workflow is ideal for:
-- Professional translators who don't want AI interference
-- Languages not well supported by AI
-- Games requiring specific terminology or style
-
-#### Editing on the website
-
-Translation owners can edit their translations directly on the website:
-- **Edit** any entry → changes tag to `H` (Human)
-- **Validate** AI entries → changes tag to `V` (Validated)
-- Changes sync back to the mod on next download/update check
-
-#### In the mod UI
-
-- Translation list shows: `H:150 V:50 A:300 (Fair)`
-- Status card shows visual H/V/A bar with colors
-- Quality score displayed as `1.8/3 (Fair)`
-
-### Manual Sharing
-
-Translation caches are stored in `translations.json` in the plugin folder:
-- BepInEx: `<Game>/BepInEx/plugins/UnityGameTranslator/translations.json`
-- MelonLoader: `<Game>/UserData/UnityGameTranslator/translations.json`
-
-Each file contains metadata for tracking:
-```json
-{
-  "_uuid": "unique-file-id",
-  "_game": { "name": "Game Name", "steam_id": "12345" },
-  "_source": { "site_id": 123, "uploader": "user", "hash": "sha256:..." },
-  "_local_changes": 42,
-
-  "Hello": "Bonjour",
-  "Play": "Jouer"
-}
-```
-
----
-
-## Building from source
+## Building from Source
 
 ### Prerequisites
 
 - .NET SDK 6.0+
-
-### Setup extlibs
-
-Create `extlibs/` folder with required DLLs:
-
-```
-extlibs/
-├── Unity/
-│   ├── UnityEngine.dll
-│   ├── UnityEngine.CoreModule.dll
-│   ├── UnityEngine.UI.dll
-│   ├── UnityEngine.IMGUIModule.dll
-│   ├── UnityEngine.TextRenderingModule.dll
-│   └── Unity.TextMeshPro.dll
-├── UniverseLib/
-│   └── UniverseLib.Mono.dll            # Compile-time reference for Core
-├── BepInEx5/
-│   ├── BepInEx.dll
-│   ├── 0Harmony.dll
-│   └── UniverseLib.Mono.dll
-├── BepInEx6-Mono/
-│   ├── BepInEx.Core.dll
-│   ├── BepInEx.Unity.Mono.dll
-│   ├── 0Harmony.dll
-│   └── UniverseLib.Mono.dll
-├── BepInEx6-IL2CPP/
-│   ├── BepInEx.Core.dll
-│   ├── BepInEx.Unity.IL2CPP.dll
-│   ├── Il2CppInterop.Runtime.dll
-│   ├── 0Harmony.dll
-│   └── UniverseLib.BIE.IL2CPP.Interop.dll
-├── MelonLoader-Mono/
-│   ├── MelonLoader.dll
-│   ├── 0Harmony.dll
-│   └── UniverseLib.Mono.dll
-└── MelonLoader-IL2CPP/
-    ├── MelonLoader.dll
-    ├── 0Harmony.dll
-    ├── Il2CppInterop.Runtime.dll
-    └── UniverseLib.ML.IL2CPP.Interop.dll
-```
-
-> **UniverseLib:** Build from the `UniverseLib/` submodule or download pre-built DLLs from the [yukieiji fork releases](https://github.com/yukieiji/UniverseLib/releases).
-
-**Sources:**
-- BepInEx 5: [Releases](https://github.com/BepInEx/BepInEx/releases) → `BepInEx/core/`
-- BepInEx 6: [Bleeding Edge](https://builds.bepinex.dev/projects/bepinex_be) → `BepInEx/core/`
-- MelonLoader: [Releases](https://github.com/LavaGang/MelonLoader/releases) → `MelonLoader/net6/`
-- Unity: Any Unity game → `<Game>_Data/Managed/`
+- `extlibs/` folder with Unity, BepInEx, MelonLoader, and UniverseLib DLLs (see project structure)
 
 ### Build
 
@@ -409,110 +220,51 @@ extlibs/
 ./prepare-release.ps1
 ```
 
-This script builds all projects and creates release zips in `releases/`.
-
-Or build individually:
-```bash
-dotnet build UnityGameTranslator-BepInEx5/UnityGameTranslator.BepInEx5.csproj -c Release
-dotnet build UnityGameTranslator-BepInEx6-Mono/UnityGameTranslator.BepInEx6Mono.csproj -c Release
-dotnet build UnityGameTranslator-BepInEx6-IL2CPP/UnityGameTranslator.BepInEx6IL2CPP.csproj -c Release
-dotnet build UnityGameTranslator-MelonLoader-Mono/UnityGameTranslator.MelonLoaderMono.csproj -c Release
-dotnet build UnityGameTranslator-MelonLoader-IL2CPP/UnityGameTranslator.MelonLoaderIL2CPP.csproj -c Release
-```
-
-Output DLLs are in each project's `bin/` folder.
-
-### Versioning & Self-Hosting
-
-Configuration is centralized in `Directory.Build.props`:
-
-```xml
-<PropertyGroup>
-  <Version>0.9.54</Version>
-  <!-- Change these URLs to use your own instance (AGPL compliance) -->
-  <ApiBaseUrl>https://unitygametranslator.asymptomatikgames.com/api/v1</ApiBaseUrl>
-  <WebsiteBaseUrl>https://unitygametranslator.asymptomatikgames.com</WebsiteBaseUrl>
-  <SseBaseUrl>https://sse-unitygametranslator.asymptomatikgames.com</SseBaseUrl>
-</PropertyGroup>
-```
-
-**To self-host:** Deploy your own [website instance](https://github.com/djethino/UnityGameTranslator-website), then update `ApiBaseUrl` and `WebsiteBaseUrl` before building.
-
-**Runtime override (advanced):** Users can also override URLs without recompiling by editing `config.json`:
-
-```json
-{
-  "api_base_url": "https://my-server.com/api/v1",
-  "website_base_url": "https://my-server.com"
-}
-```
-
-> ⚠️ **Security note:** Your API token will be sent to the configured server. Only use trusted instances.
+Creates release zips in `releases/` for all 5 mod loader variants.
 
 ### Project Structure
 
 ```
 UnityGameTranslator/
 ├── UnityGameTranslator.Core/           # Shared translation engine
-│   ├── TranslatorCore.cs               # Main logic, config, AI API (OpenAI-compatible)
-│   ├── TranslatorPatches.cs            # Harmony patches for text
-│   ├── TranslatorScanner.cs            # Scene scanning for UI
-│   ├── UI/                             # UniverseLib uGUI overlay system
-│   │   ├── TranslatorUIManager.cs      # Panel manager, hotkey handling
-│   │   ├── UIStyles.cs                 # Centralized styles and colors
-│   │   └── Panels/                     # UI panels
-│   │       ├── WizardPanel.cs          # First-run setup wizard
-│   │       ├── MainPanel.cs            # Main settings panel
-│   │       ├── OptionsPanel.cs         # Configuration options
-│   │       ├── LoginPanel.cs           # Device flow authentication
-│   │       ├── UploadPanel.cs          # Upload translations
-│   │       ├── UploadSetupPanel.cs     # Upload configuration (game, languages)
-│   │       ├── MergePanel.cs           # 3-way merge conflict resolution
-│   │       ├── LanguagePanel.cs        # Language selection
-│   │       ├── ConfirmationPanel.cs    # User confirmations
-│   │       └── StatusOverlay.cs        # Corner notifications (updates, sync)
+│   ├── TranslatorCore.cs               # Main logic, config, translation cache
+│   ├── TranslatorPatches.cs            # Harmony patches for text interception
+│   ├── TranslatorScanner.cs            # Scene scanning for UI components
+│   ├── FontManager.cs                  # Font detection, replacement, scaling, overrides
+│   ├── ImageReplacer.cs                # Sprite/image replacement for bitmap text
+│   ├── VariableManager.cs              # Dynamic variable extraction
 │   ├── ApiClient.cs                    # HTTP client for website API
-│   ├── GameDetector.cs                 # Game identification
-│   ├── GitHubUpdateChecker.cs          # GitHub releases update checker
-│   ├── TranslationMerger.cs            # 3-way merge logic
-│   └── TokenProtection.cs              # AES-256 token encryption
+│   ├── SseClient.cs                    # SSE streaming for real-time sync
+│   ├── TranslationMerger.cs            # 3-way merge with tag awareness
+│   ├── GameDetector.cs                 # Game identification (Steam ID, product name)
+│   ├── GitHubUpdateChecker.cs          # Mod version update checker
+│   ├── TokenProtection.cs              # AES-256 token encryption
+│   └── UI/                             # UniverseLib uGUI overlay
+│       ├── Panels/                     # 12 panels (wizard, settings, merge, inspector...)
+│       └── Components/                 # Reusable UI components
 ├── UniverseLib/                        # Git submodule (yukieiji fork)
-├── UnityGameTranslator-BepInEx5/       # BepInEx 5 adapter
-├── UnityGameTranslator-BepInEx6-Mono/  # BepInEx 6 Mono adapter
-├── UnityGameTranslator-BepInEx6-IL2CPP/# BepInEx 6 IL2CPP adapter
-├── UnityGameTranslator-MelonLoader-Mono/   # MelonLoader Mono adapter
-├── UnityGameTranslator-MelonLoader-IL2CPP/ # MelonLoader IL2CPP adapter
-├── extlibs/                            # External DLLs (Unity, BepInEx, UniverseLib)
-├── releases/                           # Build output
-└── Directory.Build.props               # Shared version + API URLs
+├── UnityGameTranslator-BepInEx5/       # BepInEx 5 adapter (Mono)
+├── UnityGameTranslator-BepInEx6-Mono/  # BepInEx 6 adapter (Mono)
+├── UnityGameTranslator-BepInEx6-IL2CPP/# BepInEx 6 adapter (IL2CPP)
+├── UnityGameTranslator-MelonLoader-Mono/    # MelonLoader adapter (Mono)
+├── UnityGameTranslator-MelonLoader-IL2CPP/  # MelonLoader adapter (IL2CPP)
+└── Directory.Build.props               # Version + API URLs
 ```
-
-> **UI System:** The mod uses [UniverseLib](https://github.com/yukieiji/UniverseLib) (yukieiji fork) for its overlay UI. This provides a unified uGUI-based interface that works on both Mono and IL2CPP Unity games, avoiding IMGUI crashes on IL2CPP.
-
----
 
 ## Acknowledgments
 
-UnityGameTranslator is built on the shoulders of amazing open-source projects:
-
-- **[UniverseLib](https://github.com/yukieiji/UniverseLib)** by sinai-dev & yukieiji - UI framework for Unity mods
-- **[BepInEx](https://github.com/BepInEx/BepInEx)** - Unity plugin framework
-- **[MelonLoader](https://github.com/LavaGang/MelonLoader)** by LavaGang - Universal Unity mod loader
-- **[Harmony](https://github.com/pardeike/Harmony)** by Andreas Pardeike - Runtime method patching
-- **[Newtonsoft.Json](https://github.com/JamesNK/Newtonsoft.Json)** by James Newton-King - JSON framework
-- **[OpenAI API](https://platform.openai.com/docs/api-reference)** - Standard API format supported by all major AI providers
-
-Special thanks to the Unity modding community for documentation, tutorials, and support.
+- **[UniverseLib](https://github.com/yukieiji/UniverseLib)** by sinai-dev & yukieiji — UI framework for Unity mods
+- **[BepInEx](https://github.com/BepInEx/BepInEx)** — Unity plugin framework
+- **[MelonLoader](https://github.com/LavaGang/MelonLoader)** by LavaGang — Universal Unity mod loader
+- **[Harmony](https://github.com/pardeike/Harmony)** by Andreas Pardeike — Runtime method patching
+- **[Newtonsoft.Json](https://github.com/JamesNK/Newtonsoft.Json)** by James Newton-King — JSON framework
 
 See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for full license details.
 
----
-
 ## License
 
-This project is dual-licensed:
-
-- **Open Source:** [AGPL-3.0](LICENSE) - Free for open source use
-- **Commercial:** Contact us for proprietary/commercial use
+Dual-licensed:
+- **Open Source:** [AGPL-3.0](LICENSE)
+- **Commercial:** Contact us for proprietary use
 
 See [LICENSING.md](LICENSING.md) for details.

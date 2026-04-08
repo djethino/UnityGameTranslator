@@ -2,7 +2,7 @@
 
 **Website:** [unitygametranslator.asymptomatikgames.com](https://unitygametranslator.asymptomatikgames.com)
 
-A universal translation mod for Unity games. Supports AI translation (any OpenAI-compatible server), Google Translate, DeepL, and community-shared translations. Works fully offline with a local AI server like Ollama or LM Studio — no API key, no internet, no cost.
+A universal translation mod for Unity games. Translate using AI (any OpenAI-compatible server — Ollama, LM Studio, Groq, Gemini, OpenAI, and more), Google Translate, DeepL, or download community translations. Works fully offline with a local AI server — no API key, no internet, no cost. Supports all writing systems and any language direction.
 
 ## Features
 
@@ -18,7 +18,7 @@ A universal translation mod for Unity games. Supports AI translation (any OpenAI
 
 | Backend | Description |
 |---------|-------------|
-| **AI (LLM)** | Any OpenAI-compatible server — local (Ollama, LM Studio) or cloud (Groq, OpenRouter, OpenAI) |
+| **AI (LLM)** | Any OpenAI-compatible server — local or cloud (Ollama, LM Studio, Groq, Gemini, OpenAI, OpenRouter, and any other compatible provider) |
 | **Google Translate** | Google Cloud Translation API |
 | **DeepL** | DeepL API (Free and Pro tiers) |
 | **None** | Only use cached/downloaded translations |
@@ -31,7 +31,7 @@ A universal translation mod for Unity games. Supports AI translation (any OpenAI
 
 ### Font System
 - Automatic font detection (TextMeshPro, Unity UI.Text)
-- Fallback fonts for non-Latin scripts (Chinese, Arabic, Hindi, etc.)
+- Fallback fonts for any writing system — Latin, CJK, Arabic, Devanagari, Cyrillic, Thai, Hebrew, and more
 - Per-font scaling and enable/disable
 - **Font overrides by pattern** — override size for specific UI elements (tables, titles, tooltips)
   - Add overrides via inspector click, text search, or manual pattern
@@ -142,20 +142,22 @@ The mod displays a setup wizard:
 
 By default, the mod only uses cached/downloaded translations. To enable live translation:
 
-#### Local AI servers (free, offline)
+#### AI Translation (OpenAI-compatible API)
 
-| Server | Description |
-|--------|-------------|
-| [Ollama](https://ollama.ai/) | Run `ollama pull qwen3:8b` to get started |
-| [LM Studio](https://lmstudio.ai/) | Desktop app with model browser |
+The mod works with **any server that exposes the OpenAI-compatible API** (`/v1/chat/completions`). This includes local servers, cloud providers, and an ever-growing list of AI platforms.
 
-#### Cloud AI providers (requires API key)
+**Examples (non-exhaustive):**
 
-| Provider | Description |
-|----------|-------------|
-| [Groq](https://groq.com/) | Free tier available, fast inference |
-| [OpenRouter](https://openrouter.ai/) | Aggregator with many models |
-| [OpenAI](https://platform.openai.com/) | GPT models |
+| Server | URL to enter | API key |
+|--------|-------------|---------|
+| [Ollama](https://ollama.ai/) (local) | `http://localhost:11434` | None |
+| [LM Studio](https://lmstudio.ai/) (local) | `http://localhost:1234` | None |
+| [Groq](https://groq.com/) | `https://api.groq.com/openai` | Required (free tier) |
+| [OpenRouter](https://openrouter.ai/) | `https://openrouter.ai/api` | Required (free tier) |
+| [OpenAI](https://platform.openai.com/) | `https://api.openai.com` | Required |
+| [Google Gemini](https://ai.google.dev/) | `https://generativelanguage.googleapis.com/v1beta/openai` | Required (free tier) |
+
+> **URL resolution:** The mod auto-appends `/v1/chat/completions` if the URL doesn't already end with `/completions`. If your provider has a non-standard URL, enter the full path up to `/chat/completions`.
 
 #### Commercial translation APIs
 

@@ -485,6 +485,23 @@ namespace UnityGameTranslator.Core
         /// Patterns: "Canvas/Chat/**" matches any child, "**/PlayerName" matches at any depth.
         /// An exact path also matches all children (excluding "Canvas/Panel" excludes "Canvas/Panel/Text").
         /// </summary>
+        /// <summary>
+        /// Find the original key for a translated text value.
+        /// Searches TranslationCache for an entry whose Value matches the given translated text.
+        /// Returns null if not found (text might be the original itself).
+        /// </summary>
+        public static string FindOriginalKey(string translatedText)
+        {
+            if (string.IsNullOrEmpty(translatedText)) return null;
+
+            foreach (var kvp in TranslationCache)
+            {
+                if (kvp.Value != null && kvp.Value.Value == translatedText)
+                    return kvp.Key;
+            }
+            return null;
+        }
+
         public static bool MatchesExclusionPattern(string path, string pattern)
         {
             if (string.IsNullOrEmpty(pattern)) return false;

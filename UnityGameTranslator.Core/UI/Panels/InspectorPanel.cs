@@ -18,7 +18,8 @@ namespace UnityGameTranslator.Core.UI.Panels
     {
         Exclusion,
         BitmapReplace,
-        FontOverride
+        FontOverride,
+        TextEdit
     }
 
     /// <summary>
@@ -59,6 +60,11 @@ namespace UnityGameTranslator.Core.UI.Panels
         private ButtonRef _markReplaceBtn;
         private GameObject _imageActionsRow;
         private Text _spriteInfoLabel;
+
+        // UI elements — TextEdit mode
+        private GameObject _textEditRow;
+        private GameObject _textEditListContent;
+        private Text _textEditCountLabel;
 
         // Camera selection for world-space raycast
         private Components.SearchableDropdown _cameraDropdown;
@@ -698,6 +704,22 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             _imageActionsRow.SetActive(false); // Hidden by default (exclusion mode)
 
+            // TextEdit mode — scrollable list of child texts
+            _textEditRow = UIFactory.CreateVerticalGroup(card, "TextEditRow", false, false, true, true, 4);
+            UIFactory.SetLayoutElement(_textEditRow, flexibleWidth: 9999, flexibleHeight: 9999);
+
+            _textEditCountLabel = UIFactory.CreateLabel(_textEditRow, "TextEditCount", "", TextAnchor.MiddleLeft);
+            _textEditCountLabel.fontSize = UIStyles.FontSizeSmall;
+            _textEditCountLabel.color = UIStyles.TextSecondary;
+            UIFactory.SetLayoutElement(_textEditCountLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+
+            var textEditScroll = UIFactory.CreateScrollView(_textEditRow, "TextEditScroll", out _textEditListContent, out _);
+            UIFactory.SetLayoutElement(textEditScroll, minHeight: 120, flexibleHeight: 9999, flexibleWidth: 9999);
+            UIStyles.SetBackground(textEditScroll, UIStyles.InputBackground);
+            UIFactory.SetLayoutGroup<VerticalLayoutGroup>(_textEditListContent, false, false, true, true, 5, 5, 5, 5, 5);
+
+            _textEditRow.SetActive(false); // Hidden by default
+
             // Shared clear selection button
             var actionRow2 = UIStyles.CreateFormRow(card, "ActionRow2", UIStyles.ButtonHeight, 5);
 
@@ -839,18 +861,20 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             bool isImage = _currentMode == InspectorMode.BitmapReplace;
             bool isFontOverride = _currentMode == InspectorMode.FontOverride;
+            bool isTextEdit = _currentMode == InspectorMode.TextEdit;
 
             // Update title
             if (_titleLabel != null)
                 _titleLabel.text = isImage ? "Image Inspector"
                     : isFontOverride ? "Font Override — Click on an element"
+                    : isTextEdit ? "Text Editor — Click on text to edit"
                     : "Element Inspector";
 
-            // Toggle action button visibility
-            // FontOverride mode: hide both exclusion and image actions (click auto-adds and returns)
-            if (_exclusionActionsRow != null) _exclusionActionsRow.SetActive(!isImage && !isFontOverride);
+            // Toggle action button visibility per mode
+            if (_exclusionActionsRow != null) _exclusionActionsRow.SetActive(!isImage && !isFontOverride && !isTextEdit);
             if (_imageActionsRow != null) _imageActionsRow.SetActive(isImage);
             if (_spriteInfoLabel != null) _spriteInfoLabel.gameObject.SetActive(isImage);
+            if (_textEditRow != null) _textEditRow.SetActive(false); // Shown only after clicking a text
 
             // Refresh camera list
             RefreshCameraList();
@@ -955,8 +979,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 if (_mainPanelWasOpen)
                 {
                     TranslatorUIManager.MainPanel?.SetActive(true);
-                    _mainPanelWasOpen = false;
                 }
+                _mainPanelWasOpen = false;
             }
         }
 
@@ -1033,7 +1057,11 @@ namespace UnityGameTranslator.Core.UI.Panels
                     _selectedPathLabel.fontStyle = FontStyle.Normal;
                     _cancelBtn.Component.interactable = true;
 
-                    if (_currentMode == InspectorMode.FontOverride)
+                    if (_currentMode == InspectorMode.TextEdit)
+                    {
+                        ShowTextEditUI(hitObject, path);
+                    }
+                    else if (_currentMode == InspectorMode.FontOverride)
                     {
                         // Font override mode: add override for parent path with /** to cover siblings
                         // e.g. "Canvas/Panel/Table/Text" → "path:Canvas/Panel/Table/**"
@@ -1275,6 +1303,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             _cancelBtn.Component.interactable = false;
             if (_spriteInfoLabel != null) _spriteInfoLabel.text = "";
             if (_selectedHighlight != null) _selectedHighlight.gameObject.SetActive(false);
+
+            // Clear TextEdit UI
+            if (_textEditRow != null) _textEditRow.SetActive(false);
+            if (_textEditListContent != null)
+            {
+                for (int i = _textEditListContent.transform.childCount - 1; i >= 0; i--)
+                    UnityEngine.Object.Destroy(_textEditListContent.transform.GetChild(i).gameObject);
+            }
         }
 
         private void OnExcludeThisClicked()
@@ -1381,6 +1417,199 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         #endregion
 
+        #region TextEdit Mode
+
+        private void ShowTextEditUI(GameObject hitObject, string path)
+        {
+            if (_textEditRow == null || _textEditListContent == null) return;
+
+            var textEntries = new List<(object component, string text, string originalKey, string tag, string childPath)>();
+
+            // Try the clicked path, then walk up the hierarchy until we find text components
+            string searchPath = path;
+            for (int attempt = 0; attempt < 3 && textEntries.Count == 0; attempt++)
+            {
+                FindTextComponentsAtPath(searchPath, textEntries);
+
+                if (textEntries.Count == 0)
+                {
+                    // Go up one level
+                    int lastSlash = searchPath.LastIndexOf('/');
+                    if (lastSlash <= 0) break;
+                    searchPath = searchPath.Substring(0, lastSlash);
+                }
+            }
+
+            if (textEntries.Count == 0)
+            {
+                _statusLabel.text = "No text components found";
+                _statusLabel.color = UIStyles.StatusWarning;
+                return;
+            }
+
+            // Clear previous entries
+            for (int i = _textEditListContent.transform.childCount - 1; i >= 0; i--)
+                UnityEngine.Object.Destroy(_textEditListContent.transform.GetChild(i).gameObject);
+
+            // Show the edit UI
+            _textEditRow.SetActive(true);
+            _textEditCountLabel.text = $"{textEntries.Count} text(s) found:";
+
+            // Create an editable row for each text
+            for (int i = 0; i < textEntries.Count; i++)
+            {
+                CreateTextEditRow(textEntries[i]);
+            }
+
+            _statusLabel.text = "Edit translations and click Save";
+            _statusLabel.color = UIStyles.TextSecondary;
+        }
+
+        /// <summary>
+        /// Find all text components whose path matches or is a child of the given path.
+        /// Uses FindAllObjectsOfType (IL2CPP-safe).
+        /// </summary>
+        private void FindTextComponentsAtPath(string pathPrefix,
+            List<(object component, string text, string originalKey, string tag, string childPath)> results)
+        {
+            var seenIds = new HashSet<int>();
+
+            var textTypes = new List<Type>();
+            if (TypeHelper.UI_TextType != null) textTypes.Add(TypeHelper.UI_TextType);
+            if (TypeHelper.TMP_TextType != null) textTypes.Add(TypeHelper.TMP_TextType);
+
+            foreach (var textType in textTypes)
+            {
+                var allComponents = TypeHelper.FindAllObjectsOfType(textType);
+                if (allComponents == null) continue;
+
+                for (int i = 0; i < allComponents.Length; i++)
+                {
+                    var obj = allComponents[i];
+                    if (obj == null) continue;
+                    try
+                    {
+                        Component comp = obj as Component;
+                        if (comp == null)
+                            comp = TypeHelper.Il2CppCast(obj, typeof(Component)) as Component;
+                        if (comp == null || comp.gameObject == null) continue;
+
+                        int id = comp.GetInstanceID();
+                        if (seenIds.Contains(id)) continue;
+                        if (TranslatorCore.IsOwnUI(comp)) continue;
+
+                        string compPath = TranslatorCore.GetGameObjectPath(comp.gameObject);
+                        if (compPath != pathPrefix && !compPath.StartsWith(pathPrefix + "/"))
+                            continue;
+
+                        string text = TypeHelper.GetText(obj);
+                        if (string.IsNullOrEmpty(text)) continue;
+
+                        seenIds.Add(id);
+
+                        string originalKey = TranslatorCore.FindOriginalKey(text);
+                        string tag = "—";
+                        string translation = text;
+
+                        if (originalKey != null)
+                        {
+                            if (TranslatorCore.TranslationCache.TryGetValue(originalKey, out var entry))
+                            {
+                                translation = entry.Value;
+                                tag = entry.Tag ?? "A";
+                            }
+                        }
+                        else
+                        {
+                            originalKey = text;
+                            if (TranslatorCore.TranslationCache.TryGetValue(text, out var entry))
+                            {
+                                translation = entry.Value;
+                                tag = entry.Tag ?? "A";
+                            }
+                        }
+
+                        results.Add((obj, translation, originalKey, tag, compPath));
+                    }
+                    catch { }
+                }
+            }
+        }
+
+        private void CreateTextEditRow((object component, string text, string originalKey, string tag, string childPath) entry)
+        {
+            var row = UIFactory.CreateVerticalGroup(_textEditListContent, "TextEditEntry", false, false, true, true, 3);
+            UIFactory.SetLayoutElement(row, flexibleWidth: 9999);
+            UIStyles.SetBackground(row, UIStyles.CardBackground);
+
+            // Original key (truncated)
+            string keySnippet = entry.originalKey.Length > 60
+                ? entry.originalKey.Substring(0, 60) + "..."
+                : entry.originalKey;
+            var keyLabel = UIFactory.CreateLabel(row, "Key", $"[{entry.tag}] {keySnippet}", TextAnchor.UpperLeft);
+            keyLabel.fontSize = UIStyles.FontSizeSmall;
+            keyLabel.color = UIStyles.TextMuted;
+            UIFactory.SetLayoutElement(keyLabel.gameObject, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999);
+
+            // Editable translation field
+            var input = UIFactory.CreateInputField(row, "TranslationInput", "Enter translation...");
+            UIFactory.SetLayoutElement(input.Component.gameObject, minHeight: 40, flexibleWidth: 9999);
+            UIStyles.SetBackground(input.Component.gameObject, UIStyles.InputBackground);
+            input.Component.lineType = UnityEngine.UI.InputField.LineType.MultiLineNewline;
+            input.Text = entry.text;
+
+            // Buttons row
+            var btnRow = UIFactory.CreateHorizontalGroup(row, "BtnRow", false, false, true, true, 4);
+            UIFactory.SetLayoutElement(btnRow, minHeight: UIStyles.RowHeightNormal, flexibleWidth: 9999);
+
+            // Capture for closures
+            string capturedKey = entry.originalKey;
+            object capturedComponent = entry.component;
+
+            var saveBtn = UIFactory.CreateButton(btnRow, "SaveBtn", "Save (H)");
+            UIFactory.SetLayoutElement(saveBtn.Component.gameObject, minWidth: 80, minHeight: UIStyles.RowHeightNormal);
+            UIStyles.SetBackground(saveBtn.Component.gameObject, UIStyles.ButtonSuccess);
+            saveBtn.OnClick += () =>
+            {
+                string newValue = input.Text;
+                if (string.IsNullOrEmpty(newValue)) return;
+
+                if (TranslatorCore.TranslationCache.TryGetValue(capturedKey, out var existing))
+                {
+                    existing.Value = newValue;
+                    existing.Tag = "H";
+                }
+                else
+                {
+                    TranslatorCore.TranslationCache[capturedKey] = new TranslationEntry { Value = newValue, Tag = "H" };
+                }
+
+                TranslatorCore.RecalculateLocalChanges();
+                TranslatorCore.SaveCache();
+
+                // Apply immediately to the component
+                try { TypeHelper.SetText(capturedComponent, newValue); } catch { }
+
+                _statusLabel.text = "Saved!";
+                _statusLabel.color = UIStyles.StatusSuccess;
+                keyLabel.text = $"[H] {keySnippet}";
+            };
+
+            var retranslateBtn = UIFactory.CreateButton(btnRow, "RetranslateBtn", "Retranslate (AI)");
+            UIFactory.SetLayoutElement(retranslateBtn.Component.gameObject, minWidth: 110, minHeight: UIStyles.RowHeightNormal);
+            retranslateBtn.OnClick += () =>
+            {
+                TranslatorCore.TranslationCache.Remove(capturedKey);
+                TranslatorCore.QueueForTranslation(capturedKey);
+
+                _statusLabel.text = "Queued for AI...";
+                _statusLabel.color = UIStyles.TextAccent;
+                keyLabel.text = $"[AI...] {keySnippet}";
+            };
+        }
+
+        #endregion
+
         private void OnStopClicked()
         {
             SetActive(false);
@@ -1390,6 +1619,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TranslatorUIManager.TranslationParamsPanel?.OpenOnBitmapReplaceTab();
             else if (_currentMode == InspectorMode.FontOverride)
                 TranslatorUIManager.TranslationParamsPanel?.OpenOnFontOverridesTab();
+            else if (_currentMode == InspectorMode.TextEdit)
+                TranslatorUIManager.TranslationParamsPanel?.OpenOnToolsTab();
             else
                 TranslatorUIManager.TranslationParamsPanel?.OpenOnExclusionsTab();
         }

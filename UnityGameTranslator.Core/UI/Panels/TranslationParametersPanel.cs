@@ -97,7 +97,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _tabBar.CreateUI(scrollContent);
 
             // Create tab contents
-            var behaviorTab = _tabBar.AddTab("Behavior");
+            var behaviorTab = _tabBar.AddTab("Tools");
             var exclusionsTab = _tabBar.AddTab("Exclusions");
             var fontsTab = _tabBar.AddTab("Fonts");
             var imagesTab = _tabBar.AddTab("Images");
@@ -136,11 +136,25 @@ namespace UnityGameTranslator.Core.UI.Panels
             RegisterUIText(_applyBtn.ButtonText);
         }
 
-        #region Behavior Tab
+        #region Tools Tab (formerly Behavior)
 
         private void CreateBehaviorTabContent(GameObject parent)
         {
-            var card = CreateAdaptiveCard(parent, "BehaviorCard", PanelWidth - 60, stretchVertically: true);
+            var card = CreateAdaptiveCard(parent, "ToolsCard", PanelWidth - 60, stretchVertically: true);
+
+            // Text Editor section
+            var editorTitle = UIStyles.CreateSectionTitle(card, "TextEditorLabel", "Text Editor");
+            RegisterUIText(editorTitle);
+
+            var editorHint = UIStyles.CreateHint(card, "TextEditorHint",
+                "Click on any text in-game to edit its translation or retranslate it with AI.");
+            RegisterUIText(editorHint);
+
+            var editorBtn = CreatePrimaryButton(card, "TextEditorBtn", "Start Text Editor", PanelWidth - 100);
+            editorBtn.OnClick += OnStartTextEditorClicked;
+            RegisterUIText(editorBtn.ButtonText);
+
+            UIStyles.CreateSpacer(card, 15);
 
             // Detection section
             var sectionTitle = UIStyles.CreateSectionTitle(card, "DetectionLabel", "Detection");
@@ -179,6 +193,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Listeners for Apply button
             UIHelpers.AddToggleListener(_typewritingDetectionToggle, (val) => UpdateApplyButtonText());
             UIHelpers.AddToggleListener(_concatDetectionToggle, (val) => UpdateApplyButtonText());
+        }
+
+        private void OnStartTextEditorClicked()
+        {
+            SetActive(false);
+            TranslatorUIManager.OpenInspectorPanel(InspectorMode.TextEdit);
         }
 
         #endregion
@@ -294,15 +314,20 @@ namespace UnityGameTranslator.Core.UI.Panels
             RefreshImageReplacementsList();
         }
 
+        public void OpenOnToolsTab()
+        {
+            SetActive(true);
+            _tabBar?.SelectTab("Tools");
+            if (UIRoot != null) UIRoot.transform.SetAsLastSibling();
+        }
+
         public void OpenOnFontOverridesTab()
         {
             SetActive(true);
             _tabBar?.SelectTab("Fonts");
             _fontsSubTabBar?.SelectTab("Overrides");
             RefreshFontOverridesList();
-            // Bring to front (MainPanel may have been restored by inspector closing)
-            if (UIRoot != null)
-                UIRoot.transform.SetAsLastSibling();
+            if (UIRoot != null) UIRoot.transform.SetAsLastSibling();
         }
 
         private void OnStartInspectorClicked()
@@ -779,9 +804,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             _fontsSubTabBar?.SelectTab("Overrides");
             // THEN add the new rule (on top of initialized state)
             AddFontOverrideForPath(path);
-            // Bring ourselves to front (MainPanel may have been restored by inspector's SetActive(false))
-            if (UIRoot != null)
-                UIRoot.transform.SetAsLastSibling();
+            // Ensure we're in front of MainPanel (which may have been restored)
+            if (UIRoot != null) UIRoot.transform.SetAsLastSibling();
         }
 
         private void OnAddManualFontOverride()

@@ -2038,6 +2038,11 @@ namespace UnityGameTranslator.Core
             if (url.EndsWith("/v1"))
                 return url + "/" + trimmedPath;
 
+            // URL ends with /openai (e.g., Gemini: .../v1beta/openai) — append path directly
+            // These providers expose the OpenAI-compatible API without a /v1 prefix
+            if (url.EndsWith("/openai"))
+                return url + "/" + trimmedPath;
+
             // Default — add /v1/ prefix to path (backwards compatible: Ollama, etc.)
             return url + "/v1/" + trimmedPath;
         }

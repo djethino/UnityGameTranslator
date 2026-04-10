@@ -125,10 +125,12 @@ A universal translation mod for Unity games. Translate using AI (any OpenAI-comp
 
 Download the release matching your mod loader from [GitHub Releases](https://github.com/djethino/UnityGameTranslator/releases) and extract to:
 
-| Mod Loader | Extract to |
-|------------|------------|
-| BepInEx | `<Game>/BepInEx/plugins/UnityGameTranslator/` |
-| MelonLoader | `<Game>/Mods/` |
+| Mod Loader | Extract DLLs to | User data (config, translations, fonts, images) |
+|------------|-----------------|--------------------------------------------------|
+| BepInEx | `<Game>/BepInEx/plugins/UnityGameTranslator/` | Same folder as the DLL |
+| MelonLoader | `<Game>/Mods/` (DLLs directly, **no subfolder**) | `<Game>/UserData/UnityGameTranslator/` |
+
+> **MelonLoader warning:** Do NOT place the DLLs inside `Mods/UnityGameTranslator/`. MelonLoader only scans the root `Mods/` folder and will not find mods inside subdirectories.
 
 ### 3. First Launch
 
@@ -188,6 +190,23 @@ Translation cache: `translations.json` in the same folder.
 | `settings_hotkey` | Key to open settings (default: `"F10"`) |
 | `online_mode` | Enable community features (sync, upload) |
 | `sync.merge_strategy` | `"ask"`, `"merge"`, or `"replace"` |
+
+### External Resources (Fonts & Images)
+
+UnityGameTranslator can use custom fonts and replacement images to improve translation quality — especially useful for languages with characters not supported by the game's default font, or when translating text baked into images (logos, buttons, title screens).
+
+**Where to place external resources:**
+
+| Mod Loader | Fonts folder | Images folder |
+|------------|--------------|---------------|
+| BepInEx | `<Game>/BepInEx/plugins/UnityGameTranslator/fonts/` | `<Game>/BepInEx/plugins/UnityGameTranslator/images/` |
+| MelonLoader | `<Game>/UserData/UnityGameTranslator/fonts/` | `<Game>/UserData/UnityGameTranslator/images/` |
+
+**Custom fonts** — drop `.ttf` or `.otf` files into the `fonts/` folder. The filename (without extension) becomes the font name shown in the Translation Parameters panel. Assign per UI element or globally.
+
+**Replacement images** — drop `.png` files (with transparency) into the `images/` folder. Use the in-game image capture feature to export existing sprites, edit them externally, then save the modified versions back.
+
+External resources are fully optional. The mod works perfectly without them.
 
 ### Self-Hosting
 

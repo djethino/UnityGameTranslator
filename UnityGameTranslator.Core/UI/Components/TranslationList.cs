@@ -269,9 +269,12 @@ namespace UnityGameTranslator.Core.UI.Components
 
             // Details row with quality stats (vote count is now in vote buttons)
             string qualityText = FormatQualityStats(translation);
-            var detailsLabel = UIFactory.CreateLabel(infoCol, "Details",
-                $"{translation.LineCount} lines | {qualityText}",
-                TextAnchor.MiddleLeft);
+            string detailsText = $"{translation.LineCount} lines | {qualityText}";
+            if (!string.IsNullOrEmpty(translation.ResourcesUrl))
+            {
+                detailsText += " | + Resources";
+            }
+            var detailsLabel = UIFactory.CreateLabel(infoCol, "Details", detailsText, TextAnchor.MiddleLeft);
             detailsLabel.fontSize = UIStyles.FontSizeHint;
             detailsLabel.color = UIStyles.TextMuted;
             UIFactory.SetLayoutElement(detailsLabel.gameObject, minHeight: UIStyles.RowHeightSmall);

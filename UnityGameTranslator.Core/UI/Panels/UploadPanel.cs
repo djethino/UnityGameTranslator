@@ -261,7 +261,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                             Uploader = TranslatorCore.Config.api_user,
                             Type = result.ExistingTranslation?.Type,
                             Notes = result.ExistingTranslation?.Notes,
-                            Hash = result.ExistingTranslation?.FileHash
+                            Hash = result.ExistingTranslation?.FileHash,
+                            ResourcesUrl = result.ExistingTranslation?.ResourcesUrl
                         };
 
                         // Capture for closure
@@ -476,7 +477,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                         Uploader = TranslatorCore.Config.api_user,
                         Hash = result.FileHash,
                         // Type is now auto-calculated by server from HVASM tags
-                        Notes = notes
+                        Notes = notes,
+                        ResourcesUrl = string.IsNullOrEmpty(resourcesUrl) ? null : resourcesUrl
                     };
                     TranslatorCore.LastSyncedHash = result.FileHash;
                     TranslatorCore.ResetMetadataDirty();

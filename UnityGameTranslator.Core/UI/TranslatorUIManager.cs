@@ -408,6 +408,7 @@ namespace UnityGameTranslator.Core.UI
                     serverState.Hash = translation["file_hash"]?.Value<string>();
                     serverState.Type = translation["type"]?.Value<string>();
                     serverState.Notes = translation["notes"]?.Value<string>();
+                    serverState.ResourcesUrl = translation["resources_url"]?.Value<string>();
                 }
                 else if (main != null && main.Type != JTokenType.Null)
                 {
@@ -415,6 +416,7 @@ namespace UnityGameTranslator.Core.UI
                     serverState.Uploader = main["uploader"]?.Value<string>();
                     serverState.MainUsername = main["uploader"]?.Value<string>();
                     serverState.Hash = main["file_hash"]?.Value<string>();
+                    serverState.ResourcesUrl = main["resources_url"]?.Value<string>();
                 }
 
                 TranslatorCore.ServerState = serverState;
@@ -1079,6 +1081,7 @@ namespace UnityGameTranslator.Core.UI
             var translationFileHash = translation.FileHash;
             var translationType = translation.Type;
             var translationNotes = translation.Notes;
+            var translationResourcesUrl = translation.ResourcesUrl;
             var translationSourceLang = translation.SourceLanguage;
             var translationTargetLang = translation.TargetLanguage;
 
@@ -1118,6 +1121,7 @@ namespace UnityGameTranslator.Core.UI
                             Hash = fileHash ?? translationFileHash,
                             Type = translationType,
                             Notes = translationNotes,
+                            ResourcesUrl = translationResourcesUrl,
                             SourceLanguage = translationSourceLang,
                             TargetLanguage = translationTargetLang
                         };
@@ -1175,6 +1179,7 @@ namespace UnityGameTranslator.Core.UI
             var translationFileHash = translation.FileHash;
             var translationType = translation.Type;
             var translationNotes = translation.Notes;
+            var translationResourcesUrl = translation.ResourcesUrl;
 
             try
             {
@@ -1228,7 +1233,8 @@ namespace UnityGameTranslator.Core.UI
                             Uploader = translationUploader,
                             Hash = fileHash ?? translationFileHash,
                             Type = translationType,
-                            Notes = translationNotes
+                            Notes = translationNotes,
+                            ResourcesUrl = translationResourcesUrl
                         };
 
                         if (mergeResult.ConflictCount > 0)

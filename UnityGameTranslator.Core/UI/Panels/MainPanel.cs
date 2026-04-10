@@ -47,6 +47,12 @@ namespace UnityGameTranslator.Core.UI.Panels
         private Text _syncStatusLabel;
         private Text _aiStatusLabel;
 
+        // UI references - Resources link
+        private GameObject _resourcesLinkSection;
+        private Text _resourcesByLabel;
+        private Text _resourcesUrlLabel;
+        private ButtonRef _resourcesLinkBtn;
+
         // UI references - Actions section
         private ButtonRef _uploadBtn;
         private Text _uploadHintLabel;
@@ -261,6 +267,17 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
         }
 
+        private void OnResourcesLinkClicked()
+        {
+            var serverState = TranslatorCore.ServerState;
+            string url = serverState?.ResourcesUrl;
+            if (!string.IsNullOrEmpty(url))
+            {
+                TranslatorCore.LogInfo($"[MainPanel] Opening external resources: {url}");
+                Application.OpenURL(url);
+            }
+        }
+
         private void CreateLoginCTASection(GameObject parent)
         {
             // Login CTA - prominent call-to-action for not logged in users
@@ -309,6 +326,51 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Create StatusCard widget
             _statusCard = new StatusCard();
             _statusCard.CreateUI(_statusSection);
+
+            // External Resources section (visible only when ResourcesUrl is set)
+            _resourcesLinkSection = UIFactory.CreateVerticalGroup(_statusSection, "ResourcesLinkSection", false, false, true, true, 2);
+            UIFactory.SetLayoutElement(_resourcesLinkSection, flexibleWidth: 9999);
+            UIStyles.SetBackground(_resourcesLinkSection, UIStyles.CardBackground);
+            var rlPadding = _resourcesLinkSection.GetComponent<VerticalLayoutGroup>();
+            if (rlPadding != null)
+                rlPadding.padding = new RectOffset(8, 8, 6, 6);
+
+            // "External Resources uploaded by @username"
+            _resourcesByLabel = UIFactory.CreateLabel(_resourcesLinkSection, "ResourcesByLabel",
+                "External Resources", TextAnchor.MiddleLeft);
+            _resourcesByLabel.fontStyle = FontStyle.Bold;
+            _resourcesByLabel.fontSize = UIStyles.FontSizeSmall;
+            _resourcesByLabel.color = UIStyles.TextPrimary;
+            UIFactory.SetLayoutElement(_resourcesByLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+
+            // URL displayed in full (so user sees where they're going)
+            _resourcesUrlLabel = UIFactory.CreateLabel(_resourcesLinkSection, "ResourcesUrlLabel",
+                "", TextAnchor.MiddleLeft);
+            _resourcesUrlLabel.fontSize = UIStyles.FontSizeHint;
+            _resourcesUrlLabel.color = UIStyles.TextAccent;
+            UIFactory.SetLayoutElement(_resourcesUrlLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+
+            // Open button (centered)
+            var openBtnRow = UIFactory.CreateHorizontalGroup(_resourcesLinkSection, "OpenBtnRow", false, false, true, true, 0);
+            UIFactory.SetLayoutElement(openBtnRow, minHeight: UIStyles.RowHeightLarge, flexibleWidth: 9999);
+            var openBtnLayout = openBtnRow.GetComponent<HorizontalLayoutGroup>();
+            if (openBtnLayout != null) openBtnLayout.childAlignment = TextAnchor.MiddleCenter;
+
+            _resourcesLinkBtn = CreateSecondaryButton(openBtnRow, "ResourcesOpenBtn", "Open in Browser", 140);
+            UIStyles.SetBackground(_resourcesLinkBtn.Component.gameObject, UIStyles.ButtonLink);
+            _resourcesLinkBtn.OnClick += OnResourcesLinkClicked;
+            RegisterUIText(_resourcesLinkBtn.ButtonText);
+
+            // Disclaimer
+            var disclaimer = UIFactory.CreateLabel(_resourcesLinkSection, "ResourcesDisclaimer",
+                "Third-party content. We are not responsible for external links.",
+                TextAnchor.MiddleLeft);
+            disclaimer.fontSize = UIStyles.FontSizeHint;
+            disclaimer.color = UIStyles.TextMuted;
+            UIFactory.SetLayoutElement(disclaimer.gameObject, minHeight: UIStyles.RowHeightSmall);
+            RegisterUIText(disclaimer);
+
+            _resourcesLinkSection.SetActive(false);
         }
 
         private void CreateTranslationInfoSection(GameObject parent)
@@ -850,6 +912,22 @@ namespace UnityGameTranslator.Core.UI.Panels
                 default:
                     _statusCard.ConfigureAsNoLocal();
                     break;
+            }
+
+            // Show/hide external resources link
+            if (_resourcesLinkSection != null)
+            {
+                string resourcesUrl = serverState?.ResourcesUrl;
+                bool hasResources = !string.IsNullOrEmpty(resourcesUrl);
+                _resourcesLinkSection.SetActive(hasResources);
+                if (hasResources)
+                {
+                    string uploader = serverState?.Uploader;
+                    _resourcesByLabel.text = !string.IsNullOrEmpty(uploader)
+                        ? $"External Resources uploaded by @{uploader}"
+                        : "External Resources";
+                    _resourcesUrlLabel.text = resourcesUrl;
+                }
             }
         }
 

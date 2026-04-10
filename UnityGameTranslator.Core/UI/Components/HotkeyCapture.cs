@@ -26,6 +26,7 @@ namespace UnityGameTranslator.Core.UI.Components
         private bool _alt;
         private bool _shift;
         private bool _isCapturing;
+        private ButtonRef _clearButton;
 
         // Callback
         private Action<string> _onHotkeyChanged;
@@ -41,12 +42,20 @@ namespace UnityGameTranslator.Core.UI.Components
         public bool IsCapturing => _isCapturing;
 
         /// <summary>
-        /// Get the full hotkey string (e.g., "Ctrl+Alt+F10").
+        /// Sentinel label shown on the key button when the hotkey is disabled (no key set).
+        /// </summary>
+        private const string EmptyKeyLabel = "None";
+
+        /// <summary>
+        /// Get the full hotkey string (e.g., "Ctrl+Alt+F10"), or empty string when disabled.
         /// </summary>
         public string HotkeyString
         {
             get
             {
+                if (string.IsNullOrEmpty(_key) || _key == EmptyKeyLabel)
+                    return "";
+
                 string result = "";
                 if (_ctrl) result += "Ctrl+";
                 if (_alt) result += "Alt+";
@@ -104,14 +113,34 @@ namespace UnityGameTranslator.Core.UI.Components
             plusLabel.color = UIStyles.TextMuted;
             UIFactory.SetLayoutElement(plusLabel.gameObject, minWidth: UIStyles.ToggleControlWidth);
 
-            _keyButton = UIFactory.CreateButton(modContainer, "KeyButton", _key);
+            string initialKeyLabel = string.IsNullOrEmpty(_key) ? EmptyKeyLabel : _key;
+            _keyButton = UIFactory.CreateButton(modContainer, "KeyButton", initialKeyLabel);
             UIFactory.SetLayoutElement(_keyButton.Component.gameObject, minWidth: UIStyles.SmallButtonWidth, minHeight: UIStyles.SmallButtonHeight);
             _keyButton.OnClick += StartCapture;
+            ApplyKeyButtonStyle();
+
+            _clearButton = UIFactory.CreateButton(modContainer, "KeyClearBtn", "X");
+            UIFactory.SetLayoutElement(_clearButton.Component.gameObject, minWidth: 24, minHeight: UIStyles.SmallButtonHeight);
+            _clearButton.OnClick += ClearHotkey;
 
             if (includeDisplayLabel)
             {
                 _displayLabel = UIStyles.CreateHint(parent, "HotkeyHint", "Click button and press a key to change");
             }
+        }
+
+        /// <summary>
+        /// Clears the hotkey (disables it). HotkeyString becomes empty.
+        /// </summary>
+        public void ClearHotkey()
+        {
+            _key = "";
+            _ctrl = false;
+            _alt = false;
+            _shift = false;
+            _isCapturing = false;
+            UpdateUI();
+            NotifyChange();
         }
 
         /// <summary>
@@ -152,6 +181,8 @@ namespace UnityGameTranslator.Core.UI.Components
 
                     if (_keyButton != null)
                         _keyButton.ButtonText.text = _key;
+
+                    ApplyKeyButtonStyle();
 
                     if (_displayLabel != null)
                         _displayLabel.text = "Click button and press a key to change";
@@ -195,10 +226,11 @@ namespace UnityGameTranslator.Core.UI.Components
         {
             if (string.IsNullOrEmpty(hotkeyString))
             {
+                // Disabled state — no modifiers, no key.
                 _ctrl = false;
                 _alt = false;
                 _shift = false;
-                _key = "F10";
+                _key = "";
                 return;
             }
 
@@ -216,7 +248,22 @@ namespace UnityGameTranslator.Core.UI.Components
             if (_ctrlToggle != null) _ctrlToggle.isOn = _ctrl;
             if (_altToggle != null) _altToggle.isOn = _alt;
             if (_shiftToggle != null) _shiftToggle.isOn = _shift;
-            if (_keyButton != null) _keyButton.ButtonText.text = _key;
+            if (_keyButton != null) _keyButton.ButtonText.text = string.IsNullOrEmpty(_key) ? EmptyKeyLabel : _key;
+            ApplyKeyButtonStyle();
+        }
+
+        /// <summary>
+        /// Styles the key button text based on whether a key is configured.
+        /// Configured hotkeys are highlighted (accent color, bold) for readability;
+        /// unconfigured ones stay muted to signal "disabled".
+        /// </summary>
+        private void ApplyKeyButtonStyle()
+        {
+            if (_keyButton == null || _keyButton.ButtonText == null) return;
+
+            bool hasKey = !string.IsNullOrEmpty(_key);
+            _keyButton.ButtonText.color = hasKey ? UIStyles.TextAccent : UIStyles.TextMuted;
+            _keyButton.ButtonText.fontStyle = hasKey ? FontStyle.Bold : FontStyle.Italic;
         }
 
         private void NotifyChange()

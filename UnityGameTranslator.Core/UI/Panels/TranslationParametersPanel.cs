@@ -52,6 +52,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         // Fonts section
         private GameObject _fontsListContainer;
         private Text _fontsStatusLabel;
+        private Toggle _enableFontReplacementToggle;
         private string[] _systemFonts;
         private List<SearchableDropdown> _fallbackDropdowns = new List<SearchableDropdown>();
 
@@ -62,6 +63,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         // Images section
         private GameObject _imagesListContainer;
         private Text _imagesStatusLabel;
+        private Toggle _enableImageReplacementToggle;
 
         // Variables section
         private GameObject _variablesListContainer;
@@ -631,6 +633,16 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             var explainHint = UIStyles.CreateHint(card, "FontsHint", "Configure translation for detected fonts. Add fallback fonts for non-Latin scripts (Hindi, Arabic, Chinese, etc.). Settings are saved with translations.");
             RegisterUIText(explainHint);
+
+            UIStyles.CreateSpacer(card, 5);
+
+            // Debug toggle: globally disable font replacement (for translators).
+            var fontEnableObj = UIFactory.CreateToggle(card, "EnableFontReplacementToggle", out _enableFontReplacementToggle, out var fontEnableLabel);
+            fontEnableLabel.text = " Enable font replacement (uncheck to debug with original fonts)";
+            fontEnableLabel.color = UIStyles.TextSecondary;
+            UIHelpers.AddToggleListener(_enableFontReplacementToggle, OnEnableFontReplacementChanged);
+            UIFactory.SetLayoutElement(fontEnableObj, minHeight: UIStyles.RowHeightNormal);
+            RegisterUIText(fontEnableLabel);
 
             UIStyles.CreateSpacer(card, 10);
 
@@ -1507,6 +1519,16 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             UIStyles.CreateSpacer(card, 5);
 
+            // Debug toggle: globally disable image replacement (for translators).
+            var imgEnableObj = UIFactory.CreateToggle(card, "EnableImageReplacementToggle", out _enableImageReplacementToggle, out var imgEnableLabel);
+            imgEnableLabel.text = " Enable image replacement (uncheck to debug with original images)";
+            imgEnableLabel.color = UIStyles.TextSecondary;
+            UIHelpers.AddToggleListener(_enableImageReplacementToggle, OnEnableImageReplacementChanged);
+            UIFactory.SetLayoutElement(imgEnableObj, minHeight: UIStyles.RowHeightNormal);
+            RegisterUIText(imgEnableLabel);
+
+            UIStyles.CreateSpacer(card, 5);
+
             // Start Image Inspector button
             var inspectorBtn = CreatePrimaryButton(card, "ImageInspectorBtn", "Start Image Inspector", PanelWidth - 100);
             inspectorBtn.OnClick += OnStartImageInspectorClicked;
@@ -1926,8 +1948,40 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
         }
 
+        /// <summary>
+        /// Reloads UI state from current config (debug toggles mainly).
+        /// Called externally when a hotkey flips the config flag, so the panel stays in sync.
+        /// Also resets the dirty-tracking snapshot (the hotkey already saved the config).
+        /// </summary>
+        public void RefreshFromConfig()
+        {
+            if (_enableFontReplacementToggle != null)
+                _enableFontReplacementToggle.isOn = TranslatorCore.Config.enable_font_replacement;
+            if (_enableImageReplacementToggle != null)
+                _enableImageReplacementToggle.isOn = TranslatorCore.Config.enable_image_replacement;
+
+            UpdateApplyButtonText();
+        }
+
+        private void OnEnableFontReplacementChanged(bool enabled)
+        {
+            // Just notify the Apply button — actual application happens on Apply.
+            UpdateApplyButtonText();
+        }
+
+        private void OnEnableImageReplacementChanged(bool enabled)
+        {
+            UpdateApplyButtonText();
+        }
+
         private void LoadCurrentState()
         {
+            // Debug toggles
+            if (_enableFontReplacementToggle != null)
+                _enableFontReplacementToggle.isOn = TranslatorCore.Config.enable_font_replacement;
+            if (_enableImageReplacementToggle != null)
+                _enableImageReplacementToggle.isOn = TranslatorCore.Config.enable_image_replacement;
+
             // Refresh UI lists
             try { RefreshExclusionsList(); }
             catch (Exception ex) { TranslatorCore.LogWarning($"[TranslationParametersPanel] RefreshExclusionsList failed: {ex.Message}"); }
@@ -2023,6 +2077,32 @@ namespace UnityGameTranslator.Core.UI.Panels
                 if (_concatDetectionToggle != null)
                     TranslatorCore.ConcatDetection = _concatDetectionToggle.isOn;
 
+                // Apply debug toggles — only act when the value actually changed, to avoid
+                // unnecessarily restoring/applying when the user didn't touch these.
+                if (_enableFontReplacementToggle != null)
+                {
+                    bool fontEnabled = _enableFontReplacementToggle.isOn;
+                    if (fontEnabled != TranslatorCore.Config.enable_font_replacement)
+                    {
+                        TranslatorCore.Config.enable_font_replacement = fontEnabled;
+                        if (!fontEnabled)
+                            FontManager.RestoreAllOriginalFonts();
+                    }
+                }
+
+                if (_enableImageReplacementToggle != null)
+                {
+                    bool imgEnabled = _enableImageReplacementToggle.isOn;
+                    if (imgEnabled != TranslatorCore.Config.enable_image_replacement)
+                    {
+                        TranslatorCore.Config.enable_image_replacement = imgEnabled;
+                        if (imgEnabled)
+                            ImageReplacer.ApplyToScene();
+                        else
+                            ImageReplacer.RestoreAllOriginalImages();
+                    }
+                }
+
                 TranslatorCore.SaveConfig();
                 TranslatorCore.SaveCache(); // saves _settings to translations.json
 
@@ -2105,6 +2185,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Behavior settings
             if (_typewritingDetectionToggle != null && _typewritingDetectionToggle.isOn != TranslatorCore.TypewritingDetection) count++;
             if (_concatDetectionToggle != null && _concatDetectionToggle.isOn != TranslatorCore.ConcatDetection) count++;
+
+            // Debug toggles (persisted in config.json)
+            if (_enableFontReplacementToggle != null && _enableFontReplacementToggle.isOn != TranslatorCore.Config.enable_font_replacement) count++;
+            if (_enableImageReplacementToggle != null && _enableImageReplacementToggle.isOn != TranslatorCore.Config.enable_image_replacement) count++;
 
             return count;
         }

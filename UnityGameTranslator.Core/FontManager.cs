@@ -1735,6 +1735,10 @@ namespace UnityGameTranslator.Core
         {
             if (component == null || string.IsNullOrEmpty(originalFontName)) return;
 
+            // Debug toggle: skip font replacement entirely (original fonts stay).
+            if (TranslatorCore.Config != null && !TranslatorCore.Config.enable_font_replacement)
+                return;
+
             // Fast check: already replaced this component (skip all reflection)
             int instanceId = TypeHelper.GetInstanceID(component);
             if (instanceId != -1 && _fontReplacedComponentIds.Contains(instanceId))
@@ -1814,6 +1818,103 @@ namespace UnityGameTranslator.Core
                 _originalFontsPerComponent.Remove(instanceId);
                 _fontReplacedComponentIds.Remove(instanceId);
             }
+        }
+
+        /// <summary>
+        /// Restore ALL font modifications done by the mod, covering the three code paths:
+        ///   1. Normal TMP  — per-component SetFont replacement (tracked in _replacedComponentRefs)
+        ///   2. TMProOld    — fallback asset added to game font's fallbackFontAssetTable
+        ///                    (tracked in _fallbackAppliedFonts)
+        ///   3. Unity Text  — direct modification of game font's fontNames[] array
+        ///                    (tracked in _originalFontNames)
+        /// Used when the debug toggle is turned off at runtime.
+        /// </summary>
+        public static void RestoreAllOriginalFonts()
+        {
+            int restoredComponents = 0;
+            int removedFallbacks = 0;
+            int restoredFontNames = 0;
+
+            // --- Path 1: per-component replacements (Normal TMP path) ---
+            var componentIds = new List<int>(_replacedComponentRefs.Keys);
+            foreach (var id in componentIds)
+            {
+                if (_replacedComponentRefs.TryGetValue(id, out var component))
+                {
+                    try
+                    {
+                        RestoreOriginalFont(component);
+                        restoredComponents++;
+                    }
+                    catch (Exception ex)
+                    {
+                        TranslatorCore.LogWarning($"[FontManager] RestoreAll (component) error: {ex.Message}");
+                    }
+                }
+            }
+            _replacedComponentRefs.Clear();
+
+            // --- Path 2: TMProOld fallback assets added to game fonts ---
+            // Snapshot keys because RemoveFallbackFromFont doesn't mutate but we'll clear at the end.
+            var fallbackApplied = new List<string>(_fallbackAppliedFonts);
+            foreach (var fontName in fallbackApplied)
+            {
+                try
+                {
+                    if (TranslatorCore.FontSettingsMap.TryGetValue(fontName, out var settings) &&
+                        !string.IsNullOrEmpty(settings.fallback))
+                    {
+                        RemoveFallbackFromFont(fontName, settings.fallback);
+                        removedFallbacks++;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    TranslatorCore.LogWarning($"[FontManager] RestoreAll (fallback) error: {ex.Message}");
+                }
+            }
+            _fallbackAppliedFonts.Clear();
+
+            // --- Path 3: Unity Text fontNames[] modifications (IL2CPP path) ---
+            var fontNameKeys = new List<string>(_originalFontNames.Keys);
+            foreach (var fontName in fontNameKeys)
+            {
+                try
+                {
+                    // RestoreOriginalFontNames internally removes the entry from _originalFontNames
+                    RestoreOriginalFontNames(fontName);
+                    restoredFontNames++;
+                }
+                catch (Exception ex)
+                {
+                    TranslatorCore.LogWarning($"[FontManager] RestoreAll (fontNames) error: {ex.Message}");
+                }
+            }
+
+            // Invalidate every cache that could make the scanner or the Harmony patches
+            // think a component is already processed. This mirrors what UpdateFontSettings()
+            // does on a per-font basis — without it, the patches short-circuit on
+            // _fontReplacedComponentIds.Contains(id) and nothing gets re-evaluated,
+            // which is exactly the "font toggle does nothing at runtime" bug.
+            foreach (var clone in _unityFallbackFonts.Values)
+            {
+                if (clone != null)
+                    _cloneToOriginal.Remove(clone.GetInstanceID());
+            }
+            _unityFallbackFonts.Clear();
+            _failedFallbackFontNames.Clear();
+            _knownCharsPerClone.Clear();
+            _knownCharsStringCache.Clear();
+            _preWarmedClones.Clear();
+            _excludedCharsPerClone.Clear();
+            _originalFontsPerComponent.Clear();
+            _fontReplacedComponentIds.Clear();
+
+            // Scanner caches: processed text hashes must be cleared so the scanner
+            // re-evaluates every component on the next pass.
+            TranslatorScanner.ClearProcessedCache();
+
+            TranslatorCore.LogInfo($"[FontManager] Restore summary: {restoredComponents} component(s), {removedFallbacks} fallback(s), {restoredFontNames} fontNames array(s). Caches invalidated.");
         }
 
         /// <summary>
@@ -1916,6 +2017,13 @@ namespace UnityGameTranslator.Core
             if (!_detectedTMPFontObjects.ContainsKey(fontName))
                 _detectedTMPFontObjects[fontName] = fontObj;
 
+            // Debug toggle: skip fallback injection entirely (original fonts stay).
+            // Without this check, TMProOld patches would modify the game font's
+            // fallbackFontAssetTable regardless of the flag, making the Hollow Knight
+            // startup case not respect enable_font_replacement.
+            if (TranslatorCore.Config != null && !TranslatorCore.Config.enable_font_replacement)
+                return;
+
             // Fast path: already applied
             if (_fallbackAppliedFonts.Contains(fontName)) return;
 
@@ -1972,44 +2080,62 @@ namespace UnityGameTranslator.Core
         /// </summary>
         /// <summary>
         /// Force all UI.Text components using this font to re-render.
-        /// Sets font to null then back to force Unity to drop cached glyphs.
+        /// Must use each component's actual type for reflection (IL2CPP-safe):
+        /// on IL2CPP, typeof(UnityEngine.UI.Text) differs from the object's runtime type
+        /// (Il2CppUnityEngine.UI.Text), which causes "Object does not match target type".
         /// </summary>
         private static void ForceRefreshUITextFont(Font targetFont, string fontName)
         {
             try
             {
-                // All access via reflection to avoid IL2CPP JIT crashes on stripped methods
-                var textType = typeof(UnityEngine.UI.Text);
-                var fontProp = textType.GetProperty("font", BindingFlags.Public | BindingFlags.Instance);
-                var setDirtyMethod = textType.GetMethod("SetVerticesDirty", BindingFlags.Public | BindingFlags.Instance);
-                var setLayoutDirty = textType.GetMethod("SetLayoutDirty", BindingFlags.Public | BindingFlags.Instance);
-
-                if (fontProp == null) return;
-
+                var textType = TypeHelper.UI_TextType ?? typeof(UnityEngine.UI.Text);
                 var allTexts = TypeHelper.FindAllObjectsOfType(textType);
                 int refreshed = 0;
+
                 foreach (var textObj in allTexts)
                 {
                     if (textObj == null) continue;
-                    var currentFont = fontProp.GetValue(textObj, null);
-                    if (currentFont == null) continue;
 
-                    string currentName = (currentFont is UnityEngine.Object co) ? co.name : null;
-                    if (currentFont != targetFont && currentName != fontName) continue;
-
-                    // Bump fontSize by 1 to force Unity to re-rasterize with new fontNames.
-                    // ApplyFontScale will correct it back on the next text processing cycle.
-                    float origSize = TypeHelper.GetFontSize(textObj);
-                    if (origSize > 0)
+                    try
                     {
-                        TranslatorPatches.BypassFontSizePrefix = true;
-                        TypeHelper.SetFontSize(textObj, origSize + 1);
-                        TranslatorPatches.BypassFontSizePrefix = false;
-                    }
+                        // Use the actual runtime type — on IL2CPP this is Il2CppUnityEngine.UI.Text,
+                        // on Mono it's UnityEngine.UI.Text. Reflection on the object's own type
+                        // avoids the "Object does not match target type" reflection error.
+                        var actualType = textObj.GetType();
+                        var fontProp = actualType.GetProperty("font", BindingFlags.Public | BindingFlags.Instance);
+                        if (fontProp == null) continue;
 
-                    setDirtyMethod?.Invoke(textObj, null);
-                    setLayoutDirty?.Invoke(textObj, null);
-                    refreshed++;
+                        var currentFont = fontProp.GetValue(textObj, null);
+                        if (currentFont == null) continue;
+
+                        string currentName = (currentFont is UnityEngine.Object co) ? co.name : null;
+                        // Match by reference OR name — targetFont may not be the exact same instance
+                        // (e.g. after a restore, we still want to refresh the same-named font)
+                        bool matches = (currentFont == (object)targetFont) || (currentName == fontName);
+                        if (!matches) continue;
+
+                        // Bump fontSize by 1 to force Unity to re-rasterize with the new fontNames.
+                        // ApplyFontScale will correct it back on the next text processing cycle.
+                        float origSize = TypeHelper.GetFontSize(textObj);
+                        if (origSize > 0)
+                        {
+                            TranslatorPatches.BypassFontSizePrefix = true;
+                            TypeHelper.SetFontSize(textObj, origSize + 1);
+                            TranslatorPatches.BypassFontSizePrefix = false;
+                        }
+
+                        // SetVerticesDirty / SetLayoutDirty — also use the actual type.
+                        var setDirty = actualType.GetMethod("SetVerticesDirty", BindingFlags.Public | BindingFlags.Instance);
+                        var setLayoutDirty = actualType.GetMethod("SetLayoutDirty", BindingFlags.Public | BindingFlags.Instance);
+                        setDirty?.Invoke(textObj, null);
+                        setLayoutDirty?.Invoke(textObj, null);
+                        refreshed++;
+                    }
+                    catch (Exception inner)
+                    {
+                        // Swallow per-component errors so one broken component doesn't stop the loop.
+                        TranslatorCore.LogDebug($"[FontManager] ForceRefreshUITextFont per-item error: {inner.Message}");
+                    }
                 }
 
                 // Clear font size cache so ApplyFontScale re-reads and corrects sizes
@@ -2310,6 +2436,10 @@ namespace UnityGameTranslator.Core
             if (string.IsNullOrEmpty(originalFontName))
                 return null;
 
+            // Debug toggle: skip replacement (original font stays).
+            if (TranslatorCore.Config != null && !TranslatorCore.Config.enable_font_replacement)
+                return null;
+
             // Check if fallback is configured for this font
             if (!TranslatorCore.FontSettingsMap.TryGetValue(originalFontName, out var settings))
                 return null;
@@ -2526,6 +2656,10 @@ namespace UnityGameTranslator.Core
         public static object GetTMPReplacementFont(string originalFontName)
         {
             if (string.IsNullOrEmpty(originalFontName))
+                return null;
+
+            // Debug toggle: skip replacement (original font stays).
+            if (TranslatorCore.Config != null && !TranslatorCore.Config.enable_font_replacement)
                 return null;
 
             // Check if fallback is configured for this font

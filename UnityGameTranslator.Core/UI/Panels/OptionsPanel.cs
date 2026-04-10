@@ -50,6 +50,17 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         // Hotkey section
         private HotkeyCapture _hotkeyCapture;
+        // Additional hotkeys — all blank by default, for advanced users.
+        private HotkeyCapture _hotkeyToggleTranslations;
+        private HotkeyCapture _hotkeyToggleAI;
+        private HotkeyCapture _hotkeyToggleImages;
+        private HotkeyCapture _hotkeyToggleFonts;
+        private HotkeyCapture _hotkeyToggleOverlay;
+        private HotkeyCapture _hotkeyOpenInspector;
+        private HotkeyCapture _hotkeyOpenUpload;
+        private HotkeyCapture _hotkeyOpenExclusion;
+        private HotkeyCapture _hotkeyOpenTextEditor;
+        private HotkeyCapture _hotkeyForceScan;
 
         // Translation section
         private Toggle _captureKeysOnlyToggle;
@@ -113,6 +124,16 @@ namespace UnityGameTranslator.Core.UI.Panels
             public string source_language;
             public string target_language;
             public string settings_hotkey;
+            public string toggle_translations_hotkey;
+            public string toggle_ai_hotkey;
+            public string toggle_images_hotkey;
+            public string toggle_fonts_hotkey;
+            public string toggle_overlay_hotkey;
+            public string open_inspector_hotkey;
+            public string open_upload_hotkey;
+            public string open_exclusion_mode_hotkey;
+            public string open_text_editor_hotkey;
+            public string force_scan_hotkey;
             public bool capture_keys_only;
             public string translation_backend;
             public string ai_url;
@@ -142,6 +163,16 @@ namespace UnityGameTranslator.Core.UI.Panels
                     source_language = TranslatorCore.Config.source_language ?? "auto",
                     target_language = TranslatorCore.Config.target_language ?? "auto",
                     settings_hotkey = TranslatorCore.Config.settings_hotkey ?? "F10",
+                    toggle_translations_hotkey = TranslatorCore.Config.toggle_translations_hotkey ?? "",
+                    toggle_ai_hotkey = TranslatorCore.Config.toggle_ai_hotkey ?? "",
+                    toggle_images_hotkey = TranslatorCore.Config.toggle_images_hotkey ?? "",
+                    toggle_fonts_hotkey = TranslatorCore.Config.toggle_fonts_hotkey ?? "",
+                    toggle_overlay_hotkey = TranslatorCore.Config.toggle_overlay_hotkey ?? "",
+                    open_inspector_hotkey = TranslatorCore.Config.open_inspector_hotkey ?? "",
+                    open_upload_hotkey = TranslatorCore.Config.open_upload_hotkey ?? "",
+                    open_exclusion_mode_hotkey = TranslatorCore.Config.open_exclusion_mode_hotkey ?? "",
+                    open_text_editor_hotkey = TranslatorCore.Config.open_text_editor_hotkey ?? "",
+                    force_scan_hotkey = TranslatorCore.Config.force_scan_hotkey ?? "",
                     capture_keys_only = TranslatorCore.Config.capture_keys_only,
                     translation_backend = TranslatorCore.Config.translation_backend ?? "none",
                     ai_url = TranslatorCore.Config.ai_url ?? "http://localhost:11434",
@@ -191,6 +222,16 @@ namespace UnityGameTranslator.Core.UI.Panels
             _sourceLanguageDropdown = new SearchableDropdown("SourceLang", _sourceLanguages, "auto (Detect)", popupHeight: 250, showSearch: true);
             _targetLanguageDropdown = new SearchableDropdown("TargetLang", _languages, "auto (System)", popupHeight: 250, showSearch: true);
             _hotkeyCapture = new HotkeyCapture("F10");
+            _hotkeyToggleTranslations = new HotkeyCapture("");
+            _hotkeyToggleAI = new HotkeyCapture("");
+            _hotkeyToggleImages = new HotkeyCapture("");
+            _hotkeyToggleFonts = new HotkeyCapture("");
+            _hotkeyToggleOverlay = new HotkeyCapture("");
+            _hotkeyOpenInspector = new HotkeyCapture("");
+            _hotkeyOpenUpload = new HotkeyCapture("");
+            _hotkeyOpenExclusion = new HotkeyCapture("");
+            _hotkeyOpenTextEditor = new HotkeyCapture("");
+            _hotkeyForceScan = new HotkeyCapture("");
 
             // Use scrollable layout - content scrolls if needed, buttons stay fixed
             CreateScrollablePanelLayout(out var scrollContent, out var buttonRow, PanelWidth - 40);
@@ -402,13 +443,56 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             UIStyles.CreateSpacer(card, 15);
 
-            // Placeholder for future hotkeys
-            var futureLabel = UIFactory.CreateLabel(card, "FutureLabel", "More hotkeys coming soon...", TextAnchor.MiddleCenter);
-            futureLabel.color = UIStyles.TextMuted;
-            futureLabel.fontSize = UIStyles.FontSizeSmall;
-            futureLabel.fontStyle = FontStyle.Italic;
-            UIFactory.SetLayoutElement(futureLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
-            RegisterUIText(futureLabel);
+            // Additional hotkeys (all disabled by default — click X to clear)
+            var extraTitle = UIStyles.CreateSectionTitle(card, "ExtraHotkeysLabel", "Additional Hotkeys");
+            RegisterUIText(extraTitle);
+
+            var extraHint = UIStyles.CreateHint(card, "ExtraHotkeysHint", "Optional shortcuts. All disabled by default to avoid conflicts with game controls. Click X to clear a hotkey.");
+            RegisterUIText(extraHint);
+
+            UIStyles.CreateSpacer(card, 5);
+
+            // --- Toggles (actions that turn things on/off) ---
+            CreateHotkeyRow(card, "Toggle translations", "Turn all translations on/off (restores original text)", _hotkeyToggleTranslations);
+            CreateHotkeyRow(card, "Toggle translation backend", "Pause/resume live translation calls (cache stays intact)", _hotkeyToggleAI);
+            CreateHotkeyRow(card, "Toggle image replacement", "Debug: show original images instead of replacements", _hotkeyToggleImages);
+            CreateHotkeyRow(card, "Toggle font replacement", "Debug: show original fonts instead of fallbacks", _hotkeyToggleFonts);
+            CreateHotkeyRow(card, "Toggle notifications", "Show/hide the corner notification overlay (for clean screenshots)", _hotkeyToggleOverlay);
+
+            UIStyles.CreateSpacer(card, 10);
+
+            // --- Quick access (open/close panels) ---
+            CreateHotkeyRow(card, "Toggle Inspector", "Open/close the element inspector panel", _hotkeyOpenInspector);
+            CreateHotkeyRow(card, "Toggle Upload", "Open/close the translation upload panel", _hotkeyOpenUpload);
+            CreateHotkeyRow(card, "Toggle Exclusion mode", "Open/close the inspector in exclusion mode", _hotkeyOpenExclusion);
+            CreateHotkeyRow(card, "Toggle Text editor", "Open/close the in-game text editor (click UI text to edit)", _hotkeyOpenTextEditor);
+
+            UIStyles.CreateSpacer(card, 10);
+
+            // --- Utilities ---
+            CreateHotkeyRow(card, "Force scene rescan", "Re-scan the current scene (useful after scene glitches)", _hotkeyForceScan);
+        }
+
+        /// <summary>
+        /// Creates one row per hotkey: label + hint + HotkeyCapture component.
+        /// </summary>
+        private void CreateHotkeyRow(GameObject parent, string label, string hint, HotkeyCapture capture)
+        {
+            var row = UIFactory.CreateVerticalGroup(parent, $"HotkeyRow_{label}", false, false, true, true, 2);
+            UIFactory.SetLayoutElement(row, flexibleWidth: 9999);
+
+            var labelUi = UIFactory.CreateLabel(row, "RowLabel", label, TextAnchor.MiddleLeft);
+            labelUi.fontStyle = FontStyle.Bold;
+            labelUi.color = UIStyles.TextPrimary;
+            UIFactory.SetLayoutElement(labelUi.gameObject, minHeight: UIStyles.RowHeightSmall);
+            RegisterUIText(labelUi);
+
+            var hintUi = UIStyles.CreateHint(row, "RowHint", hint);
+            RegisterUIText(hintUi);
+
+            capture.CreateUI(row, includeDisplayLabel: false);
+
+            UIStyles.CreateSpacer(parent, 6);
         }
 
         private void CreateTranslationTabContent(GameObject parent)
@@ -762,6 +846,16 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             base.Update();
             _hotkeyCapture?.Update();
+            _hotkeyToggleTranslations?.Update();
+            _hotkeyToggleAI?.Update();
+            _hotkeyToggleImages?.Update();
+            _hotkeyToggleFonts?.Update();
+            _hotkeyToggleOverlay?.Update();
+            _hotkeyOpenInspector?.Update();
+            _hotkeyOpenUpload?.Update();
+            _hotkeyOpenExclusion?.Update();
+            _hotkeyOpenTextEditor?.Update();
+            _hotkeyForceScan?.Update();
 
             // Poll toggle/dropdown state changes to update Apply button text.
             // We cannot use onValueChanged.AddListener on toggles because it fails on IL2CPP
@@ -771,6 +865,22 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 UpdateApplyButtonText();
             }
+        }
+
+        /// <summary>
+        /// Reload the UI from the current config.
+        /// Called when the config is modified externally (e.g. via hotkey toggles) so
+        /// the Options panel stays in sync without forcing the user to reopen it.
+        /// Safe to call even when the panel UI isn't built yet — it's a no-op in that case.
+        /// </summary>
+        public void RefreshFromConfig()
+        {
+            // Guard: UI might not be constructed yet (e.g. early mod init)
+            if (_enableTranslationsToggle == null) return;
+
+            LoadCurrentSettings();
+            _initialSnapshot = ConfigSnapshot.FromConfig();
+            UpdateApplyButtonText();
         }
 
         private void LoadCurrentSettings()
@@ -805,6 +915,16 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Hotkey
             _hotkeyCapture.SetHotkey(TranslatorCore.Config.settings_hotkey ?? "F10");
+            _hotkeyToggleTranslations.SetHotkey(TranslatorCore.Config.toggle_translations_hotkey ?? "");
+            _hotkeyToggleAI.SetHotkey(TranslatorCore.Config.toggle_ai_hotkey ?? "");
+            _hotkeyToggleImages.SetHotkey(TranslatorCore.Config.toggle_images_hotkey ?? "");
+            _hotkeyToggleFonts.SetHotkey(TranslatorCore.Config.toggle_fonts_hotkey ?? "");
+            _hotkeyToggleOverlay.SetHotkey(TranslatorCore.Config.toggle_overlay_hotkey ?? "");
+            _hotkeyOpenInspector.SetHotkey(TranslatorCore.Config.open_inspector_hotkey ?? "");
+            _hotkeyOpenUpload.SetHotkey(TranslatorCore.Config.open_upload_hotkey ?? "");
+            _hotkeyOpenExclusion.SetHotkey(TranslatorCore.Config.open_exclusion_mode_hotkey ?? "");
+            _hotkeyOpenTextEditor.SetHotkey(TranslatorCore.Config.open_text_editor_hotkey ?? "");
+            _hotkeyForceScan.SetHotkey(TranslatorCore.Config.force_scan_hotkey ?? "");
 
             // Online mode (must be loaded BEFORE translation backend — UpdateBackendSections checks online state)
             _onlineModeToggle.isOn = TranslatorCore.Config.online_mode;
@@ -1243,6 +1363,16 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 // Hotkey
                 TranslatorCore.Config.settings_hotkey = _hotkeyCapture.HotkeyString;
+                TranslatorCore.Config.toggle_translations_hotkey = _hotkeyToggleTranslations.HotkeyString;
+                TranslatorCore.Config.toggle_ai_hotkey = _hotkeyToggleAI.HotkeyString;
+                TranslatorCore.Config.toggle_images_hotkey = _hotkeyToggleImages.HotkeyString;
+                TranslatorCore.Config.toggle_fonts_hotkey = _hotkeyToggleFonts.HotkeyString;
+                TranslatorCore.Config.toggle_overlay_hotkey = _hotkeyToggleOverlay.HotkeyString;
+                TranslatorCore.Config.open_inspector_hotkey = _hotkeyOpenInspector.HotkeyString;
+                TranslatorCore.Config.open_upload_hotkey = _hotkeyOpenUpload.HotkeyString;
+                TranslatorCore.Config.open_exclusion_mode_hotkey = _hotkeyOpenExclusion.HotkeyString;
+                TranslatorCore.Config.open_text_editor_hotkey = _hotkeyOpenTextEditor.HotkeyString;
+                TranslatorCore.Config.force_scan_hotkey = _hotkeyForceScan.HotkeyString;
 
                 // Translation (Backend + Capture)
                 TranslatorCore.Config.capture_keys_only = _captureKeysOnlyToggle.isOn;
@@ -1394,6 +1524,16 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Hotkey capture
             _hotkeyCapture.OnHotkeyChanged += _ => UpdateApplyButtonText();
+            _hotkeyToggleTranslations.OnHotkeyChanged += _ => UpdateApplyButtonText();
+            _hotkeyToggleAI.OnHotkeyChanged += _ => UpdateApplyButtonText();
+            _hotkeyToggleImages.OnHotkeyChanged += _ => UpdateApplyButtonText();
+            _hotkeyToggleFonts.OnHotkeyChanged += _ => UpdateApplyButtonText();
+            _hotkeyToggleOverlay.OnHotkeyChanged += _ => UpdateApplyButtonText();
+            _hotkeyOpenInspector.OnHotkeyChanged += _ => UpdateApplyButtonText();
+            _hotkeyOpenUpload.OnHotkeyChanged += _ => UpdateApplyButtonText();
+            _hotkeyOpenExclusion.OnHotkeyChanged += _ => UpdateApplyButtonText();
+            _hotkeyOpenTextEditor.OnHotkeyChanged += _ => UpdateApplyButtonText();
+            _hotkeyForceScan.OnHotkeyChanged += _ => UpdateApplyButtonText();
         }
 
         /// <summary>
@@ -1420,6 +1560,16 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Hotkey
             if (_hotkeyCapture.HotkeyString != _initialSnapshot.settings_hotkey) count++;
+            if (_hotkeyToggleTranslations.HotkeyString != _initialSnapshot.toggle_translations_hotkey) count++;
+            if (_hotkeyToggleAI.HotkeyString != _initialSnapshot.toggle_ai_hotkey) count++;
+            if (_hotkeyToggleImages.HotkeyString != _initialSnapshot.toggle_images_hotkey) count++;
+            if (_hotkeyToggleFonts.HotkeyString != _initialSnapshot.toggle_fonts_hotkey) count++;
+            if (_hotkeyToggleOverlay.HotkeyString != _initialSnapshot.toggle_overlay_hotkey) count++;
+            if (_hotkeyOpenInspector.HotkeyString != _initialSnapshot.open_inspector_hotkey) count++;
+            if (_hotkeyOpenUpload.HotkeyString != _initialSnapshot.open_upload_hotkey) count++;
+            if (_hotkeyOpenExclusion.HotkeyString != _initialSnapshot.open_exclusion_mode_hotkey) count++;
+            if (_hotkeyOpenTextEditor.HotkeyString != _initialSnapshot.open_text_editor_hotkey) count++;
+            if (_hotkeyForceScan.HotkeyString != _initialSnapshot.force_scan_hotkey) count++;
 
             // Translation (Backend + Capture)
             if (_captureKeysOnlyToggle.isOn != _initialSnapshot.capture_keys_only) count++;

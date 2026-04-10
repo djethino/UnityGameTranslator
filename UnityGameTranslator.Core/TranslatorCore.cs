@@ -1162,7 +1162,21 @@ namespace UnityGameTranslator.Core
                     first_run_completed = Config.first_run_completed,
                     online_mode = Config.online_mode,
                     enable_translations = Config.enable_translations,
+                    enable_image_replacement = Config.enable_image_replacement,
+                    enable_font_replacement = Config.enable_font_replacement,
                     settings_hotkey = Config.settings_hotkey,
+
+                    // Additional hotkeys (all blank by default, configured via Options)
+                    toggle_translations_hotkey = Config.toggle_translations_hotkey,
+                    toggle_ai_hotkey = Config.toggle_ai_hotkey,
+                    toggle_images_hotkey = Config.toggle_images_hotkey,
+                    toggle_fonts_hotkey = Config.toggle_fonts_hotkey,
+                    toggle_overlay_hotkey = Config.toggle_overlay_hotkey,
+                    open_inspector_hotkey = Config.open_inspector_hotkey,
+                    open_upload_hotkey = Config.open_upload_hotkey,
+                    open_exclusion_mode_hotkey = Config.open_exclusion_mode_hotkey,
+                    open_text_editor_hotkey = Config.open_text_editor_hotkey,
+                    force_scan_hotkey = Config.force_scan_hotkey,
 
                     // Auth & sync
                     api_user = Config.api_user,
@@ -4223,7 +4237,27 @@ namespace UnityGameTranslator.Core
         public bool first_run_completed { get; set; } = false;
         public bool online_mode { get; set; } = false;
         public bool enable_translations { get; set; } = true;
+
+        // Runtime debug toggles — persisted to config.json so developers/translators
+        // can keep them off between sessions. End users should leave these at true.
+        public bool enable_image_replacement { get; set; } = true;
+        public bool enable_font_replacement { get; set; } = true;
+
         public string settings_hotkey { get; set; } = "F10";
+
+        // Additional hotkeys (empty = disabled). Configured via Options panel only.
+        // Each one maps to a toggle/action. Unused by the wizard to avoid conflicts.
+        public string toggle_translations_hotkey { get; set; } = "";
+        public string toggle_ai_hotkey { get; set; } = "";
+        public string toggle_images_hotkey { get; set; } = "";
+        public string toggle_fonts_hotkey { get; set; } = "";
+        public string toggle_overlay_hotkey { get; set; } = "";
+        public string open_inspector_hotkey { get; set; } = "";
+        public string open_upload_hotkey { get; set; } = "";
+        public string open_exclusion_mode_hotkey { get; set; } = "";
+        public string open_text_editor_hotkey { get; set; } = "";
+        public string force_scan_hotkey { get; set; } = "";
+
         public string api_token { get; set; } = null;
         public string api_user { get; set; } = null;
         // Server URL where the token was issued (for security: invalidate if URL changes)

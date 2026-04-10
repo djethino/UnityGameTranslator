@@ -60,6 +60,19 @@ namespace UnityGameTranslator.Core.UI.Panels
         private GameObject _connectionBox;
         private Text _connectionLabel;
 
+        // UI elements - Hotkey feedback toast (short-lived visual notification)
+        // When the toast is active, the other boxes (mod update, sync, AI queue, connection)
+        // are hidden to avoid confusion: the overlay becomes a single-purpose hotkey feedback.
+        private GameObject _toastBox;
+        private Text _toastLabel;
+        private float _toastHideTime = 0f;
+        private const float TOAST_DURATION = 1.8f;
+
+        // Toast tone colors (distinct from mod update / sync / AI notifications).
+        private static readonly Color ToastOnBg     = new Color(0.13f, 0.35f, 0.18f, 0.95f);  // Dark green
+        private static readonly Color ToastOffBg    = new Color(0.40f, 0.15f, 0.15f, 0.95f);  // Dark red
+        private static readonly Color ToastInfoBg   = new Color(0.24f, 0.14f, 0.38f, 0.95f);  // Dark purple
+
         // State - whether main panels are open (affects which boxes are shown)
         private bool _panelsOpenMode = false;
 
@@ -165,8 +178,98 @@ namespace UnityGameTranslator.Core.UI.Panels
             // SSE Connection Indicator
             CreateConnectionBox();
 
+            // Hotkey feedback toast
+            CreateToastBox();
+
             // Start hidden and with update
             RefreshOverlay();
+        }
+
+        private void CreateToastBox()
+        {
+            _toastBox = UIFactory.CreateVerticalGroup(ContentRoot, "ToastBox", false, false, true, true, 0);
+            UIFactory.SetLayoutElement(_toastBox, minHeight: UIStyles.RowHeightLarge, flexibleWidth: 9999);
+            SetBackgroundColor(_toastBox, ToastInfoBg);
+
+            var padding = _toastBox.GetComponent<VerticalLayoutGroup>();
+            if (padding != null)
+            {
+                padding.padding = new RectOffset(12, 12, 8, 8);
+            }
+
+            _toastLabel = UIFactory.CreateLabel(_toastBox, "ToastLabel", "", TextAnchor.MiddleCenter);
+            _toastLabel.fontStyle = FontStyle.Bold;
+            _toastLabel.fontSize = UIStyles.FontSizeSectionTitle;
+            _toastLabel.color = Color.white;
+            UIFactory.SetLayoutElement(_toastLabel.gameObject, minHeight: UIStyles.RowHeightMedium);
+
+            _toastBox.SetActive(false);
+        }
+
+        public enum ToastTone { Info, On, Off }
+
+        /// <summary>
+        /// Shows a short-lived toast message (used for hotkey feedback).
+        /// While the toast is active, all other overlay boxes are hidden so the
+        /// hotkey feedback is unambiguous. The toast auto-hides after TOAST_DURATION.
+        /// </summary>
+        public void ShowToast(string message, ToastTone tone = ToastTone.Info)
+        {
+            if (_toastBox == null || _toastLabel == null) return;
+
+            // Force overlay visibility regardless of the user's "notifications_enabled" preference:
+            // an explicit hotkey action deserves immediate visual feedback.
+            if (!Enabled)
+            {
+                SetActive(true);
+            }
+
+            // Hide all other boxes so the toast is the only thing visible.
+            HideNonToastBoxes();
+
+            // Color by tone for fast visual read (green = ON, red = OFF, purple = neutral info).
+            Color bg;
+            switch (tone)
+            {
+                case ToastTone.On:  bg = ToastOnBg; break;
+                case ToastTone.Off: bg = ToastOffBg; break;
+                default:             bg = ToastInfoBg; break;
+            }
+            SetBackgroundColor(_toastBox, bg);
+
+            _toastLabel.text = message;
+            _toastBox.SetActive(true);
+            _toastHideTime = Time.realtimeSinceStartup + TOAST_DURATION;
+        }
+
+        private void HideNonToastBoxes()
+        {
+            if (_modUpdateBox != null) _modUpdateBox.SetActive(false);
+            if (_syncBox != null) _syncBox.SetActive(false);
+            if (_aiBox != null) _aiBox.SetActive(false);
+            if (_connectionBox != null) _connectionBox.SetActive(false);
+        }
+
+        /// <summary>
+        /// Returns true while a hotkey feedback toast is currently shown.
+        /// The owning UIManager should skip RefreshOverlay() during this time
+        /// so the toast stays visible without being overwritten by the regular boxes.
+        /// </summary>
+        public bool IsToastActive => _toastBox != null && _toastBox.activeSelf;
+
+        /// <summary>
+        /// Called from the UI update loop to expire the toast after its duration.
+        /// Once expired, the other boxes are restored by the next RefreshOverlay pass.
+        /// </summary>
+        public void TickToast()
+        {
+            if (_toastBox == null || !_toastBox.activeSelf) return;
+            if (Time.realtimeSinceStartup >= _toastHideTime)
+            {
+                _toastBox.SetActive(false);
+                // Trigger a refresh so the normal boxes come back immediately.
+                RefreshOverlay();
+            }
         }
 
         private void CreateModUpdateBox()
@@ -328,6 +431,11 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         public void RefreshOverlay()
         {
+            // If a hotkey feedback toast is currently showing, don't touch the other boxes —
+            // they were hidden by ShowToast on purpose. They'll come back automatically when
+            // TickToast expires the toast and calls RefreshOverlay again.
+            if (IsToastActive) return;
+
             // When panels are open, only show AI queue (mod update & sync are in MainPanel)
             // When panels are closed, show all notifications
 

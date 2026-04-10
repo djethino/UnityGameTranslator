@@ -43,6 +43,10 @@ namespace UnityGameTranslator.Core
         private static string _imagesFolder;
         private static bool _initialized;
 
+        // Tracks components where we replaced the sprite/texture, keyed by component instance id.
+        // Stored so the Restore hotkey/toggle can put back the original (same as disabling replacement).
+        private static Dictionary<int, (object component, object originalValue, string propertyName)> _replacedComponents = new Dictionary<int, (object, object, string)>();
+
         #endregion
 
         #region ImageReplacement class
@@ -664,6 +668,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static Sprite GetReplacement(string spriteName)
         {
+            if (TranslatorCore.Config != null && !TranslatorCore.Config.enable_image_replacement) return null;
             if (string.IsNullOrEmpty(spriteName)) return null;
             if (_loadedSprites.TryGetValue(spriteName, out var sprite))
                 return sprite;
@@ -686,6 +691,55 @@ namespace UnityGameTranslator.Core
             if (!_replacements.TryGetValue(spriteName, out var entry)) return false;
             if (string.IsNullOrEmpty(entry.File)) return false;
             return System.IO.File.Exists(Path.Combine(_imagesFolder, entry.File));
+        }
+
+        /// <summary>
+        /// Remember a component's original sprite/texture before replacing it, keyed by instance id.
+        /// Used by RestoreAllOriginalImages to revert when the debug toggle is turned off.
+        /// </summary>
+        private static void TrackReplacement(object component, PropertyInfo prop, string propertyName)
+        {
+            try
+            {
+                int id = component is UnityEngine.Object uObj ? uObj.GetInstanceID() : component.GetHashCode();
+                if (_replacedComponents.ContainsKey(id)) return; // keep true original
+                object originalValue = prop.GetValue(component, null);
+                _replacedComponents[id] = (component, originalValue, propertyName);
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogDebug($"[ImageReplacer] TrackReplacement failed: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Revert all tracked replacements to their original sprite/texture.
+        /// Only affects components still alive. Clears the tracking dictionary.
+        /// </summary>
+        public static void RestoreAllOriginalImages()
+        {
+            int restored = 0;
+            foreach (var kvp in _replacedComponents)
+            {
+                try
+                {
+                    var (component, originalValue, propertyName) = kvp.Value;
+                    if (component == null) continue;
+                    // Check if the Unity object still exists
+                    if (component is UnityEngine.Object uObj && uObj == null) continue;
+
+                    var prop = component.GetType().GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance);
+                    if (prop == null || prop.SetMethod == null) continue;
+                    prop.SetValue(component, originalValue, null);
+                    restored++;
+                }
+                catch (Exception ex)
+                {
+                    TranslatorCore.LogDebug($"[ImageReplacer] RestoreAll error: {ex.Message}");
+                }
+            }
+            _replacedComponents.Clear();
+            TranslatorCore.LogInfo($"[ImageReplacer] Restored {restored} original image(s).");
         }
 
         /// <summary>
@@ -768,6 +822,7 @@ namespace UnityGameTranslator.Core
                             var prop = typed.GetType().GetProperty("sprite", BindingFlags.Public | BindingFlags.Instance);
                             if (prop != null && prop.SetMethod != null)
                             {
+                                TrackReplacement(typed, prop, "sprite");
                                 prop.SetValue(typed, replacement, null);
                                 applied++;
                                 continue;
@@ -784,6 +839,7 @@ namespace UnityGameTranslator.Core
                             var prop = typed.GetType().GetProperty("sprite", BindingFlags.Public | BindingFlags.Instance);
                             if (prop != null && prop.SetMethod != null)
                             {
+                                TrackReplacement(typed, prop, "sprite");
                                 prop.SetValue(typed, replacement, null);
                                 applied++;
                                 continue;
@@ -800,6 +856,7 @@ namespace UnityGameTranslator.Core
                             var prop = typed.GetType().GetProperty("texture", BindingFlags.Public | BindingFlags.Instance);
                             if (prop != null && prop.SetMethod != null)
                             {
+                                TrackReplacement(typed, prop, "texture");
                                 prop.SetValue(typed, replacement.texture, null);
                                 applied++;
                                 continue;

@@ -1427,6 +1427,9 @@ namespace UnityGameTranslator.Core.UI
         {
             if (StatusOverlay == null) return;
 
+            // Tick the hotkey-feedback toast (auto-hides after its duration)
+            StatusOverlay.TickToast();
+
             // User can disable the entire notification overlay
             if (!TranslatorCore.Config.sync.notifications_enabled)
             {
@@ -1476,15 +1479,14 @@ namespace UnityGameTranslator.Core.UI
             }
         }
 
-        private static void CheckHotkey()
+        /// <summary>
+        /// Checks if the given hotkey string (e.g., "Ctrl+F10") was just pressed this frame.
+        /// Returns false for null/empty strings (disabled hotkeys).
+        /// </summary>
+        private static bool IsHotkeyPressed(string hotkey)
         {
-            // Skip hotkey check during wizard
-            if (WizardPanel != null && WizardPanel.Enabled)
-                return;
-
-            string hotkey = TranslatorCore.Config.settings_hotkey;
             if (string.IsNullOrEmpty(hotkey))
-                return;
+                return false;
 
             // Parse hotkey
             bool requireCtrl = hotkey.Contains("Ctrl+");
@@ -1497,23 +1499,304 @@ namespace UnityGameTranslator.Core.UI
                 .Replace("Shift+", "");
 
             if (!Enum.TryParse<KeyCode>(baseKey, true, out KeyCode keyCode))
+                return false;
+
+            if (!UniverseLib.Input.InputManager.GetKeyDown(keyCode))
+                return false;
+
+            bool ctrlHeld = UniverseLib.Input.InputManager.GetKey(KeyCode.LeftControl) ||
+                           UniverseLib.Input.InputManager.GetKey(KeyCode.RightControl);
+            bool altHeld = UniverseLib.Input.InputManager.GetKey(KeyCode.LeftAlt) ||
+                          UniverseLib.Input.InputManager.GetKey(KeyCode.RightAlt);
+            bool shiftHeld = UniverseLib.Input.InputManager.GetKey(KeyCode.LeftShift) ||
+                            UniverseLib.Input.InputManager.GetKey(KeyCode.RightShift);
+
+            return ctrlHeld == requireCtrl && altHeld == requireAlt && shiftHeld == requireShift;
+        }
+
+        private static void CheckHotkey()
+        {
+            // Skip hotkey check during wizard
+            if (WizardPanel != null && WizardPanel.Enabled)
                 return;
 
-            // Check if hotkey is pressed
-            if (UniverseLib.Input.InputManager.GetKeyDown(keyCode))
-            {
-                bool ctrlHeld = UniverseLib.Input.InputManager.GetKey(KeyCode.LeftControl) ||
-                               UniverseLib.Input.InputManager.GetKey(KeyCode.RightControl);
-                bool altHeld = UniverseLib.Input.InputManager.GetKey(KeyCode.LeftAlt) ||
-                              UniverseLib.Input.InputManager.GetKey(KeyCode.RightAlt);
-                bool shiftHeld = UniverseLib.Input.InputManager.GetKey(KeyCode.LeftShift) ||
-                                UniverseLib.Input.InputManager.GetKey(KeyCode.RightShift);
+            var config = TranslatorCore.Config;
 
-                if (ctrlHeld == requireCtrl && altHeld == requireAlt && shiftHeld == requireShift)
-                {
-                    ToggleMain();
-                }
+            // Main settings panel hotkey (always configured, default Ctrl+F10)
+            if (IsHotkeyPressed(config.settings_hotkey))
+            {
+                ToggleMain();
+                return;
             }
+
+            // Additional toggles (all empty by default, configured in OptionsPanel)
+            if (IsHotkeyPressed(config.toggle_translations_hotkey))
+            {
+                ToggleTranslationsHotkey();
+                return;
+            }
+
+            if (IsHotkeyPressed(config.toggle_ai_hotkey))
+            {
+                ToggleAIHotkey();
+                return;
+            }
+
+            if (IsHotkeyPressed(config.toggle_images_hotkey))
+            {
+                ToggleImagesHotkey();
+                return;
+            }
+
+            if (IsHotkeyPressed(config.toggle_fonts_hotkey))
+            {
+                ToggleFontsHotkey();
+                return;
+            }
+
+            if (IsHotkeyPressed(config.toggle_overlay_hotkey))
+            {
+                ToggleOverlayHotkey();
+                return;
+            }
+
+            if (IsHotkeyPressed(config.open_inspector_hotkey))
+            {
+                OpenInspectorHotkey();
+                return;
+            }
+
+            if (IsHotkeyPressed(config.open_upload_hotkey))
+            {
+                OpenUploadHotkey();
+                return;
+            }
+
+            if (IsHotkeyPressed(config.open_exclusion_mode_hotkey))
+            {
+                OpenExclusionModeHotkey();
+                return;
+            }
+
+            if (IsHotkeyPressed(config.open_text_editor_hotkey))
+            {
+                OpenTextEditorHotkey();
+                return;
+            }
+
+            if (IsHotkeyPressed(config.force_scan_hotkey))
+            {
+                ForceScanHotkey();
+                return;
+            }
+        }
+
+        /// <summary>
+        /// Toggles the global enable_translations flag.
+        /// When disabled, the scanner restores original text for all previously translated elements.
+        /// Mirrors the full pipeline used by OptionsPanel.ApplySettings.
+        /// </summary>
+        private static void ToggleTranslationsHotkey()
+        {
+            var config = TranslatorCore.Config;
+            config.enable_translations = !config.enable_translations;
+            TranslatorCore.SaveConfig();
+            TranslatorCore.ClearProcessingCaches();
+            TranslatorScanner.ForceRefreshAllText();
+            OptionsPanel?.RefreshFromConfig();
+            ShowHotkeyFeedback(config.enable_translations ? "Translations: ON" : "Translations: OFF", config.enable_translations);
+        }
+
+        // Remembers the last non-"none" backend so Toggle AI can restore it when re-enabling.
+        private static string _lastActiveBackend = "llm";
+
+        /// <summary>
+        /// Toggles the translation backend on/off (pause/resume all live translation calls).
+        /// Does not touch the translation cache — already-translated entries stay.
+        /// When turning on, restores the last active backend (defaults to "llm").
+        /// </summary>
+        private static void ToggleAIHotkey()
+        {
+            var config = TranslatorCore.Config;
+
+            if (config.translation_backend != "none")
+            {
+                // Remember current backend so we can restore it later.
+                _lastActiveBackend = config.translation_backend;
+                config.translation_backend = "none";
+                config.enable_ai = false;
+                TranslatorCore.ClearQueue();
+                ShowHotkeyFeedback("Translation Backend: OFF", false);
+            }
+            else
+            {
+                string backend = string.IsNullOrEmpty(_lastActiveBackend) ? "llm" : _lastActiveBackend;
+                config.translation_backend = backend;
+                config.enable_ai = (backend == "llm");
+                TranslatorCore.EnsureWorkerRunning();
+                ShowHotkeyFeedback($"Translation Backend: ON ({backend})", true);
+            }
+
+            TranslatorCore.SaveConfig();
+            OptionsPanel?.RefreshFromConfig();
+        }
+
+        /// <summary>
+        /// Toggles image replacement (persisted to config.json).
+        /// Primarily a debug toggle for translators — end users should leave this on.
+        /// </summary>
+        private static void ToggleImagesHotkey()
+        {
+            var config = TranslatorCore.Config;
+            config.enable_image_replacement = !config.enable_image_replacement;
+            TranslatorCore.SaveConfig();
+
+            if (config.enable_image_replacement)
+            {
+                // Re-apply replacements to the current scene.
+                ImageReplacer.ApplyToScene();
+            }
+            else
+            {
+                // Restore original sprites for every component we tracked on apply.
+                ImageReplacer.RestoreAllOriginalImages();
+            }
+
+            TranslationParamsPanel?.RefreshFromConfig();
+            ShowHotkeyFeedback(config.enable_image_replacement ? "Image Replacement: ON" : "Image Replacement: OFF", config.enable_image_replacement);
+        }
+
+        /// <summary>
+        /// Toggles font replacement (persisted to config.json).
+        /// Primarily a debug toggle for translators — end users should leave this on.
+        /// </summary>
+        private static void ToggleFontsHotkey()
+        {
+            var config = TranslatorCore.Config;
+            config.enable_font_replacement = !config.enable_font_replacement;
+            TranslatorCore.SaveConfig();
+
+            if (!config.enable_font_replacement)
+            {
+                FontManager.RestoreAllOriginalFonts();
+            }
+
+            TranslatorCore.ClearProcessingCaches();
+            TranslatorScanner.ForceRefreshAllText();
+            TranslationParamsPanel?.RefreshFromConfig();
+            ShowHotkeyFeedback(config.enable_font_replacement ? "Font Replacement: ON" : "Font Replacement: OFF", config.enable_font_replacement);
+        }
+
+        /// <summary>
+        /// Toggles the visibility of the notification overlay (for clean screenshots).
+        /// </summary>
+        private static void ToggleOverlayHotkey()
+        {
+            if (StatusOverlay == null) return;
+            bool newState = !StatusOverlay.Enabled;
+            StatusOverlay.SetActive(newState);
+            ShowHotkeyFeedback(newState ? "Notifications: ON" : "Notifications: OFF", newState);
+        }
+
+        /// <summary>
+        /// Toggles the Inspector panel (opens if closed, closes if open).
+        /// </summary>
+        private static void OpenInspectorHotkey()
+        {
+            if (InspectorPanel == null) return;
+            if (InspectorPanel.Enabled)
+            {
+                InspectorPanel.SetActive(false);
+                ShowHotkeyFeedback("Inspector: CLOSED", false);
+            }
+            else
+            {
+                ShowUI = true;
+                InspectorPanel.SetActive(true);
+                ShowHotkeyFeedback("Inspector: OPEN", true);
+            }
+        }
+
+        /// <summary>
+        /// Toggles the Upload panel (opens if closed, closes if open).
+        /// </summary>
+        private static void OpenUploadHotkey()
+        {
+            if (UploadPanel == null) return;
+            if (UploadPanel.Enabled)
+            {
+                UploadPanel.SetActive(false);
+                ShowHotkeyFeedback("Upload: CLOSED", false);
+            }
+            else
+            {
+                ShowUI = true;
+                UploadPanel.SetActive(true);
+                ShowHotkeyFeedback("Upload: OPEN", true);
+            }
+        }
+
+        /// <summary>
+        /// Toggles the Inspector panel in Exclusion mode.
+        /// If already open in another mode, switches to Exclusion.
+        /// </summary>
+        private static void OpenExclusionModeHotkey()
+        {
+            if (InspectorPanel == null) return;
+            if (InspectorPanel.Enabled)
+            {
+                InspectorPanel.SetActive(false);
+                ShowHotkeyFeedback("Exclusion mode: CLOSED", false);
+            }
+            else
+            {
+                OpenInspectorPanel(Panels.InspectorMode.Exclusion);
+                ShowHotkeyFeedback("Exclusion mode: ON", true);
+            }
+        }
+
+        /// <summary>
+        /// Toggles the Inspector panel in TextEdit mode (click UI text to edit translation in place).
+        /// </summary>
+        private static void OpenTextEditorHotkey()
+        {
+            if (InspectorPanel == null) return;
+            if (InspectorPanel.Enabled)
+            {
+                InspectorPanel.SetActive(false);
+                ShowHotkeyFeedback("Text editor: CLOSED", false);
+            }
+            else
+            {
+                OpenInspectorPanel(Panels.InspectorMode.TextEdit);
+                ShowHotkeyFeedback("Text editor: ON", true);
+            }
+        }
+
+        /// <summary>
+        /// Forces a full scene scan (useful after problematic scene changes).
+        /// </summary>
+        private static void ForceScanHotkey()
+        {
+            TranslatorCore.ClearProcessingCaches();
+            TranslatorScanner.Scan();
+            ShowHotkeyFeedback("Scene rescanned");
+        }
+
+        /// <summary>
+        /// Shows a brief visual feedback for a hotkey action via the StatusOverlay toast.
+        /// Also logs to the mod loader console for accessibility.
+        /// </summary>
+        private static void ShowHotkeyFeedback(string message, bool? enabled = null)
+        {
+            TranslatorCore.LogInfo($"[Hotkey] {message}");
+            if (StatusOverlay == null) return;
+
+            var tone = Panels.StatusOverlay.ToastTone.Info;
+            if (enabled.HasValue)
+                tone = enabled.Value ? Panels.StatusOverlay.ToastTone.On : Panels.StatusOverlay.ToastTone.Off;
+
+            StatusOverlay.ShowToast(message, tone);
         }
 
         private static void LogHandler(string message, LogType type)

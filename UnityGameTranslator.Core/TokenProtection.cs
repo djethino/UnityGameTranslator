@@ -1,6 +1,7 @@
 using System;
 using System.Security.Cryptography;
 using System.Text;
+using Newtonsoft.Json;
 
 namespace UnityGameTranslator.Core
 {
@@ -211,5 +212,45 @@ namespace UnityGameTranslator.Core
         }
 
         #endregion
+    }
+
+    /// <summary>
+    /// JsonConverter that transparently encrypts string properties on serialization
+    /// and decrypts on deserialization. Apply via [JsonConverter(typeof(EncryptedTokenConverter))]
+    /// on a string property in a serialized class.
+    ///
+    /// In-memory the property holds the plaintext value (so callers can use it directly
+    /// for HTTP requests etc.). On disk (config.json) the value is always AES-encrypted
+    /// with the machine-derived key. Returns null on decryption failure — the caller is
+    /// expected to detect this (raw JSON had a value, in-memory is null) to log and clear.
+    /// </summary>
+    public class EncryptedTokenConverter : JsonConverter
+    {
+        public override bool CanConvert(Type objectType) => objectType == typeof(string);
+
+        public override object ReadJson(JsonReader reader, Type objectType, object existingValue, JsonSerializer serializer)
+        {
+            if (reader.TokenType == JsonToken.Null) return null;
+            string ciphertext = reader.Value as string;
+            if (string.IsNullOrEmpty(ciphertext)) return null;
+            // DecryptToken returns:
+            //   - the plaintext if input is encrypted (ENCRYPTED: prefix) and key matches
+            //   - the input unchanged if it's a legacy plaintext token (ugt_ prefix) or
+            //     unprefixed (will be re-encrypted on next save)
+            //   - null on cryptographic failure (machine identity changed, corrupted data)
+            return TokenProtection.DecryptToken(ciphertext);
+        }
+
+        public override void WriteJson(JsonWriter writer, object value, JsonSerializer serializer)
+        {
+            string plaintext = value as string;
+            if (string.IsNullOrEmpty(plaintext))
+            {
+                writer.WriteNull();
+                return;
+            }
+            // EncryptToken always wraps with ENCRYPTED: prefix; round-trip via ReadJson is symmetric.
+            writer.WriteValue(TokenProtection.EncryptToken(plaintext));
+        }
     }
 }

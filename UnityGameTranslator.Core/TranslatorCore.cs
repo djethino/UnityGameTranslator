@@ -988,6 +988,10 @@ namespace UnityGameTranslator.Core
 
         public static void OnUpdate(float currentTime)
         {
+            // Feed the scanner's adaptive frame-time budget on every frame.
+            // The scanner uses recent frame-time variance to size its per-frame work budget.
+            TranslatorScanner.RecordFrameTime();
+
             if (cacheModified && currentTime - lastSaveTime > 30f)
             {
                 lastSaveTime = currentTime;
@@ -1008,6 +1012,21 @@ namespace UnityGameTranslator.Core
 
         #endregion
 
+        #region Config persistence
+
+        /// <summary>
+        /// Names of token fields on ModConfig that are encrypted via [JsonConverter(typeof(EncryptedTokenConverter))].
+        /// Used in LoadConfig to inspect raw JSON and detect decryption failures or legacy plaintext that needs re-encryption.
+        /// Keep in sync with the [JsonConverter] annotations on ModConfig properties.
+        /// </summary>
+        private static readonly string[] EncryptedTokenFieldNames = new[]
+        {
+            "api_token",
+            "ai_api_key",
+            "google_api_key",
+            "deepl_api_key",
+        };
+
         private static void LoadConfig()
         {
             if (!File.Exists(ConfigPath))
@@ -1021,91 +1040,92 @@ namespace UnityGameTranslator.Core
             try
             {
                 string json = File.ReadAllText(ConfigPath);
+
+                // Parse raw JSON for inspection BEFORE deserialization. The deserialization
+                // step decrypts encrypted fields via [JsonConverter(typeof(EncryptedTokenConverter))],
+                // so we lose visibility into what was on disk. We need the raw values to detect:
+                //   - decryption failures (raw had value, in-memory becomes null)
+                //   - legacy plaintext / unprefixed tokens that need re-encryption on next save
+                //   - missing newly-introduced fields that should be materialized on disk
+                JObject rawJson;
+                try
+                {
+                    rawJson = JObject.Parse(json);
+                }
+                catch (Exception parseEx)
+                {
+                    // Malformed JSON: fall through to deserialization which will raise a clearer error
+                    Adapter.LogWarning($"Config JSON is malformed for inspection ({parseEx.Message}); proceeding without raw inspection");
+                    rawJson = new JObject();
+                }
+
                 Config = JsonConvert.DeserializeObject<ModConfig>(json) ?? new ModConfig();
 
-                // Decrypt API token if present
+                bool needsResave = false;
+
+                // Inspect each encrypted-token field. The converter has already populated Config
+                // with plaintext (or null on failure); the raw JSON tells us what was on disk.
+                foreach (var fieldName in EncryptedTokenFieldNames)
+                {
+                    string rawValue = rawJson[fieldName]?.Value<string>();
+                    if (string.IsNullOrEmpty(rawValue))
+                    {
+                        continue;
+                    }
+
+                    string inMemoryValue = GetTokenFieldValue(Config, fieldName);
+
+                    if (string.IsNullOrEmpty(inMemoryValue))
+                    {
+                        // Decryption failed (machine identity changed, corrupted ciphertext, key algo bumped).
+                        // Converter has already returned null; we resave to clear the bad ciphertext from disk.
+                        Adapter.LogWarning($"Failed to decrypt {fieldName} - clearing it");
+                        needsResave = true;
+                    }
+                    else if (TokenProtection.NeedsReEncryption(rawValue))
+                    {
+                        // Legacy plaintext (ugt_ prefix) or unprefixed token: in-memory holds it as-is,
+                        // next save will wrap it with the ENCRYPTED: prefix via the converter.
+                        LogDebug($"Migrated legacy/unencrypted {fieldName} to encrypted storage");
+                        needsResave = true;
+                    }
+                }
+
+                // Security: Invalidate API token if the issuing server URL changed (replay attack prevention).
+                // Runs after the converter has decrypted the token; we compare against the URL stored at issue time.
                 if (!string.IsNullOrEmpty(Config.api_token))
                 {
-                    string decryptedToken = TokenProtection.DecryptToken(Config.api_token);
-                    if (decryptedToken != null)
+                    string currentApiUrl = Config.api_base_url ?? PluginInfo.ApiBaseUrl;
+                    if (!string.IsNullOrEmpty(Config.api_token_server) &&
+                        Config.api_token_server != currentApiUrl)
                     {
-                        // Check if token needs re-encryption (legacy plaintext)
-                        if (TokenProtection.NeedsReEncryption(Config.api_token))
-                        {
-                            Config.api_token = decryptedToken;
-                            SaveConfig(); // Will encrypt on save
-                            LogDebug("Migrated legacy token to encrypted storage");
-                        }
-                        else
-                        {
-                            Config.api_token = decryptedToken;
-                        }
-
-                        // Security: Invalidate token if API URL changed (prevent token replay attacks)
-                        string currentApiUrl = Config.api_base_url ?? PluginInfo.ApiBaseUrl;
-                        if (!string.IsNullOrEmpty(Config.api_token_server) &&
-                            Config.api_token_server != currentApiUrl)
-                        {
-                            Adapter.LogWarning($"[Security] API URL changed from {Config.api_token_server} to {currentApiUrl} - invalidating token to prevent replay attacks");
-                            Config.api_token = null;
-                            Config.api_user = null;
-                            Config.api_token_server = null;
-                            SaveConfig();
-                        }
-                    }
-                    else
-                    {
-                        Adapter.LogWarning("Failed to decrypt API token - clearing it");
+                        Adapter.LogWarning($"[Security] API URL changed from {Config.api_token_server} to {currentApiUrl} - invalidating token to prevent replay attacks");
                         Config.api_token = null;
-                    }
-                }
-
-                // Decrypt AI API key if present
-                if (!string.IsNullOrEmpty(Config.ai_api_key))
-                {
-                    string decryptedKey = TokenProtection.DecryptToken(Config.ai_api_key);
-                    if (decryptedKey != null)
-                    {
-                        Config.ai_api_key = decryptedKey;
-                    }
-                    else
-                    {
-                        Adapter.LogWarning("Failed to decrypt AI API key - clearing it");
-                        Config.ai_api_key = null;
-                    }
-                }
-
-                // Decrypt Google API key if present
-                if (!string.IsNullOrEmpty(Config.google_api_key))
-                {
-                    string decryptedKey = TokenProtection.DecryptToken(Config.google_api_key);
-                    if (decryptedKey != null)
-                        Config.google_api_key = decryptedKey;
-                    else
-                    {
-                        Adapter.LogWarning("Failed to decrypt Google API key - clearing it");
-                        Config.google_api_key = null;
-                    }
-                }
-
-                // Decrypt DeepL API key if present
-                if (!string.IsNullOrEmpty(Config.deepl_api_key))
-                {
-                    string decryptedKey = TokenProtection.DecryptToken(Config.deepl_api_key);
-                    if (decryptedKey != null)
-                        Config.deepl_api_key = decryptedKey;
-                    else
-                    {
-                        Adapter.LogWarning("Failed to decrypt DeepL API key - clearing it");
-                        Config.deepl_api_key = null;
+                        Config.api_user = null;
+                        Config.api_token_server = null;
+                        needsResave = true;
                     }
                 }
 
                 if (Config._configMigrated)
                 {
                     LogDebug($"[Config] Migrated old Ollama config -> AI config (enable_ai={Config.enable_ai}, ai_url={Config.ai_url}, ai_model={Config.ai_model})");
-                    SaveConfig(); // Persist migrated config with new field names
+                    needsResave = true;
                 }
+
+                // Materialize newly-introduced fields so users can see them in config.json on first load.
+                // When a new ModConfig field is added, deserialization fills it with its default value
+                // but the existing file does not contain the JSON property; saving once writes it.
+                if (rawJson["max_text_detection_latency_seconds"] == null)
+                {
+                    needsResave = true;
+                }
+
+                if (needsResave)
+                {
+                    SaveConfig();
+                }
+
                 LogDebug($"Loaded config (enable_translations={Config.enable_translations}, backend={Config.translation_backend}, ai_url={Config.ai_url}, ai_model={Config.ai_model})");
             }
             catch (Exception e)
@@ -1114,85 +1134,32 @@ namespace UnityGameTranslator.Core
             }
         }
 
+        /// <summary>
+        /// Token-field accessor used by LoadConfig's raw-JSON inspection loop.
+        /// Centralized to avoid drift if the field names change.
+        /// </summary>
+        private static string GetTokenFieldValue(ModConfig config, string fieldName)
+        {
+            switch (fieldName)
+            {
+                case "api_token":      return config.api_token;
+                case "ai_api_key":     return config.ai_api_key;
+                case "google_api_key": return config.google_api_key;
+                case "deepl_api_key":  return config.deepl_api_key;
+                default:
+                    Adapter?.LogWarning($"[Config] Unknown encrypted token field: {fieldName}");
+                    return null;
+            }
+        }
+
         public static void SaveConfig()
         {
             try
             {
-                // Create a copy for serialization with encrypted tokens
-                var configToSave = new ModConfig
-                {
-                    // Translation backend
-                    translation_backend = Config.translation_backend,
-
-                    // LLM Translation settings
-                    ai_url = Config.ai_url,
-                    ai_model = Config.ai_model,
-                    target_language = Config.target_language,
-                    source_language = Config.source_language,
-                    strict_source_language = Config.strict_source_language,
-                    game_context = Config.game_context,
-                    timeout_ms = Config.timeout_ms,
-                    enable_ai = Config.enable_ai,
-                    cache_new_translations = Config.cache_new_translations,
-                    normalize_numbers = Config.normalize_numbers,
-                    debug = Config.debug,
-                    debug_ai = Config.debug_ai,
-                    preload_model = Config.preload_model,
-                    // Encrypt AI API key before saving
-                    ai_api_key = !string.IsNullOrEmpty(Config.ai_api_key)
-                        ? TokenProtection.EncryptToken(Config.ai_api_key)
-                        : null,
-
-                    // Google Translate settings
-                    google_api_key = !string.IsNullOrEmpty(Config.google_api_key)
-                        ? TokenProtection.EncryptToken(Config.google_api_key)
-                        : null,
-
-                    // DeepL settings
-                    deepl_api_key = !string.IsNullOrEmpty(Config.deepl_api_key)
-                        ? TokenProtection.EncryptToken(Config.deepl_api_key)
-                        : null,
-                    deepl_use_free = Config.deepl_use_free,
-                    rate_limit_retry_delay = Config.rate_limit_retry_delay,
-
-                    // General settings
-                    capture_keys_only = Config.capture_keys_only,
-                    translate_mod_ui = Config.translate_mod_ui,
-                    translate_localization_fallback = Config.translate_localization_fallback,
-                    first_run_completed = Config.first_run_completed,
-                    online_mode = Config.online_mode,
-                    enable_translations = Config.enable_translations,
-                    enable_image_replacement = Config.enable_image_replacement,
-                    enable_font_replacement = Config.enable_font_replacement,
-                    settings_hotkey = Config.settings_hotkey,
-
-                    // Additional hotkeys (all blank by default, configured via Options)
-                    toggle_translations_hotkey = Config.toggle_translations_hotkey,
-                    toggle_ai_hotkey = Config.toggle_ai_hotkey,
-                    toggle_images_hotkey = Config.toggle_images_hotkey,
-                    toggle_fonts_hotkey = Config.toggle_fonts_hotkey,
-                    toggle_overlay_hotkey = Config.toggle_overlay_hotkey,
-                    open_inspector_hotkey = Config.open_inspector_hotkey,
-                    open_upload_hotkey = Config.open_upload_hotkey,
-                    open_exclusion_mode_hotkey = Config.open_exclusion_mode_hotkey,
-                    open_text_editor_hotkey = Config.open_text_editor_hotkey,
-                    force_scan_hotkey = Config.force_scan_hotkey,
-
-                    // Auth & sync
-                    api_user = Config.api_user,
-                    api_token_server = Config.api_token_server,
-                    api_base_url = Config.api_base_url,
-                    website_base_url = Config.website_base_url,
-                    sse_base_url = Config.sse_base_url,
-                    sync = Config.sync,
-                    window_preferences = Config.window_preferences,
-                    // Encrypt API token before saving
-                    api_token = !string.IsNullOrEmpty(Config.api_token)
-                        ? TokenProtection.EncryptToken(Config.api_token)
-                        : null
-                };
-
-                string json = JsonConvert.SerializeObject(configToSave, Formatting.Indented);
+                // Token fields with [JsonConverter(typeof(EncryptedTokenConverter))] are encrypted
+                // on serialization automatically. No manual field-by-field copy is needed —
+                // adding a new ModConfig field will be persisted on the next save without changing this method.
+                string json = JsonConvert.SerializeObject(Config, Formatting.Indented);
                 File.WriteAllText(ConfigPath, json);
                 LogDebug("Config saved");
             }
@@ -1201,6 +1168,8 @@ namespace UnityGameTranslator.Core
                 Adapter?.LogError($"Failed to save config: {e.Message}");
             }
         }
+
+        #endregion
 
         private static void LoadCache()
         {
@@ -4141,12 +4110,16 @@ namespace UnityGameTranslator.Core
         public bool debug { get; set; } = false;
         public bool debug_ai { get; set; } = false;
         public bool preload_model { get; set; } = true;
+
+        [JsonConverter(typeof(EncryptedTokenConverter))]
         public string ai_api_key { get; set; } = null;
 
         // Google Translate API settings
+        [JsonConverter(typeof(EncryptedTokenConverter))]
         public string google_api_key { get; set; } = null;
 
         // DeepL API settings
+        [JsonConverter(typeof(EncryptedTokenConverter))]
         public string deepl_api_key { get; set; } = null;
         public bool deepl_use_free { get; set; } = true;
 
@@ -4155,6 +4128,19 @@ namespace UnityGameTranslator.Core
         /// Applies to all backends (LLM, Google, DeepL). Supports decimals (e.g., 0.5).
         /// </summary>
         public float rate_limit_retry_delay { get; set; } = 3f;
+
+        /// <summary>
+        /// Maximum time, in seconds, that a newly instantiated text component can stay
+        /// untranslated before the periodic scanner picks it up. This is the worst-case
+        /// detection latency for components that are not caught by the get_text/set_text
+        /// Harmony hooks (i.e. instantiated and shown without their text being read or
+        /// written immediately).
+        ///
+        /// Lower = more responsive but higher CPU usage when many text types are registered.
+        /// The actual scan work is spread across frames using an adaptive frame-time budget,
+        /// so the per-frame impact stays under the natural frame-time noise even at low values.
+        /// </summary>
+        public float max_text_detection_latency_seconds { get; set; } = 1f;
 
         /// <summary>
         /// Returns true if any translation backend is enabled (LLM, Google, or DeepL).
@@ -4258,6 +4244,7 @@ namespace UnityGameTranslator.Core
         public string open_text_editor_hotkey { get; set; } = "";
         public string force_scan_hotkey { get; set; } = "";
 
+        [JsonConverter(typeof(EncryptedTokenConverter))]
         public string api_token { get; set; } = null;
         public string api_user { get; set; } = null;
         // Server URL where the token was issued (for security: invalidate if URL changes)

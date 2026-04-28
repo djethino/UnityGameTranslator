@@ -97,8 +97,97 @@ namespace UnityGameTranslator.Core
         #region Component Cache
 
         private static float lastComponentCacheTime = 0f;
-        private const float COMPONENT_CACHE_DURATION = 2f;
+        // Refresh interval is read from Config.max_text_detection_latency_seconds.
+        // Floor below to avoid pathological values (config typo, 0).
+        private const float MIN_REFRESH_INTERVAL = 0.05f;
         private static bool cacheRefreshPending = false;
+
+        #endregion
+
+        #region Adaptive Frame-Time Budget
+
+        // Ring buffer of recent frame times (ms). Used to derive a per-frame work budget
+        // for the scanner that stays under the natural frame-time noise — so scan work is
+        // invisible to the player's perception of the framerate.
+        private const int FRAME_TIME_BUFFER_SIZE = 60;
+        private static readonly float[] _frameTimeBuffer = new float[FRAME_TIME_BUFFER_SIZE];
+        private static int _frameTimeIdx = 0;
+        private static int _frameTimeCount = 0;
+
+        // Stopwatch reused per Scan() call to measure how much budget we've consumed.
+        private static readonly System.Diagnostics.Stopwatch _scanFrameSw = new System.Diagnostics.Stopwatch();
+
+        /// <summary>
+        /// Record the duration of the previous frame. Called every frame from
+        /// TranslatorCore.OnUpdate so the adaptive budget reflects the actual game's pacing.
+        /// </summary>
+        public static void RecordFrameTime()
+        {
+            float frameMs = Time.unscaledDeltaTime * 1000f;
+            // Guard against the very first frame (deltaTime can be 0 or huge)
+            if (frameMs <= 0f || frameMs > 1000f) return;
+            _frameTimeBuffer[_frameTimeIdx] = frameMs;
+            _frameTimeIdx = (_frameTimeIdx + 1) % FRAME_TIME_BUFFER_SIZE;
+            if (_frameTimeCount < FRAME_TIME_BUFFER_SIZE) _frameTimeCount++;
+        }
+
+        /// <summary>
+        /// Derive the per-frame scan budget (in milliseconds) from the recorded frame times.
+        /// Budget = standard deviation of recent frames — this is the natural noise floor
+        /// of the game's framerate, so anything within that is imperceptible to the player.
+        /// Clamped at [0.5ms, mean*0.5] for safety (must make some progress, can't take a
+        /// full frame).
+        /// </summary>
+        private static float ComputeAdaptiveBudgetMs()
+        {
+            if (_frameTimeCount < 5)
+            {
+                // Not enough data yet — small bootstrap budget. Fully replaced after ~5 frames.
+                return 1f;
+            }
+
+            int n = _frameTimeCount;
+            float sum = 0f, sumSq = 0f;
+            for (int i = 0; i < n; i++)
+            {
+                float t = _frameTimeBuffer[i];
+                sum += t;
+                sumSq += t * t;
+            }
+            float mean = sum / n;
+            float variance = (sumSq / n) - (mean * mean);
+            float stdDev = (variance > 0f) ? Mathf.Sqrt(variance) : 0f;
+
+            return Mathf.Clamp(stdDev, 0.5f, mean * 0.5f);
+        }
+
+        #endregion
+
+        #region Incremental Refresh State
+
+        // The cache refresh used to be one monolithic call (RefreshAllCaches) that ran
+        // FindObjectsOfTypeAll for every registered text type in a single frame — a 50-100ms
+        // spike on big scenes. Now we split it across frames using the adaptive budget.
+
+        private static bool _refreshInProgress = false;
+        private static int _refreshTypeIndex = 0;
+        private static int _refreshNewTotal = 0;
+        private static List<RegisteredTextType> _refreshNeedsFilter;
+
+        // Phase 2 (mutualized MonoBehaviourFilter) incremental state.
+        // The single FindAllObjectsOfType(Component) call remains atomic (Unity API), but
+        // the per-component filtering loop is split across frames. State is initialized by
+        // BeginPhase2, advanced by ContinuePhase2, applied & cleared by EndPhase2.
+        private static bool _phase2InProgress = false;
+        private static UnityEngine.Object[] _phase2Components;
+        private static int _phase2Index = 0;
+        private static List<RegisteredTextType> _phase2Types;
+        private static Dictionary<RegisteredTextType, List<UnityEngine.Object>> _phase2Results;
+        private static Dictionary<RegisteredTextType, HashSet<int>> _phase2SeenIds;
+        // Components processed between budget checks. Trade-off: smaller = better budget
+        // adherence, larger = less stopwatch overhead. 32 is small enough that worst-case
+        // overshoot is well under 1ms even with reflection-heavy filtering.
+        private const int PHASE2_BUDGET_CHECK_INTERVAL = 32;
 
         #endregion
 
@@ -146,6 +235,12 @@ namespace UnityGameTranslator.Core
             lastComponentCacheTime = 0f;
             scanCycleComplete = true;
             cacheRefreshPending = false;
+            // Abort any in-progress incremental refresh; the new scene needs a fresh one.
+            _refreshInProgress = false;
+            _refreshTypeIndex = 0;
+            _refreshNeedsFilter = null;
+            // Phase 2 references components from the previous scene; they may be invalid now.
+            ResetPhase2State();
             processedTextHashes.Clear();
             inputFieldTextIds.Clear();
             componentOriginals.Clear();
@@ -185,6 +280,14 @@ namespace UnityGameTranslator.Core
 
                 lastComponentCacheTime = Time.time;
                 _lateUpdateCacheDirty = true;
+
+                // We just refreshed everything synchronously — cancel any in-progress
+                // incremental refresh so it doesn't redundantly re-scan types we just did.
+                _refreshInProgress = false;
+                _refreshTypeIndex = 0;
+                _refreshNeedsFilter = null;
+                ResetPhase2State();
+
                 TranslatorCore.LogDebug($"[Scanner] Force refreshed cache: {total} total components across {_registeredTypes.Count} types");
             }
             catch (Exception ex)
@@ -237,50 +340,67 @@ namespace UnityGameTranslator.Core
             if (profiling) _scanProfSw.Restart();
             float currentTime = Time.realtimeSinceStartup;
 
-            // Check if cache refresh is needed
-            bool needsRefresh = (currentTime - lastComponentCacheTime > COMPONENT_CACHE_DURATION);
+            // Per-frame budget derived from measured frame-time variance (no hardcoded ratio).
+            // The scanner is allowed to take up to "natural frame-time noise" of work each
+            // frame — anything below the noise floor is imperceptible to the player.
+            float budgetMs = ComputeAdaptiveBudgetMs();
+            _scanFrameSw.Restart();
 
-            // First run: force refresh if cache was never populated
-            // (uses lastComponentCacheTime == 0 instead of checking CachedComponents == null
-            // because null is a valid state for types with no components in the scene)
-            if (!needsRefresh && lastComponentCacheTime == 0f)
+            // Refresh interval is config-driven (UX choice: how long can a new component
+            // stay untranslated). Floor at MIN_REFRESH_INTERVAL to avoid pathological values.
+            float refreshInterval = TranslatorCore.Config?.max_text_detection_latency_seconds ?? 1f;
+            if (refreshInterval < MIN_REFRESH_INTERVAL) refreshInterval = MIN_REFRESH_INTERVAL;
+
+            // ─── Phase 1: cache refresh (incremental) ──────────────────────────────────
+            // Decide whether to start a new refresh cycle.
+            if (!_refreshInProgress && scanCycleComplete)
             {
-                needsRefresh = true;
+                bool refreshDue = (currentTime - lastComponentCacheTime > refreshInterval)
+                                  || lastComponentCacheTime == 0f;
+                if (refreshDue)
+                {
+                    StartIncrementalRefresh();
+                }
             }
 
-            if (needsRefresh)
+            // Continue an in-progress refresh, possibly across several Scan() calls.
+            if (_refreshInProgress)
             {
-                if (scanCycleComplete)
+                bool refreshDone = ContinueIncrementalRefresh(budgetMs);
+                if (refreshDone)
                 {
-                    RefreshAllCaches();
                     lastComponentCacheTime = currentTime;
                     cacheRefreshPending = false;
                     _scanProfRefreshCount++;
                 }
                 else
                 {
-                    cacheRefreshPending = true;
+                    // Budget consumed by refresh — defer ProcessBatch to next call.
+                    if (profiling) RecordProfilingCounters(currentTime, _scanProfSw.ElapsedTicks, 0);
+                    return;
                 }
-            }
-            else if (cacheRefreshPending && scanCycleComplete)
-            {
-                RefreshAllCaches();
-                lastComponentCacheTime = currentTime;
-                cacheRefreshPending = false;
-                _scanProfRefreshCount++;
             }
 
             long afterRefresh = profiling ? _scanProfSw.ElapsedTicks : 0;
 
+            // ─── Phase 2: per-component processing (already incremental via BatchIndex) ──
             try
             {
-                // Clear per-cycle dedup (each component processed at most once across all types)
-                _processedThisCycle.Clear();
+                // Clear per-cycle dedup only when starting a fresh cycle (so dedup spans
+                // the whole cycle even if it gets split across frames by the budget).
+                if (scanCycleComplete) _processedThisCycle.Clear();
 
                 bool allDone = true;
                 foreach (var type in _registeredTypes)
                 {
                     if (type.CachedComponents == null || type.CachedComponents.Length == 0) continue;
+                    if (_scanFrameSw.Elapsed.TotalMilliseconds > budgetMs)
+                    {
+                        // Budget exhausted — resume next frame from where we are
+                        // (each type's BatchIndex remembers its progress).
+                        allDone = false;
+                        break;
+                    }
                     bool typeDone = ProcessBatch(type);
                     if (!typeDone) allDone = false;
                 }
@@ -290,24 +410,29 @@ namespace UnityGameTranslator.Core
 
             if (profiling)
             {
-                long afterBatch = _scanProfSw.ElapsedTicks;
-                _scanProfRefreshTicks += afterRefresh;
-                _scanProfBatchTicks += afterBatch - afterRefresh;
-                _scanProfCount++;
+                RecordProfilingCounters(currentTime, afterRefresh, _scanProfSw.ElapsedTicks - afterRefresh);
+            }
+        }
 
-                // Log every 5 seconds
-                if (currentTime - _scanProfLastLog > 5f)
-                {
-                    _scanProfLastLog = currentTime;
-                    double freq = System.Diagnostics.Stopwatch.Frequency;
-                    TranslatorCore.LogDebug($"[SCAN-PERF] {_scanProfCount} scans in 5s ({_scanProfRefreshCount} refreshes) | " +
-                        $"Refresh={_scanProfRefreshTicks/freq*1000:F1}ms | " +
-                        $"Batch={_scanProfBatchTicks/freq*1000:F1}ms");
-                    _scanProfCount = 0;
-                    _scanProfRefreshCount = 0;
-                    _scanProfRefreshTicks = 0;
-                    _scanProfBatchTicks = 0;
-                }
+        private static void RecordProfilingCounters(float currentTime, long refreshTicks, long batchTicks)
+        {
+            _scanProfRefreshTicks += refreshTicks;
+            _scanProfBatchTicks += batchTicks;
+            _scanProfCount++;
+
+            // Log every 5 seconds
+            if (currentTime - _scanProfLastLog > 5f)
+            {
+                _scanProfLastLog = currentTime;
+                double freq = System.Diagnostics.Stopwatch.Frequency;
+                TranslatorCore.LogDebug($"[SCAN-PERF] {_scanProfCount} scans in 5s ({_scanProfRefreshCount} refreshes) | " +
+                    $"Refresh={_scanProfRefreshTicks / freq * 1000:F1}ms | " +
+                    $"Batch={_scanProfBatchTicks / freq * 1000:F1}ms | " +
+                    $"BudgetMs={ComputeAdaptiveBudgetMs():F2}");
+                _scanProfCount = 0;
+                _scanProfRefreshCount = 0;
+                _scanProfRefreshTicks = 0;
+                _scanProfBatchTicks = 0;
             }
         }
 
@@ -320,17 +445,43 @@ namespace UnityGameTranslator.Core
         private static int _lastTotalComponentCount = 0;
         private static float _lastForceRefreshTime = 0f;
 
-        private static void RefreshAllCaches()
+        /// <summary>
+        /// Begin a new incremental refresh cycle. Cheap setup; the actual work is done
+        /// across subsequent ContinueIncrementalRefresh() calls until the budget allows
+        /// the cycle to complete.
+        /// </summary>
+        private static void StartIncrementalRefresh()
         {
+            _refreshInProgress = true;
+            _refreshTypeIndex = 0;
+            _refreshNewTotal = 0;
+            _refreshNeedsFilter = new List<RegisteredTextType>();
             _lateUpdateCacheDirty = true;
-            // Phase 1: Direct scans (strategies 1-3) for each type
-            var needsFilterTypes = new List<RegisteredTextType>();
-            int newTotal = 0;
+        }
 
-            foreach (var type in _registeredTypes)
+        /// <summary>
+        /// Continue the in-progress refresh cycle. Returns true when the cycle is complete.
+        /// Stops yielding (returns false) when the per-frame budget is exhausted, leaving
+        /// internal state pointing at the next unit of work.
+        ///
+        /// Phase 1 (per-type direct scans) is split type-by-type. Phase 2 (mutualized
+        /// MonoBehaviourFilter) is also incremental: the FindAllObjectsOfType(Component)
+        /// call itself is atomic (Unity API constraint, ~10-30ms one-shot), but the
+        /// per-component filtering loop that follows it is yieldable in chunks.
+        /// </summary>
+        private static bool ContinueIncrementalRefresh(float budgetMs)
+        {
+            // Phase 1: per-type direct scans (incremental)
+            while (_refreshTypeIndex < _registeredTypes.Count)
             {
+                if (_scanFrameSw.Elapsed.TotalMilliseconds > budgetMs)
+                {
+                    return false; // budget consumed, resume next frame
+                }
+
+                var type = _registeredTypes[_refreshTypeIndex];
                 type.CachedComponents = RefreshTypeCacheDirect(type);
-                newTotal += type.CachedComponents?.Length ?? 0;
+                _refreshNewTotal += type.CachedComponents?.Length ?? 0;
 
                 if (!type.LoggedOnce && type.CachedComponents != null && type.CachedComponents.Length > 0)
                 {
@@ -338,23 +489,50 @@ namespace UnityGameTranslator.Core
                     type.LoggedOnce = true;
                 }
 
-                // If direct strategies didn't find anything, check if MonoBehaviourFilter should be tried
                 if ((type.CachedComponents == null || type.CachedComponents.Length == 0) && type.NeedsMonoBehaviourFilter)
                 {
-                    needsFilterTypes.Add(type);
+                    _refreshNeedsFilter.Add(type);
+                }
+
+                _refreshTypeIndex++;
+            }
+
+            // Phase 2: mutualized MonoBehaviourFilter (incremental)
+            if (_refreshNeedsFilter != null && _refreshNeedsFilter.Count > 0)
+            {
+                if (!_phase2InProgress)
+                {
+                    // BeginPhase2 contains an atomic FindAllObjectsOfType(Component) call
+                    // (~10-30ms on big scenes, unyieldable). Yield first if we're already
+                    // over budget so the spike lands on a frame with budget headroom.
+                    if (_scanFrameSw.Elapsed.TotalMilliseconds > budgetMs)
+                    {
+                        return false;
+                    }
+                    if (!BeginPhase2(_refreshNeedsFilter))
+                    {
+                        // No components in scene or scan failed. Per-type states already
+                        // set by BeginPhase2. Nothing more to do for Phase 2.
+                        _refreshNeedsFilter.Clear();
+                    }
+                }
+
+                if (_phase2InProgress)
+                {
+                    bool phase2Done = ContinuePhase2(budgetMs);
+                    if (!phase2Done)
+                    {
+                        return false; // resume next frame from _phase2Index
+                    }
+                    EndPhase2();
+                    _refreshNeedsFilter.Clear();
                 }
             }
 
-            // Phase 2: Mutualized MonoBehaviourFilter (ONE call for ALL types that need it)
-            if (needsFilterTypes.Count > 0)
-            {
-                RefreshViaMonoBehaviourFilterShared(needsFilterTypes);
-            }
-
-            // If new components appeared, invalidate font clones to prevent atlas corruption.
-            // Cloned fonts inherit the original's atlas; when new glyphs are needed at scaled sizes,
-            // the atlas overflows. Recreating the clone gives a fresh atlas.
-            _lastTotalComponentCount = newTotal;
+            // Cycle complete
+            _lastTotalComponentCount = _refreshNewTotal;
+            _refreshInProgress = false;
+            return true;
         }
 
         /// <summary>
@@ -641,14 +819,20 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Mutualized MonoBehaviourFilter: ONE call to FindAllObjectsOfType(typeof(Component)),
-        /// then distribute results to all types that need it.
-        /// This avoids N expensive calls when N types all need the fallback.
+        /// Begin an incremental MonoBehaviourFilter scan: take the snapshot of all scene
+        /// components (atomic Unity API call) and prepare per-type accumulator state.
+        ///
+        /// Returns true if Phase 2 was started; false if the scan failed or returned 0
+        /// components (in which case per-type states have already been set to Failed/Empty
+        /// and the caller should skip ContinuePhase2 / EndPhase2).
+        ///
+        /// On success, Phase 2 state lives in the static _phase2* fields and must be
+        /// driven to completion via ContinuePhase2 + EndPhase2 (or cleared via
+        /// ResetPhase2State on scene change / force refresh).
         /// </summary>
-        private static void RefreshViaMonoBehaviourFilterShared(List<RegisteredTextType> types)
+        private static bool BeginPhase2(List<RegisteredTextType> types)
         {
             UnityEngine.Object[] allComponents = null;
-
             try
             {
                 allComponents = TypeHelper.FindAllObjectsOfType(typeof(Component));
@@ -656,80 +840,123 @@ namespace UnityGameTranslator.Core
             catch (Exception ex)
             {
                 TranslatorCore.LogWarning($"[Scanner] MonoBehaviourFilter shared scan failed: {ex.Message}");
-                // Mark all as Failed
                 foreach (var type in types)
                     type.MonoBehaviourFilterState = StrategyState.Failed;
-                return;
+                return false;
             }
 
             if (allComponents == null || allComponents.Length == 0)
             {
                 foreach (var type in types)
                     type.MonoBehaviourFilterState = StrategyState.Empty;
-                return;
+                return false;
             }
 
-            // Build per-type result lists from the single shared scan
-            var typeResults = new Dictionary<RegisteredTextType, List<UnityEngine.Object>>();
-            var typeSeenIds = new Dictionary<RegisteredTextType, HashSet<int>>();
-            foreach (var type in types)
-            {
-                typeResults[type] = new List<UnityEngine.Object>();
-                typeSeenIds[type] = new HashSet<int>();
+            _phase2Components = allComponents;
+            _phase2Index = 0;
+            // Snapshot the type list — _refreshNeedsFilter may be cleared by the caller
+            // before ContinuePhase2 finishes, so we keep our own copy.
+            _phase2Types = new List<RegisteredTextType>(types);
+            _phase2Results = new Dictionary<RegisteredTextType, List<UnityEngine.Object>>();
+            _phase2SeenIds = new Dictionary<RegisteredTextType, HashSet<int>>();
 
-                // Pre-populate seenIds from existing cache (if any partial results from Phase 1)
+            foreach (var type in _phase2Types)
+            {
+                _phase2Results[type] = new List<UnityEngine.Object>();
+                var seen = new HashSet<int>();
+                // Pre-populate seenIds from any partial cache from Phase 1 so a component
+                // already discovered there isn't duplicated when we merge results.
                 if (type.CachedComponents != null)
                 {
                     foreach (var obj in type.CachedComponents)
                     {
-                        if (obj != null) typeSeenIds[type].Add(obj.GetInstanceID());
+                        if (obj != null) seen.Add(obj.GetInstanceID());
                     }
                 }
+                _phase2SeenIds[type] = seen;
             }
 
-            // Single pass over all components, distribute to matching types
-            foreach (var obj in allComponents)
+            _phase2InProgress = true;
+            return true;
+        }
+
+        /// <summary>
+        /// Iterate the cached scene components in chunks, distributing each component to
+        /// matching types. Returns true when the entire array has been processed; false
+        /// when the per-frame budget is consumed (caller resumes next frame from
+        /// _phase2Index).
+        /// </summary>
+        private static bool ContinuePhase2(float budgetMs)
+        {
+            int len = _phase2Components.Length;
+            int typeCount = _phase2Types.Count;
+            while (_phase2Index < len)
             {
-                if (obj == null) continue;
-
-                foreach (var type in types)
+                int chunkEnd = Math.Min(_phase2Index + PHASE2_BUDGET_CHECK_INTERVAL, len);
+                for (; _phase2Index < chunkEnd; _phase2Index++)
                 {
-                    bool matches = false;
+                    var obj = _phase2Components[_phase2Index];
+                    if (obj == null) continue;
 
-                    // Try IsInstanceOfType first (works on Mono)
-                    try { matches = type.ComponentType.IsInstanceOfType(obj); }
-                    catch { }
+                    // Cache the per-component reflection type lazily — only computed once
+                    // even when multiple types fall through to the name-walk path.
+                    Type objType = null;
 
-                    // Fallback: match by type name (handles IL2CPP proxy types)
-                    if (!matches)
+                    for (int t = 0; t < typeCount; t++)
                     {
-                        var objType = obj.GetType();
-                        string targetName = type.ComponentType.Name;
-                        if (targetName.StartsWith("Il2Cpp")) targetName = targetName.Substring(6);
+                        var type = _phase2Types[t];
+                        bool matches = false;
 
-                        var current = objType;
-                        while (current != null)
+                        // Try IsInstanceOfType first (works on Mono)
+                        try { matches = type.ComponentType.IsInstanceOfType(obj); }
+                        catch { }
+
+                        // Fallback: match by type name (handles IL2CPP proxy types where
+                        // IsInstanceOfType doesn't recognize the runtime proxy).
+                        if (!matches)
                         {
-                            string name = current.Name;
-                            if (name.StartsWith("Il2Cpp")) name = name.Substring(6);
-                            if (name == targetName) { matches = true; break; }
-                            current = current.BaseType;
+                            if (objType == null) objType = obj.GetType();
+                            string targetName = type.ComponentType.Name;
+                            if (targetName.StartsWith("Il2Cpp")) targetName = targetName.Substring(6);
+
+                            var current = objType;
+                            while (current != null)
+                            {
+                                string name = current.Name;
+                                if (name.StartsWith("Il2Cpp")) name = name.Substring(6);
+                                if (name == targetName) { matches = true; break; }
+                                current = current.BaseType;
+                            }
+                        }
+
+                        if (matches)
+                        {
+                            int id = obj.GetInstanceID();
+                            if (_phase2SeenIds[type].Add(id))
+                                _phase2Results[type].Add(obj);
                         }
                     }
+                }
 
-                    if (matches)
-                    {
-                        int id = obj.GetInstanceID();
-                        if (typeSeenIds[type].Add(id))
-                            typeResults[type].Add(obj);
-                    }
+                // Budget check between chunks. Worst-case overshoot is one chunk
+                // (PHASE2_BUDGET_CHECK_INTERVAL components × per-component cost).
+                if (_phase2Index < len && _scanFrameSw.Elapsed.TotalMilliseconds > budgetMs)
+                {
+                    return false;
                 }
             }
+            return true;
+        }
 
-            // Apply results
-            foreach (var type in types)
+        /// <summary>
+        /// Apply the accumulated Phase 2 results to each type's CachedComponents and
+        /// clear all Phase 2 state. Must be called only after ContinuePhase2 returns true.
+        /// </summary>
+        private static void EndPhase2()
+        {
+            foreach (var type in _phase2Types)
             {
-                var results = typeResults[type];
+                var results = _phase2Results[type];
                 if (results.Count > 0)
                 {
                     // Merge with any existing cache from Phase 1
@@ -757,6 +984,23 @@ namespace UnityGameTranslator.Core
                     type.MonoBehaviourFilterState = StrategyState.Empty;
                 }
             }
+
+            ResetPhase2State();
+        }
+
+        /// <summary>
+        /// Drop all Phase 2 in-progress state. Called by EndPhase2 (normal completion),
+        /// OnSceneChange, and ForceRefreshCache (where stale references to old-scene
+        /// components must not survive into the new cycle).
+        /// </summary>
+        private static void ResetPhase2State()
+        {
+            _phase2InProgress = false;
+            _phase2Components = null;
+            _phase2Index = 0;
+            _phase2Types = null;
+            _phase2Results = null;
+            _phase2SeenIds = null;
         }
 
         /// <summary>

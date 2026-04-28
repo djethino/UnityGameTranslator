@@ -19,7 +19,6 @@ namespace UnityGameTranslator.BepInEx6IL2CPP
     {
         private static Plugin Instance;
         private static Harmony harmony;
-        private float lastScanTime = 0f;
 
         private class BepInEx6IL2CPPAdapter : IModLoaderAdapter
         {
@@ -123,7 +122,6 @@ namespace UnityGameTranslator.BepInEx6IL2CPP
                     previousSceneName = lastSceneName;
                     lastSceneName = activeScene.name;
                     TranslatorCore.OnSceneChanged(activeScene.name);
-                    Instance.lastScanTime = Time.realtimeSinceStartup - 0.04f;
                 }
             }
 
@@ -135,14 +133,10 @@ namespace UnityGameTranslator.BepInEx6IL2CPP
 
         private void OnUpdate()
         {
-            float currentTime = Time.realtimeSinceStartup;
-            TranslatorCore.OnUpdate(currentTime);
-
-            if (currentTime - lastScanTime > 0.2f)
-            {
-                lastScanTime = currentTime;
-                TranslatorScanner.Scan();
-            }
+            // Scanner runs every frame with an adaptive budget; the budget keeps work
+            // under the natural frame-time noise so per-frame impact is imperceptible.
+            TranslatorCore.OnUpdate(Time.realtimeSinceStartup);
+            TranslatorScanner.Scan();
         }
 
     }

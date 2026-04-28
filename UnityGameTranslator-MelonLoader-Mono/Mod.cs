@@ -12,7 +12,6 @@ namespace UnityGameTranslator.MelonLoaderMono
 {
     public class TranslatorMod : MelonMod
     {
-        private float lastScanTime = 0f;
 
         private class MelonLoaderAdapter : IModLoaderAdapter
         {
@@ -49,7 +48,6 @@ namespace UnityGameTranslator.MelonLoaderMono
         public override void OnSceneWasLoaded(int buildIndex, string sceneName)
         {
             TranslatorCore.OnSceneChanged(sceneName);
-            lastScanTime = Time.realtimeSinceStartup - 0.04f;
         }
 
         public override void OnSceneWasUnloaded(int buildIndex, string sceneName)
@@ -59,14 +57,10 @@ namespace UnityGameTranslator.MelonLoaderMono
 
         public override void OnUpdate()
         {
-            float currentTime = Time.realtimeSinceStartup;
-            TranslatorCore.OnUpdate(currentTime);
-
-            if (currentTime - lastScanTime > 0.2f)
-            {
-                lastScanTime = currentTime;
-                TranslatorScanner.Scan();
-            }
+            // Scanner runs every frame with an adaptive budget; the budget keeps work
+            // under the natural frame-time noise so per-frame impact is imperceptible.
+            TranslatorCore.OnUpdate(Time.realtimeSinceStartup);
+            TranslatorScanner.Scan();
         }
 
         public override void OnApplicationQuit()

@@ -15,7 +15,6 @@ namespace UnityGameTranslator.BepInEx6Mono
     public class Plugin : BaseUnityPlugin
     {
         private static Harmony harmony;
-        private float lastScanTime = 0f;
 
         private class BepInEx6MonoAdapter : IModLoaderAdapter
         {
@@ -54,7 +53,6 @@ namespace UnityGameTranslator.BepInEx6Mono
             SceneManager.sceneLoaded += (scene, mode) =>
             {
                 TranslatorCore.OnSceneChanged(scene.name);
-                lastScanTime = Time.realtimeSinceStartup - 0.04f;
             };
             SceneManager.sceneUnloaded += (scene) =>
             {
@@ -64,14 +62,10 @@ namespace UnityGameTranslator.BepInEx6Mono
 
         void Update()
         {
-            float currentTime = Time.realtimeSinceStartup;
-            TranslatorCore.OnUpdate(currentTime);
-
-            if (currentTime - lastScanTime > 0.2f)
-            {
-                lastScanTime = currentTime;
-                TranslatorScanner.Scan();
-            }
+            // Scanner runs every frame with an adaptive budget; the budget keeps work
+            // under the natural frame-time noise so per-frame impact is imperceptible.
+            TranslatorCore.OnUpdate(Time.realtimeSinceStartup);
+            TranslatorScanner.Scan();
         }
 
         void OnApplicationQuit()

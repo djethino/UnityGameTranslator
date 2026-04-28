@@ -31,4 +31,133 @@ namespace UnityGameTranslator {
       <Compile Include="$(IntermediateOutputPath)PluginVersion.g.cs" />
     </ItemGroup>
   </Target>
+
+  <!--
+    ILRepack: merge Newtonsoft.Json, UniverseLib and UnityGameTranslator.Core
+    into the single shipped UnityGameTranslator.dll. This avoids version
+    conflicts when other plugins (e.g. UnityExplorer, mods using Newtonsoft.Json)
+    are installed in the same game. Each adapter sets:
+      <EnableILRepack>true</EnableILRepack>
+      <UniverseLibDllPath>relative path to the right UniverseLib variant</UniverseLibDllPath>
+      <ILRepackLibraryPath>semicolon-separated dirs to resolve unmerged refs</ILRepackLibraryPath>
+  -->
+  <PropertyGroup>
+    <!-- Suppress the package's default auto-target so only our explicit ILRepackMerge runs.
+         Set unconditionally because Directory.Build.props is evaluated before the
+         per-project EnableILRepack property is set. The path points to an existing empty
+         file so the package's `!Exists($(ILRepackTargetsFile))` skips its built-in target. -->
+    <ILRepackTargetsFile>$(MSBuildThisFileDirectory)ILRepack.disabled.targets</ILRepackTargetsFile>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(EnableILRepack)' == 'true'">
+    <PackageReference Include="ILRepack.Lib.MSBuild.Task" Version="2.0.34.2" PrivateAssets="all" />
+  </ItemGroup>
+
+  <!--
+    For IL2CPP adapters, UnityGameTranslator.Core.dll is compiled against UniverseLib.Mono.dll
+    (compile-time reference) but at runtime we ship UniverseLib.{BIE|ML}.IL2CPP.Interop.dll
+    which has a DIFFERENT assembly name. Without rewriting, the ILRepack-merged DLL still
+    has an external `UniverseLib.Mono` reference -> MelonLoader warning + future fatal error.
+
+    The fix: pre-merge step using Mono.Cecil to rewrite Core.dll's external assembly
+    reference from `UniverseLib.Mono` to the adapter's actual runtime UniverseLib variant
+    name. After this, ILRepack can match the input UniverseLib variant DLL and properly
+    rebind types into the merged output.
+
+    Activated by setting <RewriteCoreUniverseLibRef>UniverseLib.XYZ</RewriteCoreUniverseLibRef>
+    in the adapter csproj.
+  -->
+  <ItemGroup Condition="'$(EnableILRepack)' == 'true' AND '$(RewriteCoreUniverseLibRef)' != ''">
+    <PackageReference Include="Mono.Cecil" Version="0.11.5" PrivateAssets="all" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <!-- Set unconditionally because Directory.Build.props is loaded BEFORE the per-csproj
+         RewriteCoreUniverseLibRef property is evaluated. The property is harmless when the
+         Mono.Cecil package is not installed (PackageReference is conditional). -->
+    <_CecilDll Condition="'$(NuGetPackageRoot)' != ''">$(NuGetPackageRoot)mono.cecil\0.11.5\lib\netstandard2.0\Mono.Cecil.dll</_CecilDll>
+    <_CecilDll Condition="'$(_CecilDll)' == '' AND '$(NUGET_PACKAGES)' != ''">$(NUGET_PACKAGES)\mono.cecil\0.11.5\lib\netstandard2.0\Mono.Cecil.dll</_CecilDll>
+    <_CecilDll Condition="'$(_CecilDll)' == ''">$(UserProfile)\.nuget\packages\mono.cecil\0.11.5\lib\netstandard2.0\Mono.Cecil.dll</_CecilDll>
+  </PropertyGroup>
+
+  <UsingTask TaskName="RewriteAssemblyRef"
+             TaskFactory="RoslynCodeTaskFactory"
+             AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll"
+             Condition="'$(EnableILRepack)' == 'true' AND '$(RewriteCoreUniverseLibRef)' != ''">
+    <ParameterGroup>
+      <DllPath ParameterType="System.String" Required="true" />
+      <FromName ParameterType="System.String" Required="true" />
+      <ToName ParameterType="System.String" Required="true" />
+    </ParameterGroup>
+    <Task>
+      <Reference Include="$(_CecilDll)" />
+      <Using Namespace="Mono.Cecil" />
+      <Code Type="Fragment" Language="cs">
+        <![CDATA[
+          var asm = AssemblyDefinition.ReadAssembly(DllPath, new ReaderParameters { ReadWrite = true });
+          try {
+            int rewrites = 0;
+            foreach (var r in asm.MainModule.AssemblyReferences) {
+              if (r.Name == FromName) {
+                Log.LogMessage(MessageImportance.High, "[CecilRewrite] " + DllPath + ": " + FromName + " -> " + ToName);
+                r.Name = ToName;
+                rewrites++;
+              }
+            }
+            if (rewrites > 0) asm.Write();
+          } finally {
+            asm.Dispose();
+          }
+        ]]>
+      </Code>
+    </Task>
+  </UsingTask>
+
+  <Target Name="RewriteCoreReferences"
+          BeforeTargets="ILRepackMerge"
+          Condition="'$(EnableILRepack)' == 'true' AND '$(RewriteCoreUniverseLibRef)' != ''">
+    <RewriteAssemblyRef
+        DllPath="$(OutputPath)UnityGameTranslator.Core.dll"
+        FromName="UniverseLib.Mono"
+        ToName="$(RewriteCoreUniverseLibRef)" />
+  </Target>
+
+  <Target Name="ILRepackMerge" AfterTargets="Build" Condition="'$(EnableILRepack)' == 'true'">
+    <!-- Stage the UniverseLib DLL into the bin folder so ILRepack can find it -->
+    <Copy Condition="'$(UniverseLibDllPath)' != '' AND Exists('$(UniverseLibDllPath)')"
+          SourceFiles="$(UniverseLibDllPath)"
+          DestinationFolder="$(OutputPath)"
+          SkipUnchangedFiles="true" />
+
+    <PropertyGroup>
+      <_UniverseLibFileName>$([System.IO.Path]::GetFileName('$(UniverseLibDllPath)'))</_UniverseLibFileName>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <_RepackInputs Include="$(TargetPath)" />
+      <_RepackInputs Include="$(OutputPath)UnityGameTranslator.Core.dll"
+                     Condition="Exists('$(OutputPath)UnityGameTranslator.Core.dll')" />
+      <_RepackInputs Include="$(OutputPath)Newtonsoft.Json.dll"
+                     Condition="Exists('$(OutputPath)Newtonsoft.Json.dll')" />
+      <_RepackInputs Include="$(OutputPath)$(_UniverseLibFileName)"
+                     Condition="'$(_UniverseLibFileName)' != '' AND Exists('$(OutputPath)$(_UniverseLibFileName)')" />
+    </ItemGroup>
+
+    <Message Text="[ILRepack] Merging into $(TargetFileName): @(_RepackInputs->'%(Filename)%(Extension)', ', ')" Importance="high" />
+
+    <ILRepack
+        Parallel="true"
+        Internalize="true"
+        InputAssemblies="@(_RepackInputs)"
+        TargetKind="Dll"
+        OutputFile="$(TargetPath)"
+        LibraryPath="$(ILRepackLibraryPath)"
+    />
+
+    <!-- Remove the now-merged source DLLs from bin so the build output only contains UnityGameTranslator.dll -->
+    <Delete Files="$(OutputPath)UnityGameTranslator.Core.dll" Condition="Exists('$(OutputPath)UnityGameTranslator.Core.dll')" />
+    <Delete Files="$(OutputPath)Newtonsoft.Json.dll" Condition="Exists('$(OutputPath)Newtonsoft.Json.dll')" />
+    <Delete Files="$(OutputPath)$(_UniverseLibFileName)"
+            Condition="'$(_UniverseLibFileName)' != '' AND Exists('$(OutputPath)$(_UniverseLibFileName)')" />
+  </Target>
 </Project>

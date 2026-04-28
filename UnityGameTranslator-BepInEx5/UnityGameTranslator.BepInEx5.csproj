@@ -7,9 +7,19 @@
     <OutputPath>bin\</OutputPath>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+
+    <!-- ILRepack: merge Newtonsoft + UniverseLib + Core into UnityGameTranslator.dll -->
+    <EnableILRepack>true</EnableILRepack>
+    <UniverseLibDllPath>..\UniverseLib\Release\NuGet_Mono\lib\net35\UniverseLib.Mono.dll</UniverseLibDllPath>
+    <ILRepackLibraryPath>$(OutputPath);..\extlibs\Unity;..\extlibs\BepInEx5</ILRepackLibraryPath>
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Shared: assembly-level [IgnoresAccessChecksTo] to bypass Mono runtime visibility checks
+         after ILRepack changes the calling-assembly identity (see Shared/IgnoresAccessChecks.cs) -->
+    <Compile Include="..\Shared\IgnoresAccessChecks.cs" Link="IgnoresAccessChecks.cs" />
+    <Compile Include="..\Shared\IgnoresAccessChecksApplications.cs" Link="IgnoresAccessChecksApplications.cs" />
+
     <!-- Core library -->
     <ProjectReference Include="..\UnityGameTranslator.Core\UnityGameTranslator.Core.csproj" />
 

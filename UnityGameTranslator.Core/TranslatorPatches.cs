@@ -877,6 +877,11 @@ namespace UnityGameTranslator.Core
                             var textProp = type.GetProperty("text", BindingFlags.Public | BindingFlags.Instance);
                             if (textProp?.SetMethod == null) continue;
 
+                            // The "text" property MUST return string. Some custom game scripts reuse the
+                            // name "text" with a non-string return type (e.g. a TMP_Text reference instead),
+                            // which would cause Harmony to fail patching get_text with a string __result.
+                            if (textProp.PropertyType != typeof(string)) continue;
+
                             // Must inherit from Component (be a Unity component)
                             if (!typeof(Component).IsAssignableFrom(type)) continue;
 

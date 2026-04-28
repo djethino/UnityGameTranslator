@@ -8,9 +8,19 @@
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+
+    <!-- ILRepack: merge Newtonsoft + UniverseLib + Core into UnityGameTranslator.dll -->
+    <EnableILRepack>true</EnableILRepack>
+    <UniverseLibDllPath>..\UniverseLib\Release\UniverseLib.Mono\UniverseLib.Mono.dll</UniverseLibDllPath>
+    <ILRepackLibraryPath>$(OutputPath);..\extlibs\Unity;..\extlibs\MelonLoader-Mono</ILRepackLibraryPath>
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Shared: assembly-level [IgnoresAccessChecksTo] to bypass Mono runtime visibility checks
+         after ILRepack changes the calling-assembly identity (see Shared/IgnoresAccessChecks.cs) -->
+    <Compile Include="..\Shared\IgnoresAccessChecks.cs" Link="IgnoresAccessChecks.cs" />
+    <Compile Include="..\Shared\IgnoresAccessChecksApplications.cs" Link="IgnoresAccessChecksApplications.cs" />
+
     <!-- Core library -->
     <ProjectReference Include="..\UnityGameTranslator.Core\UnityGameTranslator.Core.csproj" />
 

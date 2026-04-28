@@ -4,9 +4,9 @@
 
 $ErrorActionPreference = "Stop"
 
-# Read version from Directory.Build.props
+# Read version from Directory.Build.props (Directory.Build.props has multiple PropertyGroup elements)
 [xml]$props = Get-Content "Directory.Build.props"
-$Version = $props.Project.PropertyGroup.Version
+$Version = ($props.Project.PropertyGroup | Where-Object { $_.Version }).Version
 
 Write-Host "=== UnityGameTranslator Release $Version ===" -ForegroundColor Cyan
 
@@ -73,67 +73,23 @@ Write-Host "All builds successful!" -ForegroundColor Green
 # Create zip for each mod loader
 Write-Host "`nCreating release zips..." -ForegroundColor Yellow
 
-# BepInEx 5
-$bepinex5Dir = "$releasesDir/UnityGameTranslator-BepInEx5-v$Version"
-New-Item -ItemType Directory -Path $bepinex5Dir | Out-Null
-Copy-Item "UnityGameTranslator-BepInEx5/bin/UnityGameTranslator.dll" $bepinex5Dir
-Copy-Item "UnityGameTranslator-BepInEx5/bin/UnityGameTranslator.Core.dll" $bepinex5Dir
-Copy-Item "UnityGameTranslator-BepInEx5/bin/Newtonsoft.Json.dll" $bepinex5Dir
-# UniverseLib for uGUI
-Copy-Item "UniverseLib/Release/NuGet_Mono/lib/net35/UniverseLib.Mono.dll" $bepinex5Dir
-Compress-Archive -Path "$bepinex5Dir/*" -DestinationPath "$releasesDir/UnityGameTranslator-BepInEx5-v$Version.zip"
-Write-Host "  Created UnityGameTranslator-BepInEx5-v$Version.zip" -ForegroundColor Gray
+# Each adapter ships a single ILRepack-merged DLL (Newtonsoft + UniverseLib + Core embedded)
+$releasePackages = @(
+    @{ Name = "BepInEx5";           Dll = "UnityGameTranslator-BepInEx5/bin/UnityGameTranslator.dll" }
+    @{ Name = "BepInEx6-Mono";      Dll = "UnityGameTranslator-BepInEx6-Mono/bin/UnityGameTranslator.dll" }
+    @{ Name = "BepInEx6-IL2CPP";    Dll = "UnityGameTranslator-BepInEx6-IL2CPP/bin/UnityGameTranslator.dll" }
+    @{ Name = "MelonLoader-Mono";   Dll = "UnityGameTranslator-MelonLoader-Mono/bin/UnityGameTranslator.dll" }
+    @{ Name = "MelonLoader-IL2CPP"; Dll = "UnityGameTranslator-MelonLoader-IL2CPP/bin/UnityGameTranslator.dll" }
+)
 
-# BepInEx 6 Mono
-$bepinex6MonoDir = "$releasesDir/UnityGameTranslator-BepInEx6-Mono-v$Version"
-New-Item -ItemType Directory -Path $bepinex6MonoDir | Out-Null
-Copy-Item "UnityGameTranslator-BepInEx6-Mono/bin/UnityGameTranslator.dll" $bepinex6MonoDir
-Copy-Item "UnityGameTranslator-BepInEx6-Mono/bin/UnityGameTranslator.Core.dll" $bepinex6MonoDir
-Copy-Item "UnityGameTranslator-BepInEx6-Mono/bin/Newtonsoft.Json.dll" $bepinex6MonoDir
-# UniverseLib for uGUI
-Copy-Item "UniverseLib/Release/UniverseLib.Mono/UniverseLib.Mono.dll" $bepinex6MonoDir
-Compress-Archive -Path "$bepinex6MonoDir/*" -DestinationPath "$releasesDir/UnityGameTranslator-BepInEx6-Mono-v$Version.zip"
-Write-Host "  Created UnityGameTranslator-BepInEx6-Mono-v$Version.zip" -ForegroundColor Gray
-
-# BepInEx 6 IL2CPP
-$bepinex6IL2CPPDir = "$releasesDir/UnityGameTranslator-BepInEx6-IL2CPP-v$Version"
-New-Item -ItemType Directory -Path $bepinex6IL2CPPDir | Out-Null
-Copy-Item "UnityGameTranslator-BepInEx6-IL2CPP/bin/UnityGameTranslator.dll" $bepinex6IL2CPPDir
-Copy-Item "UnityGameTranslator-BepInEx6-IL2CPP/bin/UnityGameTranslator.Core.dll" $bepinex6IL2CPPDir
-Copy-Item "UnityGameTranslator-BepInEx6-IL2CPP/bin/Newtonsoft.Json.dll" $bepinex6IL2CPPDir
-# UniverseLib IL2CPP variant for BepInEx
-Copy-Item "UniverseLib/Release/NuGet_IL2CPP_Interop/lib/net6.0/UniverseLib.BIE.IL2CPP.Interop.dll" $bepinex6IL2CPPDir
-Compress-Archive -Path "$bepinex6IL2CPPDir/*" -DestinationPath "$releasesDir/UnityGameTranslator-BepInEx6-IL2CPP-v$Version.zip"
-Write-Host "  Created UnityGameTranslator-BepInEx6-IL2CPP-v$Version.zip" -ForegroundColor Gray
-
-# MelonLoader Mono
-$melonMonoDir = "$releasesDir/UnityGameTranslator-MelonLoader-Mono-v$Version"
-New-Item -ItemType Directory -Path $melonMonoDir | Out-Null
-Copy-Item "UnityGameTranslator-MelonLoader-Mono/bin/UnityGameTranslator.dll" $melonMonoDir
-Copy-Item "UnityGameTranslator-MelonLoader-Mono/bin/UnityGameTranslator.Core.dll" $melonMonoDir
-Copy-Item "UnityGameTranslator-MelonLoader-Mono/bin/Newtonsoft.Json.dll" $melonMonoDir
-# UniverseLib Mono variant
-Copy-Item "UniverseLib/Release/UniverseLib.Mono/UniverseLib.Mono.dll" $melonMonoDir
-Compress-Archive -Path "$melonMonoDir/*" -DestinationPath "$releasesDir/UnityGameTranslator-MelonLoader-Mono-v$Version.zip"
-Write-Host "  Created UnityGameTranslator-MelonLoader-Mono-v$Version.zip" -ForegroundColor Gray
-
-# MelonLoader IL2CPP
-$melonIL2CPPDir = "$releasesDir/UnityGameTranslator-MelonLoader-IL2CPP-v$Version"
-New-Item -ItemType Directory -Path $melonIL2CPPDir | Out-Null
-Copy-Item "UnityGameTranslator-MelonLoader-IL2CPP/bin/UnityGameTranslator.dll" $melonIL2CPPDir
-Copy-Item "UnityGameTranslator-MelonLoader-IL2CPP/bin/UnityGameTranslator.Core.dll" $melonIL2CPPDir
-Copy-Item "UnityGameTranslator-MelonLoader-IL2CPP/bin/Newtonsoft.Json.dll" $melonIL2CPPDir
-# UniverseLib IL2CPP variant for MelonLoader
-Copy-Item "UniverseLib/Release/NuGet_IL2CPP_Interop/lib/net6.0/UniverseLib.ML.IL2CPP.Interop.dll" $melonIL2CPPDir
-Compress-Archive -Path "$melonIL2CPPDir/*" -DestinationPath "$releasesDir/UnityGameTranslator-MelonLoader-IL2CPP-v$Version.zip"
-Write-Host "  Created UnityGameTranslator-MelonLoader-IL2CPP-v$Version.zip" -ForegroundColor Gray
-
-# Cleanup temp directories
-Remove-Item -Recurse -Force $bepinex5Dir
-Remove-Item -Recurse -Force $bepinex6MonoDir
-Remove-Item -Recurse -Force $bepinex6IL2CPPDir
-Remove-Item -Recurse -Force $melonMonoDir
-Remove-Item -Recurse -Force $melonIL2CPPDir
+foreach ($pkg in $releasePackages) {
+    $stagingDir = "$releasesDir/UnityGameTranslator-$($pkg.Name)-v$Version"
+    New-Item -ItemType Directory -Path $stagingDir | Out-Null
+    Copy-Item $pkg.Dll $stagingDir
+    Compress-Archive -Path "$stagingDir/*" -DestinationPath "$releasesDir/UnityGameTranslator-$($pkg.Name)-v$Version.zip"
+    Remove-Item -Recurse -Force $stagingDir
+    Write-Host "  Created UnityGameTranslator-$($pkg.Name)-v$Version.zip" -ForegroundColor Gray
+}
 
 Write-Host "`n=== Release packages ready in ./releases/ ===" -ForegroundColor Green
 Get-ChildItem $releasesDir -Filter "*.zip" | ForEach-Object {

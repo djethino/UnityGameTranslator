@@ -1,0 +1,12 @@
+<!--
+  Empty stub file.
+
+  Purpose: ILRepack.Lib.MSBuild.Task ships a default ILRepack target that
+  auto-runs AfterTargets="Build" in Release configuration, when no custom
+  ILRepack.targets file exists (see the package's Condition). That auto-target
+  collides with our explicit ILRepackMerge target in Directory.Build.props.
+
+  By setting ILRepackTargetsFile to this existing-but-empty file, we suppress
+  the package's auto-target while keeping our own merge logic in Directory.Build.props.
+-->
+<Project />

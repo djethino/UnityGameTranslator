@@ -8,9 +8,21 @@
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+
+    <!-- ILRepack: merge Newtonsoft + UniverseLib + Core into UnityGameTranslator.dll -->
+    <EnableILRepack>true</EnableILRepack>
+    <UniverseLibDllPath>..\UniverseLib\Release\NuGet_IL2CPP_Interop\lib\net6.0\UniverseLib.BIE.IL2CPP.Interop.dll</UniverseLibDllPath>
+    <ILRepackLibraryPath>$(OutputPath);..\extlibs\Unity;..\extlibs\BepInEx6-IL2CPP</ILRepackLibraryPath>
+    <!-- Core compiles against UniverseLib.Mono; for IL2CPP we rewrite the ref to the actual runtime variant -->
+    <RewriteCoreUniverseLibRef>UniverseLib.BIE.IL2CPP.Interop</RewriteCoreUniverseLibRef>
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Shared: assembly-level [IgnoresAccessChecksTo] to bypass runtime visibility checks
+         after ILRepack changes the calling-assembly identity (see Shared/IgnoresAccessChecks.cs) -->
+    <Compile Include="..\Shared\IgnoresAccessChecks.cs" Link="IgnoresAccessChecks.cs" />
+    <Compile Include="..\Shared\IgnoresAccessChecksApplications.cs" Link="IgnoresAccessChecksApplications.cs" />
+
     <!-- Core library -->
     <ProjectReference Include="..\UnityGameTranslator.Core\UnityGameTranslator.Core.csproj" />
 

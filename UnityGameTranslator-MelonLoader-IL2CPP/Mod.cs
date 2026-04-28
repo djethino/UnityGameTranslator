@@ -17,7 +17,6 @@ namespace UnityGameTranslator.MelonLoaderIL2CPP
     public class TranslatorMod : MelonMod
     {
         private float lastScanTime = 0f;
-        private static Assembly _universeLibAssembly;
 
         private class MelonLoaderAdapter : IModLoaderAdapter
         {
@@ -31,28 +30,16 @@ namespace UnityGameTranslator.MelonLoaderIL2CPP
 
         public override void OnInitializeMelon()
         {
-            // Register assembly resolver BEFORE any UniverseLib types are accessed
+            // AssemblyResolve hook: kept ONLY because MelonLoader does not auto-register
+            // its Il2CppAssemblies/ folder with the CLR resolver. The merged Core references
+            // dumped Il2Cpp proxy assemblies (Il2CppTMPro, UnityEngine.UI, etc.) that live there.
+            //
+            // BepInEx 6 IL2CPP wires this resolution at the loader level (BepInEx/interop/),
+            // which is why the BepInEx6-IL2CPP adapter does not need this hook.
+            //
+            // UniverseLib redirection is no longer needed: types are embedded in this assembly
+            // via ILRepack and Core's external reference was rewritten by Cecil at build time.
             System.AppDomain.CurrentDomain.AssemblyResolve += OnAssemblyResolve;
-
-            // Pre-load the correct UniverseLib assembly
-            // Look next to the mod DLL first (Mods/ folder), then fallback to UserData/
-            string modDllDir = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
-            string universeLibPath = Path.Combine(modDllDir, "UniverseLib.ML.IL2CPP.Interop.dll");
-            if (!File.Exists(universeLibPath))
-            {
-                // Fallback to UserData/UnityGameTranslator/
-                string pluginPath = Path.Combine(MelonEnvironment.UserDataDirectory, "UnityGameTranslator");
-                universeLibPath = Path.Combine(pluginPath, "UniverseLib.ML.IL2CPP.Interop.dll");
-            }
-            if (File.Exists(universeLibPath))
-            {
-                _universeLibAssembly = Assembly.LoadFrom(universeLibPath);
-                MelonLogger.Msg($"Pre-loaded UniverseLib from: {universeLibPath}");
-            }
-            else
-            {
-                MelonLogger.Error($"UniverseLib not found at: {universeLibPath}");
-            }
 
             TranslatorCore.Initialize(new MelonLoaderAdapter());
             TranslatorCore.OnTranslationComplete = TranslatorScanner.OnTranslationComplete;
@@ -128,22 +115,13 @@ namespace UnityGameTranslator.MelonLoaderIL2CPP
         }
 
         /// <summary>
-        /// Resolve UniverseLib.Mono requests to the IL2CPP variant,
-        /// and resolve Unity assemblies from MelonLoader's Il2CppAssemblies folder.
-        /// Core references UniverseLib.Mono at compile-time, but at runtime we use the IL2CPP variant.
+        /// Resolve Unity assemblies from MelonLoader's Il2CppAssemblies folder
+        /// (TMPro, UnityEngine.UI, etc.) referenced by the merged Core.
         /// </summary>
         private static Assembly OnAssemblyResolve(object sender, System.ResolveEventArgs args)
         {
             var assemblyName = new System.Reflection.AssemblyName(args.Name);
 
-            // Redirect UniverseLib.Mono to our pre-loaded IL2CPP variant
-            if (assemblyName.Name == "UniverseLib.Mono" && _universeLibAssembly != null)
-            {
-                return _universeLibAssembly;
-            }
-
-            // Try to resolve from MelonLoader's Il2CppAssemblies folder
-            // This is needed for Unity types (TMPro, UnityEngine.UI, etc.) in IL2CPP games
             try
             {
                 string il2cppAssembliesDir = Path.Combine(MelonEnvironment.MelonLoaderDirectory, "Il2CppAssemblies");

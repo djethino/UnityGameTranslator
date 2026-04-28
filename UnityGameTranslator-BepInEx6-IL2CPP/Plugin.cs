@@ -20,7 +20,6 @@ namespace UnityGameTranslator.BepInEx6IL2CPP
         private static Plugin Instance;
         private static Harmony harmony;
         private float lastScanTime = 0f;
-        private static Assembly _universeLibAssembly;
 
         private class BepInEx6IL2CPPAdapter : IModLoaderAdapter
         {
@@ -45,21 +44,9 @@ namespace UnityGameTranslator.BepInEx6IL2CPP
         {
             Instance = this;
 
-            // Register assembly resolver for UniverseLib BEFORE any UniverseLib types are accessed
-            AppDomain.CurrentDomain.AssemblyResolve += OnAssemblyResolve;
-
-            // Pre-load the correct UniverseLib assembly
-            string pluginPath = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
-            string universeLibPath = Path.Combine(pluginPath, "UniverseLib.BIE.IL2CPP.Interop.dll");
-            if (File.Exists(universeLibPath))
-            {
-                _universeLibAssembly = Assembly.LoadFrom(universeLibPath);
-                Log.LogInfo($"Pre-loaded UniverseLib from: {universeLibPath}");
-            }
-            else
-            {
-                Log.LogError($"UniverseLib not found at: {universeLibPath}");
-            }
+            // UniverseLib is now embedded in this assembly via ILRepack — no pre-load needed.
+            // Core's UniverseLib.Mono compile-time reference was rewritten to UniverseLib.BIE.IL2CPP.Interop
+            // by the Cecil pre-merge step, so the runtime resolves types directly to the merged assembly.
 
             TranslatorCore.Initialize(new BepInEx6IL2CPPAdapter(Log));
             TranslatorCore.OnTranslationComplete = TranslatorScanner.OnTranslationComplete;
@@ -158,21 +145,5 @@ namespace UnityGameTranslator.BepInEx6IL2CPP
             }
         }
 
-        /// <summary>
-        /// Resolve UniverseLib.Mono requests to the IL2CPP variant.
-        /// Core references UniverseLib.Mono at compile-time, but at runtime we use the IL2CPP variant.
-        /// </summary>
-        private static Assembly OnAssemblyResolve(object sender, ResolveEventArgs args)
-        {
-            var assemblyName = new AssemblyName(args.Name);
-
-            // Redirect UniverseLib.Mono to our pre-loaded IL2CPP variant
-            if (assemblyName.Name == "UniverseLib.Mono" && _universeLibAssembly != null)
-            {
-                return _universeLibAssembly;
-            }
-
-            return null;
-        }
     }
 }

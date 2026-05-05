@@ -615,7 +615,7 @@ namespace UnityGameTranslator.Core
             try
             {
                 byte[] pngData = File.ReadAllBytes(fullPath);
-                var texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+                var texture = Compat.MakeTexture2D(2, 2, TextureFormat.RGBA32, false);
                 _createdTextures.Add(texture);
 
                 if (!TextureUtils.LoadImageToTexture(texture, pngData))

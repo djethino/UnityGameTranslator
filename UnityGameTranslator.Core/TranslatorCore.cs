@@ -1997,33 +1997,48 @@ namespace UnityGameTranslator.Core
 
         /// <summary>
         /// Resolve an OpenAI-compatible endpoint from the user's base URL.
-        /// Handles various URL formats:
+        /// Handles various URL formats; the only requirement on the user side is
+        /// to provide the full /chat/completions URL their provider documents
+        /// (the connection-test endpoint is derived from it automatically).
+        ///
         ///   "http://localhost:11434"                                              → .../v1/chat/completions
+        ///   "https://api.openai.com/v1/chat/completions"                          → unchanged (chat path) / .../v1/models (test)
+        ///   "https://api.deepseek.com/chat/completions"                           → unchanged (chat path) / .../models (test, no /v1)
+        ///   "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+        ///                                                                          → unchanged (chat path) / .../v1beta/openai/models (test)
         ///   "https://api.groq.com/openai/v1"                                     → .../openai/v1/chat/completions
-        ///   "https://generativelanguage.googleapis.com/.../openai/chat/completions" → unchanged (full URL)
-        ///   "https://example.com/v1/chat/completions"                            → unchanged (full URL)
         /// </summary>
         private static string ResolveAIEndpoint(string baseUrl, string path)
         {
             string url = baseUrl.TrimEnd('/');
             string trimmedPath = path.TrimStart('/');
 
-            // Already contains the full path (user pasted the complete endpoint)
+            // 1. URL already terminates with the requested path → use as-is
             if (url.EndsWith("/" + trimmedPath) || url.EndsWith(trimmedPath))
                 return url;
 
-            // URL contains /v1/ somewhere (e.g., .../openai/v1/something) — strip back to /v1 and append path
+            // 2. User pasted the chat URL but we want a different endpoint
+            //    (typically /models for the connection test). Replace
+            //    /chat/completions with the new path. Lets providers without a
+            //    /v1 prefix (Deepseek) and providers with non-standard prefixes
+            //    (Gemini's /v1beta/openai/) work transparently — the only
+            //    requirement is that the user pasted the chat URL their docs
+            //    show, which is the canonical way to configure the mod.
+            const string chatSuffix = "/chat/completions";
+            if (url.EndsWith(chatSuffix))
+                return url.Substring(0, url.Length - chatSuffix.Length) + "/" + trimmedPath;
+
+            // 3. URL contains /v1/ somewhere (e.g., .../openai/v1/something) — strip back to /v1 and append path
             int v1Index = url.LastIndexOf("/v1/");
             if (v1Index >= 0)
                 return url.Substring(0, v1Index + 3) + "/" + trimmedPath;
 
-            // URL ends with /v1 — just append the path (e.g., /chat/completions)
+            // 4. URL ends with /v1 — just append the path (e.g., /chat/completions)
             if (url.EndsWith("/v1"))
                 return url + "/" + trimmedPath;
 
-            // Default — add /v1/ prefix to path (backwards compatible: Ollama, etc.)
-            // Providers with non-standard paths (e.g., Gemini) should use the full URL
-            // including /chat/completions, or ending with /v1
+            // 5. Default — add /v1/ prefix to path (backwards compatible: Ollama, OpenAI default, Groq).
+            //    Providers without /v1 (e.g. Deepseek) should configure the full /chat/completions URL.
             return url + "/v1/" + trimmedPath;
         }
 

@@ -194,7 +194,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             var padding = _toastBox.GetComponent<VerticalLayoutGroup>();
             if (padding != null)
             {
-                padding.padding = new RectOffset(12, 12, 8, 8);
+                padding.padding = Compat.MakeRectOffset(12, 12, 8, 8);
             }
 
             _toastLabel = UIFactory.CreateLabel(_toastBox, "ToastLabel", "", TextAnchor.MiddleCenter);
@@ -281,7 +281,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             var padding = _modUpdateBox.GetComponent<VerticalLayoutGroup>();
             if (padding != null)
             {
-                padding.padding = new RectOffset(8, 8, 5, 5);
+                padding.padding = Compat.MakeRectOffset(8, 8, 5, 5);
             }
 
             _modUpdateLabel = UIFactory.CreateLabel(_modUpdateBox, "ModUpdateLabel", "Mod update available: v?.?.?", TextAnchor.MiddleLeft);
@@ -313,7 +313,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             var padding = _syncBox.GetComponent<VerticalLayoutGroup>();
             if (padding != null)
             {
-                padding.padding = new RectOffset(8, 8, 5, 5);
+                padding.padding = Compat.MakeRectOffset(8, 8, 5, 5);
             }
 
             _syncLabel = UIFactory.CreateLabel(_syncBox, "SyncLabel", "Sync status", TextAnchor.MiddleLeft);
@@ -367,7 +367,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             var padding = _aiBox.GetComponent<VerticalLayoutGroup>();
             if (padding != null)
             {
-                padding.padding = new RectOffset(8, 8, 5, 5);
+                padding.padding = Compat.MakeRectOffset(8, 8, 5, 5);
             }
 
             _aiStatusLabel = UIFactory.CreateLabel(_aiBox, "AIStatusLabel", "Translating...", TextAnchor.MiddleLeft);

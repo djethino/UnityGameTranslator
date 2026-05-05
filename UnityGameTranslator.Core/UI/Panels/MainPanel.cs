@@ -238,7 +238,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             var padding = _modUpdateBanner.GetComponent<HorizontalLayoutGroup>();
             if (padding != null)
             {
-                padding.padding = new RectOffset(10, 10, 5, 5);
+                padding.padding = Compat.MakeRectOffset(10, 10, 5, 5);
                 padding.childAlignment = TextAnchor.MiddleLeft;
             }
 
@@ -333,7 +333,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIStyles.SetBackground(_resourcesLinkSection, UIStyles.CardBackground);
             var rlPadding = _resourcesLinkSection.GetComponent<VerticalLayoutGroup>();
             if (rlPadding != null)
-                rlPadding.padding = new RectOffset(8, 8, 6, 6);
+                rlPadding.padding = Compat.MakeRectOffset(8, 8, 6, 6);
 
             // "External Resources uploaded by @username"
             _resourcesByLabel = UIFactory.CreateLabel(_resourcesLinkSection, "ResourcesByLabel",

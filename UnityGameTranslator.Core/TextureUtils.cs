@@ -535,17 +535,17 @@ namespace UnityGameTranslator.Core
                 _rtActiveProp.SetValue(null, rt, null);
 
                 // Create readable texture
-                var readable = new Texture2D(width, height, TextureFormat.RGBA32, false);
+                var readable = Compat.MakeTexture2D(width, height, TextureFormat.RGBA32, false);
 
-                // ReadPixels(new Rect(0, 0, width, height), 0, 0)
+                // ReadPixels(Compat.MakeRect(0, 0, width, height), 0, 0)
                 if (_readPixelsMethod != null)
                 {
-                    _readPixelsMethod.Invoke(readable, new object[] { new Rect(0, 0, width, height), 0, 0 });
+                    _readPixelsMethod.Invoke(readable, new object[] { Compat.MakeRect(0, 0, width, height), 0, 0 });
                 }
                 else
                 {
                     // Direct call fallback (works on Mono)
-                    readable.ReadPixels(new Rect(0, 0, width, height), 0, 0);
+                    readable.ReadPixels(Compat.MakeRect(0, 0, width, height), 0, 0);
                 }
 
                 readable.Apply();
@@ -721,7 +721,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static Texture2D ExtractRegionFromReadable(Texture2D source, int x, int y, int w, int h)
         {
-            var result = new Texture2D(w, h, TextureFormat.RGBA32, false);
+            var result = Compat.MakeTexture2D(w, h, TextureFormat.RGBA32, false);
 
             // Try GetPixels(x, y, w, h) via reflection
             try
@@ -802,7 +802,7 @@ namespace UnityGameTranslator.Core
                     ResolveSpriteCreateMethod();
                 }
 
-                var rect = new Rect(0, 0, texture.width, texture.height);
+                var rect = Compat.MakeRect(0, 0, texture.width, texture.height);
 
                 if (_spriteCreateMethod != null)
                 {
@@ -842,7 +842,7 @@ namespace UnityGameTranslator.Core
                 // Last resort direct call
                 try
                 {
-                    return Sprite.Create(texture, new Rect(0, 0, texture.width, texture.height), pivot, pixelsPerUnit);
+                    return Sprite.Create(texture, Compat.MakeRect(0, 0, texture.width, texture.height), pivot, pixelsPerUnit);
                 }
                 catch (Exception ex2)
                 {

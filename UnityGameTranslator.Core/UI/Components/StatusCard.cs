@@ -111,7 +111,7 @@ namespace UnityGameTranslator.Core.UI.Components
                 var layout = _root.GetComponent<VerticalLayoutGroup>();
                 if (layout != null)
                 {
-                    layout.padding = new RectOffset(UIStyles.CardPadding, UIStyles.CardPadding, UIStyles.CardPadding, UIStyles.CardPadding);
+                    layout.padding = Compat.MakeRectOffset(UIStyles.CardPadding, UIStyles.CardPadding, UIStyles.CardPadding, UIStyles.CardPadding);
                     layout.childAlignment = TextAnchor.UpperLeft;
                 }
             }

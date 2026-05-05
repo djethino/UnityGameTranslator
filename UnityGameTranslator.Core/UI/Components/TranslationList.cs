@@ -226,7 +226,7 @@ namespace UnityGameTranslator.Core.UI.Components
             var layout = itemRow.GetComponent<HorizontalLayoutGroup>();
             if (layout != null)
             {
-                layout.padding = new RectOffset(10, 10, 8, 8); // Left, Right, Top, Bottom
+                layout.padding = Compat.MakeRectOffset(10, 10, 8, 8); // Left, Right, Top, Bottom
                 layout.childAlignment = TextAnchor.MiddleLeft;
             }
 

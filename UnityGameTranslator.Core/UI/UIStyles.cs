@@ -241,7 +241,7 @@ namespace UnityGameTranslator.Core.UI
         /// </summary>
         public static Rect GetScreenSafeArea(Vector2 screenDimensions)
         {
-            return new Rect(
+            return Compat.MakeRect(
                 ScreenMarginHorizontal,
                 ScreenMarginBottom,
                 screenDimensions.x - ScreenMarginHorizontal * 2,
@@ -333,7 +333,7 @@ namespace UnityGameTranslator.Core.UI
             var layout = card.GetComponent<VerticalLayoutGroup>();
             if (layout != null)
             {
-                layout.padding = new RectOffset(CardPadding, CardPadding, CardPadding, CardPadding);
+                layout.padding = Compat.MakeRectOffset(CardPadding, CardPadding, CardPadding, CardPadding);
                 layout.childAlignment = TextAnchor.MiddleCenter;
                 layout.childForceExpandWidth = true;
                 layout.childForceExpandHeight = false;
@@ -373,7 +373,7 @@ namespace UnityGameTranslator.Core.UI
             var layout = section.GetComponent<VerticalLayoutGroup>();
             if (layout != null)
             {
-                layout.padding = new RectOffset(SectionPadding, SectionPadding, SectionPadding, SectionPadding);
+                layout.padding = Compat.MakeRectOffset(SectionPadding, SectionPadding, SectionPadding, SectionPadding);
                 layout.childAlignment = TextAnchor.UpperLeft;
                 layout.childControlWidth = true;
                 layout.childControlHeight = true;
@@ -491,7 +491,7 @@ namespace UnityGameTranslator.Core.UI
                 layout.childAlignment = TextAnchor.MiddleCenter;
                 layout.childForceExpandWidth = false;
                 layout.childForceExpandHeight = false;
-                layout.padding = new RectOffset(0, 0, 5, 5);
+                layout.padding = Compat.MakeRectOffset(0, 0, 5, 5);
             }
 
             return row;
@@ -510,7 +510,7 @@ namespace UnityGameTranslator.Core.UI
             var layout = container.GetComponent<HorizontalLayoutGroup>();
             if (layout != null)
             {
-                layout.padding = new RectOffset(20, 20, 10, 10);
+                layout.padding = Compat.MakeRectOffset(20, 20, 10, 10);
                 layout.childAlignment = TextAnchor.MiddleCenter;
             }
 
@@ -607,7 +607,7 @@ namespace UnityGameTranslator.Core.UI
                 scrollLayout = scrollContent.AddComponent<VerticalLayoutGroup>();
             }
             scrollLayout.spacing = ElementSpacing;
-            scrollLayout.padding = new RectOffset(0, 0, 0, 0);
+            scrollLayout.padding = Compat.MakeRectOffset(0, 0, 0, 0);
             scrollLayout.childAlignment = centerContent ? TextAnchor.MiddleCenter : TextAnchor.UpperCenter;
             scrollLayout.childControlWidth = true;
             scrollLayout.childControlHeight = true;
@@ -683,7 +683,7 @@ namespace UnityGameTranslator.Core.UI
             var layout = card.GetComponent<VerticalLayoutGroup>();
             if (layout != null)
             {
-                layout.padding = new RectOffset(CardPadding, CardPadding, CardPadding, CardPadding);
+                layout.padding = Compat.MakeRectOffset(CardPadding, CardPadding, CardPadding, CardPadding);
                 layout.childAlignment = stretchVertically ? TextAnchor.UpperCenter : TextAnchor.MiddleCenter;
                 layout.childForceExpandWidth = true;
                 layout.childForceExpandHeight = false; // Content inside card doesn't stretch
@@ -759,7 +759,7 @@ namespace UnityGameTranslator.Core.UI
             var layout = row.GetComponent<HorizontalLayoutGroup>();
             if (layout != null)
             {
-                layout.padding = new RectOffset(10, 10, 5, 5); // Left, Right, Top, Bottom padding
+                layout.padding = Compat.MakeRectOffset(10, 10, 5, 5); // Left, Right, Top, Bottom padding
                 layout.childAlignment = TextAnchor.MiddleLeft;
                 layout.childForceExpandWidth = false;
                 layout.childForceExpandHeight = false;
@@ -783,7 +783,7 @@ namespace UnityGameTranslator.Core.UI
             var layout = item.GetComponent<HorizontalLayoutGroup>();
             if (layout != null)
             {
-                layout.padding = new RectOffset(10, 10, 5, 5);
+                layout.padding = Compat.MakeRectOffset(10, 10, 5, 5);
                 layout.childAlignment = TextAnchor.MiddleLeft;
                 layout.childControlWidth = true;
                 layout.childControlHeight = true;
@@ -922,7 +922,7 @@ namespace UnityGameTranslator.Core.UI
             var headerLayout = header.GetComponent<HorizontalLayoutGroup>();
             if (headerLayout != null)
             {
-                headerLayout.padding = new RectOffset(10, 10, 5, 5);
+                headerLayout.padding = Compat.MakeRectOffset(10, 10, 5, 5);
                 headerLayout.childAlignment = TextAnchor.MiddleLeft;
             }
 
@@ -951,7 +951,7 @@ namespace UnityGameTranslator.Core.UI
             var contentLayout = content.GetComponent<VerticalLayoutGroup>();
             if (contentLayout != null)
             {
-                contentLayout.padding = new RectOffset(10, 10, 10, 10);
+                contentLayout.padding = Compat.MakeRectOffset(10, 10, 10, 10);
             }
 
             return (container, header, iconLabel, titleLabel, content);

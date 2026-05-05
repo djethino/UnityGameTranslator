@@ -263,7 +263,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 resultsLayout.spacing = 2;
                 resultsLayout.childControlHeight = true;
                 resultsLayout.childForceExpandHeight = false;
-                resultsLayout.padding = new RectOffset(2, 2, 2, 2);
+                resultsLayout.padding = Compat.MakeRectOffset(2, 2, 2, 2);
 
                 var resultsFitter = _gameResultsContent.GetComponent<ContentSizeFitter>()
                     ?? _gameResultsContent.AddComponent<ContentSizeFitter>();

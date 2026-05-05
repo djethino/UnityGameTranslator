@@ -178,7 +178,7 @@ namespace UnityGameTranslator.Core
                 TranslatorCore.LogInfo($"[FontManager] Instantiate'd font: dynamic={font.dynamic}, material={font.material?.name}");
 
                 // Create Texture2D from atlas
-                var tex = new Texture2D(result.AtlasWidth, result.AtlasHeight, TextureFormat.RGBA32, false);
+                var tex = Compat.MakeTexture2D(result.AtlasWidth, result.AtlasHeight, TextureFormat.RGBA32, false);
                 tex.name = $"BitmapAtlas_{displayName}";
                 tex.filterMode = FilterMode.Bilinear;
                 tex.wrapMode = TextureWrapMode.Clamp;

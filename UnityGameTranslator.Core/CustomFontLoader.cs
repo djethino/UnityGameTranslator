@@ -473,7 +473,7 @@ namespace UnityGameTranslator.Core
 
                     // Create temporary texture to encode as PNG
                     // Flip: our RGBA is top-to-bottom, SetPixels32 expects bottom-to-top
-                    var tmpTex = new Texture2D(w, h, TextureFormat.RGBA32, false);
+                    var tmpTex = Compat.MakeTexture2D(w, h, TextureFormat.RGBA32, false);
                     var colors = new Color32[w * h];
                     for (int row = 0; row < h; row++)
                     {
@@ -531,7 +531,7 @@ namespace UnityGameTranslator.Core
                     if (!string.IsNullOrEmpty(fontInfo.PngPath) && File.Exists(fontInfo.PngPath))
                     {
                         var pngBytes = File.ReadAllBytes(fontInfo.PngPath);
-                        texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+                        texture = Compat.MakeTexture2D(2, 2, TextureFormat.RGBA32, false);
                         texture.filterMode = FilterMode.Bilinear;
 
                         if (!LoadImageToTexture(texture, pngBytes))
@@ -556,7 +556,7 @@ namespace UnityGameTranslator.Core
                 {
                     // JSON+PNG font: load from file
                     var pngData = File.ReadAllBytes(fontInfo.PngPath);
-                    texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+                    texture = Compat.MakeTexture2D(2, 2, TextureFormat.RGBA32, false);
                     texture.filterMode = FilterMode.Bilinear;
 
                     if (!LoadImageToTexture(texture, pngData))

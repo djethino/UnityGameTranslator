@@ -155,31 +155,44 @@ namespace UnityGameTranslator.Core.UI.Components
                     result = await ApiClient.SearchByGameName(gameName, targetLanguage);
                 }
 
-                if (result != null && result.Success)
+                // After the awaits we may be on a background thread (IL2CPP). All UI access
+                // (SetStatus = _statusLabel.text, SetTranslations -> Populate -> Destroy/Create
+                // child GameObjects) must run on the main thread or the IL2CPP runtime faults
+                // with AccessViolationException inside the Unity layout/UI code.
+                var capturedResult = result;
+                TranslatorUIManager.RunOnMainThread(() =>
                 {
-                    var translations = result.Translations ?? new List<TranslationInfo>();
-                    if (translations.Count == 0)
+                    if (capturedResult != null && capturedResult.Success)
                     {
-                        SetStatus("No translations found for your language", UIStyles.TextMuted);
+                        var translations = capturedResult.Translations ?? new List<TranslationInfo>();
+                        if (translations.Count == 0)
+                        {
+                            SetStatus("No translations found for your language", UIStyles.TextMuted);
+                        }
+                        else
+                        {
+                            SetStatus($"Found {translations.Count} translation(s):", UIStyles.TextPrimary);
+                            SetTranslations(translations);
+                        }
                     }
                     else
                     {
-                        SetStatus($"Found {translations.Count} translation(s):", UIStyles.TextPrimary);
-                        SetTranslations(translations);
+                        SetStatus(capturedResult?.Error ?? "Search failed", UIStyles.StatusError);
                     }
-                }
-                else
-                {
-                    SetStatus(result?.Error ?? "Search failed", UIStyles.StatusError);
-                }
+                });
             }
             catch (Exception e)
             {
-                SetStatus($"Error: {e.Message}", UIStyles.StatusError);
-                TranslatorCore.LogWarning($"[TranslationList] Search error: {e.Message}");
+                var errorMsg = e.Message;
+                TranslatorUIManager.RunOnMainThread(() =>
+                {
+                    SetStatus($"Error: {errorMsg}", UIStyles.StatusError);
+                });
+                TranslatorCore.LogWarning($"[TranslationList] Search error: {errorMsg}");
             }
             finally
             {
+                // bool assignment is atomic in .NET; safe to set off the main thread.
                 _isSearching = false;
             }
         }

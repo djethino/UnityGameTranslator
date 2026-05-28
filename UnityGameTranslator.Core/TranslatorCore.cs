@@ -856,6 +856,24 @@ namespace UnityGameTranslator.Core
             Instance = new TranslatorCore();
             Adapter = adapter;
 
+            // Catch-all for exceptions that escape from async void methods, raw
+            // threads, or anything else that bypasses our explicit try/catch
+            // blocks. Without this the host (Unity, BepInEx, MelonLoader) may
+            // tear down the process on the first unobserved exception, leaving
+            // the user with no diagnostic.
+            // SetObserved() prevents the BCL from re-raising the unobserved
+            // task exception event, which on some runtimes does crash the app.
+            AppDomain.CurrentDomain.UnhandledException += (sender, e) =>
+            {
+                var ex = e.ExceptionObject as Exception;
+                Adapter?.LogError($"[Unhandled] {ex?.GetType().Name ?? "?"}: {ex?.Message}\n{ex?.StackTrace}");
+            };
+            System.Threading.Tasks.TaskScheduler.UnobservedTaskException += (sender, e) =>
+            {
+                Adapter?.LogError($"[UnobservedTask] {e.Exception?.Flatten().GetBaseException().Message}\n{e.Exception?.StackTrace}");
+                e.SetObserved();
+            };
+
             // Use the folder provided by the adapter directly (no subfolder)
             ModFolder = adapter.GetPluginFolder();
 
@@ -988,6 +1006,10 @@ namespace UnityGameTranslator.Core
 
         public static void OnUpdate(float currentTime)
         {
+            // Drain queued main-thread callbacks first — async callers depend
+            // on this to deliver their results to the UI in a timely fashion.
+            UI.TranslatorUIManager.DrainMainThreadQueue();
+
             // Feed the scanner's adaptive frame-time budget on every frame.
             // The scanner uses recent frame-time variance to size its per-frame work budget.
             TranslatorScanner.RecordFrameTime();

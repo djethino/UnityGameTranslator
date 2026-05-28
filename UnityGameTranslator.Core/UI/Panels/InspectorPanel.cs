@@ -40,6 +40,10 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         protected override int MinPanelHeight => 360;
 
+        // TextEdit mode contains a scrollable list of child texts that benefits from extra
+        // vertical room when the user enlarges the panel.
+        protected override bool HasFlexibleContent => true;
+
         // Mode
         private InspectorMode _currentMode = InspectorMode.Exclusion;
 
@@ -714,7 +718,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.SetLayoutElement(_textEditCountLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
 
             var textEditScroll = UIFactory.CreateScrollView(_textEditRow, "TextEditScroll", out _textEditListContent, out _);
-            UIFactory.SetLayoutElement(textEditScroll, minHeight: 120, flexibleHeight: 9999, flexibleWidth: 9999);
+            UIFactory.SetLayoutElement(textEditScroll, minHeight: 260, flexibleHeight: 9999, flexibleWidth: 9999);
             UIStyles.SetBackground(textEditScroll, UIStyles.InputBackground);
             UIFactory.SetLayoutGroup<VerticalLayoutGroup>(_textEditListContent, false, false, true, true, 5, 5, 5, 5, 5);
 

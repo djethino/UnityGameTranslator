@@ -98,7 +98,47 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Register panel root EARLY for hierarchy-based own UI detection
             // This must happen before any child components are created
             EnsurePanelRootRegistered();
-            return UIStyles.CreateScrollablePanelLayout(ContentRoot, out scrollContent, out buttonRow, cardWidth);
+            var scrollObj = UIStyles.CreateScrollablePanelLayout(ContentRoot, out scrollContent, out buttonRow, cardWidth);
+
+            if (HasFlexibleContent)
+            {
+                ConfigureScrollContentForFlex(scrollContent);
+            }
+
+            return scrollObj;
+        }
+
+        /// <summary>
+        /// Wires the scroll content so its flexibleHeight children grow with the panel while
+        /// the global panel scroll still kicks in when the content overflows.
+        ///
+        /// Default layout uses ContentSizeFitter in PreferredSize mode, which sets
+        /// scrollContent.height = sum(children.preferredHeight) and IGNORES flexibleHeight.
+        /// Result: enlarging the panel just adds empty space at the bottom — flexible
+        /// children (TextEdit list, ConflictScroll, etc.) never see the extra room.
+        ///
+        /// Fix: attach a UniverseLib.UI.Widgets.FillViewportHeight component that pushes
+        /// LayoutElement.preferredHeight = viewport.rect.height each frame, so
+        /// LayoutUtility.GetPreferredHeight returns max(viewport_height, children_height):
+        ///   - small content → preferredHeight = viewport → flex children expand
+        ///   - large content → preferredHeight = children → global scroll still works
+        ///
+        /// Also enable childForceExpandHeight on the VLG so the extra room actually
+        /// reaches the flexible child instead of staying in unused vertical space.
+        /// </summary>
+        private void ConfigureScrollContentForFlex(GameObject scrollContent)
+        {
+            if (scrollContent == null) return;
+
+            UniverseLib.UI.UIFactory.AttachFillViewportHeight(scrollContent);
+
+            var vlg = scrollContent.GetComponent<VerticalLayoutGroup>();
+            if (vlg != null)
+            {
+                vlg.childForceExpandHeight = true;
+                // Static elements stack from the top; the flexible child takes the trailing space.
+                vlg.childAlignment = TextAnchor.UpperCenter;
+            }
         }
 
         /// <summary>
@@ -249,6 +289,16 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         protected virtual bool UsesCenterAnchors => true;
 
+        /// <summary>
+        /// Whether this panel contains scrollable content that should be allowed to grow
+        /// beyond its measured min height (i.e. it has a ScrollView with flexibleHeight).
+        /// When true, MaxHeight is bumped up to the screen height so the user can drag the
+        /// bottom edge down to give the inner scroll list more room.
+        /// Override to true for panels with long lists (Inspector text edit, merge conflicts,
+        /// parameters tabs, etc.).
+        /// </summary>
+        protected virtual bool HasFlexibleContent => false;
+
         // Track if we've shown the backdrop for this panel
         private bool _backdropShown = false;
 
@@ -295,6 +345,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// <summary>
         /// Maximum height for resize - based on content height.
         /// This is checked by UniverseLib during resize to prevent extending beyond content.
+        /// For panels with HasFlexibleContent = true, we cap at screen height instead so
+        /// the user can drag the bottom edge down to give the scroll list more visible rows.
         /// </summary>
         public override int MaxHeight
         {
@@ -302,8 +354,54 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 if (!UseDynamicSizing) return int.MaxValue;
                 if (!_contentMeasured) MeasureContentHeight();
-                return Mathf.RoundToInt(_measuredContentHeight);
+                int measured = Mathf.RoundToInt(_measuredContentHeight);
+                if (HasFlexibleContent)
+                {
+                    // Allow the user to extend the panel up to the screen height minus a small
+                    // safety margin so the bottom resize handle stays grabbable.
+                    int screenCap = Mathf.Max(measured, Screen.height - 60);
+                    return screenCap;
+                }
+                return measured;
             }
+        }
+
+        /// <summary>
+        /// Clamp the panel inside the screen so the title bar (top of the panel) can
+        /// always be grabbed for dragging. Without this the UniverseLib default lets pos.y
+        /// reach halfH, which with our (0.5, 0.5) pivot puts the title bar entirely above
+        /// the screen edge and makes the panel impossible to move again.
+        /// Non-centered panels (StatusOverlay) keep the original UniverseLib behavior.
+        /// </summary>
+        public override void EnsureValidPosition()
+        {
+            if (!UsesCenterAnchors)
+            {
+                base.EnsureValidPosition();
+                return;
+            }
+
+            Vector3 pos = Rect.localPosition;
+            // localPosition is in canvas-local pixels, not screen pixels — the CanvasScaler
+            // (referenceResolution 1920x1080, Expand mode) means Screen.width/height differs
+            // from the canvas logical size in fullscreen ≠ 1080p, in windowed mode, or on HiDPI.
+            // The canvas root rect is the right source of truth for clamping localPosition.
+            var rootRect = Owner.RootRect.rect;
+            float halfW = rootRect.width * 0.5f;
+            float halfH = rootRect.height * 0.5f;
+            float halfPanelW = Rect.rect.width * 0.5f;
+            float halfPanelH = Rect.rect.height * 0.5f;
+            const float Margin = 50f;
+
+            // X: leave at least Margin px of the panel inside the screen on each side.
+            pos.x = Mathf.Clamp(pos.x, -halfW + Margin - halfPanelW, halfW - Margin + halfPanelW);
+
+            // Y: the title bar lives at the top of the panel, so the panel top must stay
+            // at least Margin px below the screen top — otherwise the title bar is unreachable.
+            // The bottom is allowed to slide further down (panel taller than screen still works).
+            pos.y = Mathf.Clamp(pos.y, -halfH + Margin - halfPanelH, halfH - Margin - halfPanelH);
+
+            Rect.localPosition = pos;
         }
 
         protected TranslatorPanelBase(UIBase owner) : base(owner)

@@ -502,58 +502,67 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private async void OnTranslationChoiceEnter()
         {
-            // Detect game if not already done
-            if (_detectedGame == null)
+            try
             {
-                _detectedGame = GameDetector.DetectGame();
-                if (_detectedGame != null)
+                // Detect game if not already done. Detection is synchronous; only the optional
+                // online search below performs an await that can resume on a background thread.
+                if (_detectedGame == null)
                 {
-                    _gameLabel.text = $"Game: {_detectedGame.name}";
-                    if (_onlineMode && !_translationList.IsSearching)
+                    _detectedGame = GameDetector.DetectGame();
+                    if (_detectedGame != null)
                     {
-                        // Use the selected target language from wizard
-                        string targetLang = _targetLanguage;
-
-                        // Capture values for closure
-                        var steamId = _detectedGame.steam_id;
-                        var gameName = _detectedGame.name;
-
-                        await _translationList.SearchAsync(steamId, gameName, targetLang);
-
-                        // After await, we may be on a background thread (IL2CPP issue)
-                        TranslatorUIManager.RunOnMainThread(() =>
+                        _gameLabel.text = $"Game: {_detectedGame.name}";
+                        if (_onlineMode && !_translationList.IsSearching)
                         {
-                            UpdateActionButtons();
+                            // Use the selected target language from wizard
+                            string targetLang = _targetLanguage;
 
-                            // Translations loaded, recalculate panel size
-                            RecalculateSize();
-                        });
+                            // Capture values for closure
+                            var steamId = _detectedGame.steam_id;
+                            var gameName = _detectedGame.name;
+
+                            await _translationList.SearchAsync(steamId, gameName, targetLang);
+                        }
+                    }
+                    else
+                    {
+                        _gameLabel.text = "Game: Unknown";
                     }
                 }
-                else
-                {
-                    _gameLabel.text = "Game: Unknown";
-                }
-            }
 
-            // Update local translations count
-            int localCount = TranslatorCore.TranslationCache.Count;
-            if (localCount > 0)
-            {
-                _localTranslationsLabel.text = $"You already have {localCount} local translations";
-                var serverState = TranslatorCore.ServerState;
-                if (serverState != null && serverState.Exists && !string.IsNullOrEmpty(serverState.Uploader))
+                // After the SearchAsync await we may be on a background thread (IL2CPP).
+                // ALL UI access from this point on (label writes, UpdateAccountStatus which
+                // internally calls RecalculateSize -> coroutine -> LayoutRebuilder) must run
+                // on the main thread, otherwise the IL2CPP runtime faults with
+                // AccessViolationException inside LayoutRebuilder.ForceRebuildLayoutImmediate.
+                // We enqueue even in the no-await branches for simplicity and safety; the
+                // 1-frame delay is imperceptible.
+                TranslatorUIManager.RunOnMainThread(() =>
                 {
-                    _localTranslationsLabel.text += $" (synced with @{serverState.Uploader})";
-                }
-            }
-            else
-            {
-                _localTranslationsLabel.text = "";
-            }
+                    // Update local translations count
+                    int localCount = TranslatorCore.TranslationCache.Count;
+                    if (localCount > 0)
+                    {
+                        _localTranslationsLabel.text = $"You already have {localCount} local translations";
+                        var serverState = TranslatorCore.ServerState;
+                        if (serverState != null && serverState.Exists && !string.IsNullOrEmpty(serverState.Uploader))
+                        {
+                            _localTranslationsLabel.text += $" (synced with @{serverState.Uploader})";
+                        }
+                    }
+                    else
+                    {
+                        _localTranslationsLabel.text = "";
+                    }
 
-            UpdateAccountStatus();
-            UpdateActionButtons();
+                    UpdateAccountStatus(); // calls RecalculateSize() internally
+                    UpdateActionButtons();
+                });
+            }
+            catch (Exception _e)
+            {
+                TranslatorCore.LogError($"[OnTranslationChoiceEnter] {_e.GetType().Name}: {_e.Message}\n{_e.StackTrace}");
+            }
         }
 
         /// <summary>
@@ -678,39 +687,46 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private async void OnMergeClicked()
         {
-            var selected = _translationList?.SelectedTranslation;
-            if (selected == null) return;
-
-            _downloadStatusLabel.text = "Downloading for merge...";
-            _downloadStatusLabel.color = UIStyles.StatusWarning;
-            SetButtonsInteractable(false);
-
-            await TranslatorUIManager.DownloadAndMerge(selected, (success, message) =>
+            try
             {
-                if (success)
-                {
-                    _downloadStatusLabel.text = message;
-                    _downloadStatusLabel.color = UIStyles.StatusSuccess;
-                    // Auto-advance to complete after successful merge
-                    UniverseLib.RuntimeHelper.StartCoroutine(DelayedShowComplete());
-                }
-                else
-                {
-                    _downloadStatusLabel.text = message;
-                    _downloadStatusLabel.color = UIStyles.StatusError;
-                    SetButtonsInteractable(true);
-                }
-            });
+                var selected = _translationList?.SelectedTranslation;
+                if (selected == null) return;
 
-            // After await, we may be on a background thread (IL2CPP issue)
-            // If MergePanel opened (conflicts), close wizard
-            TranslatorUIManager.RunOnMainThread(() =>
-            {
-                if (TranslatorUIManager.MergePanel != null && TranslatorUIManager.MergePanel.Enabled)
+                _downloadStatusLabel.text = "Downloading for merge...";
+                _downloadStatusLabel.color = UIStyles.StatusWarning;
+                SetButtonsInteractable(false);
+
+                await TranslatorUIManager.DownloadAndMerge(selected, (success, message) =>
                 {
-                    SetActive(false);
-                }
-            });
+                    if (success)
+                    {
+                        _downloadStatusLabel.text = message;
+                        _downloadStatusLabel.color = UIStyles.StatusSuccess;
+                        // Auto-advance to complete after successful merge
+                        UniverseLib.RuntimeHelper.StartCoroutine(DelayedShowComplete());
+                    }
+                    else
+                    {
+                        _downloadStatusLabel.text = message;
+                        _downloadStatusLabel.color = UIStyles.StatusError;
+                        SetButtonsInteractable(true);
+                    }
+                });
+
+                // After await, we may be on a background thread (IL2CPP issue)
+                // If MergePanel opened (conflicts), close wizard
+                TranslatorUIManager.RunOnMainThread(() =>
+                {
+                    if (TranslatorUIManager.MergePanel != null && TranslatorUIManager.MergePanel.Enabled)
+                    {
+                        SetActive(false);
+                    }
+                });
+            }
+            catch (Exception _e)
+            {
+                TranslatorCore.LogError($"[OnMergeClicked] {_e.GetType().Name}: {_e.Message}\n{_e.StackTrace}");
+            }
         }
 
         private void SetButtonsInteractable(bool interactable)
@@ -759,30 +775,39 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private async void OnDownloadClicked()
         {
-            var selected = _translationList?.SelectedTranslation;
-            if (selected == null || _isDownloading) return;
-
-            _isDownloading = true;
-            _downloadStatusLabel.text = "Downloading...";
-            _downloadStatusLabel.color = UIStyles.StatusWarning;
-            SetButtonsInteractable(false);
-
-            await TranslatorUIManager.DownloadTranslation(selected, (success, message) =>
+            try
             {
-                _downloadStatusLabel.text = message;
-                _downloadStatusLabel.color = success ? UIStyles.StatusSuccess : UIStyles.StatusError;
+                var selected = _translationList?.SelectedTranslation;
+                if (selected == null || _isDownloading) return;
 
-                if (success)
+                _isDownloading = true;
+                _downloadStatusLabel.text = "Downloading...";
+                _downloadStatusLabel.color = UIStyles.StatusWarning;
+                SetButtonsInteractable(false);
+
+                await TranslatorUIManager.DownloadTranslation(selected, (success, message) =>
                 {
-                    // Auto-advance to complete after successful download
-                    UniverseLib.RuntimeHelper.StartCoroutine(DelayedShowComplete());
-                }
-                else
-                {
-                    _isDownloading = false;
-                    SetButtonsInteractable(true);
-                }
-            });
+                    _downloadStatusLabel.text = message;
+                    _downloadStatusLabel.color = success ? UIStyles.StatusSuccess : UIStyles.StatusError;
+
+                    if (success)
+                    {
+                        // Auto-advance to complete after successful download
+                        UniverseLib.RuntimeHelper.StartCoroutine(DelayedShowComplete());
+                    }
+                    else
+                    {
+                        _isDownloading = false;
+                        SetButtonsInteractable(true);
+                    }
+                });
+            }
+            catch (Exception _e)
+            {
+                TranslatorCore.LogError($"[OnDownloadClicked] {_e.GetType().Name}: {_e.Message}\n{_e.StackTrace}");
+                _isDownloading = false;
+                SetButtonsInteractable(true);
+            }
         }
 
         private void CreateAIConfigStep()
@@ -1087,40 +1112,54 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private async void WizardTestGoogle()
         {
-            if (string.IsNullOrEmpty(_googleApiKey))
+            try
             {
-                _wizardGoogleStatusLabel.text = "Enter an API key first";
-                _wizardGoogleStatusLabel.color = UIStyles.StatusWarning;
-                return;
-            }
-            _wizardGoogleStatusLabel.text = "Testing...";
-            _wizardGoogleStatusLabel.color = UIStyles.TextSecondary;
+                if (string.IsNullOrEmpty(_googleApiKey))
+                {
+                    _wizardGoogleStatusLabel.text = "Enter an API key first";
+                    _wizardGoogleStatusLabel.color = UIStyles.StatusWarning;
+                    return;
+                }
+                _wizardGoogleStatusLabel.text = "Testing...";
+                _wizardGoogleStatusLabel.color = UIStyles.TextSecondary;
 
-            bool success = await TranslatorCore.TestGoogleConnection(_googleApiKey);
-            TranslatorUIManager.RunOnMainThread(() =>
+                bool success = await TranslatorCore.TestGoogleConnection(_googleApiKey);
+                TranslatorUIManager.RunOnMainThread(() =>
+                {
+                    _wizardGoogleStatusLabel.text = success ? "Connected!" : "Failed - check API key";
+                    _wizardGoogleStatusLabel.color = success ? UIStyles.StatusSuccess : UIStyles.StatusError;
+                });
+            }
+            catch (Exception _e)
             {
-                _wizardGoogleStatusLabel.text = success ? "Connected!" : "Failed - check API key";
-                _wizardGoogleStatusLabel.color = success ? UIStyles.StatusSuccess : UIStyles.StatusError;
-            });
+                TranslatorCore.LogError($"[WizardTestGoogle] {_e.GetType().Name}: {_e.Message}\n{_e.StackTrace}");
+            }
         }
 
         private async void WizardTestDeepL()
         {
-            if (string.IsNullOrEmpty(_deeplApiKey))
+            try
             {
-                _wizardDeeplStatusLabel.text = "Enter an API key first";
-                _wizardDeeplStatusLabel.color = UIStyles.StatusWarning;
-                return;
-            }
-            _wizardDeeplStatusLabel.text = "Testing...";
-            _wizardDeeplStatusLabel.color = UIStyles.TextSecondary;
+                if (string.IsNullOrEmpty(_deeplApiKey))
+                {
+                    _wizardDeeplStatusLabel.text = "Enter an API key first";
+                    _wizardDeeplStatusLabel.color = UIStyles.StatusWarning;
+                    return;
+                }
+                _wizardDeeplStatusLabel.text = "Testing...";
+                _wizardDeeplStatusLabel.color = UIStyles.TextSecondary;
 
-            bool success = await TranslatorCore.TestDeepLConnection(_deeplApiKey, _deeplUseFree);
-            TranslatorUIManager.RunOnMainThread(() =>
+                bool success = await TranslatorCore.TestDeepLConnection(_deeplApiKey, _deeplUseFree);
+                TranslatorUIManager.RunOnMainThread(() =>
+                {
+                    _wizardDeeplStatusLabel.text = success ? "Connected!" : "Failed - check API key and plan type";
+                    _wizardDeeplStatusLabel.color = success ? UIStyles.StatusSuccess : UIStyles.StatusError;
+                });
+            }
+            catch (Exception _e)
             {
-                _wizardDeeplStatusLabel.text = success ? "Connected!" : "Failed - check API key and plan type";
-                _wizardDeeplStatusLabel.color = success ? UIStyles.StatusSuccess : UIStyles.StatusError;
-            });
+                TranslatorCore.LogError($"[WizardTestDeepL] {_e.GetType().Name}: {_e.Message}\n{_e.StackTrace}");
+            }
         }
 
         private void CreateCompleteStep()

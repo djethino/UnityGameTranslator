@@ -24,6 +24,10 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         protected override int MinPanelHeight => 400;
 
+        // Every tab here holds a scrollable list (exclusions, fonts, overrides, images, vars)
+        // that should grow when the user enlarges the panel.
+        protected override bool HasFlexibleContent => true;
+
         // Tab system
         private TabBar _tabBar;
 
@@ -287,7 +291,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Scrollable container for exclusions
             var scrollObj = UIFactory.CreateScrollView(card, "ExclusionsScroll", out var scrollContent, out var scrollbar);
-            UIFactory.SetLayoutElement(scrollObj, minHeight: 120, flexibleHeight: 9999, flexibleWidth: 9999);
+            UIFactory.SetLayoutElement(scrollObj, minHeight: 200, flexibleHeight: 9999, flexibleWidth: 9999);
             UIStyles.SetBackground(scrollObj, UIStyles.InputBackground);
             UIFactory.ConfigureAutoHideScrollbar(scrollObj);
 
@@ -750,7 +754,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Scrollable list of overrides
             var scrollObj = UIFactory.CreateScrollView(card, "OverridesScroll", out var scrollContent, out var scrollbar);
-            UIFactory.SetLayoutElement(scrollObj, minHeight: 120, flexibleHeight: 9999, flexibleWidth: 9999);
+            UIFactory.SetLayoutElement(scrollObj, minHeight: 200, flexibleHeight: 9999, flexibleWidth: 9999);
             UIStyles.SetBackground(scrollObj, UIStyles.InputBackground);
             UIFactory.ConfigureAutoHideScrollbar(scrollObj);
 
@@ -1547,7 +1551,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             RegisterUIText(listLabel);
 
             var scrollObj = UIFactory.CreateScrollView(card, "ImagesScroll", out var scrollContent, out var scrollbar);
-            UIFactory.SetLayoutElement(scrollObj, minHeight: 120, flexibleHeight: 9999);
+            UIFactory.SetLayoutElement(scrollObj, minHeight: 200, flexibleHeight: 9999);
             _imagesListContainer = scrollContent;
 
             // Apply All button
@@ -1728,7 +1732,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             RegisterUIText(listLabel);
 
             var scrollObj = UIFactory.CreateScrollView(card, "VarsScroll", out var scrollContent, out _);
-            UIFactory.SetLayoutElement(scrollObj, minHeight: 100, flexibleHeight: 9999);
+            UIFactory.SetLayoutElement(scrollObj, minHeight: 200, flexibleHeight: 9999);
             _variablesListContainer = scrollContent;
 
             // Status label

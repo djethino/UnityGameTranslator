@@ -22,6 +22,9 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         protected override int MinPanelHeight => 400;
 
+        // Conflict list grows with the panel height to show more rows at once.
+        protected override bool HasFlexibleContent => true;
+
         // Legacy merge (string-based)
         private MergeResult _pendingMerge;
         private Dictionary<string, string> _remoteTranslations;
@@ -102,8 +105,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Use scrollable layout - content scrolls if needed, buttons stay fixed
             CreateScrollablePanelLayout(out var scrollContent, out var buttonRow, PanelWidth - 40);
 
-            // Adaptive card for merge conflicts - sizes to content (PanelWidth - 2*PanelPadding)
-            var card = CreateAdaptiveCard(scrollContent, "MergeCard", PanelWidth - 40);
+            // Adaptive card for merge conflicts — stretchVertically so the inner conflict list
+            // can absorb the extra space when the user enlarges the panel.
+            var card = CreateAdaptiveCard(scrollContent, "MergeCard", PanelWidth - 40, stretchVertically: true);
 
             var title = CreateTitle(card, "Title", "Merge Conflicts");
             RegisterUIText(title);
@@ -130,7 +134,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Conflict list scroll view
             var scrollObj = UIFactory.CreateScrollView(card, "ConflictScroll", out _conflictListContent, out _);
-            UIFactory.SetLayoutElement(scrollObj, flexibleHeight: 9999, flexibleWidth: 9999);
+            UIFactory.SetLayoutElement(scrollObj, minHeight: 240, flexibleHeight: 9999, flexibleWidth: 9999);
             UIFactory.SetLayoutGroup<VerticalLayoutGroup>(_conflictListContent, false, false, true, true, 5, 5, 5, 5, 5);
             UIStyles.SetBackground(scrollObj, UIStyles.InputBackground);
             UIStyles.ConfigureScrollViewNoScrollbar(scrollObj);

@@ -120,7 +120,7 @@ namespace UnityGameTranslator.Core.UI.Components
         {
             _isVoting = true;
 
-            // Disable buttons during vote
+            // Disable buttons during vote — runs on the main thread (button-click context).
             if (_upButton != null) _upButton.interactable = false;
             if (_downButton != null) _downButton.interactable = false;
 
@@ -128,28 +128,35 @@ namespace UnityGameTranslator.Core.UI.Components
             {
                 var result = await ApiClient.Vote(_translationId, value);
 
-                if (result.Success)
+                // After await we may be on a background thread (IL2CPP). All UI access
+                // (_countText.text, button styles, button.interactable) must run on the
+                // main thread or the IL2CPP runtime faults inside Unity UI code.
+                var capturedResult = result;
+                TranslatorUIManager.RunOnMainThread(() =>
                 {
-                    _currentVoteCount = result.VoteCount;
-                    _userVote = result.UserVote;
-
-                    if (_countText != null)
+                    if (capturedResult.Success)
                     {
-                        _countText.text = FormatVoteCount(_currentVoteCount);
-                        UpdateCountColor();
+                        _currentVoteCount = capturedResult.VoteCount;
+                        _userVote = capturedResult.UserVote;
+
+                        if (_countText != null)
+                        {
+                            _countText.text = FormatVoteCount(_currentVoteCount);
+                            UpdateCountColor();
+                        }
+
+                        UpdateButtonStyles();
+
+                        // Notify parent
+                        _onVoteChanged?.Invoke(_translationId, _currentVoteCount);
+
+                        TranslatorCore.LogInfo($"[VoteButtons] Vote successful: {_translationId} -> {_currentVoteCount}");
                     }
-
-                    UpdateButtonStyles();
-
-                    // Notify parent
-                    _onVoteChanged?.Invoke(_translationId, _currentVoteCount);
-
-                    TranslatorCore.LogInfo($"[VoteButtons] Vote successful: {_translationId} -> {_currentVoteCount}");
-                }
-                else
-                {
-                    TranslatorCore.LogWarning($"[VoteButtons] Vote failed: {result.Error}");
-                }
+                    else
+                    {
+                        TranslatorCore.LogWarning($"[VoteButtons] Vote failed: {capturedResult.Error}");
+                    }
+                });
             }
             catch (Exception e)
             {
@@ -157,12 +164,18 @@ namespace UnityGameTranslator.Core.UI.Components
             }
             finally
             {
-                _isVoting = false;
-
-                // Re-enable buttons
-                bool isLoggedIn = !string.IsNullOrEmpty(TranslatorCore.Config?.api_token);
-                if (_upButton != null) _upButton.interactable = isLoggedIn;
-                if (_downButton != null) _downButton.interactable = isLoggedIn;
+                // Re-enable buttons — needs the main thread for UI access. Queueing this
+                // after the success block above keeps the order: status updates first,
+                // then re-enable. _isVoting is set inside the queued action so a quick
+                // second click isn't accidentally accepted while the queued UI work is
+                // still pending.
+                TranslatorUIManager.RunOnMainThread(() =>
+                {
+                    _isVoting = false;
+                    bool isLoggedIn = !string.IsNullOrEmpty(TranslatorCore.Config?.api_token);
+                    if (_upButton != null) _upButton.interactable = isLoggedIn;
+                    if (_downButton != null) _downButton.interactable = isLoggedIn;
+                });
             }
         }
 

@@ -256,7 +256,7 @@ namespace UnityGameTranslator.Core
                 if (Directory.Exists("/usr/share/fonts")) dirs.Add("/usr/share/fonts");
                 if (Directory.Exists("/Library/Fonts")) dirs.Add("/Library/Fonts");
             }
-            catch { }
+            catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] suppressed: {_e.GetType().Name}: {_e.Message}"); }
 
             // Build candidate filenames from the display name
             // "Adobe Devanagari Italic" → try: "Adobe Devanagari Italic", "AdobeDevanagari-Italic",
@@ -290,7 +290,7 @@ namespace UnityGameTranslator.Core
                         }
                     }
                 }
-                catch { }
+                catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] suppressed: {_e.GetType().Name}: {_e.Message}"); }
             }
 
             return null;
@@ -643,7 +643,7 @@ namespace UnityGameTranslator.Core
             {
                 return Resources.FindObjectsOfTypeAll(type);
             }
-            catch { }
+            catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] suppressed: {_e.GetType().Name}: {_e.Message}"); }
 
             // IL2CPP: try via reflection on the actual Resources type
             try
@@ -685,7 +685,7 @@ namespace UnityGameTranslator.Core
                     catch { continue; }
                 }
             }
-            catch { }
+            catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] suppressed: {_e.GetType().Name}: {_e.Message}"); }
 
             return new UnityEngine.Object[0];
         }
@@ -701,7 +701,7 @@ namespace UnityGameTranslator.Core
             {
                 return ScriptableObject.CreateInstance(type);
             }
-            catch { }
+            catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] suppressed: {_e.GetType().Name}: {_e.Message}"); }
 
             // IL2CPP: try via reflection
             try
@@ -745,7 +745,7 @@ namespace UnityGameTranslator.Core
                 if (obj is UnityEngine.Object uobj)
                     return uobj;
             }
-            catch { }
+            catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] suppressed: {_e.GetType().Name}: {_e.Message}"); }
 
             TranslatorCore.LogWarning($"[CustomFontLoader] Cannot create ScriptableObject of type {type.Name}");
             return null;
@@ -767,7 +767,7 @@ namespace UnityGameTranslator.Core
                     return true;
                 }
             }
-            catch { }
+            catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] suppressed: {_e.GetType().Name}: {_e.Message}"); }
 
             // Try field
             try
@@ -779,7 +779,7 @@ namespace UnityGameTranslator.Core
                     return true;
                 }
             }
-            catch { }
+            catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] suppressed: {_e.GetType().Name}: {_e.Message}"); }
 
             // Try with m_ prefix (Unity convention)
             try
@@ -791,7 +791,7 @@ namespace UnityGameTranslator.Core
                     return true;
                 }
             }
-            catch { }
+            catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] suppressed: {_e.GetType().Name}: {_e.Message}"); }
 
             return false;
         }
@@ -808,7 +808,7 @@ namespace UnityGameTranslator.Core
                 if (prop != null && prop.CanRead)
                     return prop.GetValue(obj, null);
             }
-            catch { }
+            catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] suppressed: {_e.GetType().Name}: {_e.Message}"); }
 
             try
             {
@@ -816,7 +816,7 @@ namespace UnityGameTranslator.Core
                 if (field != null)
                     return field.GetValue(obj);
             }
-            catch { }
+            catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] suppressed: {_e.GetType().Name}: {_e.Message}"); }
 
             try
             {
@@ -824,7 +824,7 @@ namespace UnityGameTranslator.Core
                 if (field != null)
                     return field.GetValue(obj);
             }
-            catch { }
+            catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] suppressed: {_e.GetType().Name}: {_e.Message}"); }
 
             return null;
         }
@@ -842,7 +842,7 @@ namespace UnityGameTranslator.Core
                         return type;
                 }
             }
-            catch { }
+            catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] suppressed: {_e.GetType().Name}: {_e.Message}"); }
             return null;
         }
 
@@ -1147,7 +1147,7 @@ namespace UnityGameTranslator.Core
                                 }
                             }
                         }
-                        catch { }
+                        catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] suppressed: {_e.GetType().Name}: {_e.Message}"); }
                     }
                 }
 
@@ -1619,7 +1619,7 @@ namespace UnityGameTranslator.Core
                 object glyph = null;
 
                 // Try parameterless constructor
-                try { glyph = Activator.CreateInstance(glyphType); } catch { }
+                try { glyph = Activator.CreateInstance(glyphType); } catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] suppressed: {_e.GetType().Name}: {_e.Message}"); }
 
                 // If that fails, try ScriptableObject pattern (for IL2CPP types)
                 if (glyph == null)
@@ -1733,7 +1733,7 @@ namespace UnityGameTranslator.Core
                 // Try parameterless constructor
                 if (character == null)
                 {
-                    try { character = Activator.CreateInstance(charType); } catch { }
+                    try { character = Activator.CreateInstance(charType); } catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] suppressed: {_e.GetType().Name}: {_e.Message}"); }
                 }
 
                 if (character == null) return null;
@@ -1922,7 +1922,7 @@ namespace UnityGameTranslator.Core
                         {
                             dictAdd.Invoke(dict, new object[] { id, glyph });
                         }
-                        catch { } // Ignore duplicates
+                        catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] suppressed: {_e.GetType().Name}: {_e.Message}"); } // Ignore duplicates
                     }
                 }
 
@@ -2001,7 +2001,7 @@ namespace UnityGameTranslator.Core
                         for (int i = 0; i < 10; i++)
                         {
                             try { arr.SetValue(Activator.CreateInstance(elemType), i); }
-                            catch { }
+                            catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] suppressed: {_e.GetType().Name}: {_e.Message}"); }
                         }
                         weightsField.SetValue(fontAsset, arr);
                     }
@@ -2033,7 +2033,7 @@ namespace UnityGameTranslator.Core
                     prop.SetValue(obj, value, null);
                     return;
                 }
-                catch { }
+                catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] suppressed: {_e.GetType().Name}: {_e.Message}"); }
             }
 
             // Try field (Mono)
@@ -2046,7 +2046,7 @@ namespace UnityGameTranslator.Core
                         value = Convert.ChangeType(value, field.FieldType);
                     field.SetValue(obj, value);
                 }
-                catch { }
+                catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] suppressed: {_e.GetType().Name}: {_e.Message}"); }
             }
         }
 

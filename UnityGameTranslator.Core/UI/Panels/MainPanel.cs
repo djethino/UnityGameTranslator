@@ -34,6 +34,10 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         protected override int MinPanelHeight => 350;
 
+        // The Community tab embeds a scrollable translation list that benefits from
+        // extra room when the user enlarges the window.
+        protected override bool HasFlexibleContent => true;
+
         // UI references - Account section
         private Text _accountLabel;
         private ButtonRef _loginLogoutBtn;

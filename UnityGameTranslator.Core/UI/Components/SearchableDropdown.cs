@@ -297,7 +297,7 @@ namespace UnityGameTranslator.Core.UI.Components
             _scrollRect.horizontal = false;
             _scrollRect.vertical = true;
             _scrollRect.movementType = ScrollRect.MovementType.Clamped;
-            _scrollRect.scrollSensitivity = 30f;
+            _scrollRect.scrollSensitivity = 20f;
             _scrollRect.inertia = false;
 
             Canvas.ForceUpdateCanvases();

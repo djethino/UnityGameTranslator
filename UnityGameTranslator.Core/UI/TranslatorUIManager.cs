@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
@@ -99,22 +100,73 @@ namespace UnityGameTranslator.Core.UI
         /// Essential for IL2CPP builds where async continuations run on background threads.
         /// Safe to call from any thread - if already on main thread, executes immediately via coroutine.
         /// </summary>
-        public static void RunOnMainThread(Action action)
+        /// <summary>
+        /// Run an async block as a fire-and-forget on the SynchronizationContext
+        /// of the caller, with a top-level try/catch that prevents unobserved
+        /// exceptions from escaping to the host runtime (where they may crash
+        /// Unity / IL2CPP).
+        ///
+        /// Use this instead of declaring `async void` methods. The original
+        /// `async void` pattern exposes the entire mod to silent process crashes
+        /// whenever an exception escapes — typical when an HTTP call fails, the
+        /// server returns malformed JSON, or any UI lookup hits an unexpected
+        /// null.
+        ///
+        /// Example:
+        ///   private void OnButtonClicked() =&gt; TranslatorUIManager.RunSafe(
+        ///       async () =&gt; { ... await something ...; },
+        ///       nameof(OnButtonClicked));
+        /// </summary>
+        public static async void RunSafe(Func<Task> work, string context = null)
         {
-            if (action == null) return;
-            RuntimeHelper.StartCoroutine(RunOnMainThreadCoroutine(action));
-        }
-
-        private static IEnumerator RunOnMainThreadCoroutine(Action action)
-        {
-            yield return null; // Wait one frame to ensure we're on main thread
+            if (work == null) return;
             try
             {
-                action();
+                await work();
             }
             catch (Exception e)
             {
-                TranslatorCore.LogError($"[UIManager] RunOnMainThread error: {e.Message}");
+                TranslatorCore.LogError($"[{context ?? "RunSafe"}] {e.GetType().Name}: {e.Message}\n{e.StackTrace}");
+            }
+        }
+
+        // Thread-safe queue of actions to execute on the main thread.
+        // Drained by DrainMainThreadQueue() called every frame from
+        // TranslatorCore.OnUpdate (itself called by every adapter's frame
+        // callback). The previous implementation called Unity's StartCoroutine
+        // directly, which throws "can only be called from the main thread"
+        // when invoked from a background thread (typical IL2CPP situation
+        // after an HTTP await). The throw bubbled up to async void callers
+        // and crashed the process silently.
+        private static readonly ConcurrentQueue<Action> _mainThreadQueue = new ConcurrentQueue<Action>();
+
+        public static void RunOnMainThread(Action action)
+        {
+            if (action == null) return;
+            _mainThreadQueue.Enqueue(action);
+        }
+
+        /// <summary>
+        /// Drain queued actions on the main thread. Called every frame by
+        /// TranslatorCore.OnUpdate. Each action runs inside try/catch so a
+        /// faulty callback does not kill the entire batch nor surface as an
+        /// unobserved exception.
+        /// </summary>
+        public static void DrainMainThreadQueue()
+        {
+            // Snapshot count first so a callback that re-enqueues itself
+            // doesn't make this loop run unbounded for a frame.
+            int budget = _mainThreadQueue.Count;
+            while (budget-- > 0 && _mainThreadQueue.TryDequeue(out var action))
+            {
+                try
+                {
+                    action();
+                }
+                catch (Exception e)
+                {
+                    TranslatorCore.LogError($"[UIManager] RunOnMainThread callback error: {e.GetType().Name}: {e.Message}\n{e.StackTrace}");
+                }
             }
         }
 
@@ -244,20 +296,27 @@ namespace UnityGameTranslator.Core.UI
 
         private static async void TriggerStartupTasks()
         {
-            // Wait a bit to let the game initialize
-            await Task.Delay(3000);
-
-            // Check for mod updates first (non-blocking, independent of auth)
-            if (TranslatorCore.Config.online_mode && TranslatorCore.Config.sync.check_mod_updates)
+            try
             {
-                CheckForModUpdates();
+                // Wait a bit to let the game initialize
+                await Task.Delay(3000);
+
+                // Check for mod updates first (non-blocking, independent of auth)
+                if (TranslatorCore.Config.online_mode && TranslatorCore.Config.sync.check_mod_updates)
+                {
+                    CheckForModUpdates();
+                }
+
+                // Start SSE sync stream (replaces FetchServerState + CheckForUpdates)
+                // The SSE 'state' event combines check-uuid + check in one real-time payload
+                if (TranslatorCore.Config.online_mode && !string.IsNullOrEmpty(TranslatorCore.Config.api_token))
+                {
+                    StartSyncStream();
+                }
             }
-
-            // Start SSE sync stream (replaces FetchServerState + CheckForUpdates)
-            // The SSE 'state' event combines check-uuid + check in one real-time payload
-            if (TranslatorCore.Config.online_mode && !string.IsNullOrEmpty(TranslatorCore.Config.api_token))
+            catch (Exception _e)
             {
-                StartSyncStream();
+                TranslatorCore.LogError($"[TriggerStartupTasks] {_e.GetType().Name}: {_e.Message}\n{_e.StackTrace}");
             }
         }
 

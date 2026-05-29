@@ -109,8 +109,10 @@ namespace UnityGameTranslator.BepInEx6IL2CPP
 
             void Update()
             {
-                Instance?.OnUpdate();
-
+                // Per-frame tick (drain main-thread queue + scan) is centralized in
+                // TranslatorUIManager.MainTickLoop — no need to call OnUpdate/Scan here.
+                // We only keep the scene-change detector below; IL2CPP doesn't fire the
+                // SceneManager.sceneLoaded delegate reliably for all games, so we poll.
                 var activeScene = SceneManager.GetActiveScene();
                 if (activeScene.name != lastSceneName)
                 {
@@ -130,14 +132,5 @@ namespace UnityGameTranslator.BepInEx6IL2CPP
                 TranslatorCore.OnShutdown();
             }
         }
-
-        private void OnUpdate()
-        {
-            // Scanner runs every frame with an adaptive budget; the budget keeps work
-            // under the natural frame-time noise so per-frame impact is imperceptible.
-            TranslatorCore.OnUpdate(Time.realtimeSinceStartup);
-            TranslatorScanner.Scan();
-        }
-
     }
 }

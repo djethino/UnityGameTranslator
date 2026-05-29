@@ -60,14 +60,6 @@ namespace UnityGameTranslator.BepInEx6Mono
             };
         }
 
-        void Update()
-        {
-            // Scanner runs every frame with an adaptive budget; the budget keeps work
-            // under the natural frame-time noise so per-frame impact is imperceptible.
-            TranslatorCore.OnUpdate(Time.realtimeSinceStartup);
-            TranslatorScanner.Scan();
-        }
-
         void OnApplicationQuit()
         {
             TranslatorCore.OnShutdown();

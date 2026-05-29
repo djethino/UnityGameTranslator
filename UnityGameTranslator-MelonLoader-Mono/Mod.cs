@@ -55,14 +55,6 @@ namespace UnityGameTranslator.MelonLoaderMono
             TranslatorCore.OnSceneUnloaded(sceneName);
         }
 
-        public override void OnUpdate()
-        {
-            // Scanner runs every frame with an adaptive budget; the budget keeps work
-            // under the natural frame-time noise so per-frame impact is imperceptible.
-            TranslatorCore.OnUpdate(Time.realtimeSinceStartup);
-            TranslatorScanner.Scan();
-        }
-
         public override void OnApplicationQuit()
         {
             TranslatorCore.OnShutdown();

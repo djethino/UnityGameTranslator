@@ -898,8 +898,7 @@ namespace UnityGameTranslator.Core
             // Initialize image replacer for bitmap text translation
             ImageReplacer.Initialize(ModFolder);
 
-            httpClient = new HttpClient();
-            httpClient.Timeout = TimeSpan.FromMinutes(5);
+            httpClient = CreateHttpClient(Config);
 
             // Detect game
             CurrentGame = GameDetector.DetectGame();
@@ -2005,6 +2004,153 @@ namespace UnityGameTranslator.Core
             }
         }
 
+        // ===========================================================================
+        // HttpClient construction & proxy configuration
+        // ===========================================================================
+        //
+        // Some games hook the network stack at the process level (DRM, anti-cheat,
+        // EOS bootstrap, etc.) — they may install a runtime HTTP proxy that swallows
+        // every outbound request the mod tries to make, so SendAsync hangs until the
+        // 5-minute timeout. To stay usable in those games we let the user pick a
+        // proxy strategy at runtime: default / system / none / custom.
+        // The HttpClient is created here and can be rebuilt on the fly when the
+        // user changes the setting in OptionsPanel — the old client is dropped to
+        // the GC so requests already in flight finish naturally.
+
+        private static HttpClient CreateHttpClient(ModConfig config)
+        {
+            // Defense in depth: never let a misconfigured proxy stop the mod from booting.
+            // If BuildProxyHandler or the HttpClient constructor throws, fall back to a
+            // plain HttpClient so the rest of TranslatorCore.Initialize keeps running.
+            try
+            {
+                var handler = BuildProxyHandler(config);
+                var client = handler != null ? new HttpClient(handler) : new HttpClient();
+                client.Timeout = TimeSpan.FromMinutes(5);
+                LogProxyMode(config);
+                return client;
+            }
+            catch (Exception e)
+            {
+                Adapter?.LogError($"[HttpClient] Failed to create configured HttpClient, falling back to default: {e.GetType().Name}: {e.Message}");
+                var fallback = new HttpClient();
+                fallback.Timeout = TimeSpan.FromMinutes(5);
+                return fallback;
+            }
+        }
+
+        /// <summary>
+        /// Build the HttpClientHandler matching the user's proxy_mode.
+        /// Returns null for "default" so that HttpClient uses its plain default
+        /// constructor (legacy behavior — inherits WebRequest.DefaultProxy, which
+        /// the game may have replaced; that is exactly the situation the other
+        /// modes are designed to escape).
+        /// </summary>
+        private static HttpClientHandler BuildProxyHandler(ModConfig config)
+        {
+            string mode = (config?.proxy_mode ?? "default").Trim().ToLowerInvariant();
+            if (mode == "default")
+                return null;
+
+            HttpClientHandler handler;
+            try { handler = new HttpClientHandler(); }
+            catch (Exception e)
+            {
+                Adapter?.LogWarning($"[HttpClient] Failed to create HttpClientHandler, falling back to default: {e.Message}");
+                return null;
+            }
+
+            // IMPORTANT (Mono): MonoWebRequestHandler.set_Proxy(null) throws
+            // InvalidOperationException. Never assign null to handler.Proxy; rely on
+            // UseProxy=false instead when we want to bypass all proxies.
+            switch (mode)
+            {
+                case "none":
+                    try
+                    {
+                        handler.UseProxy = false;
+                        // Don't touch handler.Proxy here.
+                    }
+                    catch (Exception e)
+                    {
+                        Adapter?.LogWarning($"[HttpClient] Failed to disable proxy: {e.Message}");
+                        return null;
+                    }
+                    return handler;
+
+                case "system":
+                    try
+                    {
+                        // GetSystemWebProxy() reads from the registry every call, so a runtime
+                        // override on WebRequest.DefaultProxy can't poison this instance.
+                        var sys = System.Net.WebRequest.GetSystemWebProxy();
+                        if (sys == null)
+                        {
+                            Adapter?.LogWarning("[HttpClient] system proxy is null -> falling back to default");
+                            return null;
+                        }
+                        handler.UseProxy = true;
+                        handler.Proxy = sys;
+                    }
+                    catch (Exception e)
+                    {
+                        Adapter?.LogWarning($"[HttpClient] system proxy load failed: {e.Message}");
+                        return null;
+                    }
+                    return handler;
+
+                case "custom":
+                    if (string.IsNullOrWhiteSpace(config.proxy_url))
+                    {
+                        Adapter?.LogWarning("[HttpClient] proxy_mode=custom but proxy_url is empty -> falling back to default");
+                        return null;
+                    }
+                    try
+                    {
+                        var webProxy = new System.Net.WebProxy(config.proxy_url.Trim(), config.proxy_bypass_local);
+                        if (!string.IsNullOrEmpty(config.proxy_username))
+                        {
+                            webProxy.Credentials = new System.Net.NetworkCredential(
+                                config.proxy_username,
+                                config.proxy_password ?? string.Empty);
+                        }
+                        handler.UseProxy = true;
+                        handler.Proxy = webProxy;
+                    }
+                    catch (Exception e)
+                    {
+                        Adapter?.LogWarning($"[HttpClient] custom proxy '{config.proxy_url}' is invalid: {e.Message}");
+                        return null;
+                    }
+                    return handler;
+
+                default:
+                    Adapter?.LogWarning($"[HttpClient] Unknown proxy_mode '{mode}' -> falling back to default");
+                    return null;
+            }
+        }
+
+        private static void LogProxyMode(ModConfig config)
+        {
+            string mode = (config?.proxy_mode ?? "default").Trim().ToLowerInvariant();
+            string detail = (mode == "custom" && !string.IsNullOrEmpty(config?.proxy_url))
+                ? $" -> {config.proxy_url}"
+                : string.Empty;
+            Adapter?.LogInfo($"[HttpClient] Proxy mode: {mode}{detail}");
+        }
+
+        /// <summary>
+        /// Replace the shared HttpClient with a fresh one built from the current
+        /// config. Call this after the user applies a proxy setting change.
+        /// The previous instance is left for the GC: explicitly disposing it would
+        /// cancel any request still in flight (e.g. an SSE stream).
+        /// </summary>
+        public static void RebuildHttpClient()
+        {
+            Adapter?.LogInfo("[HttpClient] Rebuilding HttpClient with current proxy settings...");
+            httpClient = CreateHttpClient(Config);
+        }
+
         /// <summary>
         /// Add Authorization header for AI API requests if an API key is configured.
         /// </summary>
@@ -2072,19 +2218,22 @@ namespace UnityGameTranslator.Core
         /// <returns>True if connection successful</returns>
         public static async System.Threading.Tasks.Task<bool> TestAIConnection(string url, string apiKey = null)
         {
+            string endpoint = ResolveAIEndpoint(url, "models");
+            LogDebug($"[AI] Testing connection: GET {endpoint} (proxy_mode={Config?.proxy_mode ?? "default"})");
             try
             {
-                var request = new HttpRequestMessage(HttpMethod.Get, ResolveAIEndpoint(url, "models"));
+                var request = new HttpRequestMessage(HttpMethod.Get, endpoint);
                 if (!string.IsNullOrEmpty(apiKey))
                 {
                     request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
                 }
                 var response = await httpClient.SendAsync(request);
+                LogDebug($"[AI] Test response: {(int)response.StatusCode} {response.ReasonPhrase}");
                 return response.IsSuccessStatusCode;
             }
             catch (Exception e)
             {
-                Adapter?.LogWarning($"[AI] Connection test failed: {e.Message}");
+                Adapter?.LogWarning($"[AI] Connection test failed ({endpoint}): {e.GetType().Name}: {e.Message}");
                 return false;
             }
         }
@@ -2162,14 +2311,17 @@ namespace UnityGameTranslator.Core
         /// <returns>Sorted array of model names, or empty array on failure</returns>
         public static async System.Threading.Tasks.Task<string[]> FetchModels(string url, string apiKey = null)
         {
+            string endpoint = ResolveAIEndpoint(url, "models");
+            LogDebug($"[AI] Fetching models: GET {endpoint} (proxy_mode={Config?.proxy_mode ?? "default"})");
             try
             {
-                var request = new HttpRequestMessage(HttpMethod.Get, ResolveAIEndpoint(url, "models"));
+                var request = new HttpRequestMessage(HttpMethod.Get, endpoint);
                 if (!string.IsNullOrEmpty(apiKey))
                 {
                     request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
                 }
                 var response = await httpClient.SendAsync(request);
+                LogDebug($"[AI] FetchModels response: {(int)response.StatusCode} {response.ReasonPhrase}");
                 if (!response.IsSuccessStatusCode)
                     return new string[0];
 
@@ -2187,11 +2339,12 @@ namespace UnityGameTranslator.Core
                         models.Add(id);
                 }
                 models.Sort(StringComparer.OrdinalIgnoreCase);
+                LogDebug($"[AI] FetchModels parsed {models.Count} model(s)");
                 return models.ToArray();
             }
             catch (Exception e)
             {
-                Adapter?.LogWarning($"Failed to fetch models: {e.Message}");
+                Adapter?.LogWarning($"[AI] Failed to fetch models ({endpoint}): {e.GetType().Name}: {e.Message}");
                 return new string[0];
             }
         }
@@ -4292,6 +4445,21 @@ namespace UnityGameTranslator.Core
         public string api_base_url { get; set; } = null;
         public string website_base_url { get; set; } = null;
         public string sse_base_url { get; set; } = null;
+
+        // Proxy configuration for the mod's HTTP requests (AI provider, UGT site, GitHub).
+        // Some games intercept or hook outbound HTTP at the process level (DRM, anti-cheat,
+        // EOS bootstrap, etc.), which can make the default HttpClient hang indefinitely.
+        // Modes:
+        //   "default" — let HttpClient inherit WebRequest.DefaultProxy (legacy behavior;
+        //               can be silently replaced by the game at runtime, hence the option)
+        //   "system"  — force a fresh GetSystemWebProxy() ignoring any runtime overrides
+        //   "none"    — bypass all proxies, talk directly (fixes the "stuck on Testing..." case)
+        //   "custom"  — route through proxy_url with optional credentials
+        public string proxy_mode { get; set; } = "default";
+        public string proxy_url { get; set; } = null;
+        public string proxy_username { get; set; } = null;
+        public string proxy_password { get; set; } = null;
+        public bool proxy_bypass_local { get; set; } = true;
 
         public SyncConfig sync { get; set; } = new SyncConfig();
         public WindowPreferences window_preferences { get; set; } = new WindowPreferences();

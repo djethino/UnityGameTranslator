@@ -147,9 +147,8 @@ namespace UnityGameTranslator.Core.UI
         }
 
         /// <summary>
-        /// Drain queued actions on the main thread. Called every frame by
-        /// TranslatorCore.OnUpdate. Each action runs inside try/catch so a
-        /// faulty callback does not kill the entire batch nor surface as an
+        /// Drain queued actions on the main thread. Each action runs inside try/catch
+        /// so a faulty callback does not kill the entire batch nor surface as an
         /// unobserved exception.
         /// </summary>
         public static void DrainMainThreadQueue()
@@ -234,6 +233,45 @@ namespace UnityGameTranslator.Core.UI
 
             // Initialize UI state based on config
             InitializeUIState();
+
+            // Single source of truth for the per-frame tick: run OnUpdate (drains the
+            // main-thread queue, feeds the scanner's adaptive frame-time budget, persists
+            // cache) and Scan (applies pending translations + scans the scene) inside a
+            // permanent coroutine. We intentionally do NOT also tick from each mod
+            // loader's Update() callback — that would double-call. The coroutine works
+            // even in games whose host suppresses our MonoBehaviour.Update (LONESTAR was
+            // observed to do so) because Unity drives coroutines through a separate path
+            // hosted by UniverseLib's own runtime, which is proven to tick wherever our UI
+            // already works.
+            try
+            {
+                RuntimeHelper.StartCoroutine(MainTickLoop());
+                TranslatorCore.LogInfo("[UIManager] Main tick coroutine started");
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogError($"[UIManager] Failed to start main tick coroutine: {e.GetType().Name}: {e.Message}");
+            }
+        }
+
+        private static IEnumerator MainTickLoop()
+        {
+            while (true)
+            {
+                // Catch around each iteration so a transient failure (e.g. a scene with
+                // unexpected components) does not silently terminate the loop — Unity
+                // stops a coroutine the first time an exception escapes.
+                try
+                {
+                    TranslatorCore.OnUpdate(Time.realtimeSinceStartup);
+                    TranslatorScanner.Scan();
+                }
+                catch (Exception e)
+                {
+                    TranslatorCore.LogError($"[MainTick] {e.GetType().Name}: {e.Message}\n{e.StackTrace}");
+                }
+                yield return null;
+            }
         }
 
         private static void CreatePanels()

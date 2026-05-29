@@ -97,6 +97,17 @@ namespace UnityGameTranslator.Core.UI.Panels
         // Rate limit
         private InputFieldRef _rateLimitDelayInput;
 
+        // Proxy / Network section (in the Online tab)
+        // Mode dropdown is shown to all users. Custom URL/user/pass + bypass toggle
+        // are only visible when mode == "Custom" to avoid cluttering the regular case.
+        private SearchableDropdown _proxyModeDropdown;
+        private GameObject _proxyCustomSection;
+        private InputFieldRef _proxyUrlInput;
+        private InputFieldRef _proxyUserInput;
+        private InputFieldRef _proxyPassInput;
+        private Toggle _proxyBypassLocalToggle;
+        private static readonly string[] ProxyModeDisplayOptions = { "Default", "System", "None / Direct", "Custom" };
+
         // Online section
         private Toggle _onlineModeToggle;
         private Toggle _checkUpdatesToggle;
@@ -153,6 +164,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             public bool auto_download;
             public bool check_mod_updates;
             public bool disable_eventsystem_override;
+            public string proxy_mode;
+            public string proxy_url;
+            public string proxy_username;
+            public string proxy_password;
+            public bool proxy_bypass_local;
 
             public static ConfigSnapshot FromConfig()
             {
@@ -191,7 +207,12 @@ namespace UnityGameTranslator.Core.UI.Panels
                     notification_position = TranslatorCore.Config.sync.notification_position ?? "top-right",
                     auto_download = TranslatorCore.Config.sync.auto_download,
                     check_mod_updates = TranslatorCore.Config.sync.check_mod_updates,
-                    disable_eventsystem_override = TranslatorCore.DisableEventSystemOverride
+                    disable_eventsystem_override = TranslatorCore.DisableEventSystemOverride,
+                    proxy_mode = TranslatorCore.Config.proxy_mode ?? "default",
+                    proxy_url = TranslatorCore.Config.proxy_url ?? "",
+                    proxy_username = TranslatorCore.Config.proxy_username ?? "",
+                    proxy_password = TranslatorCore.Config.proxy_password ?? "",
+                    proxy_bypass_local = TranslatorCore.Config.proxy_bypass_local
                 };
             }
         }
@@ -791,6 +812,107 @@ namespace UnityGameTranslator.Core.UI.Panels
             _checkModUpdatesStatusLabel = UIFactory.CreateLabel(card, "ModUpdateStatus", "", TextAnchor.MiddleLeft);
             _checkModUpdatesStatusLabel.fontSize = UIStyles.FontSizeSmall;
             UIFactory.SetLayoutElement(_checkModUpdatesStatusLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+
+            // === Proxy / Network ===
+            // Most users keep "Default". Use "None" to bypass a process-level HTTP
+            // proxy injected by the game (DRM / EOS / anti-cheat) when the mod's
+            // network calls hang. "System" forces a fresh Windows proxy. "Custom"
+            // routes through a user-defined URL with optional credentials.
+            UIStyles.CreateSpacer(card, 10);
+
+            var proxySectionTitle = UIStyles.CreateSectionTitle(card, "ProxyLabel", "Network / Proxy");
+            RegisterUIText(proxySectionTitle);
+
+            var proxyIntro = UIStyles.CreateHint(card, "ProxyIntro",
+                "Use only if the mod's network calls hang (game intercepts HTTP). Keep Default otherwise.");
+            RegisterUIText(proxyIntro);
+
+            // Mode dropdown
+            var proxyModeRow = UIStyles.CreateFormRow(card, "ProxyModeRow", UIStyles.InputHeight, 5);
+            var proxyModeLabel = UIFactory.CreateLabel(proxyModeRow, "ProxyModeLabel", "Mode:", TextAnchor.MiddleLeft);
+            proxyModeLabel.color = UIStyles.TextSecondary;
+            UIFactory.SetLayoutElement(proxyModeLabel.gameObject, minWidth: 80);
+            RegisterUIText(proxyModeLabel);
+
+            _proxyModeDropdown = new SearchableDropdown(
+                "ProxyModeDropdown", ProxyModeDisplayOptions, ProxyModeDisplayOptions[0], popupHeight: 150, showSearch: false);
+            var proxyModeObj = _proxyModeDropdown.CreateUI(proxyModeRow, OnProxyModeChanged);
+            UIFactory.SetLayoutElement(proxyModeObj, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
+
+            // Custom-only section (toggled visible by OnProxyModeChanged)
+            _proxyCustomSection = UIFactory.CreateVerticalGroup(card, "ProxyCustomSection", false, false, true, true, 3);
+            UIFactory.SetLayoutElement(_proxyCustomSection, flexibleWidth: 9999);
+
+            // Custom URL
+            var proxyUrlRow = UIStyles.CreateFormRow(_proxyCustomSection, "ProxyUrlRow", UIStyles.InputHeight, 5);
+            var proxyUrlLabel = UIFactory.CreateLabel(proxyUrlRow, "ProxyUrlLabel", "URL:", TextAnchor.MiddleLeft);
+            proxyUrlLabel.color = UIStyles.TextSecondary;
+            UIFactory.SetLayoutElement(proxyUrlLabel.gameObject, minWidth: 80);
+            RegisterUIText(proxyUrlLabel);
+
+            _proxyUrlInput = UIFactory.CreateInputField(proxyUrlRow, "ProxyUrl", "http://proxy.example.com:8080");
+            UIFactory.SetLayoutElement(_proxyUrlInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
+            UIStyles.SetBackground(_proxyUrlInput.Component.gameObject, UIStyles.InputBackground);
+
+            // Username
+            var proxyUserRow = UIStyles.CreateFormRow(_proxyCustomSection, "ProxyUserRow", UIStyles.InputHeight, 5);
+            var proxyUserLabel = UIFactory.CreateLabel(proxyUserRow, "ProxyUserLabel", "Username:", TextAnchor.MiddleLeft);
+            proxyUserLabel.color = UIStyles.TextSecondary;
+            UIFactory.SetLayoutElement(proxyUserLabel.gameObject, minWidth: 80);
+            RegisterUIText(proxyUserLabel);
+
+            _proxyUserInput = UIFactory.CreateInputField(proxyUserRow, "ProxyUser", "(optional)");
+            UIFactory.SetLayoutElement(_proxyUserInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
+            UIStyles.SetBackground(_proxyUserInput.Component.gameObject, UIStyles.InputBackground);
+
+            // Password
+            var proxyPassRow = UIStyles.CreateFormRow(_proxyCustomSection, "ProxyPassRow", UIStyles.InputHeight, 5);
+            var proxyPassLabel = UIFactory.CreateLabel(proxyPassRow, "ProxyPassLabel", "Password:", TextAnchor.MiddleLeft);
+            proxyPassLabel.color = UIStyles.TextSecondary;
+            UIFactory.SetLayoutElement(proxyPassLabel.gameObject, minWidth: 80);
+            RegisterUIText(proxyPassLabel);
+
+            _proxyPassInput = UIFactory.CreateInputField(proxyPassRow, "ProxyPass", "(optional)");
+            _proxyPassInput.Component.contentType = UnityEngine.UI.InputField.ContentType.Password;
+            UIFactory.SetLayoutElement(_proxyPassInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
+            UIStyles.SetBackground(_proxyPassInput.Component.gameObject, UIStyles.InputBackground);
+
+            // Bypass local
+            var proxyBypassObj = UIFactory.CreateToggle(_proxyCustomSection, "ProxyBypassToggle",
+                out _proxyBypassLocalToggle, out var proxyBypassLabel);
+            proxyBypassLabel.text = " Bypass proxy for localhost / private addresses";
+            proxyBypassLabel.color = UIStyles.TextSecondary;
+            UIFactory.SetLayoutElement(proxyBypassObj, minHeight: UIStyles.RowHeightNormal);
+            RegisterUIText(proxyBypassLabel);
+
+            // Hidden by default; OnProxyModeChanged toggles it when the user picks "Custom".
+            _proxyCustomSection.SetActive(false);
+        }
+
+        private void OnProxyModeChanged(string newDisplay)
+        {
+            if (_proxyCustomSection != null)
+                _proxyCustomSection.SetActive(newDisplay == "Custom");
+            if (!_isLoadingSettings) UpdateApplyButtonText();
+        }
+
+        private static string ProxyModeDisplayToConfig(string display)
+        {
+            if (display == "Custom") return "custom";
+            if (display == "None / Direct") return "none";
+            if (display == "System") return "system";
+            return "default";
+        }
+
+        private static string ProxyModeConfigToDisplay(string mode)
+        {
+            switch ((mode ?? "default").Trim().ToLowerInvariant())
+            {
+                case "custom": return "Custom";
+                case "none": return "None / Direct";
+                case "system": return "System";
+                default: return "Default";
+            }
         }
 
         private void OnSourceLanguageChanged(string newSource)
@@ -935,6 +1057,15 @@ namespace UnityGameTranslator.Core.UI.Panels
             _notificationsEnabledToggle.isOn = TranslatorCore.Config.sync.notifications_enabled;
             _notificationPositionDropdown.SelectedValue = PositionConfigToDisplay(TranslatorCore.Config.sync.notification_position);
             OnOnlineModeChanged(_onlineModeToggle.isOn);
+
+            // Proxy / Network (independent of online mode -- affects every HTTP call)
+            _proxyModeDropdown.SelectedValue = ProxyModeConfigToDisplay(TranslatorCore.Config.proxy_mode);
+            _proxyUrlInput.Text = TranslatorCore.Config.proxy_url ?? "";
+            _proxyUserInput.Text = TranslatorCore.Config.proxy_username ?? "";
+            _proxyPassInput.Text = TranslatorCore.Config.proxy_password ?? "";
+            _proxyBypassLocalToggle.isOn = TranslatorCore.Config.proxy_bypass_local;
+            if (_proxyCustomSection != null)
+                _proxyCustomSection.SetActive(_proxyModeDropdown.SelectedValue == "Custom");
 
             // Translation (Backend + Capture) — after online mode so UpdateBackendSections sees correct online state
             _captureKeysOnlyToggle.isOn = TranslatorCore.Config.capture_keys_only;
@@ -1308,6 +1439,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             catch (Exception e)
             {
                 var errorMsg = e.Message;
+                TranslatorCore.LogWarning($"[Options] TestAIConnection threw: {e.GetType().Name}: {errorMsg}");
                 TranslatorUIManager.RunOnMainThread(() =>
                 {
                     _aiTestStatusLabel.text = $"Error: {errorMsg}";
@@ -1414,7 +1546,41 @@ namespace UnityGameTranslator.Core.UI.Panels
                 bool eventSystemChanged = TranslatorCore.DisableEventSystemOverride != _disableEventSystemOverrideToggle.isOn;
                 TranslatorCore.DisableEventSystemOverride = _disableEventSystemOverrideToggle.isOn;
 
+                // Proxy / Network -- capture old values BEFORE overwriting to detect a change,
+                // then rebuild the shared HttpClient AFTER SaveConfig so the next request
+                // immediately uses the new proxy.
+                string oldProxyMode = (TranslatorCore.Config.proxy_mode ?? "default");
+                string oldProxyUrl = TranslatorCore.Config.proxy_url ?? "";
+                string oldProxyUser = TranslatorCore.Config.proxy_username ?? "";
+                string oldProxyPass = TranslatorCore.Config.proxy_password ?? "";
+                bool oldProxyBypass = TranslatorCore.Config.proxy_bypass_local;
+
+                string newProxyMode = ProxyModeDisplayToConfig(_proxyModeDropdown.SelectedValue);
+                string newProxyUrl = (_proxyUrlInput.Text ?? "").Trim();
+                string newProxyUser = _proxyUserInput.Text ?? "";
+                string newProxyPass = _proxyPassInput.Text ?? "";
+                bool newProxyBypass = _proxyBypassLocalToggle.isOn;
+
+                TranslatorCore.Config.proxy_mode = newProxyMode;
+                TranslatorCore.Config.proxy_url = string.IsNullOrEmpty(newProxyUrl) ? null : newProxyUrl;
+                TranslatorCore.Config.proxy_username = string.IsNullOrEmpty(newProxyUser) ? null : newProxyUser;
+                TranslatorCore.Config.proxy_password = string.IsNullOrEmpty(newProxyPass) ? null : newProxyPass;
+                TranslatorCore.Config.proxy_bypass_local = newProxyBypass;
+
+                bool proxyChanged =
+                    oldProxyMode != newProxyMode
+                    || oldProxyUrl != newProxyUrl
+                    || oldProxyUser != newProxyUser
+                    || oldProxyPass != newProxyPass
+                    || oldProxyBypass != newProxyBypass;
+
                 TranslatorCore.SaveConfig();
+
+                if (proxyChanged)
+                {
+                    TranslatorCore.LogInfo("[Options] Proxy configuration changed, rebuilding HttpClient...");
+                    TranslatorCore.RebuildHttpClient();
+                }
 
                 // Save per-game settings (translations.json) if EventSystem override changed
                 if (eventSystemChanged)
@@ -1478,7 +1644,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
             catch (Exception e)
             {
-                TranslatorCore.LogError($"[Options] Failed to save settings: {e.Message}");
+                TranslatorCore.LogError($"[Options] Failed to save settings: {e.GetType().Name}: {e.Message}\n{e.StackTrace}");
                 _aiTestStatusLabel.text = $"Error: {e.Message}";
                 _aiTestStatusLabel.color = UIStyles.StatusError;
             }
@@ -1597,6 +1763,13 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Advanced (per-game settings)
             if (_disableEventSystemOverrideToggle.isOn != _initialSnapshot.disable_eventsystem_override) count++;
+
+            // Proxy / Network
+            if (ProxyModeDisplayToConfig(_proxyModeDropdown.SelectedValue) != _initialSnapshot.proxy_mode) count++;
+            if ((_proxyUrlInput.Text ?? "").Trim() != _initialSnapshot.proxy_url) count++;
+            if ((_proxyUserInput.Text ?? "") != _initialSnapshot.proxy_username) count++;
+            if ((_proxyPassInput.Text ?? "") != _initialSnapshot.proxy_password) count++;
+            if (_proxyBypassLocalToggle.isOn != _initialSnapshot.proxy_bypass_local) count++;
 
             return count;
         }

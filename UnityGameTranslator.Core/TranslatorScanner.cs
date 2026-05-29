@@ -1453,6 +1453,13 @@ namespace UnityGameTranslator.Core
                             if (!string.IsNullOrEmpty(currentText))
                             {
                                 textProp.SetValue(kvp.Value, currentText, null);
+                                // Pass 2 covers components seen by the patch but missed by
+                                // the scanner pass — typically because their GameObject was
+                                // inactive at scan time. On IL2CPP the property setter alone
+                                // doesn't always force a mesh + material rebuild, so we
+                                // explicitly force both here too.
+                                TypeHelper.ForceMeshUpdate(kvp.Value);
+                                TypeHelper.SetAllDirty(kvp.Value);
                                 refreshed++;
                             }
                         }
@@ -1529,6 +1536,12 @@ namespace UnityGameTranslator.Core
                     {
                         SetTextForType(component, type, currentText);
                     }
+                    // Force the UGUI pipeline to re-resolve material + vertices on the
+                    // next frame. Needed for components wrapped by SoftMaskable / other
+                    // MaskableGraphic decorators that cache the material — without this
+                    // they keep pointing to the previous (now stale) atlas after a font
+                    // fallback switch.
+                    TypeHelper.SetAllDirty(component);
                     refreshed++;
                 }
             }

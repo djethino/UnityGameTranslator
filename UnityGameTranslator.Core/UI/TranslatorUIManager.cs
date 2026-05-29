@@ -239,7 +239,7 @@ namespace UnityGameTranslator.Core.UI
             // cache) and Scan (applies pending translations + scans the scene) inside a
             // permanent coroutine. We intentionally do NOT also tick from each mod
             // loader's Update() callback — that would double-call. The coroutine works
-            // even in games whose host suppresses our MonoBehaviour.Update (LONESTAR was
+            // even in games whose host suppresses our MonoBehaviour.Update (one was
             // observed to do so) because Unity drives coroutines through a separate path
             // hosted by UniverseLib's own runtime, which is proven to tick wherever our UI
             // already works.

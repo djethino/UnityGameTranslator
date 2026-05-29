@@ -581,6 +581,14 @@ namespace UnityGameTranslator.Core
             _knownCharsPerClone.Clear();
             _knownCharsStringCache.Clear();
             SubscribeWillRenderCanvases();
+
+            // Re-scan game TMP fonts on scene change with forceRescan=true to
+            // pick up fontAssets that were lazy-loaded by the new scene. The
+            // inner loop already dedupes against _gameTMPFonts, so the only
+            // extra cost is one FindAllObjectsOfType call — well worth it to
+            // prevent first-render-with-wrong-font glitches on components that
+            // only get their .text set once at scene load.
+            ScanGameFonts(forceRescan: true);
         }
 
         /// <summary>
@@ -657,22 +665,47 @@ namespace UnityGameTranslator.Core
             if (!_pendingSceneRefresh) return;
             _pendingSceneRefresh = false;
 
-            if (_unityFallbackFonts.Count == 0) return;
-
-            // Re-warm all clone atlases
-            _preWarmedClones.Clear();
-            _knownCharsPerClone.Clear();
-            _knownCharsStringCache.Clear();
-
-            foreach (var kvp in _unityFallbackFonts)
+            // Pre-warm Unity Font (legacy) clone atlases. Skip the whole block on
+            // TMP-only games (no legacy Font clones), but we MUST still run
+            // ForceRefreshAllText below so the TMP pipeline picks up font swaps
+            // on the new scene's freshly-instantiated components. The previous
+            // code returned here when _unityFallbackFonts was empty, which
+            // silently bypassed the post-scene refresh on every TMP-only game —
+            // leaving some components rendered with their original font until a
+            // later .text re-set woke up the Harmony prefix.
+            if (_unityFallbackFonts.Count > 0)
             {
-                if (kvp.Value == null) continue;
-                try { var _ = kvp.Value.name; } catch { continue; }
+                // Re-warm all clone atlases
+                _preWarmedClones.Clear();
+                _knownCharsPerClone.Clear();
+                _knownCharsStringCache.Clear();
 
-                PreWarmCloneAtlas(kvp.Key, kvp.Value);
+                foreach (var kvp in _unityFallbackFonts)
+                {
+                    if (kvp.Value == null) continue;
+                    try { var _ = kvp.Value.name; } catch { continue; }
+
+                        // Isolate each clone's pre-warm so a single failure (e.g. a
+                    // TypeLoadException from missing CharacterInfo metadata on some
+                    // IL2CPP runtimes) doesn't abort the whole loop and leave the
+                    // remaining clones cold. We log once per failure.
+                    try
+                    {
+                        PreWarmCloneAtlas(kvp.Key, kvp.Value);
+                    }
+                    catch (Exception preWarmEx)
+                    {
+                        TranslatorCore.LogWarning($"[FontManager] PreWarmCloneAtlas '{kvp.Key}' failed: {preWarmEx.GetType().Name}: {preWarmEx.Message}");
+                    }
+                }
             }
 
-            // Force all text components to re-render with the warmed clones
+            // Force all text components to re-render so the TMP swap pipeline
+            // (ApplyFontReplacement via Harmony patch on Text/TMP_Text setters)
+            // sees the freshly-instantiated components of the new scene. Without
+            // this, components whose .text is set once by the game before the
+            // mod's prefix has the right context end up stuck with their
+            // original font until a later re-set wakes the prefix up.
             TranslatorScanner.ForceRefreshAllText();
 
             TranslatorCore.LogDebug($"[FontManager] willRenderCanvases: re-warmed {_unityFallbackFonts.Count} clones + ForceRefreshAllText");
@@ -684,15 +717,20 @@ namespace UnityGameTranslator.Core
             if (_preWarmedClones.Contains(originalFontName)) return;
             _preWarmedClones.Add(originalFontName);
 
-            // If we already have known chars in the cache, use those
+            // If we already have known chars in the cache, use those.
+            // NOTE: we deliberately avoid referencing UnityEngine.CharacterInfo here
+            // (no GetCharacterInfo() sanity check). On Unity versions where the
+            // CharacterInfo type metadata is not exposed (e.g. some IL2CPP builds
+            // observed on Heroes of Might & Magic: Olden Era) the IL2CPP JIT
+            // throws TypeLoadException when the method body is compiled — even
+            // if the failing lines are unreachable or wrapped in try/catch. The
+            // pre-warm itself only needs RequestCharactersInTexture; the checks
+            // were diagnostic-only (their results were never read).
             if (_knownCharsStringCache.TryGetValue(originalFontName, out string existing) && !string.IsNullOrEmpty(existing))
             {
                 try
                 {
                     clone.RequestCharactersInTexture(existing);
-                    CharacterInfo ci;
-                    bool hasA = clone.GetCharacterInfo('A', out ci);
-                    bool hasE = clone.GetCharacterInfo('é', out ci);
                     TranslatorCore.LogDebug($"[FontManager] PreWarm '{originalFontName}' with {existing.Length} known chars");
                 }
                 catch { }
@@ -1554,6 +1592,12 @@ namespace UnityGameTranslator.Core
                     TypeHelper.SetFont(component, originalFont);
                     SetFontSharedMaterial(component, originalFont);
                     TypeHelper.ForceMeshUpdate(component);
+                    // Mark Graphic dirty so the UGUI pipeline re-resolves the material —
+                    // this wakes up SoftMaskable wrappers (Coffee.SoftMaskForUGUI) that
+                    // had cached a clone of the previous material; without it the text
+                    // stays invisible inside scroll/mask regions (e.g. Load Game list)
+                    // until the next scene change.
+                    TypeHelper.SetAllDirty(component);
                 }
 
                 _originalFontsPerComponent.Remove(instanceId);
@@ -3394,8 +3438,42 @@ namespace UnityGameTranslator.Core
 
                 if (createMethodByName != null && font != null)
                 {
-                    // Parse font name to extract family and style
-                    var (familyName, styleName) = ParseFontName(font.name);
+                    // Resolve the real family name from the TTF's `name` table before
+                    // calling the string-based CreateFontAsset. Unity TMP's
+                    // CreateFontAsset(string family, string style, int size) looks up
+                    // the OS font registry by FAMILY name (e.g. "Times New Roman"),
+                    // not by file name (e.g. "times"). Passing font.name (a filename)
+                    // only matches by chance when the filename happens to equal the
+                    // family name (Verdana). For most fonts with humanized family
+                    // names it returns null — and the caller then falls back to the
+                    // TTF rasterizer, which on some IL2CPP builds produces an atlas
+                    // whose pixel buffer is unreadable, leaving the text invisible.
+                    //
+                    // The same TTF name-table resolution is already used for the
+                    // Unity Font (LegacyRuntime) path — we mirror it here.
+                    string resolvedName = font.name;
+                    try
+                    {
+                        string ttfPath = CustomFontLoader.FindSystemTtfPath(font.name);
+                        if (!string.IsNullOrEmpty(ttfPath))
+                        {
+                            var ttfBytes = System.IO.File.ReadAllBytes(ttfPath);
+                            var parser = new Rasterizer.TtfParser(ttfBytes);
+                            if (!string.IsNullOrEmpty(parser.Metrics.FontName))
+                            {
+                                resolvedName = parser.Metrics.FontName;
+                                TranslatorCore.LogDebug($"[FontManager] Resolved family name '{font.name}' -> '{resolvedName}' from TTF name table");
+                            }
+                        }
+                    }
+                    catch (Exception ttfEx)
+                    {
+                        // Resolution is best-effort; fall back to font.name on any failure.
+                        TranslatorCore.LogDebug($"[FontManager] TTF family name lookup failed for '{font.name}': {ttfEx.GetType().Name}: {ttfEx.Message}");
+                    }
+
+                    // Parse resolved name to extract family and style
+                    var (familyName, styleName) = ParseFontName(resolvedName);
 
                     // Try with parsed family/style first
                     TranslatorCore.LogDebug($"[FontManager] Trying CreateFontAsset(\"{familyName}\", \"{styleName}\", 90)");
@@ -3503,10 +3581,21 @@ namespace UnityGameTranslator.Core
         /// These are valid IL2CPP objects that can be used as font replacements
         /// without needing CreateDynamicFontFromOSFont (which is stripped on IL2CPP).
         /// </summary>
-        public static void ScanGameFonts()
+        public static void ScanGameFonts(bool forceRescan = false)
         {
-            if (_gameFontsScanned) return;
-            _gameFontsScanned = true;
+            // Two reasons we want to allow callers to bypass the "scanned" flag:
+            //  1. Boot-time race: the first call typically happens during
+            //     TranslatorCore.Initialize, before the game has loaded its own
+            //     TMP_FontAssets, so FindAllObjectsOfType returns 0. We now no
+            //     longer mark _gameFontsScanned = true in that case (see end of
+            //     method), so the next caller will retry.
+            //  2. Scene change: a new scene may lazy-load additional fonts that
+            //     didn't exist before. OnSceneChanged calls us with
+            //     forceRescan=true so we pick those up and apply their fallback
+            //     preemptively, instead of waiting for some Text setter to
+            //     trigger EnsureFallbackApplied later (which would leave
+            //     components rendered with their original font until then).
+            if (_gameFontsScanned && !forceRescan) return;
 
             if (TypeHelper.TMP_FontAssetType == null)
             {
@@ -3519,10 +3608,14 @@ namespace UnityGameTranslator.Core
                 var allFonts = TypeHelper.FindAllObjectsOfType(TypeHelper.TMP_FontAssetType);
                 if (allFonts == null || allFonts.Length == 0)
                 {
-                    TranslatorCore.LogDebug("[FontManager] No game TMP fonts found");
+                    TranslatorCore.LogDebug("[FontManager] No game TMP fonts found (will retry)");
+                    // Intentionally NOT setting _gameFontsScanned = true so subsequent
+                    // callers (next frame, next scene, EnsureFallbackApplied, etc.)
+                    // try again until the game has finished loading its fonts.
                     return;
                 }
 
+                int newlyDetected = 0;
                 foreach (var font in allFonts)
                 {
                     if (font == null) continue;
@@ -3535,10 +3628,23 @@ namespace UnityGameTranslator.Core
                     if (!_gameTMPFonts.ContainsKey(name))
                     {
                         _gameTMPFonts[name] = font;
+                        newlyDetected++;
+
+                        // Apply the configured fallback preemptively so the very
+                        // first frame that renders this font already has its
+                        // fallbackFontAssetTable wired up. Without this, the mod
+                        // only learns about a font at the moment a Text/TMP_Text
+                        // setter is patched — too late for components whose
+                        // .text is set once at scene load and never again.
+                        EnsureFallbackApplied(font, name);
                     }
                 }
 
-                TranslatorCore.LogDebug($"[FontManager] Found {_gameTMPFonts.Count} game TMP fonts: {string.Join(", ", GetGameFontNames())}");
+                TranslatorCore.LogDebug($"[FontManager] Scanned game TMP fonts: total={_gameTMPFonts.Count}, newly detected={newlyDetected}");
+
+                // Only lock once we've actually got something — protects against
+                // the boot-time empty-result race documented above.
+                _gameFontsScanned = true;
             }
             catch (Exception ex)
             {

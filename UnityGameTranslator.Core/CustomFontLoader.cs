@@ -471,6 +471,29 @@ namespace UnityGameTranslator.Core
                     int h = fontInfo.RgbaHeight;
                     var rgba = fontInfo.RgbaPixels;
 
+                    // IN-PLACE SDF -> ALPHA CONVERSION
+                    // TMP's SDF shader samples the Alpha channel for distance. Our rasterizer
+                    // writes the SDF into R/G/B with A=255 (easier to inspect in a normal
+                    // image viewer). We do the conversion here, on the raw byte buffer we
+                    // already hold in memory, BEFORE the Texture2D round-trip. The
+                    // alternative — converting on the Texture2D after LoadImage — requires
+                    // GetRawTextureData / GetPixels32, both of which are unreliable on some
+                    // IL2CPP runtimes (Unity 6 + Il2CppInterop observed): GetRawTextureData
+                    // returns an empty buffer and GetPixels32 throws MissingMethodException
+                    // at JIT-compile time of the calling method.
+                    // Doing the conversion on the buffer also flows through to the cached
+                    // .gen.png so subsequent reloads pick up the already-converted layout.
+                    // Visual side effect: the PNG appears all-white in viewers that ignore
+                    // the alpha channel; the SDF is still there, just in Alpha.
+                    for (int i = 0; i + 3 < rgba.Length; i += 4)
+                    {
+                        byte sdfDistance = rgba[i];
+                        rgba[i]     = 255;  // R
+                        rgba[i + 1] = 255;  // G
+                        rgba[i + 2] = 255;  // B
+                        rgba[i + 3] = sdfDistance;  // A holds the SDF
+                    }
+
                     // Create temporary texture to encode as PNG
                     // Flip: our RGBA is top-to-bottom, SetPixels32 expects bottom-to-top
                     var tmpTex = Compat.MakeTexture2D(w, h, TextureFormat.RGBA32, false);
@@ -933,6 +956,33 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Returns true when <paramref name="fontName"/> identifies a font asset
+        /// the mod has created itself — either a custom TTF loaded from the
+        /// <c>fonts/</c> folder (tracked in <c>_customFonts</c>) or a fallback
+        /// asset created dynamically by FontManager (tracked in its
+        /// <c>_createdFallbackFontNames</c> set).
+        ///
+        /// Used by every <c>FindAllObjectsOfType(TMP_FontAsset)</c> scan inside
+        /// CustomFontLoader to skip our own outputs and avoid two failure modes:
+        ///  - self-cloning (creating a font asset from a clone of itself, which
+        ///    is the recursive trap the previous hardcoded name list was trying
+        ///    to prevent), and
+        ///  - copying material/shader from one of our partially-initialized
+        ///    assets instead of from a real game font.
+        ///
+        /// This replaces the previous hardcoded <c>fontName != "NotoSansDevanagari"
+        /// &amp;&amp; fontName != "KrutiDev714Normal"</c> guard, which only covered the
+        /// two test fonts of a single past investigation and silently broke for
+        /// every other user-supplied font (CJK, Arabic, custom Latin, etc.).
+        /// </summary>
+        private static bool IsModCreatedFont(string fontName)
+        {
+            if (string.IsNullOrEmpty(fontName)) return false;
+            if (_customFonts.ContainsKey(fontName)) return true;
+            return FontManager.GetCreatedFallbackFontNames().Contains(fontName);
+        }
+
+        /// <summary>
         /// Creates a TMP_FontAsset from the loaded custom font data.
         /// </summary>
         private static object CreateFontAsset(CustomFontInfo fontInfo)
@@ -951,7 +1001,7 @@ namespace UnityGameTranslator.Core
                 var existingFonts = TypeHelper.FindAllObjectsOfType(_tmpFontAssetType);
                 foreach (var existingFont in existingFonts)
                 {
-                    if (existingFont != null && existingFont.name != "NotoSansDevanagari" && existingFont.name != "KrutiDev714Normal")
+                    if (existingFont != null && !IsModCreatedFont(existingFont.name))
                     {
                         sourceFont = existingFont;
 
@@ -1201,7 +1251,7 @@ namespace UnityGameTranslator.Core
                     {
                         foreach (var font in existingFonts)
                         {
-                            if (font != null && font.name != "NotoSansDevanagari" && font.name != "KrutiDev714Normal")
+                            if (font != null && !IsModCreatedFont(font.name))
                             {
                                 DumpExistingFontStructure(font);
                                 break;
@@ -1478,6 +1528,13 @@ namespace UnityGameTranslator.Core
                     TranslatorCore.LogInfo($"[CustomFontLoader] Using MODERN glyph system (m_GlyphTable + m_CharacterTable)");
                     SetupGlyphsModern(fontAsset, fontAssetType, glyphTable, charTable, fontInfo, pointSize, yFlipped);
 
+                    // ============= INSTRUMENTATION: state BEFORE the rebuild trigger =============
+                    object dirtyBefore = GetPropertyOrField(fontAsset, fontAssetType, "IsFontAssetLookupTablesDirty");
+                    object glyphLookupBefore = GetPropertyOrField(fontAsset, fontAssetType, "m_GlyphLookupDictionary");
+                    object charLookupBefore = GetPropertyOrField(fontAsset, fontAssetType, "m_CharacterLookupDictionary");
+                    TranslatorCore.LogInfo($"[CFL-Lookup] BEFORE trigger: dirty={dirtyBefore} glyphDict={ReflectListCount(glyphLookupBefore)} charDict={ReflectListCount(charLookupBefore)}");
+                    // ============= /INSTRUMENTATION =============
+
                     // Mark lookup tables as dirty so TMP rebuilds them
                     SetPropertyOrField(fontAsset, fontAssetType, "IsFontAssetLookupTablesDirty", true);
 
@@ -1494,6 +1551,217 @@ namespace UnityGameTranslator.Core
                         var clearMethod = charLookup.GetType().GetMethod("Clear");
                         clearMethod?.Invoke(charLookup, null);
                     }
+
+                    // Force the rebuild now — TMP's IsFontAssetLookupTablesDirty flag is just
+                    // a marker; nothing reconstructs m_GlyphLookupDictionary /
+                    // m_CharacterLookupDictionary unless ReadFontAssetDefinition() (or the more
+                    // targeted InitializeDictionaryLookupTables()) is called explicitly. Without
+                    // that, every char lookup TMP does at render time hits an empty dict and the
+                    // glyph is reported missing — even though m_GlyphTable / m_CharacterTable
+                    // contain tens of thousands of entries we just populated.
+                    //
+                    // Prefer ReadFontAssetDefinition: it also refreshes face metrics, kerning
+                    // table wiring, and fallback search lookup — all of which can be stale after
+                    // we swap in our custom atlas + tables. InitializeDictionaryLookupTables is
+                    // the narrower fallback for TMP versions that don't expose the broader API.
+                    System.Reflection.MethodInfo rebuildMethod = null;
+                    try
+                    {
+                        rebuildMethod = fontAssetType.GetMethod("ReadFontAssetDefinition",
+                            BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null)
+                            ?? fontAssetType.GetMethod("InitializeDictionaryLookupTables",
+                                BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
+                    }
+                    catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] rebuild lookup failed: {_e.Message}"); }
+
+                    if (rebuildMethod != null)
+                    {
+                        try
+                        {
+                            rebuildMethod.Invoke(fontAsset, null);
+                            TranslatorCore.LogInfo($"[CustomFontLoader] Called {rebuildMethod.Name}() to rebuild lookup tables");
+                        }
+                        catch (Exception ex)
+                        {
+                            TranslatorCore.LogWarning($"[CustomFontLoader] {rebuildMethod.Name}() failed: {ex.GetType().Name}: {ex.Message}");
+                        }
+                    }
+                    else
+                    {
+                        TranslatorCore.LogWarning("[CustomFontLoader] No ReadFontAssetDefinition / InitializeDictionaryLookupTables found on TMP_FontAsset — lookup dicts may stay empty and rendering will miss glyphs.");
+                    }
+
+                    // ============= INSTRUMENTATION: state AFTER the rebuild trigger =============
+                    object dirtyAfter = GetPropertyOrField(fontAsset, fontAssetType, "IsFontAssetLookupTablesDirty");
+                    object glyphLookupAfter = GetPropertyOrField(fontAsset, fontAssetType, "m_GlyphLookupDictionary");
+                    object charLookupAfter = GetPropertyOrField(fontAsset, fontAssetType, "m_CharacterLookupDictionary");
+                    TranslatorCore.LogInfo($"[CFL-Lookup] AFTER  trigger: dirty={dirtyAfter} glyphDict={ReflectListCount(glyphLookupAfter)} charDict={ReflectListCount(charLookupAfter)}");
+
+                    // Probe the dict for a few representative codepoints — we want to know if
+                    // TMP can actually find a TMP_Character for them after ReadFontAssetDefinition
+                    // rebuilt its lookup, and whether the linked Glyph carries sane atlas rect /
+                    // scale / atlasIndex (zero rect = nothing to render = invisible glyph).
+                    try
+                    {
+                        if (charLookupAfter != null)
+                        {
+                            var tryGet = charLookupAfter.GetType().GetMethod("TryGetValue");
+                            if (tryGet != null)
+                            {
+                                uint[] probes = new uint[] { 0x41u /* 'A' */, 0x4E00u /* '一' */, 0x7531u /* '由' */, 0x5236u /* '制' */ };
+                                foreach (var cp in probes)
+                                {
+                                    var args = new object[] { cp, null };
+                                    bool found = false;
+                                    try { found = (bool)tryGet.Invoke(charLookupAfter, args); }
+                                    catch (Exception _e) { TranslatorCore.LogDebug($"[CFL-Probe] TryGetValue U+{cp:X4} threw: {_e.GetType().Name}: {_e.Message}"); continue; }
+
+                                    if (!found || args[1] == null)
+                                    {
+                                        TranslatorCore.LogInfo($"[CFL-Probe] U+{cp:X4} = NOT FOUND in m_CharacterLookupDictionary");
+                                        continue;
+                                    }
+
+                                    object character = args[1];
+                                    Type charT = character.GetType();
+                                    var glyphIndex = GetPropertyOrField(character, charT, "m_GlyphIndex") ?? GetPropertyOrField(character, charT, "glyphIndex");
+                                    var unicodeOnChar = GetPropertyOrField(character, charT, "m_Unicode") ?? GetPropertyOrField(character, charT, "unicode");
+                                    var glyphFromChar = GetPropertyOrField(character, charT, "glyph");
+                                    string glyphSummary = "(no .glyph prop)";
+                                    if (glyphFromChar != null)
+                                    {
+                                        Type gT = glyphFromChar.GetType();
+                                        var rect = GetPropertyOrField(glyphFromChar, gT, "m_GlyphRect") ?? GetPropertyOrField(glyphFromChar, gT, "glyphRect");
+                                        var scale = GetPropertyOrField(glyphFromChar, gT, "m_Scale") ?? GetPropertyOrField(glyphFromChar, gT, "scale");
+                                        var atlasIdx = GetPropertyOrField(glyphFromChar, gT, "m_AtlasIndex") ?? GetPropertyOrField(glyphFromChar, gT, "atlasIndex");
+                                        string rectStr = "(rect null)";
+                                        if (rect != null)
+                                        {
+                                            Type rT = rect.GetType();
+                                            var rx = GetPropertyOrField(rect, rT, "x") ?? GetPropertyOrField(rect, rT, "m_X");
+                                            var ry = GetPropertyOrField(rect, rT, "y") ?? GetPropertyOrField(rect, rT, "m_Y");
+                                            var rw = GetPropertyOrField(rect, rT, "width") ?? GetPropertyOrField(rect, rT, "m_Width");
+                                            var rh = GetPropertyOrField(rect, rT, "height") ?? GetPropertyOrField(rect, rT, "m_Height");
+                                            rectStr = $"rect=({rx},{ry},{rw},{rh})";
+                                        }
+                                        glyphSummary = $"glyph: {rectStr} scale={scale} atlasIndex={atlasIdx}";
+                                    }
+                                    TranslatorCore.LogInfo($"[CFL-Probe] U+{cp:X4} = FOUND: unicode={unicodeOnChar} glyphIndex={glyphIndex} {glyphSummary}");
+                                }
+                            }
+                            else
+                            {
+                                TranslatorCore.LogInfo("[CFL-Probe] charLookup has no TryGetValue method");
+                            }
+                        }
+
+                        // m_FaceInfo (modern). If pointSize/atlasWidth/ascender are zero, TMP
+                        // will scale glyphs to (effectively) zero size at render time even when
+                        // the lookup dict contains them — fully invisible text.
+                        object faceInfo = GetPropertyOrField(fontAsset, fontAssetType, "m_FaceInfo");
+                        if (faceInfo != null)
+                        {
+                            Type fT = faceInfo.GetType();
+                            var fiPointSize = GetPropertyOrField(faceInfo, fT, "pointSize") ?? GetPropertyOrField(faceInfo, fT, "m_PointSize");
+                            var fiAscender = GetPropertyOrField(faceInfo, fT, "ascender") ?? GetPropertyOrField(faceInfo, fT, "m_Ascender");
+                            var fiDescender = GetPropertyOrField(faceInfo, fT, "descender") ?? GetPropertyOrField(faceInfo, fT, "m_Descender");
+                            var fiAtlasW = GetPropertyOrField(faceInfo, fT, "atlasWidth") ?? GetPropertyOrField(faceInfo, fT, "m_AtlasWidth");
+                            var fiAtlasH = GetPropertyOrField(faceInfo, fT, "atlasHeight") ?? GetPropertyOrField(faceInfo, fT, "m_AtlasHeight");
+                            var fiScale = GetPropertyOrField(faceInfo, fT, "scale") ?? GetPropertyOrField(faceInfo, fT, "m_Scale");
+                            TranslatorCore.LogInfo($"[CFL-FaceInfo] modern m_FaceInfo type={fT.FullName} pointSize={fiPointSize} ascender={fiAscender} descender={fiDescender} atlasWxH={fiAtlasW}x{fiAtlasH} scale={fiScale}");
+                        }
+                        else
+                        {
+                            TranslatorCore.LogInfo("[CFL-FaceInfo] modern m_FaceInfo is NULL (TMP may have no face metrics to render glyphs)");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        TranslatorCore.LogWarning($"[CFL-Probe] failed: {ex.GetType().Name}: {ex.Message}");
+                    }
+
+                    // === ATLAS / MATERIAL probe — figures out the "white squares" case =====
+                    // Three things must line up for SDF rendering to produce visible glyphs:
+                    //   1) m_AtlasTexture (and m_AtlasTextures[0]) point to OUR rasterized
+                    //      texture (right dimensions, right format).
+                    //   2) material.shader is the SDF shader (TextMeshPro/Distance Field) and
+                    //      material._MainTex is the same texture as m_AtlasTextures[0].
+                    //   3) the SDF render params (_GradientScale, _TextureWidth/Height) are
+                    //      non-zero — if they're zero the SDF math collapses to a constant
+                    //      and you get full-coverage rectangles (= the "white squares" we see).
+                    try
+                    {
+                        object atlasTex = GetPropertyOrField(fontAsset, fontAssetType, "atlasTexture")
+                                       ?? GetPropertyOrField(fontAsset, fontAssetType, "m_AtlasTexture");
+                        if (atlasTex is UnityEngine.Texture2D atlasT2D)
+                        {
+                            TranslatorCore.LogInfo($"[CFL-Atlas] m_AtlasTexture id={atlasT2D.GetInstanceID()} size={atlasT2D.width}x{atlasT2D.height} format={atlasT2D.format} readable={atlasT2D.isReadable}");
+                        }
+                        else if (atlasTex != null)
+                        {
+                            TranslatorCore.LogInfo($"[CFL-Atlas] m_AtlasTexture (raw): type={atlasTex.GetType().FullName}");
+                        }
+                        else
+                        {
+                            TranslatorCore.LogInfo("[CFL-Atlas] m_AtlasTexture is NULL");
+                        }
+
+                        // m_AtlasTextures[0] — TMP uses the array path on modern versions
+                        object atlasArr = GetPropertyOrField(fontAsset, fontAssetType, "atlasTextures")
+                                       ?? GetPropertyOrField(fontAsset, fontAssetType, "m_AtlasTextures");
+                        if (atlasArr != null)
+                        {
+                            var lenProp = atlasArr.GetType().GetProperty("Length") ?? atlasArr.GetType().GetProperty("Count");
+                            int len = lenProp != null ? Convert.ToInt32(lenProp.GetValue(atlasArr, null)) : -1;
+                            object first = null;
+                            if (len > 0)
+                            {
+                                var indexer = atlasArr.GetType().GetProperty("Item");
+                                if (indexer != null) first = indexer.GetValue(atlasArr, new object[] { 0 });
+                                else if (atlasArr is System.Collections.IEnumerable enumerable)
+                                {
+                                    foreach (var item in enumerable) { first = item; break; }
+                                }
+                            }
+                            if (first is UnityEngine.Texture2D firstT2D)
+                                TranslatorCore.LogInfo($"[CFL-Atlas] m_AtlasTextures[0] id={firstT2D.GetInstanceID()} size={firstT2D.width}x{firstT2D.height} format={firstT2D.format} (Length={len})");
+                            else
+                                TranslatorCore.LogInfo($"[CFL-Atlas] m_AtlasTextures[0] raw type={first?.GetType().FullName ?? "null"} (Length={len})");
+                        }
+
+                        // Material — shader, _MainTex, key SDF floats
+                        object materialObj = GetPropertyOrField(fontAsset, fontAssetType, "material")
+                                          ?? GetPropertyOrField(fontAsset, fontAssetType, "m_Material");
+                        if (materialObj is UnityEngine.Material mat)
+                        {
+                            var shaderName = mat.shader != null ? mat.shader.name : "(no shader)";
+                            UnityEngine.Texture mainTex = null;
+                            try { mainTex = mat.GetTexture("_MainTex"); } catch { }
+                            string mainTexInfo = mainTex == null ? "null" : $"id={mainTex.GetInstanceID()} size={mainTex.width}x{mainTex.height}";
+
+                            float gradientScale = 0f, texW = 0f, texH = 0f, weightNormal = 0f, scaleRatioA = 0f;
+                            try { gradientScale = mat.GetFloat("_GradientScale"); } catch { }
+                            try { texW = mat.GetFloat("_TextureWidth"); } catch { }
+                            try { texH = mat.GetFloat("_TextureHeight"); } catch { }
+                            try { weightNormal = mat.GetFloat("_WeightNormal"); } catch { }
+                            try { scaleRatioA = mat.GetFloat("_ScaleRatioA"); } catch { }
+
+                            TranslatorCore.LogInfo($"[CFL-Mat] shader='{shaderName}' _MainTex={mainTexInfo} _GradientScale={gradientScale} _TextureWidth={texW} _TextureHeight={texH} _WeightNormal={weightNormal} _ScaleRatioA={scaleRatioA}");
+                        }
+                        else if (materialObj != null)
+                        {
+                            TranslatorCore.LogInfo($"[CFL-Mat] material (raw): type={materialObj.GetType().FullName}");
+                        }
+                        else
+                        {
+                            TranslatorCore.LogInfo("[CFL-Mat] material is NULL");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        TranslatorCore.LogWarning($"[CFL-Atlas/Mat] probe failed: {ex.GetType().Name}: {ex.Message}");
+                    }
+                    // ============= /INSTRUMENTATION =============
 
                     return;
                 }
@@ -1517,14 +1785,32 @@ namespace UnityGameTranslator.Core
             var atlas = fontInfo.AtlasData.atlas;
             var glyphs = fontInfo.AtlasData.glyphs;
 
+            // ============= INSTRUMENTATION START =============
+            TranslatorCore.LogInfo($"[CFL-Setup] glyphs to add: {glyphs.Count}");
+            TranslatorCore.LogInfo($"[CFL-Setup] glyphTable type: {glyphTable.GetType().FullName}");
+            TranslatorCore.LogInfo($"[CFL-Setup] charTable type:  {charTable.GetType().FullName}");
+            long initialGlyphCount = ReflectListCount(glyphTable);
+            long initialCharCount = ReflectListCount(charTable);
+            TranslatorCore.LogInfo($"[CFL-Setup] initial Count: glyph={initialGlyphCount} char={initialCharCount}");
+            // ============= INSTRUMENTATION END =============
+
             // Clear existing tables
             var clearGlyph = glyphTable.GetType().GetMethod("Clear");
             var clearChar = charTable.GetType().GetMethod("Clear");
             clearGlyph?.Invoke(glyphTable, null);
             clearChar?.Invoke(charTable, null);
 
+            // ============= INSTRUMENTATION =============
+            TranslatorCore.LogInfo($"[CFL-Setup] after Clear: glyph={ReflectListCount(glyphTable)} char={ReflectListCount(charTable)}");
+            // ============= /INSTRUMENTATION =============
+
             var addGlyph = glyphTable.GetType().GetMethod("Add");
             var addChar = charTable.GetType().GetMethod("Add");
+
+            // ============= INSTRUMENTATION =============
+            TranslatorCore.LogInfo($"[CFL-Setup] addGlyph method: {(addGlyph != null ? addGlyph.DeclaringType?.FullName + "." + addGlyph.Name + "(" + string.Join(",", addGlyph.GetParameters().Select(p => p.ParameterType.FullName)) + ")" : "NULL")}");
+            TranslatorCore.LogInfo($"[CFL-Setup] addChar  method: {(addChar != null ? addChar.DeclaringType?.FullName + "." + addChar.Name + "(" + string.Join(",", addChar.GetParameters().Select(p => p.ParameterType.FullName)) + ")" : "NULL")}");
+            // ============= /INSTRUMENTATION =============
 
             if (addGlyph == null || addChar == null)
             {
@@ -1553,7 +1839,15 @@ namespace UnityGameTranslator.Core
                 TranslatorCore.LogInfo($"[CustomFontLoader] Modern Glyph props: {string.Join(", ", props.Select(p => p.Name + ":" + p.PropertyType.Name))}");
             }
 
+            // ============= INSTRUMENTATION counters =============
             int addedCount = 0;
+            int glyphNullCount = 0;
+            int charNullCount = 0;
+            int exceptionsCount = 0;
+            int cjkSeen = 0;
+            long countAfterFirstAdd = -1;
+            // ============= /INSTRUMENTATION =============
+
             foreach (var glyphInfo in glyphs)
             {
                 try
@@ -1562,9 +1856,21 @@ namespace UnityGameTranslator.Core
 
                     // Create Glyph object
                     object newGlyph = CreateModernGlyph(glyphType, glyphIndex, glyphInfo, atlas, pointSize, yFlipped);
-                    if (newGlyph == null) continue;
+                    if (newGlyph == null)
+                    {
+                        glyphNullCount++;
+                        continue;
+                    }
 
                     addGlyph.Invoke(glyphTable, new[] { newGlyph });
+
+                    // ============= INSTRUMENTATION: sample Count after first Add =============
+                    if (countAfterFirstAdd == -1)
+                    {
+                        countAfterFirstAdd = ReflectListCount(glyphTable);
+                        TranslatorCore.LogInfo($"[CFL-Setup] glyphTable Count after FIRST Add: {countAfterFirstAdd} (expected 1)");
+                    }
+                    // ============= /INSTRUMENTATION =============
 
                     // Create TMP_Character mapping unicode -> glyph
                     object newChar = CreateModernCharacter(charType, (uint)glyphInfo.unicode, glyphIndex);
@@ -1572,17 +1878,65 @@ namespace UnityGameTranslator.Core
                     {
                         addChar.Invoke(charTable, new[] { newChar });
                     }
+                    else
+                    {
+                        charNullCount++;
+                    }
+
+                    // ============= INSTRUMENTATION: track CJK coverage =============
+                    if (glyphInfo.unicode >= 0x4E00 && glyphInfo.unicode <= 0x9FFF) cjkSeen++;
+                    // ============= /INSTRUMENTATION =============
 
                     addedCount++;
                 }
                 catch (Exception ex)
                 {
+                    exceptionsCount++;
                     if (addedCount < 3)
                         TranslatorCore.LogWarning($"[CustomFontLoader] Failed to create modern glyph U+{glyphInfo.unicode:X4}: {ex.Message}");
                 }
             }
 
+            // ============= INSTRUMENTATION: post-loop summary =============
+            long glyphCountEnd = ReflectListCount(glyphTable);
+            long charCountEnd = ReflectListCount(charTable);
+            TranslatorCore.LogInfo($"[CFL-Setup] Loop done: addedCount={addedCount} glyphNull={glyphNullCount} charNull={charNullCount} exceptions={exceptionsCount} CJK_in_input={cjkSeen}");
+            TranslatorCore.LogInfo($"[CFL-Setup] FINAL Count on the SAME ref: glyph={glyphCountEnd} char={charCountEnd}  (vs addedCount={addedCount})");
+
+            // Re-read the field after to see if the underlying TMP storage has different content
+            // (would indicate that 'glyphTable' was a snapshot/wrapper, not the live field)
+            object liveGlyphTable = GetPropertyOrField(fontAsset, fontAssetType, "m_GlyphTable");
+            object liveCharTable = GetPropertyOrField(fontAsset, fontAssetType, "m_CharacterTable");
+            long liveGlyphCount = ReflectListCount(liveGlyphTable);
+            long liveCharCount = ReflectListCount(liveCharTable);
+            bool sameRefGlyph = ReferenceEquals(glyphTable, liveGlyphTable);
+            bool sameRefChar = ReferenceEquals(charTable, liveCharTable);
+            TranslatorCore.LogInfo($"[CFL-Setup] LIVE re-read m_GlyphTable: Count={liveGlyphCount} sameRef={sameRefGlyph}");
+            TranslatorCore.LogInfo($"[CFL-Setup] LIVE re-read m_CharacterTable: Count={liveCharCount} sameRef={sameRefChar}");
+            // ============= /INSTRUMENTATION =============
+
             TranslatorCore.LogInfo($"[CustomFontLoader] Added {addedCount} modern glyphs + characters");
+        }
+
+        // INSTRUMENTATION HELPER — read the `Count` property of any List-like object via reflection.
+        // Returns -1 if the list reference is null, -2 if the Count property can't be read.
+        private static long ReflectListCount(object list)
+        {
+            if (list == null) return -1;
+            try
+            {
+                var prop = list.GetType().GetProperty("Count", BindingFlags.Public | BindingFlags.Instance);
+                if (prop != null)
+                {
+                    var v = prop.GetValue(list, null);
+                    if (v != null) return Convert.ToInt64(v);
+                }
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogDebug($"[CFL-Setup] ReflectListCount failed: {ex.GetType().Name}: {ex.Message}");
+            }
+            return -2;
         }
 
         /// <summary>
@@ -1676,6 +2030,16 @@ namespace UnityGameTranslator.Core
                     SetFieldValue(glyphRect, "y", (int)y);
                     SetFieldValue(glyphRect, "width", (int)w);
                     SetFieldValue(glyphRect, "height", (int)h);
+
+                    // CRITICAL: UnityEngine.TextCore.GlyphRect is a STRUCT (value type).
+                    // GetPropertyOrField() returned a boxed COPY of it — the SetFieldValue
+                    // calls above mutated that boxed copy, not the actual rect stored on
+                    // the Glyph. Without explicitly writing the mutated struct back, every
+                    // glyph ends up with rect=(0,0,0,0) and TMP's render path blits an
+                    // empty patch of the atlas — characters look invisible even though the
+                    // lookup dictionary finds them.
+                    SetPropertyOrField(glyph, glyph.GetType(), "m_GlyphRect", glyphRect);
+                    SetPropertyOrField(glyph, glyph.GetType(), "glyphRect", glyphRect);
                 }
 
                 // Set GlyphMetrics (width, height, bearingX, bearingY, advance)
@@ -1695,6 +2059,10 @@ namespace UnityGameTranslator.Core
                     SetFieldValue(metrics, "horizontalBearingX", bearingX);
                     SetFieldValue(metrics, "horizontalBearingY", bearingY);
                     SetFieldValue(metrics, "horizontalAdvance", advance);
+
+                    // Same value-type write-back required for GlyphMetrics.
+                    SetPropertyOrField(glyph, glyph.GetType(), "m_Metrics", metrics);
+                    SetPropertyOrField(glyph, glyph.GetType(), "metrics", metrics);
                 }
 
                 // Log first few
@@ -2085,7 +2453,17 @@ namespace UnityGameTranslator.Core
                 byte[] rawData = GetRawTextureDataSafe(texture);
                 if (rawData == null || rawData.Length == 0)
                 {
-                    TranslatorCore.LogWarning("[CustomFontLoader] GetRawTextureData returned empty");
+                    // GetRawTextureData returns an empty buffer on some IL2CPP runtimes
+                    // (observed on Unity 6 + Il2CppInterop) even when isReadable==true,
+                    // and GetPixels32 throws MissingMethodException at JIT-compile time on
+                    // the same runtimes, so we can't fall back to it from inside a try.
+                    // For TTF-rasterized fonts the in-place R→A conversion is done on the
+                    // raw byte buffer BEFORE the Texture2D round-trip (see the TTF branch
+                    // higher up in LoadFontFromCacheOrFile), so this path runs only for
+                    // user-supplied JSON+PNG fonts. If those PNGs ship with SDF in RGB
+                    // instead of Alpha, the user has to provide a TMP-conventional layout
+                    // (SDF in Alpha) — we have no way to convert here on this runtime.
+                    TranslatorCore.LogWarning("[CustomFontLoader] GetRawTextureData returned empty — cannot convert SDF in this Texture2D. If this is a user-provided PNG with SDF in RGB, please use a PNG with SDF in Alpha.");
                     return;
                 }
 
@@ -2166,5 +2544,6 @@ namespace UnityGameTranslator.Core
                 TranslatorCore.LogWarning($"[CustomFontLoader] Failed to convert SDF texture: {ex.Message}");
             }
         }
+
     }
 }

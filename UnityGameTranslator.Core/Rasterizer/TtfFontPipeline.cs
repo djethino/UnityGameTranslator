@@ -25,12 +25,6 @@ namespace UnityGameTranslator.Core.Rasterizer
         public const float DefaultDistanceRange = 8f;
 
         /// <summary>
-        /// Maximum number of glyphs to process. Prevents extremely large fonts
-        /// from consuming too much memory.
-        /// </summary>
-        public const int MaxGlyphCount = 30000;
-
-        /// <summary>
         /// Process a TTF/OTF file and generate atlas data compatible with CustomFontLoader.
         /// </summary>
         /// <param name="ttfPath">Path to the .ttf or .otf file</param>
@@ -59,18 +53,14 @@ namespace UnityGameTranslator.Core.Rasterizer
                 TranslatorCore.LogInfo($"[TtfPipeline] Font: {parser.Metrics.FontName}, " +
                     $"UPM: {parser.Metrics.UnitsPerEm}, Glyphs: {parser.GlyphCount}");
 
-                // Step 2: Get all codepoints and filter
+                // Step 2: Get all codepoints. We process every codepoint the font
+                // exposes — no arbitrary cap. Any downstream constraint (atlas
+                // texture size, GPU max texture, PNG encoding limit, etc.) is the
+                // responsibility of the rasterizer / atlas packer to surface
+                // explicitly rather than silently dropping glyphs picked at
+                // random by Dictionary iteration order.
                 var codepoints = parser.GetSupportedCodepoints();
                 TranslatorCore.LogInfo($"[TtfPipeline] Mapped codepoints: {codepoints.Length}");
-
-                if (codepoints.Length > MaxGlyphCount)
-                {
-                    TranslatorCore.LogWarning($"[TtfPipeline] Font has {codepoints.Length} glyphs, " +
-                        $"limiting to {MaxGlyphCount}. Consider using msdf-atlas-gen for very large fonts.");
-                    var limited = new int[MaxGlyphCount];
-                    Array.Copy(codepoints, limited, MaxGlyphCount);
-                    codepoints = limited;
-                }
 
                 int sdfPadding = (int)Math.Ceiling(distanceRange) + 1;
 

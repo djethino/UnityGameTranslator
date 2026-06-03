@@ -581,7 +581,7 @@ namespace UnityGameTranslator.Core
                     entry.File = filename;
                 }
 
-                TranslatorCore.LogInfo($"[ImageReplacer] Exported original: {fullPath} ({pngData.Length} bytes)");
+                TranslatorCore.LogInfo($"[ImageReplacer] Exported original: {Sanitize.Path(fullPath)} ({pngData.Length} bytes)");
                 return fullPath;
             }
             catch (Exception ex)
@@ -608,7 +608,7 @@ namespace UnityGameTranslator.Core
             string fullPath = Path.Combine(_imagesFolder, pngFilename);
             if (!File.Exists(fullPath))
             {
-                TranslatorCore.LogWarning($"[ImageReplacer] File not found: {fullPath}");
+                TranslatorCore.LogWarning($"[ImageReplacer] File not found: {Sanitize.Path(fullPath)}");
                 return false;
             }
 

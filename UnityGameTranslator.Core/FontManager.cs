@@ -312,7 +312,7 @@ namespace UnityGameTranslator.Core
                     string debugDir = System.IO.Path.GetDirectoryName(TranslatorCore.CachePath);
                     string debugPath = System.IO.Path.Combine(debugDir, $"debug_atlas_{originalFontName}.raw");
                     System.IO.File.WriteAllBytes(debugPath, result.RgbaData);
-                    TranslatorCore.LogDebug($"[FontManager] Exported debug atlas to {debugPath} ({result.AtlasWidth}x{result.AtlasHeight} RGBA)");
+                    TranslatorCore.LogDebug($"[FontManager] Exported debug atlas to {Sanitize.Path(debugPath)} ({result.AtlasWidth}x{result.AtlasHeight} RGBA)");
                 }
                 catch { }
                 return font;
@@ -2093,6 +2093,17 @@ namespace UnityGameTranslator.Core
                 }
                 else
                 {
+                    // Don't blacklist if the failure is "deferred" — i.e. CustomFontLoader
+                    // has the atlas data ready but no game TMP_FontAsset was available yet
+                    // to clone from. Hitting this path early at mod load (before the game's
+                    // own TMP fonts register) is normal; we just return and let the next
+                    // EnsureFallbackApplied call retry. Blacklisting here would lock out
+                    // the fallback forever and force the user to restart the game.
+                    if (CustomFontLoader.IsFontDeferred(settings.fallback))
+                    {
+                        TranslatorCore.LogDebug($"[FontManager] Fallback '{settings.fallback}' deferred (clone source not yet available) — will retry");
+                        return;
+                    }
                     _failedFallbackFontNames.Add(settings.fallback);
                     return;
                 }
@@ -2732,7 +2743,10 @@ namespace UnityGameTranslator.Core
                 }
                 else
                 {
-                    _failedFallbackFontNames.Add(settings.fallback);
+                    // Don't blacklist a deferred font (atlas data ready, no clone source yet) —
+                    // see the matching comment in EnsureFallbackApplied.
+                    if (!CustomFontLoader.IsFontDeferred(settings.fallback))
+                        _failedFallbackFontNames.Add(settings.fallback);
                 }
             }
 
@@ -2959,7 +2973,7 @@ namespace UnityGameTranslator.Core
                             {
                                 internalFromPath.Invoke(null, new object[] { font, fontPath });
                                 font.name = fontName;
-                                TranslatorCore.LogDebug($"[FontManager] Created Font via Internal_CreateFontFromPath: {fontPath}");
+                                TranslatorCore.LogDebug($"[FontManager] Created Font via Internal_CreateFontFromPath: {Sanitize.Path(fontPath)}");
 
                                 // Try to make the font dynamic by setting internal properties
                                 // and calling RequestCharactersInTexture
@@ -3165,7 +3179,7 @@ namespace UnityGameTranslator.Core
                         string path = System.IO.Path.Combine(dir, fontName + ext);
                         if (System.IO.File.Exists(path))
                         {
-                            TranslatorCore.LogDebug($"[FontManager] Found font file: {path}");
+                            TranslatorCore.LogDebug($"[FontManager] Found font file: {Sanitize.Path(path)}");
                             return path;
                         }
                     }

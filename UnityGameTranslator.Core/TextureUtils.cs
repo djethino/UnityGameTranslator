@@ -110,8 +110,28 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static byte[] EncodeToPngSafe(Texture2D texture)
         {
-            if (texture == null) return null;
+            if (texture == null)
+            {
+                TranslatorCore.LogWarning("[TextureUtils] EncodeToPngSafe called with null texture");
+                return null;
+            }
 
+            // Log the texture state up-front so failure diagnostics on user setups don't
+            // need a second log round-trip to know what was attempted. Wrap individual
+            // property reads in try/catch because a destroyed-but-not-yet-null texture
+            // can throw on .format / .width access on some IL2CPP runtimes.
+            string textureDiag = "?";
+            try
+            {
+                textureDiag = $"format={texture.format} size={texture.width}x{texture.height} mipmaps={texture.mipmapCount} readable={texture.isReadable}";
+            }
+            catch (Exception ex)
+            {
+                textureDiag = $"(diag failed: {ex.GetType().Name}: {ex.Message})";
+            }
+            TranslatorCore.LogInfo($"[TextureUtils] EncodeToPNG attempt: {textureDiag}");
+
+            int staticAttempts = 0;
             // Try ImageConversion.EncodeToPNG(texture) — newer Unity
             foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
             {
@@ -124,38 +144,85 @@ namespace UnityGameTranslator.Core
                     var parameters = method.GetParameters();
                     if (parameters.Length == 1)
                     {
+                        staticAttempts++;
                         try
                         {
                             var result = method.Invoke(null, new object[] { texture });
-                            if (result is byte[] bytes) return bytes;
+                            if (result is byte[] bytes)
+                            {
+                                TranslatorCore.LogInfo($"[TextureUtils] EncodeToPNG returned byte[] ({bytes.Length} bytes) from ImageConversion in {asm.GetName().Name}");
+                                return bytes;
+                            }
 
                             // IL2CPP: might return Il2CppStructArray<byte>
                             if (result != null)
                             {
+                                string resultType = result.GetType().FullName ?? result.GetType().Name;
                                 byte[] extracted = ExtractByteArrayFromIl2Cpp(result);
-                                if (extracted != null) return extracted;
+                                if (extracted != null)
+                                {
+                                    TranslatorCore.LogInfo($"[TextureUtils] EncodeToPNG returned IL2CPP array ({resultType}, {extracted.Length} bytes), extracted to byte[]");
+                                    return extracted;
+                                }
+                                TranslatorCore.LogWarning($"[TextureUtils] EncodeToPNG returned non-null but not extractable: type={resultType}");
+                            }
+                            else
+                            {
+                                TranslatorCore.LogWarning($"[TextureUtils] EncodeToPNG returned null from ImageConversion in {asm.GetName().Name} (no exception thrown — Unity likely refused to encode this texture/format combination)");
                             }
                         }
                         catch (Exception ex)
                         {
-                            TranslatorCore.LogWarning($"[TextureUtils] EncodeToPNG failed: {ex.Message}");
+                            // TargetInvocationException wraps the real culprit (IL2CPP runtime
+                            // failures, OOM on huge atlases, unsupported format on this build).
+                            // Surface the inner so the user log shows the actual cause.
+                            var inner = ex.InnerException ?? ex;
+                            TranslatorCore.LogWarning($"[TextureUtils] EncodeToPNG threw via reflection: outer={ex.GetType().Name}: {ex.Message} | inner={inner.GetType().FullName}: {inner.Message}");
+                            if (inner.StackTrace != null)
+                                TranslatorCore.LogWarning($"[TextureUtils] EncodeToPNG inner stack: {inner.StackTrace}");
                         }
                     }
                 }
             }
 
             // Try Texture2D.EncodeToPNG() — older Unity (instance method)
+            int instanceAttempts = 0;
             try
             {
                 var method = texture.GetType().GetMethod("EncodeToPNG", BindingFlags.Public | BindingFlags.Instance);
                 if (method != null)
                 {
+                    instanceAttempts = 1;
                     var result = method.Invoke(texture, null);
-                    if (result is byte[] bytes) return bytes;
+                    if (result is byte[] bytes)
+                    {
+                        TranslatorCore.LogInfo($"[TextureUtils] EncodeToPNG returned byte[] ({bytes.Length} bytes) from instance method");
+                        return bytes;
+                    }
+                    if (result != null)
+                    {
+                        string resultType = result.GetType().FullName ?? result.GetType().Name;
+                        byte[] extracted = ExtractByteArrayFromIl2Cpp(result);
+                        if (extracted != null)
+                        {
+                            TranslatorCore.LogInfo($"[TextureUtils] EncodeToPNG (instance) returned IL2CPP array ({resultType}, {extracted.Length} bytes)");
+                            return extracted;
+                        }
+                        TranslatorCore.LogWarning($"[TextureUtils] EncodeToPNG (instance) returned non-null but not extractable: type={resultType}");
+                    }
+                    else
+                    {
+                        TranslatorCore.LogWarning("[TextureUtils] EncodeToPNG (instance) returned null");
+                    }
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                var inner = ex.InnerException ?? ex;
+                TranslatorCore.LogWarning($"[TextureUtils] EncodeToPNG (instance) threw: outer={ex.GetType().Name}: {ex.Message} | inner={inner.GetType().FullName}: {inner.Message}");
+            }
 
+            TranslatorCore.LogWarning($"[TextureUtils] EncodeToPNG exhausted all paths (static attempts: {staticAttempts}, instance attempts: {instanceAttempts}) — returning null");
             return null;
         }
 
@@ -466,17 +533,29 @@ namespace UnityGameTranslator.Core
             if (result == null) return null;
 
             var resultType = result.GetType();
-            var lengthProp = resultType.GetProperty("Length") ?? resultType.GetProperty("Count");
-            if (lengthProp == null) return null;
-
-            int length = (int)lengthProp.GetValue(result, null);
-            var indexer = resultType.GetProperty("Item");
-            if (indexer != null && length > 0)
+            try
             {
-                byte[] data = new byte[length];
-                for (int i = 0; i < length; i++)
-                    data[i] = (byte)indexer.GetValue(result, new object[] { i });
-                return data;
+                var lengthProp = resultType.GetProperty("Length") ?? resultType.GetProperty("Count");
+                if (lengthProp == null)
+                {
+                    TranslatorCore.LogWarning($"[TextureUtils] ExtractByteArrayFromIl2Cpp: {resultType.FullName} has neither Length nor Count property");
+                    return null;
+                }
+
+                int length = (int)lengthProp.GetValue(result, null);
+                var indexer = resultType.GetProperty("Item");
+                if (indexer != null && length > 0)
+                {
+                    byte[] data = new byte[length];
+                    for (int i = 0; i < length; i++)
+                        data[i] = (byte)indexer.GetValue(result, new object[] { i });
+                    return data;
+                }
+                TranslatorCore.LogWarning($"[TextureUtils] ExtractByteArrayFromIl2Cpp: {resultType.FullName} has Length={length} but indexer={(indexer != null ? "found" : "missing")}");
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogWarning($"[TextureUtils] ExtractByteArrayFromIl2Cpp threw on {resultType.FullName}: {ex.GetType().Name}: {ex.Message}");
             }
 
             return null;

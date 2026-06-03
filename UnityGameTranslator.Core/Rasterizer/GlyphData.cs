@@ -74,5 +74,9 @@ namespace UnityGameTranslator.Core.Rasterizer
         // Atlas placement (filled by AtlasPacker)
         public int AtlasX;
         public int AtlasY;
+
+        // Index into the AtlasResult list (0 = first/only atlas). Filled by AtlasPacker.
+        // Used by multi-atlas mode when a font has too many glyphs to fit one texture.
+        public int AtlasIndex;
     }
 }

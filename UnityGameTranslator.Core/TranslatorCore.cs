@@ -886,6 +886,13 @@ namespace UnityGameTranslator.Core
             LoadConfig();
             DebugMode = Config.debug;
 
+            // Always-on environment snapshot. Logged at LogInfo level (not LogDebug) so it
+            // ships in user reports without them having to flip a debug flag first. Cheap
+            // to produce and pays for itself the first time we receive a "doesn't work on
+            // my machine" log — we already have the Unity version, OS, GPU, driver, RAM
+            // and chosen mod loader without a second round-trip.
+            LogRuntimeEnvironment();
+
             // Initialize type resolution (must be before patches and scanning)
             TypeHelper.Initialize();
 
@@ -923,7 +930,7 @@ namespace UnityGameTranslator.Core
             if (Config.IsTranslationEnabled)
             {
                 string backendName = Config.translation_backend == "llm"
-                    ? $"LLM ({Config.ai_model} @ {Config.ai_url})"
+                    ? $"LLM ({Config.ai_model} @ {Sanitize.Url(Config.ai_url)})"
                     : Config.translation_backend == "google"
                         ? "Google Translate"
                         : Config.translation_backend == "deepl"
@@ -1048,6 +1055,41 @@ namespace UnityGameTranslator.Core
             "deepl_api_key",
         };
 
+        /// <summary>
+        /// Log a single snapshot of the runtime environment at mod startup. Every value
+        /// is fetched defensively because some IL2CPP-on-exotic-Windows configurations
+        /// throw on SystemInfo properties that look harmless. We never want this method
+        /// to take the mod down — it's diagnostic.
+        ///
+        /// Captured here:
+        ///  - Mod info: version, mod loader type
+        ///  - Unity: version, platform, runtime version
+        ///  - OS: name, processor, RAM
+        ///  - GPU: name, memory, API/driver version, maxTextureSize
+        /// </summary>
+        private static void LogRuntimeEnvironment()
+        {
+            string Safe(Func<string> fn)
+            {
+                try { return fn() ?? "(null)"; }
+                catch (Exception ex) { return $"(error: {ex.GetType().Name}: {ex.Message})"; }
+            }
+
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine("[Env] === Runtime environment ===");
+            sb.AppendLine($"[Env]  Mod: UnityGameTranslator on {Safe(() => Adapter?.ModLoaderType ?? "(no adapter)")}");
+            sb.AppendLine($"[Env]  Unity: version={Safe(() => UnityEngine.Application.unityVersion)}  platform={Safe(() => UnityEngine.Application.platform.ToString())}");
+            sb.AppendLine($"[Env]  .NET: runtime={Safe(() => System.Environment.Version.ToString())}  desc={Safe(() => System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription)}");
+            sb.AppendLine($"[Env]  OS: {Safe(() => UnityEngine.SystemInfo.operatingSystem)}");
+            sb.AppendLine($"[Env]  Device: {Safe(() => UnityEngine.SystemInfo.deviceModel)}  CPU: {Safe(() => UnityEngine.SystemInfo.processorType)} ×{Safe(() => UnityEngine.SystemInfo.processorCount.ToString())}");
+            sb.AppendLine($"[Env]  RAM: {Safe(() => UnityEngine.SystemInfo.systemMemorySize.ToString())} MB system");
+            sb.AppendLine($"[Env]  GPU: {Safe(() => UnityEngine.SystemInfo.graphicsDeviceName)}  VRAM={Safe(() => UnityEngine.SystemInfo.graphicsMemorySize.ToString())} MB  api={Safe(() => UnityEngine.SystemInfo.graphicsDeviceVersion)}");
+            sb.AppendLine($"[Env]  maxTextureSize={Safe(() => UnityEngine.SystemInfo.maxTextureSize.ToString())}  supportsAlpha8={Safe(() => UnityEngine.SystemInfo.SupportsTextureFormat(UnityEngine.TextureFormat.Alpha8).ToString())}  supportsRGBA32={Safe(() => UnityEngine.SystemInfo.SupportsTextureFormat(UnityEngine.TextureFormat.RGBA32).ToString())}");
+            sb.AppendLine($"[Env]  Culture: {Safe(() => System.Globalization.CultureInfo.CurrentCulture.Name)}  Encoding: {Safe(() => System.Text.Encoding.Default.WebName)}");
+            sb.Append("[Env] ============================");
+            LogInfo(sb.ToString());
+        }
+
         private static void LoadConfig()
         {
             if (!File.Exists(ConfigPath))
@@ -1120,7 +1162,7 @@ namespace UnityGameTranslator.Core
                     if (!string.IsNullOrEmpty(Config.api_token_server) &&
                         Config.api_token_server != currentApiUrl)
                     {
-                        Adapter.LogWarning($"[Security] API URL changed from {Config.api_token_server} to {currentApiUrl} - invalidating token to prevent replay attacks");
+                        Adapter.LogWarning($"[Security] API URL changed from {Sanitize.Url(Config.api_token_server)} to {Sanitize.Url(currentApiUrl)} - invalidating token to prevent replay attacks");
                         Config.api_token = null;
                         Config.api_user = null;
                         Config.api_token_server = null;
@@ -1130,7 +1172,7 @@ namespace UnityGameTranslator.Core
 
                 if (Config._configMigrated)
                 {
-                    LogDebug($"[Config] Migrated old Ollama config -> AI config (enable_ai={Config.enable_ai}, ai_url={Config.ai_url}, ai_model={Config.ai_model})");
+                    LogDebug($"[Config] Migrated old Ollama config -> AI config (enable_ai={Config.enable_ai}, ai_url={Sanitize.Url(Config.ai_url)}, ai_model={Config.ai_model})");
                     needsResave = true;
                 }
 
@@ -1147,7 +1189,7 @@ namespace UnityGameTranslator.Core
                     SaveConfig();
                 }
 
-                LogDebug($"Loaded config (enable_translations={Config.enable_translations}, backend={Config.translation_backend}, ai_url={Config.ai_url}, ai_model={Config.ai_model})");
+                LogDebug($"Loaded config (enable_translations={Config.enable_translations}, backend={Config.translation_backend}, ai_url={Sanitize.Url(Config.ai_url)}, ai_model={Config.ai_model})");
             }
             catch (Exception e)
             {

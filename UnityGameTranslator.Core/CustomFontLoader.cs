@@ -20,7 +20,16 @@ namespace UnityGameTranslator.Core
         [Serializable]
         public class MsdfAtlasData
         {
+            // Legacy single-atlas field. Always populated (= atlases[0]) so older code paths
+            // that only look at this still see something sensible. New code should iterate
+            // over `atlases` and rely on each GlyphInfo's atlasIndex.
             public AtlasInfo atlas { get; set; }
+
+            // Multi-atlas list. Always present in newly-generated data (length >= 1).
+            // Optional in incoming JSON for backward compatibility — if absent at load
+            // time we synthesize a single-entry list from `atlas`.
+            public List<AtlasInfo> atlases { get; set; }
+
             public MetricsInfo metrics { get; set; }
             public List<GlyphInfo> glyphs { get; set; }
             public List<KerningInfo> kerning { get; set; }
@@ -55,6 +64,11 @@ namespace UnityGameTranslator.Core
             public float advance { get; set; }
             public BoundsInfo planeBounds { get; set; }
             public BoundsInfo atlasBounds { get; set; }
+
+            // Which atlas texture (index into MsdfAtlasData.atlases) this glyph lives in.
+            // Defaults to 0 — that matches the single-atlas behaviour of every JSON file
+            // produced before multi-atlas support landed, so old caches load unchanged.
+            public int atlasIndex { get; set; }
         }
 
         [Serializable]
@@ -74,6 +88,150 @@ namespace UnityGameTranslator.Core
             public float advance { get; set; }
         }
 
+        /// <summary>
+        /// Backward-compat upgrade for incoming MsdfAtlasData. Old JSON files (pre multi-atlas)
+        /// only have `atlas` populated; new files have both `atlas` and `atlases`. This
+        /// guarantees downstream code can always read `atlases[0..N-1]` and trust each
+        /// glyph's `atlasIndex` field.
+        /// </summary>
+        private static void NormalizeAtlasData(MsdfAtlasData data)
+        {
+            if (data == null) return;
+
+            // If only the legacy single `atlas` is present, synthesize the list from it.
+            if ((data.atlases == null || data.atlases.Count == 0) && data.atlas != null)
+            {
+                data.atlases = new List<AtlasInfo> { data.atlas };
+            }
+            // If only the list is present, keep `atlas` mirrored to atlases[0] for older
+            // call-sites that still dereference `data.atlas`.
+            else if (data.atlas == null && data.atlases != null && data.atlases.Count > 0)
+            {
+                data.atlas = data.atlases[0];
+            }
+
+            // Ensure every glyph has a valid atlasIndex (default 0 already, but if a JSON
+            // had it serialized as null/missing on an older serializer, Newtonsoft would
+            // have already given 0).
+            if (data.glyphs != null && data.atlases != null && data.atlases.Count > 0)
+            {
+                int maxIdx = data.atlases.Count - 1;
+                foreach (var g in data.glyphs)
+                {
+                    if (g.atlasIndex < 0 || g.atlasIndex > maxIdx)
+                        g.atlasIndex = 0; // clamp; treat invalid as atlas 0
+                }
+            }
+        }
+
+        /// <summary>
+        /// Try to load a previously rasterized font from the compressed .gen cache (json + png).
+        /// Returns true and populates <c>fontInfo.AtlasData</c>, <c>fontInfo.PngPath</c> and
+        /// <c>fontInfo.PngPaths</c> when the cache is fresh; the texture-creation branch in
+        /// LoadFont then loads the actual Texture2D objects directly from the PNG files.
+        ///
+        /// Freshness check: the cache is considered stale (returns false) if the TTF on disk
+        /// was modified after the .gen.json was written. This guarantees a font update from
+        /// the user re-rasterizes.
+        /// </summary>
+        private static bool TryLoadGenCache(CustomFontInfo fontInfo, string cacheDir, string fontName)
+        {
+            if (string.IsNullOrEmpty(cacheDir)) return false;
+
+            string jsonPath = Path.Combine(cacheDir, fontName + ".gen.json");
+            if (!File.Exists(jsonPath)) return false;
+
+            // Stale-cache check: if the TTF was modified after the cache was written, force
+            // a re-rasterize. We compare UTC timestamps so DST changes don't trip the check.
+            if (!string.IsNullOrEmpty(fontInfo.TtfPath) && File.Exists(fontInfo.TtfPath))
+            {
+                var ttfTime = File.GetLastWriteTimeUtc(fontInfo.TtfPath);
+                var jsonTime = File.GetLastWriteTimeUtc(jsonPath);
+                if (ttfTime > jsonTime)
+                {
+                    TranslatorCore.LogInfo($"[CustomFontLoader] .gen cache stale for {fontName} (TTF newer than json), forcing re-rasterize");
+                    return false;
+                }
+            }
+
+            try
+            {
+                var json = File.ReadAllText(jsonPath);
+                var atlasData = JsonConvert.DeserializeObject<MsdfAtlasData>(json);
+                NormalizeAtlasData(atlasData);
+                if (atlasData?.glyphs == null || atlasData.glyphs.Count == 0)
+                {
+                    TranslatorCore.LogWarning($"[CustomFontLoader] .gen.json for {fontName} has no glyphs, ignoring cache");
+                    return false;
+                }
+
+                // Resolve PNG file(s). Same naming convention as the writer side:
+                // single atlas → fontName.gen.png; multi atlas → fontName.gen.atlas{N}.png
+                int atlasCount = atlasData.atlases?.Count ?? 1;
+                var pngPaths = new List<string>(atlasCount);
+                for (int i = 0; i < atlasCount; i++)
+                {
+                    string path = (atlasCount == 1)
+                        ? Path.Combine(cacheDir, fontName + ".gen.png")
+                        : Path.Combine(cacheDir, fontName + ".gen.atlas" + i + ".png");
+                    if (!File.Exists(path))
+                    {
+                        TranslatorCore.LogWarning($"[CustomFontLoader] .gen cache missing PNG {Path.GetFileName(path)} for atlas {i}, ignoring cache");
+                        return false;
+                    }
+                    pngPaths.Add(path);
+                }
+
+                fontInfo.AtlasData = atlasData;
+                fontInfo.PngPath = pngPaths[0];
+                fontInfo.PngPaths = pngPaths;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogWarning($"[CustomFontLoader] TryLoadGenCache failed for {fontName}: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Delete legacy <c>.cache.png</c> / <c>.cache.json</c> / <c>.cache.stamp</c> files
+        /// from the fonts folder. Older versions of the mod wrote the raw RGBA atlas to
+        /// <c>.cache.png</c> (16384×16384×4 = ~1 GB per font); the .gen.png compressed cache
+        /// supersedes it. Removing the orphan files reclaims disk space — for users with
+        /// multiple CJK fonts cached this can free several gigabytes.
+        /// </summary>
+        private static void PurgeLegacyRasterCache(string fontsFolder)
+        {
+            if (string.IsNullOrEmpty(fontsFolder) || !Directory.Exists(fontsFolder)) return;
+            long freedBytes = 0;
+            int removed = 0;
+            foreach (var pattern in new[] { "*.cache.png", "*.cache.json", "*.cache.stamp" })
+            {
+                string[] files;
+                try { files = Directory.GetFiles(fontsFolder, pattern); }
+                catch { continue; }
+                foreach (var f in files)
+                {
+                    try
+                    {
+                        long size = new FileInfo(f).Length;
+                        File.Delete(f);
+                        freedBytes += size;
+                        removed++;
+                    }
+                    catch (Exception ex)
+                    {
+                        TranslatorCore.LogWarning($"[CustomFontLoader] Could not delete legacy cache file {Path.GetFileName(f)}: {ex.Message}");
+                    }
+                }
+            }
+            if (removed > 0)
+            {
+                TranslatorCore.LogInfo($"[CustomFontLoader] Purged {removed} legacy .cache.* file(s), freed {freedBytes / 1024 / 1024} MB");
+            }
+        }
+
         #endregion
 
         #region Custom Font Info
@@ -85,9 +243,28 @@ namespace UnityGameTranslator.Core
         {
             public string Name { get; set; }
             public string JsonPath { get; set; }
+
+            // Legacy single-PNG path. Still used for fonts with one atlas. Multi-atlas
+            // fonts use PngPaths instead (one entry per atlas).
             public string PngPath { get; set; }
+            public List<string> PngPaths { get; set; }
+
             public MsdfAtlasData AtlasData { get; set; }
-            public Texture2D AtlasTexture { get; set; }
+
+            // Multi-atlas textures. AtlasTextures[0] mirrors the legacy AtlasTexture so
+            // older code paths that only knew about a single texture keep working.
+            public List<Texture2D> AtlasTextures { get; set; }
+            public Texture2D AtlasTexture
+            {
+                get => (AtlasTextures != null && AtlasTextures.Count > 0) ? AtlasTextures[0] : null;
+                set
+                {
+                    if (AtlasTextures == null) AtlasTextures = new List<Texture2D>();
+                    if (AtlasTextures.Count == 0) AtlasTextures.Add(value);
+                    else AtlasTextures[0] = value;
+                }
+            }
+
             public object FontAsset { get; set; } // TMP_FontAsset or TMProOld.TMP_FontAsset
             public bool IsLoaded { get; set; }
             public string Error { get; set; }
@@ -96,10 +273,40 @@ namespace UnityGameTranslator.Core
             public string TtfPath { get; set; }
             public bool IsTtf => !string.IsNullOrEmpty(TtfPath);
 
-            // For TTF-rasterized fonts: RGBA pixels stored in memory (no PNG file)
-            public byte[] RgbaPixels { get; set; }
-            public int RgbaWidth { get; set; }
-            public int RgbaHeight { get; set; }
+            // For TTF-rasterized fonts: RGBA buffers stored in memory (one per atlas).
+            // RgbaBuffers is the canonical multi-atlas store; RgbaPixels/RgbaWidth/RgbaHeight
+            // are legacy single-atlas accessors that target RgbaBuffers[0].
+            public List<Rasterizer.AtlasBuffer> RgbaBuffers { get; set; }
+            public byte[] RgbaPixels
+            {
+                get => (RgbaBuffers != null && RgbaBuffers.Count > 0) ? RgbaBuffers[0].Rgba : null;
+                set
+                {
+                    if (RgbaBuffers == null) RgbaBuffers = new List<Rasterizer.AtlasBuffer>();
+                    if (RgbaBuffers.Count == 0) RgbaBuffers.Add(new Rasterizer.AtlasBuffer());
+                    RgbaBuffers[0].Rgba = value;
+                }
+            }
+            public int RgbaWidth
+            {
+                get => (RgbaBuffers != null && RgbaBuffers.Count > 0) ? RgbaBuffers[0].Width : 0;
+                set
+                {
+                    if (RgbaBuffers == null) RgbaBuffers = new List<Rasterizer.AtlasBuffer>();
+                    if (RgbaBuffers.Count == 0) RgbaBuffers.Add(new Rasterizer.AtlasBuffer());
+                    RgbaBuffers[0].Width = value;
+                }
+            }
+            public int RgbaHeight
+            {
+                get => (RgbaBuffers != null && RgbaBuffers.Count > 0) ? RgbaBuffers[0].Height : 0;
+                set
+                {
+                    if (RgbaBuffers == null) RgbaBuffers = new List<Rasterizer.AtlasBuffer>();
+                    if (RgbaBuffers.Count == 0) RgbaBuffers.Add(new Rasterizer.AtlasBuffer());
+                    RgbaBuffers[0].Height = value;
+                }
+            }
 
             // Source: "custom" (fonts/ folder), "system" (OS fonts)
             public string Source { get; set; }
@@ -120,7 +327,6 @@ namespace UnityGameTranslator.Core
         private static Type _faceInfoType;
         private static bool _typesInitialized;
         private static bool _useAlternateTMP;
-        private static bool _existingFontDumped;
 
         /// <summary>
         /// Gets all available custom fonts (loaded or not).
@@ -142,9 +348,16 @@ namespace UnityGameTranslator.Core
                 return;
             }
 
-            TranslatorCore.LogInfo($"[CustomFontLoader] Scanning fonts folder: {fontsFolder}");
+            TranslatorCore.LogInfo($"[CustomFontLoader] Scanning fonts folder: {Sanitize.Path(fontsFolder)}");
 
-            // Find all JSON files (skip .cache.json — those are TTF rasterization cache)
+            // One-shot migration: delete the legacy .cache.{png,json,stamp} files that
+            // older versions of the mod wrote alongside each font. The .cache.png in
+            // particular was a 1 GB raw-RGBA dump per font asset — the compressed .gen.png
+            // cache replaces it. This typically reclaims several GB on disk for users with
+            // CJK fonts cached from a previous version.
+            PurgeLegacyRasterCache(fontsFolder);
+
+            // Find all JSON files (skip .gen.json — those are the compressed runtime cache)
             var jsonFiles = Directory.GetFiles(fontsFolder, "*.json");
 
             foreach (var jsonPath in jsonFiles)
@@ -155,41 +368,60 @@ namespace UnityGameTranslator.Core
                 if (fileName.EndsWith(".cache") || fileName.EndsWith(".gen"))
                     continue;
 
-                var pngPath = Path.Combine(fontsFolder, fileName + ".png");
-
-                if (!File.Exists(pngPath))
+                // Parse JSON first so we know how many atlases to look for. Multi-atlas
+                // user fonts ship as fontname.json + fontname.atlas0.png + fontname.atlas1.png + …
+                MsdfAtlasData parsedAtlas;
+                try
                 {
-                    TranslatorCore.LogWarning($"[CustomFontLoader] Missing PNG for {fileName}.json");
+                    parsedAtlas = JsonConvert.DeserializeObject<MsdfAtlasData>(File.ReadAllText(jsonPath));
+                    NormalizeAtlasData(parsedAtlas);
+                }
+                catch (Exception ex)
+                {
+                    TranslatorCore.LogWarning($"[CustomFontLoader] Failed to parse {fileName}.json: {ex.Message}");
                     continue;
                 }
+
+                int expectedAtlases = (parsedAtlas?.atlases != null && parsedAtlas.atlases.Count > 0)
+                    ? parsedAtlas.atlases.Count : 1;
+
+                // Resolve PNG file(s). Single atlas: fontname.png (legacy). Multi atlas:
+                // fontname.atlas0.png + fontname.atlas1.png + ...
+                var pngPaths = new List<string>(expectedAtlases);
+                bool allPresent = true;
+                for (int i = 0; i < expectedAtlases; i++)
+                {
+                    string candidate = (expectedAtlases == 1)
+                        ? Path.Combine(fontsFolder, fileName + ".png")
+                        : Path.Combine(fontsFolder, fileName + ".atlas" + i + ".png");
+                    pngPaths.Add(candidate);
+                    if (!File.Exists(candidate))
+                    {
+                        TranslatorCore.LogWarning($"[CustomFontLoader] Missing PNG for {fileName} atlas {i}: {Path.GetFileName(candidate)}");
+                        allPresent = false;
+                    }
+                }
+                if (!allPresent) continue;
 
                 var fontInfo = new CustomFontInfo
                 {
                     Name = fileName,
                     JsonPath = jsonPath,
-                    PngPath = pngPath
+                    PngPath = pngPaths[0],
+                    PngPaths = pngPaths,
+                    AtlasData = parsedAtlas
                 };
 
-                try
+                if (fontInfo.AtlasData?.glyphs == null || fontInfo.AtlasData.glyphs.Count == 0)
                 {
-                    var jsonContent = File.ReadAllText(jsonPath);
-                    fontInfo.AtlasData = JsonConvert.DeserializeObject<MsdfAtlasData>(jsonContent);
-
-                    if (fontInfo.AtlasData?.glyphs == null || fontInfo.AtlasData.glyphs.Count == 0)
-                    {
-                        fontInfo.Error = "No glyphs in JSON";
-                        TranslatorCore.LogWarning($"[CustomFontLoader] {fileName}: No glyphs found in JSON");
-                    }
-                    else
-                    {
-                        TranslatorCore.LogInfo($"[CustomFontLoader] Found {fileName}: {fontInfo.AtlasData.glyphs.Count} glyphs, {fontInfo.AtlasData.atlas.width}x{fontInfo.AtlasData.atlas.height} atlas");
-                        loadedCount++;
-                    }
+                    fontInfo.Error = "No glyphs in JSON";
+                    TranslatorCore.LogWarning($"[CustomFontLoader] {fileName}: No glyphs found in JSON");
                 }
-                catch (Exception ex)
+                else
                 {
-                    fontInfo.Error = $"JSON parse error: {ex.Message}";
-                    TranslatorCore.LogWarning($"[CustomFontLoader] Failed to parse {fileName}.json: {ex.Message}");
+                    TranslatorCore.LogInfo($"[CustomFontLoader] Found {fileName}: {fontInfo.AtlasData.glyphs.Count} glyphs, " +
+                        $"{expectedAtlases} atlas{(expectedAtlases > 1 ? "es" : "")} of {fontInfo.AtlasData.atlas.width}x{fontInfo.AtlasData.atlas.height}");
+                    loadedCount++;
                 }
 
                 _customFonts[fileName] = fontInfo;
@@ -376,7 +608,7 @@ namespace UnityGameTranslator.Core
                 return null;
             }
 
-            TranslatorCore.LogInfo($"[CustomFontLoader] Resolved system font '{fontName}' -> {ttfPath}");
+            TranslatorCore.LogInfo($"[CustomFontLoader] Resolved system font '{fontName}' -> {Sanitize.Path(ttfPath)}");
 
             // Register as custom font with TTF path, then load via existing pipeline
             if (!_customFonts.ContainsKey(fontName))
@@ -414,41 +646,73 @@ namespace UnityGameTranslator.Core
                 return null;
             }
 
-            // TTF font not yet rasterized — do it now (on demand)
+            // TTF font not yet rasterized — do it now (on demand), preferring the
+            // compressed PNG cache over re-rasterizing.
             if (fontInfo.IsTtf && fontInfo.AtlasData == null && fontInfo.RgbaPixels == null)
             {
-                TranslatorCore.LogInfo($"[CustomFontLoader] Rasterizing TTF on demand: {fontName}");
                 try
                 {
                     // Cache always goes in the mod's fonts/ folder
-                    string cacheDir = fontInfo.Source == "system" ? _cacheFolderPath : null;
-                    var cached = Rasterizer.TtfFontPipeline.TryLoadCache(fontInfo.TtfPath, cacheDir);
-                    if (cached == null)
-                    {
-                        cached = Rasterizer.TtfFontPipeline.ProcessTtfFont(fontInfo.TtfPath);
-                        if (cached != null)
-                        {
-                            // Ensure cache dir exists for system fonts
-                            if (cacheDir != null && !Directory.Exists(cacheDir))
-                                Directory.CreateDirectory(cacheDir);
-                            Rasterizer.TtfFontPipeline.SaveCache(fontInfo.TtfPath, cached, cacheDir);
-                        }
-                    }
+                    string cacheDir = fontInfo.Source == "system" ? _cacheFolderPath : Path.GetDirectoryName(fontInfo.TtfPath ?? "");
 
-                    if (cached != null && cached.AtlasData?.glyphs != null && cached.AtlasData.glyphs.Count > 0)
+                    // FAST PATH: try the .gen.json + .gen.png(s) compressed cache first.
+                    // These are written at the end of LoadFont's PNG-encode round-trip and
+                    // are the canonical cache going forward (the historical .cache.png
+                    // raw-RGBA format wrote ~1 GB per font asset; PNG is ~80 MB).
+                    if (TryLoadGenCache(fontInfo, cacheDir, fontName))
                     {
-                        fontInfo.AtlasData = cached.AtlasData;
-                        fontInfo.RgbaPixels = cached.RgbaPixels;
-                        fontInfo.RgbaWidth = cached.Width;
-                        fontInfo.RgbaHeight = cached.Height;
-                        TranslatorCore.LogInfo($"[CustomFontLoader] TTF rasterized: {fontName} " +
-                            $"({cached.AtlasData.glyphs.Count} glyphs, {cached.Width}x{cached.Height})");
+                        TranslatorCore.LogInfo($"[CustomFontLoader] Loaded {fontName} from .gen cache " +
+                            $"({fontInfo.AtlasData.glyphs.Count} glyphs, {fontInfo.PngPaths.Count} atlas{(fontInfo.PngPaths.Count > 1 ? "es" : "")})");
+                        // RgbaBuffers stays null — the texture creation branch below will
+                        // hit the JSON+PNG path and decode directly from disk.
                     }
                     else
                     {
-                        fontInfo.Error = "TTF rasterization failed";
-                        TranslatorCore.LogWarning($"[CustomFontLoader] TTF rasterization failed: {fontName}");
-                        return null;
+                        TranslatorCore.LogInfo($"[CustomFontLoader] No .gen cache for {fontName}, rasterizing TTF");
+
+                        // Atlas size cap. We use SystemInfo.maxTextureSize directly — the
+                        // 8192 cap we briefly added to dodge Unity EncodeToPNG failures on
+                        // huge RGBA32 atlases is no longer needed now that the texture
+                        // format is Alpha8 (16384² Alpha8 = 256 MB, well within encode
+                        // limits). Keeping the larger atlas means a single texture can hold
+                        // 40k+ glyphs and we don't trigger the multi-atlas path, whose
+                        // wiring of m_AtlasTextures[1+] currently fails on IL2CPP clones
+                        // ("Failed to set m_AtlasTextures[N]: ... target of an invocation")
+                        // because the underlying Il2CppReferenceArray can't be resized via
+                        // reflection. Fixing the multi-atlas wiring is its own task — until
+                        // then, single-atlas-at-max is the safe default.
+                        int maxAtlasSize = 8192;
+                        try
+                        {
+                            int sys = UnityEngine.SystemInfo.maxTextureSize;
+                            if (sys >= 512) maxAtlasSize = sys;
+                            TranslatorCore.LogInfo($"[CustomFontLoader] SystemInfo.maxTextureSize = {sys} → using {maxAtlasSize} for atlas cap");
+                        }
+                        catch (Exception ex)
+                        {
+                            TranslatorCore.LogWarning($"[CustomFontLoader] SystemInfo.maxTextureSize unavailable ({ex.GetType().Name}: {ex.Message}), falling back to {maxAtlasSize}");
+                        }
+
+                        var cached = Rasterizer.TtfFontPipeline.ProcessTtfFont(fontInfo.TtfPath,
+                            maxAtlasSize: maxAtlasSize);
+
+                        if (cached != null && cached.AtlasData?.glyphs != null && cached.AtlasData.glyphs.Count > 0)
+                        {
+                            fontInfo.AtlasData = cached.AtlasData;
+                            NormalizeAtlasData(fontInfo.AtlasData);
+                            // Transfer the FULL atlas list, not just the first one — otherwise
+                            // multi-atlas fonts silently lose every glyph past atlas 0.
+                            fontInfo.RgbaBuffers = cached.Atlases;
+                            TranslatorCore.LogInfo($"[CustomFontLoader] TTF rasterized: {fontName} " +
+                                $"({cached.AtlasData.glyphs.Count} glyphs, {cached.Atlases.Count} atlas{(cached.Atlases.Count > 1 ? "es" : "")} " +
+                                $"of {cached.Atlases[0].Width}x{cached.Atlases[0].Height})");
+                        }
+                        else
+                        {
+                            fontInfo.Error = "TTF rasterization failed";
+                            TranslatorCore.LogWarning($"[CustomFontLoader] TTF rasterization failed: {fontName}");
+                            return null;
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -461,141 +725,397 @@ namespace UnityGameTranslator.Core
 
             try
             {
-                Texture2D texture;
-
-                if (fontInfo.RgbaPixels != null && fontInfo.RgbaWidth > 0 && fontInfo.RgbaHeight > 0)
+                // FAST PATH on retry: when CreateFontAsset deferred on a previous LoadFont
+                // call (no clone source yet), the texture(s) were already created and
+                // assigned to fontInfo.AtlasTextures, then DontDestroyOnLoad'd. Re-entering
+                // the texture-creation branch below would (a) leak those textures by
+                // re-assigning fontInfo.AtlasTextures, and (b) crash with "Missing PNG for
+                // atlas 0" in the edge case where EncodeToPNG failed on the first run —
+                // we have the texture in memory, but the .gen.png was never written. Skip
+                // straight to CreateFontAsset.
+                if (fontInfo.AtlasTextures != null && fontInfo.AtlasTextures.Count > 0
+                    && fontInfo.AtlasTextures[0] != null)
                 {
-                    // TTF-rasterized font: create texture, save as real PNG for cache,
-                    // then reload via the same LoadImage path as JSON+PNG fonts
-                    int w = fontInfo.RgbaWidth;
-                    int h = fontInfo.RgbaHeight;
-                    var rgba = fontInfo.RgbaPixels;
+                    TranslatorCore.LogInfo($"[CustomFontLoader] Reusing {fontInfo.AtlasTextures.Count} in-memory texture(s) for {fontName} (retry after deferred CreateFontAsset)");
 
-                    // IN-PLACE SDF -> ALPHA CONVERSION
-                    // TMP's SDF shader samples the Alpha channel for distance. Our rasterizer
-                    // writes the SDF into R/G/B with A=255 (easier to inspect in a normal
-                    // image viewer). We do the conversion here, on the raw byte buffer we
-                    // already hold in memory, BEFORE the Texture2D round-trip. The
-                    // alternative — converting on the Texture2D after LoadImage — requires
-                    // GetRawTextureData / GetPixels32, both of which are unreliable on some
-                    // IL2CPP runtimes (Unity 6 + Il2CppInterop observed): GetRawTextureData
-                    // returns an empty buffer and GetPixels32 throws MissingMethodException
-                    // at JIT-compile time of the calling method.
-                    // Doing the conversion on the buffer also flows through to the cached
-                    // .gen.png so subsequent reloads pick up the already-converted layout.
-                    // Visual side effect: the PNG appears all-white in viewers that ignore
-                    // the alpha channel; the SDF is still there, just in Alpha.
-                    for (int i = 0; i + 3 < rgba.Length; i += 4)
+                    if (!_typesInitialized)
+                        InitializeTypes();
+
+                    fontInfo.FontAsset = CreateFontAsset(fontInfo);
+                    if (fontInfo.FontAsset != null)
                     {
-                        byte sdfDistance = rgba[i];
-                        rgba[i]     = 255;  // R
-                        rgba[i + 1] = 255;  // G
-                        rgba[i + 2] = 255;  // B
-                        rgba[i + 3] = sdfDistance;  // A holds the SDF
-                    }
-
-                    // Create temporary texture to encode as PNG
-                    // Flip: our RGBA is top-to-bottom, SetPixels32 expects bottom-to-top
-                    var tmpTex = Compat.MakeTexture2D(w, h, TextureFormat.RGBA32, false);
-                    var colors = new Color32[w * h];
-                    for (int row = 0; row < h; row++)
-                    {
-                        int srcRow = h - 1 - row;
-                        for (int col = 0; col < w; col++)
-                        {
-                            int srcIdx = (srcRow * w + col) * 4;
-                            colors[row * w + col] = new Color32(rgba[srcIdx], rgba[srcIdx + 1], rgba[srcIdx + 2], rgba[srcIdx + 3]);
-                        }
-                    }
-                    SetPixels32Safe(tmpTex, colors);
-                    tmpTex.Apply();
-
-                    // Save as real PNG via EncodeToPNG (reflection for IL2CPP compatibility)
-                    string cacheDir = fontInfo.Source == "system" ? _cacheFolderPath : Path.GetDirectoryName(fontInfo.TtfPath ?? "");
-                    if (!string.IsNullOrEmpty(cacheDir))
-                    {
-                        if (!Directory.Exists(cacheDir))
-                            Directory.CreateDirectory(cacheDir);
-
-                        // Use .gen.png/.gen.json to distinguish from user-provided fonts
-                        string pngPath = Path.Combine(cacheDir, fontName + ".gen.png");
-                        string jsonPath = Path.Combine(cacheDir, fontName + ".gen.json");
-
-                        try
-                        {
-                            byte[] pngData = EncodeToPngSafe(tmpTex);
-                            if (pngData != null && pngData.Length > 0)
-                            {
-                                File.WriteAllBytes(pngPath, pngData);
-                                var json = Newtonsoft.Json.JsonConvert.SerializeObject(fontInfo.AtlasData, Newtonsoft.Json.Formatting.None);
-                                File.WriteAllText(jsonPath, json);
-
-                                // Switch to the JSON+PNG path: set PngPath and clear RGBA
-                                fontInfo.PngPath = pngPath;
-                                fontInfo.RgbaPixels = null;
-
-                                TranslatorCore.LogInfo($"[CustomFontLoader] Saved TTF atlas as PNG: {pngPath} ({pngData.Length} bytes)");
-                            }
-                            else
-                            {
-                                TranslatorCore.LogWarning("[CustomFontLoader] EncodeToPNG returned null/empty");
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            TranslatorCore.LogWarning($"[CustomFontLoader] Failed to save PNG cache: {ex.Message}");
-                        }
-                    }
-
-                    UnityEngine.Object.Destroy(tmpTex);
-                    fontInfo.RgbaPixels = null;
-
-                    // Now load via the standard PNG path (same as JSON+PNG custom fonts)
-                    if (!string.IsNullOrEmpty(fontInfo.PngPath) && File.Exists(fontInfo.PngPath))
-                    {
-                        var pngBytes = File.ReadAllBytes(fontInfo.PngPath);
-                        texture = Compat.MakeTexture2D(2, 2, TextureFormat.RGBA32, false);
-                        texture.filterMode = FilterMode.Bilinear;
-
-                        if (!LoadImageToTexture(texture, pngBytes))
-                        {
-                            fontInfo.Error = "Failed to load cached PNG";
-                            TranslatorCore.LogWarning($"[CustomFontLoader] Failed to load cached PNG for {fontName}");
-                            return null;
-                        }
-
-                        // SDF is in alpha channel (R=G=B=255, A=SDF) — check if conversion needed
-                        ConvertSdfTextureForTMP(texture);
-                        TranslatorCore.LogInfo($"[CustomFontLoader] Loaded TTF atlas from PNG: {texture.width}x{texture.height}");
+                        fontInfo.IsLoaded = true;
+                        TranslatorCore.LogInfo($"[CustomFontLoader] Successfully created font asset for {fontName}");
                     }
                     else
                     {
-                        fontInfo.Error = "PNG cache not available";
-                        TranslatorCore.LogWarning($"[CustomFontLoader] No PNG cache for {fontName}");
-                        return null;
+                        TranslatorCore.LogInfo($"[CustomFontLoader] Font asset for {fontName} still deferred (no clone source available yet)");
                     }
+                    return fontInfo.FontAsset;
+                }
+
+                // Decide which atlas filenames to use. Single-atlas keeps the historical
+                // ".gen.png" / one-PNG-per-font naming so existing caches on disk still
+                // hit. Multi-atlas uses ".gen.atlas{N}.png" / ".atlas{N}.png" suffixes.
+                List<string> BuildGenPngPaths(string dir, int count)
+                {
+                    var paths = new List<string>(count);
+                    for (int i = 0; i < count; i++)
+                        paths.Add(Path.Combine(dir, count == 1 ? fontName + ".gen.png" : fontName + ".gen.atlas" + i + ".png"));
+                    return paths;
+                }
+
+                List<Texture2D> textures = new List<Texture2D>();
+
+                if (fontInfo.RgbaBuffers != null && fontInfo.RgbaBuffers.Count > 0
+                    && fontInfo.RgbaBuffers[0].Rgba != null && fontInfo.RgbaBuffers[0].Width > 0)
+                {
+                    // TTF-rasterized font: per-atlas, do the in-place SDF→Alpha conversion,
+                    // build a PNG (round-tripped through a Texture2D so we get a real PNG
+                    // file we can reload later), save it under .gen[.atlasN].png, then load
+                    // each PNG back as the runtime atlas texture.
+                    int atlasCount = fontInfo.RgbaBuffers.Count;
+                    string cacheDir = fontInfo.Source == "system" ? _cacheFolderPath : Path.GetDirectoryName(fontInfo.TtfPath ?? "");
+                    var pngPaths = !string.IsNullOrEmpty(cacheDir) ? BuildGenPngPaths(cacheDir, atlasCount) : null;
+
+                    if (pngPaths != null && !Directory.Exists(cacheDir))
+                        Directory.CreateDirectory(cacheDir);
+
+                    // Track whether EVERY atlas was successfully written to disk. We only
+                    // commit fontInfo.PngPaths and .gen.json when this is true — otherwise
+                    // a future session would find a half-written cache (json present, PNG
+                    // missing), report "Missing PNG for atlas N", set fontInfo.Error, and
+                    // permanently mark the font as "(incompatible)" in the dropdown until
+                    // the user manually clears the cache. EncodeToPNG failure typically
+                    // means the atlas is too large for this runtime's Texture2D.EncodeToPNG
+                    // (observed at 16384×16384 on some Windows IL2CPP builds) — the texture
+                    // is still usable in-memory for the current session.
+                    bool allPngsSaved = true;
+
+                    for (int ai = 0; ai < atlasCount; ai++)
+                    {
+                        var buf = fontInfo.RgbaBuffers[ai];
+                        int w = buf.Width;
+                        int h = buf.Height;
+                        var rgba = buf.Rgba;
+
+                        // Create the atlas Texture2D in Alpha8 format. The rasterizer's R
+                        // channel already carries the SDF distance value, so we drop the
+                        // 3 redundant channels (each pixel was R=G=B=SDF, A=255 in the
+                        // packer's RGBA32 buffer — a 75% storage waste). Alpha8 keeps only
+                        // the value we need, ×4 less VRAM, ×4 less to encode as PNG, and
+                        // the PNG file ends up as native grayscale (~10–20 MB for an 8192²
+                        // SDF atlas instead of ~80 MB for the same atlas in RGBA32).
+                        //
+                        // TMP's SDF shader reads `_MainTex.a` for the distance — Alpha8 stores
+                        // a single byte per pixel, exposed via the .a channel at sample time,
+                        // so the shader is drop-in compatible.
+                        //
+                        // We prefer LoadRawTextureData over SetPixels32 to avoid allocating
+                        // a Color32[] of w*h × 4 bytes — for a 16384² atlas that's a 1 GB
+                        // managed array that lives in Mono Large Object Heap and is the
+                        // single biggest contributor to RAM headroom during font loads.
+                        // The byte[] alphaPixels (w*h, 256 MB at 16384²) is the minimum
+                        // we can do for an Alpha8 texture. If LoadRawTextureData fails on
+                        // some IL2CPP runtime (we've seen this on LongYin in past sessions),
+                        // we fall back to SetPixels32 with a Color32[] computed from the
+                        // packer buffer directly so the byte[] becomes garbage immediately.
+                        //
+                        // Vertical flip: packer is top-to-bottom, Unity textures are
+                        // bottom-to-top in their stored memory layout, hence we invert the
+                        // row index so the visual top of the glyph ends up at the top of
+                        // the rendered texture.
+                        var tmpTex = Compat.MakeTexture2D(w, h, TextureFormat.Alpha8, false);
+                        var alphaPixels = new byte[w * h];
+                        for (int row = 0; row < h; row++)
+                        {
+                            int srcRow = h - 1 - row;
+                            int dstBase = row * w;
+                            int srcRowBase = srcRow * w;
+                            for (int col = 0; col < w; col++)
+                            {
+                                // R from the packer buffer is the SDF distance — for Alpha8
+                                // we copy that single byte per pixel.
+                                alphaPixels[dstBase + col] = rgba[(srcRowBase + col) * 4];
+                            }
+                        }
+                        bool rawLoaded = LoadRawTextureDataSafe(tmpTex, alphaPixels);
+                        if (!rawLoaded)
+                        {
+                            // Drop the byte[] slot before allocating the 4× Color32[]; on Mono
+                            // the LOH can reclaim it before the fallback's bigger allocation.
+                            alphaPixels = null;
+                            TranslatorCore.LogWarning("[CustomFontLoader] LoadRawTextureData failed on this runtime — falling back to SetPixels32 (4× transient RAM)");
+                            var colors = new Color32[w * h];
+                            for (int row = 0; row < h; row++)
+                            {
+                                int srcRow = h - 1 - row;
+                                int dstBase = row * w;
+                                int srcRowBase = srcRow * w;
+                                for (int col = 0; col < w; col++)
+                                {
+                                    colors[dstBase + col] = new Color32(0, 0, 0, rgba[(srcRowBase + col) * 4]);
+                                }
+                            }
+                            SetPixels32Safe(tmpTex, colors);
+                        }
+                        // alphaPixels stays live here when the raw upload succeeded — the PNG
+                        // encoder below reads it directly so we don't pay another byte[] alloc.
+                        tmpTex.Apply();
+
+                        // Save PNG to disk so subsequent launches skip rasterization. We
+                        // prefer our own pure-C# PNG writer (PngEncoder.EncodeAlpha8) over
+                        // UnityEngine.ImageConversion.EncodeToPNG for one specific reason:
+                        // on Unity 6 + Il2CppInterop the latter throws
+                        //   InvalidOperationException: "Instances of abstract classes cannot
+                        //   be created" — at UnityEngine.Bindings.BlittableArrayWrapper.Unmarshal.
+                        // It's a marshalling bug in Il2CppInterop's return-array wrapper, not
+                        // something we can paper over from outside. By encoding ourselves
+                        // from the byte[] we already have (alphaPixels — the same buffer we
+                        // just fed to LoadRawTextureData), we bypass the wrapper entirely
+                        // and the cache writes correctly on every runtime.
+                        //
+                        // EncodeToPngSafe stays as the fallback path for the rare case where
+                        // alphaPixels is null (LoadRawTextureData failed earlier, we wrote
+                        // through SetPixels32) — there we only have the texture to encode
+                        // from.
+                        bool thisAtlasSaved = false;
+                        if (pngPaths != null)
+                        {
+                            string targetPath = pngPaths[ai];
+                            try
+                            {
+                                TranslatorCore.LogInfo($"[CustomFontLoader] Encoding TTF atlas {ai} ({w}x{h}, format={tmpTex.format}) for save to {Sanitize.Path(targetPath)}");
+                                byte[] pngData = null;
+                                if (tmpTex.format == TextureFormat.Alpha8)
+                                {
+                                    // Alpha8 → use our pure-C# PngEncoder, dodging the Unity
+                                    // 6 IL2CPP marshalling bug entirely. If alphaPixels was
+                                    // released by the SetPixels32 fallback path above, rebuild
+                                    // it now from the packer's RGBA buffer — costs ~256 MB
+                                    // transient but covers the otherwise-uncovered case where
+                                    // BOTH LoadRawTextureData fails AND Unity's EncodeToPNG
+                                    // wraps the result in an unmarshallable Il2CppArrayBase.
+                                    if (alphaPixels == null && rgba != null)
+                                    {
+                                        TranslatorCore.LogInfo("[CustomFontLoader] Rebuilding alphaPixels from packer buffer for PngEncoder (fallback after SetPixels32 path)");
+                                        alphaPixels = new byte[w * h];
+                                        for (int row = 0; row < h; row++)
+                                        {
+                                            int srcRow = h - 1 - row;
+                                            int dstBase = row * w;
+                                            int srcRowBase = srcRow * w;
+                                            for (int col = 0; col < w; col++)
+                                            {
+                                                alphaPixels[dstBase + col] = rgba[(srcRowBase + col) * 4];
+                                            }
+                                        }
+                                    }
+                                    if (alphaPixels != null)
+                                    {
+                                        // alphaPixels is in Unity-bottom-up order (row 0 = bottom).
+                                        // PngEncoder flips back to PNG's top-down convention
+                                        // when we pass topDown:false.
+                                        pngData = PngEncoder.EncodeAlpha8(alphaPixels, w, h, topDown: false);
+                                        TranslatorCore.LogInfo($"[CustomFontLoader] PngEncoder.EncodeAlpha8: {pngData.Length} bytes");
+                                    }
+                                }
+                                if (pngData == null)
+                                {
+                                    // Reachable for non-Alpha8 textures (user-provided RGBA32
+                                    // fonts in fonts/ folder), or as a last resort if the
+                                    // Alpha8 branch above didn't produce data. May fail on
+                                    // Unity 6 IL2CPP — see comment above.
+                                    pngData = EncodeToPngSafe(tmpTex);
+                                }
+
+                                if (pngData != null && pngData.Length > 0)
+                                {
+                                    try
+                                    {
+                                        File.WriteAllBytes(targetPath, pngData);
+                                        thisAtlasSaved = true;
+                                        TranslatorCore.LogInfo($"[CustomFontLoader] Saved TTF atlas {ai} as PNG: {Path.GetFileName(targetPath)} ({pngData.Length} bytes)");
+                                    }
+                                    catch (Exception writeEx)
+                                    {
+                                        // Permission denied, disk full, antivirus quarantine,
+                                        // path-too-long. Log the FullName + drive info so we
+                                        // know which class of failure we're dealing with on the
+                                        // user's machine without needing a screenshot.
+                                        var inner = writeEx.InnerException ?? writeEx;
+                                        string drive = "?";
+                                        try
+                                        {
+                                            string rootDir = Path.GetPathRoot(Path.GetFullPath(targetPath));
+                                            if (!string.IsNullOrEmpty(rootDir))
+                                            {
+                                                var driveInfo = new System.IO.DriveInfo(rootDir);
+                                                drive = $"{driveInfo.Name} free={driveInfo.AvailableFreeSpace / 1024 / 1024} MB total={driveInfo.TotalSize / 1024 / 1024} MB";
+                                            }
+                                        }
+                                        catch { /* drive info best-effort */ }
+                                        TranslatorCore.LogWarning($"[CustomFontLoader] File.WriteAllBytes failed for atlas {ai}: {inner.GetType().FullName}: {inner.Message} | path={Sanitize.Path(targetPath)} | drive={drive} | size={pngData.Length}");
+                                    }
+                                }
+                                else
+                                {
+                                    TranslatorCore.LogWarning($"[CustomFontLoader] PNG encode returned null/empty for atlas {ai} ({w}x{h}, format={tmpTex.format}, alphaPixels={(alphaPixels != null ? "set" : "null")})");
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                var inner = ex.InnerException ?? ex;
+                                TranslatorCore.LogWarning($"[CustomFontLoader] PNG encode path crashed for atlas {ai}: outer={ex.GetType().Name}: {ex.Message} | inner={inner.GetType().FullName}: {inner.Message}");
+                            }
+                        }
+                        if (!thisAtlasSaved) allPngsSaved = false;
+
+                        // Now that the encode is done, drop the raw pixel buffer so the
+                        // ~256 MB slot can be reclaimed before we move on to the next atlas
+                        // (or before the GC sweep at the end of LoadFont).
+                        alphaPixels = null;
+
+                        // Reload via PNG round-trip. The .gen.png we just wrote is a
+                        // single-channel grayscale PNG (Unity EncodeToPNG on Alpha8 emits
+                        // a 1-byte-per-pixel PNG by convention). We allocate the reload
+                        // texture in Alpha8 too — if LoadImage forces it to RGBA32 anyway
+                        // (some Unity builds do, dropping the format we requested), the
+                        // ConvertSdfTextureForTMP fallback below restores the SDF in the
+                        // alpha channel from R via GetRawTextureData.
+                        if (pngPaths != null && File.Exists(pngPaths[ai]))
+                        {
+                            UnityEngine.Object.Destroy(tmpTex);
+                            var pngBytes = File.ReadAllBytes(pngPaths[ai]);
+                            var atlasTex = Compat.MakeTexture2D(2, 2, TextureFormat.Alpha8, false);
+                            atlasTex.filterMode = FilterMode.Bilinear;
+                            if (!LoadImageToTexture(atlasTex, pngBytes))
+                            {
+                                fontInfo.Error = "Failed to load cached PNG";
+                                TranslatorCore.LogWarning($"[CustomFontLoader] Failed to load cached PNG for {fontName} atlas {ai}");
+                                return null;
+                            }
+                            // ConvertSdfTextureForTMP early-returns when format is already
+                            // Alpha8 (the SDF is in .a by construction). For Unity builds
+                            // that demote the format to RGBA32 during LoadImage, the
+                            // converter copies R→A.
+                            ConvertSdfTextureForTMP(atlasTex);
+                            // Release the CPU-side mirror of the texture. The GPU keeps the
+                            // VRAM copy for sampling (that's all TMP needs at render time);
+                            // the CPU mirror is only required during GetRawTextureData /
+                            // SetPixels32 calls — none of those happen after this point.
+                            // Saves ~256 MB per 16384² Alpha8 atlas in process RAM.
+                            ApplyNonReadableSafe(atlasTex);
+                            TranslatorCore.LogInfo($"[CustomFontLoader] Loaded TTF atlas {ai} from PNG: {atlasTex.width}x{atlasTex.height} format={atlasTex.format}");
+                            textures.Add(atlasTex);
+                        }
+                        else
+                        {
+                            // No cache dir / write failed: keep the in-memory Alpha8 texture.
+                            // ConvertSdfTextureForTMP early-returns on Alpha8 — the SDF is
+                            // already in the only channel we have.
+                            ConvertSdfTextureForTMP(tmpTex);
+                            // Same CPU-mirror release as the PNG-reload branch above.
+                            ApplyNonReadableSafe(tmpTex);
+                            textures.Add(tmpTex);
+                        }
+                    }
+
+                    // Persist the JSON next to the PNGs — but ONLY if every PNG was
+                    // written successfully. A half-saved cache (json present, PNG missing)
+                    // would survive the session, get re-read at next launch by
+                    // TryLoadGenCache, fail the per-atlas File.Exists check, and force
+                    // PermaError on the font ("Missing PNG for atlas N"). With this guard,
+                    // a failed EncodeToPNG silently leaves the cache absent and the next
+                    // session simply re-rasterizes from the TTF.
+                    if (pngPaths != null && allPngsSaved)
+                    {
+                        try
+                        {
+                            string jsonPath = Path.Combine(cacheDir, fontName + ".gen.json");
+                            var json = Newtonsoft.Json.JsonConvert.SerializeObject(fontInfo.AtlasData, Newtonsoft.Json.Formatting.None);
+                            File.WriteAllText(jsonPath, json);
+                        }
+                        catch (Exception ex)
+                        {
+                            TranslatorCore.LogWarning($"[CustomFontLoader] Failed to save .gen.json: {ex.Message}");
+                        }
+
+                        fontInfo.PngPaths = pngPaths;
+                        fontInfo.PngPath = pngPaths[0];
+                    }
+                    else if (pngPaths != null && !allPngsSaved)
+                    {
+                        TranslatorCore.LogWarning($"[CustomFontLoader] One or more PNG atlases failed to encode for {fontName} — disk cache will be skipped, in-memory texture kept. Next launch will re-rasterize.");
+                    }
+
+                    // Release the raw RGBA buffers — we no longer need them in memory.
+                    fontInfo.RgbaBuffers = null;
                 }
                 else
                 {
-                    // JSON+PNG font: load from file
-                    var pngData = File.ReadAllBytes(fontInfo.PngPath);
-                    texture = Compat.MakeTexture2D(2, 2, TextureFormat.RGBA32, false);
-                    texture.filterMode = FilterMode.Bilinear;
+                    // JSON+PNG font: load from disk. Multi-atlas custom fonts expect
+                    // ".atlas{N}.png" siblings to the .json (or a single ".png" if single-atlas).
+                    int atlasCount = (fontInfo.AtlasData?.atlases != null && fontInfo.AtlasData.atlases.Count > 0)
+                        ? fontInfo.AtlasData.atlases.Count : 1;
 
-                    if (!LoadImageToTexture(texture, pngData))
+                    // Resolve PNG paths. Prefer an already-populated PngPaths; otherwise build from name.
+                    List<string> paths = fontInfo.PngPaths;
+                    if (paths == null || paths.Count == 0)
                     {
-                        fontInfo.Error = "Failed to load PNG";
-                        TranslatorCore.LogWarning($"[CustomFontLoader] Failed to load PNG for {fontName}");
-                        return null;
+                        paths = new List<string>(atlasCount);
+                        string baseDir = Path.GetDirectoryName(fontInfo.JsonPath ?? fontInfo.PngPath ?? "");
+                        for (int i = 0; i < atlasCount; i++)
+                        {
+                            string candidate = (atlasCount == 1)
+                                ? (fontInfo.PngPath ?? Path.Combine(baseDir, fontName + ".png"))
+                                : Path.Combine(baseDir, fontName + ".atlas" + i + ".png");
+                            paths.Add(candidate);
+                        }
+                        fontInfo.PngPaths = paths;
                     }
 
-                    // For SDF fonts, the distance field is in RGB (grayscale) but TMP expects it in Alpha
-                    // Convert by copying R channel to Alpha
-                    ConvertSdfTextureForTMP(texture);
+                    for (int ai = 0; ai < paths.Count; ai++)
+                    {
+                        if (!File.Exists(paths[ai]))
+                        {
+                            fontInfo.Error = $"Missing PNG for atlas {ai}: {paths[ai]}";
+                            TranslatorCore.LogWarning($"[CustomFontLoader] {fontInfo.Error}");
+                            return null;
+                        }
+                        var pngData = File.ReadAllBytes(paths[ai]);
+                        var atlasTex = Compat.MakeTexture2D(2, 2, TextureFormat.RGBA32, false);
+                        atlasTex.filterMode = FilterMode.Bilinear;
+                        if (!LoadImageToTexture(atlasTex, pngData))
+                        {
+                            fontInfo.Error = $"Failed to load PNG for atlas {ai}";
+                            TranslatorCore.LogWarning($"[CustomFontLoader] Failed to load PNG for {fontName} atlas {ai}");
+                            return null;
+                        }
+                        // For SDF fonts, the distance field is in RGB; TMP expects it in Alpha.
+                        ConvertSdfTextureForTMP(atlasTex);
+                        // Release the CPU-side mirror — TMP only samples the GPU copy at
+                        // render time. For user-provided RGBA32 fonts this saves ~1 GB of
+                        // process RAM per 16384² atlas.
+                        ApplyNonReadableSafe(atlasTex);
+                        textures.Add(atlasTex);
+                    }
                 }
 
-                fontInfo.AtlasTexture = texture;
-                TranslatorCore.LogInfo($"[CustomFontLoader] Loaded texture: {texture.width}x{texture.height}, format: {texture.format}");
+                fontInfo.AtlasTextures = textures;
+
+                // Survive scene unloads. Without DontDestroyOnLoad the atlas textures get
+                // GCed at the first LoadScene after creation, leaving TMP with null UVs and
+                // the user with invisible text — or worse, a hard crash inside TMP's render
+                // path when it dereferences the destroyed Texture2D.
+                foreach (var tex in textures)
+                {
+                    if (tex != null)
+                        UnityEngine.Object.DontDestroyOnLoad(tex);
+                }
+
+                TranslatorCore.LogInfo($"[CustomFontLoader] Loaded {textures.Count} atlas texture(s) for {fontName}, first {textures[0].width}x{textures[0].height}, format: {textures[0].format}");
+                var texture = textures[0];
 
                 // Debug: Check if texture has actual content (not all white/transparent)
                 try
@@ -627,17 +1147,47 @@ namespace UnityGameTranslator.Core
                 if (!_typesInitialized)
                     InitializeTypes();
 
-                // Create the font asset
+                // Create the font asset. May return null when no game TMP_FontAsset is yet
+                // available to clone from (mod loaded before splash). We DO NOT mark the
+                // font as IsLoaded / set Error in that case — that would lock the cache to a
+                // null asset forever; instead we leave it pristine so the next call retries.
                 fontInfo.FontAsset = CreateFontAsset(fontInfo);
-                fontInfo.IsLoaded = true;
 
                 if (fontInfo.FontAsset != null)
                 {
+                    fontInfo.IsLoaded = true;
                     TranslatorCore.LogInfo($"[CustomFontLoader] Successfully created font asset for {fontName}");
+
+                    // Reclaim memory after a font load: rasterizing a CJK atlas allocates
+                    // ~2–3 GB of transient Mono managed buffers (the rasterizer's RGBA byte
+                    // buffer, the Color32[] for SetPixels32, packer's per-glyph bitmaps,
+                    // PNG encode/decode buffers). Without an explicit collect, those sit
+                    // in Gen 2 for many seconds before Mono's idle GC reclaims them — by
+                    // which time the user has already noticed the +2 GB spike in Task
+                    // Manager. Resources.UnloadUnusedAssets cleans up Unity-side temporary
+                    // objects (intermediate Texture2D destroyed via Object.Destroy doesn't
+                    // free until the next frame's render thread sync). The collect pair
+                    // costs ~0.5–1 s but only fires once per fontAsset creation, which is
+                    // a one-off step in the user flow.
+                    try
+                    {
+                        UnityEngine.Resources.UnloadUnusedAssets();
+                        GC.Collect();
+                        GC.WaitForPendingFinalizers();
+                        GC.Collect();
+                        TranslatorCore.LogInfo($"[CustomFontLoader] Released transient buffers after {fontName} load");
+                    }
+                    catch (Exception ex)
+                    {
+                        TranslatorCore.LogWarning($"[CustomFontLoader] GC sweep after {fontName} failed: {ex.Message}");
+                    }
                 }
                 else
                 {
-                    fontInfo.Error = "Failed to create font asset";
+                    // Deferred: leave IsLoaded=false and Error=null so the next LoadFont call
+                    // re-runs CreateFontAsset (cheap — atlas data + textures persist on
+                    // fontInfo and the early return at the top of LoadFont skips re-rasterization).
+                    TranslatorCore.LogInfo($"[CustomFontLoader] Font asset for {fontName} deferred (no clone source available yet)");
                 }
 
                 return fontInfo.FontAsset;
@@ -956,6 +1506,24 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Returns true if a font's creation was deferred (no clone source was available
+        /// at the time of the attempt) and may succeed on a later retry. Differs from a
+        /// hard failure: a deferred font has its atlas data fully loaded — only the
+        /// TMP_FontAsset construction is pending. The FontManager uses this to decide
+        /// whether to permanently blacklist the fallback name or keep retrying.
+        /// </summary>
+        public static bool IsFontDeferred(string fontName)
+        {
+            if (string.IsNullOrEmpty(fontName)) return false;
+            if (!_customFonts.TryGetValue(fontName, out var fi)) return false;
+            return !fi.IsLoaded
+                   && string.IsNullOrEmpty(fi.Error)
+                   && fi.AtlasData != null
+                   && fi.AtlasData.glyphs != null
+                   && fi.AtlasData.glyphs.Count > 0;
+        }
+
+        /// <summary>
         /// Returns true when <paramref name="fontName"/> identifies a font asset
         /// the mod has created itself — either a custom TTF loaded from the
         /// <c>fonts/</c> folder (tracked in <c>_customFonts</c>) or a fallback
@@ -1005,11 +1573,23 @@ namespace UnityGameTranslator.Core
                     {
                         sourceFont = existingFont;
 
-                        // Dump the SOURCE font structure (not the clone) to see IL2CPP properties
-                        DumpExistingFontStructure(existingFont);
+                        // IL2CPP lazy-property warm-up on the SOURCE — see PrimeIL2CppPropertyGetters
+                        // for the full rationale. Without this, the clone we create just below
+                        // inherits an unprimed lazy state and SetupMaterial fails silently with
+                        // "Object does not match target type", leaving the SDF shader to sample
+                        // the source font's atlas instead of ours ("carrés à dégradés"). This call
+                        // replaces the implicit warm-up that DumpExistingFontStructure provided
+                        // up to v0.9.63.
+                        PrimeIL2CppPropertyGetters(existingFont);
 
                         // Clone using Instantiate — returns the same IL2CPP type
                         var cloned = UnityEngine.Object.Instantiate(existingFont);
+
+                        // Protect the clone from scene-unload destruction. Without this,
+                        // moving from the splash to the main menu (or any LoadScene) wipes
+                        // our font asset and leaves _fallbackAssets with a stale reference
+                        // → next access either no-ops silently or crashes IL2CPP.
+                        UnityEngine.Object.DontDestroyOnLoad(cloned);
 
                         // On IL2CPP, cast to the proper type so reflection sees all properties
                         fontAsset = TypeHelper.Il2CppCast(cloned, _tmpFontAssetType);
@@ -1018,21 +1598,49 @@ namespace UnityGameTranslator.Core
 
                         TranslatorCore.LogInfo($"[CustomFontLoader] Cloned existing font: {existingFont.name}, clone type: {fontAsset?.GetType().FullName}");
 
-                        // Dump the clone to see if it has the right type
-                        if (fontAsset is UnityEngine.Object clonedObj)
-                            DumpExistingFontStructure(clonedObj);
+                        // IL2CPP lazy-property warm-up on the CLONE — second arm of the warm-up
+                        // pair. Instantiate copies serialised state but the IL2CPP wrapper for
+                        // the clone has its own lazy property cache that must be touched the
+                        // same way before the reflective writes (m_AtlasTexture, m_AtlasTextures,
+                        // material, glyph tables, …) that follow can run cleanly.
+                        PrimeIL2CppPropertyGetters(fontAsset);
 
                         break;
                     }
                 }
 
-                // Fallback to creating new instance if no font to clone
+                // If no clone source was found, behavior depends on which TMP we target:
+                //
+                // - **Modern TMP** (TMPro namespace): create an empty asset and TMP's own
+                //   ReadFontAssetDefinition() / InitializeDictionaryLookupTables() will NRE
+                //   on the bare struct (m_FaceInfo zeroed, m_SourceFontFile null), produce
+                //   empty lookup dicts, and never resolve any glyph. Better to ABORT and
+                //   let FontManager retry once the game registers its own TMP_FontAssets we
+                //   can clone from (rasterized atlas data persists on fontInfo so the retry
+                //   is cheap). This handles the "mod loads before splash" timing problem.
+                //
+                // - **TMProOld** (legacy, e.g. Hollow Knight Silksong): the legacy code path
+                //   (SetupGlyphsLegacy / CreateGlyph / BuildCharacterDictionary) is TOLERANT
+                //   of an empty ScriptableObject — it populates m_glyphInfoList by hand and
+                //   never depends on TMP's modern lookup pipeline. ABORTING here would
+                //   permanently break TMProOld games that never expose a TMP_FontAsset we
+                //   can detect (HK Silksong reports "No game TMP fonts found" for an entire
+                //   session). For TMProOld we fall back to the bare ScriptableObject — that
+                //   keeps the long-standing Hindi/Devanagari support working on those games.
                 if (fontAsset == null)
                 {
-                    fontAsset = TypeHelper.CreateScriptableObject(_tmpFontAssetType);
-                    if (fontAsset is UnityEngine.Object uobj)
-                        uobj.name = fontInfo.Name;
-                    TranslatorCore.LogInfo("[CustomFontLoader] Created new font asset instance");
+                    if (_useAlternateTMP)
+                    {
+                        fontAsset = TypeHelper.CreateScriptableObject(_tmpFontAssetType);
+                        if (fontAsset is UnityEngine.Object uobj)
+                            uobj.name = fontInfo.Name;
+                        TranslatorCore.LogInfo($"[CustomFontLoader] TMProOld: created bare font asset for {fontInfo.Name} (no clone source — legacy path tolerates empty asset)");
+                    }
+                    else
+                    {
+                        TranslatorCore.LogWarning($"[CustomFontLoader] No clone source available for {fontInfo.Name} — aborting font asset creation. Will retry once a game TMP_FontAsset is loaded.");
+                        return null;
+                    }
                 }
 
                 var atlas = fontInfo.AtlasData.atlas;
@@ -1041,13 +1649,17 @@ namespace UnityGameTranslator.Core
 
                 // Set atlas texture on all relevant properties
                 var fontAssetType = fontAsset.GetType();
-                int atlasW = fontInfo.AtlasTexture.width;
-                int atlasH = fontInfo.AtlasTexture.height;
+                var firstTex = fontInfo.AtlasTexture;
+                int atlasW = firstTex.width;
+                int atlasH = firstTex.height;
+                int atlasCount = fontInfo.AtlasTextures != null ? fontInfo.AtlasTextures.Count : 1;
 
-                // Set main atlas property
-                SetPropertyOrField(fontAsset, fontAssetType, "atlasTexture", fontInfo.AtlasTexture);
-                SetPropertyOrField(fontAsset, fontAssetType, "m_AtlasTexture", fontInfo.AtlasTexture);
-                SetPropertyOrField(fontAsset, fontAssetType, "atlas", fontInfo.AtlasTexture);
+                // Set main atlas property (single-texture properties always point at atlas 0;
+                // TMP uses these for atlas dimensions and the material's main texture). The full
+                // texture list goes into m_AtlasTextures below.
+                SetPropertyOrField(fontAsset, fontAssetType, "atlasTexture", firstTex);
+                SetPropertyOrField(fontAsset, fontAssetType, "m_AtlasTexture", firstTex);
+                SetPropertyOrField(fontAsset, fontAssetType, "atlas", firstTex);
 
                 // Set atlas dimensions
                 SetPropertyOrField(fontAsset, fontAssetType, "m_AtlasWidth", atlasW);
@@ -1055,7 +1667,13 @@ namespace UnityGameTranslator.Core
                 SetPropertyOrField(fontAsset, fontAssetType, "atlasWidth", atlasW);
                 SetPropertyOrField(fontAsset, fontAssetType, "atlasHeight", atlasH);
 
-                // Update m_AtlasTextures array element [0]
+                // Write the full atlas list into m_AtlasTextures. TMP reads this array at
+                // render time using each Glyph's m_AtlasIndex — without this, all glyphs
+                // pointing to atlas index > 0 would sample atlas[0] and look like garbage.
+                // The pre-existing array may be too small for our multi-atlas case, so we
+                // try to set Item[i] first (covers single-atlas and equal-or-bigger arrays),
+                // and fall back to allocating a new Texture2D[atlasCount] when the property
+                // setter is writable.
                 try
                 {
                     var atlasTexturesProp = fontAssetType.GetProperty("m_AtlasTextures", BindingFlags.Public | BindingFlags.Instance)
@@ -1063,24 +1681,77 @@ namespace UnityGameTranslator.Core
                     if (atlasTexturesProp != null)
                     {
                         var atlasArray = atlasTexturesProp.GetValue(fontAsset, null);
+
+                        // If the existing array is too small, try to replace it with a fresh
+                        // Texture2D[atlasCount]. Some property setters are read-only — in that
+                        // case we'll still set whatever indices fit.
+                        int existingLen = -1;
+                        if (atlasArray != null)
+                        {
+                            var lenProp = atlasArray.GetType().GetProperty("Length")
+                                          ?? atlasArray.GetType().GetProperty("Count");
+                            if (lenProp != null)
+                            {
+                                try { existingLen = Convert.ToInt32(lenProp.GetValue(atlasArray, null)); }
+                                catch { existingLen = -1; }
+                            }
+                        }
+
+                        if ((atlasArray == null || existingLen < atlasCount) && atlasTexturesProp.CanWrite)
+                        {
+                            try
+                            {
+                                var freshArr = new Texture2D[atlasCount];
+                                for (int i = 0; i < atlasCount; i++)
+                                    freshArr[i] = fontInfo.AtlasTextures[i];
+                                atlasTexturesProp.SetValue(fontAsset, freshArr, null);
+                                atlasArray = freshArr;
+                                TranslatorCore.LogInfo($"[CustomFontLoader] Replaced m_AtlasTextures with new Texture2D[{atlasCount}]");
+                            }
+                            catch (Exception ex)
+                            {
+                                TranslatorCore.LogWarning($"[CustomFontLoader] Could not replace m_AtlasTextures array, will set indices in existing one: {ex.Message}");
+                            }
+                        }
+
                         if (atlasArray != null)
                         {
                             var indexer = atlasArray.GetType().GetProperty("Item");
                             if (indexer != null && indexer.CanWrite)
                             {
-                                indexer.SetValue(atlasArray, fontInfo.AtlasTexture, new object[] { 0 });
-                                TranslatorCore.LogInfo($"[CustomFontLoader] Set atlasTextures[0] = {atlasW}x{atlasH}");
+                                for (int i = 0; i < atlasCount; i++)
+                                {
+                                    try
+                                    {
+                                        indexer.SetValue(atlasArray, fontInfo.AtlasTextures[i], new object[] { i });
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        TranslatorCore.LogWarning($"[CustomFontLoader] Failed to set m_AtlasTextures[{i}]: {ex.Message}");
+                                    }
+                                }
+                                TranslatorCore.LogInfo($"[CustomFontLoader] Populated m_AtlasTextures[0..{atlasCount - 1}]");
                             }
                         }
                     }
                 }
                 catch (Exception ex)
                 {
-                    TranslatorCore.LogWarning($"[CustomFontLoader] Failed to set atlasTextures[0]: {ex.Message}");
+                    TranslatorCore.LogWarning($"[CustomFontLoader] Failed to populate m_AtlasTextures: {ex.Message}");
                 }
 
-                // Set material (required for rendering)
-                SetupMaterial(fontAsset, fontInfo.AtlasTexture, fontInfo.AtlasData.atlas.distanceRange);
+                // Set material (required for rendering). The material itself can only point
+                // to one main texture — atlas 0. For multi-atlas, TMP normally creates one
+                // material per atlas, but the runtime renderer falls back to per-glyph atlas
+                // index sampling on modern versions. If multi-atlas rendering misbehaves on
+                // older TMP builds we will need to spawn additional materials here.
+                SetupMaterial(fontAsset, firstTex, fontInfo.AtlasData.atlas.distanceRange);
+
+                // NOTE: previously this block force-set AtlasPopulationMode=Static plus
+                // related flags. It caused regressions (text not translated, FontOps spike)
+                // so we leave the clone's atlas mode untouched. ReadFontAssetDefinition does
+                // the right thing on healthy clones and we accept the suboptimal behaviour
+                // on the edge cases until we can isolate exactly which clones need it.
 
                 // Set face info / font info — use existing clone's faceInfo and modify it
                 SetupFaceInfo(fontAsset, fontInfo, pointSize);
@@ -1098,138 +1769,111 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Dumps the structure of an existing font for debugging.
+        /// Silent property primer that reproduces the side-effect of the
+        /// <c>DumpExistingFontStructure</c> debug helper present up to v0.9.63. The dump
+        /// did much more than logging: it walked every public property + every Material/
+        /// Atlas/Glyph/Face-related sub-property via reflection with per-call try/catch.
+        /// Each <c>prop.GetValue(obj, null)</c> call fired the matching IL2CPP wrapper
+        /// getter, which on TMP_FontAsset eagerly evaluates lazily-initialised properties
+        /// (<c>material</c>, <c>atlasTexture</c>, lookup dictionaries, etc.). Removing the
+        /// dump in the v0.9.64 cleanup broke this implicit warm-up: on Unity 6 IL2CPP
+        /// (Forsaken Frontiers, Heroes Olden Era…) the very next reflective access from
+        /// <c>SetupMaterial</c> would throw "Object does not match target type" because
+        /// the lazy state had never been touched. SetupMaterial then logged "Failed to
+        /// setup material" and the clone kept its source font's material (e.g.
+        /// LiberationSans SDF) whose <c>_MainTex</c> pointed at the wrong atlas — the
+        /// shader sampled garbage at our UV coords and rendered "carrés à dégradés" /
+        /// "squares with gradients" instead of the actual SDF glyphs.
+        ///
+        /// We restore the warm-up here without the logging cost. The walk is best-effort:
+        /// any individual property whose getter throws is swallowed, exactly like the
+        /// original dump did with its per-property try/catch.
         /// </summary>
-        private static void DumpExistingFontStructure(UnityEngine.Object existingFont)
+        private static void PrimeIL2CppPropertyGetters(object target)
         {
+            if (target == null) return;
             try
             {
-                TranslatorCore.LogInfo($"[CustomFontLoader] === Dumping font structure: {existingFont.name} ===");
-
-                var type = existingFont.GetType();
-                TranslatorCore.LogInfo($"[CustomFontLoader] Type: {type.FullName}");
-
-                // List all fields
-                var allFields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-                TranslatorCore.LogInfo($"[CustomFontLoader] Fields ({allFields.Length}): {string.Join(", ", allFields.Select(f => f.Name))}");
-
-                // List ALL properties — this is what IL2CPP exposes instead of fields
-                var allProps = type.GetProperties(BindingFlags.Public | BindingFlags.Instance);
-                var propNames = new List<string>();
-                foreach (var prop in allProps)
+                Type t = target.GetType();
+                var props = t.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+                foreach (var prop in props)
                 {
-                    string info = prop.Name;
+                    object val = null;
+                    try { val = prop.GetValue(target, null); }
+                    catch { continue; }
+                    if (val == null) continue;
+
+                    // Mirror the original dump's "drill into glyph/character/atlas/material/face/font"
+                    // pass — it touched sub-property getters on the returned value, which on
+                    // collection-typed members (m_AtlasTextures, m_GlyphTable, m_CharacterTable…)
+                    // forces their backing storage to materialise.
+                    string lower = prop.Name.ToLower();
+                    if (!(lower.Contains("glyph") || lower.Contains("character") ||
+                          lower.Contains("atlas") || lower.Contains("material") ||
+                          lower.Contains("face") || lower.Contains("font"))) continue;
+
                     try
                     {
-                        var val = prop.GetValue(existingFont, null);
-                        if (val != null)
+                        var valType = val.GetType();
+                        var countProp = valType.GetProperty("Count");
+                        if (countProp != null)
                         {
-                            var valType = val.GetType();
-                            if (val is string s)
-                                info += $"=\"{(s.Length > 30 ? s.Substring(0, 30) + "..." : s)}\"";
-                            else if (val is int || val is float || val is bool)
-                                info += $"={val}";
-                            else
-                                info += $":{valType.Name}";
-                        }
-                        else
-                        {
-                            info += "=null";
-                        }
-                    }
-                    catch
-                    {
-                        info += "=(error)";
-                    }
-                    propNames.Add(info);
-                }
-                TranslatorCore.LogInfo($"[CustomFontLoader] Properties ({allProps.Length}): {string.Join(", ", propNames)}");
-
-                // Dump properties related to glyphs, characters, atlas, material
-                foreach (var prop in allProps)
-                {
-                    string lowerName = prop.Name.ToLower();
-                    if (lowerName.Contains("glyph") || lowerName.Contains("character") ||
-                        lowerName.Contains("atlas") || lowerName.Contains("material") ||
-                        lowerName.Contains("face") || lowerName.Contains("font"))
-                    {
-                        try
-                        {
-                            var value = prop.GetValue(existingFont, null);
-                            if (value != null)
+                            try
                             {
-                                var valType = value.GetType();
-                                // Check for collection types
-                                var countProp = valType.GetProperty("Count");
-                                if (countProp != null)
+                                int count = Convert.ToInt32(countProp.GetValue(val, null));
+                                if (count > 0)
                                 {
-                                    int count = (int)countProp.GetValue(value, null);
-                                    TranslatorCore.LogInfo($"[CustomFontLoader] PROP {prop.Name}: {valType.Name} Count={count}");
-
-                                    // Dump first item structure
-                                    if (count > 0)
+                                    var indexer = valType.GetProperty("Item");
+                                    if (indexer != null)
                                     {
-                                        var indexer = valType.GetProperty("Item");
-                                        if (indexer != null)
+                                        try
                                         {
-                                            var firstItem = indexer.GetValue(value, new object[] { 0 });
+                                            var firstItem = indexer.GetValue(val, new object[] { 0 });
                                             if (firstItem != null)
                                             {
                                                 var itemProps = firstItem.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance);
-                                                var itemInfo = new List<string>();
                                                 foreach (var ip in itemProps)
                                                 {
-                                                    try
-                                                    {
-                                                        var iv = ip.GetValue(firstItem, null);
-                                                        itemInfo.Add($"{ip.Name}={iv}");
-                                                    }
-                                                    catch { itemInfo.Add($"{ip.Name}=(err)"); }
+                                                    try { ip.GetValue(firstItem, null); } catch { }
                                                 }
-                                                TranslatorCore.LogInfo($"[CustomFontLoader]   [0] props: {string.Join(", ", itemInfo)}");
                                             }
                                         }
+                                        catch { }
                                     }
                                 }
-                                else
-                                {
-                                    TranslatorCore.LogInfo($"[CustomFontLoader] PROP {prop.Name}: {valType.Name} = {value}");
-                                }
+                            }
+                            catch { }
+                        }
+                    }
+                    catch { }
+                }
+
+                // The original dump also touched the legacy `atlas` field and `m_fontInfo`
+                // by name. Replay both.
+                try
+                {
+                    var atlasField = t.GetField("atlas", BindingFlags.Public | BindingFlags.Instance);
+                    if (atlasField != null) atlasField.GetValue(target);
+                }
+                catch { }
+                try
+                {
+                    var fontInfoField = t.GetField("m_fontInfo", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                    if (fontInfoField != null)
+                    {
+                        var fi = fontInfoField.GetValue(target);
+                        if (fi != null)
+                        {
+                            foreach (var f in fi.GetType().GetFields(BindingFlags.Public | BindingFlags.Instance))
+                            {
+                                try { f.GetValue(fi); } catch { }
                             }
                         }
-                        catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] suppressed: {_e.GetType().Name}: {_e.Message}"); }
                     }
                 }
-
-                // Check for atlas field
-                var atlasField = type.GetField("atlas", BindingFlags.Public | BindingFlags.Instance);
-                if (atlasField != null)
-                {
-                    var atlas = atlasField.GetValue(existingFont) as Texture2D;
-                    TranslatorCore.LogInfo($"[CustomFontLoader] atlas: {(atlas != null ? $"{atlas.width}x{atlas.height}" : "NULL")}");
-                }
-
-                // Check m_fontInfo
-                var fontInfoField = type.GetField("m_fontInfo", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-                if (fontInfoField != null)
-                {
-                    var fontInfo = fontInfoField.GetValue(existingFont);
-                    if (fontInfo != null)
-                    {
-                        var fiType = fontInfo.GetType();
-                        var fiFields = fiType.GetFields(BindingFlags.Public | BindingFlags.Instance);
-                        var fiValues = fiFields.Select(f => $"{f.Name}={f.GetValue(fontInfo)}");
-                        TranslatorCore.LogInfo($"[CustomFontLoader] m_fontInfo: {string.Join(", ", fiValues)}");
-                    }
-                }
-
-                TranslatorCore.LogInfo("[CustomFontLoader] === End dump ===");
-                _existingFontDumped = true;
+                catch { }
             }
-            catch (Exception ex)
-            {
-                TranslatorCore.LogWarning($"[CustomFontLoader] Failed to dump font structure: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>
@@ -1245,19 +1889,6 @@ namespace UnityGameTranslator.Core
                 if (_tmpFontAssetType != null)
                 {
                     var existingFonts = TypeHelper.FindAllObjectsOfType(_tmpFontAssetType);
-
-                    // Debug: dump structure of first existing font (not our custom ones)
-                    if (!_existingFontDumped)
-                    {
-                        foreach (var font in existingFonts)
-                        {
-                            if (font != null && !IsModCreatedFont(font.name))
-                            {
-                                DumpExistingFontStructure(font);
-                                break;
-                            }
-                        }
-                    }
 
                     foreach (var existingFont in existingFonts)
                     {
@@ -1332,6 +1963,12 @@ namespace UnityGameTranslator.Core
                         return;
                     }
                 }
+
+                // Protect the material from scene-unload destruction, same reason as the
+                // font asset itself — without this, switching scenes wipes the material and
+                // every TMP_Text using the asset's fallback list renders nothing.
+                if (material != null)
+                    UnityEngine.Object.DontDestroyOnLoad(material);
 
                 // Set material on font asset
                 var materialField = _tmpFontAssetType.GetField("material", BindingFlags.Public | BindingFlags.Instance);
@@ -1474,6 +2111,15 @@ namespace UnityGameTranslator.Core
                 else if (fontInfoField != null)
                     fontInfoField.SetValue(fontAsset, faceInfo);
 
+                // NOTE: we used to also rewrite the MODERN m_FaceInfo struct here. It DID
+                // fix the UV scaling on Forsaken (cloned-from-Dynamic asset with PointSize=86)
+                // but caused a cascade of issues on the broader pipeline (text staying in the
+                // original font, FontOps spiking to 57s/5s, regressions on other games). Until
+                // we can confidently detect when modern m_FaceInfo needs rewriting (probably
+                // only when the clone source comes from a Dynamic asset with m_SourceFontFile
+                // missing), we leave m_FaceInfo as-inherited-from-clone and accept the visual
+                // imperfection on the specific Forsaken case — which still translates correctly.
+
                 // Log the configured metrics for debugging
                 TranslatorCore.LogInfo($"[CustomFontLoader] Configured FaceInfo: PointSize={pointSize}, Ascender={ascender:F2}, Descender={descender:F2}, LineHeight={metrics.lineHeight * pointSize:F2}");
                 TranslatorCore.LogInfo($"[CustomFontLoader] Atlas dimensions: {atlas.width}x{atlas.height}, DistanceRange={atlas.distanceRange}");
@@ -1504,6 +2150,13 @@ namespace UnityGameTranslator.Core
             }
         }
 
+        // NOTE: ConfigureModernFaceInfo was removed in v0.9.64. It rewrote the modern
+        // UnityEngine.TextCore.FaceInfo struct on cloned assets, which fixed the font-size
+        // mismatch on one runtime but broke the legacy TMP path on others (Hindi rendered
+        // empty text). We now leave m_FaceInfo as inherited from the clone — the legacy
+        // m_fontInfo is still configured by SetupFaceInfo, which is enough for the
+        // supported clone families. Git history before v0.9.64 holds the implementation.
+
         /// <summary>
         /// Sets up the glyph list. Tries modern TMP system (m_GlyphTable + m_CharacterTable) first,
         /// then falls back to legacy (m_glyphInfoList).
@@ -1528,240 +2181,76 @@ namespace UnityGameTranslator.Core
                     TranslatorCore.LogInfo($"[CustomFontLoader] Using MODERN glyph system (m_GlyphTable + m_CharacterTable)");
                     SetupGlyphsModern(fontAsset, fontAssetType, glyphTable, charTable, fontInfo, pointSize, yFlipped);
 
-                    // ============= INSTRUMENTATION: state BEFORE the rebuild trigger =============
-                    object dirtyBefore = GetPropertyOrField(fontAsset, fontAssetType, "IsFontAssetLookupTablesDirty");
-                    object glyphLookupBefore = GetPropertyOrField(fontAsset, fontAssetType, "m_GlyphLookupDictionary");
-                    object charLookupBefore = GetPropertyOrField(fontAsset, fontAssetType, "m_CharacterLookupDictionary");
-                    TranslatorCore.LogInfo($"[CFL-Lookup] BEFORE trigger: dirty={dirtyBefore} glyphDict={ReflectListCount(glyphLookupBefore)} charDict={ReflectListCount(charLookupBefore)}");
-                    // ============= /INSTRUMENTATION =============
-
-                    // Mark lookup tables as dirty so TMP rebuilds them
+                    // Mark lookup tables as dirty so TMP rebuilds them, then force the rebuild
+                    // by calling ReadFontAssetDefinition (preferred — refreshes face metrics +
+                    // lookup dicts + atlas tracking) with a narrow fallback to
+                    // InitializeDictionaryLookupTables for builds that don't expose the broader
+                    // API or where the first throws on a missing TTF source.
                     SetPropertyOrField(fontAsset, fontAssetType, "IsFontAssetLookupTablesDirty", true);
 
-                    // Clear lookup dictionaries to force rebuild
-                    var glyphLookup = GetPropertyOrField(fontAsset, fontAssetType, "m_GlyphLookupDictionary");
-                    if (glyphLookup != null)
-                    {
-                        var clearMethod = glyphLookup.GetType().GetMethod("Clear");
-                        clearMethod?.Invoke(glyphLookup, null);
-                    }
-                    var charLookup = GetPropertyOrField(fontAsset, fontAssetType, "m_CharacterLookupDictionary");
-                    if (charLookup != null)
-                    {
-                        var clearMethod = charLookup.GetType().GetMethod("Clear");
-                        clearMethod?.Invoke(charLookup, null);
-                    }
-
-                    // Force the rebuild now — TMP's IsFontAssetLookupTablesDirty flag is just
-                    // a marker; nothing reconstructs m_GlyphLookupDictionary /
-                    // m_CharacterLookupDictionary unless ReadFontAssetDefinition() (or the more
-                    // targeted InitializeDictionaryLookupTables()) is called explicitly. Without
-                    // that, every char lookup TMP does at render time hits an empty dict and the
-                    // glyph is reported missing — even though m_GlyphTable / m_CharacterTable
-                    // contain tens of thousands of entries we just populated.
-                    //
-                    // Prefer ReadFontAssetDefinition: it also refreshes face metrics, kerning
-                    // table wiring, and fallback search lookup — all of which can be stale after
-                    // we swap in our custom atlas + tables. InitializeDictionaryLookupTables is
-                    // the narrower fallback for TMP versions that don't expose the broader API.
-                    System.Reflection.MethodInfo rebuildMethod = null;
+                    System.Reflection.MethodInfo readFontMethod = null;
+                    System.Reflection.MethodInfo initLookupMethod = null;
                     try
                     {
-                        rebuildMethod = fontAssetType.GetMethod("ReadFontAssetDefinition",
-                            BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null)
-                            ?? fontAssetType.GetMethod("InitializeDictionaryLookupTables",
-                                BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
+                        readFontMethod = fontAssetType.GetMethod("ReadFontAssetDefinition",
+                            BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
+                        initLookupMethod = fontAssetType.GetMethod("InitializeDictionaryLookupTables",
+                            BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
                     }
-                    catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] rebuild lookup failed: {_e.Message}"); }
+                    catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] resolve lookup methods failed: {_e.Message}"); }
 
-                    if (rebuildMethod != null)
+                    bool rebuilt = false;
+                    if (readFontMethod != null)
                     {
                         try
                         {
-                            rebuildMethod.Invoke(fontAsset, null);
-                            TranslatorCore.LogInfo($"[CustomFontLoader] Called {rebuildMethod.Name}() to rebuild lookup tables");
+                            readFontMethod.Invoke(fontAsset, null);
+                            TranslatorCore.LogInfo("[CustomFontLoader] Called ReadFontAssetDefinition() to rebuild lookup tables");
+                            rebuilt = true;
                         }
                         catch (Exception ex)
                         {
-                            TranslatorCore.LogWarning($"[CustomFontLoader] {rebuildMethod.Name}() failed: {ex.GetType().Name}: {ex.Message}");
+                            var inner = ex.InnerException ?? ex;
+                            TranslatorCore.LogWarning($"[CustomFontLoader] ReadFontAssetDefinition() failed: {inner.GetType().Name}: {inner.Message}");
                         }
                     }
-                    else
+                    if (!rebuilt && initLookupMethod != null)
                     {
-                        TranslatorCore.LogWarning("[CustomFontLoader] No ReadFontAssetDefinition / InitializeDictionaryLookupTables found on TMP_FontAsset — lookup dicts may stay empty and rendering will miss glyphs.");
+                        try
+                        {
+                            initLookupMethod.Invoke(fontAsset, null);
+                            TranslatorCore.LogInfo("[CustomFontLoader] Called InitializeDictionaryLookupTables() to rebuild lookup tables (fallback)");
+                            rebuilt = true;
+                        }
+                        catch (Exception ex)
+                        {
+                            var inner = ex.InnerException ?? ex;
+                            TranslatorCore.LogWarning($"[CustomFontLoader] InitializeDictionaryLookupTables() failed: {inner.GetType().Name}: {inner.Message}");
+                        }
                     }
-
-                    // ============= INSTRUMENTATION: state AFTER the rebuild trigger =============
-                    object dirtyAfter = GetPropertyOrField(fontAsset, fontAssetType, "IsFontAssetLookupTablesDirty");
-                    object glyphLookupAfter = GetPropertyOrField(fontAsset, fontAssetType, "m_GlyphLookupDictionary");
-                    object charLookupAfter = GetPropertyOrField(fontAsset, fontAssetType, "m_CharacterLookupDictionary");
-                    TranslatorCore.LogInfo($"[CFL-Lookup] AFTER  trigger: dirty={dirtyAfter} glyphDict={ReflectListCount(glyphLookupAfter)} charDict={ReflectListCount(charLookupAfter)}");
-
-                    // Probe the dict for a few representative codepoints — we want to know if
-                    // TMP can actually find a TMP_Character for them after ReadFontAssetDefinition
-                    // rebuilt its lookup, and whether the linked Glyph carries sane atlas rect /
-                    // scale / atlasIndex (zero rect = nothing to render = invisible glyph).
-                    try
+                    if (!rebuilt)
                     {
-                        if (charLookupAfter != null)
-                        {
-                            var tryGet = charLookupAfter.GetType().GetMethod("TryGetValue");
-                            if (tryGet != null)
-                            {
-                                uint[] probes = new uint[] { 0x41u /* 'A' */, 0x4E00u /* '一' */, 0x7531u /* '由' */, 0x5236u /* '制' */ };
-                                foreach (var cp in probes)
-                                {
-                                    var args = new object[] { cp, null };
-                                    bool found = false;
-                                    try { found = (bool)tryGet.Invoke(charLookupAfter, args); }
-                                    catch (Exception _e) { TranslatorCore.LogDebug($"[CFL-Probe] TryGetValue U+{cp:X4} threw: {_e.GetType().Name}: {_e.Message}"); continue; }
-
-                                    if (!found || args[1] == null)
-                                    {
-                                        TranslatorCore.LogInfo($"[CFL-Probe] U+{cp:X4} = NOT FOUND in m_CharacterLookupDictionary");
-                                        continue;
-                                    }
-
-                                    object character = args[1];
-                                    Type charT = character.GetType();
-                                    var glyphIndex = GetPropertyOrField(character, charT, "m_GlyphIndex") ?? GetPropertyOrField(character, charT, "glyphIndex");
-                                    var unicodeOnChar = GetPropertyOrField(character, charT, "m_Unicode") ?? GetPropertyOrField(character, charT, "unicode");
-                                    var glyphFromChar = GetPropertyOrField(character, charT, "glyph");
-                                    string glyphSummary = "(no .glyph prop)";
-                                    if (glyphFromChar != null)
-                                    {
-                                        Type gT = glyphFromChar.GetType();
-                                        var rect = GetPropertyOrField(glyphFromChar, gT, "m_GlyphRect") ?? GetPropertyOrField(glyphFromChar, gT, "glyphRect");
-                                        var scale = GetPropertyOrField(glyphFromChar, gT, "m_Scale") ?? GetPropertyOrField(glyphFromChar, gT, "scale");
-                                        var atlasIdx = GetPropertyOrField(glyphFromChar, gT, "m_AtlasIndex") ?? GetPropertyOrField(glyphFromChar, gT, "atlasIndex");
-                                        string rectStr = "(rect null)";
-                                        if (rect != null)
-                                        {
-                                            Type rT = rect.GetType();
-                                            var rx = GetPropertyOrField(rect, rT, "x") ?? GetPropertyOrField(rect, rT, "m_X");
-                                            var ry = GetPropertyOrField(rect, rT, "y") ?? GetPropertyOrField(rect, rT, "m_Y");
-                                            var rw = GetPropertyOrField(rect, rT, "width") ?? GetPropertyOrField(rect, rT, "m_Width");
-                                            var rh = GetPropertyOrField(rect, rT, "height") ?? GetPropertyOrField(rect, rT, "m_Height");
-                                            rectStr = $"rect=({rx},{ry},{rw},{rh})";
-                                        }
-                                        glyphSummary = $"glyph: {rectStr} scale={scale} atlasIndex={atlasIdx}";
-                                    }
-                                    TranslatorCore.LogInfo($"[CFL-Probe] U+{cp:X4} = FOUND: unicode={unicodeOnChar} glyphIndex={glyphIndex} {glyphSummary}");
-                                }
-                            }
-                            else
-                            {
-                                TranslatorCore.LogInfo("[CFL-Probe] charLookup has no TryGetValue method");
-                            }
-                        }
-
-                        // m_FaceInfo (modern). If pointSize/atlasWidth/ascender are zero, TMP
-                        // will scale glyphs to (effectively) zero size at render time even when
-                        // the lookup dict contains them — fully invisible text.
-                        object faceInfo = GetPropertyOrField(fontAsset, fontAssetType, "m_FaceInfo");
-                        if (faceInfo != null)
-                        {
-                            Type fT = faceInfo.GetType();
-                            var fiPointSize = GetPropertyOrField(faceInfo, fT, "pointSize") ?? GetPropertyOrField(faceInfo, fT, "m_PointSize");
-                            var fiAscender = GetPropertyOrField(faceInfo, fT, "ascender") ?? GetPropertyOrField(faceInfo, fT, "m_Ascender");
-                            var fiDescender = GetPropertyOrField(faceInfo, fT, "descender") ?? GetPropertyOrField(faceInfo, fT, "m_Descender");
-                            var fiAtlasW = GetPropertyOrField(faceInfo, fT, "atlasWidth") ?? GetPropertyOrField(faceInfo, fT, "m_AtlasWidth");
-                            var fiAtlasH = GetPropertyOrField(faceInfo, fT, "atlasHeight") ?? GetPropertyOrField(faceInfo, fT, "m_AtlasHeight");
-                            var fiScale = GetPropertyOrField(faceInfo, fT, "scale") ?? GetPropertyOrField(faceInfo, fT, "m_Scale");
-                            TranslatorCore.LogInfo($"[CFL-FaceInfo] modern m_FaceInfo type={fT.FullName} pointSize={fiPointSize} ascender={fiAscender} descender={fiDescender} atlasWxH={fiAtlasW}x{fiAtlasH} scale={fiScale}");
-                        }
-                        else
-                        {
-                            TranslatorCore.LogInfo("[CFL-FaceInfo] modern m_FaceInfo is NULL (TMP may have no face metrics to render glyphs)");
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        TranslatorCore.LogWarning($"[CFL-Probe] failed: {ex.GetType().Name}: {ex.Message}");
+                        TranslatorCore.LogWarning("[CustomFontLoader] No working lookup-table rebuild method on TMP_FontAsset — lookup dicts will stay empty and rendering will miss glyphs.");
                     }
 
-                    // === ATLAS / MATERIAL probe — figures out the "white squares" case =====
-                    // Three things must line up for SDF rendering to produce visible glyphs:
-                    //   1) m_AtlasTexture (and m_AtlasTextures[0]) point to OUR rasterized
-                    //      texture (right dimensions, right format).
-                    //   2) material.shader is the SDF shader (TextMeshPro/Distance Field) and
-                    //      material._MainTex is the same texture as m_AtlasTextures[0].
-                    //   3) the SDF render params (_GradientScale, _TextureWidth/Height) are
-                    //      non-zero — if they're zero the SDF math collapses to a constant
-                    //      and you get full-coverage rectangles (= the "white squares" we see).
-                    try
-                    {
-                        object atlasTex = GetPropertyOrField(fontAsset, fontAssetType, "atlasTexture")
-                                       ?? GetPropertyOrField(fontAsset, fontAssetType, "m_AtlasTexture");
-                        if (atlasTex is UnityEngine.Texture2D atlasT2D)
-                        {
-                            TranslatorCore.LogInfo($"[CFL-Atlas] m_AtlasTexture id={atlasT2D.GetInstanceID()} size={atlasT2D.width}x{atlasT2D.height} format={atlasT2D.format} readable={atlasT2D.isReadable}");
-                        }
-                        else if (atlasTex != null)
-                        {
-                            TranslatorCore.LogInfo($"[CFL-Atlas] m_AtlasTexture (raw): type={atlasTex.GetType().FullName}");
-                        }
-                        else
-                        {
-                            TranslatorCore.LogInfo("[CFL-Atlas] m_AtlasTexture is NULL");
-                        }
-
-                        // m_AtlasTextures[0] — TMP uses the array path on modern versions
-                        object atlasArr = GetPropertyOrField(fontAsset, fontAssetType, "atlasTextures")
-                                       ?? GetPropertyOrField(fontAsset, fontAssetType, "m_AtlasTextures");
-                        if (atlasArr != null)
-                        {
-                            var lenProp = atlasArr.GetType().GetProperty("Length") ?? atlasArr.GetType().GetProperty("Count");
-                            int len = lenProp != null ? Convert.ToInt32(lenProp.GetValue(atlasArr, null)) : -1;
-                            object first = null;
-                            if (len > 0)
-                            {
-                                var indexer = atlasArr.GetType().GetProperty("Item");
-                                if (indexer != null) first = indexer.GetValue(atlasArr, new object[] { 0 });
-                                else if (atlasArr is System.Collections.IEnumerable enumerable)
-                                {
-                                    foreach (var item in enumerable) { first = item; break; }
-                                }
-                            }
-                            if (first is UnityEngine.Texture2D firstT2D)
-                                TranslatorCore.LogInfo($"[CFL-Atlas] m_AtlasTextures[0] id={firstT2D.GetInstanceID()} size={firstT2D.width}x{firstT2D.height} format={firstT2D.format} (Length={len})");
-                            else
-                                TranslatorCore.LogInfo($"[CFL-Atlas] m_AtlasTextures[0] raw type={first?.GetType().FullName ?? "null"} (Length={len})");
-                        }
-
-                        // Material — shader, _MainTex, key SDF floats
-                        object materialObj = GetPropertyOrField(fontAsset, fontAssetType, "material")
-                                          ?? GetPropertyOrField(fontAsset, fontAssetType, "m_Material");
-                        if (materialObj is UnityEngine.Material mat)
-                        {
-                            var shaderName = mat.shader != null ? mat.shader.name : "(no shader)";
-                            UnityEngine.Texture mainTex = null;
-                            try { mainTex = mat.GetTexture("_MainTex"); } catch { }
-                            string mainTexInfo = mainTex == null ? "null" : $"id={mainTex.GetInstanceID()} size={mainTex.width}x{mainTex.height}";
-
-                            float gradientScale = 0f, texW = 0f, texH = 0f, weightNormal = 0f, scaleRatioA = 0f;
-                            try { gradientScale = mat.GetFloat("_GradientScale"); } catch { }
-                            try { texW = mat.GetFloat("_TextureWidth"); } catch { }
-                            try { texH = mat.GetFloat("_TextureHeight"); } catch { }
-                            try { weightNormal = mat.GetFloat("_WeightNormal"); } catch { }
-                            try { scaleRatioA = mat.GetFloat("_ScaleRatioA"); } catch { }
-
-                            TranslatorCore.LogInfo($"[CFL-Mat] shader='{shaderName}' _MainTex={mainTexInfo} _GradientScale={gradientScale} _TextureWidth={texW} _TextureHeight={texH} _WeightNormal={weightNormal} _ScaleRatioA={scaleRatioA}");
-                        }
-                        else if (materialObj != null)
-                        {
-                            TranslatorCore.LogInfo($"[CFL-Mat] material (raw): type={materialObj.GetType().FullName}");
-                        }
-                        else
-                        {
-                            TranslatorCore.LogInfo("[CFL-Mat] material is NULL");
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        TranslatorCore.LogWarning($"[CFL-Atlas/Mat] probe failed: {ex.GetType().Name}: {ex.Message}");
-                    }
-                    // ============= /INSTRUMENTATION =============
+                    // IL2CPP property warm-up — DO NOT REMOVE without understanding what it does.
+                    // Up to v0.9.63 a verbose debug block here read these same properties via
+                    // reflection to log their state. The cleanup in v0.9.64 removed it as "pure
+                    // logging" but actually broke SDF rendering on Unity 6 IL2CPP (Forsaken
+                    // Frontiers): without these reads, fontAsset.material on the clone keeps
+                    // referencing the source's material (e.g. LiberationSans SDF) and the shader
+                    // samples the wrong atlas at our UV coords → "carrés à dégradés" instead
+                    // of the actual glyphs. Touching each property via GetPropertyOrField
+                    // triggers TMP's IL2CPP lazy property getters which reconcile m_Material
+                    // with m_AtlasTexture / m_AtlasTextures[0] (the atlas refs we wired earlier
+                    // in this method). Reads are wrapped internally with try/catch by
+                    // GetPropertyOrField, so this is side-effect-only and never throws.
+                    GetPropertyOrField(fontAsset, fontAssetType, "material");
+                    GetPropertyOrField(fontAsset, fontAssetType, "m_Material");
+                    GetPropertyOrField(fontAsset, fontAssetType, "atlasTexture");
+                    GetPropertyOrField(fontAsset, fontAssetType, "m_AtlasTexture");
+                    GetPropertyOrField(fontAsset, fontAssetType, "atlasTextures");
+                    GetPropertyOrField(fontAsset, fontAssetType, "m_AtlasTextures");
 
                     return;
                 }
@@ -1782,17 +2271,14 @@ namespace UnityGameTranslator.Core
         private static void SetupGlyphsModern(object fontAsset, Type fontAssetType,
             object glyphTable, object charTable, CustomFontInfo fontInfo, float pointSize, bool yFlipped)
         {
-            var atlas = fontInfo.AtlasData.atlas;
+            // Multi-atlas: we hand the FULL atlas list to CreateModernGlyph so each glyph
+            // can use the height of its own atlas for the y-flip (atlases can in principle
+            // differ in height; the current packer makes them identical but the math stays
+            // honest either way).
+            var atlases = (fontInfo.AtlasData.atlases != null && fontInfo.AtlasData.atlases.Count > 0)
+                ? fontInfo.AtlasData.atlases
+                : new List<AtlasInfo> { fontInfo.AtlasData.atlas };
             var glyphs = fontInfo.AtlasData.glyphs;
-
-            // ============= INSTRUMENTATION START =============
-            TranslatorCore.LogInfo($"[CFL-Setup] glyphs to add: {glyphs.Count}");
-            TranslatorCore.LogInfo($"[CFL-Setup] glyphTable type: {glyphTable.GetType().FullName}");
-            TranslatorCore.LogInfo($"[CFL-Setup] charTable type:  {charTable.GetType().FullName}");
-            long initialGlyphCount = ReflectListCount(glyphTable);
-            long initialCharCount = ReflectListCount(charTable);
-            TranslatorCore.LogInfo($"[CFL-Setup] initial Count: glyph={initialGlyphCount} char={initialCharCount}");
-            // ============= INSTRUMENTATION END =============
 
             // Clear existing tables
             var clearGlyph = glyphTable.GetType().GetMethod("Clear");
@@ -1800,17 +2286,8 @@ namespace UnityGameTranslator.Core
             clearGlyph?.Invoke(glyphTable, null);
             clearChar?.Invoke(charTable, null);
 
-            // ============= INSTRUMENTATION =============
-            TranslatorCore.LogInfo($"[CFL-Setup] after Clear: glyph={ReflectListCount(glyphTable)} char={ReflectListCount(charTable)}");
-            // ============= /INSTRUMENTATION =============
-
             var addGlyph = glyphTable.GetType().GetMethod("Add");
             var addChar = charTable.GetType().GetMethod("Add");
-
-            // ============= INSTRUMENTATION =============
-            TranslatorCore.LogInfo($"[CFL-Setup] addGlyph method: {(addGlyph != null ? addGlyph.DeclaringType?.FullName + "." + addGlyph.Name + "(" + string.Join(",", addGlyph.GetParameters().Select(p => p.ParameterType.FullName)) + ")" : "NULL")}");
-            TranslatorCore.LogInfo($"[CFL-Setup] addChar  method: {(addChar != null ? addChar.DeclaringType?.FullName + "." + addChar.Name + "(" + string.Join(",", addChar.GetParameters().Select(p => p.ParameterType.FullName)) + ")" : "NULL")}");
-            // ============= /INSTRUMENTATION =============
 
             if (addGlyph == null || addChar == null)
             {
@@ -1829,63 +2306,23 @@ namespace UnityGameTranslator.Core
                 return;
             }
 
-            TranslatorCore.LogInfo($"[CustomFontLoader] Modern glyph type: {glyphType.FullName}, char type: {charType.FullName}");
-
-            // Log properties of glyph type
-            if (!_glyphFieldsLogged)
-            {
-                _glyphFieldsLogged = true;
-                var props = glyphType.GetProperties(BindingFlags.Public | BindingFlags.Instance);
-                TranslatorCore.LogInfo($"[CustomFontLoader] Modern Glyph props: {string.Join(", ", props.Select(p => p.Name + ":" + p.PropertyType.Name))}");
-            }
-
-            // ============= INSTRUMENTATION counters =============
             int addedCount = 0;
-            int glyphNullCount = 0;
-            int charNullCount = 0;
             int exceptionsCount = 0;
-            int cjkSeen = 0;
-            long countAfterFirstAdd = -1;
-            // ============= /INSTRUMENTATION =============
-
             foreach (var glyphInfo in glyphs)
             {
                 try
                 {
                     uint glyphIndex = (uint)addedCount;
 
-                    // Create Glyph object
-                    object newGlyph = CreateModernGlyph(glyphType, glyphIndex, glyphInfo, atlas, pointSize, yFlipped);
-                    if (newGlyph == null)
-                    {
-                        glyphNullCount++;
-                        continue;
-                    }
-
+                    // Create Glyph object — pass the FULL atlas list so the glyph picks up
+                    // the dimensions of its own atlas (glyphInfo.atlasIndex) for the y-flip.
+                    object newGlyph = CreateModernGlyph(glyphType, glyphIndex, glyphInfo, atlases, pointSize, yFlipped);
+                    if (newGlyph == null) continue;
                     addGlyph.Invoke(glyphTable, new[] { newGlyph });
-
-                    // ============= INSTRUMENTATION: sample Count after first Add =============
-                    if (countAfterFirstAdd == -1)
-                    {
-                        countAfterFirstAdd = ReflectListCount(glyphTable);
-                        TranslatorCore.LogInfo($"[CFL-Setup] glyphTable Count after FIRST Add: {countAfterFirstAdd} (expected 1)");
-                    }
-                    // ============= /INSTRUMENTATION =============
 
                     // Create TMP_Character mapping unicode -> glyph
                     object newChar = CreateModernCharacter(charType, (uint)glyphInfo.unicode, glyphIndex);
-                    if (newChar != null)
-                    {
-                        addChar.Invoke(charTable, new[] { newChar });
-                    }
-                    else
-                    {
-                        charNullCount++;
-                    }
-
-                    // ============= INSTRUMENTATION: track CJK coverage =============
-                    if (glyphInfo.unicode >= 0x4E00 && glyphInfo.unicode <= 0x9FFF) cjkSeen++;
-                    // ============= /INSTRUMENTATION =============
+                    if (newChar != null) addChar.Invoke(charTable, new[] { newChar });
 
                     addedCount++;
                 }
@@ -1897,29 +2334,13 @@ namespace UnityGameTranslator.Core
                 }
             }
 
-            // ============= INSTRUMENTATION: post-loop summary =============
-            long glyphCountEnd = ReflectListCount(glyphTable);
-            long charCountEnd = ReflectListCount(charTable);
-            TranslatorCore.LogInfo($"[CFL-Setup] Loop done: addedCount={addedCount} glyphNull={glyphNullCount} charNull={charNullCount} exceptions={exceptionsCount} CJK_in_input={cjkSeen}");
-            TranslatorCore.LogInfo($"[CFL-Setup] FINAL Count on the SAME ref: glyph={glyphCountEnd} char={charCountEnd}  (vs addedCount={addedCount})");
-
-            // Re-read the field after to see if the underlying TMP storage has different content
-            // (would indicate that 'glyphTable' was a snapshot/wrapper, not the live field)
-            object liveGlyphTable = GetPropertyOrField(fontAsset, fontAssetType, "m_GlyphTable");
-            object liveCharTable = GetPropertyOrField(fontAsset, fontAssetType, "m_CharacterTable");
-            long liveGlyphCount = ReflectListCount(liveGlyphTable);
-            long liveCharCount = ReflectListCount(liveCharTable);
-            bool sameRefGlyph = ReferenceEquals(glyphTable, liveGlyphTable);
-            bool sameRefChar = ReferenceEquals(charTable, liveCharTable);
-            TranslatorCore.LogInfo($"[CFL-Setup] LIVE re-read m_GlyphTable: Count={liveGlyphCount} sameRef={sameRefGlyph}");
-            TranslatorCore.LogInfo($"[CFL-Setup] LIVE re-read m_CharacterTable: Count={liveCharCount} sameRef={sameRefChar}");
-            // ============= /INSTRUMENTATION =============
-
-            TranslatorCore.LogInfo($"[CustomFontLoader] Added {addedCount} modern glyphs + characters");
+            TranslatorCore.LogInfo($"[CustomFontLoader] Added {addedCount} modern glyphs + characters" + (exceptionsCount > 0 ? $" ({exceptionsCount} exceptions)" : ""));
         }
 
-        // INSTRUMENTATION HELPER — read the `Count` property of any List-like object via reflection.
-        // Returns -1 if the list reference is null, -2 if the Count property can't be read.
+        /// <summary>
+        /// Read the <c>Count</c> property of any List-like object via reflection.
+        /// Returns -1 if the list reference is null, -2 if the Count property can't be read.
+        /// </summary>
         private static long ReflectListCount(object list)
         {
             if (list == null) return -1;
@@ -1932,10 +2353,7 @@ namespace UnityGameTranslator.Core
                     if (v != null) return Convert.ToInt64(v);
                 }
             }
-            catch (Exception ex)
-            {
-                TranslatorCore.LogDebug($"[CFL-Setup] ReflectListCount failed: {ex.GetType().Name}: {ex.Message}");
-            }
+            catch { }
             return -2;
         }
 
@@ -1965,7 +2383,7 @@ namespace UnityGameTranslator.Core
         /// Create a modern UnityEngine.TextCore.Glyph object.
         /// </summary>
         private static object CreateModernGlyph(Type glyphType, uint index, GlyphInfo glyphInfo,
-            AtlasInfo atlas, float pointSize, bool yFlipped)
+            List<AtlasInfo> atlases, float pointSize, bool yFlipped)
         {
             try
             {
@@ -1990,12 +2408,36 @@ namespace UnityGameTranslator.Core
                 var ab = glyphInfo.atlasBounds;
                 var pb = glyphInfo.planeBounds;
 
-                // Atlas coordinates
+                // Pick this glyph's own atlas — its height is what drives the y-flip and
+                // its index is what TMP sub-samples at render time via m_AtlasTextures[idx].
+                int atlasIdx = glyphInfo.atlasIndex;
+                if (atlasIdx < 0 || atlasIdx >= atlases.Count) atlasIdx = 0;
+                var atlas = atlases[atlasIdx];
+
+                // Atlas coordinates. CRITICAL Y-flip semantics:
+                //
+                // Our pipeline produces atlasBounds in "bottom" yOrigin convention. The
+                // physical texture stored on the TMP_FontAsset is ALSO bottom-up (Unity
+                // standard: SetPixels32 expects bottom-up, our SetPixels32 call already
+                // performs the visual flip from the top-down packed buffer).
+                //
+                // TMP's Glyph.glyphRect expects Y=0 at the bottom (standard Unity texture
+                // convention). So when yOrigin=="bottom" the rect.y is JUST ab.bottom — no
+                // further flip needed. When yOrigin=="top" (legacy MSDF-atlas-gen JSON)
+                // the bounds are in top-down and we must convert to bottom-up via
+                // (atlas.height - ab.top).
+                //
+                // The previous formula had the branches inverted, which on bottom-up
+                // textures (the only case we currently produce) caused TMP to sample
+                // the WRONG region of the atlas — every glyph rendered the bytes that
+                // happened to live at the y-mirror of its real position. Visible
+                // symptom: text translated to Chinese rendered as random Chinese chars
+                // mal coupés, never the correct glyphs.
                 float x = 0, y = 0, w = 0, h = 0;
                 if (ab != null)
                 {
                     x = ab.left;
-                    y = yFlipped ? (atlas.height - ab.top) : ab.bottom;
+                    y = yFlipped ? ab.bottom : (atlas.height - ab.top);
                     w = ab.right - ab.left;
                     h = ab.top - ab.bottom;
                 }
@@ -2007,13 +2449,15 @@ namespace UnityGameTranslator.Core
                 float bearingY = (pb?.top ?? 0) * pointSize;
                 float advance = glyphInfo.advance * pointSize;
 
-                // Set properties via reflection
+                // Set properties via reflection. m_AtlasIndex MUST be set to this glyph's
+                // own atlas index — for single-atlas fonts that's always 0 (unchanged
+                // behaviour), for multi-atlas it routes TMP's renderer to the right texture.
                 SetFieldValue(glyph, "m_Index", index);
                 SetFieldValue(glyph, "index", index);
                 SetFieldValue(glyph, "m_Scale", 1f);
                 SetFieldValue(glyph, "scale", 1f);
-                SetFieldValue(glyph, "m_AtlasIndex", 0);
-                SetFieldValue(glyph, "atlasIndex", 0);
+                SetFieldValue(glyph, "m_AtlasIndex", atlasIdx);
+                SetFieldValue(glyph, "atlasIndex", atlasIdx);
 
                 // Set GlyphRect (x, y, width, height in atlas pixels)
                 object glyphRect = GetPropertyOrField(glyph, glyph.GetType(), "m_GlyphRect");
@@ -2063,14 +2507,6 @@ namespace UnityGameTranslator.Core
                     // Same value-type write-back required for GlyphMetrics.
                     SetPropertyOrField(glyph, glyph.GetType(), "m_Metrics", metrics);
                     SetPropertyOrField(glyph, glyph.GetType(), "metrics", metrics);
-                }
-
-                // Log first few
-                bool shouldLog = (glyphInfo.unicode >= 65 && glyphInfo.unicode <= 67)
-                    || (glyphInfo.unicode >= 2309 && glyphInfo.unicode <= 2312);
-                if (shouldLog)
-                {
-                    TranslatorCore.LogInfo($"[CustomFontLoader] Modern Glyph U+{glyphInfo.unicode:X4}: rect=({(int)x},{(int)y},{(int)w},{(int)h}), metrics=({metricsW:F1},{metricsH:F1},{bearingX:F1},{bearingY:F1},{advance:F1})");
                 }
 
                 return glyph;
@@ -2180,8 +2616,6 @@ namespace UnityGameTranslator.Core
             TranslatorCore.LogInfo($"[CustomFontLoader] Added {glyphs.Count} legacy glyphs");
         }
 
-        private static bool _glyphFieldsLogged = false;
-
         /// <summary>
         /// Creates a single glyph object.
         /// </summary>
@@ -2192,17 +2626,6 @@ namespace UnityGameTranslator.Core
                 var glyphType = _tmpGlyphType ?? _tmpTextElementType;
                 if (glyphType == null)
                     return null;
-
-                // Log available fields AND properties once for debugging
-                if (!_glyphFieldsLogged)
-                {
-                    _glyphFieldsLogged = true;
-                    var fields = glyphType.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-                    var props = glyphType.GetProperties(BindingFlags.Public | BindingFlags.Instance);
-                    TranslatorCore.LogInfo($"[CustomFontLoader] Glyph type: {glyphType.FullName}");
-                    TranslatorCore.LogInfo($"[CustomFontLoader] Glyph fields ({fields.Length}): {string.Join(", ", fields.Select(f => f.Name + ":" + f.FieldType.Name))}");
-                    TranslatorCore.LogInfo($"[CustomFontLoader] Glyph props ({props.Length}): {string.Join(", ", props.Select(p => p.Name + ":" + p.PropertyType.Name))}");
-                }
 
                 var glyph = Activator.CreateInstance(glyphType);
 
@@ -2381,6 +2804,14 @@ namespace UnityGameTranslator.Core
             }
         }
 
+        // ManuallyPopulateLookupDictionaries, ResolveDictionaryFieldType, ForceEnumValueByZero
+        // removed in v0.9.64. They were part of the alternate "skip TMP, populate ourselves"
+        // path we needed during the multi-atlas / Static-mode investigation. The current
+        // SetupGlyphs path lets TMP's ReadFontAssetDefinition (or InitializeDictionaryLookupTables
+        // fallback) handle the dictionaries on its own, which works on every supported game.
+        // Git history before v0.9.64 has the implementations if a future case ever requires
+        // sidestepping TMP again.
+
         /// <summary>
         /// Helper to set a field value via reflection.
         /// </summary>
@@ -2433,6 +2864,31 @@ namespace UnityGameTranslator.Core
         private static byte[] GetRawTextureDataSafe(Texture2D texture)
             => TextureUtils.GetRawTextureDataSafe(texture);
 
+        /// <summary>
+        /// Release the CPU-side mirror of a Texture2D. After this call the texture's bytes
+        /// only live in VRAM — GetRawTextureData / SetPixels32 / EncodeToPNG will fail.
+        ///
+        /// Why we want it: a Texture2D created with default flags carries TWO copies of its
+        /// pixel data: one in VRAM (for the GPU sampler) and one in process RAM (for
+        /// CPU-side reads). For an Alpha8 16384² atlas, that's 256 MB of RAM mirror per
+        /// font that the runtime never reads back. Calling Apply(false, true) drops it,
+        /// shaving the mirror without affecting render output. Wrapped in try/catch since
+        /// a destroyed texture (Object.Destroy already called) throws on Apply.
+        /// </summary>
+        private static void ApplyNonReadableSafe(Texture2D texture)
+        {
+            if (texture == null) return;
+            try
+            {
+                // Apply(updateMipmaps=false, makeNoLongerReadable=true)
+                texture.Apply(false, true);
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogWarning($"[CustomFontLoader] ApplyNonReadableSafe failed: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
         private static bool LoadRawTextureDataSafe(Texture2D texture, byte[] data)
             => TextureUtils.LoadRawTextureDataSafe(texture, data);
 
@@ -2447,6 +2903,16 @@ namespace UnityGameTranslator.Core
         private static void ConvertSdfTextureForTMP(Texture2D texture)
         {
             if (texture == null) return;
+
+            // Alpha8 stores exactly one channel that the TMP shader reads as `.a`. If
+            // the texture is already in Alpha8, the SDF value IS the byte we hold and
+            // there is nothing to convert — short-circuit before touching the
+            // unreliable GetRawTextureData on IL2CPP runtimes.
+            if (texture.format == TextureFormat.Alpha8)
+            {
+                TranslatorCore.LogInfo($"[CustomFontLoader] Texture is Alpha8 — SDF already in correct channel, no conversion needed");
+                return;
+            }
 
             try
             {

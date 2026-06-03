@@ -317,7 +317,7 @@ namespace UnityGameTranslator.Core.UI
             if (!string.IsNullOrEmpty(TranslatorCore.Config.api_token))
             {
                 ApiClient.SetAuthToken(TranslatorCore.Config.api_token);
-                TranslatorCore.LogInfo($"[UIManager] Restored API token for user: {TranslatorCore.Config.api_user ?? "unknown"}");
+                TranslatorCore.LogInfo($"[UIManager] Restored API token for user: {Sanitize.UserName(TranslatorCore.Config.api_user ?? "unknown")}");
             }
 
             if (!TranslatorCore.Config.first_run_completed)

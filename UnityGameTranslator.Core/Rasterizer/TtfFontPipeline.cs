@@ -30,9 +30,13 @@ namespace UnityGameTranslator.Core.Rasterizer
         /// <param name="ttfPath">Path to the .ttf or .otf file</param>
         /// <param name="renderSize">Pixel size for rasterization</param>
         /// <param name="distanceRange">SDF spread in pixels</param>
-        /// <returns>Pipeline result with atlas data and pixel buffer, or null on failure</returns>
+        /// <param name="maxAtlasSize">
+        /// Maximum atlas dimension (typically SystemInfo.maxTextureSize at runtime — 16384
+        /// on modern PC GPUs). Pipeline never exceeds this size.
+        /// </param>
         public static PipelineResult ProcessTtfFont(string ttfPath,
-            float renderSize = DefaultRenderSize, float distanceRange = DefaultDistanceRange)
+            float renderSize = DefaultRenderSize, float distanceRange = DefaultDistanceRange,
+            int maxAtlasSize = 8192)
         {
             if (!File.Exists(ttfPath))
             {
@@ -124,25 +128,52 @@ namespace UnityGameTranslator.Core.Rasterizer
                 TranslatorCore.LogInfo($"[TtfPipeline] Rasterized: {rasterizedCount}, " +
                     $"Empty: {emptyCount}, Failed: {failCount}");
 
-                // Step 5: Pack atlas
-                TranslatorCore.LogInfo($"[TtfPipeline] Packing atlas...");
-                var atlasResult = AtlasPacker.PackAtlas(rasterizedGlyphs);
+                // Step 5: Pack atlas(es). The packer returns one entry if everything fits,
+                // and N entries (multi-atlas) otherwise. Each RasterizedGlyph now carries
+                // an AtlasIndex pointing to its atlas in this list.
+                TranslatorCore.LogInfo($"[TtfPipeline] Packing atlas (max {maxAtlasSize}x{maxAtlasSize})...");
+                var atlasResults = AtlasPacker.PackAtlases(rasterizedGlyphs, padding: 1, maxAtlasSize: maxAtlasSize);
 
-                TranslatorCore.LogInfo($"[TtfPipeline] Atlas: {atlasResult.Width}x{atlasResult.Height}");
+                if (atlasResults.Count == 1)
+                    TranslatorCore.LogInfo($"[TtfPipeline] Atlas: {atlasResults[0].Width}x{atlasResults[0].Height} (single)");
+                else
+                    TranslatorCore.LogInfo($"[TtfPipeline] Multi-atlas: {atlasResults.Count} × {atlasResults[0].Width}x{atlasResults[0].Height}");
+
+                // Glyphs that couldn't fit anywhere (single glyph larger than maxAtlasSize)
+                // were tagged with AtlasIndex = -1 by the packer. Drop them explicitly here.
+                int droppedCount = 0;
+                for (int i = rasterizedGlyphs.Count - 1; i >= 0; i--)
+                {
+                    if (rasterizedGlyphs[i].AtlasIndex < 0)
+                    {
+                        droppedCount++;
+                        rasterizedGlyphs.RemoveAt(i);
+                        if (i < glyphOutlines.Count) glyphOutlines.RemoveAt(i);
+                    }
+                }
+                if (droppedCount > 0)
+                {
+                    TranslatorCore.LogWarning($"[TtfPipeline] Dropped {droppedCount} glyphs that exceed {maxAtlasSize}x{maxAtlasSize} single-glyph bounds.");
+                }
 
                 // Step 6: Generate MsdfAtlasData
                 var atlasData = GenerateAtlasData(parser, rasterizedGlyphs, glyphOutlines,
-                    atlasResult, renderSize, distanceRange);
+                    atlasResults, renderSize, distanceRange);
 
                 TranslatorCore.LogInfo($"[TtfPipeline] Pipeline complete: {fontName}, " +
-                    $"{atlasData.glyphs.Count} glyphs, {atlasResult.Width}x{atlasResult.Height} atlas");
+                    $"{atlasData.glyphs.Count} glyphs across {atlasResults.Count} atlas(es)");
+
+                // Convert each AtlasResult to an AtlasBuffer for the PipelineResult.
+                var buffers = new List<AtlasBuffer>(atlasResults.Count);
+                foreach (var ar in atlasResults)
+                {
+                    buffers.Add(new AtlasBuffer { Rgba = ar.RgbaData, Width = ar.Width, Height = ar.Height });
+                }
 
                 return new PipelineResult
                 {
                     AtlasData = atlasData,
-                    RgbaPixels = atlasResult.RgbaData,
-                    Width = atlasResult.Width,
-                    Height = atlasResult.Height
+                    Atlases = buffers
                 };
             }
             catch (NotSupportedException ex)
@@ -159,10 +190,14 @@ namespace UnityGameTranslator.Core.Rasterizer
 
         /// <summary>
         /// Generate MsdfAtlasData compatible with CustomFontLoader's existing pipeline.
+        /// Multi-atlas aware: each GlyphInfo carries its atlasIndex and its atlasBounds
+        /// are computed against the height of its OWN atlas (since each atlas can in
+        /// principle have a different height — they don't currently, but the math is
+        /// stable either way).
         /// </summary>
         private static CustomFontLoader.MsdfAtlasData GenerateAtlasData(TtfParser parser,
             List<RasterizedGlyph> rasterizedGlyphs, List<GlyphOutline> outlines,
-            AtlasResult atlas, float renderSize, float distanceRange)
+            List<AtlasResult> atlases, float renderSize, float distanceRange)
         {
             var metrics = parser.Metrics;
             float upm = metrics.UnitsPerEm;
@@ -174,10 +209,15 @@ namespace UnityGameTranslator.Core.Rasterizer
                 var rg = rasterizedGlyphs[i];
                 var outline = i < outlines.Count ? outlines[i] : null;
 
+                int atlasIdx = rg.AtlasIndex;
+                if (atlasIdx < 0 || atlasIdx >= atlases.Count) atlasIdx = 0;
+                var atlas = atlases[atlasIdx];
+
                 var glyphInfo = new CustomFontLoader.GlyphInfo
                 {
                     unicode = rg.Unicode,
-                    advance = rg.AdvanceWidth / upm
+                    advance = rg.AdvanceWidth / upm,
+                    atlasIndex = atlasIdx
                 };
 
                 if (outline != null && !outline.IsEmpty && rg.Width > 0 && rg.Height > 0)
@@ -197,7 +237,7 @@ namespace UnityGameTranslator.Core.Rasterizer
                         top = cy + hy
                     };
 
-                    // atlasBounds in pixel coordinates (yOrigin = "bottom")
+                    // atlasBounds in pixel coordinates (yOrigin = "bottom") of THIS glyph's atlas
                     glyphInfo.atlasBounds = new CustomFontLoader.BoundsInfo
                     {
                         left = rg.AtlasX,
@@ -210,17 +250,26 @@ namespace UnityGameTranslator.Core.Rasterizer
                 glyphInfos.Add(glyphInfo);
             }
 
-            return new CustomFontLoader.MsdfAtlasData
+            // Build atlases[] list and mirror atlases[0] into the legacy `atlas` field
+            // so older code paths still see a sensible single-atlas snapshot.
+            var atlasInfos = new List<CustomFontLoader.AtlasInfo>(atlases.Count);
+            foreach (var a in atlases)
             {
-                atlas = new CustomFontLoader.AtlasInfo
+                atlasInfos.Add(new CustomFontLoader.AtlasInfo
                 {
                     type = "sdf",
                     distanceRange = distanceRange,
                     size = renderSize,
-                    width = atlas.Width,
-                    height = atlas.Height,
+                    width = a.Width,
+                    height = a.Height,
                     yOrigin = "bottom"
-                },
+                });
+            }
+
+            return new CustomFontLoader.MsdfAtlasData
+            {
+                atlas = atlasInfos[0],
+                atlases = atlasInfos,
                 metrics = new CustomFontLoader.MetricsInfo
                 {
                     emSize = upm,
@@ -235,134 +284,78 @@ namespace UnityGameTranslator.Core.Rasterizer
             };
         }
 
-        #region Cache
+        #region Cache (removed)
 
-        /// <summary>
-        /// Save generated atlas to cache files for faster subsequent loads.
-        /// If cacheDir is specified, cache files are written there instead of alongside the TTF
-        /// (needed for system fonts where the source directory is read-only).
-        /// </summary>
-        public static void SaveCache(string ttfPath, PipelineResult result, string cacheDir = null)
-        {
-            if (result == null) return;
-
-            try
-            {
-                string dir = cacheDir ?? Path.GetDirectoryName(ttfPath);
-
-                // Create cache directory if it doesn't exist
-                if (!Directory.Exists(dir))
-                    Directory.CreateDirectory(dir);
-
-                string basePath = Path.Combine(dir, Path.GetFileNameWithoutExtension(ttfPath));
-
-                string jsonPath = basePath + ".cache.json";
-                string pngPath = basePath + ".cache.png";
-
-                // Save atlas data as JSON
-                var json = JsonConvert.SerializeObject(result.AtlasData, Formatting.None);
-                File.WriteAllText(jsonPath, json);
-
-                // Save RGBA data as raw file (we can't encode PNG without Unity, so save raw)
-                // Store dimensions in a header: [width:4bytes][height:4bytes][rgba data]
-                using (var fs = new FileStream(pngPath, FileMode.Create))
-                using (var bw = new BinaryWriter(fs))
-                {
-                    bw.Write(result.Width);
-                    bw.Write(result.Height);
-                    bw.Write(result.RgbaPixels);
-                }
-
-                // Save timestamp file to track TTF modification time
-                string stampPath = basePath + ".cache.stamp";
-                var ttfLastWrite = File.GetLastWriteTimeUtc(ttfPath);
-                File.WriteAllText(stampPath, ttfLastWrite.Ticks.ToString());
-
-                TranslatorCore.LogInfo($"[TtfPipeline] Cache saved: {Path.GetFileName(jsonPath)}");
-            }
-            catch (Exception ex)
-            {
-                TranslatorCore.LogWarning($"[TtfPipeline] Failed to save cache: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// Try to load from cache. Returns null if cache is stale or missing.
-        /// If cacheDir is specified, looks there instead of alongside the TTF.
-        /// </summary>
-        public static PipelineResult TryLoadCache(string ttfPath, string cacheDir = null)
-        {
-            try
-            {
-                string dir = cacheDir ?? Path.GetDirectoryName(ttfPath);
-                string basePath = Path.Combine(dir, Path.GetFileNameWithoutExtension(ttfPath));
-
-                string jsonPath = basePath + ".cache.json";
-                string pngPath = basePath + ".cache.png";
-                string stampPath = basePath + ".cache.stamp";
-
-                if (!File.Exists(jsonPath) || !File.Exists(pngPath) || !File.Exists(stampPath))
-                    return null;
-
-                // Check if TTF has been modified since cache was created
-                var ttfLastWrite = File.GetLastWriteTimeUtc(ttfPath);
-                var stampText = File.ReadAllText(stampPath).Trim();
-                long stampTicks;
-                if (!long.TryParse(stampText, out stampTicks) || ttfLastWrite.Ticks != stampTicks)
-                {
-                    TranslatorCore.LogInfo($"[TtfPipeline] Cache stale for {Path.GetFileName(ttfPath)}");
-                    return null;
-                }
-
-                // Load JSON
-                var json = File.ReadAllText(jsonPath);
-                var atlasData = JsonConvert.DeserializeObject<CustomFontLoader.MsdfAtlasData>(json);
-                if (atlasData?.glyphs == null)
-                    return null;
-
-                // Load raw RGBA data
-                int width, height;
-                byte[] rgbaPixels;
-                using (var fs = new FileStream(pngPath, FileMode.Open, FileAccess.Read))
-                using (var br = new BinaryReader(fs))
-                {
-                    width = br.ReadInt32();
-                    height = br.ReadInt32();
-                    rgbaPixels = br.ReadBytes(width * height * 4);
-                }
-
-                if (rgbaPixels.Length != width * height * 4)
-                    return null;
-
-                TranslatorCore.LogInfo($"[TtfPipeline] Loaded from cache: {Path.GetFileName(ttfPath)}, " +
-                    $"{atlasData.glyphs.Count} glyphs, {width}x{height}");
-
-                return new PipelineResult
-                {
-                    AtlasData = atlasData,
-                    RgbaPixels = rgbaPixels,
-                    Width = width,
-                    Height = height
-                };
-            }
-            catch (Exception ex)
-            {
-                TranslatorCore.LogWarning($"[TtfPipeline] Cache load failed: {ex.Message}");
-                return null;
-            }
-        }
+        // Historically this region exposed SaveCache / TryLoadCache, which dumped the
+        // rasterized RGBA atlas alongside the TTF as raw bytes (no compression). At
+        // 16384x16384x4 = 1 GB per font asset, this dominated the mod's on-disk
+        // footprint for users with CJK fallbacks. The cache has been replaced with the
+        // PNG-compressed .gen.png + .gen.json pair written by CustomFontLoader after
+        // the texture round-trip, which is ~14x smaller (50–80 MB) and uses the same
+        // codepath as user-provided JSON+PNG fonts at reload time. The migration code
+        // in CustomFontLoader.PurgeLegacyRasterCache deletes the orphan .cache.* files.
 
         #endregion
     }
 
     /// <summary>
-    /// Result from the TTF pipeline.
+    /// One atlas texture buffer (RGBA bytes + dimensions).
+    /// </summary>
+    public class AtlasBuffer
+    {
+        public byte[] Rgba;
+        public int Width;
+        public int Height;
+    }
+
+    /// <summary>
+    /// Result from the TTF pipeline. Always has at least one entry in Atlases.
+    /// The legacy RgbaPixels/Width/Height properties expose the FIRST atlas for older
+    /// call-sites that only knew about one — new code should iterate over Atlases and
+    /// rely on each glyph's atlasIndex.
     /// </summary>
     public class PipelineResult
     {
         public CustomFontLoader.MsdfAtlasData AtlasData;
-        public byte[] RgbaPixels;
-        public int Width;
-        public int Height;
+        public List<AtlasBuffer> Atlases;
+
+        // Legacy single-atlas accessors. They mirror Atlases[0] for callers that haven't
+        // been migrated yet. Settable so the cache loader can populate them directly when
+        // reading a legacy (pre multi-atlas) .cache.png file.
+        public byte[] RgbaPixels
+        {
+            get => (Atlases != null && Atlases.Count > 0) ? Atlases[0].Rgba : null;
+            set
+            {
+                EnsureFirstAtlas();
+                Atlases[0].Rgba = value;
+            }
+        }
+
+        public int Width
+        {
+            get => (Atlases != null && Atlases.Count > 0) ? Atlases[0].Width : 0;
+            set
+            {
+                EnsureFirstAtlas();
+                Atlases[0].Width = value;
+            }
+        }
+
+        public int Height
+        {
+            get => (Atlases != null && Atlases.Count > 0) ? Atlases[0].Height : 0;
+            set
+            {
+                EnsureFirstAtlas();
+                Atlases[0].Height = value;
+            }
+        }
+
+        private void EnsureFirstAtlas()
+        {
+            if (Atlases == null) Atlases = new List<AtlasBuffer>();
+            if (Atlases.Count == 0) Atlases.Add(new AtlasBuffer());
+        }
     }
 }

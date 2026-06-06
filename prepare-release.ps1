@@ -84,14 +84,23 @@ $releasePackages = @(
 
 foreach ($pkg in $releasePackages) {
     $stagingDir = "$releasesDir/UnityGameTranslator-$($pkg.Name)-v$Version"
+    $zipName = "UnityGameTranslator-$($pkg.Name)-v$Version.zip"
+    $zipPath = "$releasesDir/$zipName"
     New-Item -ItemType Directory -Path $stagingDir | Out-Null
     Copy-Item $pkg.Dll $stagingDir
-    Compress-Archive -Path "$stagingDir/*" -DestinationPath "$releasesDir/UnityGameTranslator-$($pkg.Name)-v$Version.zip"
+    Compress-Archive -Path "$stagingDir/*" -DestinationPath $zipPath
     Remove-Item -Recurse -Force $stagingDir
-    Write-Host "  Created UnityGameTranslator-$($pkg.Name)-v$Version.zip" -ForegroundColor Gray
+
+    # Per-file SHA256 checksum, sha256sum-compatible format: "<hash>  <filename>" + LF.
+    # Lowercase hash and two spaces so users can verify with `sha256sum -c <file>.sha256`.
+    $hash = (Get-FileHash $zipPath -Algorithm SHA256).Hash.ToLower()
+    Set-Content -Path "$zipPath.sha256" -Value "$hash  $zipName`n" -NoNewline -Encoding utf8
+
+    Write-Host "  Created $zipName (+ .sha256)" -ForegroundColor Gray
 }
 
 Write-Host "`n=== Release packages ready in ./releases/ ===" -ForegroundColor Green
-Get-ChildItem $releasesDir -Filter "*.zip" | ForEach-Object {
+Get-ChildItem $releasesDir -File | Sort-Object Name | ForEach-Object {
     Write-Host "  $($_.Name)" -ForegroundColor Cyan
 }
+Write-Host "  (attach the .sha256 files alongside their .zip on the GitHub release)" -ForegroundColor DarkGray

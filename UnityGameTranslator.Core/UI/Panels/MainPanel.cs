@@ -267,7 +267,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             string url = info?.DownloadUrl ?? info?.ReleaseUrl;
             if (!string.IsNullOrEmpty(url))
             {
-                Application.OpenURL(url);
+                TranslatorCore.OpenUrlSafe(url);
             }
         }
 
@@ -278,7 +278,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (!string.IsNullOrEmpty(url))
             {
                 TranslatorCore.LogInfo($"[MainPanel] Opening external resources: {url}");
-                Application.OpenURL(url);
+                TranslatorCore.OpenUrlSafe(url);
             }
         }
 
@@ -1250,7 +1250,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             string url = ApiClient.GetMergeReviewUrl(uuid);
             TranslatorCore.LogInfo($"[MainPanel] Opening review page: {url}");
-            Application.OpenURL(url);
+            TranslatorCore.OpenUrlSafe(url);
         }
 
         private void OnForkClicked()
@@ -1438,8 +1438,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                     if (success && !string.IsNullOrEmpty(url))
                     {
                         string fullUrl = ApiClient.GetMergePreviewFullUrl(url);
-                        TranslatorCore.LogInfo($"[MainPanel] Opening compare page: {fullUrl}");
-                        Application.OpenURL(fullUrl);
+                        // Debug only: the merge preview URL carries a one-time login token
+                        TranslatorCore.LogDebug($"[MainPanel] Opening compare page: {fullUrl}");
+                        TranslatorCore.OpenUrlSafe(fullUrl);
 
                         // Listen for merge completion via SSE — auto-downloads result
                         if (!string.IsNullOrEmpty(token))

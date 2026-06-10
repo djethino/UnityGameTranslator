@@ -661,7 +661,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             string url = info?.DownloadUrl ?? info?.ReleaseUrl;
             if (!string.IsNullOrEmpty(url))
             {
-                Application.OpenURL(url);
+                TranslatorCore.OpenUrlSafe(url);
             }
         }
 

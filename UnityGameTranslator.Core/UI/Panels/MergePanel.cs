@@ -640,8 +640,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                     if (success && !string.IsNullOrEmpty(relativeUrl))
                     {
                         string fullUrl = ApiClient.GetMergePreviewFullUrl(relativeUrl);
-                        TranslatorCore.LogInfo($"[MergePanel] Opening merge preview: {fullUrl}");
-                        Application.OpenURL(fullUrl);
+                        // Debug only: the merge preview URL carries a one-time login token
+                        TranslatorCore.LogDebug($"[MergePanel] Opening merge preview: {fullUrl}");
+                        TranslatorCore.OpenUrlSafe(fullUrl);
 
                         // Listen for merge completion via SSE (auto-download result)
                         if (!string.IsNullOrEmpty(token))

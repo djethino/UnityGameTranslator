@@ -471,7 +471,7 @@ namespace UnityGameTranslator.Core.UI
         {
             try
             {
-                var data = JObject.Parse(jsonData);
+                var data = ApiClient.ParseJsonSafe(jsonData);
 
                 bool exists = data["exists"]?.Value<bool>() ?? false;
                 string roleStr = data["role"]?.Value<string>() ?? "none";
@@ -560,7 +560,7 @@ namespace UnityGameTranslator.Core.UI
         {
             try
             {
-                var data = JObject.Parse(jsonData);
+                var data = ApiClient.ParseJsonSafe(jsonData);
 
                 string serverHash = data["file_hash"]?.Value<string>();
                 int lineCount = data["line_count"]?.Value<int>() ?? 0;
@@ -730,7 +730,7 @@ namespace UnityGameTranslator.Core.UI
         {
             try
             {
-                var data = JObject.Parse(jsonData);
+                var data = ApiClient.ParseJsonSafe(jsonData);
                 string fileHash = data["file_hash"]?.Value<string>();
                 int lineCount = data["line_count"]?.Value<int>() ?? 0;
 

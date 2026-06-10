@@ -248,7 +248,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             try
             {
-                var data = JObject.Parse(jsonData);
+                var data = ApiClient.ParseJsonSafe(jsonData);
                 string token = data["access_token"]?.Value<string>();
                 string userName = data["user"]?["name"]?.Value<string>();
 
@@ -297,7 +297,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             try
             {
-                var data = JObject.Parse(jsonData);
+                var data = ApiClient.ParseJsonSafe(jsonData);
                 string error = data["error"]?.Value<string>() ?? "Unknown error";
                 _statusLabel.text = error;
             }
@@ -323,7 +323,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (!string.IsNullOrEmpty(_verificationUri))
             {
-                Application.OpenURL(_verificationUri);
+                TranslatorCore.OpenUrlSafe(_verificationUri);
                 TranslatorCore.LogInfo($"[Login] Opening verification URL: {_verificationUri}");
             }
         }

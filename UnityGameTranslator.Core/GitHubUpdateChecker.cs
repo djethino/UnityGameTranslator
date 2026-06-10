@@ -63,7 +63,7 @@ namespace UnityGameTranslator.Core
                 }
 
                 var json = await response.Content.ReadAsStringAsync();
-                var release = JObject.Parse(json);
+                var release = ApiClient.ParseJsonSafe(json);
 
                 var tagName = release["tag_name"]?.ToString();
                 var htmlUrl = release["html_url"]?.ToString();

@@ -117,6 +117,36 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Maximum accepted size for a translation JSON payload (decompressed).
+        /// 100MB is more than enough for any translation file.
+        /// </summary>
+        private const int MaxTranslationJsonBytes = 100 * 1024 * 1024;
+
+        /// <summary>
+        /// Parse a JSON object from a network response with an enforced depth limit.
+        /// Newtonsoft's default MaxDepth (64) still lets a hostile or buggy server
+        /// nest deep enough to exhaust the stack; 10 covers every legitimate API
+        /// response with margin. Throws JsonReaderException on invalid or too-deep
+        /// JSON — every caller already wraps parsing in try/catch.
+        /// Public: also used for every other network-originated JSON in the mod
+        /// (AI responses, GitHub API, SSE messages).
+        /// </summary>
+        public static JObject ParseJsonSafe(string json)
+        {
+            using (var stringReader = new StringReader(json))
+            using (var jsonReader = new JsonTextReader(stringReader) { MaxDepth = 10 })
+            {
+                var parsed = JObject.Load(jsonReader);
+                // Mirror JObject.Parse: reject trailing content after the object
+                if (jsonReader.Read())
+                {
+                    throw new JsonReaderException("Additional text found after JSON content.");
+                }
+                return parsed;
+            }
+        }
+
+        /// <summary>
         /// Get the HttpClient configured for SSE streaming (infinite timeout, no gzip).
         /// </summary>
         public static HttpClient GetSseHttpClient() => sseClient;
@@ -187,7 +217,7 @@ namespace UnityGameTranslator.Core
                 }
 
                 string json = await response.Content.ReadAsStringAsync();
-                var data = JObject.Parse(json);
+                var data = ParseJsonSafe(json);
 
                 var result = new TranslationSearchResult { Success = true };
                 result.Count = data["count"]?.Value<int>() ?? 0;
@@ -227,7 +257,7 @@ namespace UnityGameTranslator.Core
                 }
 
                 string json = await response.Content.ReadAsStringAsync();
-                var data = JObject.Parse(json);
+                var data = ParseJsonSafe(json);
 
                 var result = new TranslationSearchResult { Success = true };
                 result.Count = data["count"]?.Value<int>() ?? 0;
@@ -317,11 +347,27 @@ namespace UnityGameTranslator.Core
 
                 if (response.Content.Headers.ContentEncoding.Contains("gzip"))
                 {
+                    // Bounded decompression: a gzip bomb (tiny compressed, huge decompressed)
+                    // must be rejected during inflation, not after materializing the result
                     using (var stream = new MemoryStream(rawContent))
                     using (var gzip = new GZipStream(stream, CompressionMode.Decompress))
-                    using (var reader = new StreamReader(gzip, Encoding.UTF8))
+                    using (var output = new MemoryStream())
                     {
-                        jsonContent = await reader.ReadToEndAsync();
+                        var buffer = new byte[81920];
+                        int read;
+                        while ((read = await gzip.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                        {
+                            if (output.Length + read > MaxTranslationJsonBytes)
+                            {
+                                return new TranslationDownloadResult
+                                {
+                                    Success = false,
+                                    Error = $"Decompressed content exceeds {MaxTranslationJsonBytes} bytes"
+                                };
+                            }
+                            output.Write(buffer, 0, read);
+                        }
+                        jsonContent = Encoding.UTF8.GetString(output.GetBuffer(), 0, (int)output.Length);
                     }
                 }
                 else
@@ -388,8 +434,8 @@ namespace UnityGameTranslator.Core
                 }
 
                 string json = await response.Content.ReadAsStringAsync();
-                TranslatorCore.LogInfo($"[ApiClient] CheckUuid response: {json}");
-                var data = JObject.Parse(json);
+                TranslatorCore.LogDebug($"[ApiClient] CheckUuid response: {json}");
+                var data = ParseJsonSafe(json);
 
                 // Parse role first to derive IsOwner
                 string roleStr = data["role"]?.Value<string>();
@@ -510,7 +556,7 @@ namespace UnityGameTranslator.Core
                 }
 
                 string json = await response.Content.ReadAsStringAsync();
-                var data = JObject.Parse(json);
+                var data = ParseJsonSafe(json);
 
                 var result = new BranchListResult
                 {
@@ -564,9 +610,8 @@ namespace UnityGameTranslator.Core
                 return false;
             }
 
-            // Size limit (100MB should be more than enough for any translation file)
-            const int maxSize = 100 * 1024 * 1024;
-            if (json.Length > maxSize)
+            // Size limit
+            if (json.Length > MaxTranslationJsonBytes)
             {
                 error = $"Content too large ({json.Length} bytes)";
                 return false;
@@ -574,13 +619,8 @@ namespace UnityGameTranslator.Core
 
             try
             {
-                // Parse with depth limit to prevent stack overflow attacks
-                var settings = new JsonSerializerSettings
-                {
-                    MaxDepth = 10 // Translation files should be flat key-value
-                };
-
-                var parsed = JObject.Parse(json);
+                // ParseJsonSafe enforces MaxDepth=10 (translation files are flat key-value)
+                var parsed = ParseJsonSafe(json);
 
                 // Must be a JSON object (not array)
                 if (parsed == null)
@@ -681,7 +721,7 @@ namespace UnityGameTranslator.Core
                 }
 
                 string json = await response.Content.ReadAsStringAsync();
-                var data = JObject.Parse(json);
+                var data = ParseJsonSafe(json);
 
                 var result = new GameSearchResult { Success = true };
                 result.Count = data["count"]?.Value<int>() ?? 0;
@@ -742,7 +782,7 @@ namespace UnityGameTranslator.Core
                 }
 
                 string json = await response.Content.ReadAsStringAsync();
-                var data = JObject.Parse(json);
+                var data = ParseJsonSafe(json);
 
                 var result = new GameSearchResult { Success = true };
                 result.Count = data["count"]?.Value<int>() ?? 0;
@@ -813,7 +853,7 @@ namespace UnityGameTranslator.Core
                 }
 
                 string json = await response.Content.ReadAsStringAsync();
-                var data = JObject.Parse(json);
+                var data = ParseJsonSafe(json);
 
                 return new DeviceFlowInitResult
                 {
@@ -902,7 +942,7 @@ namespace UnityGameTranslator.Core
                 TranslatorCore.LogInfo($"[ApiClient] Response: {(int)response.StatusCode} {response.StatusCode}");
 
                 string json = await response.Content.ReadAsStringAsync();
-                var data = JObject.Parse(json);
+                var data = ParseJsonSafe(json);
 
                 if (!response.IsSuccessStatusCode)
                 {
@@ -1014,7 +1054,7 @@ namespace UnityGameTranslator.Core
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    var errorData = JObject.Parse(json);
+                    var errorData = ParseJsonSafe(json);
                     string errorMsg = errorData["error"]?.Value<string>()
                         ?? errorData["message"]?.Value<string>()
                         ?? $"HTTP {response.StatusCode}";
@@ -1023,7 +1063,7 @@ namespace UnityGameTranslator.Core
                     return new MergePreviewInitResult { Success = false, Error = errorMsg };
                 }
 
-                var data = JObject.Parse(json);
+                var data = ParseJsonSafe(json);
 
                 return new MergePreviewInitResult
                 {
@@ -1094,7 +1134,7 @@ namespace UnityGameTranslator.Core
 
                 var response = await client.SendAsync(request);
                 string json = await response.Content.ReadAsStringAsync();
-                var data = JObject.Parse(json);
+                var data = ParseJsonSafe(json);
 
                 if (!response.IsSuccessStatusCode)
                 {

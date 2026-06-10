@@ -1038,6 +1038,28 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static void LogDebug(string message) { if (DebugMode) Adapter?.LogInfo(message); }
 
+        /// <summary>
+        /// Open a URL in the system browser, restricted to http/https. URLs reaching
+        /// this point can come from the server (verification_uri, merge preview links,
+        /// GitHub release assets): a hostile response must not be able to launch
+        /// file://, UNC paths or custom protocol handlers via the OS shell.
+        /// </summary>
+        public static void OpenUrlSafe(string url)
+        {
+            if (string.IsNullOrEmpty(url))
+                return;
+
+            if (Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
+                (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
+            {
+                UnityEngine.Application.OpenURL(url);
+            }
+            else
+            {
+                LogWarning($"[Security] Blocked attempt to open non-http(s) URL: {Sanitize.Url(url)}");
+            }
+        }
+
         #endregion
 
         #region Config persistence
@@ -1053,6 +1075,7 @@ namespace UnityGameTranslator.Core
             "ai_api_key",
             "google_api_key",
             "deepl_api_key",
+            "proxy_password",
         };
 
         /// <summary>
@@ -1159,8 +1182,10 @@ namespace UnityGameTranslator.Core
                 if (!string.IsNullOrEmpty(Config.api_token))
                 {
                     string currentApiUrl = Config.api_base_url ?? PluginInfo.ApiBaseUrl;
+                    // Normalized comparison: a trailing slash or case difference is the same
+                    // server and must not wipe the token (false-positive invalidation)
                     if (!string.IsNullOrEmpty(Config.api_token_server) &&
-                        Config.api_token_server != currentApiUrl)
+                        !string.Equals(Config.api_token_server.TrimEnd('/'), currentApiUrl?.TrimEnd('/'), StringComparison.OrdinalIgnoreCase))
                     {
                         Adapter.LogWarning($"[Security] API URL changed from {Sanitize.Url(Config.api_token_server)} to {Sanitize.Url(currentApiUrl)} - invalidating token to prevent replay attacks");
                         Config.api_token = null;
@@ -1168,6 +1193,16 @@ namespace UnityGameTranslator.Core
                         Config.api_token_server = null;
                         needsResave = true;
                     }
+                }
+
+                // Security: warn when the AI endpoint is a remote host over plain http —
+                // the ai_api_key would travel unencrypted on the network. Loopback (Ollama,
+                // LM Studio, etc.) is the normal local case and stays silent.
+                if (Config.enable_ai && !string.IsNullOrEmpty(Config.ai_api_key) &&
+                    Uri.TryCreate(Config.ai_url, UriKind.Absolute, out var aiUri) &&
+                    aiUri.Scheme == Uri.UriSchemeHttp && !aiUri.IsLoopback)
+                {
+                    Adapter.LogWarning($"[Security] ai_url points to a remote server over plain http ({Sanitize.Url(Config.ai_url)}) - your AI API key is sent unencrypted. Use https for remote AI servers.");
                 }
 
                 if (Config._configMigrated)
@@ -1209,6 +1244,7 @@ namespace UnityGameTranslator.Core
                 case "ai_api_key":     return config.ai_api_key;
                 case "google_api_key": return config.google_api_key;
                 case "deepl_api_key":  return config.deepl_api_key;
+                case "proxy_password": return config.proxy_password;
                 default:
                     Adapter?.LogWarning($"[Config] Unknown encrypted token field: {fieldName}");
                     return null;
@@ -2368,7 +2404,7 @@ namespace UnityGameTranslator.Core
                     return new string[0];
 
                 string json = await response.Content.ReadAsStringAsync();
-                var obj = JObject.Parse(json);
+                var obj = ApiClient.ParseJsonSafe(json);
                 var data = obj["data"] as JArray;
                 if (data == null)
                     return new string[0];
@@ -2917,7 +2953,7 @@ namespace UnityGameTranslator.Core
                 }
 
                 string responseJson = response.Content.ReadAsStringAsync().Result;
-                var responseObj = JObject.Parse(responseJson);
+                var responseObj = ApiClient.ParseJsonSafe(responseJson);
                 string translation = responseObj["choices"]?[0]?["message"]?["content"]?.ToString()?.Trim();
 
                 if (Config.debug_ai)
@@ -3017,7 +3053,7 @@ namespace UnityGameTranslator.Core
                 }
 
                 string responseJson = response.Content.ReadAsStringAsync().Result;
-                var responseObj = JObject.Parse(responseJson);
+                var responseObj = ApiClient.ParseJsonSafe(responseJson);
                 string translation = responseObj["data"]?["translations"]?[0]?["translatedText"]?.ToString();
 
                 if (Config.debug_ai)
@@ -3095,7 +3131,7 @@ namespace UnityGameTranslator.Core
                 }
 
                 string responseJson = response.Content.ReadAsStringAsync().Result;
-                var responseObj = JObject.Parse(responseJson);
+                var responseObj = ApiClient.ParseJsonSafe(responseJson);
                 string translation = responseObj["translations"]?[0]?["text"]?.ToString();
 
                 if (Config.debug_ai)
@@ -4500,6 +4536,9 @@ namespace UnityGameTranslator.Core
         public string proxy_mode { get; set; } = "default";
         public string proxy_url { get; set; } = null;
         public string proxy_username { get; set; } = null;
+        // Often a corporate/AD credential — encrypted at rest like every other secret.
+        // Plaintext values from existing configs are re-encrypted on next save.
+        [JsonConverter(typeof(EncryptedTokenConverter))]
         public string proxy_password { get; set; } = null;
         public bool proxy_bypass_local { get; set; } = true;
 

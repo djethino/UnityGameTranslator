@@ -6,7 +6,17 @@ using Newtonsoft.Json;
 namespace UnityGameTranslator.Core
 {
     /// <summary>
-    /// Provides secure token storage using AES-256 encryption with machine-derived key.
+    /// At-rest obfuscation of secrets in config.json, binding them to the machine.
+    /// AES-256-CBC with a key derived from machine identity (MachineName, UserName,
+    /// OS, profile path) — values any process running as the same user can read.
+    ///
+    /// Threat model — be honest about what this does and does not protect:
+    ///  - DOES protect: a config.json copied off the machine (shared for support,
+    ///    cloud-synced, accidentally committed) cannot be decrypted elsewhere.
+    ///  - Does NOT protect against a local attacker: any code running as the same
+    ///    user can rebuild the key from public identity values and decrypt. This is
+    ///    NOT a security boundary; the real defense is server-side token revocation.
+    ///
     /// Works on all platforms: Windows, Linux, macOS (Mono and IL2CPP).
     /// </summary>
     public static class TokenProtection

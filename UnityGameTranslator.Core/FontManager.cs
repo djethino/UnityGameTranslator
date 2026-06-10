@@ -573,9 +573,14 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static bool IsAtlasWarmPending => _pendingSceneRefresh;
         private static bool _willRenderSubscribed = false;
+        // The exact delegate instance handed to add_willRenderCanvases, kept so we can
+        // remove it on shutdown — leaving a static-event subscription live while the game
+        // tears down lets the callback run against destroyed objects (native crash).
+        private static object _willRenderHandler = null;
 
         public static void OnSceneChanged()
         {
+            if (TranslatorCore.ShuttingDown) return;
             _pendingSceneRefresh = true;
             _preWarmedClones.Clear();
             _knownCharsPerClone.Clear();
@@ -616,12 +621,15 @@ namespace UnityGameTranslator.Core
 
                 if (addMethod != null)
                 {
-                    // On IL2CPP, may need DelegateSupport wrapping
+                    // The event's delegate type: Canvas.WillRenderCanvases (a named delegate),
+                    // NOT System.Action — passing the Action directly fails on both runtimes.
+                    var paramType = addMethod.GetParameters()[0].ParameterType;
                     Action handler = OnWillRenderCanvases;
                     object wrappedHandler = handler;
 
                     if (TranslatorCore.Adapter?.IsIL2CPP == true)
                     {
+                        // IL2CPP: wrap the managed Action into the Il2Cpp delegate type
                         try
                         {
                             Type delegateSupportType = null;
@@ -632,7 +640,6 @@ namespace UnityGameTranslator.Core
                             }
                             if (delegateSupportType != null)
                             {
-                                var paramType = addMethod.GetParameters()[0].ParameterType;
                                 var convertMethod = delegateSupportType.GetMethod("ConvertDelegate",
                                     BindingFlags.Public | BindingFlags.Static);
                                 if (convertMethod != null)
@@ -644,8 +651,20 @@ namespace UnityGameTranslator.Core
                         }
                         catch { }
                     }
+                    else if (paramType != typeof(Action) && typeof(Delegate).IsAssignableFrom(paramType))
+                    {
+                        // Mono: rebuild a delegate of the exact event type from our static method.
+                        // Without this, add_willRenderCanvases(Action) throws "Object of type
+                        // 'System.Action' cannot be converted to type 'Canvas+WillRenderCanvases'",
+                        // and the scene-change atlas re-warm never runs on Mono games.
+                        var method = typeof(FontManager).GetMethod(nameof(OnWillRenderCanvases),
+                            BindingFlags.NonPublic | BindingFlags.Static);
+                        if (method != null)
+                            wrappedHandler = Delegate.CreateDelegate(paramType, method);
+                    }
 
                     addMethod.Invoke(null, new object[] { wrappedHandler });
+                    _willRenderHandler = wrappedHandler; // keep for symmetric removal on shutdown
                     _willRenderSubscribed = true;
                     TranslatorCore.LogDebug("[FontManager] Subscribed to Canvas.willRenderCanvases");
                 }
@@ -660,8 +679,51 @@ namespace UnityGameTranslator.Core
             }
         }
 
+        /// <summary>
+        /// Remove the Canvas.willRenderCanvases subscription. Called on shutdown so the
+        /// callback can't fire during Unity's teardown (when canvases/components are being
+        /// destroyed), which would dereference destroyed native objects and crash.
+        /// </summary>
+        public static void UnsubscribeWillRenderCanvases()
+        {
+            if (!_willRenderSubscribed || _willRenderHandler == null) return;
+
+            try
+            {
+                var canvasType = typeof(Canvas);
+                var removeMethod = canvasType.GetMethod("remove_willRenderCanvases",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+
+                if (removeMethod == null)
+                {
+                    var evt = canvasType.GetEvent("willRenderCanvases",
+                        BindingFlags.Public | BindingFlags.Static);
+                    if (evt != null)
+                        removeMethod = evt.GetRemoveMethod(true);
+                }
+
+                if (removeMethod != null)
+                {
+                    removeMethod.Invoke(null, new object[] { _willRenderHandler });
+                    TranslatorCore.LogDebug("[FontManager] Unsubscribed from Canvas.willRenderCanvases");
+                }
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogDebug($"[FontManager] Failed to unsubscribe willRenderCanvases: {ex.Message}");
+            }
+            finally
+            {
+                _willRenderSubscribed = false;
+                _willRenderHandler = null;
+            }
+        }
+
         private static void OnWillRenderCanvases()
         {
+            // During teardown Unity still fires this once while canvases/components are
+            // being destroyed; touching them (ForceRefreshAllText) would crash natively.
+            if (TranslatorCore.ShuttingDown) return;
             if (!_pendingSceneRefresh) return;
             _pendingSceneRefresh = false;
 
@@ -3619,7 +3681,9 @@ namespace UnityGameTranslator.Core
 
             try
             {
-                var allFonts = TypeHelper.FindAllObjectsOfType(TypeHelper.TMP_FontAssetType);
+                // TMP_FontAsset is a ScriptableObject asset, not a live scene object —
+                // use the asset scan (Resources.FindObjectsOfTypeAll) or Mono finds none.
+                var allFonts = TypeHelper.FindAllAssetsOfType(TypeHelper.TMP_FontAssetType);
                 if (allFonts == null || allFonts.Length == 0)
                 {
                     TranslatorCore.LogDebug("[FontManager] No game TMP fonts found (will retry)");

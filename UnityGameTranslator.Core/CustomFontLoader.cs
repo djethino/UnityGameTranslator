@@ -1115,32 +1115,39 @@ namespace UnityGameTranslator.Core
                 }
 
                 TranslatorCore.LogInfo($"[CustomFontLoader] Loaded {textures.Count} atlas texture(s) for {fontName}, first {textures[0].width}x{textures[0].height}, format: {textures[0].format}");
-                var texture = textures[0];
 
-                // Debug: Check if texture has actual content (not all white/transparent)
-                try
+                // Diagnostic-only atlas content check. GetRawTextureDataSafe copies the ENTIRE
+                // atlas (up to ~1 GB for a 16384² ARGB32 CJK atlas) just to inspect 100 pixels,
+                // and the result is never used beyond this log line — so gate it on debug mode.
+                // On some textures the raw-data read NREs, which is what produced the noisy
+                // "Could not sample texture" warning on every font load.
+                if (TranslatorCore.DebugMode)
                 {
-                    byte[] rawSample = GetRawTextureDataSafe(texture);
-                    int bpp = GetBytesPerPixel(texture.format);
-                    int pixelCount = rawSample.Length / bpp;
-                    int sampleSize = Math.Min(100, pixelCount);
-                    int nonWhiteCount = 0;
-                    for (int pi = 0; pi < sampleSize; pi++)
+                    var texture = textures[0];
+                    try
                     {
-                        int idx = pi * bpp;
-                        if (idx + bpp > rawSample.Length) break;
-                        bool isWhite = true;
-                        for (int b = 0; b < bpp && b < 4; b++)
+                        byte[] rawSample = GetRawTextureDataSafe(texture);
+                        int bpp = GetBytesPerPixel(texture.format);
+                        int pixelCount = rawSample.Length / bpp;
+                        int sampleSize = Math.Min(100, pixelCount);
+                        int nonWhiteCount = 0;
+                        for (int pi = 0; pi < sampleSize; pi++)
                         {
-                            if (rawSample[idx + b] < 252) { isWhite = false; break; }
+                            int idx = pi * bpp;
+                            if (idx + bpp > rawSample.Length) break;
+                            bool isWhite = true;
+                            for (int b = 0; b < bpp && b < 4; b++)
+                            {
+                                if (rawSample[idx + b] < 252) { isWhite = false; break; }
+                            }
+                            if (!isWhite) nonWhiteCount++;
                         }
-                        if (!isWhite) nonWhiteCount++;
+                        TranslatorCore.LogInfo($"[CustomFontLoader] Texture sample: {nonWhiteCount}/{sampleSize} non-white pixels");
                     }
-                    TranslatorCore.LogInfo($"[CustomFontLoader] Texture sample: {nonWhiteCount}/{sampleSize} non-white pixels");
-                }
-                catch (Exception ex)
-                {
-                    TranslatorCore.LogWarning($"[CustomFontLoader] Could not sample texture: {ex.Message}");
+                    catch (Exception ex)
+                    {
+                        TranslatorCore.LogDebug($"[CustomFontLoader] Could not sample texture: {ex.Message}");
+                    }
                 }
 
                 // Initialize type references if needed
@@ -1563,10 +1570,12 @@ namespace UnityGameTranslator.Core
 
             try
             {
-                // Try to clone an existing font asset first (better initialization)
+                // Try to clone an existing font asset first (better initialization).
+                // TMP_FontAsset is a ScriptableObject asset, not a scene object — must use
+                // the asset scan or Mono finds zero clone sources (modern-TMP games).
                 object fontAsset = null;
                 UnityEngine.Object sourceFont = null;
-                var existingFonts = TypeHelper.FindAllObjectsOfType(_tmpFontAssetType);
+                var existingFonts = TypeHelper.FindAllAssetsOfType(_tmpFontAssetType);
                 foreach (var existingFont in existingFonts)
                 {
                     if (existingFont != null && !IsModCreatedFont(existingFont.name))
@@ -1885,10 +1894,11 @@ namespace UnityGameTranslator.Core
             {
                 Material material = null;
 
-                // First, try to find an existing TMP font and copy its material/shader
+                // First, try to find an existing TMP font and copy its material/shader.
+                // TMP_FontAsset is an asset (ScriptableObject) — use the asset scan.
                 if (_tmpFontAssetType != null)
                 {
-                    var existingFonts = TypeHelper.FindAllObjectsOfType(_tmpFontAssetType);
+                    var existingFonts = TypeHelper.FindAllAssetsOfType(_tmpFontAssetType);
 
                     foreach (var existingFont in existingFonts)
                     {

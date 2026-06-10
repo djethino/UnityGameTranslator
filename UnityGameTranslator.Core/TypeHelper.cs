@@ -878,6 +878,63 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Find all loaded objects of an ASSET type (ScriptableObject-derived, e.g.
+        /// TMP_FontAsset). Always uses Resources.FindObjectsOfTypeAll, the ONLY API that
+        /// returns assets which are not live scene objects.
+        ///
+        /// Why this is separate from FindAllObjectsOfType: that method's Mono path tries
+        /// Object.FindObjectsOfType first and returns its (empty but non-null) result for
+        /// assets — ScriptableObjects are never returned by FindObjectsOfType (scene-only),
+        /// so it short-circuits before ever reaching Resources.FindObjectsOfTypeAll. That
+        /// left Mono + modern-TMP games (e.g. clone-source lookup for custom fonts) finding
+        /// zero TMP_FontAssets. Routing asset scans here aligns Mono with the IL2CPP path,
+        /// which already goes through Resources.FindObjectsOfTypeAll.
+        ///
+        /// Note: this is for ASSETS only. Do NOT use it for Component scans (scene text):
+        /// FindObjectsOfTypeAll also returns prefabs, inactive objects and built-in assets,
+        /// which those scans intentionally exclude.
+        /// </summary>
+        public static UnityEngine.Object[] FindAllAssetsOfType(Type type)
+        {
+            if (type == null) return new UnityEngine.Object[0];
+
+            // IL2CPP: FindAllObjectsOfType already routes through Resources.FindObjectsOfTypeAll
+            if (_il2cppHelpersInitialized && _il2cppTypeOfMethod != null && _il2cppResourcesFindAllMethod != null)
+            {
+                return FindAllObjectsOfType(type);
+            }
+
+            // Mono: call Resources.FindObjectsOfTypeAll directly via reflection
+            return FindAllAssetsOfTypeMono(type);
+        }
+
+        /// <summary>
+        /// Mono-only asset scan via Resources.FindObjectsOfTypeAll (pure reflection).
+        /// NoInlining prevents JIT from resolving the method reference on IL2CPP.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static UnityEngine.Object[] FindAllAssetsOfTypeMono(Type type)
+        {
+            try
+            {
+                var method = typeof(Resources).GetMethod("FindObjectsOfTypeAll",
+                    BindingFlags.Public | BindingFlags.Static,
+                    null, new Type[] { typeof(Type) }, null);
+                if (method != null)
+                {
+                    var result = method.Invoke(null, new object[] { type }) as UnityEngine.Object[];
+                    if (result != null) return result;
+                }
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogWarning($"[TypeHelper] FindAllAssetsOfType failed for {type.Name}: {ex.Message}");
+            }
+
+            return new UnityEngine.Object[0];
+        }
+
+        /// <summary>
         /// Mono-only fallback using pure reflection (no direct Unity method references).
         /// NoInlining prevents JIT from resolving these method references on IL2CPP.
         /// </summary>

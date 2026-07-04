@@ -180,6 +180,11 @@ namespace UnityGameTranslator.Core
         // Pattern match failure cache (texts that don't match any pattern)
         private static HashSet<string> patternMatchFailures = new HashSet<string>();
 
+        // Texts whose translation failed placeholder validation after all retries.
+        // In-memory only: never cached to disk, retried on next game launch.
+        // Prevents hammering the backend every scan cycle within the same session.
+        private static ConcurrentDictionary<string, byte> validationFailedTexts = new ConcurrentDictionary<string, byte>();
+
         // Callback for updating components when translation completes
         public static Action<string, string, List<object>> OnTranslationComplete;
 
@@ -819,25 +824,140 @@ namespace UnityGameTranslator.Core
             return result;
         }
 
+        // Matches every frozen token sent to the AI: [!v*N], [!t*N], [!STR*N], [!nl]
+        private static readonly Regex PlaceholderTokenPattern = new Regex(
+            @"\[!(?:v\*\d+|t\*\d+|STR\*\d+|nl)\]",
+            RegexOptions.Compiled);
+
         /// <summary>
-        /// Validate that all [!t*N] placeholders are present in the AI response.
-        /// Logs warnings for missing tags but does not reject the translation.
+        /// Build the "frozen sequences" of the text sent to the AI: each placeholder
+        /// token expanded with the game's own delimiters directly around it
+        /// (opening on the left, closing on the right), e.g. "({[!v*0]})".
+        /// Expanding left over opening chars only ('{', '(', '[') and right over
+        /// closing chars only ('}', ')', ']') can never swallow a neighbouring token
+        /// (tokens start with '[' and end with ']').
+        /// These sequences must appear verbatim in the translation.
         /// </summary>
-        private static void ValidateMarkupTags(string translation, int expectedCount, string originalText)
+        private static List<string> BuildFrozenSequences(string source)
         {
-            if (expectedCount == 0) return;
+            var sequences = new List<string>();
+            if (string.IsNullOrEmpty(source)) return sequences;
 
-            int missing = 0;
-            for (int i = 0; i < expectedCount; i++)
+            foreach (Match match in PlaceholderTokenPattern.Matches(source))
             {
-                if (!translation.Contains($"{TagPlaceholderPrefix}{i}{TagPlaceholderSuffix}"))
-                    missing++;
+                int start = match.Index;
+                int end = match.Index + match.Length; // exclusive
+
+                while (start > 0 && (source[start - 1] == '{' || source[start - 1] == '(' || source[start - 1] == '['))
+                    start--;
+                while (end < source.Length && (source[end] == '}' || source[end] == ')' || source[end] == ']'))
+                    end++;
+
+                string seq = source.Substring(start, end - start);
+                if (!sequences.Contains(seq))
+                    sequences.Add(seq);
             }
 
-            if (missing > 0)
+            return sequences;
+        }
+
+        private static int CountOccurrences(string text, string token)
+        {
+            int count = 0, index = 0;
+            while ((index = text.IndexOf(token, index, StringComparison.Ordinal)) >= 0)
             {
-                Adapter?.LogWarning($"[AI] Translation missing {missing}/{expectedCount} tag placeholders for: {originalText.Substring(0, Math.Min(60, originalText.Length))}...");
+                count++;
+                index += token.Length;
             }
+            return count;
+        }
+
+        /// <summary>
+        /// Structural validation of a translation against the source sent to the AI.
+        /// A simple Contains is not enough: "[{[!v*0]}]" still contains "[!v*0]".
+        /// Checks (in order): frozen sequences verbatim, same token multiset
+        /// (nothing missing, duplicated or invented), same '{' '}' '[' ']' counts
+        /// (catches brackets added around placeholders).
+        /// Fills compact error lines usable as targeted retry feedback.
+        /// </summary>
+        private static bool ValidatePlaceholders(string source, string translation, List<string> frozenSequences, out List<string> errors)
+        {
+            errors = new List<string>();
+
+            foreach (var seq in frozenSequences)
+            {
+                int expected = CountOccurrences(source, seq);
+                int found = CountOccurrences(translation, seq);
+                if (found < expected)
+                    errors.Add($"the exact sequence \"{seq}\" is missing or altered");
+            }
+
+            var sourceTokens = new Dictionary<string, int>();
+            foreach (Match m in PlaceholderTokenPattern.Matches(source))
+            {
+                sourceTokens.TryGetValue(m.Value, out int sc);
+                sourceTokens[m.Value] = sc + 1;
+            }
+            var translationTokens = new Dictionary<string, int>();
+            foreach (Match m in PlaceholderTokenPattern.Matches(translation))
+            {
+                translationTokens.TryGetValue(m.Value, out int tc);
+                translationTokens[m.Value] = tc + 1;
+            }
+            foreach (var kv in sourceTokens)
+            {
+                translationTokens.TryGetValue(kv.Key, out int found);
+                if (found != kv.Value)
+                    errors.Add($"token {kv.Key} appears {found} time(s) instead of {kv.Value}");
+            }
+            foreach (var kv in translationTokens)
+            {
+                if (!sourceTokens.ContainsKey(kv.Key))
+                    errors.Add($"token {kv.Key} does not exist in the source");
+            }
+
+            foreach (char c in new[] { '{', '}', '[', ']' })
+            {
+                int expected = 0, found = 0;
+                foreach (char sc in source) if (sc == c) expected++;
+                foreach (char tc in translation) if (tc == c) found++;
+                if (expected != found)
+                    errors.Add($"character '{c}' appears {found} time(s) instead of {expected}");
+            }
+
+            return errors.Count == 0;
+        }
+
+        /// <summary>
+        /// Compact correction message for the corrective-dialogue retry.
+        /// Targeted feedback corrects far better than a generic "try again".
+        /// </summary>
+        private static string BuildCorrectionMessage(List<string> errors, List<string> frozenSequences)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("Your translation is INVALID:");
+            foreach (var err in errors)
+                sb.AppendLine($"- {err}");
+            if (frozenSequences.Count > 0)
+            {
+                sb.AppendLine("These exact character sequences from the source must appear unchanged in your translation:");
+                sb.AppendLine(string.Join(", ", frozenSequences.Select(s => $"\"{s}\"")));
+            }
+            sb.Append("Reply with ONLY the corrected translation, nothing else.");
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// Extra system prompt section for the last attempt (fresh start, reinforced).
+        /// </summary>
+        private static string BuildMandatorySequencesSection(List<string> frozenSequences)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("=== MANDATORY EXACT SEQUENCES ===");
+            sb.AppendLine("The text contains technical placeholders. Your output MUST contain these exact character sequences, copied character-for-character, unmodified:");
+            foreach (var seq in frozenSequences)
+                sb.AppendLine($"\"{seq}\"");
+            return sb.ToString();
         }
 
         public class PatternEntry
@@ -2586,6 +2706,13 @@ namespace UnityGameTranslator.Core
                             if (Config.debug_ai)
                                 Adapter?.LogInfo($"[Worker] Captured key (no translation): {normalizedOriginal.Substring(0, Math.Min(30, normalizedOriginal.Length))}...");
                         }
+                        // Text already failed placeholder validation this session:
+                        // don't hammer the backend, it will be retried next launch
+                        else if (translation == null && validationFailedTexts.ContainsKey(normalizedOriginal))
+                        {
+                            if (Config.debug_ai)
+                                Adapter?.LogInfo($"[Worker] Skipping (failed placeholder validation earlier): {normalizedOriginal.Substring(0, Math.Min(40, normalizedOriginal.Length))}...");
+                        }
                         // Only call translation backend if not in cache
                         else if (translation == null)
                         {
@@ -2875,102 +3002,110 @@ namespace UnityGameTranslator.Core
                 // === BUILD REQUEST ===
                 bool isThinkingModel = IsThinkingModel(Config.ai_model);
                 string userContent = isThinkingModel ? textForAI + " /no_think" : textForAI;
+                int maxTokens = Math.Max(200, textToTranslate.Length * 2);
 
-                var messagesArray = new JArray
+                // Frozen sequences: placeholders + the game's own delimiters around them.
+                // Empty when the text has no placeholder → single attempt, no validation.
+                var frozenSequences = BuildFrozenSequences(textForAI);
+                bool needsValidation = frozenSequences.Count > 0;
+
+                // === ATTEMPTS: initial call + up to 2 validation retries ===
+                // temperature 0 is deterministic: an identical retry would return the
+                // same broken answer, so each retry must change something.
+                // Attempt 1: normal request, temperature 0.
+                // Attempt 2: corrective dialogue — failed answer as assistant turn
+                //            + compact targeted feedback (context changed → output changes).
+                // Attempt 3: fresh request WITHOUT the failed answer (breaks anchoring),
+                //            reinforced system prompt + temperature 0.3 to leave the
+                //            deterministic basin that failed twice.
+                string translation = null;
+                List<string> validationErrors = null;
+                string failedResponse = null;
+                bool isValid = false;
+
+                for (int attempt = 0; attempt < 3 && !isValid; attempt++)
                 {
-                    new JObject { ["role"] = "system", ["content"] = systemPrompt },
-                    new JObject { ["role"] = "user", ["content"] = userContent }
-                };
-                // Extra safety for known thinking models: assistant prefill to skip reasoning
-                if (isThinkingModel)
-                {
-                    messagesArray.Add(new JObject { ["role"] = "assistant", ["content"] = "<think>\n\n</think>\n\n" });
-                }
+                    JArray messagesArray;
+                    double temperature = 0.0;
 
-                var requestObj = new JObject
-                {
-                    ["model"] = Config.ai_model,
-                    ["messages"] = messagesArray,
-                    ["temperature"] = 0.0,
-                    ["max_tokens"] = Math.Max(200, textToTranslate.Length * 2),
-                    ["stream"] = false
-                };
-
-                // Send "think": false to disable reasoning on providers that support it (e.g. Ollama).
-                // Some providers (OpenAI, Grok, etc.) reject unknown parameters with 400.
-                // We use a cached flag to avoid retrying on every request.
-                bool sendThink = ShouldSendThinkParam();
-                if (sendThink)
-                {
-                    requestObj["think"] = false;
-                }
-
-                string aiEndpoint = ResolveAIEndpoint(Config.ai_url, "chat/completions");
-                string jsonRequest = requestObj.ToString(Newtonsoft.Json.Formatting.None);
-                var httpContent = new StringContent(jsonRequest, Encoding.UTF8, "application/json");
-
-                var request = new HttpRequestMessage(HttpMethod.Post, aiEndpoint);
-                request.Content = httpContent;
-                AddAIAuthHeader(request);
-
-                var response = httpClient.SendAsync(request).Result;
-
-                // Handle providers that reject the "think" parameter with 400
-                if (!response.IsSuccessStatusCode && sendThink && (int)response.StatusCode == 400)
-                {
-                    string errorBody = "";
-                    try { errorBody = response.Content.ReadAsStringAsync().Result; } catch { }
-
-                    if (errorBody.Contains("think"))
+                    if (attempt == 0)
                     {
-                        // This provider doesn't support "think" param — cache and retry without it
-                        _providerSupportsThinkParam = false;
-                        LogDebug("[AI] Provider does not support 'think' parameter, retrying without it");
+                        messagesArray = new JArray
+                        {
+                            new JObject { ["role"] = "system", ["content"] = systemPrompt },
+                            new JObject { ["role"] = "user", ["content"] = userContent }
+                        };
+                    }
+                    else if (attempt == 1)
+                    {
+                        string correction = BuildCorrectionMessage(validationErrors, frozenSequences);
+                        messagesArray = new JArray
+                        {
+                            new JObject { ["role"] = "system", ["content"] = systemPrompt },
+                            new JObject { ["role"] = "user", ["content"] = userContent },
+                            new JObject { ["role"] = "assistant", ["content"] = failedResponse },
+                            new JObject { ["role"] = "user", ["content"] = isThinkingModel ? correction + " /no_think" : correction }
+                        };
+                        if (Config.debug_ai)
+                            Adapter?.LogInfo($"[AI] Retry 1 (corrective dialogue):\n{correction}");
+                    }
+                    else
+                    {
+                        temperature = 0.3;
+                        string reinforcedPrompt = systemPrompt + "\n" + BuildMandatorySequencesSection(frozenSequences);
+                        messagesArray = new JArray
+                        {
+                            new JObject { ["role"] = "system", ["content"] = reinforcedPrompt },
+                            new JObject { ["role"] = "user", ["content"] = userContent }
+                        };
+                        if (Config.debug_ai)
+                            Adapter?.LogInfo("[AI] Retry 2 (fresh reinforced prompt, temperature 0.3)");
+                    }
 
-                        requestObj.Remove("think");
-                        jsonRequest = requestObj.ToString(Newtonsoft.Json.Formatting.None);
-                        httpContent = new StringContent(jsonRequest, Encoding.UTF8, "application/json");
+                    // Extra safety for known thinking models: assistant prefill to skip reasoning
+                    if (isThinkingModel)
+                    {
+                        messagesArray.Add(new JObject { ["role"] = "assistant", ["content"] = "<think>\n\n</think>\n\n" });
+                    }
 
-                        request = new HttpRequestMessage(HttpMethod.Post, aiEndpoint);
-                        request.Content = httpContent;
-                        AddAIAuthHeader(request);
+                    translation = SendChatRequest(messagesArray, temperature, maxTokens);
 
-                        response = httpClient.SendAsync(request).Result;
+                    // Transport/HTTP error (incl. 429): retrying here is pointless,
+                    // the worker handles re-queueing on rate limit
+                    if (translation == null)
+                        return null;
+
+                    if (Config.debug_ai)
+                    {
+                        Adapter?.LogInfo($"[AI Raw] {translation.Substring(0, Math.Min(80, translation.Length))}");
+                    }
+
+                    // Skip marker: not a translation, nothing to validate
+                    if (translation.Contains(SkipTranslationMarker))
+                        return translation;
+
+                    if (!needsValidation)
+                        break;
+
+                    isValid = ValidatePlaceholders(textForAI, translation, frozenSequences, out validationErrors);
+                    if (!isValid)
+                    {
+                        failedResponse = translation;
+                        Adapter?.LogWarning($"[AI] Attempt {attempt + 1}/3: invalid placeholders ({string.Join("; ", validationErrors)}) for: {textToTranslate.Substring(0, Math.Min(60, textToTranslate.Length))}...");
                     }
                 }
 
-                // Mark provider as supporting think param on success (if we sent it)
-                if (response.IsSuccessStatusCode && sendThink && _providerSupportsThinkParam == null)
+                if (needsValidation && !isValid)
                 {
-                    _providerSupportsThinkParam = true;
-                }
-
-                if (!response.IsSuccessStatusCode)
-                {
-                    int statusCode = (int)response.StatusCode;
-                    if (statusCode == 429)
-                        _apiRateLimited = true;
-                    string errorBody = "";
-                    try { errorBody = response.Content.ReadAsStringAsync().Result; } catch { }
-                    Adapter?.LogWarning($"[AI] HTTP {statusCode} {response.StatusCode}: {errorBody}");
+                    // Never cache the corruption. In-memory marker only:
+                    // left untranslated this session, retried on next launch.
+                    validationFailedTexts.TryAdd(textWithPlaceholders, 0);
+                    Adapter?.LogWarning($"[AI] Placeholder validation failed after 3 attempts, left untranslated: {textToTranslate.Substring(0, Math.Min(60, textToTranslate.Length))}...");
                     return null;
-                }
-
-                string responseJson = response.Content.ReadAsStringAsync().Result;
-                var responseObj = ApiClient.ParseJsonSafe(responseJson);
-                string translation = responseObj["choices"]?[0]?["message"]?["content"]?.ToString()?.Trim();
-
-                if (Config.debug_ai)
-                {
-                    Adapter?.LogInfo($"[AI Raw] {translation?.Substring(0, Math.Min(80, translation?.Length ?? 0))}");
                 }
 
                 if (!string.IsNullOrEmpty(translation))
                 {
-                    // Validate tag placeholders are preserved
-                    if (extractedTags != null && extractedTags.Count > 0)
-                        ValidateMarkupTags(translation, extractedTags.Count, textToTranslate);
-
                     // Restore placeholders in reverse order of extraction:
                     // 1. Markup tags [!t*N] → original tags
                     translation = RestoreMarkupTags(translation, extractedTags);
@@ -2994,6 +3129,87 @@ namespace UnityGameTranslator.Core
                 Adapter?.LogWarning($"[AI] Translation error: {e.Message}");
                 return null;
             }
+        }
+
+        /// <summary>
+        /// Send a chat/completions request and return the raw assistant content (trimmed).
+        /// Handles the "think" parameter negotiation, rate limiting and HTTP errors.
+        /// Returns null on transport/HTTP failure.
+        /// </summary>
+        private static string SendChatRequest(JArray messagesArray, double temperature, int maxTokens)
+        {
+            var requestObj = new JObject
+            {
+                ["model"] = Config.ai_model,
+                ["messages"] = messagesArray,
+                ["temperature"] = temperature,
+                ["max_tokens"] = maxTokens,
+                ["stream"] = false
+            };
+
+            // Send "think": false to disable reasoning on providers that support it (e.g. Ollama).
+            // Some providers (OpenAI, Grok, etc.) reject unknown parameters with 400.
+            // We use a cached flag to avoid retrying on every request.
+            bool sendThink = ShouldSendThinkParam();
+            if (sendThink)
+            {
+                requestObj["think"] = false;
+            }
+
+            string aiEndpoint = ResolveAIEndpoint(Config.ai_url, "chat/completions");
+            string jsonRequest = requestObj.ToString(Newtonsoft.Json.Formatting.None);
+            var httpContent = new StringContent(jsonRequest, Encoding.UTF8, "application/json");
+
+            var request = new HttpRequestMessage(HttpMethod.Post, aiEndpoint);
+            request.Content = httpContent;
+            AddAIAuthHeader(request);
+
+            var response = httpClient.SendAsync(request).Result;
+
+            // Handle providers that reject the "think" parameter with 400
+            if (!response.IsSuccessStatusCode && sendThink && (int)response.StatusCode == 400)
+            {
+                string body = "";
+                try { body = response.Content.ReadAsStringAsync().Result; } catch { }
+
+                if (body.Contains("think"))
+                {
+                    // This provider doesn't support "think" param — cache and retry without it
+                    _providerSupportsThinkParam = false;
+                    LogDebug("[AI] Provider does not support 'think' parameter, retrying without it");
+
+                    requestObj.Remove("think");
+                    jsonRequest = requestObj.ToString(Newtonsoft.Json.Formatting.None);
+                    httpContent = new StringContent(jsonRequest, Encoding.UTF8, "application/json");
+
+                    request = new HttpRequestMessage(HttpMethod.Post, aiEndpoint);
+                    request.Content = httpContent;
+                    AddAIAuthHeader(request);
+
+                    response = httpClient.SendAsync(request).Result;
+                }
+            }
+
+            // Mark provider as supporting think param on success (if we sent it)
+            if (response.IsSuccessStatusCode && sendThink && _providerSupportsThinkParam == null)
+            {
+                _providerSupportsThinkParam = true;
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                int statusCode = (int)response.StatusCode;
+                if (statusCode == 429)
+                    _apiRateLimited = true;
+                string errorBody = "";
+                try { errorBody = response.Content.ReadAsStringAsync().Result; } catch { }
+                Adapter?.LogWarning($"[AI] HTTP {statusCode} {response.StatusCode}: {errorBody}");
+                return null;
+            }
+
+            string responseJson = response.Content.ReadAsStringAsync().Result;
+            var responseObj = ApiClient.ParseJsonSafe(responseJson);
+            return responseObj["choices"]?[0]?["message"]?["content"]?.ToString()?.Trim();
         }
 
         /// <summary>
@@ -3208,8 +3424,20 @@ namespace UnityGameTranslator.Core
                 if (string.IsNullOrEmpty(translation))
                     return null;
 
+                // Structural placeholder validation. No retry here: these APIs take
+                // no prompt, so there is nothing to correct — but a broken result
+                // must never reach the cache (it would be permanent).
+                var frozenSequences = BuildFrozenSequences(textForAPI);
+                if (frozenSequences.Count > 0
+                    && !ValidatePlaceholders(textForAPI, translation, frozenSequences, out var apiErrors))
+                {
+                    validationFailedTexts.TryAdd(textWithPlaceholders, 0);
+                    Adapter?.LogWarning($"[API] Invalid placeholders ({string.Join("; ", apiErrors)}), left untranslated: {textToTranslate.Substring(0, Math.Min(60, textToTranslate.Length))}...");
+                    return null;
+                }
+
                 // === POST-PROCESS: restore placeholders ===
-                // Validate and restore markup tags
+                // Restore markup tags
                 if (extractedTags != null && extractedTags.Count > 0)
                 {
                     translation = RestoreMarkupTags(translation, extractedTags);
@@ -4135,6 +4363,9 @@ namespace UnityGameTranslator.Core
 
             // Clear pattern match failure cache (in case patterns changed)
             patternMatchFailures.Clear();
+
+            // Give validation-failed texts another chance (model/language may have changed)
+            validationFailedTexts.Clear();
 
             // Clear user exclusion cache (instance IDs change between scenes)
             ClearUserExclusionCache();

@@ -184,6 +184,14 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Get the SSE stream URL for a live edit session (browser saves + end).
+        /// </summary>
+        public static string GetEditSessionStreamUrl(string modKey)
+        {
+            return $"{SseBaseUrl}/edit-session/{Uri.EscapeDataString(modKey)}/stream";
+        }
+
+        /// <summary>
         /// Set the API token for authenticated requests
         /// </summary>
         public static void SetAuthToken(string token)
@@ -1096,6 +1104,103 @@ namespace UnityGameTranslator.Core
 
         #endregion
 
+        #region Edit Session (anonymous live edit in browser)
+
+        /// <summary>
+        /// Initialize a live edit session: uploads the raw local translations
+        /// file (metadata keys INCLUDED — the session file comes back verbatim
+        /// to replace translations.json, so _uuid/_game/_source must survive
+        /// the round trip). No authentication required.
+        /// </summary>
+        public static async Task<EditSessionInitResult> InitEditSession()
+        {
+            try
+            {
+                if (!System.IO.File.Exists(TranslatorCore.CachePath))
+                {
+                    return new EditSessionInitResult { Success = false, Error = "No local translation file to edit" };
+                }
+
+                string raw = System.IO.File.ReadAllText(TranslatorCore.CachePath);
+                JObject contentObj;
+                try { contentObj = JObject.Parse(raw); }
+                catch
+                {
+                    return new EditSessionInitResult { Success = false, Error = "Local translation file is not valid JSON" };
+                }
+
+                var payload = new JObject
+                {
+                    ["content"] = contentObj,
+                    ["game_name"] = TranslatorCore.CurrentGame?.name,
+                    ["source_language"] = TranslatorCore.Config?.GetSourceLanguage(),
+                    ["target_language"] = TranslatorCore.Config?.GetTargetLanguage()
+                };
+
+                var jsonPayload = payload.ToString(Newtonsoft.Json.Formatting.None);
+                var content = CompressJson(jsonPayload);
+
+                TranslatorCore.LogInfo($"[ApiClient] Initiating edit session (gzip: {jsonPayload.Length} -> {content.Headers.ContentLength ?? 0} bytes)...");
+                var response = await client.PostAsync($"{DefaultBaseUrl}/edit-session/init", content);
+
+                string json = await response.Content.ReadAsStringAsync();
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    var errorData = ParseJsonSafe(json);
+                    string errorMsg = errorData["error"]?.Value<string>()
+                        ?? errorData["message"]?.Value<string>()
+                        ?? $"HTTP {response.StatusCode}";
+
+                    TranslatorCore.LogWarning($"[ApiClient] Edit session init failed: {errorMsg}");
+                    return new EditSessionInitResult { Success = false, Error = errorMsg };
+                }
+
+                var data = ParseJsonSafe(json);
+
+                return new EditSessionInitResult
+                {
+                    Success = true,
+                    ModKey = data["mod_key"]?.Value<string>(),
+                    Url = data["url"]?.Value<string>(),
+                    ExpiresAt = data["expires_at"]?.Value<string>()
+                };
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogWarning($"[ApiClient] Edit session init error: {e.Message}");
+                return new EditSessionInitResult { Success = false, Error = e.Message };
+            }
+        }
+
+        /// <summary>
+        /// Download the current edit session content (called after each
+        /// browser save, signaled over SSE).
+        /// </summary>
+        public static async Task<EditSessionContentResult> GetEditSessionContent(string modKey)
+        {
+            try
+            {
+                var response = await client.GetAsync($"{DefaultBaseUrl}/edit-session/{Uri.EscapeDataString(modKey)}/content");
+                string body = await response.Content.ReadAsStringAsync();
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    var errorData = ParseJsonSafe(body);
+                    string errorMsg = errorData["error"]?.Value<string>() ?? $"HTTP {response.StatusCode}";
+                    return new EditSessionContentResult { Success = false, Error = errorMsg };
+                }
+
+                return new EditSessionContentResult { Success = true, Content = body };
+            }
+            catch (Exception e)
+            {
+                return new EditSessionContentResult { Success = false, Error = e.Message };
+            }
+        }
+
+        #endregion
+
         #region Voting
 
         /// <summary>
@@ -1365,6 +1470,26 @@ namespace UnityGameTranslator.Core
         public string Url { get; set; }
         /// <summary>ISO8601 expiration timestamp</summary>
         public string ExpiresAt { get; set; }
+    }
+
+    public class EditSessionInitResult
+    {
+        public bool Success { get; set; }
+        public string Error { get; set; }
+        /// <summary>Mod-side key for content download and SSE stream (never shown to a browser)</summary>
+        public string ModKey { get; set; }
+        /// <summary>URL to open in browser (may be relative, contains the one-time browser token)</summary>
+        public string Url { get; set; }
+        /// <summary>ISO8601 expiration timestamp</summary>
+        public string ExpiresAt { get; set; }
+    }
+
+    public class EditSessionContentResult
+    {
+        public bool Success { get; set; }
+        public string Error { get; set; }
+        /// <summary>Raw JSON of the session translations file</summary>
+        public string Content { get; set; }
     }
 
     #endregion

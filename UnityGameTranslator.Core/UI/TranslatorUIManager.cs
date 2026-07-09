@@ -752,18 +752,7 @@ namespace UnityGameTranslator.Core.UI
                 {
                     if (success && !string.IsNullOrEmpty(content))
                     {
-                        // Backup current file
-                        string backupPath = TranslatorCore.CachePath + ".backup";
-                        if (System.IO.File.Exists(TranslatorCore.CachePath))
-                        {
-                            System.IO.File.Copy(TranslatorCore.CachePath, backupPath, true);
-                        }
-
-                        // Write new content
-                        System.IO.File.WriteAllText(TranslatorCore.CachePath, content);
-
-                        // Reload cache to apply new content immediately
-                        TranslatorCore.ReloadCache();
+                        ApplyDownloadedTranslationFile(content);
 
                         // Update sync state
                         var serverState = TranslatorCore.ServerState;
@@ -800,6 +789,162 @@ namespace UnityGameTranslator.Core.UI
                 RunOnMainThread(() =>
                 {
                     TranslatorCore.LogError($"[MergeSSE] Error handling merge_completed: {errorMsg}");
+                });
+            }
+        }
+
+        /// <summary>
+        /// Backup the local translations file, overwrite it with new content
+        /// and hot-reload it. Shared by merge completion and edit session
+        /// saves. Must run on the main thread (ReloadCache touches Unity APIs).
+        /// </summary>
+        private static void ApplyDownloadedTranslationFile(string content)
+        {
+            string backupPath = TranslatorCore.CachePath + ".backup";
+            if (System.IO.File.Exists(TranslatorCore.CachePath))
+            {
+                System.IO.File.Copy(TranslatorCore.CachePath, backupPath, true);
+            }
+
+            System.IO.File.WriteAllText(TranslatorCore.CachePath, content);
+
+            // Reload cache to apply new content immediately
+            TranslatorCore.ReloadCache();
+        }
+
+        #endregion
+
+        #region SSE Edit Session (anonymous live edit in browser)
+
+        private static SseClient _editSessionSseClient;
+        private static string _editSessionModKey;
+        // Last applied save (dedupe: the SSE server replays the latest save on reconnection)
+        private static string _lastEditSessionHash;
+
+        /// <summary>True while a live edit session is listening for browser saves.</summary>
+        public static bool IsEditSessionActive => _editSessionSseClient != null;
+
+        /// <summary>
+        /// Start listening for edit session saves via SSE.
+        /// Unlike the merge listener, the stream stays open across many saves:
+        /// each one is downloaded and hot-reloaded so the user sees it in-game.
+        /// </summary>
+        public static void StartEditSessionListener(string modKey)
+        {
+            if (string.IsNullOrEmpty(modKey))
+            {
+                TranslatorCore.LogWarning("[EditSSE] No mod key, skipping edit session listener");
+                return;
+            }
+
+            StopEditSessionListener();
+            _editSessionModKey = modKey;
+            _lastEditSessionHash = null;
+
+            string url = ApiClient.GetEditSessionStreamUrl(modKey);
+
+            _editSessionSseClient = new SseClient(ApiClient.GetSseHttpClient());
+
+            _editSessionSseClient.OnEvent += (evt) =>
+            {
+                var eventType = evt.EventType;
+                var data = evt.Data;
+
+                RunOnMainThread(() =>
+                {
+                    if (eventType == "edit_saved")
+                    {
+                        HandleEditSessionSaved(data);
+                    }
+                    else if (eventType == "edit_session_ended")
+                    {
+                        TranslatorCore.LogInfo("[EditSSE] Edit session ended from the browser");
+                        StopEditSessionListener();
+                    }
+                });
+            };
+
+            _editSessionSseClient.OnError += (error) =>
+            {
+                var errorMsg = error;
+                RunOnMainThread(() =>
+                {
+                    TranslatorCore.LogWarning($"[EditSSE] Error: {errorMsg}");
+                    StopEditSessionListener();
+                });
+            };
+
+            _editSessionSseClient.Connect(url);
+            TranslatorCore.LogInfo($"[EditSSE] Listening for edit session saves (key: {modKey.Substring(0, 8)}...)");
+        }
+
+        /// <summary>
+        /// Stop listening for edit session saves.
+        /// </summary>
+        public static void StopEditSessionListener()
+        {
+            if (_editSessionSseClient != null)
+            {
+                _editSessionSseClient.Disconnect();
+                _editSessionSseClient.Dispose();
+                _editSessionSseClient = null;
+            }
+            _editSessionModKey = null;
+            _lastEditSessionHash = null;
+        }
+
+        /// <summary>
+        /// Handle an edit_saved SSE event — download the session content and
+        /// hot-reload it so the edit shows up in-game immediately.
+        /// </summary>
+        private static async void HandleEditSessionSaved(string jsonData)
+        {
+            try
+            {
+                var data = ApiClient.ParseJsonSafe(jsonData);
+                string contentHash = data["content_hash"]?.Value<string>();
+                int lineCount = data["line_count"]?.Value<int>() ?? 0;
+
+                // Reconnections replay the latest save — skip if already applied
+                if (!string.IsNullOrEmpty(contentHash) && contentHash == _lastEditSessionHash)
+                {
+                    TranslatorCore.LogDebug("[EditSSE] Save already applied (replay), skipping");
+                    return;
+                }
+
+                string modKey = _editSessionModKey;
+                if (string.IsNullOrEmpty(modKey)) return;
+
+                TranslatorCore.LogInfo($"[EditSSE] Browser saved ({lineCount} lines), downloading...");
+
+                var result = await ApiClient.GetEditSessionContent(modKey);
+
+                // After await, we may be on a background thread (IL2CPP issue)
+                var success = result.Success;
+                var content = result.Content;
+                var error = result.Error;
+
+                RunOnMainThread(() =>
+                {
+                    if (success && !string.IsNullOrEmpty(content))
+                    {
+                        ApplyDownloadedTranslationFile(content);
+                        _lastEditSessionHash = contentHash;
+                        TranslatorCore.LogInfo("[EditSSE] Edit applied in-game!");
+                        MainPanel?.RefreshUI();
+                    }
+                    else
+                    {
+                        TranslatorCore.LogWarning($"[EditSSE] Download after save failed: {error}");
+                    }
+                });
+            }
+            catch (Exception e)
+            {
+                var errorMsg = e.Message;
+                RunOnMainThread(() =>
+                {
+                    TranslatorCore.LogError($"[EditSSE] Error handling edit_saved: {errorMsg}");
                 });
             }
         }

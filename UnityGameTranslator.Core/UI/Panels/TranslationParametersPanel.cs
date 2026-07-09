@@ -79,6 +79,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         // Apply button tracking
         private ButtonRef _applyBtn;
 
+        // Tools tab — browser editor (live edit session)
+        private ButtonRef _browserEditorBtn;
+        private Text _browserEditorStatus;
+
         // Font highlight tracking
         private string _highlightedFontName = null;
         private ButtonRef _highlightedButton = null;
@@ -162,6 +166,24 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             UIStyles.CreateSpacer(card, 15);
 
+            // Browser Editor section (live edit session on the website, no account needed)
+            var browserEditorTitle = UIStyles.CreateSectionTitle(card, "BrowserEditorLabel", "Browser Editor");
+            RegisterUIText(browserEditorTitle);
+
+            var browserEditorHint = UIStyles.CreateHint(card, "BrowserEditorHint",
+                "Edit your translation file comfortably in your browser while playing — no account needed, nothing is published. Each save is applied in-game automatically.");
+            RegisterUIText(browserEditorHint);
+
+            _browserEditorBtn = CreatePrimaryButton(card, "BrowserEditorBtn", "Edit in browser", PanelWidth - 100);
+            _browserEditorBtn.OnClick += OnBrowserEditorClicked;
+            RegisterUIText(_browserEditorBtn.ButtonText);
+
+            _browserEditorStatus = UIStyles.CreateHint(card, "BrowserEditorStatus", "");
+            RegisterUIText(_browserEditorStatus);
+            RefreshBrowserEditorUI();
+
+            UIStyles.CreateSpacer(card, 15);
+
             // Detection section
             var sectionTitle = UIStyles.CreateSectionTitle(card, "DetectionLabel", "Detection");
             RegisterUIText(sectionTitle);
@@ -205,6 +227,68 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             SetActive(false);
             TranslatorUIManager.OpenInspectorPanel(InspectorMode.TextEdit);
+        }
+
+        private void OnBrowserEditorClicked()
+        {
+            if (TranslatorUIManager.IsEditSessionActive)
+            {
+                TranslatorUIManager.StopEditSessionListener();
+                SetBrowserEditorStatus("Session stopped.", UIStyles.TextMuted);
+                RefreshBrowserEditorUI();
+                return;
+            }
+
+            StartBrowserEditorSession();
+        }
+
+        private async void StartBrowserEditorSession()
+        {
+            SetBrowserEditorStatus("Starting session...", UIStyles.TextSecondary);
+
+            // Flush in-memory changes so the browser edits the current state
+            TranslatorCore.SaveCache();
+
+            var result = await ApiClient.InitEditSession();
+
+            // Capture values before RunOnMainThread (IL2CPP safety)
+            var success = result.Success;
+            var error = result.Error;
+            var modKey = result.ModKey;
+            var url = result.Url;
+
+            TranslatorUIManager.RunOnMainThread(() =>
+            {
+                if (!success || string.IsNullOrEmpty(modKey) || string.IsNullOrEmpty(url))
+                {
+                    SetBrowserEditorStatus($"Failed to start: {error ?? "unknown error"}", UIStyles.StatusError);
+                    return;
+                }
+
+                string fullUrl = ApiClient.GetMergePreviewFullUrl(url);
+                TranslatorCore.OpenUrlSafe(fullUrl);
+
+                TranslatorUIManager.StartEditSessionListener(modKey);
+                SetBrowserEditorStatus("Session active — edit in your browser, each save is applied in-game.", UIStyles.StatusSuccess);
+                RefreshBrowserEditorUI();
+            });
+        }
+
+        private void SetBrowserEditorStatus(string message, Color color)
+        {
+            if (_browserEditorStatus == null) return;
+            _browserEditorStatus.text = message;
+            _browserEditorStatus.color = color;
+        }
+
+        private void RefreshBrowserEditorUI()
+        {
+            if (_browserEditorBtn?.ButtonText != null)
+            {
+                _browserEditorBtn.ButtonText.text = TranslatorUIManager.IsEditSessionActive
+                    ? "Stop browser session"
+                    : "Edit in browser";
+            }
         }
 
         #endregion

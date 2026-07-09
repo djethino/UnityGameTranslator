@@ -1427,7 +1427,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (_textEditRow == null || _textEditListContent == null) return;
 
-            var textEntries = new List<(object component, string text, string originalKey, string tag, string childPath)>();
+            var textEntries = new List<(object component, string text, string originalKey, string tag, string childPath, Dictionary<int, string> liveNumbers)>();
 
             // Try the clicked path, then walk up the hierarchy until we find text components
             string searchPath = path;
@@ -1474,7 +1474,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// Uses FindAllObjectsOfType (IL2CPP-safe).
         /// </summary>
         private void FindTextComponentsAtPath(string pathPrefix,
-            List<(object component, string text, string originalKey, string tag, string childPath)> results)
+            List<(object component, string text, string originalKey, string tag, string childPath, Dictionary<int, string> liveNumbers)> results)
         {
             var seenIds = new HashSet<int>();
 
@@ -1511,49 +1511,49 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                         seenIds.Add(id);
 
-                        string originalKey = TranslatorCore.FindOriginalKey(text);
-                        string tag = "—";
-                        string translation = text;
+                        // Resolve to the cache entry with pipeline normalization, so texts
+                        // with dynamic numbers map to their [!v*N] pattern key
+                        var resolution = TranslatorCore.ResolveDisplayedText(text);
+                        if (resolution == null) continue;
 
-                        if (originalKey != null)
-                        {
-                            if (TranslatorCore.TranslationCache.TryGetValue(originalKey, out var entry))
-                            {
-                                translation = entry.Value;
-                                tag = entry.Tag ?? "A";
-                            }
-                        }
-                        else
-                        {
-                            originalKey = text;
-                            if (TranslatorCore.TranslationCache.TryGetValue(text, out var entry))
-                            {
-                                translation = entry.Value;
-                                tag = entry.Tag ?? "A";
-                            }
-                        }
+                        string tag = resolution.Entry?.Tag ?? "—";
+                        // Prefill: current translation with placeholders, or the normalized
+                        // source text when no entry exists yet
+                        string translation = resolution.Entry?.Value ?? resolution.Key;
 
-                        results.Add((obj, translation, originalKey, tag, compPath));
+                        results.Add((obj, translation, resolution.Key, tag, compPath, resolution.CapturedNumbers));
                     }
                     catch { }
                 }
             }
         }
 
-        private void CreateTextEditRow((object component, string text, string originalKey, string tag, string childPath) entry)
+        private void CreateTextEditRow((object component, string text, string originalKey, string tag, string childPath, Dictionary<int, string> liveNumbers) entry)
         {
             var row = UIFactory.CreateVerticalGroup(_textEditListContent, "TextEditEntry", false, false, true, true, 3);
             UIFactory.SetLayoutElement(row, flexibleWidth: 9999);
             UIStyles.SetBackground(row, UIStyles.CardBackground);
 
-            // Original key (truncated)
-            string keySnippet = entry.originalKey.Length > 60
-                ? entry.originalKey.Substring(0, 60) + "..."
-                : entry.originalKey;
-            var keyLabel = UIFactory.CreateLabel(row, "Key", $"[{entry.tag}] {keySnippet}", TextAnchor.UpperLeft);
+            // Original key: full text, word-wrapped (translating needs the whole source)
+            var keyLabel = UIFactory.CreateLabel(row, "Key", $"[{entry.tag}] {entry.originalKey}", TextAnchor.UpperLeft);
             keyLabel.fontSize = UIStyles.FontSizeSmall;
             keyLabel.color = UIStyles.TextMuted;
+            keyLabel.horizontalOverflow = HorizontalWrapMode.Wrap;
             UIFactory.SetLayoutElement(keyLabel.gameObject, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999);
+
+            // Live values of the [!v*N] placeholders, as currently displayed in-game
+            if (entry.liveNumbers != null && entry.liveNumbers.Count > 0)
+            {
+                var parts = new List<string>();
+                foreach (var kv in entry.liveNumbers)
+                    parts.Add($"[!v*{kv.Key}] = {kv.Value}");
+                var hintLabel = UIFactory.CreateLabel(row, "LiveValues",
+                    $"Keep placeholders as-is. Current values: {string.Join("   ", parts)}", TextAnchor.UpperLeft);
+                hintLabel.fontSize = UIStyles.FontSizeHint;
+                hintLabel.color = UIStyles.TextAccent;
+                hintLabel.horizontalOverflow = HorizontalWrapMode.Wrap;
+                UIFactory.SetLayoutElement(hintLabel.gameObject, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999);
+            }
 
             // Editable translation field
             var input = UIFactory.CreateInputField(row, "TranslationInput", "Enter translation...");
@@ -1569,6 +1569,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Capture for closures
             string capturedKey = entry.originalKey;
             object capturedComponent = entry.component;
+            var capturedNumbers = entry.liveNumbers;
 
             var saveBtn = UIFactory.CreateButton(btnRow, "SaveBtn", "Save (H)");
             UIFactory.SetLayoutElement(saveBtn.Component.gameObject, minWidth: 80, minHeight: UIStyles.RowHeightNormal);
@@ -1578,37 +1579,40 @@ namespace UnityGameTranslator.Core.UI.Panels
                 string newValue = input.Text;
                 if (string.IsNullOrEmpty(newValue)) return;
 
-                if (TranslatorCore.TranslationCache.TryGetValue(capturedKey, out var existing))
+                // Refuse edits that drop or invent placeholders — they would break
+                // dynamic numbers for every future value
+                string placeholderError = TranslatorCore.ValidateEditedPlaceholders(capturedKey, newValue);
+                if (placeholderError != null)
                 {
-                    existing.Value = newValue;
-                    existing.Tag = "H";
-                }
-                else
-                {
-                    TranslatorCore.TranslationCache[capturedKey] = new TranslationEntry { Value = newValue, Tag = "H" };
+                    _statusLabel.text = $"Not saved — {placeholderError}";
+                    _statusLabel.color = UIStyles.StatusError;
+                    return;
                 }
 
-                TranslatorCore.RecalculateLocalChanges();
-                TranslatorCore.SaveCache();
+                TranslatorCore.SetTranslationFromEditor(capturedKey, newValue);
 
-                // Apply immediately to the component
-                try { TypeHelper.SetText(capturedComponent, newValue); } catch { }
+                // Apply immediately to the component, with the live numbers re-injected
+                try
+                {
+                    TypeHelper.SetText(capturedComponent,
+                        TranslatorCore.RestoreNumbersFromPlaceholders(newValue, capturedNumbers));
+                }
+                catch { }
 
                 _statusLabel.text = "Saved!";
                 _statusLabel.color = UIStyles.StatusSuccess;
-                keyLabel.text = $"[H] {keySnippet}";
+                keyLabel.text = $"[H] {capturedKey}";
             };
 
             var retranslateBtn = UIFactory.CreateButton(btnRow, "RetranslateBtn", "Retranslate (AI)");
             UIFactory.SetLayoutElement(retranslateBtn.Component.gameObject, minWidth: 110, minHeight: UIStyles.RowHeightNormal);
             retranslateBtn.OnClick += () =>
             {
-                TranslatorCore.TranslationCache.Remove(capturedKey);
-                TranslatorCore.QueueForTranslation(capturedKey);
+                TranslatorCore.RemoveTranslationForRetranslate(capturedKey);
 
                 _statusLabel.text = "Queued for AI...";
                 _statusLabel.color = UIStyles.TextAccent;
-                keyLabel.text = $"[AI...] {keySnippet}";
+                keyLabel.text = $"[AI...] {capturedKey}";
             };
         }
 

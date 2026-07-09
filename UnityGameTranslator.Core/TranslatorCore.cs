@@ -490,23 +490,6 @@ namespace UnityGameTranslator.Core
         /// Patterns: "Canvas/Chat/**" matches any child, "**/PlayerName" matches at any depth.
         /// An exact path also matches all children (excluding "Canvas/Panel" excludes "Canvas/Panel/Text").
         /// </summary>
-        /// <summary>
-        /// Find the original key for a translated text value.
-        /// Searches TranslationCache for an entry whose Value matches the given translated text.
-        /// Returns null if not found (text might be the original itself).
-        /// </summary>
-        public static string FindOriginalKey(string translatedText)
-        {
-            if (string.IsNullOrEmpty(translatedText)) return null;
-
-            foreach (var kvp in TranslationCache)
-            {
-                if (kvp.Value != null && kvp.Value.Value == translatedText)
-                    return kvp.Key;
-            }
-            return null;
-        }
-
         public static bool MatchesExclusionPattern(string path, string pattern)
         {
             if (string.IsNullOrEmpty(pattern)) return false;
@@ -2074,7 +2057,6 @@ namespace UnityGameTranslator.Core
             // TryPatternMatch iterates PatternEntries on the main thread while
             // this can be called from the worker thread (via AddToCache).
             var newEntries = new List<PatternEntry>();
-            var placeholderRegex = new Regex(@"\[!v\*(\d+)\]", RegexOptions.None);
 
             // Snapshot to avoid "Collection was modified" if AddToCache runs concurrently
             KeyValuePair<string, TranslationEntry>[] cacheSnapshot;
@@ -2090,31 +2072,16 @@ namespace UnityGameTranslator.Core
                 // Skip if key equals value (no translation)
                 if (kv.Key == kv.Value.Value) continue;
 
-                var matches = placeholderRegex.Matches(kv.Key);
-                if (matches.Count == 0) continue;
+                var matchRegex = BuildPatternRegex(kv.Key, out var placeholderIndices, compiled: true);
+                if (matchRegex == null) continue;
 
-                try
+                newEntries.Add(new PatternEntry
                 {
-                    var placeholderIndices = new List<int>();
-                    string pattern = Regex.Escape(kv.Key);
-
-                    foreach (Match match in matches)
-                    {
-                        int index = int.Parse(match.Groups[1].Value);
-                        placeholderIndices.Add(index);
-                        string placeholder = Regex.Escape(match.Value);
-                        pattern = pattern.Replace(placeholder, @"(-?\d+(?:[.,]\d+)?%?)");
-                    }
-
-                    newEntries.Add(new PatternEntry
-                    {
-                        OriginalPattern = kv.Key,
-                        TranslatedPattern = kv.Value.Value,
-                        MatchRegex = new Regex("^" + pattern + "$", RegexOptions.Compiled),
-                        PlaceholderIndices = placeholderIndices
-                    });
-                }
-                catch { }
+                    OriginalPattern = kv.Key,
+                    TranslatedPattern = kv.Value.Value,
+                    MatchRegex = matchRegex,
+                    PlaceholderIndices = placeholderIndices
+                });
             }
 
             // Atomic swap — main thread sees either the old or the new list, never a half-built one
@@ -2123,6 +2090,241 @@ namespace UnityGameTranslator.Core
             if (DebugMode)
                 Adapter?.LogInfo($"Built {PatternEntries.Count} pattern entries");
         }
+
+        // Matches [!v*N] and captures its index
+        private static readonly Regex PlaceholderIndexPattern = new Regex(@"\[!v\*(\d+)\]", RegexOptions.Compiled);
+
+        /// <summary>
+        /// Build a regex matching a placeholder pattern against text with concrete numbers.
+        /// Each [!v*N] becomes a number-capture group; capture group i+1 corresponds to
+        /// placeholderIndices[i]. Works on original keys AND on translated values (which
+        /// may reorder the placeholders). Returns null if the pattern has no placeholders.
+        /// </summary>
+        private static Regex BuildPatternRegex(string patternText, out List<int> placeholderIndices, bool compiled = false)
+        {
+            placeholderIndices = new List<int>();
+            if (string.IsNullOrEmpty(patternText)) return null;
+
+            var matches = PlaceholderIndexPattern.Matches(patternText);
+            if (matches.Count == 0) return null;
+
+            try
+            {
+                string pattern = Regex.Escape(patternText);
+                foreach (Match match in matches)
+                {
+                    placeholderIndices.Add(int.Parse(match.Groups[1].Value));
+                    string placeholder = Regex.Escape(match.Value);
+                    // Replace one occurrence at a time so capture group order
+                    // follows appearance order even with duplicated indices
+                    int idx = pattern.IndexOf(placeholder, StringComparison.Ordinal);
+                    if (idx < 0) return null;
+                    pattern = pattern.Substring(0, idx) + @"(-?\d+(?:[.,]\d+)?%?)"
+                        + pattern.Substring(idx + placeholder.Length);
+                }
+                return new Regex("^" + pattern + "$", compiled ? RegexOptions.Compiled : RegexOptions.None);
+            }
+            catch { return null; }
+        }
+
+        #region In-Game Text Editor support
+
+        /// <summary>
+        /// Result of resolving a live displayed text back to its translation cache entry.
+        /// </summary>
+        public class DisplayedTextResolution
+        {
+            /// <summary>Cache key: normalized source text, may contain [!v*N] placeholders.
+            /// When Entry is null the key does not exist in the cache yet.</summary>
+            public string Key;
+            /// <summary>Cache entry when the text matched one, otherwise null.</summary>
+            public TranslationEntry Entry;
+            /// <summary>Live numbers captured from the displayed text, by placeholder index.</summary>
+            public Dictionary<int, string> CapturedNumbers = new Dictionary<int, string>();
+        }
+
+        /// <summary>
+        /// Resolve a live displayed text (original or translated, with concrete numbers)
+        /// back to its cache entry. Applies the same normalization as the translation
+        /// pipeline so texts with dynamic numbers resolve to their [!v*N] pattern key
+        /// instead of a frozen-number key.
+        /// </summary>
+        public static DisplayedTextResolution ResolveDisplayedText(string displayedText)
+        {
+            if (string.IsNullOrEmpty(displayedText)) return null;
+
+            var result = new DisplayedTextResolution();
+
+            string normalized = NormalizeLineEndings(displayedText);
+            List<string> liveNumbers = null;
+            if (Config.normalize_numbers)
+                normalized = ExtractNumbersToPlaceholders(normalized, out liveNumbers);
+
+            // ExtractNumbersToPlaceholders numbers placeholders in appearance order
+            if (liveNumbers != null)
+                for (int i = 0; i < liveNumbers.Count; i++)
+                    result.CapturedNumbers[i] = liveNumbers[i];
+
+            // Displayed text is a source text (untranslated, or shown before translation)
+            if (TranslationCache.TryGetValue(normalized, out var directEntry))
+            {
+                result.Key = normalized;
+                result.Entry = directEntry;
+                return result;
+            }
+            string trimmed = normalized.TrimEnd();
+            if (trimmed != normalized && TranslationCache.TryGetValue(trimmed, out directEntry))
+            {
+                result.Key = trimmed;
+                result.Entry = directEntry;
+                return result;
+            }
+
+            // Displayed text is a translated value (placeholders in source appearance order).
+            // try/catch: the AI worker can mutate TranslationCache during this iteration
+            // (same reason BuildPatternEntries snapshots) — fall through to pattern matching.
+            try
+            {
+                foreach (var kvp in TranslationCache)
+                {
+                    string value = kvp.Value?.Value;
+                    if (value == null) continue;
+                    if (value == normalized || value.TrimEnd() == trimmed)
+                    {
+                        result.Key = kvp.Key;
+                        result.Entry = kvp.Value;
+                        return result;
+                    }
+                }
+            }
+            catch { }
+
+            // Translated value whose placeholders were reordered by the translation:
+            // match the displayed text against each pattern's translated form
+            var patterns = PatternEntries;
+            if (patterns != null)
+            {
+                foreach (var pe in patterns)
+                {
+                    var reverseRegex = BuildPatternRegex(pe.TranslatedPattern, out var groupPlaceholders);
+                    if (reverseRegex == null) continue;
+                    var m = reverseRegex.Match(trimmed);
+                    if (!m.Success) continue;
+
+                    result.CapturedNumbers.Clear();
+                    for (int g = 0; g < groupPlaceholders.Count; g++)
+                        result.CapturedNumbers[groupPlaceholders[g]] = m.Groups[g + 1].Value;
+
+                    result.Key = pe.OriginalPattern;
+                    TranslationCache.TryGetValue(pe.OriginalPattern, out var patternEntry);
+                    result.Entry = patternEntry;
+                    return result;
+                }
+            }
+
+            // Unknown text: the normalized form is the key a future entry must use
+            result.Key = normalized;
+            return result;
+        }
+
+        /// <summary>
+        /// Validate that an edited translation keeps every frozen token of its key
+        /// ([!v*N], [!t*N], [!STR*N], [!nl]). Returns null when valid, otherwise a
+        /// short error message listing the problem tokens.
+        /// </summary>
+        public static string ValidateEditedPlaceholders(string key, string newValue)
+        {
+            var keyTokens = new Dictionary<string, int>();
+            foreach (Match m in PlaceholderTokenPattern.Matches(key ?? ""))
+            {
+                keyTokens.TryGetValue(m.Value, out int c);
+                keyTokens[m.Value] = c + 1;
+            }
+            var valueTokens = new Dictionary<string, int>();
+            foreach (Match m in PlaceholderTokenPattern.Matches(newValue ?? ""))
+            {
+                valueTokens.TryGetValue(m.Value, out int c);
+                valueTokens[m.Value] = c + 1;
+            }
+
+            var problems = new List<string>();
+            foreach (var kv in keyTokens)
+            {
+                valueTokens.TryGetValue(kv.Key, out int found);
+                if (found < kv.Value)
+                    problems.Add($"missing {kv.Key}");
+            }
+            foreach (var kv in valueTokens)
+            {
+                if (!keyTokens.ContainsKey(kv.Key))
+                    problems.Add($"unknown {kv.Key}");
+            }
+
+            return problems.Count == 0 ? null : string.Join(", ", problems);
+        }
+
+        /// <summary>
+        /// Create or update a translation entry from the in-game text editor (human edit).
+        /// Keeps the reverse cache in sync, rebuilds pattern entries when the key contains
+        /// placeholders, and persists the cache.
+        /// </summary>
+        public static void SetTranslationFromEditor(string key, string newValue)
+        {
+            if (string.IsNullOrEmpty(key) || string.IsNullOrEmpty(newValue)) return;
+
+            if (TranslationCache.TryGetValue(key, out var existing))
+            {
+                existing.Value = newValue;
+                existing.Tag = "H";
+            }
+            else
+            {
+                TranslationCache[key] = new TranslationEntry { Value = newValue, Tag = "H" };
+            }
+
+            // Reverse cache sync so the new value isn't detected as untranslated text
+            string normalizedTranslation = NormalizeLineEndings(newValue);
+            if (Config.normalize_numbers)
+                normalizedTranslation = ExtractNumbersToPlaceholders(normalizedTranslation, out _);
+            translatedTexts.TryAdd(normalizedTranslation.TrimEnd(), 0);
+
+            if (key.Contains(PlaceholderPrefix))
+                BuildPatternEntries();
+
+            RecalculateLocalChanges();
+            SaveCache();
+        }
+
+        /// <summary>
+        /// Remove a translation entry and queue its key for AI retranslation
+        /// (in-game text editor "Retranslate" action).
+        /// </summary>
+        public static void RemoveTranslationForRetranslate(string key)
+        {
+            if (string.IsNullOrEmpty(key)) return;
+
+            TranslationCache.Remove(key);
+            if (key.Contains(PlaceholderPrefix))
+                BuildPatternEntries();
+
+            QueueForTranslation(key);
+        }
+
+        /// <summary>
+        /// Replace [!v*N] placeholders with live numbers captured by ResolveDisplayedText.
+        /// </summary>
+        public static string RestoreNumbersFromPlaceholders(string text, IDictionary<int, string> numbersByIndex)
+        {
+            if (string.IsNullOrEmpty(text) || numbersByIndex == null || numbersByIndex.Count == 0)
+                return text;
+
+            string result = text;
+            foreach (var kv in numbersByIndex)
+                result = result.Replace($"{PlaceholderPrefix}{kv.Key}{PlaceholderSuffix}", kv.Value);
+            return result;
+        }
+
+        #endregion
 
         private static bool workerRunning = false;
         /// <summary>

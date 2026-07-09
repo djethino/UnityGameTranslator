@@ -1358,8 +1358,15 @@ namespace UnityGameTranslator.Core
         public static void RestoreAllOriginals()
         {
             int restored = 0;
+
+            // Suppress the text patches for the whole restore: the outgoing cache is
+            // still loaded, so every SetText below would otherwise fire the set_text
+            // prefix and immediately reapply the stale translation over the original
+            TranslatorCore.SuppressTranslationPatches = true;
             try
             {
+                // Pass 1: scanner cache
+                var processedIds = new HashSet<int>();
                 foreach (var type in _registeredTypes)
                 {
                     if (type.CachedComponents == null) continue;
@@ -1380,6 +1387,7 @@ namespace UnityGameTranslator.Core
 
                             int instanceId = TypeHelper.GetInstanceID(component);
                             if (instanceId == -1) continue;
+                            processedIds.Add(instanceId);
 
                             string original = GetOriginalText(instanceId);
                             if (original != null)
@@ -1393,12 +1401,45 @@ namespace UnityGameTranslator.Core
                     }
                 }
 
+                // Pass 2: components seen by the patches but not in the scanner cache
+                // (inactive GameObjects at scan time, etc.) — same gap ForceRefreshAllText
+                // covers. Without it they keep displaying the old translation, which the
+                // scanner would then queue for AI as if it were untranslated source text.
+                List<KeyValuePair<int, object>> patchRefs;
+                try { patchRefs = new List<KeyValuePair<int, object>>(TranslatorPatches.PatchedComponentRefs); }
+                catch { patchRefs = new List<KeyValuePair<int, object>>(); }
+
+                foreach (var kvp in patchRefs)
+                {
+                    if (kvp.Value == null || processedIds.Contains(kvp.Key)) continue;
+                    try
+                    {
+                        string original = GetOriginalText(kvp.Key);
+                        if (original == null) continue;
+
+                        var textProp = kvp.Value.GetType().GetProperty("text",
+                            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                        if (textProp?.SetMethod == null) continue;
+
+                        textProp.SetValue(kvp.Value, original, null);
+                        TypeHelper.ForceMeshUpdate(kvp.Value);
+                        TypeHelper.SetAllDirty(kvp.Value);
+                        ClearOriginalText(kvp.Key);
+                        restored++;
+                    }
+                    catch { }
+                }
+
                 if (restored > 0)
                     TranslatorCore.LogInfo($"[Scanner] Restored {restored} texts to originals before cache reload");
             }
             catch (Exception ex)
             {
                 TranslatorCore.LogWarning($"[Scanner] RestoreAllOriginals error: {ex.Message}");
+            }
+            finally
+            {
+                TranslatorCore.SuppressTranslationPatches = false;
             }
         }
 

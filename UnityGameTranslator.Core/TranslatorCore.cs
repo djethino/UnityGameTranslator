@@ -361,6 +361,14 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Set while RestoreAllOriginals rewrites displayed texts back to their
+        /// originals (cache reload): the text patches must not re-translate those
+        /// writes — the outgoing cache is still loaded at that point and would
+        /// reapply the stale translation over the restored original.
+        /// </summary>
+        public static volatile bool SuppressTranslationPatches = false;
+
+        /// <summary>
         /// Register a component to be excluded from translation (mod title, language codes, config values).
         /// </summary>
         public static void RegisterExcluded(UnityEngine.Object component)
@@ -694,8 +702,8 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static bool ShouldSkipTranslation(int instanceId)
         {
-            // Skip all translations during panel construction
-            if (IsInConstructionMode)
+            // Skip all translations during panel construction or original-text restore
+            if (IsInConstructionMode || SuppressTranslationPatches)
                 return true;
             if (ownUIExcluded.Contains(instanceId))
                 return true;
@@ -711,8 +719,8 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static bool ShouldSkipTranslation(Component component)
         {
-            // Skip all translations during panel construction
-            if (IsInConstructionMode)
+            // Skip all translations during panel construction or original-text restore
+            if (IsInConstructionMode || SuppressTranslationPatches)
                 return true;
             if (component == null) return false;
 
@@ -1713,6 +1721,12 @@ namespace UnityGameTranslator.Core
         {
             LogDebug("[TranslatorCore] Reloading cache from disk...");
 
+            // Snapshot the outgoing cache first: any text still displayed with an
+            // old translation after the reload can then be recognized and refreshed
+            // instead of being queued for AI (which would cache the old translated
+            // text as a key)
+            BuildStaleTranslationSnapshot();
+
             // Restore all displayed text to originals BEFORE loading new cache,
             // so the scanner doesn't see stale translated text from the old JSON
             // and try to re-translate it
@@ -2322,6 +2336,150 @@ namespace UnityGameTranslator.Core
             foreach (var kv in numbersByIndex)
                 result = result.Replace($"{PlaceholderPrefix}{kv.Key}{PlaceholderSuffix}", kv.Value);
             return result;
+        }
+
+        #endregion
+
+        #region Stale Translation Snapshot (post-reload safety net)
+
+        private class StalePatternEntry
+        {
+            public Regex Regex;                  // matches the OLD translated form with concrete numbers
+            public List<int> PlaceholderIndices; // capture group i+1 -> placeholder index
+            public string Key;
+        }
+
+        // Snapshot of the cache being replaced by ReloadCache. Texts still displayed
+        // with an old translation (components RestoreAllOriginals could not reach)
+        // are recognized through it and refreshed from the new cache instead of
+        // being queued for AI translation.
+        private static Dictionary<string, string> _staleValueToKey;
+        private static List<StalePatternEntry> _stalePatterns;
+
+        /// <summary>
+        /// Snapshot the current cache values before a reload replaces them.
+        /// Called by ReloadCache while the outgoing cache is still loaded.
+        /// </summary>
+        private static void BuildStaleTranslationSnapshot()
+        {
+            var valueToKey = new Dictionary<string, string>();
+            var stalePatterns = new List<StalePatternEntry>();
+
+            // Snapshot first: the AI worker can mutate TranslationCache during
+            // this iteration (same reason BuildPatternEntries snapshots)
+            KeyValuePair<string, TranslationEntry>[] cacheSnapshot;
+            try
+            {
+                cacheSnapshot = new List<KeyValuePair<string, TranslationEntry>>(TranslationCache).ToArray();
+            }
+            catch { return; }
+
+            foreach (var kv in cacheSnapshot)
+            {
+                string value = kv.Value?.Value;
+                if (string.IsNullOrEmpty(value) || kv.Key == value) continue;
+
+                string normalizedValue = NormalizeLineEndings(value);
+                if (Config.normalize_numbers)
+                    normalizedValue = ExtractNumbersToPlaceholders(normalizedValue, out _);
+                normalizedValue = normalizedValue.TrimEnd();
+                if (!valueToKey.ContainsKey(normalizedValue))
+                    valueToKey[normalizedValue] = kv.Key;
+
+                // Values whose placeholders were reordered by the translation can't be
+                // matched by the normalized-value lookup — keep a regex for them
+                if (value.Contains(PlaceholderPrefix))
+                {
+                    var regex = BuildPatternRegex(value, out var indices);
+                    if (regex == null) continue;
+                    bool inAppearanceOrder = true;
+                    for (int i = 0; i < indices.Count; i++)
+                        if (indices[i] != i) { inAppearanceOrder = false; break; }
+                    if (!inAppearanceOrder)
+                        stalePatterns.Add(new StalePatternEntry
+                        {
+                            Regex = regex,
+                            PlaceholderIndices = indices,
+                            Key = kv.Key
+                        });
+                }
+            }
+
+            _staleValueToKey = valueToKey;
+            _stalePatterns = stalePatterns;
+            LogDebug($"[StaleSnapshot] {valueToKey.Count} values, {stalePatterns.Count} reordered patterns");
+        }
+
+        /// <summary>
+        /// Recognize a displayed text that is a translation from the pre-reload cache.
+        /// Returns the refreshed translation from the new cache, the input text itself
+        /// when the entry no longer exists (marked as translated so it is never queued),
+        /// or null when the text is not a stale translation.
+        /// </summary>
+        private static string TryResolveStaleTranslation(string text, string trimmedNormalized, object component)
+        {
+            var valueToKey = _staleValueToKey;
+            if (valueToKey == null) return null;
+
+            string key = null;
+            Dictionary<int, string> capturedNumbers = null;
+
+            if (valueToKey.TryGetValue(trimmedNormalized, out key))
+            {
+                // Normalized-value match: placeholders are in appearance order,
+                // so live numbers map to placeholder indices by position
+                if (Config.normalize_numbers)
+                {
+                    ExtractNumbersToPlaceholders(NormalizeLineEndings(text), out var numbers);
+                    if (numbers != null && numbers.Count > 0)
+                    {
+                        capturedNumbers = new Dictionary<int, string>();
+                        for (int i = 0; i < numbers.Count; i++)
+                            capturedNumbers[i] = numbers[i];
+                    }
+                }
+            }
+            else
+            {
+                var stalePatterns = _stalePatterns;
+                if (stalePatterns == null || stalePatterns.Count == 0) return null;
+
+                string lineNormalized = NormalizeLineEndings(text).TrimEnd();
+                foreach (var sp in stalePatterns)
+                {
+                    var m = sp.Regex.Match(lineNormalized);
+                    if (!m.Success) continue;
+                    key = sp.Key;
+                    capturedNumbers = new Dictionary<int, string>();
+                    for (int g = 0; g < sp.PlaceholderIndices.Count; g++)
+                        capturedNumbers[sp.PlaceholderIndices[g]] = m.Groups[g + 1].Value;
+                    break;
+                }
+                if (key == null) return null;
+            }
+
+            // The displayed text is a stale translation of `key`
+            if (TranslationCache.TryGetValue(key, out var entry) && !string.IsNullOrEmpty(entry.Value)
+                && entry.Value != key && !entry.IsHumanEmpty && entry.Tag != "S")
+            {
+                string newText = RestoreNumbersFromPlaceholders(entry.Value, capturedNumbers);
+                if (component != null)
+                {
+                    string originalText = RestoreNumbersFromPlaceholders(key, capturedNumbers);
+                    TranslatorScanner.StoreOriginalText(component, originalText);
+                    TranslatorPatches.TrackTranslation(TypeHelper.GetInstanceID(component), originalText, newText);
+                }
+                translatedCount++;
+                LogDebug($"[StaleRefresh] Refreshed stale translation for key: {key.Substring(0, Math.Min(40, key.Length))}");
+                return newText;
+            }
+
+            // Entry removed from the new cache: keep the displayed text and mark it
+            // as translated so it is never queued (returning the input unchanged also
+            // keeps the caller from tracking it as a new translation)
+            translatedTexts.TryAdd(trimmedNormalized, 0);
+            LogDebug($"[StaleRefresh] Entry gone from new cache, keeping displayed text for key: {key.Substring(0, Math.Min(40, key.Length))}");
+            return text;
         }
 
         #endregion
@@ -4158,6 +4316,12 @@ namespace UnityGameTranslator.Core
                     return text;
                 }
 
+                // Text may be a translation from the pre-reload cache still displayed
+                // (component missed by RestoreAllOriginals) — refresh it, never queue it
+                string staleRefreshed = TryResolveStaleTranslation(text, trimmedNormalized, null);
+                if (staleRefreshed != null)
+                    return staleRefreshed;
+
                 if (!IsTargetLanguage(text))
                 {
                     QueueForTranslation(text);
@@ -4415,6 +4579,12 @@ namespace UnityGameTranslator.Core
                     skippedAlreadyTranslated++;
                     return text;
                 }
+
+                // Text may be a translation from the pre-reload cache still displayed
+                // (component missed by RestoreAllOriginals) — refresh it, never queue it
+                string staleRefreshed = TryResolveStaleTranslation(text, trimmedNormalized, component);
+                if (staleRefreshed != null)
+                    return staleRefreshed;
 
                 // Own UI text that's already translated (displayed result) — don't re-queue
                 // The mod UI shows translated text; re-queueing it creates an infinite loop

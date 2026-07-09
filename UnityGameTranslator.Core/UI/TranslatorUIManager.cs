@@ -167,6 +167,16 @@ namespace UnityGameTranslator.Core.UI
                     TranslatorCore.LogError($"[UIManager] RunOnMainThread callback error: {e.GetType().Name}: {e.Message}\n{e.StackTrace}");
                 }
             }
+
+            // Live edit session housekeeping (debounced pushes, browser grace timer)
+            try
+            {
+                TickEditSession();
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogError($"[UIManager] TickEditSession error: {e.Message}");
+            }
         }
 
         /// <summary>
@@ -797,9 +807,22 @@ namespace UnityGameTranslator.Core.UI
         /// Backup the local translations file, overwrite it with new content
         /// and hot-reload it. Shared by merge completion and edit session
         /// saves. Must run on the main thread (ReloadCache touches Unity APIs).
+        /// Returns false (and leaves the local file untouched) if the content
+        /// is not valid JSON — a corrupted write would make LoadCache reset
+        /// the cache and regenerate the file UUID, breaking the lineage.
         /// </summary>
-        private static void ApplyDownloadedTranslationFile(string content)
+        private static bool ApplyDownloadedTranslationFile(string content)
         {
+            try
+            {
+                Newtonsoft.Json.Linq.JObject.Parse(content);
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogWarning($"[UIManager] Refusing to apply downloaded content: not valid JSON ({e.Message})");
+                return false;
+            }
+
             string backupPath = TranslatorCore.CachePath + ".backup";
             if (System.IO.File.Exists(TranslatorCore.CachePath))
             {
@@ -810,6 +833,7 @@ namespace UnityGameTranslator.Core.UI
 
             // Reload cache to apply new content immediately
             TranslatorCore.ReloadCache();
+            return true;
         }
 
         #endregion
@@ -821,8 +845,183 @@ namespace UnityGameTranslator.Core.UI
         // Last applied save (dedupe: the SSE server replays the latest save on reconnection)
         private static string _lastEditSessionHash;
 
+        // Mod → browser live sync: local file changes are pushed to the session
+        // (debounced) so new AI translations / in-game edits show up in the editor
+        private const float PushDebounceSeconds = 10f;
+        private static volatile bool _pendingLocalPush;   // set by SaveCache (any thread)
+        private static bool _pushInFlight;                // main thread only
+        private static float _nextPushAllowedTime;        // main thread only
+
+        // Browser presence: the page signals departure (pagehide beacon) and
+        // return; the mod ends the session after a grace period without the
+        // browser (grace absorbs page refreshes and navigations)
+        private const float BrowserGraceSeconds = 90f;
+        private const int BrowserStaleSeconds = 180;      // crash fallback via push responses
+        private static float _browserLeftSince = -1f;     // main thread only, -1 = present
+
         /// <summary>True while a live edit session is listening for browser saves.</summary>
         public static bool IsEditSessionActive => _editSessionSseClient != null;
+
+        /// <summary>
+        /// Called by TranslatorCore.SaveCache whenever the local file is written.
+        /// Cheap and thread-safe: just flags the change, TickEditSession pushes.
+        /// </summary>
+        public static void NotifyLocalFileChanged()
+        {
+            if (_editSessionSseClient == null) return;
+            _pendingLocalPush = true;
+        }
+
+        /// <summary>
+        /// Per-frame housekeeping for the live edit session (called from
+        /// DrainMainThreadQueue): debounced local-file pushes and the
+        /// browser-absence grace timer.
+        /// </summary>
+        private static void TickEditSession()
+        {
+            if (_editSessionSseClient == null) return;
+
+            float now = Time.realtimeSinceStartup;
+
+            if (_browserLeftSince >= 0f && now - _browserLeftSince > BrowserGraceSeconds)
+            {
+                TranslatorCore.LogInfo("[EditSSE] Browser page gone past grace period, ending session");
+                EndEditSessionFromMod("Browser page closed — session ended.");
+                return;
+            }
+
+            if (_pendingLocalPush && !_pushInFlight && now >= _nextPushAllowedTime)
+            {
+                _pendingLocalPush = false;
+                _pushInFlight = true;
+                _nextPushAllowedTime = now + PushDebounceSeconds;
+                PushLocalFileToEditSession();
+            }
+        }
+
+        /// <summary>
+        /// Push the local file to the session so the browser editor sees
+        /// in-game changes. Skipped when the file still matches the session
+        /// content (e.g. the save we just applied) — natural echo suppression.
+        /// </summary>
+        private static async void PushLocalFileToEditSession()
+        {
+            try
+            {
+                string modKey = _editSessionModKey;
+                if (string.IsNullOrEmpty(modKey))
+                {
+                    _pushInFlight = false;
+                    return;
+                }
+
+                string localHash = ComputeLocalFileHash();
+                if (localHash != null && localHash == _lastEditSessionHash)
+                {
+                    _pushInFlight = false;
+                    return;
+                }
+
+                var result = await ApiClient.UpdateEditSession(modKey);
+
+                // Capture before RunOnMainThread (IL2CPP safety)
+                var success = result.Success;
+                var sessionGone = result.SessionGone;
+                var contentHash = result.ContentHash;
+                var browserLeft = result.BrowserLeft;
+                var seenSecondsAgo = result.BrowserSeenSecondsAgo;
+                var error = result.Error;
+
+                RunOnMainThread(() =>
+                {
+                    _pushInFlight = false;
+
+                    if (sessionGone)
+                    {
+                        TranslatorCore.LogInfo("[EditSSE] Session no longer exists server-side, stopping");
+                        StopEditSessionListener();
+                        TranslationParamsPanel?.OnEditSessionEnded("Session expired — stopped.");
+                        return;
+                    }
+
+                    if (!success)
+                    {
+                        // Transient failure: re-arm, the next tick retries after the debounce
+                        TranslatorCore.LogWarning($"[EditSSE] Push failed: {error}");
+                        _pendingLocalPush = true;
+                        return;
+                    }
+
+                    _lastEditSessionHash = contentHash;
+                    TranslatorCore.LogDebug("[EditSSE] Local changes pushed to the browser editor");
+
+                    // Presence carried by the response (covers browser crashes
+                    // where the pagehide beacon never fired)
+                    bool browserAway = browserLeft
+                        || (seenSecondsAgo.HasValue && seenSecondsAgo.Value > BrowserStaleSeconds);
+                    if (browserAway)
+                    {
+                        if (_browserLeftSince < 0f)
+                            _browserLeftSince = Time.realtimeSinceStartup;
+                    }
+                    else if (seenSecondsAgo.HasValue)
+                    {
+                        _browserLeftSince = -1f;
+                    }
+                });
+            }
+            catch (Exception e)
+            {
+                var errorMsg = e.Message;
+                RunOnMainThread(() =>
+                {
+                    _pushInFlight = false;
+                    TranslatorCore.LogWarning($"[EditSSE] Push error: {errorMsg}");
+                });
+            }
+        }
+
+        /// <summary>
+        /// sha256 of the local translations file, matching the server-side
+        /// hash of the session content (same bytes after an applied save).
+        /// </summary>
+        private static string ComputeLocalFileHash()
+        {
+            try
+            {
+                if (!System.IO.File.Exists(TranslatorCore.CachePath)) return null;
+                using (var sha = System.Security.Cryptography.SHA256.Create())
+                {
+                    var bytes = System.IO.File.ReadAllBytes(TranslatorCore.CachePath);
+                    return BitConverter.ToString(sha.ComputeHash(bytes)).Replace("-", "").ToLowerInvariant();
+                }
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// End the session from the mod side: server cleanup (idempotent
+        /// DELETE), stop listening, notify the panel.
+        /// </summary>
+        public static async void EndEditSessionFromMod(string reason)
+        {
+            string modKey = _editSessionModKey;
+            StopEditSessionListener();
+
+            if (!string.IsNullOrEmpty(modKey))
+            {
+                await ApiClient.EndEditSession(modKey);
+            }
+
+            RunOnMainThread(() =>
+            {
+                TranslatorCore.LogInfo($"[EditSSE] Session ended: {reason}");
+                TranslationParamsPanel?.OnEditSessionEnded(reason);
+            });
+        }
 
         /// <summary>
         /// Start listening for edit session saves via SSE.
@@ -860,6 +1059,22 @@ namespace UnityGameTranslator.Core.UI
                     {
                         TranslatorCore.LogInfo("[EditSSE] Edit session ended from the browser");
                         StopEditSessionListener();
+                        TranslationParamsPanel?.OnEditSessionEnded("Session ended from the browser.");
+                    }
+                    else if (eventType == "browser_left")
+                    {
+                        // pagehide fired (close, refresh or navigation) — start
+                        // the grace timer; a rejoin cancels it
+                        if (_browserLeftSince < 0f)
+                        {
+                            _browserLeftSince = Time.realtimeSinceStartup;
+                            TranslatorCore.LogDebug("[EditSSE] Browser page left, grace period started");
+                        }
+                    }
+                    else if (eventType == "browser_joined")
+                    {
+                        _browserLeftSince = -1f;
+                        TranslatorCore.LogDebug("[EditSSE] Browser page (re)joined");
                     }
                 });
             };
@@ -891,6 +1106,9 @@ namespace UnityGameTranslator.Core.UI
             }
             _editSessionModKey = null;
             _lastEditSessionHash = null;
+            _pendingLocalPush = false;
+            _pushInFlight = false;
+            _browserLeftSince = -1f;
         }
 
         /// <summary>
@@ -930,6 +1148,8 @@ namespace UnityGameTranslator.Core.UI
                     {
                         ApplyDownloadedTranslationFile(content);
                         _lastEditSessionHash = contentHash;
+                        // A save proves the browser is alive
+                        _browserLeftSince = -1f;
                         TranslatorCore.LogInfo("[EditSSE] Edit applied in-game!");
                         MainPanel?.RefreshUI();
                     }

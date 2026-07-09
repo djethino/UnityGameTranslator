@@ -233,13 +233,24 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (TranslatorUIManager.IsEditSessionActive)
             {
-                TranslatorUIManager.StopEditSessionListener();
-                SetBrowserEditorStatus("Session stopped.", UIStyles.TextMuted);
-                RefreshBrowserEditorUI();
+                // Ends server-side too (deletes the session file) and
+                // calls back OnEditSessionEnded to refresh this UI
+                TranslatorUIManager.EndEditSessionFromMod("Session stopped.");
                 return;
             }
 
             StartBrowserEditorSession();
+        }
+
+        /// <summary>
+        /// Called by TranslatorUIManager when the session ends outside a
+        /// direct click (browser closed past grace, ended from the page,
+        /// expired server-side, or the Stop button round trip).
+        /// </summary>
+        public void OnEditSessionEnded(string reason)
+        {
+            SetBrowserEditorStatus(reason, UIStyles.TextMuted);
+            RefreshBrowserEditorUI();
         }
 
         private async void StartBrowserEditorSession()

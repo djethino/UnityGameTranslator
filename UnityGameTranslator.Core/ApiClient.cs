@@ -1174,6 +1174,78 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Push the current local file to the edit session (the file changed
+        /// in-game while the browser session is open). The response carries
+        /// browser presence so the caller can conclude the page was closed.
+        /// </summary>
+        public static async Task<EditSessionUpdateResult> UpdateEditSession(string modKey)
+        {
+            try
+            {
+                if (!System.IO.File.Exists(TranslatorCore.CachePath))
+                {
+                    return new EditSessionUpdateResult { Success = false, Error = "No local translation file" };
+                }
+
+                string raw = System.IO.File.ReadAllText(TranslatorCore.CachePath);
+                JObject contentObj;
+                try { contentObj = JObject.Parse(raw); }
+                catch
+                {
+                    return new EditSessionUpdateResult { Success = false, Error = "Local translation file is not valid JSON" };
+                }
+
+                var payload = new JObject { ["content"] = contentObj };
+                var content = CompressJson(payload.ToString(Newtonsoft.Json.Formatting.None));
+
+                var response = await client.PostAsync($"{DefaultBaseUrl}/edit-session/{Uri.EscapeDataString(modKey)}/update", content);
+                string json = await response.Content.ReadAsStringAsync();
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    var errorData = ParseJsonSafe(json);
+                    return new EditSessionUpdateResult
+                    {
+                        Success = false,
+                        SessionGone = response.StatusCode == System.Net.HttpStatusCode.NotFound,
+                        Error = errorData["error"]?.Value<string>() ?? $"HTTP {response.StatusCode}"
+                    };
+                }
+
+                var data = ParseJsonSafe(json);
+                return new EditSessionUpdateResult
+                {
+                    Success = true,
+                    ContentHash = data["content_hash"]?.Value<string>(),
+                    BrowserSeenSecondsAgo = data["browser_seen_seconds_ago"]?.Value<int?>(),
+                    BrowserLeft = data["browser_left"]?.Value<bool>() ?? false
+                };
+            }
+            catch (Exception e)
+            {
+                return new EditSessionUpdateResult { Success = false, Error = e.Message };
+            }
+        }
+
+        /// <summary>
+        /// End the edit session server-side (user clicked Stop in the mod, or
+        /// the browser page was gone past the grace period). Idempotent.
+        /// </summary>
+        public static async Task<bool> EndEditSession(string modKey)
+        {
+            try
+            {
+                var response = await client.DeleteAsync($"{DefaultBaseUrl}/edit-session/{Uri.EscapeDataString(modKey)}");
+                return response.IsSuccessStatusCode;
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogWarning($"[ApiClient] Edit session end error: {e.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
         /// Download the current edit session content (called after each
         /// browser save, signaled over SSE).
         /// </summary>
@@ -1490,6 +1562,20 @@ namespace UnityGameTranslator.Core
         public string Error { get; set; }
         /// <summary>Raw JSON of the session translations file</summary>
         public string Content { get; set; }
+    }
+
+    public class EditSessionUpdateResult
+    {
+        public bool Success { get; set; }
+        public string Error { get; set; }
+        /// <summary>True when the server no longer knows the session (404)</summary>
+        public bool SessionGone { get; set; }
+        /// <summary>sha256 of the session file after this push</summary>
+        public string ContentHash { get; set; }
+        /// <summary>Seconds since the browser last signaled presence (null: never opened)</summary>
+        public int? BrowserSeenSecondsAgo { get; set; }
+        /// <summary>True when the pagehide beacon fired without a rejoin since</summary>
+        public bool BrowserLeft { get; set; }
     }
 
     #endregion

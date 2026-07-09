@@ -4915,6 +4915,10 @@ namespace UnityGameTranslator.Core
                     Adapter?.LogError($"Failed to save cache: {e.Message}");
                 }
             }
+
+            // Live edit session: push the change to the browser editor
+            // (debounced + hash-checked by the UI manager, no-op otherwise)
+            UI.TranslatorUIManager.NotifyLocalFileChanged();
         }
 
         /// <summary>

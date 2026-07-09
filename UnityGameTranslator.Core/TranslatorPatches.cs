@@ -451,6 +451,11 @@ namespace UnityGameTranslator.Core
             "DynamicScrollbarHider", // Our own component
         };
 
+        // Middleware namespaces whose text components never display game text.
+        // Rewired: its internal GUIText backs a debug overlay, and its getter can
+        // run on Rewired's input thread → native crash on IL2CPP (GitHub issue #15).
+        private static readonly string[] GenericExcludedNamespaces = { "Rewired" };
+
         // Common font property names to check (in priority order)
         private static readonly string[] FontPropertyNames = { "font", "trueTypeFont", "fontAsset" };
         private static readonly string[] FontSizePropertyNames = { "fontSize", "size", "fontsize" };
@@ -499,6 +504,20 @@ namespace UnityGameTranslator.Core
                             string cleanName = typeName.StartsWith("Il2Cpp") ? typeName.Substring(6) : typeName;
                             if (GenericExcludedTypes.Contains(cleanName)) continue;
                             if (handledTypes.Contains(type)) continue;
+
+                            // Skip middleware namespaces (strip interop prefix for matching)
+                            string ns = type.Namespace ?? "";
+                            if (ns.StartsWith("Il2Cpp")) ns = ns.Substring(6);
+                            bool inExcludedNamespace = false;
+                            foreach (var excludedNs in GenericExcludedNamespaces)
+                            {
+                                if (ns == excludedNs || ns.StartsWith(excludedNs + "."))
+                                {
+                                    inExcludedNamespace = true;
+                                    break;
+                                }
+                            }
+                            if (inExcludedNamespace) continue;
 
                             // Check if it inherits from MonoBehaviour (Component chain)
                             if (!typeof(Component).IsAssignableFrom(type) && !InheritsFromComponent(type))
@@ -639,6 +658,28 @@ namespace UnityGameTranslator.Core
             return patched;
         }
 
+        // Generic text types already reported as accessed off the main thread (log once per type)
+        private static readonly HashSet<string> _offThreadLoggedTypes = new HashSet<string>();
+
+        /// <summary>
+        /// Returns true (and logs once per type) when called off the Unity main thread.
+        /// Generic getters/setters can be invoked from middleware background threads
+        /// (e.g. Rewired's input thread); the Unity APIs used below are main-thread
+        /// only and crash natively on IL2CPP instead of throwing.
+        /// </summary>
+        private static bool SkipOffMainThread(object instance)
+        {
+            if (TranslatorCore.IsMainThread) return false;
+
+            string typeName = instance?.GetType().FullName ?? "?";
+            bool firstTime;
+            lock (_offThreadLoggedTypes)
+                firstTime = _offThreadLoggedTypes.Add(typeName);
+            if (firstTime)
+                TranslatorCore.LogDebug($"[Patches] {typeName}.text accessed off the main thread — translation skipped");
+            return true;
+        }
+
         /// <summary>
         /// Prefix for generically detected text components (NGUI UILabel, etc.)
         /// </summary>
@@ -646,6 +687,7 @@ namespace UnityGameTranslator.Core
         {
             if (string.IsNullOrEmpty(value)) return;
             if (!TranslatorCore.Config.enable_translations) return;
+            if (SkipOffMainThread(__instance)) return;
             try
             {
                 var component = __instance as Component;
@@ -702,6 +744,7 @@ namespace UnityGameTranslator.Core
         {
             if (string.IsNullOrEmpty(__result)) return;
             if (!TranslatorCore.Config.enable_translations) return;
+            if (SkipOffMainThread(__instance)) return;
             try
             {
                 var component = __instance as Component;

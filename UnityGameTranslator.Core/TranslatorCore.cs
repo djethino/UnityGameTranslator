@@ -968,11 +968,25 @@ namespace UnityGameTranslator.Core
             public List<int> PlaceholderIndices;
         }
 
+        // Managed id of the Unity main thread, captured in Initialize (which the
+        // mod loaders always call on it). Unity APIs are main-thread only; on
+        // IL2CPP an off-thread call dies with a native, uncatchable
+        // AccessViolationException instead of a managed exception.
+        private static int _mainThreadId = -1;
+
+        /// <summary>
+        /// True when the current thread is the Unity main thread.
+        /// Patches invoked from middleware background threads (e.g. Rewired's
+        /// input thread) must check this before touching any Unity API.
+        /// </summary>
+        public static bool IsMainThread => Thread.CurrentThread.ManagedThreadId == _mainThreadId;
+
         /// <summary>
         /// Initialize the translation core
         /// </summary>
         public static void Initialize(IModLoaderAdapter adapter)
         {
+            _mainThreadId = Thread.CurrentThread.ManagedThreadId;
             Instance = new TranslatorCore();
             Adapter = adapter;
 

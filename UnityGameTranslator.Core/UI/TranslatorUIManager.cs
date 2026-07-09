@@ -854,10 +854,19 @@ namespace UnityGameTranslator.Core.UI
 
         // Browser presence: the page signals departure (pagehide beacon) and
         // return; the mod ends the session after a grace period without the
-        // browser (grace absorbs page refreshes and navigations)
+        // browser (grace absorbs page refreshes and navigations).
+        // ONLY the explicit beacon counts as "left": background tabs get
+        // frozen/discarded by the browser (their heartbeat stops) and that
+        // must never end a session — the player can stay in-game for hours
+        // before coming back to save.
         private const float BrowserGraceSeconds = 90f;
-        private const int BrowserStaleSeconds = 180;      // crash fallback via push responses
         private static float _browserLeftSince = -1f;     // main thread only, -1 = present
+
+        // Keepalive: extends the server-side TTL for the whole play session,
+        // so the session only ever ends on browser close or game shutdown
+        private const float KeepaliveIntervalSeconds = 600f;
+        private static float _nextKeepaliveTime;           // main thread only
+        private static bool _keepaliveInFlight;            // main thread only
 
         /// <summary>True while a live edit session is listening for browser saves.</summary>
         public static bool IsEditSessionActive => _editSessionSseClient != null;
@@ -896,6 +905,47 @@ namespace UnityGameTranslator.Core.UI
                 _pushInFlight = true;
                 _nextPushAllowedTime = now + PushDebounceSeconds;
                 PushLocalFileToEditSession();
+            }
+
+            if (now >= _nextKeepaliveTime && !_keepaliveInFlight)
+            {
+                _keepaliveInFlight = true;
+                _nextKeepaliveTime = now + KeepaliveIntervalSeconds;
+                SendEditSessionKeepalive();
+            }
+        }
+
+        /// <summary>
+        /// Periodic server-side TTL extension: the session must survive for
+        /// as long as the game runs, whatever the player's editing rhythm.
+        /// </summary>
+        private static async void SendEditSessionKeepalive()
+        {
+            try
+            {
+                string modKey = _editSessionModKey;
+                if (string.IsNullOrEmpty(modKey))
+                {
+                    _keepaliveInFlight = false;
+                    return;
+                }
+
+                bool alive = await ApiClient.KeepAliveEditSession(modKey);
+
+                RunOnMainThread(() =>
+                {
+                    _keepaliveInFlight = false;
+                    if (!alive)
+                    {
+                        TranslatorCore.LogInfo("[EditSSE] Session no longer exists server-side, stopping");
+                        StopEditSessionListener();
+                        TranslationParamsPanel?.OnEditSessionEnded("Session expired — stopped.");
+                    }
+                });
+            }
+            catch
+            {
+                RunOnMainThread(() => { _keepaliveInFlight = false; });
             }
         }
 
@@ -953,18 +1003,19 @@ namespace UnityGameTranslator.Core.UI
                     }
 
                     _lastEditSessionHash = contentHash;
+                    // A successful push also extended the server TTL
+                    _nextKeepaliveTime = Time.realtimeSinceStartup + KeepaliveIntervalSeconds;
                     TranslatorCore.LogDebug("[EditSSE] Local changes pushed to the browser editor");
 
-                    // Presence carried by the response (covers browser crashes
-                    // where the pagehide beacon never fired)
-                    bool browserAway = browserLeft
-                        || (seenSecondsAgo.HasValue && seenSecondsAgo.Value > BrowserStaleSeconds);
-                    if (browserAway)
+                    // Presence: ONLY the explicit pagehide beacon counts as
+                    // "left" — a stale heartbeat just means the tab is frozen
+                    // in the background, which must never end the session
+                    if (browserLeft)
                     {
                         if (_browserLeftSince < 0f)
                             _browserLeftSince = Time.realtimeSinceStartup;
                     }
-                    else if (seenSecondsAgo.HasValue)
+                    else
                     {
                         _browserLeftSince = -1f;
                     }
@@ -1039,6 +1090,7 @@ namespace UnityGameTranslator.Core.UI
             StopEditSessionListener();
             _editSessionModKey = modKey;
             _lastEditSessionHash = null;
+            _nextKeepaliveTime = Time.realtimeSinceStartup + KeepaliveIntervalSeconds;
 
             string url = ApiClient.GetEditSessionStreamUrl(modKey);
 
@@ -1108,7 +1160,27 @@ namespace UnityGameTranslator.Core.UI
             _lastEditSessionHash = null;
             _pendingLocalPush = false;
             _pushInFlight = false;
+            _keepaliveInFlight = false;
             _browserLeftSince = -1f;
+        }
+
+        /// <summary>
+        /// Best-effort synchronous session end during game shutdown (bounded
+        /// wait — the process is exiting). Closing the game is one of the two
+        /// legitimate ways a session ends; the server TTL covers hard crashes.
+        /// </summary>
+        public static void EndEditSessionOnShutdown()
+        {
+            string modKey = _editSessionModKey;
+            StopEditSessionListener();
+            if (string.IsNullOrEmpty(modKey)) return;
+
+            try
+            {
+                ApiClient.EndEditSession(modKey).Wait(2000);
+                TranslatorCore.LogInfo("[EditSSE] Session ended (game shutdown)");
+            }
+            catch { }
         }
 
         /// <summary>

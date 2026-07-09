@@ -1112,6 +1112,11 @@ namespace UnityGameTranslator.Core
             try { TranslatorUIManager.StopSyncStream(); } catch { }
             try { TranslatorUIManager.StopMergeCompletionListener(); } catch { }
 
+            // Closing the game is one of the two legitimate session-end
+            // events — clean up the live edit session server-side (bounded
+            // wait; must run BEFORE httpClient disposal below)
+            try { TranslatorUIManager.EndEditSessionOnShutdown(); } catch { }
+
             // Stop the LateUpdate coroutine
             try { TranslatorScanner.StopLateUpdateRunner(); } catch { }
 

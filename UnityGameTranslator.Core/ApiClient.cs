@@ -1228,8 +1228,31 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// End the edit session server-side (user clicked Stop in the mod, or
-        /// the browser page was gone past the grace period). Idempotent.
+        /// Keep the edit session alive while the game runs: a session must
+        /// only end on explicit browser close or game shutdown, never on a
+        /// timer — the server TTL is just a backstop for orphaned sessions.
+        /// Returns false only when the session no longer exists server-side
+        /// (transient network failures keep the session).
+        /// </summary>
+        public static async Task<bool> KeepAliveEditSession(string modKey)
+        {
+            try
+            {
+                var response = await client.PostAsync(
+                    $"{DefaultBaseUrl}/edit-session/{Uri.EscapeDataString(modKey)}/keepalive",
+                    new StringContent("{}", Encoding.UTF8, "application/json"));
+                return response.StatusCode != System.Net.HttpStatusCode.NotFound;
+            }
+            catch
+            {
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// End the edit session server-side (user clicked Stop in the mod,
+        /// the browser page was closed past the grace period, or the game is
+        /// shutting down). Idempotent.
         /// </summary>
         public static async Task<bool> EndEditSession(string modKey)
         {

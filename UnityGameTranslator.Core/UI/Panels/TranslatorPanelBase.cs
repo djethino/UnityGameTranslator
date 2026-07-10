@@ -431,15 +431,19 @@ namespace UnityGameTranslator.Core.UI.Panels
             float halfH = rootRect.height * 0.5f;
             float halfPanelW = Rect.rect.width * 0.5f;
             float halfPanelH = Rect.rect.height * 0.5f;
-            const float Margin = 50f;
+            // Minimum reachable slice of the panel on the side/bottom edges —
+            // overflowing there is allowed (and useful), as long as enough of
+            // the panel stays grabbable
+            const float GrabMargin = 50f;
 
-            // X: leave at least Margin px of the panel inside the screen on each side.
-            pos.x = Mathf.Clamp(pos.x, -halfW + Margin - halfPanelW, halfW - Margin + halfPanelW);
+            // X: leave at least GrabMargin px of the panel inside the screen on each side.
+            pos.x = Mathf.Clamp(pos.x, -halfW + GrabMargin - halfPanelW, halfW - GrabMargin + halfPanelW);
 
-            // Y: the title bar lives at the top of the panel, so the panel top must stay
-            // at least Margin px below the screen top — otherwise the title bar is unreachable.
-            // The bottom is allowed to slide further down (panel taller than screen still works).
-            pos.y = Mathf.Clamp(pos.y, -halfH + Margin - halfPanelH, halfH - Margin - halfPanelH);
+            // Y, top edge: the panel top may touch the screen edge exactly (no dead band)
+            // but never pass above it — the title bar is the only way to move the panel.
+            // Y, bottom edge: keep at least GrabMargin px of the panel's top (where the
+            // title bar lives) above the bottom edge; the rest may overflow below.
+            pos.y = Mathf.Clamp(pos.y, -halfH + GrabMargin - halfPanelH, halfH - halfPanelH);
 
             Rect.localPosition = pos;
         }

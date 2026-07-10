@@ -1188,7 +1188,11 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TranslatorCore.Config.window_preferences.screenHeight = 0;
                 TranslatorCore.SaveConfig();
 
-                _resetWindowsStatusLabel.text = "Positions reset! Reopen panels.";
+                // And move the LIVE windows back to their defaults right now —
+                // clearing the config alone only took effect on the next launch
+                TranslatorPanelBase.ResetAllLiveWindows();
+
+                _resetWindowsStatusLabel.text = "Positions reset!";
                 _resetWindowsStatusLabel.color = UIStyles.StatusSuccess;
 
                 TranslatorCore.LogInfo("[Options] Window preferences reset");

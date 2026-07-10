@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using UniverseLib.UI;
@@ -324,6 +325,45 @@ namespace UnityGameTranslator.Core.UI.Panels
         // Flag to ignore OnPanelResized during programmatic resizes
         private bool _isProgrammaticResize;
 
+        // Every constructed panel, so "Reset Window Positions" can act on the
+        // LIVE windows immediately instead of only clearing the saved config
+        private static readonly List<TranslatorPanelBase> _livePanels = new List<TranslatorPanelBase>();
+
+        /// <summary>
+        /// Re-center and re-size every live panel to its defaults, right now.
+        /// Called by the Options "Reset Window Positions" button after it
+        /// clears the persisted preferences — the visible windows must move
+        /// at runtime, not on the next game launch.
+        /// </summary>
+        public static void ResetAllLiveWindows()
+        {
+            _livePanels.RemoveAll(p => p == null || p.Rect == null);
+            foreach (var panel in _livePanels)
+            {
+                try { panel.ResetWindowToDefaults(); }
+                catch (Exception e) { TranslatorCore.LogWarning($"[Panels] Reset failed for {panel.Name}: {e.Message}"); }
+            }
+        }
+
+        /// <summary>
+        /// Back to the default placement: centered, user resize dropped
+        /// (the dynamically computed size is content-driven, it is kept),
+        /// tracking refreshed so the reset state is not re-saved as a move.
+        /// </summary>
+        private void ResetWindowToDefaults()
+        {
+            if (!UsesCenterAnchors) return;
+
+            // SetDefaultSizeAndPosition restores anchors/pivot (user resizes
+            // shift anchors), re-applies the default or dynamic size, centers
+            // the panel and clamps it back on screen
+            SetDefaultSizeAndPosition();
+
+            _lastSavedPosition = Rect.anchoredPosition;
+            _lastSavedSize = new Vector2(Rect.rect.width, Rect.rect.height);
+            _hasLastSavedValues = true;
+        }
+
         /// <summary>
         /// Updates the dragger's resize cache without triggering the user resize save.
         /// Use this for programmatic size changes.
@@ -406,6 +446,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         protected TranslatorPanelBase(UIBase owner) : base(owner)
         {
+            _livePanels.Add(this);
         }
 
         /// <summary>
@@ -483,6 +524,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 _needsFirstShowSizing = false;
                 UniverseLib.RuntimeHelper.StartCoroutine(DelayedFirstShowSizing());
+            }
+            else if (active && _initialSizingComplete)
+            {
+                // Every reopen re-clamps: covers resolution changes that
+                // happened while the panel was hidden
+                EnsureValidPosition();
             }
         }
 
@@ -605,13 +652,17 @@ namespace UnityGameTranslator.Core.UI.Panels
             float heightRatio = prefs.screenHeight > 0 ? screenDim.y / prefs.screenHeight : 1f;
             bool resolutionChanged = Math.Abs(widthRatio - 1) > 0.1f || Math.Abs(heightRatio - 1) > 0.1f;
 
-            // Handle position (independent of size)
+            // Handle position (independent of size). The restored SIZE matters
+            // here: a user-resized panel is often taller/wider than the
+            // declared defaults, and judging bounds with the default size let
+            // saved positions land with the title bar above the screen.
+            bool sizeRestored = hasPreference && pref.userResized && pref.width > 0 && pref.height > 0 && !resolutionChanged;
             if (hasPreference && pref.hasPosition)
             {
                 float newX = resolutionChanged ? pref.x * widthRatio : pref.x;
                 float newY = resolutionChanged ? pref.y * heightRatio : pref.y;
-                float halfWidth = PanelWidth / 2f;
-                float halfHeight = PanelHeight / 2f;
+                float halfWidth = (sizeRestored ? pref.width : PanelWidth) / 2f;
+                float halfHeight = (sizeRestored ? pref.height : PanelHeight) / 2f;
 
                 // Check if saved position would be out of bounds
                 bool positionOutOfBounds = Math.Abs(newX) + halfWidth > screenDim.x / 2f ||
@@ -634,12 +685,16 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
 
             // Handle size (independent of position)
-            if (hasPreference && pref.userResized && pref.width > 0 && pref.height > 0 && !resolutionChanged)
+            if (sizeRestored)
             {
                 // User manually resized - apply saved size and skip dynamic sizing
                 Rect.sizeDelta = new Vector2(pref.width, pref.height);
                 _needsFirstShowSizing = false;
                 _initialSizingComplete = true;
+                // Dynamic sizing (and its clamp) will NOT run for this panel:
+                // enforce the reachable-title-bar guarantee here
+                EnsureValidPosition();
+                UpdateDraggerCache();
             }
             // Otherwise, keep _needsFirstShowSizing = true to calculate size dynamically
 
@@ -676,6 +731,10 @@ namespace UnityGameTranslator.Core.UI.Panels
                 return;
             }
 
+            // Growing a center-pivot panel pushes its top edge UP: a resize
+            // can move the title bar above the screen — clamp it back
+            EnsureValidPosition();
+
             // Don't save during initial construction - only after user interaction
             if (!_initialSizingComplete) return;
 
@@ -692,6 +751,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         private void OnPanelDragged()
         {
+            // Clamp BEFORE saving: the persisted position must never be one
+            // where the title bar cannot be grabbed back
+            EnsureValidPosition();
+
             // Don't save during initial construction - only after user interaction
             if (!_initialSizingComplete) return;
 

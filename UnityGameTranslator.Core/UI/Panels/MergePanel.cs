@@ -43,6 +43,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private ButtonRef _applyBtn;
         private ButtonRef _keepMineBtn;
         private ButtonRef _takeServerBtn;
+        private Components.HelpZone _helpZone;
         private bool _userMadeChoice = false;
 
         public MergePanel(UIBase owner) : base(owner)
@@ -105,6 +106,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Use scrollable layout - content scrolls if needed, buttons stay fixed
             CreateScrollablePanelLayout(out var scrollContent, out var buttonRow, PanelWidth - 40);
 
+            // Contextual help bar between content and footer
+            _helpZone = CreateHelpZone(buttonRow, "Hover a button to see what it does");
+
             // Adaptive card for merge conflicts — stretchVertically so the inner conflict list
             // can absorb the extra space when the user enlarges the panel.
             var card = CreateAdaptiveCard(scrollContent, "MergeCard", PanelWidth - 40, stretchVertically: true);
@@ -150,32 +154,44 @@ namespace UnityGameTranslator.Core.UI.Panels
             _keepMineBtn = CreateSecondaryButton(bulkRow, "UseAllLocalBtn", "Keep My Changes", 120);
             _keepMineBtn.OnClick += () => TranslatorUIManager.MergePanel?.UseAllLocal();
             RegisterUIText(_keepMineBtn.ButtonText);
+            _helpZone?.Describe(_keepMineBtn.Component.gameObject,
+                "Resolve every conflict with YOUR version of the line");
 
             _takeServerBtn = CreateSecondaryButton(bulkRow, "UseAllRemoteBtn", "Take Server", 100);
             _takeServerBtn.OnClick += () => TranslatorUIManager.MergePanel?.UseAllRemote();
             RegisterUIText(_takeServerBtn.ButtonText);
+            _helpZone?.Describe(_takeServerBtn.Component.gameObject,
+                "Resolve every conflict with the website's version of the line");
 
             // Apply Merge - starts disabled until user makes a choice
             _applyBtn = CreatePrimaryButton(bulkRow, "ApplyBtn", "Apply Merge");
             _applyBtn.OnClick += () => TranslatorUIManager.MergePanel?.ApplyMerge();
             RegisterUIText(_applyBtn.ButtonText);
             SetApplyButtonEnabled(false);
+            _helpZone?.Describe(_applyBtn.Component.gameObject,
+                "Save the merged result: non-conflicting changes from both sides plus your choices above");
 
             // Bottom buttons - in fixed footer (outside scroll)
             var cancelBtn = CreateSecondaryButton(buttonRow, "CancelBtn", "Cancel");
             cancelBtn.OnClick += () => TranslatorUIManager.MergePanel?.CancelMerge();
             RegisterUIText(cancelBtn.ButtonText);
+            _helpZone?.Describe(cancelBtn.Component.gameObject,
+                "Close without changing anything — you can merge later");
 
-            var replaceBtn = CreateSecondaryButton(buttonRow, "ReplaceBtn", "Replace with Remote", 155);
+            var replaceBtn = CreateSecondaryButton(buttonRow, "ReplaceBtn", "Replace with Server", 155);
             UIStyles.SetBackground(replaceBtn.Component.gameObject, UIStyles.ButtonDanger);
             replaceBtn.OnClick += () => TranslatorUIManager.MergePanel?.ReplaceWithRemote();
             RegisterUIText(replaceBtn.ButtonText);
+            _helpZone?.Describe(replaceBtn.Component.gameObject,
+                "Throw away ALL your local changes and take the website's version as-is");
 
             // Review on Website in the footer (secondary action)
             var reviewBtn = CreateSecondaryButton(buttonRow, "ReviewBtn", "Review on Website", 140);
             UIStyles.SetBackground(reviewBtn.Component.gameObject, UIStyles.ButtonLink);
             reviewBtn.OnClick += () => TranslatorUIManager.MergePanel?.OpenReviewPage();
             RegisterUIText(reviewBtn.ButtonText);
+            _helpZone?.Describe(reviewBtn.Component.gameObject,
+                "Open this merge in your browser: bigger screen, search, and line-by-line tools");
         }
 
         private void RefreshConflictList()
@@ -302,7 +318,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.SetLayoutElement(remoteGroup, flexibleWidth: 9999);
 
             // Remote label with tag if available
-            string remoteLabelText = remoteTag != null ? $"Remote {GetTagDisplayName(remoteTag)}:" : "Remote:";
+            string remoteLabelText = remoteTag != null ? $"Server {GetTagDisplayName(remoteTag)}:" : "Server:";
             var remoteLbl = UIFactory.CreateLabel(remoteGroup, "RemoteLabel", remoteLabelText, TextAnchor.MiddleLeft);
             remoteLbl.fontSize = UIStyles.FontSizeSmall;
             if (remoteTag != null) remoteLbl.color = GetTagColor(remoteTag);
@@ -320,7 +336,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             var localBtn = UIFactory.CreateButton(choiceRow, "UseLocalBtn", "Use Local");
             UIFactory.SetLayoutElement(localBtn.Component.gameObject, minWidth: 100, minHeight: UIStyles.RowHeightNormal);
 
-            var remoteBtn = UIFactory.CreateButton(choiceRow, "UseRemoteBtn", "Use Remote");
+            var remoteBtn = UIFactory.CreateButton(choiceRow, "UseRemoteBtn", "Use Server");
             UIFactory.SetLayoutElement(remoteBtn.Component.gameObject, minWidth: 100, minHeight: UIStyles.RowHeightNormal);
 
             // Style the active button

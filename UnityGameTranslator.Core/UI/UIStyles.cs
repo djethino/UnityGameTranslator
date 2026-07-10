@@ -197,6 +197,11 @@ namespace UnityGameTranslator.Core.UI
         // Notification boxes (StatusOverlay)
         public static readonly int NotificationBoxHeight = 55;
 
+        // Backend type dropdown labels, shared by WizardPanel and OptionsPanel
+        // (plain words instead of "LLM"/"API" jargon; compared by value in both panels)
+        public const string BackendTypeLLM = "AI (local or cloud)";
+        public const string BackendTypeApi = "Google / DeepL";
+
         // Screen margins for dynamic sizing
         public static readonly int ScreenMarginTop = 40;
         public static readonly int ScreenMarginBottom = 40;

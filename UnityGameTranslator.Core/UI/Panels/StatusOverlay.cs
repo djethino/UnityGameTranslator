@@ -45,6 +45,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         // UI elements - Translation sync notification
         private GameObject _syncBox;
         private Text _syncLabel;
+        private Text _syncHintLabel;
         private ButtonRef _syncBranchBtn;    // Branch option (contribute, green)
         private ButtonRef _syncForkBtn;      // Fork option (independent, red)
         private ButtonRef _syncActionBtn;    // Generic action (Download/Update/Merge)
@@ -355,6 +356,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             _syncIgnoreBtn.OnClick += OnSyncIgnoreClicked;
             RegisterUIText(_syncIgnoreBtn.ButtonText);
 
+            // Plain-words explanation of the Branch/Fork choice (only shown with those buttons)
+            _syncHintLabel = UIStyles.CreateHint(_syncBox, "SyncHintLabel", "");
+            RegisterUIText(_syncHintLabel);
+
             _syncBox.SetActive(false);
         }
 
@@ -534,7 +539,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     {
                         // Non-owner: show Branch AND Fork options
                         // User must choose to contribute (branch) or go independent (fork)
-                        message = $"You have {TranslatorCore.LocalChangesCount} local changes!";
+                        message = $"You changed {TranslatorCore.LocalChangesCount} line(s). Share them?";
                         showBranchFork = true;
                         showAction = false;
                     }
@@ -552,6 +557,14 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _syncBranchBtn?.Component.gameObject.SetActive(showBranchFork);
                 _syncForkBtn?.Component.gameObject.SetActive(showBranchFork);
                 _syncActionBtn?.Component.gameObject.SetActive(showAction);
+
+                if (_syncHintLabel != null)
+                {
+                    _syncHintLabel.text = showBranchFork
+                        ? $"Branch: send them to @{ownerName} for review • Fork: start your own independent translation"
+                        : "";
+                    _syncHintLabel.gameObject.SetActive(showBranchFork);
+                }
 
                 if (showAction)
                 {
@@ -763,7 +776,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Show warning dialog before forking (destructive action)
             TranslatorUIManager.ConfirmationPanel?.Show(
                 "Create Independent Fork?",
-                $"This will create a new independent translation with a new lineage.\n\n" +
+                $"This will create a new independent translation, no longer linked to the original.\n\n" +
                 $"You will become the owner of this new translation.\n\n" +
                 $"You will no longer be able to contribute to @{ownerName}'s translation.\n\n" +
                 "This action cannot be undone.",

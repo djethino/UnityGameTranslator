@@ -16,7 +16,7 @@ namespace UnityGameTranslator.Core.UI.Panels
     /// </summary>
     public class TranslationParametersPanel : TranslatorPanelBase
     {
-        public override string Name => "Translation Parameters";
+        public override string Name => "Translation Tools";
         public override int MinWidth => 580;
         public override int MinHeight => 400;
         public override int PanelWidth => 600;
@@ -97,7 +97,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             CreateScrollablePanelLayout(out var scrollContent, out var buttonRow, PanelWidth - 40);
 
             // Title
-            var title = CreateTitle(scrollContent, "Title", "Translation Parameters");
+            var title = CreateTitle(scrollContent, "Title", "Translation Tools");
             RegisterUIText(title);
 
             UIStyles.CreateSpacer(scrollContent, 5);

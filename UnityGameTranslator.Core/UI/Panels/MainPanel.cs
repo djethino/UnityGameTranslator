@@ -63,6 +63,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         private ButtonRef _reviewOnWebsiteBtn;
         private ButtonRef _compareWithServerBtn;
         private ButtonRef _forkBtn;
+        private Text _roleActionsHint;
+        private Components.HelpZone _helpZone;
 
         // UI references - Community Translations section
         private GameObject _communitySection;
@@ -112,6 +114,9 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Use scrollable layout - content scrolls if needed, buttons stay fixed
             CreateScrollablePanelLayout(out var scrollContent, out var buttonRow, PanelWidth - 40);
+
+            // Contextual help bar between content and footer
+            _helpZone = CreateHelpZone(buttonRow, "Hover an element to see what it does");
 
             // === HEADER SECTION (outside tabs, like OptionsPanel) ===
             // Title directly in scrollContent
@@ -167,18 +172,25 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Guidance Section (GAP 9: contextual messages)
             CreateGuidanceSection(myTransCard);
 
+            // Collapsed glossary for the sharing model vocabulary
+            CreateGlossarySection(myTransCard);
+
             // === COMMUNITY TAB (content in a stretching card) ===
             var communityCard = CreateAdaptiveCard(communityTab, "CommunityCard", PanelWidth - 60, stretchVertically: true);
             CreateCommunitySection(communityCard);
 
             // Bottom buttons - in fixed footer (outside scroll)
-            var transParamsBtn = CreateSecondaryButton(buttonRow, "TransParamsBtn", "Parameters");
+            var transParamsBtn = CreateSecondaryButton(buttonRow, "TransParamsBtn", "Translation Tools");
             transParamsBtn.OnClick += () => TranslatorUIManager.TranslationParamsPanel?.SetActive(true);
             RegisterUIText(transParamsBtn.ButtonText);
+            _helpZone?.Describe(transParamsBtn.Component.gameObject,
+                "Text editors, exclusions, fonts, images and variables");
 
-            var optionsBtn = CreateSecondaryButton(buttonRow, "OptionsBtn", "Options");
+            var optionsBtn = CreateSecondaryButton(buttonRow, "OptionsBtn", "Mod Options");
             optionsBtn.OnClick += () => TranslatorUIManager.OptionsPanel?.SetActive(true);
             RegisterUIText(optionsBtn.ButtonText);
+            _helpZone?.Describe(optionsBtn.Component.gameObject,
+                "General settings: hotkeys, online mode, translation backend");
 
             var closeBtn = CreatePrimaryButton(buttonRow, "CloseBtn", "Close");
             closeBtn.OnClick += () => SetActive(false);
@@ -330,6 +342,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Create StatusCard widget
             _statusCard = new StatusCard();
             _statusCard.CreateUI(_statusSection);
+            _helpZone?.Describe(_statusCard.Root,
+                "Your translation at a glance: sync state with the website, your role (Main = owner, Branch = contributor), and quality (Human / Validated / AI lines)");
 
             // External Resources section (visible only when ResourcesUrl is set)
             _resourcesLinkSection = UIFactory.CreateVerticalGroup(_statusSection, "ResourcesLinkSection", false, false, true, true, 2);
@@ -428,6 +442,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.SetLayoutElement(_uploadBtn.Component.gameObject, flexibleWidth: 9999);
             _uploadBtn.OnClick += OnUploadClicked;
             RegisterUIText(_uploadBtn.ButtonText);
+            _helpZone?.Describe(_uploadBtn.Component.gameObject,
+                "Send your local translation to the website so others can use it");
 
             _uploadHintLabel = UIStyles.CreateHint(actionsBox, "UploadHintLabel", "");
             RegisterUIText(_uploadHintLabel);
@@ -442,18 +458,28 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIStyles.SetBackground(_reviewOnWebsiteBtn.Component.gameObject, UIStyles.ButtonLink);
             _reviewOnWebsiteBtn.OnClick += OnReviewOnWebsiteClicked;
             RegisterUIText(_reviewOnWebsiteBtn.ButtonText);
+            _helpZone?.Describe(_reviewOnWebsiteBtn.Component.gameObject,
+                "Open the website to accept or reject changes proposed by other players");
 
             // Compare with Server button (Main and Branch) - opens diff view
             _compareWithServerBtn = CreateSecondaryButton(roleActionsRow, "CompareBtn", "Compare", 100);
             UIStyles.SetBackground(_compareWithServerBtn.Component.gameObject, UIStyles.ButtonSecondary);
             _compareWithServerBtn.OnClick += OnCompareWithServerClicked;
             RegisterUIText(_compareWithServerBtn.ButtonText);
+            _helpZone?.Describe(_compareWithServerBtn.Component.gameObject,
+                "See the differences between your local file and the version on the website");
 
             // Fork button (Branch only) - creates independent fork
             _forkBtn = CreateSecondaryButton(roleActionsRow, "ForkBtn", "Fork", 80);
             UIStyles.SetBackground(_forkBtn.Component.gameObject, UIStyles.ButtonDanger);
             _forkBtn.OnClick += OnForkClicked;
             RegisterUIText(_forkBtn.ButtonText);
+            _helpZone?.Describe(_forkBtn.Component.gameObject,
+                "Leave the owner's translation and continue on your own — asks for confirmation first");
+
+            // One-line explanation for whichever role buttons are visible
+            _roleActionsHint = UIStyles.CreateHint(actionsBox, "RoleActionsHint", "");
+            RegisterUIText(_roleActionsHint);
         }
 
         /// <summary>
@@ -479,6 +505,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.SetLayoutElement(_contributeAsBranchBtn.Component.gameObject, flexibleWidth: 9999);
             _contributeAsBranchBtn.OnClick += OnContributeAsBranchClicked;
             RegisterUIText(_contributeAsBranchBtn.ButtonText);
+            _helpZone?.Describe(_contributeAsBranchBtn.Component.gameObject,
+                "Your changes are sent to the owner, who can merge them into the main translation");
 
             var branchDesc = UIFactory.CreateLabel(branchRow, "BranchDesc", "Your changes will help improve the main translation", TextAnchor.MiddleCenter);
             branchDesc.fontSize = UIStyles.FontSizeSmall;
@@ -497,6 +525,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.SetLayoutElement(_downloadLatestBtn.Component.gameObject, flexibleWidth: 9999);
             _downloadLatestBtn.OnClick += OnDownloadLatestClicked;
             RegisterUIText(_downloadLatestBtn.ButtonText);
+            _helpZone?.Describe(_downloadLatestBtn.Component.gameObject,
+                "Replace your local file with the owner's latest version from the website");
 
             var downloadDesc = UIFactory.CreateLabel(downloadRow, "DownloadDesc", "Get the owner's latest version (replaces your local)", TextAnchor.MiddleCenter);
             downloadDesc.fontSize = UIStyles.FontSizeSmall;
@@ -515,12 +545,46 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.SetLayoutElement(_createIndependentBtn.Component.gameObject, flexibleWidth: 9999);
             _createIndependentBtn.OnClick += OnCreateIndependentClicked;
             RegisterUIText(_createIndependentBtn.ButtonText);
+            _helpZone?.Describe(_createIndependentBtn.Component.gameObject,
+                "Start your own independent translation from your current file — asks for confirmation first");
 
-            var forkDesc = UIFactory.CreateLabel(forkRow, "ForkDesc", "Fork into your own translation (new lineage)", TextAnchor.MiddleCenter);
+            var forkDesc = UIFactory.CreateLabel(forkRow, "ForkDesc", "Start your own independent translation, no longer linked to the original", TextAnchor.MiddleCenter);
             forkDesc.fontSize = UIStyles.FontSizeSmall;
             forkDesc.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(forkDesc.gameObject, flexibleWidth: 9999, minHeight: UIStyles.RowHeightNormal);
             RegisterUIText(forkDesc);
+        }
+
+        /// <summary>
+        /// Collapsed glossary explaining the sharing model vocabulary
+        /// (Main / Branch / Fork and the H/V/A quality tags) for first-time users.
+        /// </summary>
+        private void CreateGlossarySection(GameObject parent)
+        {
+            var (container, header, iconLabel, titleLabel, content) =
+                UIStyles.CreateCollapsibleSection(parent, "Glossary", "What do Main, Branch and Fork mean?", initiallyExpanded: false);
+            RegisterUIText(titleLabel);
+            RegisterExcluded(iconLabel);
+
+            var headerBtn = header.GetComponent<Button>();
+            bool expanded = false;
+            UIHelpers.AddButtonListener(headerBtn, () =>
+            {
+                expanded = !expanded;
+                UIStyles.SetCollapsibleState(iconLabel, content, expanded);
+                RecalculateSize();
+            });
+
+            var glossaryText = UIFactory.CreateLabel(content, "GlossaryText",
+                "• Main — the reference translation, owned by its creator and public on the website.\n" +
+                "• Branch — your improvements to someone else's Main; they are sent to the owner for review.\n" +
+                "• Fork — your own independent translation: you become the owner and it is no longer linked to the original.\n\n" +
+                "Line quality tags: H = written by a human, V = AI line validated by a human, A = raw AI.",
+                TextAnchor.UpperLeft);
+            glossaryText.fontSize = UIStyles.FontSizeSmall;
+            glossaryText.color = UIStyles.TextSecondary;
+            UIFactory.SetLayoutElement(glossaryText.gameObject, flexibleWidth: 9999, minHeight: UIStyles.MultiLineLarge);
+            RegisterUIText(glossaryText);
         }
 
         /// <summary>
@@ -987,7 +1051,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     case TranslationRole.Main:
                         if (serverState.BranchesCount > 0)
                         {
-                            _roleLabel.text = $"[MAIN] {serverState.BranchesCount} branch(es) contributing";
+                            _roleLabel.text = $"[MAIN] {serverState.BranchesCount} contribution(s) from other players";
                         }
                         else
                         {
@@ -996,7 +1060,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                         _roleLabel.color = UIStyles.StatusSuccess;
                         break;
                     case TranslationRole.Branch:
-                        _roleLabel.text = $"[BRANCH] Contributing to @{serverState.MainUsername ?? serverState.Uploader}";
+                        _roleLabel.text = $"[BRANCH] Your changes go to @{serverState.MainUsername ?? serverState.Uploader} for review";
                         _roleLabel.color = UIStyles.StatusWarning;
                         break;
                     default:
@@ -1180,6 +1244,21 @@ namespace UnityGameTranslator.Core.UI.Panels
                 if (isBranch)
                 {
                     _forkBtn.Component.interactable = isLoggedIn;
+                }
+
+                // Explain the visible buttons in plain words
+                if (_roleActionsHint != null)
+                {
+                    string hint = "";
+                    if (isBranch)
+                        hint = "Fork = leave @" + (state.MainUsername ?? state.Uploader ?? "the owner") +
+                               "'s translation and continue on your own";
+                    else if (isMain && hasBranches)
+                        hint = "Review Branches opens the website to accept or reject contributions";
+                    else if (canCompare)
+                        hint = "Compare shows your changes against the website version";
+                    _roleActionsHint.text = hint;
+                    _roleActionsHint.gameObject.SetActive(!string.IsNullOrEmpty(hint));
                 }
             }
         }
@@ -1381,7 +1460,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // GAP 10: Warning for creating independent fork
             TranslatorUIManager.ConfirmationPanel?.Show(
                 "Create Independent Translation?",
-                $"This will create a new independent translation with a new lineage.\n\n" +
+                $"This will create a new independent translation, no longer linked to the original.\n\n" +
                 $"You will become the Main owner of this new translation.\n\n" +
                 $"You will no longer be able to merge changes with @{ownerName}'s translation.\n\n" +
                 "This action cannot be undone.",
@@ -1489,7 +1568,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             var game = TranslatorCore.CurrentGame;
             if (!isOnline)
             {
-                _communityGameLabel.text = "Offline mode - enable online in Options";
+                _communityGameLabel.text = "Offline mode - enable Online Mode in Mod Options";
                 _communityGameLabel.color = UIStyles.StatusWarning;
                 _searchBtn.Component.interactable = false;
 
@@ -1551,9 +1630,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // WARNING: Different lineage - this is a major change
                 TranslatorUIManager.ConfirmationPanel?.Show(
                     "Switch to Different Translation?",
-                    $"You are about to download a different translation lineage.\n\n" +
+                    $"This translation is not related to yours — it is a separate translation, not an update.\n\n" +
                     $"Your current translation ({localCount} entries) will be replaced with @{selectedTranslation.Uploader}'s translation.\n\n" +
-                    "This is a different lineage - you will lose your current translation history.\n\n" +
+                    "You will lose your current translation and its history.\n\n" +
                     "This cannot be undone.",
                     "Switch Translation",
                     async () => await PerformDownload(selectedTranslation),

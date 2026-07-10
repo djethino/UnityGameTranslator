@@ -119,7 +119,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             if (!TranslatorCore.Config.online_mode)
             {
-                _statusLabel.text = "Offline mode - enable online in Options first";
+                _statusLabel.text = "Offline mode - enable Online Mode in Mod Options first";
                 _statusLabel.color = UIStyles.StatusError;
                 return;
             }

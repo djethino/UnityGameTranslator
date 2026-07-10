@@ -110,6 +110,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         private ButtonRef _uploadBtn;
         private ButtonRef _mergeBtn;
         private GameObject _actionButtonsRow;
+        private Text _actionButtonsHint;
+        private GameObject _onlineChoiceBox;
+        private GameObject _offlineChoiceBox;
+        private Components.HelpZone _helpZone;
 
         public WizardPanel(UIBase owner) : base(owner)
         {
@@ -169,6 +173,9 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Use centralized scroll layout - ONE scroll for the entire panel
             CreateScrollablePanelLayout(out _scrollContent, out var sharedButtonRow, PanelWidth - 40);
+
+            // Contextual help bar (fixed at the bottom, above the hidden shared row)
+            _helpZone = CreateHelpZone(sharedButtonRow, "Hover an element to see what it does");
 
             // Hide the shared button row - wizard has per-step buttons
             sharedButtonRow.SetActive(false);
@@ -234,7 +241,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             var onlineToggleObj = UIFactory.CreateToggle(onlineRow, "OnlineToggle", out var onlineToggle, out var onlineLabel);
             onlineToggle.isOn = _onlineMode;
             onlineLabel.text = "";
-            UIHelpers.AddToggleListener(onlineToggle, (val) => _onlineMode = val);
+            UIHelpers.AddToggleListener(onlineToggle, (val) => { _onlineMode = val; UpdateOnlineChoiceHighlight(); });
             UIFactory.SetLayoutElement(onlineToggleObj, minWidth: UIStyles.ToggleControlWidth);
 
             var onlineTextLabel = UIFactory.CreateLabel(onlineRow, "OnlineTextLabel", "Enable Online Mode", TextAnchor.MiddleLeft);
@@ -260,7 +267,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             var offlineToggleObj = UIFactory.CreateToggle(offlineRow, "OfflineToggle", out var offlineToggle, out var offlineLabel);
             offlineToggle.isOn = !_onlineMode;
             offlineLabel.text = "";
-            UIHelpers.AddToggleListener(offlineToggle, (val) => { if (val) _onlineMode = false; onlineToggle.isOn = !val; });
+            UIHelpers.AddToggleListener(offlineToggle, (val) => { if (val) _onlineMode = false; onlineToggle.isOn = !val; UpdateOnlineChoiceHighlight(); });
             UIHelpers.AddToggleListener(onlineToggle, (val) => offlineToggle.isOn = !val);
             UIFactory.SetLayoutElement(offlineToggleObj, minWidth: UIStyles.ToggleControlWidth);
 
@@ -286,6 +293,26 @@ namespace UnityGameTranslator.Core.UI.Panels
             var nextBtn = CreatePrimaryButton(buttonRow, "NextBtn", "Continue →");
             nextBtn.OnClick += () => ShowStep(WizardStep.Hotkey);
             RegisterUIText(nextBtn.ButtonText);
+
+            _onlineChoiceBox = onlineBox;
+            _offlineChoiceBox = offlineBox;
+            UpdateOnlineChoiceHighlight();
+
+            _helpZone?.Describe(onlineBox,
+                "The mod contacts our website to find translations for your games and tell you about updates. Nothing else is sent.");
+            _helpZone?.Describe(offlineBox,
+                "The mod never talks to our website. You can still translate with a local AI. Changeable anytime in Mod Options.");
+        }
+
+        /// <summary>
+        /// Highlight the whole selected box so the active choice is visible at a glance
+        /// (the 20px checkbox alone is easy to miss).
+        /// </summary>
+        private void UpdateOnlineChoiceHighlight()
+        {
+            if (_onlineChoiceBox == null || _offlineChoiceBox == null) return;
+            UIStyles.SetBackground(_onlineChoiceBox, _onlineMode ? UIStyles.ItemBackgroundSelected : UIStyles.ItemBackground);
+            UIStyles.SetBackground(_offlineChoiceBox, !_onlineMode ? UIStyles.ItemBackgroundSelected : UIStyles.ItemBackground);
         }
 
         private void CreateHotkeyStep()
@@ -433,7 +460,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             RegisterExcluded(_localTranslationsLabel); // Dynamic content with numbers/usernames
 
             // Account status row
-            _accountStatusLabel = UIFactory.CreateLabel(gameSection, "AccountStatus", "Want to sync your translations?", TextAnchor.MiddleLeft);
+            _accountStatusLabel = UIFactory.CreateLabel(gameSection, "AccountStatus", "Optional: connect an account to share your translation later", TextAnchor.MiddleLeft);
             _accountStatusLabel.fontSize = UIStyles.FontSizeHint;
             _accountStatusLabel.color = UIStyles.TextMuted;
             UIFactory.SetLayoutElement(_accountStatusLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
@@ -473,18 +500,29 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIStyles.SetBackground(_downloadBtn.Component.gameObject, UIStyles.ButtonPrimary);
             _downloadBtn.OnClick += OnDownloadClicked;
             RegisterUIText(_downloadBtn.ButtonText);
+            _helpZone?.Describe(_downloadBtn.Component.gameObject,
+                "Get the selected community translation and use it in your game");
 
             _uploadBtn = UIFactory.CreateButton(_actionButtonsRow, "UploadBtn", "Upload");
             UIFactory.SetLayoutElement(_uploadBtn.Component.gameObject, minWidth: 100, minHeight: UIStyles.RowHeightNormal);
             UIStyles.SetBackground(_uploadBtn.Component.gameObject, UIStyles.ButtonSuccess);
             _uploadBtn.OnClick += OnUploadClicked;
             RegisterUIText(_uploadBtn.ButtonText);
+            _helpZone?.Describe(_uploadBtn.Component.gameObject,
+                "Share your local translation on the website");
 
             _mergeBtn = UIFactory.CreateButton(_actionButtonsRow, "MergeBtn", "Merge");
             UIFactory.SetLayoutElement(_mergeBtn.Component.gameObject, minWidth: 100, minHeight: UIStyles.RowHeightNormal);
             UIStyles.SetBackground(_mergeBtn.Component.gameObject, UIStyles.ButtonWarning);
             _mergeBtn.OnClick += OnMergeClicked;
             RegisterUIText(_mergeBtn.ButtonText);
+            _helpZone?.Describe(_mergeBtn.Component.gameObject,
+                "Combine the community translation with your local texts (nothing is lost)");
+
+            _actionButtonsHint = UIStyles.CreateHint(card, "ActionBtnsHint",
+                "Merge combines the community translation with the texts you already have locally");
+            RegisterUIText(_actionButtonsHint);
+            _actionButtonsHint.gameObject.SetActive(false);
 
             _actionButtonsRow.SetActive(false);
 
@@ -582,6 +620,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _mergeBtn.Component.gameObject.SetActive(false);
             _comparisonLabel.text = "";
             _actionButtonsRow.SetActive(false);
+            _actionButtonsHint?.gameObject.SetActive(false);
 
             if (selected == null && localCount == 0)
             {
@@ -622,7 +661,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (localCount == 0 && selected != null)
             {
                 // Remote only, no local
-                _comparisonLabel.text = $"Remote: {remoteCount} lines by @{selected.Uploader}";
+                _comparisonLabel.text = $"On the server: {remoteCount} lines by @{selected.Uploader}";
                 _comparisonLabel.color = UIStyles.TextPrimary;
                 _downloadBtn.Component.gameObject.SetActive(true);
                 return;
@@ -635,7 +674,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (isOwnRemote)
             {
                 // Same owner - sync scenario
-                _comparisonLabel.text = $"Local: {localCount} | Remote (yours): {remoteCount} ({diffText})";
+                _comparisonLabel.text = $"Local: {localCount} | Server (yours): {remoteCount} ({diffText})";
 
                 if (localCount > remoteCount)
                 {
@@ -664,7 +703,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             else
             {
                 // Different owner - download or merge
-                _comparisonLabel.text = $"Local: {localCount} | Remote (@{selected.Uploader}): {remoteCount}";
+                _comparisonLabel.text = $"Local: {localCount} | Server (@{selected.Uploader}): {remoteCount}";
                 _comparisonLabel.color = UIStyles.TextPrimary;
 
                 _downloadBtn.Component.gameObject.SetActive(true);
@@ -673,6 +712,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                     _mergeBtn.Component.gameObject.SetActive(true);
                 }
             }
+
+            // Explain Merge whenever the button is offered
+            _actionButtonsHint?.gameObject.SetActive(_mergeBtn.Component.gameObject.activeSelf);
         }
 
         private void OnUploadClicked()
@@ -755,7 +797,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
             else
             {
-                _accountStatusLabel.text = "Want to sync your translations?";
+                _accountStatusLabel.text = "Optional: connect an account to share your translation later";
                 _loginBtn.Component.gameObject.SetActive(true);
             }
 
@@ -819,7 +861,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             var aiTitle = CreateTitle(card, "Title", "Auto-Translation");
             RegisterUIText(aiTitle);
-            var aiDesc = CreateDescription(card, "Description", "Choose a translation backend (can be changed later in Settings)");
+            var aiDesc = CreateDescription(card, "Description", "How should texts with no translation yet be translated? (can be changed later in Mod Options)");
             RegisterUIText(aiDesc);
 
             UIStyles.CreateSpacer(card, 10);
@@ -853,10 +895,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.SetLayoutElement(typeLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
             RegisterUIText(typeLabel);
 
-            string[] typeOptions = { "LLM (AI)", "Translation API" };
+            string[] typeOptions = { UIStyles.BackendTypeLLM, UIStyles.BackendTypeApi };
             bool isTransApi = _translationBackend == "google" || _translationBackend == "deepl";
             _wizardBackendTypeDropdown = new SearchableDropdown("WizardType", typeOptions,
-                isTransApi ? "Translation API" : "LLM (AI)", 100, false);
+                isTransApi ? UIStyles.BackendTypeApi : UIStyles.BackendTypeLLM, 100, false);
             var typeObj = _wizardBackendTypeDropdown.CreateUI(typeSection, OnWizardTypeChanged);
             UIFactory.SetLayoutElement(typeObj, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
 
@@ -1065,13 +1107,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             // If not online, force LLM (Translation APIs require internet)
             bool canUseTransApi = _onlineMode;
             _wizardBackendTypeDropdown?.SetInteractable(canUseTransApi);
-            if (!canUseTransApi && _wizardBackendTypeDropdown?.SelectedValue == "Translation API")
+            if (!canUseTransApi && _wizardBackendTypeDropdown?.SelectedValue == UIStyles.BackendTypeApi)
             {
-                _wizardBackendTypeDropdown.SelectedValue = "LLM (AI)";
+                _wizardBackendTypeDropdown.SelectedValue = UIStyles.BackendTypeLLM;
             }
 
-            string type = _wizardBackendTypeDropdown?.SelectedValue ?? "LLM (AI)";
-            bool isLLM = type == "LLM (AI)";
+            string type = _wizardBackendTypeDropdown?.SelectedValue ?? UIStyles.BackendTypeLLM;
+            bool isLLM = type == UIStyles.BackendTypeLLM;
 
             _wizardLlmSection?.SetActive(isLLM);
             _wizardTransApiSection?.SetActive(!isLLM);

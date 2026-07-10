@@ -83,6 +83,7 @@ namespace UnityGameTranslator.Core.UI.Components
         private Image _humanBar;
         private Image _validatedBar;
         private Image _aiBar;
+        private Text _qualityLegend;
         private Text _secondaryLabel;
 
         /// <summary>
@@ -176,8 +177,19 @@ namespace UnityGameTranslator.Core.UI.Components
             _qualityLabel.color = UIStyles.TextMuted;
             UIFactory.SetLayoutElement(_qualityLabel.gameObject, minWidth: 80);
 
+            // Legend so the colored segments are self-explanatory
+            _qualityLegend = UIFactory.CreateLabel(_root, "QualityLegend",
+                $"<color=#{ColorUtility.ToHtmlStringRGB(UIStyles.StatusSuccess)}>■ Human</color>  " +
+                $"<color=#{ColorUtility.ToHtmlStringRGB(UIStyles.StatusInfo)}>■ Validated</color>  " +
+                $"<color=#{ColorUtility.ToHtmlStringRGB(UIStyles.StatusWarning)}>■ AI</color>",
+                TextAnchor.MiddleLeft);
+            _qualityLegend.fontSize = UIStyles.FontSizeHint;
+            _qualityLegend.color = UIStyles.TextMuted;
+            UIFactory.SetLayoutElement(_qualityLegend.gameObject, minHeight: UIStyles.RowHeightSmall);
+
             // Hide quality row by default
             _qualityRow.SetActive(false);
+            _qualityLegend.gameObject.SetActive(false);
 
             // Secondary info row: branches count or main owner
             _secondaryLabel = UIFactory.CreateLabel(_root, "SecondaryLabel", "", TextAnchor.MiddleLeft);
@@ -212,7 +224,7 @@ namespace UnityGameTranslator.Core.UI.Components
                     break;
                 case SyncStatusType.LocalOnly:
                     _statusIcon.color = UIStyles.TextMuted;
-                    _statusLabel.text = "LOCAL ONLY";
+                    _statusLabel.text = "NOT SHARED";
                     _statusLabel.color = UIStyles.TextMuted;
                     break;
                 case SyncStatusType.NotLoggedIn:
@@ -302,6 +314,7 @@ namespace UnityGameTranslator.Core.UI.Components
             if (stats == null)
             {
                 _qualityRow.SetActive(false);
+                _qualityLegend?.gameObject.SetActive(false);
                 return;
             }
 
@@ -309,6 +322,7 @@ namespace UnityGameTranslator.Core.UI.Components
             if (total == 0)
             {
                 _qualityRow.SetActive(false);
+                _qualityLegend?.gameObject.SetActive(false);
                 return;
             }
 
@@ -328,6 +342,7 @@ namespace UnityGameTranslator.Core.UI.Components
             }
 
             _qualityRow.SetActive(true);
+            _qualityLegend?.gameObject.SetActive(true);
         }
 
         /// <summary>
@@ -381,7 +396,9 @@ namespace UnityGameTranslator.Core.UI.Components
             SetRole(TranslationRoleType.Main);
             SetDetails(entryCount, language);
             SetQualityStats(CalculateLocalStats());
-            SetSecondaryInfo(branchCount > 0 ? $"{branchCount} branch(es) contributing" : null);
+            SetSecondaryInfo(branchCount > 0
+                ? $"{branchCount} contribution(s) from other players to review"
+                : "You own this translation");
         }
 
         /// <summary>
@@ -393,7 +410,9 @@ namespace UnityGameTranslator.Core.UI.Components
             SetRole(TranslationRoleType.Branch);
             SetDetails(entryCount, language);
             SetQualityStats(CalculateLocalStats());
-            SetSecondaryInfo(!string.IsNullOrEmpty(mainOwner) ? $"Contributing to @{mainOwner}" : null);
+            SetSecondaryInfo(!string.IsNullOrEmpty(mainOwner)
+                ? $"Your changes are sent to @{mainOwner} for review"
+                : null);
         }
 
         /// <summary>
@@ -409,8 +428,8 @@ namespace UnityGameTranslator.Core.UI.Components
             SetQualityStats(CalculateLocalStats());
             // Show whose translation this is based on, prompting user to make a choice
             SetSecondaryInfo(!string.IsNullOrEmpty(mainOwner)
-                ? $"Based on @{mainOwner}'s translation • Choose: Branch or Fork"
-                : "Choose: Branch or Fork");
+                ? $"Based on @{mainOwner}'s translation — contribute your changes (Branch) or go independent (Fork)"
+                : "Contribute your changes (Branch) or go independent (Fork)");
         }
 
         /// <summary>

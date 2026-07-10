@@ -16,7 +16,7 @@ namespace UnityGameTranslator.Core.UI.Panels
     /// </summary>
     public class OptionsPanel : TranslatorPanelBase
     {
-        public override string Name => "Options";
+        public override string Name => "Mod Options";
         public override int MinWidth => 580;
         public override int MinHeight => 400;
         public override int PanelWidth => 600;
@@ -64,8 +64,9 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         // Translation section
         private Toggle _captureKeysOnlyToggle;
-        private SearchableDropdown _backendTypeDropdown; // "LLM (AI)" / "Translation API"
-        private static readonly string[] BackendTypeOptions = { "LLM (AI)", "Translation API" };
+        private Components.HelpZone _helpZone;
+        private SearchableDropdown _backendTypeDropdown; // UIStyles.BackendTypeLLM / BackendTypeApi
+        private static readonly string[] BackendTypeOptions = { UIStyles.BackendTypeLLM, UIStyles.BackendTypeApi };
         private Toggle _enableTranslationBackendToggle;
         private GameObject _backendTypeSection;
 
@@ -257,8 +258,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Use scrollable layout - content scrolls if needed, buttons stay fixed
             CreateScrollablePanelLayout(out var scrollContent, out var buttonRow, PanelWidth - 40);
 
+            // Contextual help bar between content and footer
+            _helpZone = CreateHelpZone(buttonRow, "Hover an element to see what it does");
+
             // Title
-            var title = CreateTitle(scrollContent, "Title", "Options");
+            var title = CreateTitle(scrollContent, "Title", "Mod Options");
             RegisterUIText(title);
 
             UIStyles.CreateSpacer(scrollContent, 5);
@@ -475,9 +479,9 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // --- Toggles (actions that turn things on/off) ---
             CreateHotkeyRow(card, "Toggle translations", "Turn all translations on/off (restores original text)", _hotkeyToggleTranslations);
-            CreateHotkeyRow(card, "Toggle translation backend", "Pause/resume live translation calls (cache stays intact)", _hotkeyToggleAI);
+            CreateHotkeyRow(card, "Toggle translation backend", "Pause/resume live translation - texts already translated stay translated", _hotkeyToggleAI);
             CreateHotkeyRow(card, "Toggle image replacement", "Debug: show original images instead of replacements", _hotkeyToggleImages);
-            CreateHotkeyRow(card, "Toggle font replacement", "Debug: show original fonts instead of fallbacks", _hotkeyToggleFonts);
+            CreateHotkeyRow(card, "Toggle font replacement", "Debug: show the game's original fonts instead of the mod's replacement fonts", _hotkeyToggleFonts);
             CreateHotkeyRow(card, "Toggle notifications", "Show/hide the corner notification overlay (for clean screenshots)", _hotkeyToggleOverlay);
 
             UIStyles.CreateSpacer(card, 10);
@@ -525,13 +529,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             RegisterUIText(captureSectionTitle);
 
             var captureObj = UIFactory.CreateToggle(card, "CaptureKeysToggle", out _captureKeysOnlyToggle, out var captureLabel);
-            captureLabel.text = " Capture keys only (no translation)";
+            captureLabel.text = " Collect texts without translating them";
             captureLabel.color = UIStyles.TextSecondary;
             UIHelpers.AddToggleListener(_captureKeysOnlyToggle, OnCaptureKeysOnlyChanged);
             UIFactory.SetLayoutElement(captureObj, minHeight: UIStyles.RowHeightNormal);
             RegisterUIText(captureLabel);
 
-            var captureHint = UIStyles.CreateHint(card, "CaptureHint", "Saves texts without translating - for manual translation");
+            var captureHint = UIStyles.CreateHint(card, "CaptureHint", "Every text the game shows is added to your translation file as an empty entry, so you can translate it later (in-game editor or browser)");
             RegisterUIText(captureHint);
 
             UIStyles.CreateSpacer(card, 15);
@@ -560,9 +564,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             RegisterUIText(typeLabel);
 
             _backendTypeDropdown = new SearchableDropdown(
-                "BackendTypeDropdown", BackendTypeOptions, "LLM (AI)", popupHeight: 100, showSearch: false);
+                "BackendTypeDropdown", BackendTypeOptions, UIStyles.BackendTypeLLM, popupHeight: 100, showSearch: false);
             var typeObj = _backendTypeDropdown.CreateUI(typeRow, OnBackendTypeChanged);
             UIFactory.SetLayoutElement(typeObj, minWidth: 160, minHeight: UIStyles.InputHeight);
+            _helpZone?.Describe(typeObj,
+                "AI: your own model (Ollama, LM Studio, ChatGPT...) with full context. Google / DeepL: classic translation services, needs an API key.");
 
             UIStyles.CreateSpacer(_backendTypeSection, 5);
 
@@ -745,7 +751,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.SetLayoutElement(rateLimitUnit.gameObject, flexibleWidth: 9999);
             RegisterUIText(rateLimitUnit);
 
-            var rateLimitHint = UIStyles.CreateHint(_backendTypeSection, "RateLimitHint", "Delay before retrying after a rate limit error (HTTP 429)");
+            var rateLimitHint = UIStyles.CreateHint(_backendTypeSection, "RateLimitHint", "How long to wait before retrying when the translation service asks to slow down");
             RegisterUIText(rateLimitHint);
 
             // Initial visibility - all hidden until UpdateBackendSections
@@ -1086,7 +1092,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _aiTestStatusLabel.text = "";
             // Set dropdowns BEFORE the enable toggle (which triggers UpdateBackendSections)
             string backend = TranslatorCore.Config.translation_backend ?? "none";
-            _backendTypeDropdown.SelectedValue = (backend == "google" || backend == "deepl") ? "Translation API" : "LLM (AI)";
+            _backendTypeDropdown.SelectedValue = (backend == "google" || backend == "deepl") ? UIStyles.BackendTypeApi : UIStyles.BackendTypeLLM;
             _providerDropdown.SelectedValue = backend == "deepl" ? "DeepL" : "Google Translate";
             _enableTranslationBackendToggle.isOn = (backend != "none");
 
@@ -1236,8 +1242,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_enableTranslationBackendToggle == null || !_enableTranslationBackendToggle.isOn)
                 return "none";
 
-            string type = _backendTypeDropdown?.SelectedValue ?? "LLM (AI)";
-            if (type == "LLM (AI)") return "llm";
+            string type = _backendTypeDropdown?.SelectedValue ?? UIStyles.BackendTypeLLM;
+            if (type == UIStyles.BackendTypeLLM) return "llm";
 
             // Translation API -> check provider
             string provider = _providerDropdown?.SelectedValue ?? "Google Translate";
@@ -1262,13 +1268,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Translation APIs require online mode
             bool canUseTransApi = _onlineModeToggle != null && _onlineModeToggle.isOn;
             _backendTypeDropdown?.SetInteractable(canUseTransApi);
-            if (!canUseTransApi && _backendTypeDropdown?.SelectedValue == "Translation API")
+            if (!canUseTransApi && _backendTypeDropdown?.SelectedValue == UIStyles.BackendTypeApi)
             {
-                _backendTypeDropdown.SelectedValue = "LLM (AI)";
+                _backendTypeDropdown.SelectedValue = UIStyles.BackendTypeLLM;
             }
 
-            string type = _backendTypeDropdown?.SelectedValue ?? "LLM (AI)";
-            bool isLLM = type == "LLM (AI)";
+            string type = _backendTypeDropdown?.SelectedValue ?? UIStyles.BackendTypeLLM;
+            bool isLLM = type == UIStyles.BackendTypeLLM;
 
             _llmSection?.SetActive(isLLM);
             _translationApiSection?.SetActive(!isLLM);

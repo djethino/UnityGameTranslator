@@ -1166,6 +1166,7 @@ namespace UnityGameTranslator.Core.UI
             _pushInFlight = false;
             _keepaliveInFlight = false;
             _browserLeftSince = -1f;
+            _seenRetranslateIds.Clear();
         }
 
         /// <summary>
@@ -1187,10 +1188,18 @@ namespace UnityGameTranslator.Core.UI
             catch { }
         }
 
+        // Request ids already honored: the browser RE-EMITS its retranslate
+        // request every 30s while pending (SSE delivery is not guaranteed —
+        // events published during a reconnection gap are lost), always with
+        // the same id. Bounded FIFO, cleared with the session.
+        private static readonly Queue<string> _seenRetranslateIds = new Queue<string>();
+        private const int MaxSeenRetranslateIds = 32;
+
         /// <summary>
         /// Handle an edit_retranslate SSE event — the browser asked to
         /// re-translate ONE entry with the player's own AI backend. Runs on
         /// the main thread (dispatched by the SSE handler). Guards:
+        /// the request id must be new (browser retries reuse the id),
         /// AI must be enabled, and the key must already exist in OUR cache —
         /// the request key comes from the browser verbatim, and arbitrary
         /// text must never be fed to the player's AI (cost, prompt abuse).
@@ -1205,6 +1214,19 @@ namespace UnityGameTranslator.Core.UI
                 var data = ApiClient.ParseJsonSafe(jsonData);
                 string key = data["key"]?.Value<string>();
                 if (string.IsNullOrEmpty(key)) return;
+
+                string requestId = data["id"]?.Value<string>();
+                if (!string.IsNullOrEmpty(requestId))
+                {
+                    if (_seenRetranslateIds.Contains(requestId))
+                    {
+                        TranslatorCore.LogDebug("[EditSSE] Duplicate retranslate request (browser retry), ignored");
+                        return;
+                    }
+                    _seenRetranslateIds.Enqueue(requestId);
+                    while (_seenRetranslateIds.Count > MaxSeenRetranslateIds)
+                        _seenRetranslateIds.Dequeue();
+                }
 
                 if (!TranslatorCore.Config.enable_ai)
                 {

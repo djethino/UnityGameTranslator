@@ -1,6 +1,6 @@
 # Universal Unity Game Translator (Beta)
 
-**Website:** [unitygametranslator.asymptomatikgames.com](https://unitygametranslator.asymptomatikgames.com)
+**Website:** [unitygametranslator.asymptomatikgames.com](https://unitygametranslator.asymptomatikgames.com) — [browse available game translations](https://unitygametranslator.asymptomatikgames.com/games)
 
 A universal translation mod for Unity games. Translate using AI (any OpenAI-compatible server — Ollama, LM Studio, Groq, Gemini, OpenAI, and more), Google Translate, DeepL, or download community translations. Works fully offline with a local AI server — no API key, no internet, no cost. Supports all writing systems and any language direction.
 
@@ -56,7 +56,7 @@ A universal translation mod for Unity games. Translate using AI (any OpenAI-comp
 - Variable scanner to discover candidates
 
 ### Online Community Features
-- **Community translations** — download translations from the website
+- **Community translations** — download [game translations from the website](https://unitygametranslator.asymptomatikgames.com/games)
 - **Automatic game detection** — via Steam ID, product name, or folder
 - **Real-time sync** via SSE (Server-Sent Events) — get updates without restarting
 - **3-way merge** — intelligently merge remote updates with your local changes

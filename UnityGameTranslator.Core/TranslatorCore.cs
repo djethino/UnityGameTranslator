@@ -2315,6 +2315,18 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Whether a key exists in the translation cache. Guard for the
+        /// browser-requested retranslation: the key travels from the browser
+        /// through the site verbatim, and only texts already in OUR file may
+        /// ever be queued to the player's AI backend.
+        /// </summary>
+        public static bool HasTranslationKey(string key)
+        {
+            if (string.IsNullOrEmpty(key)) return false;
+            return TranslationCache.ContainsKey(key);
+        }
+
+        /// <summary>
         /// Remove a translation entry and queue its key for AI retranslation
         /// (in-game text editor "Retranslate" action).
         /// </summary>

@@ -1128,6 +1128,10 @@ namespace UnityGameTranslator.Core.UI
                         _browserLeftSince = -1f;
                         TranslatorCore.LogDebug("[EditSSE] Browser page (re)joined");
                     }
+                    else if (eventType == "edit_retranslate")
+                    {
+                        HandleEditSessionRetranslate(data);
+                    }
                 });
             };
 
@@ -1181,6 +1185,49 @@ namespace UnityGameTranslator.Core.UI
                 TranslatorCore.LogInfo("[EditSSE] Session ended (game shutdown)");
             }
             catch { }
+        }
+
+        /// <summary>
+        /// Handle an edit_retranslate SSE event — the browser asked to
+        /// re-translate ONE entry with the player's own AI backend. Runs on
+        /// the main thread (dispatched by the SSE handler). Guards:
+        /// AI must be enabled, and the key must already exist in OUR cache —
+        /// the request key comes from the browser verbatim, and arbitrary
+        /// text must never be fed to the player's AI (cost, prompt abuse).
+        /// The result comes back through the normal AI worker → SaveCache →
+        /// session push pipeline; the debounce is lifted so the browser sees
+        /// it as soon as the translation lands.
+        /// </summary>
+        private static void HandleEditSessionRetranslate(string jsonData)
+        {
+            try
+            {
+                var data = ApiClient.ParseJsonSafe(jsonData);
+                string key = data["key"]?.Value<string>();
+                if (string.IsNullOrEmpty(key)) return;
+
+                if (!TranslatorCore.Config.enable_ai)
+                {
+                    TranslatorCore.LogWarning("[EditSSE] Retranslate requested but AI is disabled, ignored");
+                    return;
+                }
+
+                if (!TranslatorCore.HasTranslationKey(key))
+                {
+                    TranslatorCore.LogWarning("[EditSSE] Retranslate requested for a key not in the local file, ignored");
+                    return;
+                }
+
+                TranslatorCore.LogInfo("[EditSSE] Browser requested AI retranslation of one entry");
+                TranslatorCore.RemoveTranslationForRetranslate(key);
+                // The user is waiting in the browser: push as soon as the
+                // AI worker saves, without the usual debounce window
+                _nextPushAllowedTime = 0f;
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogError($"[EditSSE] Error handling edit_retranslate: {e.Message}");
+            }
         }
 
         /// <summary>

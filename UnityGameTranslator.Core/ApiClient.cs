@@ -1107,6 +1107,24 @@ namespace UnityGameTranslator.Core
         #region Edit Session (anonymous live edit in browser)
 
         /// <summary>
+        /// Human-readable label of the active translation backend, advertised
+        /// to the live edit session (tooltip of the browser's retranslate
+        /// button). Null when AI translation is disabled.
+        /// </summary>
+        private static string GetAiBackendLabel()
+        {
+            var config = TranslatorCore.Config;
+            if (config == null || !config.enable_ai) return null;
+            switch (config.translation_backend)
+            {
+                case "llm": return string.IsNullOrEmpty(config.ai_model) ? "LLM" : config.ai_model;
+                case "google": return "Google Translate";
+                case "deepl": return "DeepL";
+                default: return config.translation_backend;
+            }
+        }
+
+        /// <summary>
         /// Initialize a live edit session: uploads the raw local translations
         /// file (metadata keys INCLUDED — the session file comes back verbatim
         /// to replace translations.json, so _uuid/_game/_source must survive
@@ -1134,7 +1152,12 @@ namespace UnityGameTranslator.Core
                     ["content"] = contentObj,
                     ["game_name"] = TranslatorCore.CurrentGame?.name,
                     ["source_language"] = TranslatorCore.Config?.GetSourceLanguage(),
-                    ["target_language"] = TranslatorCore.Config?.GetTargetLanguage()
+                    ["target_language"] = TranslatorCore.Config?.GetTargetLanguage(),
+                    // Advertise OUR AI backend so the browser can offer per-line
+                    // retranslation — no credential leaves this machine, the
+                    // site only ever relays the request back over SSE
+                    ["ai_available"] = TranslatorCore.Config?.enable_ai ?? false,
+                    ["ai_model"] = GetAiBackendLabel()
                 };
 
                 var jsonPayload = payload.ToString(Newtonsoft.Json.Formatting.None);
@@ -1195,7 +1218,14 @@ namespace UnityGameTranslator.Core
                     return new EditSessionUpdateResult { Success = false, Error = "Local translation file is not valid JSON" };
                 }
 
-                var payload = new JObject { ["content"] = contentObj };
+                var payload = new JObject
+                {
+                    ["content"] = contentObj,
+                    // Pushes refresh the AI flag: the player can toggle the
+                    // backend mid-session and the browser buttons follow
+                    ["ai_available"] = TranslatorCore.Config?.enable_ai ?? false,
+                    ["ai_model"] = GetAiBackendLabel()
+                };
                 var content = CompressJson(payload.ToString(Newtonsoft.Json.Formatting.None));
 
                 var response = await client.PostAsync($"{DefaultBaseUrl}/edit-session/{Uri.EscapeDataString(modKey)}/update", content);

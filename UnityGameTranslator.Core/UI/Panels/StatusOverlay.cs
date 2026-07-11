@@ -46,6 +46,12 @@ namespace UnityGameTranslator.Core.UI.Panels
         private GameObject _syncBox;
         private Text _syncLabel;
         private Text _syncHintLabel;
+
+        // UI elements - Website notifications relay
+        private GameObject _webNotifBox;
+        private Text _webNotifLabel;
+        private ButtonRef _webNotifViewBtn;
+        private ButtonRef _webNotifDismissBtn;
         private ButtonRef _syncBranchBtn;    // Branch option (contribute, green)
         private ButtonRef _syncForkBtn;      // Fork option (independent, red)
         private ButtonRef _syncActionBtn;    // Generic action (Download/Update/Merge)
@@ -361,6 +367,81 @@ namespace UnityGameTranslator.Core.UI.Panels
             RegisterUIText(_syncHintLabel);
 
             _syncBox.SetActive(false);
+
+            CreateWebNotifBox();
+        }
+
+        /// <summary>
+        /// Website notifications relay: contributions to review, announcements.
+        /// Discreet corner box with the first notification's summary.
+        /// </summary>
+        private void CreateWebNotifBox()
+        {
+            _webNotifBox = UIFactory.CreateVerticalGroup(ContentRoot, "WebNotifBox", false, false, true, true, 5);
+            UIFactory.SetLayoutElement(_webNotifBox, minHeight: UIStyles.NotificationBoxHeight, flexibleWidth: 9999);
+            SetBackgroundColor(_webNotifBox, UIStyles.NotificationInfo);
+
+            var padding = _webNotifBox.GetComponent<VerticalLayoutGroup>();
+            if (padding != null)
+            {
+                padding.padding = Compat.MakeRectOffset(8, 8, 5, 5);
+            }
+
+            _webNotifLabel = UIFactory.CreateLabel(_webNotifBox, "WebNotifLabel", "", TextAnchor.MiddleLeft);
+            _webNotifLabel.fontStyle = FontStyle.Bold;
+            UIFactory.SetLayoutElement(_webNotifLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
+            RegisterUIText(_webNotifLabel);
+
+            var notifBtnRow = UIStyles.CreateFormRow(_webNotifBox, "WebNotifBtnRow", UIStyles.RowHeightMedium, 3);
+
+            _webNotifViewBtn = UIFactory.CreateButton(notifBtnRow, "WebNotifViewBtn", "View");
+            UIFactory.SetLayoutElement(_webNotifViewBtn.Component.gameObject, minWidth: 65, minHeight: UIStyles.RowHeightNormal);
+            UIStyles.SetBackground(_webNotifViewBtn.Component.gameObject, UIStyles.ButtonPrimary);
+            _webNotifViewBtn.OnClick += OnWebNotifViewClicked;
+            RegisterUIText(_webNotifViewBtn.ButtonText);
+
+            _webNotifDismissBtn = UIFactory.CreateButton(notifBtnRow, "WebNotifDismissBtn", "Dismiss");
+            UIFactory.SetLayoutElement(_webNotifDismissBtn.Component.gameObject, minWidth: 70, minHeight: UIStyles.RowHeightNormal);
+            _webNotifDismissBtn.OnClick += OnWebNotifDismissClicked;
+            RegisterUIText(_webNotifDismissBtn.ButtonText);
+
+            _webNotifBox.SetActive(false);
+        }
+
+        /// <summary>
+        /// Show/hide the website notifications box from the latest poll result.
+        /// </summary>
+        public void RefreshNotificationsBox()
+        {
+            if (_webNotifBox == null) return;
+
+            var result = TranslatorUIManager.WebsiteNotifications;
+            bool show = !TranslatorUIManager.WebsiteNotificationsDismissed &&
+                        result != null && result.Unread > 0 && result.Items.Count > 0;
+
+            _webNotifBox.SetActive(show);
+            if (show)
+            {
+                string text = result.Items[0].Text ?? "";
+                if (result.Unread > 1)
+                {
+                    text += $" (+{result.Unread - 1} more)";
+                }
+                _webNotifLabel.text = text;
+            }
+        }
+
+        private void OnWebNotifViewClicked()
+        {
+            var result = TranslatorUIManager.WebsiteNotifications;
+            string url = result?.Items.Count > 0 ? result.Items[0].Url : null;
+            TranslatorCore.OpenUrlSafe(url ?? $"{ApiClient.WebsiteBaseUrl}/notifications");
+        }
+
+        private void OnWebNotifDismissClicked()
+        {
+            TranslatorUIManager.MarkWebsiteNotificationsRead();
+            _webNotifBox?.SetActive(false);
         }
 
         private void CreateAIBox()

@@ -360,6 +360,7 @@ namespace UnityGameTranslator.Core.UI
                 if (TranslatorCore.Config.online_mode && !string.IsNullOrEmpty(TranslatorCore.Config.api_token))
                 {
                     StartSyncStream();
+                    StartNotificationsPolling();
                 }
             }
             catch (Exception _e)
@@ -367,6 +368,67 @@ namespace UnityGameTranslator.Core.UI
                 TranslatorCore.LogError($"[TriggerStartupTasks] {_e.GetType().Name}: {_e.Message}\n{_e.StackTrace}");
             }
         }
+
+        #region Website notifications relay
+
+        /// <summary>Latest unread website notifications, shown by the StatusOverlay.</summary>
+        public static ModNotificationsResult WebsiteNotifications { get; private set; }
+
+        /// <summary>Set when the user dismisses the notifications box (until new items arrive).</summary>
+        public static bool WebsiteNotificationsDismissed { get; set; }
+
+        private static bool _notificationsPollingStarted;
+
+        /// <summary>
+        /// Light poll of the website's in-app notifications (contributions to
+        /// review, announcements): once at startup, then every 30 minutes.
+        /// </summary>
+        private static async void StartNotificationsPolling()
+        {
+            if (_notificationsPollingStarted) return;
+            _notificationsPollingStarted = true;
+
+            try
+            {
+                while (TranslatorCore.Config.online_mode && !string.IsNullOrEmpty(TranslatorCore.Config.api_token))
+                {
+                    var result = await ApiClient.GetNotificationsAsync();
+                    if (result.Success)
+                    {
+                        bool hasNew = result.Unread > 0 &&
+                            (WebsiteNotifications == null || result.Unread != WebsiteNotifications.Unread);
+                        WebsiteNotifications = result;
+                        if (hasNew)
+                        {
+                            WebsiteNotificationsDismissed = false;
+                        }
+                        RunOnMainThread(() => StatusOverlay?.RefreshNotificationsBox());
+                    }
+
+                    await Task.Delay(TimeSpan.FromMinutes(30));
+                }
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogWarning($"[Notifications] Polling stopped: {e.Message}");
+            }
+            finally
+            {
+                _notificationsPollingStarted = false;
+            }
+        }
+
+        /// <summary>
+        /// Mark all website notifications as read (called from the overlay's dismiss).
+        /// </summary>
+        public static async void MarkWebsiteNotificationsRead()
+        {
+            WebsiteNotificationsDismissed = true;
+            WebsiteNotifications = null;
+            await ApiClient.MarkNotificationsReadAsync();
+        }
+
+        #endregion
 
         #region SSE Sync Stream
 

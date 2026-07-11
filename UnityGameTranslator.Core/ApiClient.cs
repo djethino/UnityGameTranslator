@@ -207,6 +207,81 @@ namespace UnityGameTranslator.Core
             }
         }
 
+        #region Notifications
+
+        /// <summary>
+        /// Fetch the user's unread in-app notifications (compact summary for the
+        /// status overlay). Requires the auth token to be set.
+        /// </summary>
+        public static async Task<ModNotificationsResult> GetNotificationsAsync()
+        {
+            try
+            {
+                var response = await client.GetAsync($"{DefaultBaseUrl}/me/notifications");
+                if (!response.IsSuccessStatusCode)
+                {
+                    return new ModNotificationsResult { Success = false, Error = $"HTTP {response.StatusCode}" };
+                }
+
+                string json = await response.Content.ReadAsStringAsync();
+                var data = ParseJsonSafe(json);
+
+                var result = new ModNotificationsResult
+                {
+                    Success = true,
+                    Unread = data["unread"]?.Value<int>() ?? 0,
+                    Items = new List<ModNotificationItem>(),
+                };
+
+                if (data["items"] is JArray items)
+                {
+                    foreach (var item in items)
+                    {
+                        result.Items.Add(new ModNotificationItem
+                        {
+                            Id = item["id"]?.ToString(),
+                            Type = item["type"]?.ToString(),
+                            Text = item["text"]?.ToString(),
+                            Url = item["url"]?.ToString(),
+                        });
+                    }
+                }
+
+                return result;
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogWarning($"[ApiClient] Notifications error: {e.Message}");
+                return new ModNotificationsResult { Success = false, Error = e.Message };
+            }
+        }
+
+        /// <summary>
+        /// Mark notifications as read on the website (all of them when ids is null).
+        /// </summary>
+        public static async Task<bool> MarkNotificationsReadAsync(List<string> ids = null)
+        {
+            try
+            {
+                var payload = new JObject();
+                if (ids != null && ids.Count > 0)
+                {
+                    payload["ids"] = new JArray(ids);
+                }
+
+                var content = new StringContent(payload.ToString(), Encoding.UTF8, "application/json");
+                var response = await client.PostAsync($"{DefaultBaseUrl}/me/notifications/read", content);
+                return response.IsSuccessStatusCode;
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogWarning($"[ApiClient] Mark notifications read error: {e.Message}");
+                return false;
+            }
+        }
+
+        #endregion
+
         #region Translation Search
 
         /// <summary>
@@ -1390,6 +1465,22 @@ namespace UnityGameTranslator.Core
     }
 
     #region Result Classes
+
+    public class ModNotificationsResult
+    {
+        public bool Success { get; set; }
+        public string Error { get; set; }
+        public int Unread { get; set; }
+        public List<ModNotificationItem> Items { get; set; } = new List<ModNotificationItem>();
+    }
+
+    public class ModNotificationItem
+    {
+        public string Id { get; set; }
+        public string Type { get; set; }
+        public string Text { get; set; }
+        public string Url { get; set; }
+    }
 
     public class TranslationSearchResult
     {

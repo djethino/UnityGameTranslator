@@ -1577,6 +1577,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 string newBackend = GetSelectedBackendConfig();
                 TranslatorCore.Config.translation_backend = newBackend;
                 TranslatorCore.Config.enable_ai = (newBackend == "llm"); // Keep enable_ai in sync
+                // Capture mode works WITHOUT a backend: the worker must run to
+                // store the H+empty entries (it never calls any backend then)
+                TranslatorCore.EnsureWorkerRunning();
                 TranslatorCore.Config.ai_url = _aiUrlInput.Text;
                 string apiKeyValue = _aiApiKeyInput.Text;
                 TranslatorCore.Config.ai_api_key = !string.IsNullOrEmpty(apiKeyValue) ? apiKeyValue : null;

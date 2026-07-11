@@ -2515,9 +2515,9 @@ namespace UnityGameTranslator.Core
 
         private static void StartTranslationWorker()
         {
-            if (!Config.IsTranslationEnabled)
+            if (!Config.IsTranslationEnabled && !Config.capture_keys_only)
             {
-                Adapter?.LogWarning("[Worker] Cannot start: no translation backend enabled");
+                Adapter?.LogWarning("[Worker] Cannot start: no translation backend enabled (and capture mode off)");
                 return;
             }
             if (workerRunning) return; // Already running
@@ -2535,7 +2535,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static void EnsureWorkerRunning()
         {
-            if (Config.IsTranslationEnabled && !workerRunning)
+            if ((Config.IsTranslationEnabled || Config.capture_keys_only) && !workerRunning)
             {
                 LogDebug("[TranslatorCore] Starting translation worker thread...");
                 StartTranslationWorker();
@@ -2986,8 +2986,8 @@ namespace UnityGameTranslator.Core
 
             while (!ShuttingDown)
             {
-                // Stop if AI was disabled
-                if (!Config.IsTranslationEnabled)
+                // Stop if AI was disabled (capture-only mode keeps the worker alive)
+                if (!Config.IsTranslationEnabled && !Config.capture_keys_only)
                 {
                     LogDebug("[Worker] Translation disabled, stopping worker thread");
                     workerRunning = false;
@@ -4171,7 +4171,9 @@ namespace UnityGameTranslator.Core
 
         public static void QueueForTranslation(string text, object component = null, bool isOwnUI = false)
         {
-            if (!Config.IsTranslationEnabled) return;
+            // Capture-only mode needs the queue too: entries are stored as
+            // H+empty by the worker without any backend call
+            if (!Config.IsTranslationEnabled && !Config.capture_keys_only) return;
             // Google/DeepL require online mode
             if (Config.ActiveBackendRequiresOnline && !Config.online_mode) return;
             if (string.IsNullOrEmpty(text)) return;
@@ -4322,7 +4324,7 @@ namespace UnityGameTranslator.Core
                 return patternResult;
             }
 
-            if (Config.IsTranslationEnabled && !string.IsNullOrEmpty(text))
+            if ((Config.IsTranslationEnabled || Config.capture_keys_only) && !string.IsNullOrEmpty(text))
             {
                 // Check reverse cache with NORMALIZED text (translations are stored normalized + trimmed)
                 // TrimEnd because TMP often strips trailing whitespace/newlines when displaying
@@ -4585,8 +4587,8 @@ namespace UnityGameTranslator.Core
                 return text;
             }
 
-            // No cache hit - queue for AI if enabled
-            if (Config.IsTranslationEnabled && !string.IsNullOrEmpty(text))
+            // No cache hit - queue for AI if enabled (or for capture-only mode)
+            if ((Config.IsTranslationEnabled || Config.capture_keys_only) && !string.IsNullOrEmpty(text))
             {
                 // Check reverse cache with NORMALIZED text (translations are stored normalized + trimmed)
                 // TrimEnd because TMP often strips trailing whitespace/newlines when displaying

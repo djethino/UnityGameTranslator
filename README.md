@@ -2,7 +2,7 @@
 
 **Website:** [unitygametranslator.asymptomatikgames.com](https://unitygametranslator.asymptomatikgames.com) — [browse game translations](https://unitygametranslator.asymptomatikgames.com/games) · [user documentation](https://unitygametranslator.asymptomatikgames.com/docs)
 
-A mod that players install into any Unity game to play it in their language — the game doesn't need to support it, and the developer doesn't need to do anything. Translate using AI (any OpenAI-compatible server — Ollama, LM Studio, Groq, Gemini, OpenAI, and more), Google Translate, DeepL, or download community translations. Works fully offline with a local AI server — no API key, no internet, no cost. Supports all writing systems and any language direction.
+A mod that players install into any Unity game to play it in their language — the game doesn't need to support it, and the developer doesn't need to do anything. Use translations shared by the community, or translate live with your own AI: a free local server (Ollama, LM Studio — Vulkan covers NVIDIA, AMD and Intel GPUs) if your machine can run the game and the model together, or any OpenAI-compatible online provider (Groq, Gemini, OpenAI, OpenRouter…), Google Translate or DeepL with your own key. Fully offline with a local AI: no API key, no internet, no cost. Supports all writing systems and any language direction.
 
 > This README covers the technical side (installation details, configuration, self-hosting, building). For the user guide — setup wizard, editors, collaboration, troubleshooting — see the [documentation on the website](https://unitygametranslator.asymptomatikgames.com/docs).
 
@@ -10,7 +10,7 @@ A mod that players install into any Unity game to play it in their language — 
 
 ### Translation Engine
 - **Runtime translation** — text is translated as you encounter it in-game
-- **Multiple backends** — AI (OpenAI-compatible), Google Translate, DeepL, or community downloads only
+- **Multiple backends** — community downloads only, free local AI, or online services with your own key (OpenAI-compatible providers, Google Translate, DeepL)
 - **Instant cache hits** — cached translations apply synchronously with zero latency
 - **Number normalization** — "Kill 5 enemies" and "Kill 10 enemies" share the same translation
 - **Auto language detection** — detects system language as default target

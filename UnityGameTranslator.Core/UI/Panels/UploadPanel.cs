@@ -39,6 +39,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private InputFieldRef _resourcesUrlInput;
         private ButtonRef _backBtn;
         private ButtonRef _uploadBtn;
+        private Components.HelpZone _helpZone;
 
         // State
         private bool _isUploading;
@@ -59,6 +60,9 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             // Use scrollable layout - content scrolls if needed, buttons stay fixed
             CreateScrollablePanelLayout(out var scrollContent, out var buttonRow, PanelWidth - 40);
+
+            // Contextual help bar between content and footer
+            _helpZone = CreateHelpZone(buttonRow, "Hover an element to see what it does");
 
             // Adaptive card - sizes to content (PanelWidth - 2*PanelPadding)
             var card = CreateAdaptiveCard(scrollContent, "UploadCard", PanelWidth - 40);
@@ -99,6 +103,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             RegisterUIText(notesLabel);
 
             _notesInput = CreateStyledInputField(card, "NotesInput", "Add any notes about this translation...", UIStyles.MultiLineSmall);
+            _helpZone?.Describe(_notesInput.Component.gameObject,
+                "Shown to other players on the website next to your translation");
 
             // Resources URL
             var urlLabel = CreateSmallLabel(card, "UrlLabel", "Resources URL (optional):");
@@ -143,6 +149,17 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
             };
             RegisterUIText(_uploadBtn.ButtonText);
+            DescribeUploadButton("Publish this translation online so others can find and download it for this game");
+        }
+
+        /// <summary>
+        /// The upload button means different things per mode (New/Update/Branch/Fork);
+        /// re-describe it whenever the mode is resolved.
+        /// </summary>
+        private void DescribeUploadButton(string helpText)
+        {
+            if (_uploadBtn != null)
+                _helpZone?.Describe(_uploadBtn.Component.gameObject, helpText);
         }
 
         private void OnBackToSetup()
@@ -276,6 +293,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                             _titleLabel.text = "Update Translation";
                             _modeInfoLabel.text = $"Updating: ID #{siteId}";
                             _uploadBtn.ButtonText.text = "Update";
+                            DescribeUploadButton("Replace your published version with your current local file");
 
                             // Note: Type is now auto-calculated by server from HVASM tags
                             _notesInput.Text = existingNotes;
@@ -312,6 +330,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                             _titleLabel.text = "Contribute as Branch";
                             _modeInfoLabel.text = $"Contributing to: @{uploader}";
                             _uploadBtn.ButtonText.text = "Contribute";
+                            DescribeUploadButton($"Send your changes to @{uploader} for review — they can merge them into the main translation");
                             // Note: Type is now auto-calculated by server from HVASM tags
                             _statusLabel.text = "";
                             _isChecking = false;
@@ -345,6 +364,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                             _titleLabel.text = "Upload Fork";
                             _modeInfoLabel.text = $"Languages: {forkSourceLang} -> {forkTargetLang} (from forked translation)";
                             _uploadBtn.ButtonText.text = "Upload";
+                            DescribeUploadButton("Publish your independent translation — you become its owner on the website");
                             _statusLabel.text = "";
                             _isChecking = false;
                             _uploadBtn.Component.interactable = true;

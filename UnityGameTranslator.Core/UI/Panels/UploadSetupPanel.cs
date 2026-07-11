@@ -251,6 +251,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.SetLayoutElement(_gameSearchStatus.gameObject, minHeight: UIStyles.RowHeightSmall);
             RegisterUIText(_gameSearchStatus);
 
+            // Legend for the search result markers
+            var resultsLegend = UIStyles.CreateHint(gameBox, "ResultsLegend",
+                "Pick the matching game. ★ = best match • [catalog] = already known here, other tags = external game databases");
+            RegisterUIText(resultsLegend);
+
             // Search results scroll
             var resultsScroll = UIFactory.CreateScrollView(gameBox, "ResultsScroll", out _gameResultsContent, out _);
             UIFactory.SetLayoutElement(resultsScroll, minHeight: 80, flexibleHeight: 0);

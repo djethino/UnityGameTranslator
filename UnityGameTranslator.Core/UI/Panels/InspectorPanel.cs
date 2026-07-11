@@ -53,6 +53,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private Text _statusLabel;
         private ButtonRef _cancelBtn;
         private Text _titleLabel;
+        private Components.HelpZone _helpZone;
 
         // UI elements — Exclusion mode
         private ButtonRef _excludeThisBtn;
@@ -605,6 +606,9 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             CreateScrollablePanelLayout(out var scrollContent, out var buttonRow, PanelWidth - 40);
 
+            // Contextual help bar between content and footer
+            _helpZone = CreateHelpZone(buttonRow, "Hover an element to see what it does");
+
             // Title
             _titleLabel = CreateTitle(scrollContent, "Title", "Element Inspector");
             RegisterUIText(_titleLabel);
@@ -632,6 +636,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 new[] { "UI Only" }, "UI Only", popupHeight: 150, showSearch: false);
             var cameraObj = _cameraDropdown.CreateUI(card, OnCameraSelected, PanelWidth - 80);
             UIFactory.SetLayoutElement(cameraObj, minHeight: UIStyles.RowHeightNormal, flexibleWidth: 9999);
+            _helpZone?.Describe(cameraObj,
+                "'UI Only' picks on-screen interface text. Choose a camera to pick objects in the game world instead.");
 
             UIStyles.CreateSpacer(card, 8);
 
@@ -684,12 +690,16 @@ namespace UnityGameTranslator.Core.UI.Panels
             _excludeThisBtn.Component.interactable = false;
             UIFactory.SetLayoutElement(_excludeThisBtn.Component.gameObject, flexibleWidth: 9999);
             RegisterUIText(_excludeThisBtn.ButtonText);
+            _helpZone?.Describe(_excludeThisBtn.Component.gameObject,
+                "Never translate this exact element (only this one)");
 
             _excludePatternBtn = CreateSecondaryButton(_exclusionActionsRow, "ExcludePatternBtn", "Exclude Pattern");
             _excludePatternBtn.OnClick += OnExcludePatternClicked;
             _excludePatternBtn.Component.interactable = false;
             UIFactory.SetLayoutElement(_excludePatternBtn.Component.gameObject, flexibleWidth: 9999);
             RegisterUIText(_excludePatternBtn.ButtonText);
+            _helpZone?.Describe(_excludePatternBtn.Component.gameObject,
+                "Never translate ANY element with this name, anywhere in the game (e.g. every chat line)");
 
             // BitmapReplace mode actions
             _imageActionsRow = UIStyles.CreateFormRow(card, "ImageActionRow", UIStyles.ButtonHeight, 5);
@@ -699,12 +709,16 @@ namespace UnityGameTranslator.Core.UI.Panels
             _exportOriginalBtn.Component.interactable = false;
             UIFactory.SetLayoutElement(_exportOriginalBtn.Component.gameObject, flexibleWidth: 9999);
             RegisterUIText(_exportOriginalBtn.ButtonText);
+            _helpZone?.Describe(_exportOriginalBtn.Component.gameObject,
+                "Save the game's current image to disk as a template you can edit");
 
             _markReplaceBtn = CreateSecondaryButton(_imageActionsRow, "MarkReplaceBtn", "Mark for Replace");
             _markReplaceBtn.OnClick += OnMarkReplaceClicked;
             _markReplaceBtn.Component.interactable = false;
             UIFactory.SetLayoutElement(_markReplaceBtn.Component.gameObject, flexibleWidth: 9999);
             RegisterUIText(_markReplaceBtn.ButtonText);
+            _helpZone?.Describe(_markReplaceBtn.Component.gameObject,
+                "Register this image for replacement: drop your edited version in the images folder and it swaps in-game");
 
             _imageActionsRow.SetActive(false); // Hidden by default (exclusion mode)
 

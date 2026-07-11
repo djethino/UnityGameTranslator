@@ -242,6 +242,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             _loginLogoutBtn = CreateSecondaryButton(accountRow, "LoginLogoutBtn", "Login", 80);
             _loginLogoutBtn.OnClick += OnLoginLogoutClicked;
             RegisterUIText(_loginLogoutBtn.ButtonText);
+            _helpZone?.Describe(_loginLogoutBtn.Component.gameObject,
+                "An account is only needed to SHARE translations. Downloading and playing work without one.");
         }
 
         private void CreateModUpdateBanner(GameObject parent)
@@ -328,6 +330,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIStyles.SetBackground(_loginCTABtn.Component.gameObject, UIStyles.ButtonSuccess);
             _loginCTABtn.OnClick += () => TranslatorUIManager.LoginPanel?.SetActive(true);
             RegisterUIText(_loginCTABtn.ButtonText);
+            _helpZone?.Describe(_loginCTABtn.Component.gameObject,
+                "An account is only needed to SHARE translations. Downloading and playing work without one.");
         }
 
         private void CreateStatusSection(GameObject parent)
@@ -378,6 +382,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIStyles.SetBackground(_resourcesLinkBtn.Component.gameObject, UIStyles.ButtonLink);
             _resourcesLinkBtn.OnClick += OnResourcesLinkClicked;
             RegisterUIText(_resourcesLinkBtn.ButtonText);
+            _helpZone?.Describe(_resourcesLinkBtn.Component.gameObject,
+                "Open the external link the translation's author attached (custom fonts or images). Not hosted by us.");
 
             // Disclaimer
             var disclaimer = UIFactory.CreateLabel(_resourcesLinkSection, "ResourcesDisclaimer",
@@ -625,6 +631,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             _searchBtn = CreateSecondaryButton(searchRow, "SearchBtn", "Search", 80);
             _searchBtn.OnClick += OnSearchCommunityClicked;
             RegisterUIText(_searchBtn.ButtonText);
+            _helpZone?.Describe(_searchBtn.Component.gameObject,
+                "Search the translations other players shared for this game");
 
             // Translation list - ensure initialized (larger height for dedicated tab)
             if (_translationList == null)
@@ -652,6 +660,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             _downloadBtn.OnClick += OnDownloadCommunityClicked;
             _downloadBtn.Component.interactable = false;
             RegisterUIText(_downloadBtn.ButtonText);
+            _helpZone?.Describe(_downloadBtn.Component.gameObject,
+                "Use the selected translation in your game — the mod asks before replacing anything you changed");
         }
 
         public override void SetActive(bool active)

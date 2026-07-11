@@ -1,8 +1,10 @@
 # Universal Unity Game Translator (Beta)
 
-**Website:** [unitygametranslator.asymptomatikgames.com](https://unitygametranslator.asymptomatikgames.com) — [browse available game translations](https://unitygametranslator.asymptomatikgames.com/games)
+**Website:** [unitygametranslator.asymptomatikgames.com](https://unitygametranslator.asymptomatikgames.com) — [browse game translations](https://unitygametranslator.asymptomatikgames.com/games) · [user documentation](https://unitygametranslator.asymptomatikgames.com/docs)
 
-A universal translation mod for Unity games. Translate using AI (any OpenAI-compatible server — Ollama, LM Studio, Groq, Gemini, OpenAI, and more), Google Translate, DeepL, or download community translations. Works fully offline with a local AI server — no API key, no internet, no cost. Supports all writing systems and any language direction.
+A mod that players install into any Unity game to play it in their language — the game doesn't need to support it, and the developer doesn't need to do anything. Translate using AI (any OpenAI-compatible server — Ollama, LM Studio, Groq, Gemini, OpenAI, and more), Google Translate, DeepL, or download community translations. Works fully offline with a local AI server — no API key, no internet, no cost. Supports all writing systems and any language direction.
+
+> This README covers the technical side (installation details, configuration, self-hosting, building). For the user guide — setup wizard, editors, collaboration, troubleshooting — see the [documentation on the website](https://unitygametranslator.asymptomatikgames.com/docs).
 
 ## Features
 
@@ -23,11 +25,10 @@ A universal translation mod for Unity games. Translate using AI (any OpenAI-comp
 | **DeepL** | DeepL API (Free and Pro tiers) |
 | **None** | Only use cached/downloaded translations |
 
-### In-Game Text Editor
-- Click on any UI element to see all text in that area
-- Edit translations directly in-game — saves immediately with Human (H) tag
-- Retranslate with AI if the current translation isn't good enough
-- Found in **Translation Parameters → Tools → Start Text Editor**
+### Editing Tools
+- **In-game text editor** — click any UI element, edit its texts in place (saved with the Human tag), or retranslate them with AI. Found in **Translation Tools → Tools → Start Text Editor**
+- **Browser live edit** — open your local translation file in a full web editor while playing: search & replace, filters, quality bar, keyboard review. Every save is hot-reloaded in-game, and new AI translations appear in the browser as you play. No account needed, nothing is published
+- **Private AI retranslation from the browser** — the website only *calls your mod*, which translates with your own locally-configured backend. No API key or LLM configuration ever reaches the website
 
 ### Font System
 - Automatic font detection (TextMeshPro, Unity UI.Text)
@@ -62,15 +63,15 @@ A universal translation mod for Unity games. Translate using AI (any OpenAI-comp
 - **3-way merge** — intelligently merge remote updates with your local changes
 - **Device Flow login** — secure authentication without entering passwords in-game
 - **Upload & share** — share your translations with the community
-- **Mod update checker** — notifications when a new mod version is available
+- **Mod update checker** — notifications when a new mod version is available; stable releases by default, opt-in for beta (pre-release) builds
 
 ### Collaboration System (Main/Branch/Fork)
 
 | Term | Description |
 |------|-------------|
-| **Main** | The original translation. First uploader becomes the owner. |
-| **Branch** | A contributor's version, linked to the Main. One per user per UUID. |
-| **Fork** | Copying a translation to create your own Branch. |
+| **Main** | The reference translation, owned by its creator and public on the website. |
+| **Branch** | Your improvements to someone else's Main, sent to the owner for review. One per user per UUID. |
+| **Fork** | Your own independent translation (new lineage): you become its Main owner, no longer linked to the original. |
 
 **Upload behavior:**
 
@@ -78,7 +79,8 @@ A universal translation mod for Unity games. Translate using AI (any OpenAI-comp
 |-----------|--------|
 | UUID doesn't exist on server | Creates **new Main** |
 | UUID exists, you're the owner | **Updates** your Main |
-| UUID exists, owned by someone else | **Forks** → creates your **Branch** |
+| UUID exists, owned by someone else | Creates your **Branch** (the owner reviews and merges) |
+| "Create Independent" / Fork in the mod | New UUID → **new Main** owned by you |
 
 ### Translation Quality System (H/V/A Tags)
 

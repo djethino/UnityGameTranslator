@@ -1336,7 +1336,8 @@ namespace UnityGameTranslator.Core.UI
                 string currentVersion = PluginInfo.Version;
                 string modLoaderType = TranslatorCore.Adapter?.ModLoaderType ?? "Unknown";
 
-                var result = await GitHubUpdateChecker.CheckForUpdatesAsync(currentVersion, modLoaderType);
+                var result = await GitHubUpdateChecker.CheckForUpdatesAsync(currentVersion, modLoaderType,
+                    TranslatorCore.Config.sync.notify_prereleases);
 
                 if (result.Success && result.HasUpdate)
                 {

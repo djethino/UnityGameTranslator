@@ -5234,6 +5234,12 @@ namespace UnityGameTranslator.Core
         public bool check_mod_updates { get; set; } = true;
 
         /// <summary>
+        /// Also notify about beta releases (GitHub pre-releases). Off by default:
+        /// most players should only hear about stable releases.
+        /// </summary>
+        public bool notify_prereleases { get; set; } = false;
+
+        /// <summary>
         /// Last known mod version (to avoid notifying about same version again)
         /// </summary>
         public string last_seen_mod_version { get; set; } = null;

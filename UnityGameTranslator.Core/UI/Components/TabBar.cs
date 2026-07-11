@@ -254,6 +254,19 @@ namespace UnityGameTranslator.Core.UI.Components
         }
 
         /// <summary>
+        /// Get a tab button's GameObject by tab name (e.g. to attach help descriptions).
+        /// </summary>
+        public GameObject GetTabButton(string name)
+        {
+            for (int i = 0; i < _tabs.Count; i++)
+            {
+                if (_tabs[i].Name == name)
+                    return _tabs[i].Button?.Component.gameObject;
+            }
+            return null;
+        }
+
+        /// <summary>
         /// Measures the maximum content height across all tabs.
         /// Activates all tabs simultaneously to ensure proper layout calculation,
         /// then restores original selection.

@@ -452,7 +452,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 _modUpdateBox.SetActive(true);
                 var info = TranslatorUIManager.ModUpdateInfo;
-                _modUpdateLabel.text = $"Mod update available: v{info?.LatestVersion ?? "?"}";
+                string kind = info?.IsPrerelease == true ? " (beta)"
+                    : info?.IsMajorUpdate == true ? " (major)" : "";
+                _modUpdateLabel.text = $"Mod update available: v{info?.LatestVersion ?? "?"}{kind}";
 
                 // Show appropriate button
                 bool hasDirectDownload = !string.IsNullOrEmpty(info?.DownloadUrl);

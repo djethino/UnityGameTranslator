@@ -19,6 +19,10 @@ namespace UnityGameTranslator.Core
         public string DownloadUrl { get; set; }
         public string ReleaseNotes { get; set; }
         public DateTime? PublishedAt { get; set; }
+        /// <summary>GitHub "Pre-release" flag (beta builds).</summary>
+        public bool IsPrerelease { get; set; }
+        /// <summary>Major jump vs the current version (first component; second while still in 0.x).</summary>
+        public bool IsMajorUpdate { get; set; }
     }
 
     /// <summary>
@@ -26,7 +30,9 @@ namespace UnityGameTranslator.Core
     /// </summary>
     public static class GitHubUpdateChecker
     {
+        // /releases/latest natively excludes pre-releases; the list endpoint includes them
         private const string GITHUB_API_URL = "https://api.github.com/repos/djethino/UnityGameTranslator/releases/latest";
+        private const string GITHUB_RELEASES_URL = "https://api.github.com/repos/djethino/UnityGameTranslator/releases?per_page=10";
         private static readonly HttpClient httpClient;
 
         static GitHubUpdateChecker()
@@ -43,14 +49,15 @@ namespace UnityGameTranslator.Core
         /// </summary>
         /// <param name="currentVersion">Current mod version (e.g., "0.9.3")</param>
         /// <param name="modLoaderType">Mod loader type for selecting the right asset</param>
+        /// <param name="includePrereleases">Also consider GitHub pre-releases (beta builds)</param>
         /// <returns>Update info with download URL if update available</returns>
-        public static async Task<ModUpdateInfo> CheckForUpdatesAsync(string currentVersion, string modLoaderType)
+        public static async Task<ModUpdateInfo> CheckForUpdatesAsync(string currentVersion, string modLoaderType, bool includePrereleases = false)
         {
             try
             {
-                TranslatorCore.LogInfo($"[GitHubUpdate] Checking for updates... Current: v{currentVersion}, Loader: {modLoaderType}");
+                TranslatorCore.LogInfo($"[GitHubUpdate] Checking for updates... Current: v{currentVersion}, Loader: {modLoaderType}, Prereleases: {includePrereleases}");
 
-                var response = await httpClient.GetAsync(GITHUB_API_URL);
+                var response = await httpClient.GetAsync(includePrereleases ? GITHUB_RELEASES_URL : GITHUB_API_URL);
 
                 if (!response.IsSuccessStatusCode)
                 {
@@ -63,7 +70,32 @@ namespace UnityGameTranslator.Core
                 }
 
                 var json = await response.Content.ReadAsStringAsync();
-                var release = ApiClient.ParseJsonSafe(json);
+                JToken release;
+                if (includePrereleases)
+                {
+                    // Newest first; skip drafts, keep the most recent release or pre-release
+                    var releases = JArray.Parse(json);
+                    release = null;
+                    foreach (var candidate in releases)
+                    {
+                        if (candidate["draft"]?.ToObject<bool>() == true) continue;
+                        release = candidate;
+                        break;
+                    }
+                    if (release == null)
+                    {
+                        return new ModUpdateInfo
+                        {
+                            Success = false,
+                            Error = "No releases found",
+                            CurrentVersion = currentVersion
+                        };
+                    }
+                }
+                else
+                {
+                    release = ApiClient.ParseJsonSafe(json);
+                }
 
                 var tagName = release["tag_name"]?.ToString();
                 var htmlUrl = release["html_url"]?.ToString();
@@ -96,7 +128,9 @@ namespace UnityGameTranslator.Core
                     ReleaseUrl = htmlUrl,
                     DownloadUrl = downloadUrl,
                     ReleaseNotes = body,
-                    PublishedAt = publishedAt
+                    PublishedAt = publishedAt,
+                    IsPrerelease = release["prerelease"]?.ToObject<bool>() ?? false,
+                    IsMajorUpdate = hasUpdate && IsMajorJump(currentVersion, latestVersion)
                 };
             }
             catch (HttpRequestException ex)
@@ -182,6 +216,28 @@ namespace UnityGameTranslator.Core
                 default:
                     return modLoaderType;
             }
+        }
+
+        /// <summary>
+        /// True when the jump between two versions is "major" for notification purposes:
+        /// the first component changed — or the second one while we are still in 0.x
+        /// (SemVer treats 0.MINOR as the breaking-change slot).
+        /// </summary>
+        public static bool IsMajorJump(string current, string latest)
+        {
+            if (string.IsNullOrEmpty(current) || string.IsNullOrEmpty(latest)) return false;
+
+            var p1 = current.TrimStart('v').Split('.');
+            var p2 = latest.TrimStart('v').Split('.');
+
+            int major1 = 0, major2 = 0, minor1 = 0, minor2 = 0;
+            if (p1.Length > 0) int.TryParse(p1[0].Split('-')[0], out major1);
+            if (p2.Length > 0) int.TryParse(p2[0].Split('-')[0], out major2);
+            if (p1.Length > 1) int.TryParse(p1[1].Split('-')[0], out minor1);
+            if (p2.Length > 1) int.TryParse(p2[1].Split('-')[0], out minor2);
+
+            if (major1 != major2) return true;
+            return major2 == 0 && minor1 != minor2;
         }
 
         /// <summary>

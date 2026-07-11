@@ -30,6 +30,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         // Tab system
         private TabBar _tabBar;
+        private Components.HelpZone _helpZone;
 
         // Tab sizing
         private bool _tabHeightFixed = false;
@@ -96,6 +97,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Use scrollable layout - content scrolls if needed, buttons stay fixed
             CreateScrollablePanelLayout(out var scrollContent, out var buttonRow, PanelWidth - 40);
 
+            // Contextual help bar between content and footer
+            _helpZone = CreateHelpZone(buttonRow, "Hover an element to see what it does");
+
             // Title
             var title = CreateTitle(scrollContent, "Title", "Translation Tools");
             RegisterUIText(title);
@@ -118,6 +122,18 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 RegisterUIText(text);
             }
+
+            // Explain what lives behind each tab
+            _helpZone?.Describe(_tabBar.GetTabButton("Tools"),
+                "Text editors (in-game and browser) and text detection settings");
+            _helpZone?.Describe(_tabBar.GetTabButton("Exclusions"),
+                "Prevent specific texts or UI elements from being translated");
+            _helpZone?.Describe(_tabBar.GetTabButton("Fonts"),
+                "Replace the game's fonts when they can't display your language's characters");
+            _helpZone?.Describe(_tabBar.GetTabButton("Images"),
+                "Replace images that contain baked-in text");
+            _helpZone?.Describe(_tabBar.GetTabButton("Variables"),
+                "Protect dynamic values (numbers, names) inside translated texts");
 
             // Build each tab's content
             CreateBehaviorTabContent(behaviorTab);
@@ -163,6 +179,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             var editorBtn = CreatePrimaryButton(card, "TextEditorBtn", "Start Text Editor", PanelWidth - 100);
             editorBtn.OnClick += OnStartTextEditorClicked;
             RegisterUIText(editorBtn.ButtonText);
+            _helpZone?.Describe(editorBtn.Component.gameObject,
+                "Pick any text on screen to fix its translation without leaving the game");
 
             UIStyles.CreateSpacer(card, 15);
 
@@ -177,6 +195,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             _browserEditorBtn = CreatePrimaryButton(card, "BrowserEditorBtn", "Edit in browser", PanelWidth - 100);
             _browserEditorBtn.OnClick += OnBrowserEditorClicked;
             RegisterUIText(_browserEditorBtn.ButtonText);
+            _helpZone?.Describe(_browserEditorBtn.Component.gameObject,
+                "Open your translation in a browser editor: search, filters, and every save applied in-game live");
 
             _browserEditorStatus = UIStyles.CreateHint(card, "BrowserEditorStatus", "");
             RegisterUIText(_browserEditorStatus);

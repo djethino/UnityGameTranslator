@@ -117,6 +117,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private Toggle _notificationsEnabledToggle;
         private SearchableDropdown _notificationPositionDropdown;
         private Toggle _checkModUpdatesToggle;
+        private Toggle _notifyPrereleasesToggle;
         private ButtonRef _checkModUpdatesNowBtn;
         private Text _checkModUpdatesStatusLabel;
 
@@ -164,6 +165,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             public string notification_position;
             public bool auto_download;
             public bool check_mod_updates;
+            public bool notify_prereleases;
             public bool disable_eventsystem_override;
             public string proxy_mode;
             public string proxy_url;
@@ -208,6 +210,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     notification_position = TranslatorCore.Config.sync.notification_position ?? "top-right",
                     auto_download = TranslatorCore.Config.sync.auto_download,
                     check_mod_updates = TranslatorCore.Config.sync.check_mod_updates,
+                    notify_prereleases = TranslatorCore.Config.sync.notify_prereleases,
                     disable_eventsystem_override = TranslatorCore.DisableEventSystemOverride,
                     proxy_mode = TranslatorCore.Config.proxy_mode ?? "default",
                     proxy_url = TranslatorCore.Config.proxy_url ?? "",
@@ -285,6 +288,16 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 RegisterUIText(text);
             }
+
+            // Explain what lives behind each tab
+            _helpZone?.Describe(_tabBar.GetTabButton("General"),
+                "Language, mod UI translation, and general behavior");
+            _helpZone?.Describe(_tabBar.GetTabButton("Hotkeys"),
+                "Keyboard shortcuts for the mod's panels and tools");
+            _helpZone?.Describe(_tabBar.GetTabButton("Translation"),
+                "How untranslated texts get translated: your AI, Google or DeepL");
+            _helpZone?.Describe(_tabBar.GetTabButton("Online"),
+                "Website sync, update notifications, and network settings");
 
             // Build each tab's content
             CreateGeneralTabContent(generalTab);
@@ -772,6 +785,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIHelpers.AddToggleListener(_onlineModeToggle, OnOnlineModeChanged);
             UIFactory.SetLayoutElement(onlineToggleObj, minHeight: UIStyles.RowHeightMedium);
             RegisterUIText(onlineLabel);
+            _helpZone?.Describe(onlineToggleObj,
+                "On: the mod contacts our website to find community translations and updates for your games. Off: fully offline, nothing leaves your machine.");
 
             UIStyles.CreateSpacer(card, 10);
 
@@ -796,6 +811,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             autoLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(autoDownloadObj, minHeight: UIStyles.RowHeightNormal);
             RegisterUIText(autoLabel);
+            _helpZone?.Describe(autoDownloadObj,
+                "Only applies when you have no local changes — otherwise the mod always asks first");
 
             UIStyles.CreateSpacer(card, 10);
 
@@ -814,6 +831,16 @@ namespace UnityGameTranslator.Core.UI.Panels
             _checkModUpdatesNowBtn = CreateSecondaryButton(modUpdatesRow, "CheckNowBtn", "Check Now", 90);
             _checkModUpdatesNowBtn.OnClick += OnCheckModUpdatesNowClicked;
             RegisterUIText(_checkModUpdatesNowBtn.ButtonText);
+
+            var prereleaseObj = UIFactory.CreateToggle(card, "PrereleaseToggle", out _notifyPrereleasesToggle, out var prereleaseLabel);
+            prereleaseLabel.text = " Also notify about beta releases";
+            prereleaseLabel.color = UIStyles.TextSecondary;
+            UIFactory.SetLayoutElement(prereleaseObj, minHeight: UIStyles.RowHeightNormal);
+            RegisterUIText(prereleaseLabel);
+
+            var prereleaseHint = UIStyles.CreateHint(card, "PrereleaseHint",
+                "Betas are early builds for testing new features. Leave off to only hear about stable releases.");
+            RegisterUIText(prereleaseHint);
 
             _checkModUpdatesStatusLabel = UIFactory.CreateLabel(card, "ModUpdateStatus", "", TextAnchor.MiddleLeft);
             _checkModUpdatesStatusLabel.fontSize = UIStyles.FontSizeSmall;
@@ -1060,6 +1087,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _notifyUpdatesToggle.isOn = TranslatorCore.Config.sync.notify_updates;
             _autoDownloadToggle.isOn = TranslatorCore.Config.sync.auto_download;
             _checkModUpdatesToggle.isOn = TranslatorCore.Config.sync.check_mod_updates;
+            _notifyPrereleasesToggle.isOn = TranslatorCore.Config.sync.notify_prereleases;
             _notificationsEnabledToggle.isOn = TranslatorCore.Config.sync.notifications_enabled;
             _notificationPositionDropdown.SelectedValue = PositionConfigToDisplay(TranslatorCore.Config.sync.notification_position);
             OnOnlineModeChanged(_onlineModeToggle.isOn);
@@ -1150,6 +1178,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _notifyUpdatesToggle.interactable = enabled;
             _autoDownloadToggle.interactable = enabled;
             _checkModUpdatesToggle.interactable = enabled;
+            _notifyPrereleasesToggle.interactable = enabled;
             _checkModUpdatesNowBtn.Component.interactable = enabled;
 
             // Translation API availability depends on online mode
@@ -1372,7 +1401,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 string currentVersion = PluginInfo.Version;
                 string modLoaderType = TranslatorCore.Adapter?.ModLoaderType ?? "Unknown";
 
-                var result = await GitHubUpdateChecker.CheckForUpdatesAsync(currentVersion, modLoaderType);
+                var result = await GitHubUpdateChecker.CheckForUpdatesAsync(currentVersion, modLoaderType,
+                    _notifyPrereleasesToggle != null && _notifyPrereleasesToggle.isOn);
 
                 var success = result.Success;
                 var hasUpdate = result.HasUpdate;
@@ -1546,6 +1576,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TranslatorCore.Config.sync.notify_updates = _notifyUpdatesToggle.isOn;
                 TranslatorCore.Config.sync.auto_download = _autoDownloadToggle.isOn;
                 TranslatorCore.Config.sync.check_mod_updates = _checkModUpdatesToggle.isOn;
+                TranslatorCore.Config.sync.notify_prereleases = _notifyPrereleasesToggle.isOn;
                 TranslatorCore.Config.sync.notifications_enabled = _notificationsEnabledToggle.isOn;
                 TranslatorCore.Config.sync.notification_position = PositionDisplayToConfig(_notificationPositionDropdown.SelectedValue);
 
@@ -1768,6 +1799,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_notifyUpdatesToggle.isOn != _initialSnapshot.notify_updates) count++;
             if (_autoDownloadToggle.isOn != _initialSnapshot.auto_download) count++;
             if (_checkModUpdatesToggle.isOn != _initialSnapshot.check_mod_updates) count++;
+            if (_notifyPrereleasesToggle.isOn != _initialSnapshot.notify_prereleases) count++;
             if (_notificationsEnabledToggle.isOn != _initialSnapshot.notifications_enabled) count++;
             if (PositionDisplayToConfig(_notificationPositionDropdown.SelectedValue) != _initialSnapshot.notification_position) count++;
 

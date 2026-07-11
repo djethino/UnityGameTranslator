@@ -101,7 +101,7 @@ A mod that players install into any Unity game to play it in their language — 
 - **First-run wizard** — guided setup on first launch
 - **Settings hotkey** — F10 (configurable) opens the full settings panel
 - **Translation info** — H/V/A distribution, quality score, sync status
-- **Translation parameters** — tabs for Tools, Exclusions, Fonts (Global + Overrides), Images, Variables
+- **Translation Tools** — tabs for Tools (editors), Exclusions, Fonts (Global + Overrides), Images, Variables
 - **Merge panel** — resolve conflicts with per-entry Keep Mine / Take Server choices
 - **Status overlay** — corner notifications for updates, sync, and AI queue
 
@@ -170,7 +170,7 @@ The mod works with **any server that exposes the OpenAI-compatible API** (`/v1/c
 | [Google Translate](https://cloud.google.com/translate) | Cloud Translation API |
 | [DeepL](https://www.deepl.com/pro-api) | Free and Pro tiers |
 
-**Setup:** Open settings (F10) → Translation tab → select backend → enter URL/key → Test → Enable.
+**Setup:** Open the mod panel (F10) → Mod Options → Translation tab → select backend → enter URL/key → Test → Enable.
 
 > **Recommended local model:** `qwen3:8b` — best balance of speed, quality, and multilingual support (~6-8 GB VRAM).
 

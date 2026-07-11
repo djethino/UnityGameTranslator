@@ -463,6 +463,32 @@ namespace UnityGameTranslator.Core.UI.Panels
             _resetWindowsStatusLabel = UIFactory.CreateLabel(resetRow, "ResetStatus", "", TextAnchor.MiddleLeft);
             _resetWindowsStatusLabel.fontSize = UIStyles.FontSizeSmall;
             UIFactory.SetLayoutElement(_resetWindowsStatusLabel.gameObject, flexibleWidth: 9999);
+
+            // === HELP & FEEDBACK (single compact row) ===
+            UIStyles.CreateSpacer(card, 15);
+
+            var helpSectionTitle = UIStyles.CreateSectionTitle(card, "HelpFeedbackLabel", "Help & Feedback");
+            RegisterUIText(helpSectionTitle);
+
+            var helpRow = UIStyles.CreateFormRow(card, "HelpFeedbackRow", UIStyles.RowHeightMedium, 5);
+
+            var reportBugBtn = CreateSecondaryButton(helpRow, "ReportBugBtn", "Report a Bug", 110);
+            reportBugBtn.OnClick += () => TranslatorCore.OpenUrlSafe("https://github.com/djethino/UnityGameTranslator/issues");
+            RegisterUIText(reportBugBtn.ButtonText);
+            _helpZone?.Describe(reportBugBtn.Component.gameObject,
+                "Something broken? Open a GitHub issue (a free GitHub account is required)");
+
+            var discussionsBtn = CreateSecondaryButton(helpRow, "DiscussionsBtn", "Discussions", 100);
+            discussionsBtn.OnClick += () => TranslatorCore.OpenUrlSafe("https://github.com/djethino/UnityGameTranslator/discussions");
+            RegisterUIText(discussionsBtn.ButtonText);
+            _helpZone?.Describe(discussionsBtn.Component.gameObject,
+                "Questions, ideas and feedback — talk with us and other players on GitHub");
+
+            var docsBtn = CreateSecondaryButton(helpRow, "OnlineDocsBtn", "Online Docs", 100);
+            docsBtn.OnClick += () => TranslatorCore.OpenUrlSafe($"{ApiClient.WebsiteBaseUrl}/docs");
+            RegisterUIText(docsBtn.ButtonText);
+            _helpZone?.Describe(docsBtn.Component.gameObject,
+                "The full user guide on the website (in your language)");
         }
 
         private void CreateHotkeysTabContent(GameObject parent)

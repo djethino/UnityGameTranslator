@@ -166,6 +166,7 @@ namespace UnityGameTranslator.Core
         // instead of string-based tracking which caused false positives when game text matched mod UI text
         private static object lockObj = new object();
         private static bool cacheModified = false;
+        private static int nextTranslationIndex = 1;
         private static HttpClient httpClient;
         private static int skippedTargetLang = 0;
         private static int skippedAlreadyTranslated = 0;
@@ -1431,6 +1432,8 @@ namespace UnityGameTranslator.Core
                 // Track saved _game.steam_id to compare with current detection
                 string savedSteamId = null;
                 int engineVersion = 0;
+                int highestSeenIndex = 0;
+                int? savedNextIndex = null;
 
                 // Extract metadata and translations
                 foreach (var prop in parsed.Properties())
@@ -1446,6 +1449,13 @@ namespace UnityGameTranslator.Core
                     else if (prop.Name == "_local_changes")
                     {
                         LocalChangesCount = prop.Value.Value<int>();
+                    }
+                    else if (prop.Name == "_next_index")
+                    {
+                        if (int.TryParse(prop.Value.ToString(), out int parsedNextIndex) && parsedNextIndex > 0)
+                        {
+                            savedNextIndex = parsedNextIndex;
+                        }
                     }
                     else if (prop.Name == "_metadata_dirty")
                     {
@@ -1549,14 +1559,21 @@ namespace UnityGameTranslator.Core
                         TranslationEntry newEntry;
                         if (prop.Value.Type == JTokenType.Object)
                         {
-                            // New format: {"v": "value", "t": "A"}
+                            // New format: {"v": "value", "t": "A", "i": 123}
                             var obj = prop.Value as JObject;
                             newEntry = new TranslationEntry
                             {
                                 // Normalize value line endings too
                                 Value = NormalizeLineEndings(obj?["v"]?.ToString() ?? ""),
-                                Tag = obj?["t"]?.ToString() ?? "A"
+                                Tag = obj?["t"]?.ToString() ?? "A",
+                                Index = ParseTranslationIndex(obj?["i"])
                             };
+
+                            if (newEntry.Index.HasValue)
+                            {
+                                if (newEntry.Index.Value > highestSeenIndex)
+                                    highestSeenIndex = newEntry.Index.Value;
+                            }
                         }
                         else if (prop.Value.Type == JTokenType.String)
                         {
@@ -1606,6 +1623,24 @@ namespace UnityGameTranslator.Core
                     cacheModified = true;
                     LogDebug($"Legacy cache file, generated UUID: {FileUuid}");
                 }
+
+                int computedNextIndex = Math.Max(highestSeenIndex + 1, 1);
+                if (savedNextIndex.HasValue && savedNextIndex.Value > computedNextIndex)
+                {
+                    computedNextIndex = savedNextIndex.Value;
+                }
+
+                // Backfill missing indices so all keys can be ordered in the web editor.
+                foreach (var kvp in TranslationCache)
+                {
+                    if (!kvp.Value.Index.HasValue)
+                    {
+                        kvp.Value.Index = computedNextIndex++;
+                        cacheModified = true;
+                    }
+                }
+
+                nextTranslationIndex = computedNextIndex;
 
                 // Update _game.steam_id if we detected one but file didn't have it
                 if (CurrentGame != null && !string.IsNullOrEmpty(CurrentGame.steam_id))
@@ -1660,6 +1695,7 @@ namespace UnityGameTranslator.Core
                 Adapter.LogError($"Failed to load cache: {e.Message}");
                 TranslationCache = new Dictionary<string, TranslationEntry>();
                 FileUuid = Guid.NewGuid().ToString();
+                nextTranslationIndex = 1;
             }
         }
 
@@ -1971,7 +2007,7 @@ namespace UnityGameTranslator.Core
 
         /// <summary>
         /// Parse JSON content into Dictionary of TranslationEntry.
-        /// Handles both new format ({"v": "value", "t": "tag"}) and legacy format (string).
+        /// Handles both new format ({"v": "value", "t": "tag", "i": 123}) and legacy format (string).
         /// </summary>
         /// <param name="jsonContent">Raw JSON string from file or API</param>
         /// <returns>Dictionary with translation entries including tags</returns>
@@ -1992,12 +2028,13 @@ namespace UnityGameTranslator.Core
 
                     if (prop.Value.Type == JTokenType.Object)
                     {
-                        // New format: {"v": "value", "t": "A"}
+                        // New format: {"v": "value", "t": "A", "i": 123}
                         var obj = prop.Value as JObject;
                         result[prop.Name] = new TranslationEntry
                         {
                             Value = obj?["v"]?.ToString() ?? "",
-                            Tag = obj?["t"]?.ToString() ?? "A"
+                            Tag = obj?["t"]?.ToString() ?? "A",
+                            Index = ParseTranslationIndex(obj?["i"])
                         };
                     }
                     else if (prop.Value.Type == JTokenType.String)
@@ -2036,11 +2073,12 @@ namespace UnityGameTranslator.Core
                 foreach (var kvp in TranslationCache)
                 {
                     // TranslationCache now contains TranslationEntry objects
-                    // Serialize with new format: {"v": "value", "t": "tag"}
-                    sortedDict[kvp.Key] = new Dictionary<string, string>
+                    // Serialize with new format: {"v": "value", "t": "tag", "i": index}
+                    sortedDict[kvp.Key] = new Dictionary<string, object>
                     {
                         ["v"] = kvp.Value.Value,
-                        ["t"] = kvp.Value.Tag ?? "A"
+                        ["t"] = kvp.Value.Tag ?? "A",
+                        ["i"] = kvp.Value.Index ?? 0
                     };
                 }
                 sortedDict["_uuid"] = FileUuid;
@@ -2295,10 +2333,14 @@ namespace UnityGameTranslator.Core
             {
                 existing.Value = newValue;
                 existing.Tag = "H";
+                if (!existing.Index.HasValue)
+                {
+                    existing.Index = nextTranslationIndex++;
+                }
             }
             else
             {
-                TranslationCache[key] = new TranslationEntry { Value = newValue, Tag = "H" };
+                TranslationCache[key] = new TranslationEntry { Value = newValue, Tag = "H", Index = nextTranslationIndex++ };
             }
 
             // Reverse cache sync so the new value isn't detected as untranslated text
@@ -3893,6 +3935,15 @@ namespace UnityGameTranslator.Core
             return text.Replace("\r\n", "\n").Replace("\r", "\n");
         }
 
+        private static int? ParseTranslationIndex(JToken token)
+        {
+            if (token == null || token.Type != JTokenType.Integer)
+                return null;
+
+            int value = token.Value<int>();
+            return value > 0 ? value : (int?)null;
+        }
+
         /// <summary>
         /// Add a translation to the cache with an optional tag.
         /// </summary>
@@ -3920,7 +3971,8 @@ namespace UnityGameTranslator.Core
                 var entry = new TranslationEntry
                 {
                     Value = normalizedValue,
-                    Tag = tag ?? "A"
+                    Tag = tag ?? "A",
+                    Index = nextTranslationIndex++
                 };
 
                 TranslationCache[normalizedKey] = entry;
@@ -4805,6 +4857,7 @@ namespace UnityGameTranslator.Core
                     // Metadata
                     output["_engine_version"] = CurrentEngineVersion;
                     output["_uuid"] = FileUuid;
+                    output["_next_index"] = nextTranslationIndex;
 
                     if (CurrentGame != null)
                     {
@@ -4910,17 +4963,25 @@ namespace UnityGameTranslator.Core
                             output["_settings"] = settingsObj;
                     }
 
-                    // Sorted translations with new format {"v": "value", "t": "tag"}
+                    // Sorted translations with new format {"v": "value", "t": "tag", "i": index}
                     var sortedKeys = TranslationCache.Keys.OrderBy(k => k).ToList();
                     foreach (var key in sortedKeys)
                     {
                         var entry = TranslationCache[key];
+                        if (!entry.Index.HasValue)
+                        {
+                            entry.Index = nextTranslationIndex++;
+                        }
+
                         output[key] = new JObject
                         {
                             ["v"] = entry.Value,
-                            ["t"] = entry.Tag ?? "A"
+                            ["t"] = entry.Tag ?? "A",
+                            ["i"] = entry.Index.Value
                         };
                     }
+
+                    output["_next_index"] = nextTranslationIndex;
 
                     string json = output.ToString(Formatting.Indented);
                     File.WriteAllText(CachePath, json);
@@ -5373,7 +5434,7 @@ namespace UnityGameTranslator.Core
 
     /// <summary>
     /// A translation entry with value and tag.
-    /// JSON format: {"v": "value", "t": "A/H/V"}
+    /// JSON format: {"v": "value", "t": "A/H/V", "i": 123}
     /// </summary>
     public class TranslationEntry
     {
@@ -5387,6 +5448,11 @@ namespace UnityGameTranslator.Core
         /// Null defaults to A.
         /// </summary>
         public string Tag { get; set; } = "A";
+
+        /// <summary>
+        /// Monotonic insertion index used for ordering entries in the web editor.
+        /// </summary>
+        public int? Index { get; set; }
 
         /// <summary>True if this is a Skipped or Mod UI entry (immutable tags)</summary>
         public bool IsImmutableTag => Tag == "S" || Tag == "M";

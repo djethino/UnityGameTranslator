@@ -736,7 +736,7 @@ namespace UnityGameTranslator.Core
 
                     // Each translation entry can be:
                     // - A string (old format): "key": "value"
-                    // - An object (new format): "key": {"v": "value", "t": "A/H/V"}
+                    // - An object (new format): "key": {"v": "value", "t": "A/H/V", "i": 123}
                     if (prop.Value.Type == JTokenType.String)
                     {
                         // Old format - valid
@@ -751,7 +751,8 @@ namespace UnityGameTranslator.Core
                             error = $"Invalid entry format for key '{prop.Name}' (missing 'v' field)";
                             return false;
                         }
-                        // "v" must be string, "t" is optional but must be string if present
+                        // "v" must be string, "t" is optional but must be string if present,
+                        // "i" is optional but must be integer if present.
                         if (entry["v"]?.Type != JTokenType.String)
                         {
                             error = $"Invalid 'v' type for key '{prop.Name}' (expected string)";
@@ -760,6 +761,11 @@ namespace UnityGameTranslator.Core
                         if (entry.ContainsKey("t") && entry["t"]?.Type != JTokenType.String)
                         {
                             error = $"Invalid 't' type for key '{prop.Name}' (expected string)";
+                            return false;
+                        }
+                        if (entry.ContainsKey("i") && entry["i"]?.Type != JTokenType.Integer)
+                        {
+                            error = $"Invalid 'i' type for key '{prop.Name}' (expected integer)";
                             return false;
                         }
                     }
@@ -1117,7 +1123,8 @@ namespace UnityGameTranslator.Core
                     contentForApi[kvp.Key] = new
                     {
                         v = kvp.Value.Value,
-                        t = kvp.Value.Tag
+                        t = kvp.Value.Tag,
+                        i = kvp.Value.Index
                     };
                 }
 

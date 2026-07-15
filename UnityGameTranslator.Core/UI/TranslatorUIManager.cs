@@ -1623,13 +1623,21 @@ namespace UnityGameTranslator.Core.UI
             foreach (var kvp in mergeResult.Merged)
             {
                 // For now, merged values get AI tag by default
-                // Full tag support will be added when TranslationMerger is updated
+                // Full tag support will be added when TranslationMerger is updated.
+                // The capture-order index of an existing local entry survives the
+                // rewrite; keys new to us stay index-less until LoadCache backfills.
+                long? existingIndex = null;
+                if (TranslatorCore.TranslationCache.TryGetValue(kvp.Key, out var existingEntry))
+                    existingIndex = existingEntry.Index;
+
                 TranslatorCore.TranslationCache[kvp.Key] = new TranslationEntry
                 {
                     Value = kvp.Value,
-                    Tag = "A"  // TODO: Preserve original tags when merger is updated
+                    Tag = "A",  // TODO: Preserve original tags when merger is updated
+                    Index = existingIndex
                 };
             }
+            TranslatorCore.SyncOrderIndexCounter();
 
             // Update server state
             var serverState = TranslatorCore.ServerState;
@@ -1686,6 +1694,9 @@ namespace UnityGameTranslator.Core.UI
             {
                 TranslatorCore.TranslationCache[kvp.Key] = kvp.Value;
             }
+            // The other branch can bring in capture-order indices above our
+            // counter — future captures must not reuse them
+            TranslatorCore.SyncOrderIndexCounter();
 
             // Update server state
             var serverState = TranslatorCore.ServerState;

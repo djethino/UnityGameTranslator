@@ -736,7 +736,7 @@ namespace UnityGameTranslator.Core
 
                     // Each translation entry can be:
                     // - A string (old format): "key": "value"
-                    // - An object (new format): "key": {"v": "value", "t": "A/H/V"}
+                    // - An object (new format): "key": {"v": "value", "t": "A/H/V", "i": 123}
                     if (prop.Value.Type == JTokenType.String)
                     {
                         // Old format - valid
@@ -751,7 +751,10 @@ namespace UnityGameTranslator.Core
                             error = $"Invalid entry format for key '{prop.Name}' (missing 'v' field)";
                             return false;
                         }
-                        // "v" must be string, "t" is optional but must be string if present
+                        // "v" must be string, "t" is optional but must be string if present,
+                        // "i" (capture-order index) is optional but must be an integer if
+                        // present — out-of-range values are handled at parse time
+                        // (treated as absent), not rejected here
                         if (entry["v"]?.Type != JTokenType.String)
                         {
                             error = $"Invalid 'v' type for key '{prop.Name}' (expected string)";
@@ -760,6 +763,11 @@ namespace UnityGameTranslator.Core
                         if (entry.ContainsKey("t") && entry["t"]?.Type != JTokenType.String)
                         {
                             error = $"Invalid 't' type for key '{prop.Name}' (expected string)";
+                            return false;
+                        }
+                        if (entry.ContainsKey("i") && entry["i"]?.Type != JTokenType.Integer)
+                        {
+                            error = $"Invalid 'i' type for key '{prop.Name}' (expected integer)";
                             return false;
                         }
                     }
@@ -1108,17 +1116,24 @@ namespace UnityGameTranslator.Core
         {
             try
             {
-                // Convert TranslationEntry to simple format for API
+                // Convert TranslationEntry to simple format for API.
+                // "i" (capture-order index) is omitted when absent — an anonymous
+                // type would serialize "i": null, which the server rejects
                 var contentForApi = new Dictionary<string, object>();
                 foreach (var kvp in localContent)
                 {
                     if (kvp.Key.StartsWith("_")) continue; // Skip metadata
 
-                    contentForApi[kvp.Key] = new
+                    var entry = new Dictionary<string, object>
                     {
-                        v = kvp.Value.Value,
-                        t = kvp.Value.Tag
+                        ["v"] = kvp.Value.Value,
+                        ["t"] = kvp.Value.Tag
                     };
+                    if (kvp.Value.Index.HasValue)
+                    {
+                        entry["i"] = kvp.Value.Index.Value;
+                    }
+                    contentForApi[kvp.Key] = entry;
                 }
 
                 var payload = new

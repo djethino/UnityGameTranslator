@@ -166,6 +166,10 @@ namespace UnityGameTranslator.Core
         // instead of string-based tracking which caused false positives when game text matched mod UI text
         private static object lockObj = new object();
         private static bool cacheModified = false;
+        // Next capture-order index "i" to assign (monotonic, per lineage).
+        // Recomputed as max(i)+1 at every LoadCache — never persisted as metadata.
+        // Assign ONLY via NextOrderIndex() (lock-protected).
+        private static long nextTranslationIndex = 1;
         private static HttpClient httpClient;
         private static int skippedTargetLang = 0;
         private static int skippedAlreadyTranslated = 0;
@@ -1545,17 +1549,18 @@ namespace UnityGameTranslator.Core
                         // Normalize key line endings for cross-platform consistency
                         string normalizedKey = NormalizeLineEndings(prop.Name);
 
-                        // Handle both new format (object with v/t) and legacy format (string)
+                        // Handle both new format (object with v/t/i) and legacy format (string)
                         TranslationEntry newEntry;
                         if (prop.Value.Type == JTokenType.Object)
                         {
-                            // New format: {"v": "value", "t": "A"}
+                            // New format: {"v": "value", "t": "A", "i": 123}
                             var obj = prop.Value as JObject;
                             newEntry = new TranslationEntry
                             {
                                 // Normalize value line endings too
                                 Value = NormalizeLineEndings(obj?["v"]?.ToString() ?? ""),
-                                Tag = obj?["t"]?.ToString() ?? "A"
+                                Tag = obj?["t"]?.ToString() ?? "A",
+                                Index = ParseTranslationIndex(obj?["i"])
                             };
                         }
                         else if (prop.Value.Type == JTokenType.String)
@@ -1605,6 +1610,44 @@ namespace UnityGameTranslator.Core
                     FileUuid = Guid.NewGuid().ToString();
                     cacheModified = true;
                     LogDebug($"Legacy cache file, generated UUID: {FileUuid}");
+                }
+
+                // Capture-order index: recompute the counter from the file, then
+                // backfill entries without one (legacy files, older mod versions,
+                // web-editor-created keys) in ALPHABETICAL key order — deterministic,
+                // so every device produces identical indices from the same file.
+                // "i" is excluded from the content hash on both mod and website,
+                // so this never affects sync/update detection.
+                long highestIndex = 0;
+                List<string> keysWithoutIndex = null;
+                foreach (var kvp in TranslationCache)
+                {
+                    if (kvp.Value.Index.HasValue)
+                    {
+                        if (kvp.Value.Index.Value > highestIndex)
+                            highestIndex = kvp.Value.Index.Value;
+                    }
+                    else
+                    {
+                        if (keysWithoutIndex == null)
+                            keysWithoutIndex = new List<string>();
+                        keysWithoutIndex.Add(kvp.Key);
+                    }
+                }
+                long nextIndex = highestIndex + 1;
+                if (keysWithoutIndex != null)
+                {
+                    keysWithoutIndex.Sort(StringComparer.Ordinal);
+                    foreach (var key in keysWithoutIndex)
+                    {
+                        TranslationCache[key].Index = nextIndex++;
+                    }
+                    cacheModified = true;
+                    LogDebug($"[LoadCache] Backfilled capture-order index on {keysWithoutIndex.Count} entries");
+                }
+                lock (lockObj)
+                {
+                    nextTranslationIndex = nextIndex;
                 }
 
                 // Update _game.steam_id if we detected one but file didn't have it
@@ -1660,6 +1703,10 @@ namespace UnityGameTranslator.Core
                 Adapter.LogError($"Failed to load cache: {e.Message}");
                 TranslationCache = new Dictionary<string, TranslationEntry>();
                 FileUuid = Guid.NewGuid().ToString();
+                lock (lockObj)
+                {
+                    nextTranslationIndex = 1;
+                }
             }
         }
 
@@ -1907,7 +1954,8 @@ namespace UnityGameTranslator.Core
                 cache[newKey] = new TranslationEntry
                 {
                     Value = newVal,
-                    Tag = kv.Value.Tag
+                    Tag = kv.Value.Tag,
+                    Index = kv.Value.Index
                 };
             }
 
@@ -1992,12 +2040,13 @@ namespace UnityGameTranslator.Core
 
                     if (prop.Value.Type == JTokenType.Object)
                     {
-                        // New format: {"v": "value", "t": "A"}
+                        // New format: {"v": "value", "t": "A", "i": 123}
                         var obj = prop.Value as JObject;
                         result[prop.Name] = new TranslationEntry
                         {
                             Value = obj?["v"]?.ToString() ?? "",
-                            Tag = obj?["t"]?.ToString() ?? "A"
+                            Tag = obj?["t"]?.ToString() ?? "A",
+                            Index = ParseTranslationIndex(obj?["i"])
                         };
                     }
                     else if (prop.Value.Type == JTokenType.String)
@@ -2295,10 +2344,17 @@ namespace UnityGameTranslator.Core
             {
                 existing.Value = newValue;
                 existing.Tag = "H";
+                // Editing never changes the capture order; only entries that
+                // somehow have no index yet get one (defensive — LoadCache
+                // backfills everything)
+                if (!existing.Index.HasValue)
+                {
+                    existing.Index = NextOrderIndex();
+                }
             }
             else
             {
-                TranslationCache[key] = new TranslationEntry { Value = newValue, Tag = "H" };
+                TranslationCache[key] = new TranslationEntry { Value = newValue, Tag = "H", Index = NextOrderIndex() };
             }
 
             // Reverse cache sync so the new value isn't detected as untranslated text
@@ -3894,6 +3950,70 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Max value for the per-entry capture-order index "i": JavaScript's
+        /// Number.MAX_SAFE_INTEGER (2^53 - 1), the web editor being the consumer.
+        /// </summary>
+        internal const long MaxOrderIndex = 9007199254740991L;
+
+        /// <summary>
+        /// Parse the optional capture-order index "i" of a translation entry.
+        /// NEVER throws: an invalid or out-of-range value reads as "no index"
+        /// (LoadCache's catch-all resets the cache and regenerates the UUID,
+        /// so a corrupted download must not be able to trigger it).
+        /// </summary>
+        private static long? ParseTranslationIndex(JToken token)
+        {
+            if (token == null || token.Type != JTokenType.Integer)
+                return null;
+
+            try
+            {
+                long value = token.Value<long>();
+                return (value >= 1 && value <= MaxOrderIndex) ? value : (long?)null;
+            }
+            catch
+            {
+                // Integer beyond long range (BigInteger) — treat as absent
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Reserve the next capture-order index. Lock-protected because entries
+        /// are created both from the worker thread (AddToCache) and the main
+        /// thread (in-game editor); Monitor is re-entrant, so callers already
+        /// holding lockObj are fine.
+        /// </summary>
+        private static long NextOrderIndex()
+        {
+            lock (lockObj)
+            {
+                return nextTranslationIndex++;
+            }
+        }
+
+        /// <summary>
+        /// Re-sync the capture-order counter with the current cache (max+1).
+        /// Call after bulk cache replacements (merge apply): the other branch
+        /// can bring in indices above our counter, and future captures must
+        /// never reuse them. Never lowers the counter.
+        /// </summary>
+        public static void SyncOrderIndexCounter()
+        {
+            long highest = 0;
+            foreach (var kvp in TranslationCache)
+            {
+                if (kvp.Value.Index.HasValue && kvp.Value.Index.Value > highest)
+                    highest = kvp.Value.Index.Value;
+            }
+            lock (lockObj)
+            {
+                if (nextTranslationIndex <= highest)
+                    nextTranslationIndex = highest + 1;
+            }
+        }
+
+        /// <summary>
         /// Add a translation to the cache with an optional tag.
         /// </summary>
         /// <param name="original">Original text (key)</param>
@@ -3917,10 +4037,19 @@ namespace UnityGameTranslator.Core
                 if (TranslationCache.ContainsKey(normalizedKey))
                     return;
 
+                // Re-adding an existing key keeps its original capture order;
+                // only genuinely new keys consume a new index
+                long? orderIndex;
+                if (TranslationCache.TryGetValue(normalizedKey, out var previousEntry) && previousEntry.Index.HasValue)
+                    orderIndex = previousEntry.Index;
+                else
+                    orderIndex = NextOrderIndex();
+
                 var entry = new TranslationEntry
                 {
                     Value = normalizedValue,
-                    Tag = tag ?? "A"
+                    Tag = tag ?? "A",
+                    Index = orderIndex
                 };
 
                 TranslationCache[normalizedKey] = entry;
@@ -4910,16 +5039,23 @@ namespace UnityGameTranslator.Core
                             output["_settings"] = settingsObj;
                     }
 
-                    // Sorted translations with new format {"v": "value", "t": "tag"}
+                    // Sorted translations with new format {"v": "value", "t": "tag", "i": index}
                     var sortedKeys = TranslationCache.Keys.OrderBy(k => k).ToList();
                     foreach (var key in sortedKeys)
                     {
                         var entry = TranslationCache[key];
-                        output[key] = new JObject
+                        var obj = new JObject
                         {
                             ["v"] = entry.Value,
                             ["t"] = entry.Tag ?? "A"
                         };
+                        // Capture-order index — omitted when absent (never "i": null,
+                        // the website validation would reject it)
+                        if (entry.Index.HasValue)
+                        {
+                            obj["i"] = entry.Index.Value;
+                        }
+                        output[key] = obj;
                     }
 
                     string json = output.ToString(Formatting.Indented);
@@ -5373,7 +5509,7 @@ namespace UnityGameTranslator.Core
 
     /// <summary>
     /// A translation entry with value and tag.
-    /// JSON format: {"v": "value", "t": "A/H/V"}
+    /// JSON format: {"v": "value", "t": "A/H/V", "i": 123}
     /// </summary>
     public class TranslationEntry
     {
@@ -5387,6 +5523,15 @@ namespace UnityGameTranslator.Core
         /// Null defaults to A.
         /// </summary>
         public string Tag { get; set; } = "A";
+
+        /// <summary>
+        /// Capture-order index "i": monotonic number assigned when the text is
+        /// first captured, used by the web editors to sort entries in the order
+        /// they appeared in-game. Presentation metadata ONLY — excluded from the
+        /// content hash (mod and website), ignored by merge comparisons, and
+        /// absent on entries written by older mod versions.
+        /// </summary>
+        public long? Index { get; set; }
 
         /// <summary>True if this is a Skipped or Mod UI entry (immutable tags)</summary>
         public bool IsImmutableTag => Tag == "S" || Tag == "M";

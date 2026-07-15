@@ -617,14 +617,20 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (variables != null)
                 output["_variables"] = variables;
 
-            // Use same format as SaveCache: {"v": "value", "t": "tag"}
+            // Use same format as SaveCache: {"v": "value", "t": "tag", "i": index}
+            // ("i" omitted when absent — the server validation rejects "i": null)
             foreach (var kv in TranslatorCore.TranslationCache)
             {
-                output[kv.Key] = new System.Collections.Generic.Dictionary<string, string>
+                var entryObj = new System.Collections.Generic.Dictionary<string, object>
                 {
                     ["v"] = kv.Value.Value,
                     ["t"] = kv.Value.Tag ?? "A"
                 };
+                if (kv.Value.Index.HasValue)
+                {
+                    entryObj["i"] = kv.Value.Index.Value;
+                }
+                output[kv.Key] = entryObj;
             }
 
             return Newtonsoft.Json.JsonConvert.SerializeObject(output, Newtonsoft.Json.Formatting.None);

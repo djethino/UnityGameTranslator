@@ -135,7 +135,71 @@ namespace UnityGameTranslator.Core
                 }
             }
 
+            RenumberMergedIndices(result.Merged, local);
+
             return result;
+        }
+
+        /// <summary>
+        /// Resolve capture-order index collisions after a merge: both sides grew
+        /// their counters independently since the fork, so different texts can
+        /// carry the same index. Local entries keep their numbers; entries taken
+        /// from the remote side whose index collides with a local one are
+        /// renumbered after the highest index in the merged set, preserving
+        /// their relative order — a conversation captured on the other device
+        /// stays contiguous. Entries without an index are left for LoadCache's
+        /// deterministic backfill. Safe by design: "i" is excluded from the
+        /// content hash and from merge comparisons.
+        /// </summary>
+        private static void RenumberMergedIndices(
+            Dictionary<string, TranslationEntry> merged,
+            Dictionary<string, TranslationEntry> local)
+        {
+            if (merged == null || merged.Count == 0) return;
+
+            // Entries kept from the local side, by reference (Merged reuses the
+            // input TranslationEntry instances)
+            var localEntries = new HashSet<TranslationEntry>();
+            if (local != null)
+            {
+                foreach (var entry in local.Values)
+                    localEntries.Add(entry);
+            }
+
+            long maxIndex = 0;
+            var localIndices = new HashSet<long>();
+            foreach (var kvp in merged)
+            {
+                if (!kvp.Value.Index.HasValue) continue;
+                if (kvp.Value.Index.Value > maxIndex)
+                    maxIndex = kvp.Value.Index.Value;
+                if (localEntries.Contains(kvp.Value))
+                    localIndices.Add(kvp.Value.Index.Value);
+            }
+
+            // Remote-sourced entries colliding with a local index
+            var colliding = new List<KeyValuePair<string, TranslationEntry>>();
+            foreach (var kvp in merged)
+            {
+                if (!kvp.Value.Index.HasValue) continue;
+                if (localEntries.Contains(kvp.Value)) continue;
+                if (localIndices.Contains(kvp.Value.Index.Value))
+                    colliding.Add(kvp);
+            }
+            if (colliding.Count == 0) return;
+
+            // Preserve the remote side's own ordering (index, then key for ties)
+            colliding.Sort((a, b) =>
+            {
+                int cmp = a.Value.Index.Value.CompareTo(b.Value.Index.Value);
+                return cmp != 0 ? cmp : string.CompareOrdinal(a.Key, b.Key);
+            });
+
+            long next = maxIndex + 1;
+            foreach (var kvp in colliding)
+            {
+                kvp.Value.Index = next++;
+            }
         }
 
         private static KeyDecisionWithTags ResolveKeyWithTags(

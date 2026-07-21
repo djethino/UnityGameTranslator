@@ -709,6 +709,25 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// IL2CPP-safe liveness check for Unity objects. A managed wrapper can outlive
+        /// its native object (destroyed or unloaded by the game): any member access on
+        /// the dead wrapper (e.g. <c>.name</c>) then throws. Unity's overloaded
+        /// <c>==</c> operator detects the destroyed native side on both Mono and
+        /// IL2CPP interop, without touching the object's members.
+        /// Non-Unity objects are considered alive if non-null.
+        /// </summary>
+        public static bool IsUnityObjectAlive(object obj)
+        {
+            if (obj == null) return false;
+            if (obj is UnityEngine.Object unityObj)
+            {
+                try { return unityObj != null; }
+                catch { return false; }
+            }
+            return true;
+        }
+
+        /// <summary>
         /// Check if an object is of a given type (null-safe).
         /// </summary>
         public static bool IsOfType(object obj, Type type)

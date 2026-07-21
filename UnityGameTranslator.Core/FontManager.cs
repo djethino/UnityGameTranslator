@@ -173,7 +173,11 @@ namespace UnityGameTranslator.Core
                 }
 
                 font.name = displayName;
+                // DontUnloadUnusedAsset: real shield against Resources.UnloadUnusedAssets
+                // for runtime-created assets — DontDestroyOnLoad alone doesn't protect
+                // non-scene objects (issue #21).
                 UnityEngine.Object.DontDestroyOnLoad(font);
+                font.hideFlags |= HideFlags.DontUnloadUnusedAsset;
 
                 TranslatorCore.LogInfo($"[FontManager] Instantiate'd font: dynamic={font.dynamic}, material={font.material?.name}");
 
@@ -183,6 +187,7 @@ namespace UnityGameTranslator.Core
                 tex.filterMode = FilterMode.Bilinear;
                 tex.wrapMode = TextureWrapMode.Clamp;
                 UnityEngine.Object.DontDestroyOnLoad(tex);
+                tex.hideFlags |= HideFlags.DontUnloadUnusedAsset;
 
                 // No flip — SetPixels32 starts at bottom-left, our atlas starts at top-left.
                 // This means the atlas is upside-down in Unity's texture coords.
@@ -211,6 +216,7 @@ namespace UnityGameTranslator.Core
                     mat.name = $"BitmapFontMat_{displayName}";
                     mat.mainTexture = tex;
                     UnityEngine.Object.DontDestroyOnLoad(mat);
+                    mat.hideFlags |= HideFlags.DontUnloadUnusedAsset;
                 }
                 else
                 {
@@ -223,6 +229,7 @@ namespace UnityGameTranslator.Core
                         mat.name = $"BitmapFontMat_{displayName}";
                         mat.mainTexture = tex;
                         UnityEngine.Object.DontDestroyOnLoad(mat);
+                        mat.hideFlags |= HideFlags.DontUnloadUnusedAsset;
                     }
                 }
 
@@ -1708,6 +1715,31 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Cache lookup for created fallback assets that survives game-side unloads.
+        /// If the cached wrapper's native object was destroyed (the game unloaded our
+        /// asset despite the DontUnloadUnusedAsset shield — issue #21), the stale entry
+        /// and every "already applied" marker are dropped so the caller falls through
+        /// to a fresh CreateFallbackAsset (cheap: rasterized atlas data persists).
+        /// </summary>
+        private static bool TryGetLiveFallbackAsset(string fallbackName, out object asset)
+        {
+            if (!_fallbackAssets.TryGetValue(fallbackName, out asset))
+                return false;
+
+            if (TypeHelper.IsUnityObjectAlive(asset))
+                return true;
+
+            TranslatorCore.LogWarning($"[FontManager] Fallback font asset '{fallbackName}' was unloaded by the game — dropping caches to recreate it");
+            _fallbackAssets.Remove(fallbackName);
+            // Components still reference the dead asset: force ApplyFontReplacement to
+            // re-run on them, and let fallback lists / reverse fallbacks be re-added.
+            _fontReplacedComponentIds.Clear();
+            _fallbackAppliedFonts.Clear();
+            asset = null;
+            return false;
+        }
+
+        /// <summary>
         /// Apply fallback font to a specific TMP font asset (via reflection).
         /// </summary>
         private static bool ApplyFallbackToFont(object font, string systemFontName)
@@ -1720,7 +1752,7 @@ namespace UnityGameTranslator.Core
                 string fontName = (font is UnityEngine.Object uobj) ? uobj.name : "unknown";
 
                 // Get or create fallback asset for this system font
-                if (!_fallbackAssets.TryGetValue(systemFontName, out var fallbackAsset))
+                if (!TryGetLiveFallbackAsset(systemFontName, out var fallbackAsset))
                 {
                     fallbackAsset = CreateFallbackAsset(systemFontName);
                     if (fallbackAsset == null)
@@ -1853,7 +1885,12 @@ namespace UnityGameTranslator.Core
             var replacementFont = GetTMPReplacementFont(originalFontName);
             if (replacementFont == null) return;
 
-            // Don't re-apply if already replaced with the right font
+            // Don't re-apply if already replaced with the right font.
+            // Liveness guard: GetTMPReplacementFont evicts dead cache entries, but if the
+            // asset dies between that call and here (or creation returned a dying object),
+            // .name would NRE on the dead wrapper (issue #21) — skip, next call heals.
+            if (replacementFont is UnityEngine.Object aliveCheck && aliveCheck == null)
+                return;
             string currentFontName = TypeHelper.GetFontName(component);
             string replacementName = (replacementFont is UnityEngine.Object rObj) ? rObj.name : null;
             if (currentFontName == replacementName)
@@ -2144,7 +2181,7 @@ namespace UnityGameTranslator.Core
                 return;
 
             // Get or create the fallback font asset
-            if (!_fallbackAssets.TryGetValue(settings.fallback, out var fallbackAsset))
+            if (!TryGetLiveFallbackAsset(settings.fallback, out var fallbackAsset))
             {
                 fallbackAsset = CreateFallbackAsset(settings.fallback);
                 if (fallbackAsset != null)
@@ -2354,7 +2391,7 @@ namespace UnityGameTranslator.Core
             if (tmpFontAsset == null)
             {
                 // Try CreateFallbackAsset (covers all paths including game fonts)
-                if (!_fallbackAssets.TryGetValue(settings.fallback, out tmpFontAsset))
+                if (!TryGetLiveFallbackAsset(settings.fallback, out tmpFontAsset))
                 {
                     tmpFontAsset = CreateFallbackAsset(settings.fallback);
                     if (tmpFontAsset != null)
@@ -2790,8 +2827,9 @@ namespace UnityGameTranslator.Core
             if (_failedFallbackFontNames.Contains(settings.fallback))
                 return null;
 
-            // Get or create the replacement font asset
-            if (!_fallbackAssets.TryGetValue(settings.fallback, out var replacementFont))
+            // Get or create the replacement font asset (live check evicts wrappers whose
+            // native object was unloaded by the game — issue #21)
+            if (!TryGetLiveFallbackAsset(settings.fallback, out var replacementFont))
             {
                 replacementFont = CreateFallbackAsset(settings.fallback);
                 if (replacementFont != null)

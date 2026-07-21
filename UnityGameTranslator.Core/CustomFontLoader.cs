@@ -1104,14 +1104,19 @@ namespace UnityGameTranslator.Core
 
                 fontInfo.AtlasTextures = textures;
 
-                // Survive scene unloads. Without DontDestroyOnLoad the atlas textures get
-                // GCed at the first LoadScene after creation, leaving TMP with null UVs and
-                // the user with invisible text — or worse, a hard crash inside TMP's render
-                // path when it dereferences the destroyed Texture2D.
+                // Survive scene unloads. Without this the atlas textures get GCed at the
+                // first LoadScene after creation, leaving TMP with null UVs and the user
+                // with invisible text — or worse, a hard crash inside TMP's render path
+                // when it dereferences the destroyed Texture2D. DontUnloadUnusedAsset is
+                // the flag that actually shields assets from Resources.UnloadUnusedAssets
+                // (DontDestroyOnLoad kept for scene-object semantics — see issue #21).
                 foreach (var tex in textures)
                 {
                     if (tex != null)
+                    {
                         UnityEngine.Object.DontDestroyOnLoad(tex);
+                        tex.hideFlags |= HideFlags.DontUnloadUnusedAsset;
+                    }
                 }
 
                 TranslatorCore.LogInfo($"[CustomFontLoader] Loaded {textures.Count} atlas texture(s) for {fontName}, first {textures[0].width}x{textures[0].height}, format: {textures[0].format}");
@@ -1594,11 +1599,17 @@ namespace UnityGameTranslator.Core
                         // Clone using Instantiate — returns the same IL2CPP type
                         var cloned = UnityEngine.Object.Instantiate(existingFont);
 
-                        // Protect the clone from scene-unload destruction. Without this,
-                        // moving from the splash to the main menu (or any LoadScene) wipes
-                        // our font asset and leaves _fallbackAssets with a stale reference
-                        // → next access either no-ops silently or crashes IL2CPP.
+                        // Protect the clone from scene-unload destruction. DontDestroyOnLoad
+                        // only really protects scene objects; for ASSETS the game's
+                        // Resources.UnloadUnusedAssets() still collects them once no native
+                        // reference remains — and on IL2CPP our managed cache references are
+                        // invisible to the il2cpp GC (issue #21: the menu components holding
+                        // the font die at LoadScene, the asset gets unloaded, and every later
+                        // .name access on the cached wrapper throws NRE).
+                        // DontUnloadUnusedAsset is the flag that actually shields
+                        // runtime-created assets from UnloadUnusedAssets.
                         UnityEngine.Object.DontDestroyOnLoad(cloned);
+                        cloned.hideFlags |= HideFlags.DontUnloadUnusedAsset;
 
                         // On IL2CPP, cast to the proper type so reflection sees all properties
                         fontAsset = TypeHelper.Il2CppCast(cloned, _tmpFontAssetType);
@@ -1642,7 +1653,11 @@ namespace UnityGameTranslator.Core
                     {
                         fontAsset = TypeHelper.CreateScriptableObject(_tmpFontAssetType);
                         if (fontAsset is UnityEngine.Object uobj)
+                        {
                             uobj.name = fontInfo.Name;
+                            // Same UnloadUnusedAssets shield as the cloned path above.
+                            uobj.hideFlags |= HideFlags.DontUnloadUnusedAsset;
+                        }
                         TranslatorCore.LogInfo($"[CustomFontLoader] TMProOld: created bare font asset for {fontInfo.Name} (no clone source — legacy path tolerates empty asset)");
                     }
                     else
@@ -1655,6 +1670,30 @@ namespace UnityGameTranslator.Core
                 var atlas = fontInfo.AtlasData.atlas;
                 var metrics = fontInfo.AtlasData.metrics;
                 var pointSize = atlas.size;
+
+                // Modern TMP: the clone keeps its source font's m_FaceInfo — we deliberately
+                // do NOT rewrite the modern struct (see the v0.9.64 note in SetupFaceInfo).
+                // TMP scales every glyph by fontSize / m_FaceInfo.pointSize (× faceInfo.scale),
+                // while our glyph metrics below are written in pixels at the ATLAS point size.
+                // When the two differ (issue #21: atlas at 48 vs game font sampled larger),
+                // text renders at the wrong size. Compensate per-glyph via Glyph.m_Scale:
+                // it multiplies METRICS only (quad size, bearings, advance) — the atlas
+                // glyphRect/UVs are not affected. Legacy/TMProOld assets have no modern
+                // faceInfo → ratio stays 1 and that path is untouched.
+                float glyphMetricsScale = 1f;
+                if (TryGetModernFaceInfo(fontAsset, out float cloneFacePointSize, out float cloneFaceScale))
+                {
+                    if (cloneFacePointSize > 0f && pointSize > 0f)
+                    {
+                        float effectiveScale = cloneFaceScale > 0f ? cloneFaceScale : 1f;
+                        glyphMetricsScale = cloneFacePointSize / (pointSize * effectiveScale);
+                    }
+                    TranslatorCore.LogInfo($"[CustomFontLoader] Clone modern faceInfo: pointSize={cloneFacePointSize}, scale={cloneFaceScale} — atlas size={pointSize} → glyph metrics scale {glyphMetricsScale:F3}");
+                }
+                else
+                {
+                    TranslatorCore.LogInfo($"[CustomFontLoader] No modern faceInfo readable on clone (legacy TMP asset ?) — glyph metrics scale stays 1");
+                }
 
                 // Set atlas texture on all relevant properties
                 var fontAssetType = fontAsset.GetType();
@@ -1766,7 +1805,7 @@ namespace UnityGameTranslator.Core
                 SetupFaceInfo(fontAsset, fontInfo, pointSize);
 
                 // Set glyphs
-                SetupGlyphs(fontAsset, fontInfo, pointSize);
+                SetupGlyphs(fontAsset, fontInfo, pointSize, glyphMetricsScale);
 
                 return fontAsset;
             }
@@ -1978,7 +2017,10 @@ namespace UnityGameTranslator.Core
                 // font asset itself — without this, switching scenes wipes the material and
                 // every TMP_Text using the asset's fallback list renders nothing.
                 if (material != null)
+                {
                     UnityEngine.Object.DontDestroyOnLoad(material);
+                    material.hideFlags |= HideFlags.DontUnloadUnusedAsset;
+                }
 
                 // Set material on font asset
                 var materialField = _tmpFontAssetType.GetField("material", BindingFlags.Public | BindingFlags.Instance);
@@ -2008,6 +2050,68 @@ namespace UnityGameTranslator.Core
         /// <summary>
         /// Sets up the face info (font metrics).
         /// </summary>
+        /// <summary>
+        /// Read the MODERN m_FaceInfo (UnityEngine.TextCore.FaceInfo) pointSize and scale
+        /// from a font asset, without writing anything. Returns false when the asset has
+        /// no readable modern faceInfo (TMProOld/legacy assets). Reading is safe on
+        /// IL2CPP: PrimeIL2CppPropertyGetters already warmed up the lazy property state.
+        /// </summary>
+        private static bool TryGetModernFaceInfo(object fontAsset, out float facePointSize, out float faceScale)
+        {
+            facePointSize = 0f;
+            faceScale = 1f;
+            if (fontAsset == null) return false;
+
+            try
+            {
+                var t = fontAsset.GetType();
+                object face = null;
+
+                var prop = t.GetProperty("faceInfo", BindingFlags.Public | BindingFlags.Instance);
+                if (prop != null && prop.CanRead)
+                    face = prop.GetValue(fontAsset, null);
+
+                if (face == null)
+                {
+                    var field = t.GetField("m_FaceInfo", BindingFlags.NonPublic | BindingFlags.Instance)
+                             ?? t.GetField("m_FaceInfo", BindingFlags.Public | BindingFlags.Instance);
+                    if (field != null)
+                        face = field.GetValue(fontAsset);
+                }
+
+                if (face == null) return false;
+
+                var faceType = face.GetType();
+
+                var psProp = faceType.GetProperty("pointSize", BindingFlags.Public | BindingFlags.Instance);
+                if (psProp != null && psProp.CanRead)
+                    facePointSize = Convert.ToSingle(psProp.GetValue(face, null));
+                else
+                {
+                    var psField = faceType.GetField("m_PointSize", BindingFlags.NonPublic | BindingFlags.Instance);
+                    if (psField == null) return false;
+                    facePointSize = Convert.ToSingle(psField.GetValue(face));
+                }
+
+                var scProp = faceType.GetProperty("scale", BindingFlags.Public | BindingFlags.Instance);
+                if (scProp != null && scProp.CanRead)
+                    faceScale = Convert.ToSingle(scProp.GetValue(face, null));
+                else
+                {
+                    var scField = faceType.GetField("m_Scale", BindingFlags.NonPublic | BindingFlags.Instance);
+                    if (scField != null)
+                        faceScale = Convert.ToSingle(scField.GetValue(face));
+                }
+
+                return facePointSize > 0f;
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogDebug($"[CustomFontLoader] Modern faceInfo read failed: {ex.Message}");
+                return false;
+            }
+        }
+
         private static void SetupFaceInfo(object fontAsset, CustomFontInfo fontInfo, float pointSize)
         {
             var metrics = fontInfo.AtlasData.metrics;
@@ -2171,7 +2275,7 @@ namespace UnityGameTranslator.Core
         /// Sets up the glyph list. Tries modern TMP system (m_GlyphTable + m_CharacterTable) first,
         /// then falls back to legacy (m_glyphInfoList).
         /// </summary>
-        private static void SetupGlyphs(object fontAsset, CustomFontInfo fontInfo, float pointSize)
+        private static void SetupGlyphs(object fontAsset, CustomFontInfo fontInfo, float pointSize, float glyphMetricsScale)
         {
             var atlas = fontInfo.AtlasData.atlas;
             var glyphs = fontInfo.AtlasData.glyphs;
@@ -2189,7 +2293,7 @@ namespace UnityGameTranslator.Core
                 if (glyphTable != null && charTable != null)
                 {
                     TranslatorCore.LogInfo($"[CustomFontLoader] Using MODERN glyph system (m_GlyphTable + m_CharacterTable)");
-                    SetupGlyphsModern(fontAsset, fontAssetType, glyphTable, charTable, fontInfo, pointSize, yFlipped);
+                    SetupGlyphsModern(fontAsset, fontAssetType, glyphTable, charTable, fontInfo, pointSize, yFlipped, glyphMetricsScale);
 
                     // Mark lookup tables as dirty so TMP rebuilds them, then force the rebuild
                     // by calling ReadFontAssetDefinition (preferred — refreshes face metrics +
@@ -2279,7 +2383,8 @@ namespace UnityGameTranslator.Core
         /// Populate m_GlyphTable and m_CharacterTable (modern TMP system).
         /// </summary>
         private static void SetupGlyphsModern(object fontAsset, Type fontAssetType,
-            object glyphTable, object charTable, CustomFontInfo fontInfo, float pointSize, bool yFlipped)
+            object glyphTable, object charTable, CustomFontInfo fontInfo, float pointSize, bool yFlipped,
+            float glyphMetricsScale)
         {
             // Multi-atlas: we hand the FULL atlas list to CreateModernGlyph so each glyph
             // can use the height of its own atlas for the y-flip (atlases can in principle
@@ -2326,7 +2431,7 @@ namespace UnityGameTranslator.Core
 
                     // Create Glyph object — pass the FULL atlas list so the glyph picks up
                     // the dimensions of its own atlas (glyphInfo.atlasIndex) for the y-flip.
-                    object newGlyph = CreateModernGlyph(glyphType, glyphIndex, glyphInfo, atlases, pointSize, yFlipped);
+                    object newGlyph = CreateModernGlyph(glyphType, glyphIndex, glyphInfo, atlases, pointSize, yFlipped, glyphMetricsScale);
                     if (newGlyph == null) continue;
                     addGlyph.Invoke(glyphTable, new[] { newGlyph });
 
@@ -2393,7 +2498,7 @@ namespace UnityGameTranslator.Core
         /// Create a modern UnityEngine.TextCore.Glyph object.
         /// </summary>
         private static object CreateModernGlyph(Type glyphType, uint index, GlyphInfo glyphInfo,
-            List<AtlasInfo> atlases, float pointSize, bool yFlipped)
+            List<AtlasInfo> atlases, float pointSize, bool yFlipped, float glyphMetricsScale)
         {
             try
             {
@@ -2464,8 +2569,10 @@ namespace UnityGameTranslator.Core
                 // behaviour), for multi-atlas it routes TMP's renderer to the right texture.
                 SetFieldValue(glyph, "m_Index", index);
                 SetFieldValue(glyph, "index", index);
-                SetFieldValue(glyph, "m_Scale", 1f);
-                SetFieldValue(glyph, "scale", 1f);
+                // Compensates the modern m_FaceInfo.pointSize inherited from the clone
+                // (issue #21) — scales metrics only, never the atlas rect/UVs.
+                SetFieldValue(glyph, "m_Scale", glyphMetricsScale);
+                SetFieldValue(glyph, "scale", glyphMetricsScale);
                 SetFieldValue(glyph, "m_AtlasIndex", atlasIdx);
                 SetFieldValue(glyph, "atlasIndex", atlasIdx);
 

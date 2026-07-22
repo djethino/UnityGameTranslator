@@ -4475,6 +4475,13 @@ namespace UnityGameTranslator.Core
 
                 if (!IsTargetLanguage(text))
                 {
+                    // A never-seen text may miss only because variable values went
+                    // stale (game assigned a new seed/name this frame). Refresh and
+                    // retry the whole lookup once — RefreshOnMiss is throttled to
+                    // once per frame, so the recursion cannot loop.
+                    if (VariableManager.RefreshOnMiss())
+                        return TranslateSingleText(text);
+
                     QueueForTranslation(text);
                 }
                 else
@@ -4794,7 +4801,15 @@ namespace UnityGameTranslator.Core
                     }
 
                     if (!skipQueueing)
+                    {
+                        // Same stale-variables guard as TranslateSingleText: refresh
+                        // and retry once before minting a new queue entry (throttled
+                        // once per frame — the recursion cannot loop)
+                        if (VariableManager.RefreshOnMiss())
+                            return TranslateSingleTextWithTracking(text, component, isOwnUI, skipTypewriting, skipQueueing);
+
                         QueueForTranslation(text, component, isOwnUI);
+                    }
                     // else: concat component — deltas are queued individually, skip full text queue
                 }
                 else

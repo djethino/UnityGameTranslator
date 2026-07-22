@@ -27,7 +27,7 @@ namespace UnityGameTranslator.Core
         private static List<VariableDefinition> _definitions = new List<VariableDefinition>();
         private static Dictionary<int, string> _currentValues = new Dictionary<int, string>(); // Id → value
         private static int _nextId = 0; // Auto-increment ID, never reused
-        private static bool _needsRefresh = true; // Flag: resolve values on next ExtractVariables call
+        private static bool _needsRefresh = true; // Flag: forces a resolve on the next OnUpdate tick
 
         /// <summary>True if any variables are defined.</summary>
         public static bool HasVariables => _definitions.Count > 0;
@@ -62,34 +62,40 @@ namespace UnityGameTranslator.Core
 
         public static void LoadFromJson(JToken token)
         {
-            _definitions.Clear();
-            _currentValues.Clear();
+            // Copy-on-write: the translation worker iterates _definitions and reads
+            // _currentValues concurrently — mutate copies, then swap the references
+            // (reference assignment is atomic).
+            var defs = new List<VariableDefinition>();
 
-            if (token == null || token.Type != JTokenType.Array) return;
-
-            foreach (var item in token)
+            if (token != null && token.Type == JTokenType.Array)
             {
-                if (item.Type != JTokenType.Object) continue;
-                var obj = (JObject)item;
-
-                int id = obj.Value<int>("id");
-                var def = new VariableDefinition
+                foreach (var item in token)
                 {
-                    Id = id,
-                    Name = obj.Value<string>("name") ?? "",
-                    ClassName = obj.Value<string>("class") ?? "",
-                    FieldPath = obj.Value<string>("path") ?? ""
-                };
+                    if (item.Type != JTokenType.Object) continue;
+                    var obj = (JObject)item;
 
-                if (!string.IsNullOrEmpty(def.ClassName) && !string.IsNullOrEmpty(def.FieldPath))
-                {
-                    _definitions.Add(def);
-                    if (id >= _nextId) _nextId = id + 1;
+                    int id = obj.Value<int>("id");
+                    var def = new VariableDefinition
+                    {
+                        Id = id,
+                        Name = obj.Value<string>("name") ?? "",
+                        ClassName = obj.Value<string>("class") ?? "",
+                        FieldPath = obj.Value<string>("path") ?? ""
+                    };
+
+                    if (!string.IsNullOrEmpty(def.ClassName) && !string.IsNullOrEmpty(def.FieldPath))
+                    {
+                        defs.Add(def);
+                        if (id >= _nextId) _nextId = id + 1;
+                    }
                 }
             }
 
-            if (_definitions.Count > 0)
-                TranslatorCore.LogInfo($"[VariableManager] Loaded {_definitions.Count} variable definitions (nextId={_nextId})");
+            _definitions = defs;
+            _currentValues = new Dictionary<int, string>();
+
+            if (defs.Count > 0)
+                TranslatorCore.LogInfo($"[VariableManager] Loaded {defs.Count} variable definitions (nextId={_nextId})");
         }
 
         public static JToken SaveToJson()
@@ -126,13 +132,17 @@ namespace UnityGameTranslator.Core
             }
 
             int id = _nextId++;
-            _definitions.Add(new VariableDefinition
+            var defs = new List<VariableDefinition>(_definitions)
             {
-                Id = id,
-                Name = name,
-                ClassName = className,
-                FieldPath = fieldPath
-            });
+                new VariableDefinition
+                {
+                    Id = id,
+                    Name = name,
+                    ClassName = className,
+                    FieldPath = fieldPath
+                }
+            };
+            _definitions = defs; // copy-on-write: worker may be iterating the old list
 
             TranslatorCore.SetMetadataDirty();
             TranslatorCore.LogInfo($"[VariableManager] Added variable [!STR*{id}]: {name} ({className}.{fieldPath})");
@@ -144,8 +154,15 @@ namespace UnityGameTranslator.Core
             var def = _definitions.Find(d => d.Id == id);
             if (def == null) return;
 
-            _definitions.Remove(def);
-            _currentValues.Remove(id);
+            // Copy-on-write: worker may be iterating/reading the old collections
+            var defs = new List<VariableDefinition>(_definitions);
+            defs.Remove(def);
+            _definitions = defs;
+
+            var values = new Dictionary<int, string>(_currentValues);
+            values.Remove(id);
+            _currentValues = values;
+
             TranslatorCore.SetMetadataDirty();
             TranslatorCore.LogInfo($"[VariableManager] Removed variable [!STR*{id}]: {def.Name}");
         }
@@ -155,7 +172,7 @@ namespace UnityGameTranslator.Core
         #region Value Resolution (Reflection)
 
         /// <summary>
-        /// Mark variables for refresh on next ExtractVariables call.
+        /// Force a value refresh on the next OnUpdate tick (bypasses the throttle).
         /// Called on scene change.
         /// </summary>
         public static void MarkNeedsRefresh()
@@ -166,6 +183,13 @@ namespace UnityGameTranslator.Core
         private static float _lastRefreshTime = -999f;
         private const float RefreshIntervalSeconds = 2f;
 
+        // Own frame counter (Time.frameCount is unreliable off the main thread) and
+        // main thread id, both maintained by OnUpdate. _mainThreadId stays -1 until
+        // the first frame, so RefreshOnMiss safely no-ops before then.
+        private static int _frameCounter;
+        private static int _lastMissRefreshFrame = -1;
+        private static int _mainThreadId = -1;
+
         /// <summary>
         /// Main-thread periodic refresh, called every frame from TranslatorCore.OnUpdate.
         /// Games (re)assign their state (seeds, player names...) long after the scene
@@ -175,6 +199,9 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static void OnUpdate(float currentTime)
         {
+            _mainThreadId = System.Threading.Thread.CurrentThread.ManagedThreadId;
+            _frameCounter++;
+
             if (_definitions.Count == 0) return;
             if (!_needsRefresh && currentTime - _lastRefreshTime < RefreshIntervalSeconds) return;
 
@@ -184,21 +211,47 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Resolve all variable values. Called on scene change.
-        /// Keeps old values if re-resolution fails (instance temporarily destroyed).
-        /// Never called from the hot path (ExtractVariables just reads the cache).
+        /// Re-resolve values right before a never-seen text is queued for translation.
+        /// The periodic tick cannot close the race where the game assigns a value and
+        /// displays it immediately — the queued text's cache key is built by the worker
+        /// from _currentValues, so stale values there mint a polluted key. The miss is
+        /// the only moment a new cache entry can be born, which makes it the correct
+        /// refresh trigger. Throttled to once per frame (scene-load floods queue
+        /// hundreds of texts) and main-thread only (resolution may call Unity APIs).
+        /// Returns true when a refresh actually ran, so the caller can retry its
+        /// lookup once with fresh values — the throttle guarantees the retry cannot loop.
+        /// </summary>
+        public static bool RefreshOnMiss()
+        {
+            if (_definitions.Count == 0) return false;
+            if (System.Threading.Thread.CurrentThread.ManagedThreadId != _mainThreadId) return false;
+            if (_lastMissRefreshFrame == _frameCounter) return false;
+
+            _lastMissRefreshFrame = _frameCounter;
+            RefreshValues();
+            return true;
+        }
+
+        /// <summary>
+        /// Resolve all variable values (main thread only: resolution may call Unity
+        /// APIs). Keeps old values if re-resolution fails (instance temporarily
+        /// destroyed). Builds a new dictionary and swaps the reference so the worker
+        /// can read _currentValues concurrently without torn state.
         /// </summary>
         public static void RefreshValues()
         {
-            if (_definitions.Count == 0) return;
+            var defs = _definitions;
+            if (defs.Count == 0) return;
 
-            foreach (var def in _definitions)
+            var newValues = new Dictionary<int, string>(_currentValues);
+            foreach (var def in defs)
             {
                 string value = ResolveValue(def);
                 if (value != null)
-                    _currentValues[def.Id] = value;
+                    newValues[def.Id] = value;
                 // If null, keep the old cached value (don't erase)
             }
+            _currentValues = newValues;
         }
 
         /// <summary>
@@ -206,7 +259,8 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static string GetValue(int index)
         {
-            if (_currentValues.TryGetValue(index, out string val))
+            var values = _currentValues; // snapshot: main thread swaps the reference
+            if (values.TryGetValue(index, out string val))
                 return val;
             return null;
         }
@@ -433,22 +487,21 @@ namespace UnityGameTranslator.Core
         public static string ExtractVariables(string text, out List<KeyValuePair<int, string>> extracted)
         {
             extracted = null;
-            if (string.IsNullOrEmpty(text) || _definitions.Count == 0) return text;
-
-            // Resolve values once after scene change (on first text request)
-            if (_needsRefresh)
-            {
-                _needsRefresh = false;
-                RefreshValues();
-            }
+            // Snapshot references: this method also runs on the translation worker
+            // while the main thread swaps them (copy-on-write). Resolution NEVER
+            // happens here — it may call Unity APIs, main-thread only (OnUpdate tick
+            // + RefreshOnMiss).
+            var defs = _definitions;
+            var values = _currentValues;
+            if (string.IsNullOrEmpty(text) || defs.Count == 0) return text;
 
             // Collect active variables (non-null, non-empty values)
             // Key = stable Id (not list position), Value = current string value
             // Sort by value length descending to avoid partial matches
             var active = new List<KeyValuePair<int, string>>();
-            foreach (var def in _definitions)
+            foreach (var def in defs)
             {
-                if (_currentValues.TryGetValue(def.Id, out string val) && !string.IsNullOrEmpty(val))
+                if (values.TryGetValue(def.Id, out string val) && !string.IsNullOrEmpty(val))
                     active.Add(new KeyValuePair<int, string>(def.Id, val));
             }
 

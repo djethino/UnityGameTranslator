@@ -713,6 +713,12 @@ namespace UnityGameTranslator.Core
                         if (prop.PropertyType != typeof(string) && !prop.PropertyType.Name.Contains("String"))
                             continue;
                         if (!prop.CanRead) continue;
+                        // Same purity rule as the instance scan: on IL2CPP proxies,
+                        // only read field-backed static wrappers, never real getters
+                        var declaring = prop.DeclaringType ?? type;
+                        if (IsIl2CppProxyType(declaring) && declaring.GetField("NativeFieldInfoPtr_" + prop.Name,
+                            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.DeclaredOnly) == null)
+                            continue;
                         var val = prop.GetValue(null, null);
                         string strVal = val as string ?? val?.ToString();
                         int rank = GetMatchRank(strVal, searchValue);
@@ -814,20 +820,32 @@ namespace UnityGameTranslator.Core
             return prop.PropertyType.IsAssignableFrom(scannedType) || scannedType.IsAssignableFrom(prop.PropertyType);
         }
 
+        // Cache: proxy detection enumerates static fields, and the scan asks for the
+        // same types over and over (hierarchy levels, thousands of statics-pass types)
+        private static readonly Dictionary<Type, bool> _proxyTypeCache = new Dictionary<Type, bool>();
+
         /// <summary>An Il2CppInterop-generated proxy type carries Native*InfoPtr marker fields.</summary>
         private static bool IsIl2CppProxyType(Type type)
         {
+            if (_proxyTypeCache.TryGetValue(type, out bool cached)) return cached;
+
+            bool isProxy = false;
             try
             {
                 foreach (var f in type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.DeclaredOnly))
                 {
                     if (f.Name.StartsWith("NativeMethodInfoPtr_", StringComparison.Ordinal)
                         || f.Name.StartsWith("NativeFieldInfoPtr_", StringComparison.Ordinal))
-                        return true;
+                    {
+                        isProxy = true;
+                        break;
+                    }
                 }
             }
             catch { }
-            return false;
+
+            _proxyTypeCache[type] = isProxy;
+            return isProxy;
         }
 
         /// <summary>
@@ -853,6 +871,8 @@ namespace UnityGameTranslator.Core
 
             for (Type t = actualType; t != null && !IsEngineOrSystemType(t); t = t.BaseType)
             {
+                bool proxyLevel = IsIl2CppProxyType(t);
+
                 FieldInfo[] fields;
                 try { fields = t.GetFields(flags); } catch { fields = null; }
                 if (fields != null)
@@ -880,6 +900,15 @@ namespace UnityGameTranslator.Core
                         {
                             if (!prop.CanRead || prop.GetIndexParameters().Length > 0) continue;
                             if (!ShouldFetchMember(prop.PropertyType, depth)) continue;
+                            // On IL2CPP proxies, only read field-backed wrappers
+                            // (NativeFieldInfoPtr marker = pure memory read). A real
+                            // native getter runs arbitrary game code — side effects
+                            // and hang risk when mass-invoked by a scan. Game DATA
+                            // lives in il2cpp fields; computed strings are handled
+                            // as multi-variable compositions instead.
+                            if (proxyLevel && t.GetField("NativeFieldInfoPtr_" + prop.Name,
+                                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.DeclaredOnly) == null)
+                                continue;
                             var val = prop.GetValue(instance, null);
                             HandleScannedMember(val, prop.PropertyType, rootClassName, parentPath, prop.Name,
                                 searchValue, results, seen, depth, visited);
@@ -992,70 +1021,90 @@ namespace UnityGameTranslator.Core
         /// unlike raw reflection which only sees base class members.
         /// Works on both Mono and IL2CPP.
         /// </summary>
+        // Soft cap on the instance pass. It cannot interrupt a single blocking native
+        // call, but bounds the total when a game has thousands of live types.
+        private const int InstanceScanBudgetMs = 15000;
+
+        /// <summary>
+        /// Scan live game instances. Enumerates ALL MonoBehaviours and ScriptableObjects
+        /// in two bulk native calls, then groups by actual type and scans the first
+        /// instance of each — the previous shape (one FindAllObjectsOfType native call
+        /// PER candidate type) took minutes on large IL2CPP games, perceived as a
+        /// freeze. Bulk enumeration also only ever visits types that actually have
+        /// live instances.
+        /// </summary>
         private static void ScanInstancesUniverseLib(string searchValue, string[] skipPrefixes,
             List<VariableCandidate> results, HashSet<string> seen)
         {
             try
             {
-                // Iterate concrete types from game assemblies and FindAllObjectsOfType per type
-                var gameAssemblies = new List<System.Reflection.Assembly>();
-                foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-                {
-                    string asmName = asm.GetName().Name;
-                    if (!asmName.Contains("Assembly-CSharp") && !asmName.StartsWith("Il2Cpp")) continue;
-                    bool skipAsm = false;
-                    foreach (var prefix in skipPrefixes)
-                    {
-                        if (asmName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-                        { skipAsm = true; break; }
-                    }
-                    if (!skipAsm) gameAssemblies.Add(asm);
-                }
-
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                var scannedTypes = new HashSet<Type>();
                 int typesScanned = 0;
+                bool truncated = false;
 
-                foreach (var asm in gameAssemblies)
+                // Scene objects (incl. inactive) + assets: SOs need the asset-scan
+                // path on Mono (FindObjectsOfType never returns assets)
+                var pools = new UnityEngine.Object[][]
                 {
-                    Type[] types;
-                    try { types = asm.GetTypes(); }
-                    catch { continue; }
+                    TypeHelper.FindAllObjectsOfType(typeof(MonoBehaviour)),
+                    TypeHelper.FindAllAssetsOfType(typeof(ScriptableObject))
+                };
+                TranslatorCore.LogInfo($"[VariableManager] Instance pass: {pools[0]?.Length ?? 0} behaviours + {pools[1]?.Length ?? 0} scriptable objects enumerated in {sw.ElapsedMilliseconds} ms");
 
-                    foreach (var type in types)
+                foreach (var pool in pools)
+                {
+                    if (pool == null) continue;
+                    if (truncated) break;
+
+                    foreach (var obj in pool)
                     {
                         try
                         {
-                            if (!typeof(UnityEngine.Object).IsAssignableFrom(type)) continue;
-                            if (type.IsAbstract || type.IsInterface) continue;
-                            // Open generics have no instances (and crash/hang native lookups)
-                            if (type.ContainsGenericParameters) continue;
+                            if (obj == null) continue;
 
-                            var instances = TypeHelper.FindAllObjectsOfType(type);
-                            if (instances == null || instances.Length == 0) continue;
-
-                            var firstObj = instances[0];
-                            if (firstObj == null) continue;
-
-                            // Get actual proxy type via UniverseLib
                             Type actualType;
-                            try { actualType = firstObj.GetActualType(); }
-                            catch { actualType = type; }
+                            try { actualType = obj.GetActualType(); }
+                            catch { continue; }
 
-                            typesScanned++;
+                            if (!scannedTypes.Add(actualType)) continue;
+
+                            // Keep only game types (same assembly filter as the statics pass)
+                            string asmName = actualType.Assembly.GetName().Name;
+                            if (!asmName.Contains("Assembly-CSharp") && !asmName.StartsWith("Il2Cpp")) continue;
+                            bool skipAsm = false;
+                            foreach (var prefix in skipPrefixes)
+                            {
+                                if (asmName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                                { skipAsm = true; break; }
+                            }
+                            if (skipAsm) continue;
+
+                            if (sw.ElapsedMilliseconds > InstanceScanBudgetMs)
+                            {
+                                truncated = true;
+                                TranslatorCore.LogWarning($"[VariableManager] Instance pass truncated after {typesScanned} types ({InstanceScanBudgetMs} ms budget) — some candidates may be missing");
+                                break;
+                            }
 
                             // Cast to actual type
                             object typed;
-                            try { typed = TypeHelper.Il2CppCast(firstObj, actualType) ?? firstObj; }
-                            catch { typed = firstObj; }
+                            try { typed = TypeHelper.Il2CppCast(obj, actualType) ?? obj; }
+                            catch { typed = obj; }
+
+                            typesScanned++;
+                            if (typesScanned % 100 == 0)
+                                TranslatorCore.LogInfo($"[VariableManager] Instance pass: {typesScanned} types scanned, {sw.ElapsedMilliseconds} ms, last={actualType.Name}");
 
                             // Scan fields and properties, following sub-objects
                             var visited = new HashSet<object>(ReferenceComparer.Comparer);
-                            ScanObjectRecursive(typed, type.Name, "", searchValue, results, seen, 0, visited);
+                            ScanObjectRecursive(typed, actualType.Name, "", searchValue, results, seen, 0, visited);
                         }
                         catch { }
                     }
                 }
 
-                TranslatorCore.LogInfo($"[VariableManager] UniverseLib scan: {typesScanned} types checked");
+                TranslatorCore.LogInfo($"[VariableManager] Instance pass: {typesScanned} types checked in {sw.ElapsedMilliseconds} ms{(truncated ? " (TRUNCATED)" : "")}");
             }
             catch (Exception ex)
             {

@@ -1877,6 +1877,9 @@ namespace UnityGameTranslator.Core
         // Cache of components already font-replaced (avoids reflection GetFontName on every set_text)
         private static readonly HashSet<int> _fontReplacedComponentIds = new HashSet<int>();
 
+        // Fonts for which the one-shot replacement diagnostic was already logged (issue #21)
+        private static readonly HashSet<string> _replacementDiagLogged = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         public static void ApplyFontReplacement(object component, object originalFontObj, string originalFontName)
         {
             if (component == null || string.IsNullOrEmpty(originalFontName)) return;
@@ -1927,6 +1930,30 @@ namespace UnityGameTranslator.Core
 
             // Force mesh regeneration so the new font renders immediately
             TypeHelper.ForceMeshUpdate(component);
+
+            // One-shot diagnostic per original font (issue #21): everything needed to
+            // compute the expected on-screen size on a reporter's game — the component's
+            // sizing mode (auto-size makes visual size invariant to glyph metrics), the
+            // ORIGINAL font's faceInfo (the clone source is a DIFFERENT asset, so its
+            // pointSize/scale may not match), and the effective font after SetFont.
+            if (_replacementDiagLogged.Add(originalFontName))
+            {
+                try
+                {
+                    var ct = component.GetType();
+                    object fs = ct.GetProperty("fontSize", BindingFlags.Public | BindingFlags.Instance)?.GetValue(component, null);
+                    object autoSize = ct.GetProperty("enableAutoSizing", BindingFlags.Public | BindingFlags.Instance)?.GetValue(component, null);
+                    string origFace = "n/a";
+                    if (originalFontObj != null && CustomFontLoader.TryGetModernFaceInfo(originalFontObj, out var ops, out var osc))
+                        origFace = $"pointSize={ops}, scale={osc}";
+                    string nowFont = TypeHelper.GetFontName(component);
+                    TranslatorCore.LogInfo($"[FontManager] DIAG replace '{originalFontName}' → '{nowFont}' on {ct.Name}: fontSize={fs}, autoSize={autoSize}, original faceInfo: {origFace}");
+                }
+                catch (Exception ex)
+                {
+                    TranslatorCore.LogDebug($"[FontManager] DIAG replace failed: {ex.Message}");
+                }
+            }
 
             // Add original game font as fallback on the replacement font
             // So missing chars in replacement → fall back to original

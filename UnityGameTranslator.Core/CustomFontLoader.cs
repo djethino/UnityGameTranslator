@@ -1674,21 +1674,27 @@ namespace UnityGameTranslator.Core
                 // Modern TMP: the clone keeps its source font's m_FaceInfo — we deliberately
                 // do NOT rewrite the modern struct (see the v0.9.64 note in SetupFaceInfo).
                 // TMP renders text with elementScale = fontSize / m_FaceInfo.pointSize ×
-                // m_FaceInfo.scale × TMP_Character.scale (TMP_Text.cs 3.0.6:4224+4238),
-                // while our glyph metrics below are written in pixels at the ATLAS point
-                // size. When the two differ (issue #21: atlas at 48 vs game font sampled at
-                // 408), text renders proportionally too small. Compensation ratio =
-                // clonePointSize / atlasSize, applied via TMP_Character.scale.
-                // faceInfo.scale is NOT part of the ratio: it multiplies the game's own
-                // glyphs identically through elementScale, so it cancels out (a first fix
-                // dividing by it rendered text at half the intended size).
+                // m_FaceInfo.scale × TMP_Character.scale (TMPro_UGUI_Private.cs 3.0.6:2102,
+                // same for the 3D path), while our glyph metrics below are written in pixels
+                // at the ATLAS point size. When the two differ (issue #21: atlas at 48 vs
+                // clone sampled at 408 with faceInfo.scale=2), text renders at the wrong
+                // size. Compensate via TMP_Character.scale so that the asset renders like a
+                // STANDARD font (em height = fontSize), independent of which game font the
+                // clone came from — the clone source is picked opportunistically and is
+                // often NOT the font being replaced:
+                //   ratio = clonePointSize / (atlasSize × cloneFaceScale)
+                // Any residual mismatch equals the replaced font's own design scale and is
+                // adjustable with the per-font "scale" setting in the Fonts tab.
                 // Legacy/TMProOld assets have no modern faceInfo → ratio stays 1 and that
                 // path is untouched.
                 float glyphMetricsScale = 1f;
                 if (TryGetModernFaceInfo(fontAsset, out float cloneFacePointSize, out float cloneFaceScale))
                 {
                     if (cloneFacePointSize > 0f && pointSize > 0f)
-                        glyphMetricsScale = cloneFacePointSize / pointSize;
+                    {
+                        float effectiveFaceScale = cloneFaceScale > 0f ? cloneFaceScale : 1f;
+                        glyphMetricsScale = cloneFacePointSize / (pointSize * effectiveFaceScale);
+                    }
                     TranslatorCore.LogInfo($"[CustomFontLoader] Clone modern faceInfo: pointSize={cloneFacePointSize}, scale={cloneFaceScale} — atlas size={pointSize} → character scale {glyphMetricsScale:F3}");
                 }
                 else
@@ -2057,7 +2063,7 @@ namespace UnityGameTranslator.Core
         /// no readable modern faceInfo (TMProOld/legacy assets). Reading is safe on
         /// IL2CPP: PrimeIL2CppPropertyGetters already warmed up the lazy property state.
         /// </summary>
-        private static bool TryGetModernFaceInfo(object fontAsset, out float facePointSize, out float faceScale)
+        internal static bool TryGetModernFaceInfo(object fontAsset, out float facePointSize, out float faceScale)
         {
             facePointSize = 0f;
             faceScale = 1f;
@@ -2367,6 +2373,13 @@ namespace UnityGameTranslator.Core
                     GetPropertyOrField(fontAsset, fontAssetType, "atlasTextures");
                     GetPropertyOrField(fontAsset, fontAssetType, "m_AtlasTextures");
 
+                    // Post-rebuild READ-BACK of the values we wrote into the tables (issue
+                    // #21 round 3: three different scale configurations rendered identically
+                    // on the reporter's game, so we need ground truth on whether the
+                    // reflective writes actually land on the il2cpp objects and survive
+                    // ReadFontAssetDefinition). One Info line per font creation — cheap.
+                    VerifyGlyphTablesReadBack(glyphTable, charTable);
+
                     return;
                 }
 
@@ -2377,6 +2390,72 @@ namespace UnityGameTranslator.Core
             catch (Exception ex)
             {
                 TranslatorCore.LogWarning($"[CustomFontLoader] Failed to setup glyphs: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Read back a sample TMP_Character and Glyph from the tables and log the values
+        /// we care about (character.scale carries the pointSize compensation, glyph scale
+        /// must stay 1, advance proves the metrics writes). Diagnostic for issue #21.
+        /// </summary>
+        private static void VerifyGlyphTablesReadBack(object glyphTable, object charTable)
+        {
+            try
+            {
+                var cItem = charTable.GetType().GetProperty("Item");
+                var cCountProp = charTable.GetType().GetProperty("Count");
+                int cCount = cCountProp != null ? Convert.ToInt32(cCountProp.GetValue(charTable, null)) : -1;
+                object sample = null;
+                int sampleIdx = -1;
+                if (cItem != null)
+                {
+                    for (int i = 0; i < cCount; i++)
+                    {
+                        var c = cItem.GetValue(charTable, new object[] { i });
+                        if (c == null) continue;
+                        if (sample == null) { sample = c; sampleIdx = i; }
+                        var uni = GetPropertyOrField(c, c.GetType(), "unicode")
+                               ?? GetPropertyOrField(c, c.GetType(), "m_Unicode");
+                        // Prefer 'A' as the sample when present (readable in logs)
+                        if (uni != null && Convert.ToInt64(uni) == 65) { sample = c; sampleIdx = i; break; }
+                    }
+                }
+
+                string charInfo = "none";
+                if (sample != null)
+                {
+                    var st = sample.GetType();
+                    var uni = GetPropertyOrField(sample, st, "unicode") ?? GetPropertyOrField(sample, st, "m_Unicode");
+                    var scl = GetPropertyOrField(sample, st, "scale") ?? GetPropertyOrField(sample, st, "m_Scale");
+                    var gidx = GetPropertyOrField(sample, st, "glyphIndex") ?? GetPropertyOrField(sample, st, "m_GlyphIndex");
+                    charInfo = $"[{sampleIdx}] type={st.Name}, unicode={uni}, scale={scl}, glyphIndex={gidx}";
+                }
+
+                string glyphInfoStr = "none";
+                var gItem = glyphTable.GetType().GetProperty("Item");
+                var gCountProp = glyphTable.GetType().GetProperty("Count");
+                int gCount = gCountProp != null ? Convert.ToInt32(gCountProp.GetValue(glyphTable, null)) : -1;
+                if (gItem != null && gCount > 0)
+                {
+                    var g = gItem.GetValue(glyphTable, new object[] { 0 });
+                    if (g != null)
+                    {
+                        var gt = g.GetType();
+                        var gscl = GetPropertyOrField(g, gt, "scale") ?? GetPropertyOrField(g, gt, "m_Scale");
+                        var gm = GetPropertyOrField(g, gt, "metrics") ?? GetPropertyOrField(g, gt, "m_Metrics");
+                        object adv = null;
+                        if (gm != null)
+                            adv = GetPropertyOrField(gm, gm.GetType(), "horizontalAdvance")
+                               ?? GetPropertyOrField(gm, gm.GetType(), "m_HorizontalAdvance");
+                        glyphInfoStr = $"scale={gscl}, advance={adv}";
+                    }
+                }
+
+                TranslatorCore.LogInfo($"[CustomFontLoader] VERIFY tables read-back: chars={cCount} sample {charInfo} | glyphs={gCount} glyph[0] {glyphInfoStr}");
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogWarning($"[CustomFontLoader] VERIFY read-back failed: {ex.Message}");
             }
         }
 

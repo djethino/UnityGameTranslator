@@ -6,8 +6,6 @@ using MelonLoader.Utils;
 using HarmonyLib;
 using UnityEngine;
 using UnityGameTranslator.Core;
-using UnityGameTranslator.Core.UI.Components;
-using Il2CppInterop.Runtime.Injection;
 
 [assembly: MelonInfo(typeof(UnityGameTranslator.MelonLoaderIL2CPP.TranslatorMod), "UnityGameTranslator", UnityGameTranslator.PluginInfo.Version, "Community")]
 [assembly: MelonGame(null, null)]
@@ -45,9 +43,6 @@ namespace UnityGameTranslator.MelonLoaderIL2CPP
 
             TranslatorScanner.InitializeIL2CPP();
 
-            // Register Core's MonoBehaviour types for IL2CPP before UI initialization
-            RegisterCoreTypes();
-
             // Initialize UI in a separate method to ensure AssemblyResolve is active
             InitializeUI();
 
@@ -75,19 +70,6 @@ namespace UnityGameTranslator.MelonLoaderIL2CPP
         public override void OnApplicationQuit()
         {
             TranslatorCore.OnShutdown();
-        }
-
-        /// <summary>
-        /// Registers Core's MonoBehaviour types with IL2CPP injector.
-        /// Must be called before any of these types are used.
-        /// NoInlining prevents JIT from loading these types before registration.
-        /// </summary>
-        [MethodImpl(MethodImplOptions.NoInlining)]
-        private void RegisterCoreTypes()
-        {
-            // Register UI component types from Core that are used with AddComponent
-            ClassInjector.RegisterTypeInIl2Cpp<DynamicScrollbarHider>();
-            MelonLogger.Msg("Registered Core MonoBehaviour types for IL2CPP");
         }
 
         /// <summary>

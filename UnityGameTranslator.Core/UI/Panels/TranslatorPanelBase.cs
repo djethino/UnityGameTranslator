@@ -833,30 +833,49 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 var scrollContent = sizeFitter.gameObject;
                 var scrollContentRect = scrollContent.GetComponent<RectTransform>();
-                LayoutRebuilder.ForceRebuildLayoutImmediate(scrollContentRect);
 
-                // Method 1: Use Unity's preferred height (most accurate when layout is calculated)
-                float unityPreferredHeight = LayoutUtility.GetPreferredHeight(scrollContentRect);
+                // FillViewportHeight (flex panels) writes the CURRENT viewport height
+                // into the content's LayoutElement.preferredHeight. Measuring with it
+                // active returns max(current viewport, children): the measure could
+                // never go below the panel's current size, so flex panels never shrank
+                // back and MaxHeight was inflated. Neutralize during the measure.
+                var contentLayoutElement = scrollContent.GetComponent<LayoutElement>();
+                float savedPreferredHeight = contentLayoutElement != null ? contentLayoutElement.preferredHeight : -1f;
+                if (contentLayoutElement != null)
+                    contentLayoutElement.preferredHeight = -1f;
 
-                // Method 2: Measure recursively (fallback when Unity returns 0)
-                float childrenHeight = MeasureChildrenRecursive(scrollContent.transform);
-
-                // Add spacing between direct children (from VerticalLayoutGroup)
-                var layoutGroup = scrollContent.GetComponent<VerticalLayoutGroup>();
-                if (layoutGroup != null)
+                try
                 {
-                    // Use helper for IL2CPP compatibility (foreach on Transform doesn't work in IL2CPP)
-                    int activeChildren = UIHelpers.CountActiveChildren(scrollContent.transform);
-                    if (activeChildren > 1)
-                    {
-                        childrenHeight += layoutGroup.spacing * (activeChildren - 1);
-                    }
-                    // Add padding
-                    childrenHeight += layoutGroup.padding.top + layoutGroup.padding.bottom;
-                }
+                    LayoutRebuilder.ForceRebuildLayoutImmediate(scrollContentRect);
 
-                // Use the MAXIMUM of both methods - Unity's calculation is more accurate when available
-                contentHeight = Mathf.Max(unityPreferredHeight, childrenHeight);
+                    // Method 1: Use Unity's preferred height (most accurate when layout is calculated)
+                    float unityPreferredHeight = LayoutUtility.GetPreferredHeight(scrollContentRect);
+
+                    // Method 2: Measure recursively (fallback when Unity returns 0)
+                    float childrenHeight = MeasureChildrenRecursive(scrollContent.transform);
+
+                    // Add spacing between direct children (from VerticalLayoutGroup)
+                    var layoutGroup = scrollContent.GetComponent<VerticalLayoutGroup>();
+                    if (layoutGroup != null)
+                    {
+                        // Use helper for IL2CPP compatibility (foreach on Transform doesn't work in IL2CPP)
+                        int activeChildren = UIHelpers.CountActiveChildren(scrollContent.transform);
+                        if (activeChildren > 1)
+                        {
+                            childrenHeight += layoutGroup.spacing * (activeChildren - 1);
+                        }
+                        // Add padding
+                        childrenHeight += layoutGroup.padding.top + layoutGroup.padding.bottom;
+                    }
+
+                    // Use the MAXIMUM of both methods - Unity's calculation is more accurate when available
+                    contentHeight = Mathf.Max(unityPreferredHeight, childrenHeight);
+                }
+                finally
+                {
+                    if (contentLayoutElement != null)
+                        contentLayoutElement.preferredHeight = savedPreferredHeight;
+                }
             }
             else
             {
@@ -878,8 +897,13 @@ namespace UnityGameTranslator.Core.UI.Panels
         }
 
         /// <summary>
-        /// Measures the chrome height (non-scrollable parts: title bar, button row, padding, spacing).
-        /// Dynamically finds and measures actual UI elements instead of using hardcoded values.
+        /// Measures the chrome height: every fixed (non-scrolling) direct child of
+        /// ContentRoot — title bar, footer buttons, help zone, any future bar — plus
+        /// the layout group's padding and spacing. Children are discovered dynamically:
+        /// the only one excluded is the scroll view itself, whose content is measured
+        /// separately by MeasureContentHeight. Hardcoded chrome names here are exactly
+        /// what caused the HelpZone regression (panels sized 45px too short → the
+        /// auto-hide scrollbar correctly showed up in windows that "had room").
         /// </summary>
         private float MeasureChromeHeight()
         {
@@ -889,69 +913,49 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
 
             float chromeHeight = 0;
+            int activeChildren = 0;
 
-            // Measure ContentRoot's layout group padding (if any)
+            // Manual iteration for IL2CPP compatibility (foreach on Transform doesn't work)
+            var root = ContentRoot.transform;
+            for (int i = 0; i < root.childCount; i++)
+            {
+                Transform child = root.GetChild(i);
+                if (!child.gameObject.activeSelf) continue;
+                activeChildren++;
+
+                // The scroll view is the elastic part, not chrome
+                if (child.GetComponent<ScrollRect>() != null) continue;
+
+                var childRect = child.GetComponent<RectTransform>();
+                if (childRect == null) continue;
+
+                LayoutRebuilder.ForceRebuildLayoutImmediate(childRect);
+                float childHeight = LayoutUtility.GetPreferredHeight(childRect);
+                if (childHeight <= 0)
+                {
+                    var layoutElement = child.GetComponent<LayoutElement>();
+                    childHeight = layoutElement != null && layoutElement.minHeight > 0
+                        ? layoutElement.minHeight
+                        : childRect.rect.height;
+                }
+                if (childHeight > 0)
+                    chromeHeight += childHeight;
+            }
+
+            // Layout group padding + spacing between direct children
             var contentVlg = ContentRoot.GetComponent<VerticalLayoutGroup>();
             if (contentVlg != null)
             {
                 chromeHeight += contentVlg.padding.top + contentVlg.padding.bottom;
+                if (activeChildren > 1)
+                {
+                    chromeHeight += contentVlg.spacing * (activeChildren - 1);
+                }
             }
             else
             {
-                // Fallback to UIStyles constant
+                // Fallback to UIStyles constants: padding + assume 2 gaps
                 chromeHeight += UIStyles.PanelPadding * 2;
-            }
-
-            // Find and measure title bar
-            var titleBar = ContentRoot.transform.Find("TitleBar");
-            if (titleBar != null && titleBar.gameObject.activeSelf)
-            {
-                var titleRect = titleBar.GetComponent<RectTransform>();
-                if (titleRect != null)
-                {
-                    LayoutRebuilder.ForceRebuildLayoutImmediate(titleRect);
-                    float titleHeight = LayoutUtility.GetPreferredHeight(titleRect);
-                    if (titleHeight <= 0)
-                    {
-                        var titleLayout = titleBar.GetComponent<LayoutElement>();
-                        titleHeight = titleLayout != null ? titleLayout.minHeight : titleRect.rect.height;
-                    }
-                    chromeHeight += titleHeight;
-                }
-            }
-
-            // Find and measure button row (can be "ButtonRow" or "FooterButtons")
-            Transform buttonRow = ContentRoot.transform.Find("ButtonRow") ?? ContentRoot.transform.Find("FooterButtons");
-            if (buttonRow != null && buttonRow.gameObject.activeSelf)
-            {
-                var buttonRect = buttonRow.GetComponent<RectTransform>();
-                if (buttonRect != null)
-                {
-                    LayoutRebuilder.ForceRebuildLayoutImmediate(buttonRect);
-                    float buttonHeight = LayoutUtility.GetPreferredHeight(buttonRect);
-                    if (buttonHeight <= 0)
-                    {
-                        var buttonLayout = buttonRow.GetComponent<LayoutElement>();
-                        buttonHeight = buttonLayout != null ? buttonLayout.minHeight : buttonRect.rect.height;
-                    }
-                    chromeHeight += buttonHeight;
-                }
-            }
-
-            // Add spacing between elements
-            if (contentVlg != null)
-            {
-                // Count visible direct children to calculate spacing
-                // Use helper for IL2CPP compatibility (foreach on Transform doesn't work in IL2CPP)
-                int visibleChildren = UIHelpers.CountActiveChildren(ContentRoot.transform);
-                if (visibleChildren > 1)
-                {
-                    chromeHeight += contentVlg.spacing * (visibleChildren - 1);
-                }
-            }
-            else
-            {
-                // Fallback: assume 2 gaps with default spacing
                 chromeHeight += UIStyles.ElementSpacing * 2;
             }
 

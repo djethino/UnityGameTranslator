@@ -9,7 +9,6 @@ using HarmonyLib;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityGameTranslator.Core;
-using UnityGameTranslator.Core.UI.Components;
 using Il2CppInterop.Runtime.Injection;
 
 namespace UnityGameTranslator.BepInEx6IL2CPP
@@ -53,9 +52,6 @@ namespace UnityGameTranslator.BepInEx6IL2CPP
             // Initialize IL2CPP scanning support
             TranslatorScanner.InitializeIL2CPP();
 
-            // Register Core's MonoBehaviour types for IL2CPP before UI initialization
-            RegisterCoreTypes();
-
             // Initialize UI in a separate method to ensure AssemblyResolve is active
             // before the JIT tries to resolve UniverseLib types
             InitializeUI();
@@ -77,19 +73,6 @@ namespace UnityGameTranslator.BepInEx6IL2CPP
             go.AddComponent<TranslatorUpdateBehaviour>();
 
             Log.LogInfo("BepInEx 6 IL2CPP version loaded");
-        }
-
-        /// <summary>
-        /// Registers Core's MonoBehaviour types with IL2CPP injector.
-        /// Must be called before any of these types are used.
-        /// NoInlining prevents JIT from loading these types before registration.
-        /// </summary>
-        [MethodImpl(MethodImplOptions.NoInlining)]
-        private void RegisterCoreTypes()
-        {
-            // Register UI component types from Core that are used with AddComponent
-            ClassInjector.RegisterTypeInIl2Cpp<DynamicScrollbarHider>();
-            Log.LogInfo("Registered Core MonoBehaviour types for IL2CPP");
         }
 
         /// <summary>

@@ -859,11 +859,6 @@ namespace UnityGameTranslator.Core
         {
             if (type == null) return new UnityEngine.Object[0];
 
-            // Open generic definitions have no instances. Worse, on IL2CPP the
-            // reflection fallback ends up invoking the native FindObjectsOfType with
-            // an unconstructed type, which can hang inside il2cpp instead of throwing.
-            if (type.ContainsGenericParameters) return new UnityEngine.Object[0];
-
             // IL2CPP path: use Il2CppType.Of<T>() pattern
             if (_il2cppHelpersInitialized && _il2cppTypeOfMethod != null && _il2cppResourcesFindAllMethod != null)
             {

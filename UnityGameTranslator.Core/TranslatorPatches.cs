@@ -448,7 +448,6 @@ namespace UnityGameTranslator.Core
             "InputField", "TMP_InputField", "tk2dTextMesh",
             "TMP_Dropdown", "Dropdown", "Toggle", "Button", "Slider", "Scrollbar",
             "ScrollRect", "LayoutGroup", "ContentSizeFitter", "CanvasScaler",
-            "DynamicScrollbarHider", // Our own component
         };
 
         // Middleware namespaces whose text components never display game text.

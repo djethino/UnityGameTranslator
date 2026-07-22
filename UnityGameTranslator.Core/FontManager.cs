@@ -1762,6 +1762,14 @@ namespace UnityGameTranslator.Core
                     // Mark as created fallback so it won't be registered as game font
                     if (fallbackAsset is UnityEngine.Object fbObj)
                         _createdFallbackFontNames.Add(fbObj.name);
+
+                    // Font just created — schedule ONE refresh on the next scan cycle,
+                    // exactly like the GetTMPReplacementFont creation path. At game restart
+                    // the deferred creation lands HERE (RegisterFontObject auto-apply on
+                    // first font detection), and without this flag the texts already on
+                    // screen never re-fire set_text, so ApplyFontReplacement never runs
+                    // and the game keeps its original font (issue #21, restart case).
+                    _pendingRefresh = true;
                 }
 
                 // Get the fallback list via reflection

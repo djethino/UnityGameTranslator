@@ -1673,26 +1673,27 @@ namespace UnityGameTranslator.Core
 
                 // Modern TMP: the clone keeps its source font's m_FaceInfo — we deliberately
                 // do NOT rewrite the modern struct (see the v0.9.64 note in SetupFaceInfo).
-                // TMP scales every glyph by fontSize / m_FaceInfo.pointSize (× faceInfo.scale),
-                // while our glyph metrics below are written in pixels at the ATLAS point size.
-                // When the two differ (issue #21: atlas at 48 vs game font sampled larger),
-                // text renders at the wrong size. Compensate per-glyph via Glyph.m_Scale:
-                // it multiplies METRICS only (quad size, bearings, advance) — the atlas
-                // glyphRect/UVs are not affected. Legacy/TMProOld assets have no modern
-                // faceInfo → ratio stays 1 and that path is untouched.
+                // TMP renders text with elementScale = fontSize / m_FaceInfo.pointSize ×
+                // m_FaceInfo.scale × TMP_Character.scale (TMP_Text.cs 3.0.6:4224+4238),
+                // while our glyph metrics below are written in pixels at the ATLAS point
+                // size. When the two differ (issue #21: atlas at 48 vs game font sampled at
+                // 408), text renders proportionally too small. Compensation ratio =
+                // clonePointSize / atlasSize, applied via TMP_Character.scale.
+                // faceInfo.scale is NOT part of the ratio: it multiplies the game's own
+                // glyphs identically through elementScale, so it cancels out (a first fix
+                // dividing by it rendered text at half the intended size).
+                // Legacy/TMProOld assets have no modern faceInfo → ratio stays 1 and that
+                // path is untouched.
                 float glyphMetricsScale = 1f;
                 if (TryGetModernFaceInfo(fontAsset, out float cloneFacePointSize, out float cloneFaceScale))
                 {
                     if (cloneFacePointSize > 0f && pointSize > 0f)
-                    {
-                        float effectiveScale = cloneFaceScale > 0f ? cloneFaceScale : 1f;
-                        glyphMetricsScale = cloneFacePointSize / (pointSize * effectiveScale);
-                    }
-                    TranslatorCore.LogInfo($"[CustomFontLoader] Clone modern faceInfo: pointSize={cloneFacePointSize}, scale={cloneFaceScale} — atlas size={pointSize} → glyph metrics scale {glyphMetricsScale:F3}");
+                        glyphMetricsScale = cloneFacePointSize / pointSize;
+                    TranslatorCore.LogInfo($"[CustomFontLoader] Clone modern faceInfo: pointSize={cloneFacePointSize}, scale={cloneFaceScale} — atlas size={pointSize} → character scale {glyphMetricsScale:F3}");
                 }
                 else
                 {
-                    TranslatorCore.LogInfo($"[CustomFontLoader] No modern faceInfo readable on clone (legacy TMP asset ?) — glyph metrics scale stays 1");
+                    TranslatorCore.LogInfo($"[CustomFontLoader] No modern faceInfo readable on clone (legacy TMP asset ?) — character scale stays 1");
                 }
 
                 // Set atlas texture on all relevant properties
@@ -2431,12 +2432,13 @@ namespace UnityGameTranslator.Core
 
                     // Create Glyph object — pass the FULL atlas list so the glyph picks up
                     // the dimensions of its own atlas (glyphInfo.atlasIndex) for the y-flip.
-                    object newGlyph = CreateModernGlyph(glyphType, glyphIndex, glyphInfo, atlases, pointSize, yFlipped, glyphMetricsScale);
+                    object newGlyph = CreateModernGlyph(glyphType, glyphIndex, glyphInfo, atlases, pointSize, yFlipped);
                     if (newGlyph == null) continue;
                     addGlyph.Invoke(glyphTable, new[] { newGlyph });
 
-                    // Create TMP_Character mapping unicode -> glyph
-                    object newChar = CreateModernCharacter(charType, (uint)glyphInfo.unicode, glyphIndex);
+                    // Create TMP_Character mapping unicode -> glyph. Carries the pointSize
+                    // compensation via TMP_Character.scale (see comment in CreateFontAsset).
+                    object newChar = CreateModernCharacter(charType, (uint)glyphInfo.unicode, glyphIndex, glyphMetricsScale);
                     if (newChar != null) addChar.Invoke(charTable, new[] { newChar });
 
                     addedCount++;
@@ -2498,7 +2500,7 @@ namespace UnityGameTranslator.Core
         /// Create a modern UnityEngine.TextCore.Glyph object.
         /// </summary>
         private static object CreateModernGlyph(Type glyphType, uint index, GlyphInfo glyphInfo,
-            List<AtlasInfo> atlases, float pointSize, bool yFlipped, float glyphMetricsScale)
+            List<AtlasInfo> atlases, float pointSize, bool yFlipped)
         {
             try
             {
@@ -2569,10 +2571,12 @@ namespace UnityGameTranslator.Core
                 // behaviour), for multi-atlas it routes TMP's renderer to the right texture.
                 SetFieldValue(glyph, "m_Index", index);
                 SetFieldValue(glyph, "index", index);
-                // Compensates the modern m_FaceInfo.pointSize inherited from the clone
-                // (issue #21) — scales metrics only, never the atlas rect/UVs.
-                SetFieldValue(glyph, "m_Scale", glyphMetricsScale);
-                SetFieldValue(glyph, "scale", glyphMetricsScale);
+                // Glyph.scale MUST stay 1: for TEXT characters TMP 3.0.6 ignores it
+                // (only TMP_Character.scale is multiplied — TMP_Text.cs:4238; Glyph.scale
+                // is sprite-only) and newer TMP versions multiply BOTH, which would
+                // double-apply the pointSize compensation set on the character.
+                SetFieldValue(glyph, "m_Scale", 1f);
+                SetFieldValue(glyph, "scale", 1f);
                 SetFieldValue(glyph, "m_AtlasIndex", atlasIdx);
                 SetFieldValue(glyph, "atlasIndex", atlasIdx);
 
@@ -2636,9 +2640,11 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Create a modern TMP_Character object.
+        /// Create a modern TMP_Character object. <paramref name="scale"/> carries the
+        /// clone-pointSize compensation: TMP multiplies TMP_Character.scale into
+        /// currentElementScale for text characters (TMP_Text.cs 3.0.6:4238).
         /// </summary>
-        private static object CreateModernCharacter(Type charType, uint unicode, uint glyphIndex)
+        private static object CreateModernCharacter(Type charType, uint unicode, uint glyphIndex, float scale)
         {
             try
             {
@@ -2664,8 +2670,8 @@ namespace UnityGameTranslator.Core
                 SetFieldValue(character, "unicode", unicode);
                 SetFieldValue(character, "m_GlyphIndex", glyphIndex);
                 SetFieldValue(character, "glyphIndex", glyphIndex);
-                SetFieldValue(character, "m_Scale", 1f);
-                SetFieldValue(character, "scale", 1f);
+                SetFieldValue(character, "m_Scale", scale);
+                SetFieldValue(character, "scale", scale);
 
                 return character;
             }

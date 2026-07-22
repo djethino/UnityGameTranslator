@@ -1158,6 +1158,9 @@ namespace UnityGameTranslator.Core
             // The scanner uses recent frame-time variance to size its per-frame work budget.
             TranslatorScanner.RecordFrameTime();
 
+            // Keep variable values (seeds, player names...) in sync with live game state
+            VariableManager.OnUpdate(currentTime);
+
             if (cacheModified && currentTime - lastSaveTime > 30f)
             {
                 lastSaveTime = currentTime;

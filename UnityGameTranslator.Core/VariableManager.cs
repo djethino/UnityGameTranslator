@@ -155,16 +155,32 @@ namespace UnityGameTranslator.Core
         #region Value Resolution (Reflection)
 
         /// <summary>
-        /// Refresh all variable values from game memory via reflection.
-        /// Called periodically (every ~2 seconds).
-        /// </summary>
-        /// <summary>
         /// Mark variables for refresh on next ExtractVariables call.
         /// Called on scene change.
         /// </summary>
         public static void MarkNeedsRefresh()
         {
             _needsRefresh = true;
+        }
+
+        private static float _lastRefreshTime = -999f;
+        private const float RefreshIntervalSeconds = 2f;
+
+        /// <summary>
+        /// Main-thread periodic refresh, called every frame from TranslatorCore.OnUpdate.
+        /// Games (re)assign their state (seeds, player names...) long after the scene
+        /// loads — new run, save load — so refreshing only on scene change serves stale
+        /// values, extraction misses, and number extraction pollutes the cache with
+        /// one key per seed. No-op without defined variables; throttled otherwise.
+        /// </summary>
+        public static void OnUpdate(float currentTime)
+        {
+            if (_definitions.Count == 0) return;
+            if (!_needsRefresh && currentTime - _lastRefreshTime < RefreshIntervalSeconds) return;
+
+            _needsRefresh = false;
+            _lastRefreshTime = currentTime;
+            RefreshValues();
         }
 
         /// <summary>

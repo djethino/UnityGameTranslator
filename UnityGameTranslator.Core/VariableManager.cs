@@ -605,6 +605,7 @@ namespace UnityGameTranslator.Core
 
             var results = new List<VariableCandidate>();
             var seen = new HashSet<string>(); // "ClassName|FieldPath" dedup across all scan passes
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
             TranslatorCore.LogInfo($"[VariableManager] Scanning for value: \"{searchValue}\"...");
 
             // Skip system/engine assemblies that can crash on IL2CPP when accessing types
@@ -649,13 +650,16 @@ namespace UnityGameTranslator.Core
                 catch { }
             }
 
+            long staticsPassMs = stopwatch.ElapsedMilliseconds;
+            TranslatorCore.LogInfo($"[VariableManager] Statics/singletons pass: {results.Count} candidate(s) in {staticsPassMs} ms");
+
             // Scan game instances using UniverseLib's GetActualType()
             // which resolves IL2CPP proxy types correctly on both Mono and IL2CPP
             ScanInstancesUniverseLib(searchValue, skipPrefixes, results, seen);
 
             foreach (var r in results)
                 TranslatorCore.LogInfo($"[VariableManager] Candidate: {r.ClassName}.{r.FieldPath} = \"{r.CurrentValue}\" static={r.IsStatic} rank={r.MatchRank}");
-            TranslatorCore.LogInfo($"[VariableManager] Scan complete: {results.Count} candidates found");
+            TranslatorCore.LogInfo($"[VariableManager] Scan complete: {results.Count} candidates found ({staticsPassMs} ms statics + {stopwatch.ElapsedMilliseconds - staticsPassMs} ms instances)");
 
             // Filter out noise: clipboard fields, m_Text (UI internals), our own mod
             results.RemoveAll(r =>
@@ -725,22 +729,105 @@ namespace UnityGameTranslator.Core
         {
             if (type.ContainsGenericParameters) return; // open generics have no readable statics
 
-            // Check for singleton patterns: Instance, instance, I, Singleton...
-            // GetStaticMemberValue walks base classes, covering the Singleton<T> generic
-            // base pattern (plain C# managers invisible to the Unity instance scan).
-            string[] singletonNames = { "Instance", "instance", "I", "Singleton", "singleton", "Current", "current" };
+            object instance = GetSingletonInstanceForScan(type, out string memberName);
+            if (instance == null) return;
 
-            foreach (var singletonName in singletonNames)
+            var visited = new HashSet<object>(ReferenceComparer.Comparer);
+            ScanObjectRecursive(instance, type.Name, memberName, searchValue, results, seen, 0, visited);
+        }
+
+        // Singleton member names, checked as FIELDS first (pure memory reads,
+        // no side effects) including common backing-field spellings.
+        private static readonly string[] SingletonMemberNames =
+            { "Instance", "instance", "_instance", "s_instance", "m_instance",
+              "I", "Singleton", "singleton", "Current", "current" };
+
+        /// <summary>
+        /// Find a live singleton instance WITHOUT triggering side effects, walking
+        /// base classes (Singleton&lt;T&gt; generic base pattern). Static property
+        /// getters are only invoked when provably safe: on IL2CPP proxies, only
+        /// field-backed wrappers (NativeFieldInfoPtr_ marker) — a real native getter
+        /// may lazily CONSTRUCT the singleton, and the scan mass-invoking inherited
+        /// Instance getters would instantiate every manager in the game. On Mono,
+        /// getters are only invoked when the property returns the singleton's own
+        /// type (classic pattern), limiting exposure to intended accessors.
+        /// The permissive read stays in GetStaticMemberValue for runtime resolution
+        /// of user-chosen variables, where hitting the intended getter is the point.
+        /// </summary>
+        private static object GetSingletonInstanceForScan(Type type, out string memberName)
+        {
+            memberName = null;
+            var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.DeclaredOnly;
+
+            for (Type t = type; t != null && t != typeof(object); t = t.BaseType)
             {
-                object instance = null;
-                try { instance = GetStaticMemberValue(type, singletonName); }
-                catch { continue; }
-                if (instance == null) continue;
+                bool isProxy = IsIl2CppProxyType(t);
 
-                var visited = new HashSet<object>(ReferenceComparer.Comparer);
-                ScanObjectRecursive(instance, type.Name, singletonName, searchValue, results, seen, 0, visited);
-                break; // Found a singleton, don't check other names
+                foreach (var name in SingletonMemberNames)
+                {
+                    try
+                    {
+                        var field = t.GetField(name, flags);
+                        if (field != null)
+                        {
+                            var value = field.GetValue(null);
+                            if (value != null)
+                            {
+                                memberName = name;
+                                return value;
+                            }
+                            continue;
+                        }
+
+                        var prop = FindProperty(t, name, flags);
+                        if (prop != null && prop.CanRead && IsSafeStaticPropertyRead(t, prop, type, isProxy))
+                        {
+                            var value = prop.GetValue(null, null);
+                            if (value != null)
+                            {
+                                memberName = name;
+                                return value;
+                            }
+                        }
+                    }
+                    catch { }
+                }
             }
+
+            return null;
+        }
+
+        /// <summary>See GetSingletonInstanceForScan — scan-time getter safety rules.</summary>
+        private static bool IsSafeStaticPropertyRead(Type declaringType, PropertyInfo prop, Type scannedType, bool isProxy)
+        {
+            if (isProxy)
+            {
+                // Il2CppInterop emits NativeFieldInfoPtr_<name> for il2cpp FIELDS
+                // exposed as proxy properties (side-effect-free reads) and
+                // NativeMethodInfoPtr_get_<name> for real property getters.
+                var marker = declaringType.GetField("NativeFieldInfoPtr_" + prop.Name,
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.DeclaredOnly);
+                return marker != null;
+            }
+
+            // Mono: classic singleton signature — the property returns the singleton's own type
+            return prop.PropertyType.IsAssignableFrom(scannedType) || scannedType.IsAssignableFrom(prop.PropertyType);
+        }
+
+        /// <summary>An Il2CppInterop-generated proxy type carries Native*InfoPtr marker fields.</summary>
+        private static bool IsIl2CppProxyType(Type type)
+        {
+            try
+            {
+                foreach (var f in type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.DeclaredOnly))
+                {
+                    if (f.Name.StartsWith("NativeMethodInfoPtr_", StringComparison.Ordinal)
+                        || f.Name.StartsWith("NativeFieldInfoPtr_", StringComparison.Ordinal))
+                        return true;
+                }
+            }
+            catch { }
+            return false;
         }
 
         /// <summary>
@@ -774,6 +861,7 @@ namespace UnityGameTranslator.Core
                     {
                         try
                         {
+                            if (!ShouldFetchMember(field.FieldType, depth)) continue;
                             var val = field.GetValue(instance);
                             HandleScannedMember(val, field.FieldType, rootClassName, parentPath, field.Name,
                                 searchValue, results, seen, depth, visited);
@@ -791,6 +879,7 @@ namespace UnityGameTranslator.Core
                         try
                         {
                             if (!prop.CanRead || prop.GetIndexParameters().Length > 0) continue;
+                            if (!ShouldFetchMember(prop.PropertyType, depth)) continue;
                             var val = prop.GetValue(instance, null);
                             HandleScannedMember(val, prop.PropertyType, rootClassName, parentPath, prop.Name,
                                 searchValue, results, seen, depth, visited);
@@ -799,6 +888,32 @@ namespace UnityGameTranslator.Core
                     }
                 }
             }
+        }
+
+        /// <summary>
+        /// Decide from the DECLARED member type whether reading the value is worth it.
+        /// Critical on IL2CPP where every property read invokes a native getter:
+        /// fetching blindly runs arbitrary game code (lazy initializers, expensive
+        /// computed properties) for members the scan could never use. Runtime checks
+        /// (CanRecurseInto) still run after the fetch — the declared type may be an
+        /// interface or base whose runtime value is not followable.
+        /// </summary>
+        private static bool ShouldFetchMember(Type declaredType, int depth)
+        {
+            bool isStringLike = declaredType == typeof(string) || declaredType.Name.Contains("String")
+                || declaredType.FullName == "System.String";
+            if (isStringLike) return true;
+
+            // Non-string member: only worth fetching to recurse into it
+            if (depth >= MaxScanDepth) return false;
+            if (declaredType.IsPrimitive || declaredType.IsEnum || declaredType.IsValueType) return false;
+            if (declaredType == typeof(object)) return false;
+            if (typeof(Delegate).IsAssignableFrom(declaredType)) return false;
+            if (typeof(MemberInfo).IsAssignableFrom(declaredType)) return false;
+            if (typeof(System.Collections.IEnumerable).IsAssignableFrom(declaredType)) return false;
+            if (typeof(UnityEngine.Object).IsAssignableFrom(declaredType)) return false;
+            if (IsEngineOrSystemType(declaredType)) return false;
+            return true;
         }
 
         /// <summary>Rank a scanned member value as candidate, or recurse into it.</summary>
@@ -911,6 +1026,8 @@ namespace UnityGameTranslator.Core
                         {
                             if (!typeof(UnityEngine.Object).IsAssignableFrom(type)) continue;
                             if (type.IsAbstract || type.IsInterface) continue;
+                            // Open generics have no instances (and crash/hang native lookups)
+                            if (type.ContainsGenericParameters) continue;
 
                             var instances = TypeHelper.FindAllObjectsOfType(type);
                             if (instances == null || instances.Length == 0) continue;

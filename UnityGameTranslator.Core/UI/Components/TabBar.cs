@@ -27,6 +27,7 @@ namespace UnityGameTranslator.Core.UI.Components
         // UI elements
         private GameObject _tabRow;
         private GameObject _contentContainer;
+        private ScrollRect _contentScrollRect; // scroll hosting the contents, if any
 
         // State
         private readonly List<TabInfo> _tabs = new List<TabInfo>();
@@ -66,9 +67,12 @@ namespace UnityGameTranslator.Core.UI.Components
         /// Create the tab bar UI in the given parent.
         /// Call AddTab() after this to add tabs.
         /// </summary>
-        /// <param name="parent">Parent GameObject</param>
+        /// <param name="parent">Parent GameObject for the tab button row</param>
+        /// <param name="contentParent">Optional separate parent for the tab contents —
+        /// e.g. a scroll area while the buttons stay fixed above it. Null = same as the
+        /// button row (legacy layout).</param>
         /// <param name="tabRowHeight">Height of the tab button row</param>
-        public void CreateUI(GameObject parent, int tabRowHeight = 32)
+        public void CreateUI(GameObject parent, GameObject contentParent = null, int tabRowHeight = 32)
         {
             // Tab button row
             _tabRow = UIFactory.CreateHorizontalGroup(parent, "TabRow", false, false, true, true, 2,
@@ -77,9 +81,27 @@ namespace UnityGameTranslator.Core.UI.Components
 
             // Content container - holds all tab contents, only one visible at a time
             // forceHeight: false so children align to top instead of stretching
-            _contentContainer = UIFactory.CreateVerticalGroup(parent, "TabContent", true, false, true, true, 0,
+            var contentHost = contentParent != null ? contentParent : parent;
+            _contentContainer = UIFactory.CreateVerticalGroup(contentHost, "TabContent", true, false, true, true, 0,
                 new Vector4(0, 0, 0, 0), Color.clear, TextAnchor.UpperLeft);
             UIFactory.SetLayoutElement(_contentContainer, flexibleWidth: 9999, flexibleHeight: 9999);
+
+            // If the contents live inside a scroll view, remember it so tab switches
+            // start at the top instead of wherever the previous tab was scrolled.
+            // Manual parent walk: GetComponentInParent skips inactive hierarchies
+            // (panels are often constructed while hidden).
+            _contentScrollRect = FindScrollRectInParents(_contentContainer.transform.parent);
+        }
+
+        private static ScrollRect FindScrollRectInParents(Transform transform)
+        {
+            while (transform != null)
+            {
+                var scrollRect = transform.GetComponent<ScrollRect>();
+                if (scrollRect != null) return scrollRect;
+                transform = transform.parent;
+            }
+            return null;
         }
 
         /// <summary>
@@ -154,6 +176,10 @@ namespace UnityGameTranslator.Core.UI.Components
             var newTab = _tabs[index];
             newTab.Content.SetActive(true);
             StyleTabButton(newTab, true);
+
+            // Contents hosted in a scroll area: each tab starts at the top
+            if (_contentScrollRect != null)
+                _contentScrollRect.verticalNormalizedPosition = 1f;
 
             // Fire event
             _onTabChanged?.Invoke(index, newTab.Name);

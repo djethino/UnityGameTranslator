@@ -129,6 +129,27 @@ namespace UnityGameTranslator.Core.UI.Panels
         }
 
         /// <summary>
+        /// Creates a fixed (non-scrolling) header container pinned between the title bar
+        /// and the scroll area — the top mirror of the HelpZone/footer pattern. Put panel
+        /// titles and tab buttons here so only the actual content scrolls. As a direct
+        /// child of ContentRoot it is automatically counted as chrome by
+        /// MeasureChromeHeight.
+        /// </summary>
+        protected GameObject CreateFixedHeader(string name = "FixedHeader")
+        {
+            var header = UIFactory.CreateVerticalGroup(ContentRoot, name, false, false, true, true,
+                UIStyles.ElementSpacing, default, Color.clear);
+            UIFactory.SetLayoutElement(header, flexibleWidth: 9999, flexibleHeight: 0);
+
+            // Pin right above the scroll view
+            var scroll = ContentRoot.transform.Find("PanelScroll");
+            if (scroll != null)
+                header.transform.SetSiblingIndex(scroll.GetSiblingIndex());
+
+            return header;
+        }
+
+        /// <summary>
         /// Wires the scroll content so its flexibleHeight children grow with the panel while
         /// the global panel scroll still kicks in when the content overflows.
         ///

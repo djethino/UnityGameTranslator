@@ -118,24 +118,25 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Contextual help bar between content and footer
             _helpZone = CreateHelpZone(buttonRow, "Hover an element to see what it does");
 
-            // === HEADER SECTION (outside tabs, like OptionsPanel) ===
-            // Title directly in scrollContent
-            var title = CreateTitle(scrollContent, "Title", "Unity Game Translator");
+            // === FIXED HEADER (outside the scroll — only tab content scrolls) ===
+            var header = CreateFixedHeader();
+
+            var title = CreateTitle(header, "Title", "Unity Game Translator");
             RegisterExcluded(title); // Mod name - never translate
 
-            UIStyles.CreateSpacer(scrollContent, 5);
+            UIStyles.CreateSpacer(header, 5);
 
             // Account Section (compact, inline)
-            CreateAccountSection(scrollContent);
+            CreateAccountSection(header);
 
-            UIStyles.CreateSpacer(scrollContent, 5);
+            UIStyles.CreateSpacer(header, 5);
 
             // Mod Update Banner (between account and tabs, visible only when update available)
-            CreateModUpdateBanner(scrollContent);
+            CreateModUpdateBanner(header);
 
-            // === TAB BAR (directly in scrollContent, like OptionsPanel) ===
+            // === TAB BAR (buttons in the fixed header, contents in the scroll area) ===
             _tabBar = new TabBar();
-            _tabBar.CreateUI(scrollContent);
+            _tabBar.CreateUI(header, scrollContent);
 
             // Create tab contents - each tab will create its own card
             var myTranslationTab = _tabBar.AddTab(TAB_MY_TRANSLATION);

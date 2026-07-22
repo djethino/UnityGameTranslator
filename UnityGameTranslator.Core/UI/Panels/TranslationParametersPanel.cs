@@ -100,15 +100,18 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Contextual help bar between content and footer
             _helpZone = CreateHelpZone(buttonRow, "Hover an element to see what it does");
 
+            // Fixed header: title and tab buttons stay put, only tab content scrolls
+            var header = CreateFixedHeader();
+
             // Title
-            var title = CreateTitle(scrollContent, "Title", "Translation Tools");
+            var title = CreateTitle(header, "Title", "Translation Tools");
             RegisterUIText(title);
 
-            UIStyles.CreateSpacer(scrollContent, 5);
+            UIStyles.CreateSpacer(header, 5);
 
-            // Create tab bar
+            // Create tab bar — buttons in the fixed header, contents in the scroll area
             _tabBar = new TabBar();
-            _tabBar.CreateUI(scrollContent);
+            _tabBar.CreateUI(header, scrollContent);
 
             // Create tab contents
             var behaviorTab = _tabBar.AddTab("Tools");
@@ -730,7 +733,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             // Sub-tab bar for Global / Overrides
             _fontsSubTabBar = new TabBar();
-            _fontsSubTabBar.CreateUI(parent, 26); // Compact height for sub-tabs
+            _fontsSubTabBar.CreateUI(parent, tabRowHeight: 26); // Compact height for sub-tabs
 
             var globalTab = _fontsSubTabBar.AddTab("Global");
             var overridesTab = _fontsSubTabBar.AddTab("Overrides");

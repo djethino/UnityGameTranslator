@@ -1296,6 +1296,12 @@ namespace UnityGameTranslator.Core
 
                 if (string.IsNullOrEmpty(currentText) || currentText.Length < 2) return;
 
+                // Skip mirrors of the user's typed input (game echoing the typed value
+                // into a display text). Transient skip — NOT a permanent exclusion:
+                // the same component may show normal game text later.
+                if (TranslatorPatches.IsUserInputMirror(component, currentText))
+                    return;
+
                 int textHash = currentText.GetHashCode();
 
                 // Quick skip: already processed with same text

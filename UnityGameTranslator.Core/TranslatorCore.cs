@@ -771,6 +771,16 @@ namespace UnityGameTranslator.Core
         private const string TagPlaceholderSuffix = "]";
 
         /// <summary>
+        /// Remove all markup tags from a text — for comparisons against raw values
+        /// (e.g. input mirrors: games wrap the typed value in color tags).
+        /// </summary>
+        public static string StripMarkupTags(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return text;
+            return MarkupTagPattern.Replace(text, "");
+        }
+
+        /// <summary>
         /// Extract markup tags from text, replacing them with [!t*N] placeholders.
         /// Returns the processed text and the list of extracted tags.
         /// </summary>

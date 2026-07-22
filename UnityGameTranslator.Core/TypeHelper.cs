@@ -67,6 +67,10 @@ namespace UnityGameTranslator.Core
         // UI InputField.textComponent
         public static PropertyInfo UI_InputField_TextComponentProp { get; private set; }
 
+        // TMP_InputField.text / UI InputField.text (current typed value)
+        public static PropertyInfo TMP_InputField_TextProp { get; private set; }
+        public static PropertyInfo UI_InputField_TextProp { get; private set; }
+
         // TMP_Text.ForceMeshUpdate()
         public static MethodInfo TMP_ForceMeshUpdateMethod { get; private set; }
 
@@ -235,16 +239,18 @@ namespace UnityGameTranslator.Core
                 TextMesh_FontProp = TextMeshType.GetProperty("font", pubInst);
             }
 
-            // TMP_InputField.textComponent
+            // TMP_InputField.textComponent + .text
             if (TMP_InputFieldType != null)
             {
                 TMP_InputField_TextComponentProp = TMP_InputFieldType.GetProperty("textComponent", pubInst);
+                TMP_InputField_TextProp = TMP_InputFieldType.GetProperty("text", pubInst);
             }
 
-            // UI InputField.textComponent
+            // UI InputField.textComponent + .text
             if (UI_InputFieldType != null)
             {
                 UI_InputField_TextComponentProp = UI_InputFieldType.GetProperty("textComponent", pubInst);
+                UI_InputField_TextProp = UI_InputFieldType.GetProperty("text", pubInst);
             }
         }
 
@@ -592,81 +598,158 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Check if a text component is the textComponent of an InputField (should not be translated).
-        /// Works for both TMP_InputField and UI.InputField.
+        /// Check if a text component is the textComponent of an InputField (should not
+        /// be translated). Works for both TMP_InputField and UI.InputField. The parent
+        /// lookup walks the transform chain manually (GetComponentInParent skips
+        /// inactive hierarchies — the first set_text often fires while a menu is still
+        /// being built inactive, and a cached miss there was permanent).
         /// </summary>
         public static bool IsInputFieldTextComponent(object textComponent)
         {
-            if (textComponent == null) return false;
-
             var comp = textComponent as Component;
             if (comp == null) return false;
 
+            var input = FindParentInputField(comp);
+            if (input == null) return false;
+
+            return IsTextComponentOfInputField(input, textComponent);
+        }
+
+        /// <summary>
+        /// Identity check "is this the input's wired textComponent", by InstanceID:
+        /// on IL2CPP two interop wrappers for the same native object fail ReferenceEquals.
+        /// </summary>
+        public static bool IsTextComponentOfInputField(object inputField, object textComponent)
+        {
             try
             {
-                var type = textComponent.GetType();
+                var wired = GetInputFieldTextComponent(inputField);
+                if (wired == null) return false;
+                int a = GetInstanceID(wired);
+                int b = GetInstanceID(textComponent);
+                return a != -1 && a == b;
+            }
+            catch { return false; }
+        }
 
-                // Check TMP_InputField
-                if (TMP_InputFieldType != null && TMP_TextType != null && TMP_TextType.IsAssignableFrom(type))
-                {
-                    // Use GetComponentInParent via reflection (generic method)
-                    var getCompMethod = FindGetComponentInParent(comp, TMP_InputFieldType);
-                    if (getCompMethod != null)
-                    {
-                        var inputField = getCompMethod;
-                        if (inputField != null && TMP_InputField_TextComponentProp != null)
-                        {
-                            var textComp = TMP_InputField_TextComponentProp.GetValue(inputField, null);
-                            return textComp != null && ReferenceEquals(textComp, textComponent);
-                        }
-                    }
-                }
+        /// <summary>
+        /// Find an InputField or TMP_InputField on this component's GameObject or any
+        /// parent. Manual transform walk, works on inactive hierarchies.
+        /// </summary>
+        public static object FindParentInputField(Component component)
+        {
+            if (component == null) return null;
 
-                // Check UI.InputField
-                if (UI_InputFieldType != null && UI_TextType != null && UI_TextType.IsAssignableFrom(type))
+            try
+            {
+                var t = component.transform;
+                while (t != null)
                 {
-                    var getCompMethod = FindGetComponentInParent(comp, UI_InputFieldType);
-                    if (getCompMethod != null)
+                    if (TMP_InputFieldType != null)
                     {
-                        var inputField = getCompMethod;
-                        if (inputField != null && UI_InputField_TextComponentProp != null)
-                        {
-                            var textComp = UI_InputField_TextComponentProp.GetValue(inputField, null);
-                            return textComp != null && ReferenceEquals(textComp, textComponent);
-                        }
+                        var field = GetComponentOfType(t, TMP_InputFieldType);
+                        if (field != null && IsUnityObjectAlive(field)) return field;
                     }
+                    if (UI_InputFieldType != null)
+                    {
+                        var field = GetComponentOfType(t, UI_InputFieldType);
+                        if (field != null && IsUnityObjectAlive(field)) return field;
+                    }
+                    t = t.parent;
                 }
             }
             catch { }
 
-            return false;
+            return null;
         }
 
-        /// <summary>
-        /// Call GetComponentInParent for a given type via reflection.
-        /// </summary>
-        private static object FindGetComponentInParent(Component component, Type searchType)
+        /// <summary>Current typed value of an InputField / TMP_InputField (null if unavailable).</summary>
+        public static string GetInputFieldText(object inputField)
         {
+            if (inputField == null) return null;
+
             try
             {
-                // Use the non-generic GetComponentInParent(Type)
-                var method = typeof(Component).GetMethod("GetComponentInParent",
-                    BindingFlags.Public | BindingFlags.Instance,
-                    null, new Type[] { typeof(Type) }, null);
+                var type = inputField.GetType();
+                PropertyInfo prop = null;
+                if (TMP_InputFieldType != null && TMP_InputFieldType.IsAssignableFrom(type))
+                    prop = TMP_InputField_TextProp;
+                else if (UI_InputFieldType != null && UI_InputFieldType.IsAssignableFrom(type))
+                    prop = UI_InputField_TextProp;
+                if (prop == null)
+                    prop = type.GetProperty("text", BindingFlags.Public | BindingFlags.Instance);
 
-                if (method != null)
-                {
-                    return method.Invoke(component, new object[] { searchType });
-                }
+                return prop != null ? prop.GetValue(inputField, null) as string : null;
+            }
+            catch { }
 
-                // Fallback: use the generic version
-                var genericMethod = typeof(Component).GetMethod("GetComponentInParent",
-                    BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
-                if (genericMethod != null && genericMethod.IsGenericMethodDefinition)
+            return null;
+        }
+
+        /// <summary>The textComponent wired on an InputField / TMP_InputField.</summary>
+        public static object GetInputFieldTextComponent(object inputField)
+        {
+            if (inputField == null) return null;
+
+            try
+            {
+                var type = inputField.GetType();
+                PropertyInfo prop = null;
+                if (TMP_InputFieldType != null && TMP_InputFieldType.IsAssignableFrom(type))
+                    prop = TMP_InputField_TextComponentProp;
+                else if (UI_InputFieldType != null && UI_InputFieldType.IsAssignableFrom(type))
+                    prop = UI_InputField_TextComponentProp;
+                if (prop == null)
+                    prop = type.GetProperty("textComponent", BindingFlags.Public | BindingFlags.Instance);
+
+                return prop != null ? prop.GetValue(inputField, null) : null;
+            }
+            catch { }
+
+            return null;
+        }
+
+        // Cached GetComponent lookups: Mono exposes GetComponent(Type); IL2CPP proxies
+        // only expose the generic version, closed via reflection and cached per type.
+        private static MethodInfo _getComponentTypeMethod;
+        private static bool _getComponentTypeMethodResolved;
+        private static MethodInfo _getComponentGenericDef;
+        private static readonly Dictionary<Type, MethodInfo> _getComponentClosedCache = new Dictionary<Type, MethodInfo>();
+
+        /// <summary>GetComponent(searchType) working on both Mono and IL2CPP.</summary>
+        public static object GetComponentOfType(Component target, Type searchType)
+        {
+            if (target == null || searchType == null) return null;
+
+            try
+            {
+                if (!_getComponentTypeMethodResolved)
                 {
-                    var specific = genericMethod.MakeGenericMethod(searchType);
-                    return specific.Invoke(component, null);
+                    _getComponentTypeMethodResolved = true;
+                    _getComponentTypeMethod = typeof(Component).GetMethod("GetComponent",
+                        BindingFlags.Public | BindingFlags.Instance, null, new Type[] { typeof(Type) }, null);
                 }
+                if (_getComponentTypeMethod != null)
+                    return _getComponentTypeMethod.Invoke(target, new object[] { searchType });
+
+                if (!_getComponentClosedCache.TryGetValue(searchType, out var closed))
+                {
+                    if (_getComponentGenericDef == null)
+                    {
+                        foreach (var m in typeof(Component).GetMethods(BindingFlags.Public | BindingFlags.Instance))
+                        {
+                            if (m.Name == "GetComponent" && m.IsGenericMethodDefinition && m.GetParameters().Length == 0)
+                            {
+                                _getComponentGenericDef = m;
+                                break;
+                            }
+                        }
+                    }
+                    closed = _getComponentGenericDef != null ? _getComponentGenericDef.MakeGenericMethod(searchType) : null;
+                    _getComponentClosedCache[searchType] = closed;
+                }
+                if (closed != null)
+                    return closed.Invoke(target, null);
             }
             catch { }
 

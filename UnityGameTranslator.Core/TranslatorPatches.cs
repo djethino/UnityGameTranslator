@@ -1592,10 +1592,31 @@ namespace UnityGameTranslator.Core
 
         #region Patch Methods
 
-        // Cache for InputField textComponent exclusion (avoids repeated GetComponentInParent calls)
+        // Cache for InputField textComponent exclusion (avoids repeated parent walks)
         // Key: instanceId, Value: true if this is an InputField's textComponent (should be excluded)
         private static readonly System.Collections.Generic.Dictionary<int, bool> inputFieldTextCache =
             new System.Collections.Generic.Dictionary<int, bool>();
+
+        // Parent InputField per text component (walk once per component).
+        // Value null = no InputField ancestor (stable: hierarchies almost never reparent).
+        private static readonly System.Collections.Generic.Dictionary<int, object> _parentInputFieldCache =
+            new System.Collections.Generic.Dictionary<int, object>();
+
+        private static object GetParentInputFieldCached(object textComponent)
+        {
+            int id = TypeHelper.GetInstanceID(textComponent);
+            if (id == -1) return null;
+
+            if (_parentInputFieldCache.TryGetValue(id, out object cached))
+            {
+                if (cached == null || TypeHelper.IsUnityObjectAlive(cached)) return cached;
+                _parentInputFieldCache.Remove(id); // stale wrapper (scene unload)
+            }
+
+            object input = TypeHelper.FindParentInputField(textComponent as Component);
+            _parentInputFieldCache[id] = input;
+            return input;
+        }
 
         /// <summary>
         /// Check if a text component is the textComponent of an InputField (should not be translated).
@@ -1609,9 +1630,111 @@ namespace UnityGameTranslator.Core
             if (inputFieldTextCache.TryGetValue(id, out bool isInputFieldText))
                 return isInputFieldText;
 
-            bool result = TypeHelper.IsInputFieldTextComponent(textComponent);
-            inputFieldTextCache[id] = result;
+            object input = GetParentInputFieldCached(textComponent);
+            if (input == null)
+            {
+                inputFieldTextCache[id] = false; // stable: no InputField ancestor
+                return false;
+            }
+
+            bool result = TypeHelper.IsTextComponentOfInputField(input, textComponent);
+            // Positives are stable; negatives under an InputField are NOT cached —
+            // the game may wire textComponent after the first set_text
+            if (result) inputFieldTextCache[id] = true;
             return result;
+        }
+
+        // === USER INPUT MIRROR PROTECTION ===
+        // Games echo what the user types into display texts beyond the official
+        // textComponent: a styled copy inside the input widget (e.g. seed shown in a
+        // color-tagged TMP_Text next to the real one) or a live preview elsewhere
+        // (character name in a header). Typed text must never be translated NOR
+        // queued — and these checks must run BEFORE cache lookup: input matching an
+        // existing cache key would otherwise be replaced by its translation while
+        // typing.
+        private const float InputBlurGraceSeconds = 2f;
+        private const int MirrorCaseInsensitiveMinLength = 4;
+
+        private static int _focusReadFrame = -1;
+        private static string _focusedInputTextThisFrame;
+        private static string _lastFocusedInputText;
+        private static float _lastFocusedInputTime = -999f;
+
+        /// <summary>
+        /// True when a text is the user's own typed input echoed by the game:
+        /// 1) internal mirror — component inside an InputField whose content equals
+        ///    THAT input's text (structural, no dependency on focus or timing), or
+        /// 2) external mirror — content equals the focused input field's text, with a
+        ///    short grace period after the field loses focus (blur re-renders).
+        /// Also used by the scanner (transient skip, never a permanent exclusion).
+        /// </summary>
+        public static bool IsUserInputMirror(object component, string text)
+        {
+            if (string.IsNullOrEmpty(text)) return false;
+
+            string candidate = TranslatorCore.StripMarkupTags(text).Trim();
+            if (candidate.Length == 0) return false;
+
+            // Internal mirror
+            if (component is Component)
+            {
+                object parentInput = GetParentInputFieldCached(component);
+                if (parentInput != null && MatchesTypedText(candidate, TypeHelper.GetInputFieldText(parentInput)))
+                    return true;
+            }
+
+            // External mirror (focused field, then blur grace)
+            string focused = GetFocusedInputTextCached();
+            if (MatchesTypedText(candidate, focused)) return true;
+            if (_lastFocusedInputText != null
+                && Time.realtimeSinceStartup - _lastFocusedInputTime <= InputBlurGraceSeconds
+                && MatchesTypedText(candidate, _lastFocusedInputText)) return true;
+
+            return false;
+        }
+
+        private static bool MatchesTypedText(string candidate, string inputText)
+        {
+            if (string.IsNullOrEmpty(inputText)) return false;
+            inputText = inputText.Trim();
+            if (inputText.Length == 0) return false;
+            if (string.Equals(candidate, inputText, StringComparison.Ordinal)) return true;
+            // Case-insensitive only for longer values (games display seeds uppercased);
+            // short words stay strict so legit labels aren't skipped while typing them
+            return inputText.Length >= MirrorCaseInsensitiveMinLength
+                && string.Equals(candidate, inputText, StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>Text of the currently focused input field, read once per frame.</summary>
+        private static string GetFocusedInputTextCached()
+        {
+            int frame = Time.frameCount;
+            if (_focusReadFrame == frame) return _focusedInputTextThisFrame;
+            _focusReadFrame = frame;
+            _focusedInputTextThisFrame = null;
+
+            try
+            {
+                var eventSystem = UnityEngine.EventSystems.EventSystem.current;
+                var selected = eventSystem != null ? eventSystem.currentSelectedGameObject : null;
+                if (selected != null)
+                {
+                    object input = TypeHelper.FindParentInputField(selected.transform);
+                    if (input != null)
+                    {
+                        string typed = TypeHelper.GetInputFieldText(input);
+                        if (!string.IsNullOrEmpty(typed))
+                        {
+                            _focusedInputTextThisFrame = typed;
+                            _lastFocusedInputText = typed;
+                            _lastFocusedInputTime = Time.realtimeSinceStartup;
+                        }
+                    }
+                }
+            }
+            catch { }
+
+            return _focusedInputTextThisFrame;
         }
 
         // === CONCATENATION DETECTION ===
@@ -1728,6 +1851,7 @@ namespace UnityGameTranslator.Core
         public static void ClearCache()
         {
             inputFieldTextCache.Clear();
+            _parentInputFieldCache.Clear();
             _altTMPFontReplacedIds.Clear();
             _fontNameCache.Clear();
             _patchedComponentRefs.Clear();
@@ -2705,6 +2829,24 @@ namespace UnityGameTranslator.Core
 
                 // Don't translate InputField textComponent (user's typed text)
                 if (componentType != "TextMesh" && IsInputFieldTextComponentCached(__instance)) return;
+
+                // Don't translate mirrors of the user's typed input (styled copy in
+                // the input widget, live preview elsewhere). Also purge TW/concat
+                // state for the component: char-by-char typing has the exact
+                // signature of a typewriting effect, and a one-frame-late mirror
+                // must not leave a stale prefix behind for the stabilizer to queue.
+                if (IsUserInputMirror(__instance, textValue))
+                {
+                    if (compId != -1)
+                    {
+                        _typewritingState.Remove(compId);
+                        _activeTypewriting.Remove(compId);
+                        _concatComponents.Remove(compId);
+                        _concatDeltas.Remove(compId);
+                        _lastRawText.Remove(compId);
+                    }
+                    return;
+                }
 
                 // Check if own UI (use UI-specific prompt) - uses hierarchy check
                 bool isOwnUI = TranslatorCore.IsOwnUITranslatable(comp);

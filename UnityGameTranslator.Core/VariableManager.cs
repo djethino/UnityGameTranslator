@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
 using UniverseLib;
@@ -28,9 +29,6 @@ namespace UnityGameTranslator.Core
         private static int _nextId = 0; // Auto-increment ID, never reused
         private static bool _needsRefresh = true; // Flag: resolve values on next ExtractVariables call
 
-        // Cached resolved types/fields for performance
-        private static Dictionary<int, ResolvedPath> _resolvedPaths = new Dictionary<int, ResolvedPath>();
-
         /// <summary>True if any variables are defined.</summary>
         public static bool HasVariables => _definitions.Count > 0;
 
@@ -55,14 +53,7 @@ namespace UnityGameTranslator.Core
             public string FieldPath;
             public string CurrentValue;
             public bool IsStatic;
-        }
-
-        private class ResolvedPath
-        {
-            public Type RootType;
-            public List<MemberInfo> PathMembers; // chain of fields/properties to traverse
-            public bool IsStatic;                // first member is static
-            public bool ResolveFailed;
+            public int MatchRank;      // 3 = exact, 2 = value contains search, 1 = search contains value
         }
 
         #endregion
@@ -73,7 +64,6 @@ namespace UnityGameTranslator.Core
         {
             _definitions.Clear();
             _currentValues.Clear();
-            _resolvedPaths.Clear();
 
             if (token == null || token.Type != JTokenType.Array) return;
 
@@ -144,7 +134,6 @@ namespace UnityGameTranslator.Core
                 FieldPath = fieldPath
             });
 
-            _resolvedPaths.Clear();
             TranslatorCore.SetMetadataDirty();
             TranslatorCore.LogInfo($"[VariableManager] Added variable [!STR*{id}]: {name} ({className}.{fieldPath})");
         }
@@ -157,7 +146,6 @@ namespace UnityGameTranslator.Core
 
             _definitions.Remove(def);
             _currentValues.Remove(id);
-            _resolvedPaths.Clear();
             TranslatorCore.SetMetadataDirty();
             TranslatorCore.LogInfo($"[VariableManager] Removed variable [!STR*{id}]: {def.Name}");
         }
@@ -208,27 +196,45 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Resolve a variable value by finding the instance via FindAllObjectsOfType
-        /// then traversing properties using GetActualType() for IL2CPP compatibility.
+        /// Resolve a variable value. The historical pipeline (Unity object root +
+        /// property traversal) runs first so existing definitions keep resolving
+        /// through the exact same path; the static/singleton root pipeline only fires
+        /// where the historical one returns null (plain C# game classes, static
+        /// fields, Singleton&lt;T&gt; pattern — all previously unresolvable).
         /// </summary>
         private static string ResolveValue(VariableDefinition def)
         {
             if (def == null) return null;
 
+            Type rootType = FindType(def.ClassName);
+            if (rootType == null) return null;
+
+            string[] parts = def.FieldPath.Split('.');
+
+            string result = ResolveViaUnityInstance(rootType, parts);
+            if (result != null) return result;
+
+            return ResolveViaStaticRoot(rootType, parts);
+        }
+
+        /// <summary>
+        /// Historical pipeline: find a live Unity object of the root type and traverse
+        /// the path from its instance.
+        /// </summary>
+        private static string ResolveViaUnityInstance(Type rootType, string[] parts)
+        {
             try
             {
-                // Find the root type
-                Type rootType = FindType(def.ClassName);
-                if (rootType == null) return null;
+                // Non-Unity roots can never be found by FindAllObjectsOfType — skip
+                // (avoids pointless engine calls and IL2CPP warning spam on refresh)
+                if (!typeof(UnityEngine.Object).IsAssignableFrom(rootType)) return null;
 
-                // Find an instance
                 var instances = TypeHelper.FindAllObjectsOfType(rootType);
                 if (instances == null || instances.Length == 0) return null;
 
                 var obj = instances[0];
                 if (obj == null) return null;
 
-                // Get actual type and cast
                 Type actualType;
                 try { actualType = obj.GetActualType(); }
                 catch { actualType = rootType; }
@@ -237,29 +243,12 @@ namespace UnityGameTranslator.Core
                 try { current = TypeHelper.Il2CppCast(obj, actualType) ?? obj; }
                 catch { current = obj; }
 
-                // Traverse the property path
-                string[] parts = def.FieldPath.Split('.');
                 for (int i = 0; i < parts.Length; i++)
                 {
+                    current = GetMemberValue(current, parts[i]);
                     if (current == null) return null;
-
-                    Type currentType;
-                    try { currentType = current.GetActualType(); }
-                    catch { currentType = current.GetType(); }
-
-                    var flags = BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly;
-                    var prop = currentType.GetProperty(parts[i], flags);
-                    if (prop == null)
-                    {
-                        // Try without DeclaredOnly
-                        prop = currentType.GetProperty(parts[i], BindingFlags.Public | BindingFlags.Instance);
-                    }
-                    if (prop == null) return null;
-
-                    current = prop.GetValue(current, null);
                 }
 
-                if (current == null) return null;
                 if (current is string str) return str;
                 return current.ToString();
             }
@@ -269,116 +258,110 @@ namespace UnityGameTranslator.Core
             }
         }
 
-        private static ResolvedPath BuildResolvedPath(VariableDefinition def)
+        /// <summary>
+        /// Fallback pipeline: resolve the first path segment as a static member
+        /// (singleton Instance, static field...) on the root type or its base classes,
+        /// then traverse the rest from that object.
+        /// </summary>
+        private static string ResolveViaStaticRoot(Type rootType, string[] parts)
         {
-            var result = new ResolvedPath
+            try
             {
-                PathMembers = new List<MemberInfo>()
-            };
-
-            // Find the root type
-            result.RootType = FindType(def.ClassName);
-            if (result.RootType == null)
-            {
-                TranslatorCore.LogDebug($"[VariableManager] Type not found: {def.ClassName}");
-                result.ResolveFailed = true;
-                return result;
-            }
-
-            // Parse field path: "Instance.playerName" → ["Instance", "playerName"]
-            string[] parts = def.FieldPath.Split('.');
-            Type currentType = result.RootType;
-
-            for (int i = 0; i < parts.Length; i++)
-            {
-                string memberName = parts[i];
-                var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
-
-                // Try field first, then property
-                var field = currentType.GetField(memberName, flags);
-                if (field != null)
-                {
-                    result.PathMembers.Add(field);
-                    if (i == 0) result.IsStatic = field.IsStatic;
-                    currentType = field.FieldType;
-                    continue;
-                }
-
-                var prop = currentType.GetProperty(memberName, flags);
-                if (prop != null)
-                {
-                    result.PathMembers.Add(prop);
-                    if (i == 0)
-                    {
-                        var getter = prop.GetGetMethod(true);
-                        result.IsStatic = getter != null && getter.IsStatic;
-                    }
-                    currentType = prop.PropertyType;
-                    continue;
-                }
-
-                // IL2CPP: try with different naming conventions
-                field = currentType.GetField("_" + memberName, flags);
-                if (field != null)
-                {
-                    result.PathMembers.Add(field);
-                    if (i == 0) result.IsStatic = field.IsStatic;
-                    currentType = field.FieldType;
-                    continue;
-                }
-
-                TranslatorCore.LogDebug($"[VariableManager] Member not found: {def.ClassName}.{memberName} (in path {def.FieldPath})");
-                result.ResolveFailed = true;
-                return result;
-            }
-
-            return result;
-        }
-
-        private static string TraversePath(ResolvedPath resolved)
-        {
-            object current = null;
-
-            for (int i = 0; i < resolved.PathMembers.Count; i++)
-            {
-                var member = resolved.PathMembers[i];
-                bool isFirst = (i == 0);
-
-                object target = isFirst && resolved.IsStatic ? null : current;
-
-                if (member is FieldInfo fi)
-                {
-                    current = fi.GetValue(target);
-                }
-                else if (member is PropertyInfo pi)
-                {
-                    current = pi.GetValue(target, null);
-                }
-
+                object current = GetStaticMemberValue(rootType, parts[0]);
                 if (current == null) return null;
+
+                for (int i = 1; i < parts.Length; i++)
+                {
+                    current = GetMemberValue(current, parts[i]);
+                    if (current == null) return null;
+                }
+
+                if (current is string str) return str;
+                return current.ToString();
             }
-
-            // Final value should be a string
-            if (current is string str)
-                return str;
-
-            // IL2CPP: might be an Il2CppString
-            return current.ToString();
+            catch
+            {
+                return null;
+            }
         }
 
-        private static bool IsOwnUI(GameObject go)
+        /// <summary>
+        /// Read one instance member on an object. Lookup order preserves the historical
+        /// behavior — public property (DeclaredOnly, then inherited) — then extends it:
+        /// non-public property, field, "_"-prefixed field. Each later step only fires
+        /// where the previous ones found nothing (previously a null result).
+        /// </summary>
+        private static object GetMemberValue(object instance, string memberName)
         {
-            if (go == null) return false;
-            var current = go.transform;
-            while (current != null)
+            if (instance == null || string.IsNullOrEmpty(memberName)) return null;
+
+            Type type;
+            try { type = instance.GetActualType(); }
+            catch { type = instance.GetType(); }
+
+            var prop = FindProperty(type, memberName, BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+                ?? FindProperty(type, memberName, BindingFlags.Public | BindingFlags.Instance)
+                ?? FindProperty(type, memberName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (prop != null && prop.CanRead)
             {
-                string name = current.name;
-                if (name.StartsWith("UGT_") || name.StartsWith("UniverseLibCanvas")
-                    || name.StartsWith("UniverseLib_") || name == "UGT_InspectorHighlight")
-                    return true;
-                current = current.parent;
+                try { return prop.GetValue(instance, null); }
+                catch { return null; }
             }
-            return false;
+
+            var fieldFlags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+            var field = type.GetField(memberName, fieldFlags) ?? type.GetField("_" + memberName, fieldFlags);
+            if (field != null)
+            {
+                try { return field.GetValue(instance); }
+                catch { return null; }
+            }
+
+            return null;
+        }
+
+        /// <summary>GetProperty guarded against AmbiguousMatchException (properties re-declared with "new").</summary>
+        private static PropertyInfo FindProperty(Type type, string name, BindingFlags flags)
+        {
+            try
+            {
+                return type.GetProperty(name, flags);
+            }
+            catch
+            {
+                try
+                {
+                    foreach (var p in type.GetProperties(flags))
+                        if (p.Name == name) return p;
+                }
+                catch { }
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Read a static member by name on a type or any of its base classes.
+        /// Walking the hierarchy manually (DeclaredOnly per level) reaches private
+        /// statics of generic bases like Singleton&lt;T&gt;.instance, which
+        /// BindingFlags.FlattenHierarchy never returns.
+        /// </summary>
+        private static object GetStaticMemberValue(Type type, string memberName)
+        {
+            var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.DeclaredOnly;
+
+            for (Type t = type; t != null && t != typeof(object); t = t.BaseType)
+            {
+                try
+                {
+                    var field = t.GetField(memberName, flags);
+                    if (field != null) return field.GetValue(null);
+
+                    var prop = FindProperty(t, memberName, flags);
+                    if (prop != null && prop.CanRead) return prop.GetValue(null, null);
+                }
+                catch { }
+            }
+
+            return null;
         }
 
         private static Type FindType(string className)
@@ -504,19 +487,57 @@ namespace UnityGameTranslator.Core
 
         #region Capture Mode (Scan)
 
+        // Reverse-containment matches ("field value is a piece of the searched text")
+        // below this length are noise — they match everywhere.
+        private const int MinReverseMatchLength = 4;
+
+        // How deep the scan follows object-typed members from a root (root.a.b.field).
+        private const int MaxScanDepth = 2;
+
         /// <summary>
-        /// Scan game memory for fields/properties containing the specified string value.
+        /// Rank a candidate string value against the searched text.
+        /// 3 = exact, 2 = value contains the search, 1 = search contains the value
+        /// (displayed strings composed from several fields, e.g. "seedA-seedB"), 0 = no match.
+        /// </summary>
+        private static int GetMatchRank(string value, string searchValue)
+        {
+            if (string.IsNullOrEmpty(value)) return 0;
+            if (value == searchValue) return 3;
+            if (value.Contains(searchValue)) return 2;
+            if (value.Length >= MinReverseMatchLength && !string.IsNullOrWhiteSpace(value)
+                && searchValue.Contains(value)) return 1;
+            return 0;
+        }
+
+        private static void AddCandidate(List<VariableCandidate> results, HashSet<string> seen,
+            string className, string fieldPath, string value, bool isStatic, int rank)
+        {
+            if (!seen.Add(className + "|" + fieldPath)) return;
+            results.Add(new VariableCandidate
+            {
+                ClassName = className,
+                FieldPath = fieldPath,
+                CurrentValue = value,
+                IsStatic = isStatic,
+                MatchRank = rank
+            });
+        }
+
+        /// <summary>
+        /// Scan game memory for fields/properties matching the specified string value.
         /// This is a heavy operation — only called on user request (not every frame).
-        /// Returns candidates sorted by relevance (singleton fields first, then static, then instance).
+        /// Covers static members, singletons (including plain C# Singleton&lt;T&gt;
+        /// classes, recursing into their object members) and live Unity instances.
+        /// Returns candidates sorted by match strength then relevance.
         /// </summary>
         public static List<VariableCandidate> ScanForValue(string searchValue)
         {
             if (string.IsNullOrEmpty(searchValue)) return new List<VariableCandidate>();
 
             var results = new List<VariableCandidate>();
+            var seen = new HashSet<string>(); // "ClassName|FieldPath" dedup across all scan passes
             TranslatorCore.LogInfo($"[VariableManager] Scanning for value: \"{searchValue}\"...");
 
-            // Scan static fields across all types
             // Skip system/engine assemblies that can crash on IL2CPP when accessing types
             var skipPrefixes = new[] { "mscorlib", "System", "Mono.", "UnityEngine.",
                 "Unity.", "Il2CppInterop", "Il2CppMono", "Il2CppSystem",
@@ -548,10 +569,10 @@ namespace UnityGameTranslator.Core
                     {
                         try
                         {
-                            if (type.IsAbstract && type.IsSealed)
-                                ScanTypeStaticFields(type, searchValue, results);
-                            else
-                                ScanTypeSingletonAndStatic(type, searchValue, results);
+                            ScanTypeStaticFields(type, searchValue, results, seen);
+                            // Static classes (abstract+sealed) can't have singleton instances
+                            if (!(type.IsAbstract && type.IsSealed))
+                                ScanTypeSingleton(type, searchValue, results, seen);
                         }
                         catch { }
                     }
@@ -561,10 +582,10 @@ namespace UnityGameTranslator.Core
 
             // Scan game instances using UniverseLib's GetActualType()
             // which resolves IL2CPP proxy types correctly on both Mono and IL2CPP
-            ScanInstancesUniverseLib(searchValue, skipPrefixes, results);
+            ScanInstancesUniverseLib(searchValue, skipPrefixes, results, seen);
 
             foreach (var r in results)
-                TranslatorCore.LogInfo($"[VariableManager] Candidate: {r.ClassName}.{r.FieldPath} = \"{r.CurrentValue}\" static={r.IsStatic}");
+                TranslatorCore.LogInfo($"[VariableManager] Candidate: {r.ClassName}.{r.FieldPath} = \"{r.CurrentValue}\" static={r.IsStatic} rank={r.MatchRank}");
             TranslatorCore.LogInfo($"[VariableManager] Scan complete: {results.Count} candidates found");
 
             // Filter out noise: clipboard fields, m_Text (UI internals), our own mod
@@ -578,9 +599,10 @@ namespace UnityGameTranslator.Core
                 || r.ClassName.Contains("UniverseLib")
             );
 
-            // Sort: singleton fields first, then static, then instance
+            // Sort: strongest match first, then singleton fields, then static, then name
             results.Sort((a, b) =>
             {
+                if (a.MatchRank != b.MatchRank) return b.MatchRank.CompareTo(a.MatchRank);
                 bool aIsSingleton = a.FieldPath.StartsWith("Instance.") || a.FieldPath.StartsWith("instance.");
                 bool bIsSingleton = b.FieldPath.StartsWith("Instance.") || b.FieldPath.StartsWith("instance.");
                 if (aIsSingleton != bIsSingleton) return aIsSingleton ? -1 : 1;
@@ -591,7 +613,7 @@ namespace UnityGameTranslator.Core
             return results;
         }
 
-        private static void ScanTypeStaticFields(Type type, string searchValue, List<VariableCandidate> results)
+        private static void ScanTypeStaticFields(Type type, string searchValue, List<VariableCandidate> results, HashSet<string> seen)
         {
             try
             {
@@ -604,16 +626,9 @@ namespace UnityGameTranslator.Core
                             continue;
                         var val = field.GetValue(null);
                         string strVal = val as string ?? val?.ToString();
-                        if (strVal == searchValue)
-                        {
-                            results.Add(new VariableCandidate
-                            {
-                                ClassName = type.Name,
-                                FieldPath = field.Name,
-                                CurrentValue = strVal,
-                                IsStatic = true
-                            });
-                        }
+                        int rank = GetMatchRank(strVal, searchValue);
+                        if (rank > 0)
+                            AddCandidate(results, seen, type.Name, field.Name, strVal, true, rank);
                     }
                     catch { }
                 }
@@ -627,16 +642,9 @@ namespace UnityGameTranslator.Core
                         if (!prop.CanRead) continue;
                         var val = prop.GetValue(null, null);
                         string strVal = val as string ?? val?.ToString();
-                        if (strVal == searchValue)
-                        {
-                            results.Add(new VariableCandidate
-                            {
-                                ClassName = type.Name,
-                                FieldPath = prop.Name,
-                                CurrentValue = strVal,
-                                IsStatic = true
-                            });
-                        }
+                        int rank = GetMatchRank(strVal, searchValue);
+                        if (rank > 0)
+                            AddCandidate(results, seen, type.Name, prop.Name, strVal, true, rank);
                     }
                     catch { }
                 }
@@ -644,235 +652,150 @@ namespace UnityGameTranslator.Core
             catch { }
         }
 
-        private static void ScanTypeSingletonAndStatic(Type type, string searchValue, List<VariableCandidate> results)
+        private static void ScanTypeSingleton(Type type, string searchValue, List<VariableCandidate> results, HashSet<string> seen)
         {
-            // Check for singleton patterns: Instance, instance, I, Singleton
+            if (type.ContainsGenericParameters) return; // open generics have no readable statics
+
+            // Check for singleton patterns: Instance, instance, I, Singleton...
+            // GetStaticMemberValue walks base classes, covering the Singleton<T> generic
+            // base pattern (plain C# managers invisible to the Unity instance scan).
             string[] singletonNames = { "Instance", "instance", "I", "Singleton", "singleton", "Current", "current" };
-            var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static;
 
             foreach (var singletonName in singletonNames)
             {
                 object instance = null;
-
-                try
-                {
-                    var field = type.GetField(singletonName, flags);
-                    if (field != null)
-                    {
-                        instance = field.GetValue(null);
-                    }
-                    else
-                    {
-                        var prop = type.GetProperty(singletonName, flags);
-                        if (prop != null && prop.CanRead)
-                            instance = prop.GetValue(null, null);
-                    }
-                }
+                try { instance = GetStaticMemberValue(type, singletonName); }
                 catch { continue; }
-
                 if (instance == null) continue;
 
-                // Scan instance fields of the singleton
-                var instanceFlags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
-                try
-                {
-                    foreach (var field in instance.GetType().GetFields(instanceFlags))
-                    {
-                        try
-                        {
-                            if (field.FieldType != typeof(string) && !field.FieldType.Name.Contains("String"))
-                                continue;
-                            var val = field.GetValue(instance);
-                            string strVal = val as string ?? val?.ToString();
-                            if (strVal == searchValue)
-                            {
-                                results.Add(new VariableCandidate
-                                {
-                                    ClassName = type.Name,
-                                    FieldPath = $"{singletonName}.{field.Name}",
-                                    CurrentValue = strVal,
-                                    IsStatic = false
-                                });
-                            }
-                        }
-                        catch { }
-                    }
-
-                    foreach (var prop in instance.GetType().GetProperties(instanceFlags))
-                    {
-                        try
-                        {
-                            if (prop.PropertyType != typeof(string) && !prop.PropertyType.Name.Contains("String"))
-                                continue;
-                            if (!prop.CanRead) continue;
-                            var val = prop.GetValue(instance, null);
-                            string strVal = val as string ?? val?.ToString();
-                            if (strVal == searchValue)
-                            {
-                                results.Add(new VariableCandidate
-                                {
-                                    ClassName = type.Name,
-                                    FieldPath = $"{singletonName}.{prop.Name}",
-                                    CurrentValue = strVal,
-                                    IsStatic = false
-                                });
-                            }
-                        }
-                        catch { }
-                    }
-                }
-                catch { }
-
+                var visited = new HashSet<object>(ReferenceComparer.Comparer);
+                ScanObjectRecursive(instance, type.Name, singletonName, searchValue, results, seen, 0, visited);
                 break; // Found a singleton, don't check other names
             }
-
-            // Also scan static string fields of this type
-            ScanTypeStaticFields(type, searchValue, results);
         }
 
         /// <summary>
-        /// Scan properties of an instance recursively (safe — uses .NET reflection on proxy types).
-        /// Follows sub-objects up to maxDepth levels to find nested string values.
+        /// Scan an object's fields AND properties for matching strings, following
+        /// object-typed members up to MaxScanDepth levels (reaches nested plain C#
+        /// state like Manager.Instance.subObject.seed). Fields matter on Mono where
+        /// game data is not exposed as properties; IL2CPP proxies expose the same
+        /// members as properties, deduplicated by the seen set. The type hierarchy is
+        /// walked manually (DeclaredOnly per level) so inherited game members are
+        /// covered without pulling in engine/system base-class noise.
         /// </summary>
-        private static void ScanInstanceFieldsRecursive(object instance, Type type, string className,
-            string parentPath, string searchValue, List<VariableCandidate> results, int depth)
+        private static void ScanObjectRecursive(object instance, string rootClassName, string parentPath,
+            string searchValue, List<VariableCandidate> results, HashSet<string> seen, int depth, HashSet<object> visited)
         {
-            if (instance == null || type == null || depth > 3) return;
+            if (instance == null || depth > MaxScanDepth) return;
+            if (!visited.Add(instance)) return;
 
-            var flags = BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly;
+            Type actualType;
+            try { actualType = instance.GetActualType(); }
+            catch { actualType = instance.GetType(); }
 
-            try
+            var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly;
+
+            for (Type t = actualType; t != null && !IsEngineOrSystemType(t); t = t.BaseType)
             {
-                foreach (var prop in type.GetProperties(flags))
+                FieldInfo[] fields;
+                try { fields = t.GetFields(flags); } catch { fields = null; }
+                if (fields != null)
                 {
-                    try
+                    foreach (var field in fields)
                     {
-                        if (!prop.CanRead) continue;
-                        if (prop.GetIndexParameters().Length > 0) continue;
-
-                        string fullPath = string.IsNullOrEmpty(parentPath) ? prop.Name : $"{parentPath}.{prop.Name}";
-                        var pt = prop.PropertyType;
-
-                        // String property
-                        bool isString = pt == typeof(string) || pt.Name.Contains("String")
-                            || pt.FullName == "System.String";
-
-                        if (isString)
+                        try
                         {
-                            var val = prop.GetValue(instance, null);
-                            if (val == null) continue;
-                            string strVal = val as string;
-                            if (strVal == null) strVal = val.ToString();
-                            if (strVal != null && strVal.Contains(searchValue))
-                            {
-                                results.Add(new VariableCandidate
-                                {
-                                    ClassName = className,
-                                    FieldPath = fullPath,
-                                    CurrentValue = strVal,
-                                    IsStatic = false
-                                });
-                            }
+                            var val = field.GetValue(instance);
+                            HandleScannedMember(val, field.FieldType, rootClassName, parentPath, field.Name,
+                                searchValue, results, seen, depth, visited);
                         }
-                        // Non-primitive object property — recurse
-                        else if (!pt.IsPrimitive && !pt.IsEnum && !pt.IsValueType
-                            && pt != typeof(object) && !pt.Name.StartsWith("Il2CppArrayBase")
-                            && !pt.Name.Contains("List") && !pt.Name.Contains("Dictionary")
-                            && !pt.Name.Contains("Array") && !pt.Namespace?.StartsWith("UnityEngine") == true)
-                        {
-                            // Skip Unity types and collections — too deep and noisy
-                            if (depth >= 2) continue;
-
-                            try
-                            {
-                                var childVal = prop.GetValue(instance, null);
-                                if (childVal == null) continue;
-
-                                Type childType;
-                                try { childType = childVal.GetActualType(); }
-                                catch { childType = childVal.GetType(); }
-
-                                ScanInstanceFieldsRecursive(childVal, childType, className, fullPath, searchValue, results, depth + 1);
-                            }
-                            catch { }
-                        }
+                        catch { }
                     }
-                    catch { }
+                }
+
+                PropertyInfo[] props;
+                try { props = t.GetProperties(flags); } catch { props = null; }
+                if (props != null)
+                {
+                    foreach (var prop in props)
+                    {
+                        try
+                        {
+                            if (!prop.CanRead || prop.GetIndexParameters().Length > 0) continue;
+                            var val = prop.GetValue(instance, null);
+                            HandleScannedMember(val, prop.PropertyType, rootClassName, parentPath, prop.Name,
+                                searchValue, results, seen, depth, visited);
+                        }
+                        catch { }
+                    }
                 }
             }
-            catch { }
         }
 
-        private static void ScanInstanceFields(object instance, Type type, string searchValue, List<VariableCandidate> results)
+        /// <summary>Rank a scanned member value as candidate, or recurse into it.</summary>
+        private static void HandleScannedMember(object value, Type declaredType, string rootClassName,
+            string parentPath, string memberName, string searchValue,
+            List<VariableCandidate> results, HashSet<string> seen, int depth, HashSet<object> visited)
         {
-            var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
-            try
+            if (value == null) return;
+
+            string fullPath = string.IsNullOrEmpty(parentPath) ? memberName : parentPath + "." + memberName;
+
+            bool isStringLike = declaredType == typeof(string) || declaredType.Name.Contains("String")
+                || declaredType.FullName == "System.String";
+            if (isStringLike)
             {
-                // Scan fields
-                foreach (var field in type.GetFields(flags))
-                {
-                    try
-                    {
-                        var ft = field.FieldType;
-                        bool isStringLike = ft == typeof(string) || ft.Name.Contains("String")
-                            || ft.FullName == "System.String";
-                        if (!isStringLike) continue;
-
-                        var val = field.GetValue(instance);
-                        if (val == null) continue;
-
-                        string strVal = val as string;
-                        if (strVal == null) strVal = val.ToString();
-                        if (strVal == null) continue;
-
-                        if (strVal.Contains(searchValue))
-                        {
-                            results.Add(new VariableCandidate
-                            {
-                                ClassName = type.Name,
-                                FieldPath = field.Name,
-                                CurrentValue = strVal,
-                                IsStatic = false
-                            });
-                        }
-                    }
-                    catch { }
-                }
-
-                // Scan properties (IL2CPP proxy classes expose fields as properties)
-                foreach (var prop in type.GetProperties(flags | BindingFlags.Public))
-                {
-                    try
-                    {
-                        var pt = prop.PropertyType;
-                        bool isStringLike = pt == typeof(string) || pt.Name.Contains("String")
-                            || pt.FullName == "System.String";
-                        if (!isStringLike || !prop.CanRead) continue;
-                        // Skip indexers
-                        if (prop.GetIndexParameters().Length > 0) continue;
-
-                        var val = prop.GetValue(instance, null);
-                        if (val == null) continue;
-
-                        string strVal = val as string;
-                        if (strVal == null) strVal = val.ToString();
-                        if (strVal == null) continue;
-
-                        if (strVal.Contains(searchValue))
-                        {
-                            results.Add(new VariableCandidate
-                            {
-                                ClassName = type.Name,
-                                FieldPath = prop.Name,
-                                CurrentValue = strVal,
-                                IsStatic = false
-                            });
-                        }
-                    }
-                    catch { }
-                }
+                string strVal = value as string ?? value.ToString();
+                int rank = GetMatchRank(strVal, searchValue);
+                if (rank > 0)
+                    AddCandidate(results, seen, rootClassName, fullPath, strVal, false, rank);
+                return;
             }
-            catch { }
+
+            if (depth >= MaxScanDepth) return;
+            if (!CanRecurseInto(value)) return;
+            ScanObjectRecursive(value, rootClassName, fullPath, searchValue, results, seen, depth + 1, visited);
+        }
+
+        /// <summary>
+        /// Only follow plain data objects: no primitives/enums/structs, no strings,
+        /// no delegates/reflection types, no collections, no Unity objects (already
+        /// scanned as roots by the instance scan) and no engine/system classes.
+        /// </summary>
+        private static bool CanRecurseInto(object value)
+        {
+            Type type;
+            try { type = value.GetActualType(); }
+            catch { type = value.GetType(); }
+
+            if (type.IsPrimitive || type.IsEnum || type.IsValueType) return false;
+            if (type == typeof(string)) return false;
+            if (typeof(Delegate).IsAssignableFrom(type)) return false;
+            if (typeof(MemberInfo).IsAssignableFrom(type)) return false; // covers Type too
+            if (typeof(System.Collections.IEnumerable).IsAssignableFrom(type)) return false;
+            if (typeof(UnityEngine.Object).IsAssignableFrom(type)) return false;
+            if (IsEngineOrSystemType(type)) return false;
+            return true;
+        }
+
+        /// <summary>Engine/framework types: never scanned as declaring levels nor recursed into.</summary>
+        private static bool IsEngineOrSystemType(Type type)
+        {
+            if (type == typeof(object)) return true;
+            string ns = type.Namespace ?? "";
+            return ns.StartsWith("System") || ns.StartsWith("UnityEngine") || ns.StartsWith("Unity.")
+                || ns.StartsWith("Il2CppSystem") || ns.StartsWith("Il2CppInterop")
+                || ns.StartsWith("MelonLoader") || ns.StartsWith("BepInEx") || ns.StartsWith("HarmonyLib")
+                || ns.StartsWith("Newtonsoft") || ns.StartsWith("UniverseLib")
+                || ns.StartsWith("UnityGameTranslator") || ns.StartsWith("TMPro") || ns.StartsWith("TMProOld");
+        }
+
+        /// <summary>Reference-equality comparer for the visited set (cycle guard).</summary>
+        private sealed class ReferenceComparer : IEqualityComparer<object>
+        {
+            public static readonly ReferenceComparer Comparer = new ReferenceComparer();
+            bool IEqualityComparer<object>.Equals(object x, object y) => ReferenceEquals(x, y);
+            int IEqualityComparer<object>.GetHashCode(object obj) => RuntimeHelpers.GetHashCode(obj);
         }
 
         #endregion
@@ -885,7 +808,8 @@ namespace UnityGameTranslator.Core
         /// unlike raw reflection which only sees base class members.
         /// Works on both Mono and IL2CPP.
         /// </summary>
-        private static void ScanInstancesUniverseLib(string searchValue, string[] skipPrefixes, List<VariableCandidate> results)
+        private static void ScanInstancesUniverseLib(string searchValue, string[] skipPrefixes,
+            List<VariableCandidate> results, HashSet<string> seen)
         {
             try
             {
@@ -937,25 +861,9 @@ namespace UnityGameTranslator.Core
                             try { typed = TypeHelper.Il2CppCast(firstObj, actualType) ?? firstObj; }
                             catch { typed = firstObj; }
 
-                            // Debug: dump members of GameDataController
-                            if (actualType.Name.Contains("GameData"))
-                            {
-                                var allFlags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
-                                try
-                                {
-                                    var members = actualType.GetMembers(allFlags);
-                                    TranslatorCore.LogInfo($"[VarDiag] {actualType.FullName}: {members.Length} members (DeclaredOnly)");
-                                    foreach (var m in members)
-                                    {
-                                        if (m.MemberType == MemberTypes.Property || m.MemberType == MemberTypes.Field)
-                                            TranslatorCore.LogInfo($"[VarDiag]   {m.MemberType}: {m.Name}");
-                                    }
-                                }
-                                catch { }
-                            }
-
-                            // Scan fields and properties (with 1 level of depth for sub-objects)
-                            ScanInstanceFieldsRecursive(typed, actualType, type.Name, "", searchValue, results, 0);
+                            // Scan fields and properties, following sub-objects
+                            var visited = new HashSet<object>(ReferenceComparer.Comparer);
+                            ScanObjectRecursive(typed, type.Name, "", searchValue, results, seen, 0, visited);
                         }
                         catch { }
                     }

@@ -1907,7 +1907,12 @@ namespace UnityGameTranslator.Core.UI.Panels
                         UIFactory.SetLayoutGroup<HorizontalLayoutGroup>(row, false, false, true, true, 5, 2, 2, 2, 2);
                         UIFactory.SetLayoutElement(row, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999);
 
-                        string display = $"{candidate.ClassName}.{candidate.FieldPath}";
+                        // Show the matched value: with partial matches (composed display
+                        // strings like "seedA-seedB"), the path alone doesn't tell the
+                        // user which piece of the text each candidate holds.
+                        string valPreview = (candidate.CurrentValue ?? "").Replace("\r", " ").Replace("\n", " ");
+                        if (valPreview.Length > 24) valPreview = valPreview.Substring(0, 24) + "...";
+                        string display = $"{candidate.ClassName}.{candidate.FieldPath} = \"{valPreview}\"";
                         if (candidate.IsStatic) display += " (static)";
 
                         var label = UIFactory.CreateLabel(row, "Label", display, TextAnchor.MiddleLeft);

@@ -2215,8 +2215,11 @@ namespace UnityGameTranslator.Core
             if (_createdFallbackFontNames.Contains(fontName)) return;
 
             string settingsFontName = GetSettingsFontName(instanceId, fontName);
-            if (string.IsNullOrEmpty(GetConfiguredFallback(settingsFontName))) return;
             if (!IsTranslationEnabled(settingsFontName)) return;
+
+            // Same override-rule resolution as the prefix and the direct pass
+            string effectiveFontName = ResolveFontNameWithOverrides(component, instanceId, settingsFontName);
+            if (string.IsNullOrEmpty(GetConfiguredFallback(effectiveFontName))) return;
 
             if (_fontReplacedComponentIds.Remove(instanceId))
             {
@@ -2231,6 +2234,39 @@ namespace UnityGameTranslator.Core
             }
 
             _directApplyNudge = true;
+        }
+
+        /// <summary>
+        /// Resolve the effective settings-font name for a component, applying pattern
+        /// override rules exactly like the set_text prefix does (replacement font +
+        /// per-component size multiplier). Without this, components whose replacement
+        /// comes only from an override rule were reachable through set_text alone —
+        /// the direct-apply pass and the font-setter postfix ignored them.
+        /// Cheap no-op when no rule is configured.
+        /// </summary>
+        private static string ResolveFontNameWithOverrides(object component, int instanceId, string settingsFontName)
+        {
+            if (TranslatorCore.FontOverrides.Count == 0) return settingsFontName;
+
+            try
+            {
+                var comp = component as Component;
+                string goPath = comp != null ? TranslatorCore.GetGameObjectPath(comp.gameObject) : null;
+                string text = TypeHelper.GetText(component);
+                var rule = TranslatorCore.FindFontOverride(instanceId, goPath, settingsFontName, text);
+                if (rule != null)
+                {
+                    if (rule.size_multiplier > 0.001f)
+                        ApplyTemporaryScale(instanceId, rule.size_multiplier);
+                    if (!string.IsNullOrEmpty(rule.replacement))
+                        return rule.replacement;
+                }
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogDebug($"[FontManager] Override resolve failed: {ex.Message}");
+            }
+            return settingsFontName;
         }
 
         /// <summary>
@@ -2283,10 +2319,14 @@ namespace UnityGameTranslator.Core
                     if (_createdFallbackFontNames.Contains(fontName)) continue;
 
                     string settingsFontName = GetSettingsFontName(id, fontName);
-                    if (string.IsNullOrEmpty(GetConfiguredFallback(settingsFontName))) continue;
                     if (!IsTranslationEnabled(settingsFontName)) continue;
 
-                    ApplyFontReplacement(c, fontObj, settingsFontName);
+                    // Pattern override rules can redirect the replacement (and set a
+                    // per-component size multiplier) — same resolution as the prefix
+                    string effectiveFontName = ResolveFontNameWithOverrides(c, id, settingsFontName);
+                    if (string.IsNullOrEmpty(GetConfiguredFallback(effectiveFontName))) continue;
+
+                    ApplyFontReplacement(c, fontObj, effectiveFontName);
                     if (_fontReplacedComponentIds.Contains(id)) applied++;
                 }
 

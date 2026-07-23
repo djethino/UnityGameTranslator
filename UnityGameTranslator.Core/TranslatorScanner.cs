@@ -1453,8 +1453,10 @@ namespace UnityGameTranslator.Core
         /// Force refresh all text components by re-assigning their text.
         /// If translations are disabled, restores original texts from cache.
         /// This triggers Harmony patches to re-process and apply translations/fonts.
+        /// Returns the number of components touched (refreshed + restored) so callers
+        /// can detect a too-early pass that found nothing (issue #21).
         /// </summary>
-        public static void ForceRefreshAllText()
+        public static int ForceRefreshAllText()
         {
             int refreshed = 0;
             int restored = 0;
@@ -1523,6 +1525,8 @@ namespace UnityGameTranslator.Core
             {
                 TranslatorCore.LogWarning($"[Scanner] ForceRefreshAllText error: {ex.Message}");
             }
+
+            return refreshed + restored;
         }
 
         /// <summary>
@@ -2136,15 +2140,28 @@ namespace UnityGameTranslator.Core
                 }
             }
 
-            // After new chars were added to a clone atlas, force all components to re-render
-            // so they pick up updated glyph positions. Debounced to max once per second.
+            // After a font was created or new chars were added to a clone atlas, force all
+            // components to re-render so they pick up the replacement / updated glyphs.
+            // Debounced to max once per second.
             if (FontManager.ConsumePendingRefresh())
             {
                 float now = Time.realtimeSinceStartup;
                 if (now - _lastForceRefreshTime > 1f)
                 {
                     _lastForceRefreshTime = now;
-                    ForceRefreshAllText();
+                    int touched = ForceRefreshAllText();
+                    // Too early: no component known yet (scene still loading — issue #21:
+                    // the single post-creation refresh fired at the splash screen with 0
+                    // components, and serialized/I2-localized texts never fire set_text,
+                    // so the menu never got the font). Keep the request alive so the pass
+                    // reruns once components exist.
+                    if (touched == 0)
+                        FontManager.RearmPendingRefresh();
+                }
+                else
+                {
+                    // Debounced this cycle — don't lose the request
+                    FontManager.RearmPendingRefresh();
                 }
             }
 

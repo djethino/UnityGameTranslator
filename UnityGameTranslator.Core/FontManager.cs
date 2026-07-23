@@ -594,6 +594,13 @@ namespace UnityGameTranslator.Core
             _knownCharsStringCache.Clear();
             SubscribeWillRenderCanvases();
 
+            // Every new scene brings components whose text is serialized or set by the
+            // game's own localization (I2.Loc…) BEFORE our patches can see a set_text —
+            // the font replacement only reaches them through a ForceRefreshAllText pass
+            // (issue #21: main-menu items stayed in the original font after a restart).
+            if (_fallbackAssets.Count > 0)
+                RequestPendingRefresh();
+
             // Re-scan game TMP fonts on scene change with forceRescan=true to
             // pick up fontAssets that were lazy-loaded by the new scene. The
             // inner loop already dedupes against _gameTMPFonts, so the only
@@ -1679,6 +1686,104 @@ namespace UnityGameTranslator.Core
         /// Set fontSharedMaterial on a TMP component from a font asset's material.
         /// Uses IL2CPP-safe casting for proxy objects.
         /// </summary>
+        // Materials adapted from a component's ORIGINAL material to our replacement
+        // atlas, keyed by original material instance ID. Preserves the game's per-material
+        // styling presets (face color, underlay/shadow, outline). Shared original material
+        // → shared adapted clone, so TMP batching is preserved.
+        private static readonly Dictionary<int, Material> _adaptedMaterials = new Dictionary<int, Material>();
+        // Original shared material per component (for faithful restore)
+        private static readonly Dictionary<int, object> _originalMaterialsPerComponent = new Dictionary<int, object>();
+
+        /// <summary>
+        /// Read the material of a TMP_FontAsset (property on modern TMP, field on TMProOld).
+        /// </summary>
+        private static object GetFontAssetMaterial(object fontAsset)
+        {
+            if (fontAsset == null) return null;
+            try
+            {
+                var t = fontAsset.GetType();
+                var prop = t.GetProperty("material", BindingFlags.Public | BindingFlags.Instance);
+                if (prop != null && prop.CanRead)
+                {
+                    var m = prop.GetValue(fontAsset, null);
+                    if (m != null) return m;
+                }
+                var field = t.GetField("material", BindingFlags.Public | BindingFlags.Instance);
+                return field?.GetValue(fontAsset);
+            }
+            catch { return null; }
+        }
+
+        /// <summary>
+        /// Assign a shared material bound to the replacement font's atlas while keeping
+        /// the component's original styling preset: clone the ORIGINAL material (colors,
+        /// underlay, outline…) and graft our atlas + SDF parameters onto the clone.
+        /// Falls back to the replacement font's own material whenever the preset can't be
+        /// transplanted (non-SDF shader, missing material, any failure).
+        /// </summary>
+        private static void ApplyAdaptedMaterial(object component, object replacementFont, object originalSharedMaterial)
+        {
+            var origMat = TypeHelper.Il2CppCast(originalSharedMaterial, typeof(Material)) as Material
+                          ?? originalSharedMaterial as Material;
+
+            // The preset only transplants between SDF shaders — for anything else
+            // (bitmap TMP shaders…) use the replacement font's own material.
+            bool sdfShader = false;
+            try
+            {
+                sdfShader = origMat != null && origMat.shader != null &&
+                            origMat.shader.name.IndexOf("Distance Field", StringComparison.OrdinalIgnoreCase) >= 0;
+            }
+            catch (Exception _e) { TranslatorCore.LogDebug($"[FontReplace] shader read failed: {_e.Message}"); }
+
+            if (!sdfShader)
+            {
+                SetFontSharedMaterial(component, replacementFont);
+                return;
+            }
+
+            try
+            {
+                var fontMatObj = GetFontAssetMaterial(replacementFont);
+                var fontMat = TypeHelper.Il2CppCast(fontMatObj, typeof(Material)) as Material ?? fontMatObj as Material;
+                if (fontMat == null)
+                {
+                    SetFontSharedMaterial(component, replacementFont);
+                    return;
+                }
+
+                int key = origMat.GetInstanceID();
+                if (!_adaptedMaterials.TryGetValue(key, out var adapted) || !TypeHelper.IsUnityObjectAlive(adapted))
+                {
+                    adapted = new Material(origMat);
+                    adapted.name = origMat.name + " (UGT adapted)";
+                    if (fontMat.HasProperty("_MainTex") && adapted.HasProperty("_MainTex"))
+                        adapted.SetTexture("_MainTex", fontMat.GetTexture("_MainTex"));
+                    foreach (var p in new[] { "_TextureWidth", "_TextureHeight", "_GradientScale", "_WeightNormal", "_WeightBold" })
+                    {
+                        if (fontMat.HasProperty(p) && adapted.HasProperty(p))
+                            adapted.SetFloat(p, fontMat.GetFloat(p));
+                    }
+                    UnityEngine.Object.DontDestroyOnLoad(adapted);
+                    adapted.hideFlags |= HideFlags.DontUnloadUnusedAsset;
+                    _adaptedMaterials[key] = adapted;
+                    TranslatorCore.LogDebug($"[FontReplace] Adapted material '{origMat.name}' → replacement atlas (preset preserved)");
+                }
+
+                var sharedMatProp = component.GetType().GetProperty("fontSharedMaterial", BindingFlags.Public | BindingFlags.Instance);
+                if (sharedMatProp != null && sharedMatProp.CanWrite)
+                    sharedMatProp.SetValue(component, TypeHelper.Il2CppCast(adapted, sharedMatProp.PropertyType), null);
+                else
+                    SetFontSharedMaterial(component, replacementFont);
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogWarning($"[FontReplace] Adapted material failed: {ex.Message} — using replacement font material");
+                SetFontSharedMaterial(component, replacementFont);
+            }
+        }
+
         private static void SetFontSharedMaterial(object component, object fontAsset)
         {
             if (component == null || fontAsset == null) return;
@@ -1763,13 +1868,13 @@ namespace UnityGameTranslator.Core
                     if (fallbackAsset is UnityEngine.Object fbObj)
                         _createdFallbackFontNames.Add(fbObj.name);
 
-                    // Font just created — schedule ONE refresh on the next scan cycle,
-                    // exactly like the GetTMPReplacementFont creation path. At game restart
-                    // the deferred creation lands HERE (RegisterFontObject auto-apply on
-                    // first font detection), and without this flag the texts already on
-                    // screen never re-fire set_text, so ApplyFontReplacement never runs
-                    // and the game keeps its original font (issue #21, restart case).
-                    _pendingRefresh = true;
+                    // Font just created — schedule a refresh pass, exactly like the
+                    // GetTMPReplacementFont creation path. At game restart the deferred
+                    // creation lands HERE (RegisterFontObject auto-apply on first font
+                    // detection), and without this the texts already on screen never
+                    // re-fire set_text, so ApplyFontReplacement never runs and the game
+                    // keeps its original font (issue #21, restart case).
+                    RequestPendingRefresh();
                 }
 
                 // Get the fallback list via reflection
@@ -1847,6 +1952,14 @@ namespace UnityGameTranslator.Core
         // Flag: a new font was created, refresh needed on next scan cycle
         private static bool _pendingRefresh = false;
 
+        // Re-arm budget for the pending refresh: a single ForceRefreshAllText can fire
+        // before the scene's text components exist (issue #21: consumed at the splash
+        // screen with 0 components → serialized/I2-localized menu text never got the
+        // font). The scanner re-arms the flag while refreshes touch nothing, within this
+        // budget (~1 attempt/second due to the refresh debounce).
+        private static int _refreshRearmAttempts = 0;
+        private const int MaxRefreshRearmAttempts = 300;
+
         /// <summary>
         /// Check and consume the pending refresh flag. Called from scan loop.
         /// </summary>
@@ -1858,6 +1971,27 @@ namespace UnityGameTranslator.Core
                 return true;
             }
             return false;
+        }
+
+        /// <summary>
+        /// Re-arm the pending refresh after a pass that touched nothing (or that was
+        /// debounced away). Budgeted to avoid refreshing forever on text-less games.
+        /// </summary>
+        public static void RearmPendingRefresh()
+        {
+            if (_refreshRearmAttempts >= MaxRefreshRearmAttempts) return;
+            _refreshRearmAttempts++;
+            _pendingRefresh = true;
+        }
+
+        /// <summary>
+        /// Request a full refresh pass with a fresh re-arm budget. Called when a font is
+        /// created and on scene changes while replacements are active.
+        /// </summary>
+        private static void RequestPendingRefresh()
+        {
+            _refreshRearmAttempts = 0;
+            _pendingRefresh = true;
         }
 
         /// <summary>
@@ -1917,6 +2051,19 @@ namespace UnityGameTranslator.Core
                 _replacedComponentRefs[instanceId] = component;
             }
 
+            // Capture the component's CURRENT shared material BEFORE SetFont: it carries
+            // the game's styling preset (face color, underlay/shadow, outline) that gets
+            // transplanted onto our atlas below, and it's needed to restore faithfully.
+            object originalSharedMaterial = null;
+            try
+            {
+                var sharedMatProp = component.GetType().GetProperty("fontSharedMaterial", BindingFlags.Public | BindingFlags.Instance);
+                originalSharedMaterial = sharedMatProp?.GetValue(component, null);
+            }
+            catch (Exception _e) { TranslatorCore.LogDebug($"[FontReplace] fontSharedMaterial read failed: {_e.Message}"); }
+            if (instanceId != -1 && originalSharedMaterial != null && !_originalMaterialsPerComponent.ContainsKey(instanceId))
+                _originalMaterialsPerComponent[instanceId] = originalSharedMaterial;
+
             // SetFont to replacement
             TypeHelper.SetFont(component, replacementFont);
 
@@ -1924,9 +2071,12 @@ namespace UnityGameTranslator.Core
             if (instanceId != -1)
                 _fontReplacedComponentIds.Add(instanceId);
 
-            // Set fontSharedMaterial to match the replacement font's material
-            // Without this, TMP renders with the old font's atlas/shader → empty rectangles
-            SetFontSharedMaterial(component, replacementFont);
+            // Bind a material pointing at OUR atlas — without this, TMP renders with the
+            // old font's atlas/shader → empty rectangles. Prefer an ADAPTED clone of the
+            // component's original material so the game's styling preset survives
+            // (issue #21: green title with drop shadow rendered plain red when the
+            // replacement font's generic material was assigned instead).
+            ApplyAdaptedMaterial(component, replacementFont, originalSharedMaterial);
 
             // Force mesh regeneration so the new font renders immediately
             TypeHelper.ForceMeshUpdate(component);
@@ -2010,9 +2160,30 @@ namespace UnityGameTranslator.Core
             if (_originalFontsPerComponent.TryGetValue(instanceId, out var originalFont))
             {
                 TypeHelper.SetFont(component, originalFont);
-                SetFontSharedMaterial(component, originalFont);
+
+                // Restore the component's ORIGINAL shared material (styling preset) when
+                // still alive; the font's default material loses per-component presets.
+                bool materialRestored = false;
+                if (_originalMaterialsPerComponent.TryGetValue(instanceId, out var origMatObj) &&
+                    TypeHelper.IsUnityObjectAlive(origMatObj))
+                {
+                    try
+                    {
+                        var sharedMatProp = component.GetType().GetProperty("fontSharedMaterial", BindingFlags.Public | BindingFlags.Instance);
+                        if (sharedMatProp != null && sharedMatProp.CanWrite)
+                        {
+                            sharedMatProp.SetValue(component, TypeHelper.Il2CppCast(origMatObj, sharedMatProp.PropertyType), null);
+                            materialRestored = true;
+                        }
+                    }
+                    catch (Exception _e) { TranslatorCore.LogDebug($"[FontReplace] material restore failed: {_e.Message}"); }
+                }
+                if (!materialRestored)
+                    SetFontSharedMaterial(component, originalFont);
+
                 TypeHelper.ForceMeshUpdate(component);
                 _originalFontsPerComponent.Remove(instanceId);
+                _originalMaterialsPerComponent.Remove(instanceId);
                 _fontReplacedComponentIds.Remove(instanceId);
             }
         }
@@ -2892,8 +3063,8 @@ namespace UnityGameTranslator.Core
                     if (replacementFont is UnityEngine.Object uobj && !_gameTMPFonts.ContainsKey(uobj.name))
                         _createdFallbackFontNames.Add(uobj.name);
 
-                    // Font just created — schedule ONE refresh on next scan cycle
-                    _pendingRefresh = true;
+                    // Font just created — schedule a refresh pass on the scan cycles
+                    RequestPendingRefresh();
                 }
                 else
                 {

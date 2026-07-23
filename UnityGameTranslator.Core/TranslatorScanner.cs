@@ -244,8 +244,9 @@ namespace UnityGameTranslator.Core
             processedTextHashes.Clear();
             inputFieldTextIds.Clear();
             componentOriginals.Clear();
-            _maxVisibleWatchdog.Clear();
-            _maxVisibleWatchdogRefs.Clear();
+            _revealFixWindow.Clear();
+            _revealFixRefs.Clear();
+            _revealFixLast.Clear();
 
             // Clear all per-type caches and reset discovery strategies
             foreach (var type in _registeredTypes)
@@ -2133,35 +2134,38 @@ namespace UnityGameTranslator.Core
             }
         }
 
-        // Components we just applied a translation to, watched for a short window so a
-        // freshly-applied translation can't be left invisible by the game's typewriter
-        // resetting maxVisibleCharacters (issue #21). Value = watch deadline (realtime).
-        private static readonly Dictionary<int, float> _maxVisibleWatchdog = new Dictionary<int, float>();
-        private static readonly Dictionary<int, object> _maxVisibleWatchdogRefs = new Dictionary<int, object>();
-        private const float MaxVisibleWatchdogSeconds = 1.2f;
+        // Issue #21 — freshly-applied dialogue translations render partial/blank because
+        // the game's per-character typewriter reveal re-runs on our async text change and
+        // stalls (proven: text/font/atlas/mesh all correct, mesh has vertices, but the
+        // per-char scale+alpha reveal freezes mid-way — see screenshot casse.png). The
+        // english was already fully revealed before we translate, so there is NO live
+        // animation to preserve: we re-assert the finished state (full visibility + a
+        // clean mesh rebuild) for a short window, winning against the stalled reveal and
+        // against our own later disruptors (font re-assign, refresh). Value = deadline.
+        private static readonly Dictionary<int, float> _revealFixWindow = new Dictionary<int, float>();
+        private static readonly Dictionary<int, object> _revealFixRefs = new Dictionary<int, object>();
+        private static readonly Dictionary<int, float> _revealFixLast = new Dictionary<int, float>();
+        private const float RevealFixWindowSeconds = 1.5f;
+        private const float RevealFixIntervalSeconds = 0.1f;
 
-        /// <summary>
-        /// Register a TMP component for the maxVisibleCharacters watchdog after we set its
-        /// translation. Only relevant when a typewriter is actually clipping (maxVisible
-        /// below the character count) — for a fully-visible component this no-ops each tick.
-        /// </summary>
-        private static void RegisterMaxVisibleWatchdog(object comp)
+        private static void RegisterRevealFix(object comp)
         {
             int id = TypeHelper.GetInstanceID(comp);
             if (id == -1) return;
-            _maxVisibleWatchdog[id] = Time.realtimeSinceStartup + MaxVisibleWatchdogSeconds;
-            _maxVisibleWatchdogRefs[id] = comp;
+            _revealFixWindow[id] = Time.realtimeSinceStartup + RevealFixWindowSeconds;
+            _revealFixRefs[id] = comp;
+            _revealFixLast[id] = 0f;
         }
 
-        private static void TickMaxVisibleWatchdog()
+        private static void TickRevealFix()
         {
-            if (_maxVisibleWatchdog.Count == 0) return;
+            if (_revealFixWindow.Count == 0) return;
             float now = Time.realtimeSinceStartup;
             List<int> expired = null;
 
-            foreach (var kvp in _maxVisibleWatchdog)
+            foreach (var kvp in _revealFixWindow)
             {
-                object comp = _maxVisibleWatchdogRefs.TryGetValue(kvp.Key, out var c) ? c : null;
+                object comp = _revealFixRefs.TryGetValue(kvp.Key, out var c) ? c : null;
                 bool dead = comp == null || (comp is UnityEngine.Object uo && uo == null);
                 if (dead || now > kvp.Value)
                 {
@@ -2169,31 +2173,25 @@ namespace UnityGameTranslator.Core
                     continue;
                 }
 
-                // DIAGNOSTIC (issue #21): log the real state every tick so we can see
-                // exactly what happens to a freshly-applied dialogue line — the watchdog
-                // never firing on the last build means the empty is NOT (only) a
-                // maxVisibleCharacters clip. Capture text/maxVis/charCount/enabled.
-                int charCount = TypeHelper.GetTMPCharacterCount(comp);
-                int maxVis = TypeHelper.GetMaxVisibleCharacters(comp);
-                if (TranslatorCore.DebugMode)
-                {
-                    string txt = TypeHelper.GetText(comp);
-                    string tp = txt == null ? "<null>" : (txt.Length > 24 ? txt.Substring(0, 24) : txt);
-                    TranslatorCore.LogDebug($"[MaxVisible] comp={kvp.Key} maxVis={maxVis} charCount={charCount} textLen={txt?.Length ?? -1} text='{tp}'");
-                }
-                if (charCount > 0 && maxVis >= 0 && maxVis < charCount)
-                {
-                    TypeHelper.SetMaxVisibleCharacters(comp, int.MaxValue);
-                    if (TranslatorCore.DebugMode)
-                        TranslatorCore.LogDebug($"[MaxVisible] comp={kvp.Key} → revealed fully (was {maxVis}/{charCount})");
-                }
+                // Throttle: re-assert every ~0.1s over the window (cheap, lands after the
+                // game's font re-assign / typewriter coroutine have settled).
+                if (_revealFixLast.TryGetValue(kvp.Key, out float last) && now - last < RevealFixIntervalSeconds)
+                    continue;
+                _revealFixLast[kvp.Key] = now;
+
+                // Full visibility (covers maxVisibleCharacters-based typewriters) + a clean
+                // mesh rebuild (regenerates every glyph at full scale/alpha, undoing the
+                // per-char reveal that froze). ForceMeshUpdate is the canonical TMP rebuild.
+                TypeHelper.SetMaxVisibleCharacters(comp, int.MaxValue);
+                TypeHelper.ForceMeshUpdate(comp);
             }
 
             if (expired != null)
                 foreach (int id in expired)
                 {
-                    _maxVisibleWatchdog.Remove(id);
-                    _maxVisibleWatchdogRefs.Remove(id);
+                    _revealFixWindow.Remove(id);
+                    _revealFixRefs.Remove(id);
+                    _revealFixLast.Remove(id);
                 }
         }
 
@@ -2207,8 +2205,8 @@ namespace UnityGameTranslator.Core
             // when multiple cloned fonts share the native font rasterizer
             FontManager.ProtectCloneAtlases();
 
-            // Keep freshly-applied translations visible against typewriter resets
-            TickMaxVisibleWatchdog();
+            // Keep freshly-applied dialogue translations from freezing mid-typewriter
+            TickRevealFix();
 
             // Check for stabilized typewriting texts and trigger their translation
             TranslatorPatches.ProcessStabilizedTypewriting();
@@ -2317,18 +2315,16 @@ namespace UnityGameTranslator.Core
                         // TMP, keep the toggle for UI.Text and other types.
                         if (TypeHelper.IsOfType(comp, TypeHelper.TMP_TextType))
                         {
+                            // Non-destructive refresh for TMP (SetText already rebuilds;
+                            // ToggleEnabled would fire the game typewriter OnDisable/
+                            // OnEnable). The empty/garbled/partial render on dialogue is the
+                            // game's per-character typewriter reveal re-running on our async
+                            // text change and freezing (proven: font/atlas/mesh all correct,
+                            // vertices present, but the per-char reveal stalls). The reveal
+                            // window (below) re-asserts the finished state for ~1.5s.
                             TypeHelper.ForceMeshUpdate(comp);
                             TypeHelper.SetAllDirty(comp);
-
-                            // The game's typewriter (subscribed to TMP OnTextChanged)
-                            // reacts to our text/mesh change and resets
-                            // maxVisibleCharacters to 0 without re-running its reveal —
-                            // the freshly-applied translation renders EMPTY (issue #21).
-                            // We can't suppress the game event, so guarantee visibility
-                            // instead: register the component for a short watchdog that
-                            // re-asserts full visibility for ~1s (covers the game touching
-                            // it a frame or two later, as the logs show it does).
-                            RegisterMaxVisibleWatchdog(comp);
+                            RegisterRevealFix(comp);
                         }
                         else
                         {
@@ -2341,10 +2337,7 @@ namespace UnityGameTranslator.Core
                             TranslatorCore.UpdateSeenText(id, translation);
                             processedTextHashes[id] = translation.GetHashCode();
                         }
-                        if (TranslatorCore.DebugMode && TypeHelper.IsOfType(comp, TypeHelper.TMP_TextType))
-                            TranslatorCore.LogDebug($"[Apply OK] comp={id} maxVis={TypeHelper.GetMaxVisibleCharacters(comp)} charCount={TypeHelper.GetTMPCharacterCount(comp)} {expectedPreview}");
-                        else
-                            TranslatorCore.LogDebug($"[Apply OK] comp={id} {expectedPreview}");
+                        TranslatorCore.LogDebug($"[Apply OK] comp={id} {expectedPreview}");
                     }
                     else
                     {

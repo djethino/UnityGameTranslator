@@ -2073,10 +2073,12 @@ namespace UnityGameTranslator.Core
                     return;
                 }
 
-                // Find all TMP text components in the scene
-                UnityEngine.Object[] allTmpComponents;
-                try { allTmpComponents = UnityEngine.Object.FindObjectsOfType(tmpTextType); }
-                catch { allTmpComponents = Resources.FindObjectsOfTypeAll(tmpTextType); }
+                // Find all TMP text components in the scene. Same latent trap as
+                // FontManager.ApplyReplacementsToScene: a direct
+                // UnityEngine.Object.FindObjectsOfType(Type) call can bind against an
+                // overload absent from stripped interop assemblies and throw
+                // MissingMethodException at JIT time — use the IL2CPP-safe helper.
+                var allTmpComponents = TypeHelper.FindAllObjectsOfType(tmpTextType);
                 int appliedCount = 0;
 
                 foreach (var component in allTmpComponents)

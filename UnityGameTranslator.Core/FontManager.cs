@@ -2256,9 +2256,11 @@ namespace UnityGameTranslator.Core
 
             try
             {
-                UnityEngine.Object[] comps;
-                try { comps = UnityEngine.Object.FindObjectsOfType(TypeHelper.TMP_TextType); }
-                catch { comps = Resources.FindObjectsOfTypeAll(TypeHelper.TMP_TextType); }
+                // TypeHelper.FindAllObjectsOfType is the IL2CPP-safe finder (a direct
+                // UnityEngine.Object.FindObjectsOfType(Type) call binds against an
+                // overload that stripped interop assemblies may not expose at all —
+                // MissingMethodException at JIT time, uncatchable from inside).
+                var comps = TypeHelper.FindAllObjectsOfType(TypeHelper.TMP_TextType);
                 if (comps == null) return;
 
                 int applied = 0;

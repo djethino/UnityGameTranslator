@@ -885,6 +885,50 @@ namespace UnityGameTranslator.Core
         /// (catches brackets added around placeholders).
         /// Fills compact error lines usable as targeted retry feedback.
         /// </summary>
+        /// <summary>
+        /// Deterministic repair for the most common systematic model failure: dropping
+        /// [!nl] tokens at the very END of the text (models love trimming trailing
+        /// newlines — field case: a credits roll with 51 tokens got 50 back on every
+        /// attempt, burning 3 AI calls per launch forever). Only ever APPENDS: applies
+        /// when the source ends with more consecutive [!nl] than the translation and
+        /// that exact trailing deficit explains the whole count difference. Returns
+        /// null otherwise — every other mismatch keeps the strict reject.
+        /// </summary>
+        private static string TryRepairTrailingNewlinePlaceholders(string source, string translation)
+        {
+            const string token = "[!nl]";
+            if (string.IsNullOrEmpty(source) || string.IsNullOrEmpty(translation)) return null;
+
+            int CountTotal(string s)
+            {
+                int n = 0, i = 0;
+                while ((i = s.IndexOf(token, i, StringComparison.Ordinal)) >= 0) { n++; i += token.Length; }
+                return n;
+            }
+
+            int CountTrailing(string s)
+            {
+                int n = 0;
+                string t = s.TrimEnd();
+                while (t.EndsWith(token, StringComparison.Ordinal))
+                {
+                    n++;
+                    t = t.Substring(0, t.Length - token.Length).TrimEnd();
+                }
+                return n;
+            }
+
+            int deficit = CountTotal(source) - CountTotal(translation);
+            if (deficit <= 0) return null;
+
+            int missingTrailing = CountTrailing(source) - CountTrailing(translation);
+            if (missingTrailing != deficit) return null;
+
+            var repaired = new System.Text.StringBuilder(translation.TrimEnd());
+            for (int i = 0; i < deficit; i++) repaired.Append(token);
+            return repaired.ToString();
+        }
+
         private static bool ValidatePlaceholders(string source, string translation, List<string> frozenSequences, out List<string> errors)
         {
             errors = new List<string>();
@@ -3550,6 +3594,19 @@ namespace UnityGameTranslator.Core
                     isValid = ValidatePlaceholders(textForAI, translation, frozenSequences, out validationErrors);
                     if (!isValid)
                     {
+                        // Deterministic trailing-[!nl] repair before rejecting — the
+                        // repaired candidate must pass the FULL validation itself.
+                        string repairedCandidate = TryRepairTrailingNewlinePlaceholders(textForAI, translation);
+                        if (repairedCandidate != null &&
+                            ValidatePlaceholders(textForAI, repairedCandidate, frozenSequences, out _))
+                        {
+                            translation = repairedCandidate;
+                            isValid = true;
+                            Adapter?.LogInfo($"[AI] Repaired missing trailing [!nl] token(s), validation OK for: {textToTranslate.Substring(0, Math.Min(60, textToTranslate.Length))}...");
+                        }
+                    }
+                    if (!isValid)
+                    {
                         failedResponse = translation;
                         Adapter?.LogWarning($"[AI] Attempt {attempt + 1}/3: invalid placeholders ({string.Join("; ", validationErrors)}) for: {textToTranslate.Substring(0, Math.Min(60, textToTranslate.Length))}...");
                     }
@@ -3886,14 +3943,25 @@ namespace UnityGameTranslator.Core
 
                 // Structural placeholder validation. No retry here: these APIs take
                 // no prompt, so there is nothing to correct — but a broken result
-                // must never reach the cache (it would be permanent).
+                // must never reach the cache (it would be permanent). The deterministic
+                // trailing-[!nl] repair applies before rejecting, same as the AI path.
                 var frozenSequences = BuildFrozenSequences(textForAPI);
                 if (frozenSequences.Count > 0
                     && !ValidatePlaceholders(textForAPI, translation, frozenSequences, out var apiErrors))
                 {
-                    validationFailedTexts.TryAdd(textWithPlaceholders, 0);
-                    Adapter?.LogWarning($"[API] Invalid placeholders ({string.Join("; ", apiErrors)}), left untranslated: {textToTranslate.Substring(0, Math.Min(60, textToTranslate.Length))}...");
-                    return null;
+                    string repairedCandidate = TryRepairTrailingNewlinePlaceholders(textForAPI, translation);
+                    if (repairedCandidate != null &&
+                        ValidatePlaceholders(textForAPI, repairedCandidate, frozenSequences, out _))
+                    {
+                        translation = repairedCandidate;
+                        Adapter?.LogInfo($"[API] Repaired missing trailing [!nl] token(s), validation OK for: {textToTranslate.Substring(0, Math.Min(60, textToTranslate.Length))}...");
+                    }
+                    else
+                    {
+                        validationFailedTexts.TryAdd(textWithPlaceholders, 0);
+                        Adapter?.LogWarning($"[API] Invalid placeholders ({string.Join("; ", apiErrors)}), left untranslated: {textToTranslate.Substring(0, Math.Min(60, textToTranslate.Length))}...");
+                        return null;
+                    }
                 }
 
                 // === POST-PROCESS: restore placeholders ===

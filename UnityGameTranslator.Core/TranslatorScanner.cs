@@ -1580,9 +1580,23 @@ namespace UnityGameTranslator.Core
                 {
                     if (type.NeedsForceMeshUpdate)
                     {
-                        // TMP needs empty-then-restore to force re-render
-                        SetTextForType(component, type, "");
-                        SetTextForType(component, type, currentText);
+                        // TMP: SELECTIVE refresh (issue #21). The historical behavior
+                        // re-set every component's text with an empty-then-restore hack;
+                        // the refresh fires after EVERY completed AI translation, so game
+                        // typewriter scripts reacted to the "" set (maxVisibleCharacters
+                        // frozen at 0 → dialogue bubbles rendered EMPTY) or restarted
+                        // their animation on every set.
+                        //  - Text already translated (reverse-cache hit): nothing to
+                        //    apply — no text event at all.
+                        //  - Otherwise: ONE direct set (the prefix transforms it inline;
+                        //    when the text actually changes TMP re-renders naturally, no
+                        //    same-text early-out to defeat, so no "" needed).
+                        // The unconditional ForceMeshUpdate + SetAllDirty below covers
+                        // re-render needs without text events (clone-atlas UV updates).
+                        // UI.Text (else branch) keeps the historical single re-set — the
+                        // LongYin-era fixes depend on that exact flow.
+                        if (!TranslatorCore.HasCachedTranslation(currentText))
+                            SetTextForType(component, type, currentText);
                         TypeHelper.ForceMeshUpdate(component);
                     }
                     else

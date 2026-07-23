@@ -2238,8 +2238,23 @@ namespace UnityGameTranslator.Core
 
                         TypeHelper.SetText(comp, translation);
 
-                        // Force visual refresh by toggling enabled state
-                        TypeHelper.ToggleEnabled(comp);
+                        // Visual refresh. ToggleEnabled (disable→enable) was introduced
+                        // for UI.Text clone-atlas rebinding (CanvasRenderer won't rebind
+                        // otherwise), but on TMP it is unnecessary — SetText already
+                        // triggers a full rebuild — AND destructive: the disable/enable
+                        // fires the game typewriter's OnDisable/OnEnable, which resets
+                        // maxVisibleCharacters to 0 and blanks the freshly-set text
+                        // (issue #21 dialogue bubbles). Use the non-destructive path for
+                        // TMP, keep the toggle for UI.Text and other types.
+                        if (TypeHelper.IsOfType(comp, TypeHelper.TMP_TextType))
+                        {
+                            TypeHelper.ForceMeshUpdate(comp);
+                            TypeHelper.SetAllDirty(comp);
+                        }
+                        else
+                        {
+                            TypeHelper.ToggleEnabled(comp);
+                        }
 
                         int id = TypeHelper.GetInstanceID(comp);
                         if (id != -1)

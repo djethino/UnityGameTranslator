@@ -2169,16 +2169,23 @@ namespace UnityGameTranslator.Core
                     continue;
                 }
 
-                // If a typewriter clipped our freshly-set text (maxVisible < the actual
-                // TMP character count), reveal it fully. Untouched when already visible.
+                // DIAGNOSTIC (issue #21): log the real state every tick so we can see
+                // exactly what happens to a freshly-applied dialogue line — the watchdog
+                // never firing on the last build means the empty is NOT (only) a
+                // maxVisibleCharacters clip. Capture text/maxVis/charCount/enabled.
                 int charCount = TypeHelper.GetTMPCharacterCount(comp);
-                if (charCount <= 0) continue;
                 int maxVis = TypeHelper.GetMaxVisibleCharacters(comp);
-                if (maxVis >= 0 && maxVis < charCount)
+                if (TranslatorCore.DebugMode)
+                {
+                    string txt = TypeHelper.GetText(comp);
+                    string tp = txt == null ? "<null>" : (txt.Length > 24 ? txt.Substring(0, 24) : txt);
+                    TranslatorCore.LogDebug($"[MaxVisible] comp={kvp.Key} maxVis={maxVis} charCount={charCount} textLen={txt?.Length ?? -1} text='{tp}'");
+                }
+                if (charCount > 0 && maxVis >= 0 && maxVis < charCount)
                 {
                     TypeHelper.SetMaxVisibleCharacters(comp, int.MaxValue);
                     if (TranslatorCore.DebugMode)
-                        TranslatorCore.LogDebug($"[MaxVisible] comp={kvp.Key} typewriter clipped translation (maxVisible={maxVis} < chars={charCount}) — revealed fully");
+                        TranslatorCore.LogDebug($"[MaxVisible] comp={kvp.Key} → revealed fully (was {maxVis}/{charCount})");
                 }
             }
 
@@ -2334,7 +2341,10 @@ namespace UnityGameTranslator.Core
                             TranslatorCore.UpdateSeenText(id, translation);
                             processedTextHashes[id] = translation.GetHashCode();
                         }
-                        TranslatorCore.LogDebug($"[Apply OK] comp={id} {expectedPreview}");
+                        if (TranslatorCore.DebugMode && TypeHelper.IsOfType(comp, TypeHelper.TMP_TextType))
+                            TranslatorCore.LogDebug($"[Apply OK] comp={id} maxVis={TypeHelper.GetMaxVisibleCharacters(comp)} charCount={TypeHelper.GetTMPCharacterCount(comp)} {expectedPreview}");
+                        else
+                            TranslatorCore.LogDebug($"[Apply OK] comp={id} {expectedPreview}");
                     }
                     else
                     {

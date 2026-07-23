@@ -15,14 +15,53 @@ namespace UnityGameTranslator.Core.Rasterizer
     {
         /// <summary>
         /// Default render size in pixels for SDF rasterization.
-        /// Higher = better quality but larger atlas. 32px is a good balance.
+        /// Higher = better quality but larger atlas. Used as the FLOOR of the automatic
+        /// quality ladder (huge CJK charsets) — small charsets get a higher size.
         /// </summary>
         public const float DefaultRenderSize = 48f;
 
         /// <summary>
         /// Default SDF spread in pixels. Must match the distanceRange used by TMP shaders.
+        /// Kept at renderSize/6 by the automatic quality selection.
         /// </summary>
         public const float DefaultDistanceRange = 8f;
+
+        /// <summary>
+        /// Bump when the generated atlas format/quality changes in a way that requires
+        /// re-rasterizing existing .gen caches (spacing, sampling size, SDF encoding…).
+        /// v2: inter-glyph spacing = distanceRange (was 1px — underlay/shadow sampling
+        /// bled the neighbouring glyph row into rendered text) + automatic sampling size.
+        /// </summary>
+        public const int PipelineVersion = 2;
+
+        /// <summary>
+        /// Target atlas budget for the automatic quality ladder. Deliberately below GPU
+        /// limits: a 4096² ARGB32 atlas is 64 MB — acceptable; bigger is not, as default.
+        /// </summary>
+        private const int AutoQualityAtlasBudget = 4096;
+
+        /// <summary>
+        /// Pick the largest sampling size whose estimated single atlas fits the budget.
+        /// Small charsets (Latin ≈ a few hundred glyphs) get 96-128px/em — crisp at the
+        /// large on-screen sizes where the historical 48px looked jagged; huge charsets
+        /// (CJK) fall back to the compact default.
+        /// </summary>
+        public static float ChooseRenderSize(int glyphCount, int maxAtlasSize)
+        {
+            int budget = Math.Min(AutoQualityAtlasBudget, maxAtlasSize);
+            float side = (float)Math.Ceiling(Math.Sqrt(Math.Max(1, glyphCount)));
+
+            foreach (float size in new[] { 128f, 96f, 64f })
+            {
+                // Cell estimate: glyph body (~1.3 em worst case) + SDF padding on both
+                // sides + inter-cell spacing, with distanceRange = size/6.
+                float range = (float)Math.Round(size / 6f);
+                float cell = size * 1.3f + 2f * (range + 1f) + range;
+                if (side * cell <= budget)
+                    return size;
+            }
+            return DefaultRenderSize;
+        }
 
         /// <summary>
         /// Process a TTF/OTF file and generate atlas data compatible with CustomFontLoader.
@@ -65,6 +104,17 @@ namespace UnityGameTranslator.Core.Rasterizer
                 // random by Dictionary iteration order.
                 var codepoints = parser.GetSupportedCodepoints();
                 TranslatorCore.LogInfo($"[TtfPipeline] Mapped codepoints: {codepoints.Length}");
+
+                // Automatic quality: renderSize <= 0 means "pick for me" — small charsets
+                // get a higher sampling size (crisp at large on-screen sizes), huge ones
+                // keep the compact default. distanceRange follows at the historical
+                // 48px/8px ratio (1/6 em) so shader gradients stay proportional.
+                if (renderSize <= 0f)
+                {
+                    renderSize = ChooseRenderSize(codepoints.Length, maxAtlasSize);
+                    distanceRange = (float)Math.Round(renderSize / 6f);
+                    TranslatorCore.LogInfo($"[TtfPipeline] Auto quality: {codepoints.Length} glyphs → renderSize={renderSize}px, distanceRange={distanceRange}px");
+                }
 
                 int sdfPadding = (int)Math.Ceiling(distanceRange) + 1;
 
@@ -132,7 +182,12 @@ namespace UnityGameTranslator.Core.Rasterizer
                 // and N entries (multi-atlas) otherwise. Each RasterizedGlyph now carries
                 // an AtlasIndex pointing to its atlas in this list.
                 TranslatorCore.LogInfo($"[TtfPipeline] Packing atlas (max {maxAtlasSize}x{maxAtlasSize})...");
-                var atlasResults = AtlasPacker.PackAtlases(rasterizedGlyphs, padding: 1, maxAtlasSize: maxAtlasSize);
+                // Inter-cell spacing must cover the SDF spread: TMP underlay/shadow
+                // effects sample OUTSIDE the glyph rect, and with the historical 1px
+                // spacing they picked up the neighbouring row's SDF (visible as cut-off
+                // shadows of other characters above/below the rendered text).
+                int cellSpacing = Math.Max(1, (int)Math.Ceiling(distanceRange));
+                var atlasResults = AtlasPacker.PackAtlases(rasterizedGlyphs, padding: cellSpacing, maxAtlasSize: maxAtlasSize);
 
                 if (atlasResults.Count == 1)
                     TranslatorCore.LogInfo($"[TtfPipeline] Atlas: {atlasResults[0].Width}x{atlasResults[0].Height} (single)");
@@ -268,6 +323,7 @@ namespace UnityGameTranslator.Core.Rasterizer
 
             return new CustomFontLoader.MsdfAtlasData
             {
+                pipelineVersion = PipelineVersion,
                 atlas = atlasInfos[0],
                 atlases = atlasInfos,
                 metrics = new CustomFontLoader.MetricsInfo

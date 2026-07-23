@@ -1900,6 +1900,8 @@ namespace UnityGameTranslator.Core
                 _fontNameCache.Remove(id);
                 _originalFontSizes.Remove(id);
                 _trueOriginalFontSizes.Remove(id);
+                _originalAutoSizeMax.Remove(id);
+                _originalAutoSizeMin.Remove(id);
                 _inheritedCloneComponents.Remove(id);
                 _lastTranslatedText.Remove(id);
                 _lastRawText.Remove(id);
@@ -1916,6 +1918,8 @@ namespace UnityGameTranslator.Core
         {
             _originalFontSizes.Clear();
             _alternateTMPOriginalSizes.Clear();
+            _originalAutoSizeMax.Clear();
+            _originalAutoSizeMin.Clear();
         }
 
         /// <summary>
@@ -2244,7 +2248,8 @@ namespace UnityGameTranslator.Core
             if (Math.Abs(scale - 1.0f) < 0.001f && bump == 0)
             {
                 if (instanceId == -1 ||
-                    (!_originalFontSizes.ContainsKey(instanceId) && !_trueOriginalFontSizes.ContainsKey(instanceId)))
+                    (!_originalFontSizes.ContainsKey(instanceId) && !_trueOriginalFontSizes.ContainsKey(instanceId)
+                     && !_originalAutoSizeMax.ContainsKey(instanceId)))
                     return;
             }
             if (instanceId == -1) return;
@@ -2282,6 +2287,68 @@ namespace UnityGameTranslator.Core
             // Also scale bestFit maxSize (Mono only — IL2CPP causes atlas corruption)
             if (TranslatorCore.Adapter == null || !TranslatorCore.Adapter.IsIL2CPP)
                 ApplyBestFitScale(instance, instanceId, scale);
+
+            // TMP auto-sizing overwrites fontSize with the computed fit, so the scale
+            // above has no visible effect on auto-sized components — scale their
+            // auto-size BOUNDS instead (issue #21).
+            ApplyTMPAutoSizeScale(instance, instanceId, scale);
+        }
+
+        // Cache original TMP auto-size bounds per component (for restore at scale 1.0)
+        private static readonly Dictionary<int, float> _originalAutoSizeMax = new Dictionary<int, float>();
+        private static readonly Dictionary<int, float> _originalAutoSizeMin = new Dictionary<int, float>();
+
+        /// <summary>
+        /// TMP counterpart of ApplyBestFitScale: on components with enableAutoSizing,
+        /// the game recomputes fontSize to fit the container, erasing any direct
+        /// fontSize scaling. Multiplying fontSizeMax/fontSizeMin by the user's per-font
+        /// scale keeps the game's responsive fit while moving its ceiling/floor — the
+        /// only lever that visibly changes auto-sized text (issue #21: text clamped at
+        /// fontSizeMax rendered smaller than the original font's design scale).
+        /// No-ops on non-TMP components (no enableAutoSizing property) and on
+        /// components with auto-sizing off.
+        /// </summary>
+        private static void ApplyTMPAutoSizeScale(object instance, int instanceId, float scale)
+        {
+            try
+            {
+                var type = instance.GetType();
+                var autoProp = type.GetProperty("enableAutoSizing", BindingFlags.Public | BindingFlags.Instance);
+                if (autoProp == null) return;
+                if (!(bool)autoProp.GetValue(instance, null)) return;
+
+                var maxProp = type.GetProperty("fontSizeMax", BindingFlags.Public | BindingFlags.Instance);
+                if (maxProp == null || !maxProp.CanWrite) return;
+
+                if (!_originalAutoSizeMax.TryGetValue(instanceId, out float origMax))
+                {
+                    origMax = Convert.ToSingle(maxProp.GetValue(instance, null));
+                    if (origMax <= 0) return;
+                    _originalAutoSizeMax[instanceId] = origMax;
+                }
+                float targetMax = origMax * scale;
+                float currentMax = Convert.ToSingle(maxProp.GetValue(instance, null));
+                if (Math.Abs(currentMax - targetMax) > 0.1f)
+                    maxProp.SetValue(instance, targetMax, null);
+
+                var minProp = type.GetProperty("fontSizeMin", BindingFlags.Public | BindingFlags.Instance);
+                if (minProp != null && minProp.CanWrite)
+                {
+                    if (!_originalAutoSizeMin.TryGetValue(instanceId, out float origMin))
+                    {
+                        origMin = Convert.ToSingle(minProp.GetValue(instance, null));
+                        _originalAutoSizeMin[instanceId] = origMin;
+                    }
+                    float targetMin = origMin * scale;
+                    float currentMin = Convert.ToSingle(minProp.GetValue(instance, null));
+                    if (Math.Abs(currentMin - targetMin) > 0.1f)
+                        minProp.SetValue(instance, targetMin, null);
+                }
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogDebug($"[Patches] AutoSize scale failed: {ex.Message}");
+            }
         }
 
         // Cache original resizeTextMaxSize per component

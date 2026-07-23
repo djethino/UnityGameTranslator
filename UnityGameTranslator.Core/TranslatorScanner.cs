@@ -244,6 +244,8 @@ namespace UnityGameTranslator.Core
             processedTextHashes.Clear();
             inputFieldTextIds.Clear();
             componentOriginals.Clear();
+            _maxVisibleWatchdog.Clear();
+            _maxVisibleWatchdogRefs.Clear();
 
             // Clear all per-type caches and reset discovery strategies
             foreach (var type in _registeredTypes)
@@ -2131,6 +2133,63 @@ namespace UnityGameTranslator.Core
             }
         }
 
+        // Components we just applied a translation to, watched for a short window so a
+        // freshly-applied translation can't be left invisible by the game's typewriter
+        // resetting maxVisibleCharacters (issue #21). Value = watch deadline (realtime).
+        private static readonly Dictionary<int, float> _maxVisibleWatchdog = new Dictionary<int, float>();
+        private static readonly Dictionary<int, object> _maxVisibleWatchdogRefs = new Dictionary<int, object>();
+        private const float MaxVisibleWatchdogSeconds = 1.2f;
+
+        /// <summary>
+        /// Register a TMP component for the maxVisibleCharacters watchdog after we set its
+        /// translation. Only relevant when a typewriter is actually clipping (maxVisible
+        /// below the character count) — for a fully-visible component this no-ops each tick.
+        /// </summary>
+        private static void RegisterMaxVisibleWatchdog(object comp)
+        {
+            int id = TypeHelper.GetInstanceID(comp);
+            if (id == -1) return;
+            _maxVisibleWatchdog[id] = Time.realtimeSinceStartup + MaxVisibleWatchdogSeconds;
+            _maxVisibleWatchdogRefs[id] = comp;
+        }
+
+        private static void TickMaxVisibleWatchdog()
+        {
+            if (_maxVisibleWatchdog.Count == 0) return;
+            float now = Time.realtimeSinceStartup;
+            List<int> expired = null;
+
+            foreach (var kvp in _maxVisibleWatchdog)
+            {
+                object comp = _maxVisibleWatchdogRefs.TryGetValue(kvp.Key, out var c) ? c : null;
+                bool dead = comp == null || (comp is UnityEngine.Object uo && uo == null);
+                if (dead || now > kvp.Value)
+                {
+                    (expired ??= new List<int>()).Add(kvp.Key);
+                    continue;
+                }
+
+                // If a typewriter clipped our freshly-set text (maxVisible < the actual
+                // TMP character count), reveal it fully. Untouched when already visible.
+                int charCount = TypeHelper.GetTMPCharacterCount(comp);
+                if (charCount <= 0) continue;
+                int maxVis = TypeHelper.GetMaxVisibleCharacters(comp);
+                if (maxVis >= 0 && maxVis < charCount)
+                {
+                    TypeHelper.SetMaxVisibleCharacters(comp, int.MaxValue);
+                    if (TranslatorCore.DebugMode)
+                        TranslatorCore.LogDebug($"[MaxVisible] comp={kvp.Key} typewriter clipped translation (maxVisible={maxVis} < chars={charCount}) — revealed fully");
+                }
+            }
+
+            if (expired != null)
+                foreach (int id in expired)
+                {
+                    _maxVisibleWatchdog.Remove(id);
+                    _maxVisibleWatchdogRefs.Remove(id);
+                }
+        }
+
         /// <summary>
         /// Process pending translation updates on the main thread.
         /// Call this from Update() or scan methods.
@@ -2140,6 +2199,9 @@ namespace UnityGameTranslator.Core
             // Protect clone atlases every frame — prevents character purging
             // when multiple cloned fonts share the native font rasterizer
             FontManager.ProtectCloneAtlases();
+
+            // Keep freshly-applied translations visible against typewriter resets
+            TickMaxVisibleWatchdog();
 
             // Check for stabilized typewriting texts and trigger their translation
             TranslatorPatches.ProcessStabilizedTypewriting();
@@ -2250,6 +2312,16 @@ namespace UnityGameTranslator.Core
                         {
                             TypeHelper.ForceMeshUpdate(comp);
                             TypeHelper.SetAllDirty(comp);
+
+                            // The game's typewriter (subscribed to TMP OnTextChanged)
+                            // reacts to our text/mesh change and resets
+                            // maxVisibleCharacters to 0 without re-running its reveal —
+                            // the freshly-applied translation renders EMPTY (issue #21).
+                            // We can't suppress the game event, so guarantee visibility
+                            // instead: register the component for a short watchdog that
+                            // re-asserts full visibility for ~1s (covers the game touching
+                            // it a frame or two later, as the logs show it does).
+                            RegisterMaxVisibleWatchdog(comp);
                         }
                         else
                         {

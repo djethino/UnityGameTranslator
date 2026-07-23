@@ -841,6 +841,61 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Read TMP_Text.maxVisibleCharacters (int). Returns -1 when unavailable.
+        /// A typewriter effect keeps this below the text length while revealing; a
+        /// finished/idle typewriter leaves it at the last-revealed count. Default is a
+        /// very large value (= "show everything").
+        /// </summary>
+        public static int GetMaxVisibleCharacters(object component)
+        {
+            if (component == null) return -1;
+            try
+            {
+                var prop = component.GetType().GetProperty("maxVisibleCharacters", BindingFlags.Public | BindingFlags.Instance);
+                if (prop != null && prop.CanRead)
+                    return Convert.ToInt32(prop.GetValue(component, null));
+            }
+            catch { }
+            return -1;
+        }
+
+        /// <summary>
+        /// Set TMP_Text.maxVisibleCharacters (int). No-op when the property is absent.
+        /// </summary>
+        public static void SetMaxVisibleCharacters(object component, int value)
+        {
+            if (component == null) return;
+            try
+            {
+                var prop = component.GetType().GetProperty("maxVisibleCharacters", BindingFlags.Public | BindingFlags.Instance);
+                if (prop != null && prop.CanWrite)
+                    prop.SetValue(component, value, null);
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Character count of a TMP_Text (textInfo.characterCount). Returns -1 if absent.
+        /// This is the count TMP compares maxVisibleCharacters against — NOT string length
+        /// (rich-text tags and composed glyphs make the two differ).
+        /// </summary>
+        public static int GetTMPCharacterCount(object component)
+        {
+            if (component == null) return -1;
+            try
+            {
+                var tiProp = component.GetType().GetProperty("textInfo", BindingFlags.Public | BindingFlags.Instance);
+                var ti = tiProp?.GetValue(component, null);
+                if (ti == null) return -1;
+                var ccProp = ti.GetType().GetProperty("characterCount", BindingFlags.Public | BindingFlags.Instance);
+                if (ccProp != null && ccProp.CanRead)
+                    return Convert.ToInt32(ccProp.GetValue(ti, null));
+            }
+            catch { }
+            return -1;
+        }
+
+        /// <summary>
         /// Call SetAllDirty() on a UI component for forcing visual refresh.
         /// </summary>
         public static void SetAllDirty(object component)

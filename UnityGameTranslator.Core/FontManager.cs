@@ -1516,6 +1516,11 @@ namespace UnityGameTranslator.Core
                 if (settings.enabled)
                 {
                     TranslatorScanner.RefreshForFont(fontName);
+
+                    // RefreshForFont only walks the scanner cache — static auto-sized
+                    // components (main-menu items…) live only in the patch refs and
+                    // would keep their old bounds until a restart (issue #21).
+                    TranslatorPatches.ApplyAutoSizeScaleForFont(fontName);
                 }
 
                 TranslatorCore.SaveCache();

@@ -1952,26 +1952,75 @@ namespace UnityGameTranslator.Core
                 if (kvp.Value == null) continue;
                 try
                 {
-                    float trueOriginal;
-                    if (!_trueOriginalFontSizes.TryGetValue(kvp.Key, out trueOriginal))
-                        continue;
+                    // fontSize path — needs the tracked true original to avoid reading a
+                    // scaled value back as "original"
+                    if (_trueOriginalFontSizes.TryGetValue(kvp.Key, out float trueOriginal))
+                    {
+                        var fontSizeProp = kvp.Value.GetType().GetProperty("fontSize",
+                            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                        if (fontSizeProp != null && fontSizeProp.CanWrite)
+                        {
+                            // Set the true original size — the fontSize prefix will re-apply the correct scale
+                            if (fontSizeProp.PropertyType == typeof(float))
+                                fontSizeProp.SetValue(kvp.Value, trueOriginal, null);
+                            else if (fontSizeProp.PropertyType == typeof(int))
+                                fontSizeProp.SetValue(kvp.Value, (int)trueOriginal, null);
 
-                    var fontSizeProp = kvp.Value.GetType().GetProperty("fontSize",
-                        System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
-                    if (fontSizeProp == null || !fontSizeProp.CanWrite) continue;
+                            count++;
+                        }
+                    }
 
-                    // Set the true original size — the fontSize prefix will re-apply the correct scale
-                    if (fontSizeProp.PropertyType == typeof(float))
-                        fontSizeProp.SetValue(kvp.Value, trueOriginal, null);
-                    else if (fontSizeProp.PropertyType == typeof(int))
-                        fontSizeProp.SetValue(kvp.Value, (int)trueOriginal, null);
-
-                    count++;
+                    // Auto-size bounds path — INDEPENDENT of the fontSize tracking:
+                    // components never scaled before have no tracked original (scale 1.0
+                    // fast-exits without storing), and auto-sized text ignores fontSize
+                    // anyway. Without this, static auto-sized components (main-menu
+                    // items…) only picked a runtime scale change up after a game restart
+                    // (issue #21). ApplyTMPAutoSizeScale reads/tracks its own original
+                    // bounds and no-ops on non-auto-sized components.
+                    if (_fontNameCache.TryGetValue(kvp.Key, out string cachedFontName) &&
+                        !string.IsNullOrEmpty(cachedFontName))
+                    {
+                        string settingsName = FontManager.GetSettingsFontName(kvp.Key, cachedFontName);
+                        float scale = FontManager.GetFontScale(settingsName, kvp.Key);
+                        ApplyTMPAutoSizeScale(kvp.Value, kvp.Key, scale);
+                    }
                 }
                 catch { }
             }
 
             TranslatorCore.LogDebug($"[Patches] ReapplyAllFontSizes: re-applied {count} components");
+        }
+
+        /// <summary>
+        /// Apply the current per-font scale to the auto-size bounds of every tracked
+        /// component using <paramref name="fontName"/>. Static auto-sized components
+        /// never re-fire set_text and may be absent from the scanner cache, so the
+        /// RefreshForFont pass misses them — the patch refs have them (issue #21:
+        /// main-menu items ignored runtime Size changes until a game restart).
+        /// </summary>
+        public static void ApplyAutoSizeScaleForFont(string fontName)
+        {
+            if (string.IsNullOrEmpty(fontName)) return;
+
+            var refs = new List<KeyValuePair<int, object>>(PatchedComponentRefs);
+            foreach (var kvp in refs)
+            {
+                if (kvp.Value == null) continue;
+                try
+                {
+                    if (!_fontNameCache.TryGetValue(kvp.Key, out string cachedFontName) ||
+                        string.IsNullOrEmpty(cachedFontName))
+                        continue;
+
+                    string settingsName = FontManager.GetSettingsFontName(kvp.Key, cachedFontName);
+                    if (!string.Equals(settingsName, fontName, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    float scale = FontManager.GetFontScale(settingsName, kvp.Key);
+                    ApplyTMPAutoSizeScale(kvp.Value, kvp.Key, scale);
+                }
+                catch { }
+            }
         }
 
         /// <summary>

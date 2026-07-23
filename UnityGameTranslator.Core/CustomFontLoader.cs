@@ -1688,7 +1688,8 @@ namespace UnityGameTranslator.Core
                 // Legacy/TMProOld assets have no modern faceInfo → ratio stays 1 and that
                 // path is untouched.
                 float glyphMetricsScale = 1f;
-                if (TryGetModernFaceInfo(fontAsset, out float cloneFacePointSize, out float cloneFaceScale))
+                bool hasModernFaceInfo = TryGetModernFaceInfo(fontAsset, out float cloneFacePointSize, out float cloneFaceScale);
+                if (hasModernFaceInfo)
                 {
                     if (cloneFacePointSize > 0f && pointSize > 0f)
                     {
@@ -1810,6 +1811,13 @@ namespace UnityGameTranslator.Core
 
                 // Set face info / font info — use existing clone's faceInfo and modify it
                 SetupFaceInfo(fontAsset, fontInfo, pointSize);
+
+                // Pure modern TMP: rewrite the modern m_FaceInfo with OUR metrics so line
+                // metrics and glyph metrics agree (issue #21: inherited clone line metrics
+                // break TMP auto-sizing). When the verified rewrite succeeds, the asset is
+                // native-consistent and needs NO character-scale compensation.
+                if (hasModernFaceInfo && TryRewriteModernFaceInfo(fontAsset, fontInfo, pointSize))
+                    glyphMetricsScale = 1f;
 
                 // Set glyphs
                 SetupGlyphs(fontAsset, fontInfo, pointSize, glyphMetricsScale);
@@ -2119,6 +2127,104 @@ namespace UnityGameTranslator.Core
             }
         }
 
+        /// <summary>
+        /// Rewrite the MODERN m_FaceInfo struct (UnityEngine.TextCore.FaceInfo) of a
+        /// cloned asset with OUR font's metrics at the atlas point size, so the asset is
+        /// fully native-consistent: glyph metrics at 48px, faceInfo pointSize=48/scale=1,
+        /// line metrics from the rasterized font. Without this, line metrics stay those of
+        /// the clone source (issue #21: pointSize=408/scale=2) while glyphs are normalized
+        /// → TMP's auto-sizing sees lines ~2× too tall and crushes the text.
+        ///
+        /// This is the successor of ConfigureModernFaceInfo removed in v0.9.64. The
+        /// historical regressions are now gated out: this only runs when the clone exposes
+        /// a readable modern faceInfo (pure modern TMP path — TMProOld/legacy never gets
+        /// here), and on failure the caller keeps the TMP_Character.scale compensation.
+        /// Returns true only when the write is VERIFIED by reading pointSize back.
+        /// </summary>
+        private static bool TryRewriteModernFaceInfo(object fontAsset, CustomFontInfo fontInfo, float pointSize)
+        {
+            try
+            {
+                var t = fontAsset.GetType();
+                object face = null;
+                PropertyInfo faceProp = t.GetProperty("m_FaceInfo", BindingFlags.Public | BindingFlags.Instance);
+                FieldInfo faceField = null;
+                if (faceProp != null && faceProp.CanRead)
+                    face = faceProp.GetValue(fontAsset, null);
+                if (face == null)
+                {
+                    faceProp = null;
+                    faceField = t.GetField("m_FaceInfo", BindingFlags.NonPublic | BindingFlags.Instance)
+                             ?? t.GetField("m_FaceInfo", BindingFlags.Public | BindingFlags.Instance);
+                    if (faceField != null)
+                        face = faceField.GetValue(fontAsset);
+                }
+                if (face == null) return false;
+
+                var metrics = fontInfo.AtlasData.metrics;
+                float ascent = metrics.ascender * pointSize;
+                float descent = metrics.descender * pointSize; // negative
+                // Space advance ≈ tab width baseline (TMP multiplies by tabSize itself)
+                float spaceAdvance = pointSize * 0.25f;
+                foreach (var g in fontInfo.AtlasData.glyphs)
+                {
+                    if (g.unicode == 32) { spaceAdvance = g.advance * pointSize; break; }
+                }
+
+                // Both naming schemes: Il2CppInterop exposes il2cpp fields as properties
+                // named m_PointSize etc.; Mono has private m_PointSize fields plus public
+                // camelCase properties. SetFieldValue tries property then field per name.
+                void Set(string il2cppName, string monoName, object value)
+                {
+                    SetFieldValue(face, il2cppName, value);
+                    SetFieldValue(face, monoName, value);
+                }
+
+                Set("m_FamilyName", "familyName", fontInfo.Name);
+                Set("m_StyleName", "styleName", "Regular");
+                Set("m_PointSize", "pointSize", (int)pointSize);
+                Set("m_Scale", "scale", 1f);
+                Set("m_LineHeight", "lineHeight", metrics.lineHeight * pointSize);
+                Set("m_AscentLine", "ascentLine", ascent);
+                Set("m_CapLine", "capLine", ascent * 0.8f);
+                Set("m_MeanLine", "meanLine", ascent * 0.5f);
+                Set("m_Baseline", "baseline", 0f);
+                Set("m_DescentLine", "descentLine", descent);
+                Set("m_SuperscriptOffset", "superscriptOffset", ascent);
+                Set("m_SuperscriptSize", "superscriptSize", 0.5f);
+                Set("m_SubscriptOffset", "subscriptOffset", descent * 0.5f);
+                Set("m_SubscriptSize", "subscriptSize", 0.5f);
+                Set("m_UnderlineOffset", "underlineOffset", (metrics.underlineY != 0 ? metrics.underlineY : -0.1f) * pointSize);
+                Set("m_UnderlineThickness", "underlineThickness", (metrics.underlineThickness != 0 ? metrics.underlineThickness : 0.05f) * pointSize);
+                Set("m_TabWidth", "tabWidth", spaceAdvance);
+                // strikethrough left as-is: ReadFontAssetDefinition fills it from capLine when 0
+
+                // FaceInfo is a STRUCT: the reads above returned a boxed copy — write it back.
+                if (faceProp != null && faceProp.CanWrite)
+                    faceProp.SetValue(fontAsset, face, null);
+                else if (faceField != null)
+                    faceField.SetValue(fontAsset, face);
+                else
+                    return false;
+
+                // VERIFY the write actually landed (struct write-back is the fragile part)
+                if (TryGetModernFaceInfo(fontAsset, out float verifyPs, out float verifyScale)
+                    && Math.Abs(verifyPs - pointSize) < 0.5f)
+                {
+                    TranslatorCore.LogInfo($"[CustomFontLoader] Modern m_FaceInfo rewritten: pointSize={verifyPs}, scale={verifyScale}, lineHeight={metrics.lineHeight * pointSize:F2}");
+                    return true;
+                }
+
+                TranslatorCore.LogWarning($"[CustomFontLoader] Modern m_FaceInfo rewrite did not verify (read back pointSize={verifyPs}) — keeping character-scale compensation");
+                return false;
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogWarning($"[CustomFontLoader] Modern m_FaceInfo rewrite failed: {ex.Message} — keeping character-scale compensation");
+                return false;
+            }
+        }
+
         private static void SetupFaceInfo(object fontAsset, CustomFontInfo fontInfo, float pointSize)
         {
             var metrics = fontInfo.AtlasData.metrics;
@@ -2232,14 +2338,11 @@ namespace UnityGameTranslator.Core
                 else if (fontInfoField != null)
                     fontInfoField.SetValue(fontAsset, faceInfo);
 
-                // NOTE: we used to also rewrite the MODERN m_FaceInfo struct here. It DID
-                // fix the UV scaling on Forsaken (cloned-from-Dynamic asset with PointSize=86)
-                // but caused a cascade of issues on the broader pipeline (text staying in the
-                // original font, FontOps spiking to 57s/5s, regressions on other games). Until
-                // we can confidently detect when modern m_FaceInfo needs rewriting (probably
-                // only when the clone source comes from a Dynamic asset with m_SourceFontFile
-                // missing), we leave m_FaceInfo as-inherited-from-clone and accept the visual
-                // imperfection on the specific Forsaken case — which still translates correctly.
+                // NOTE: the modern m_FaceInfo rewrite (removed in v0.9.64 after regressions)
+                // is REINSTATED as TryRewriteModernFaceInfo, called from CreateFontAsset and
+                // properly gated: pure modern TMP clones only (legacy/TMProOld never has a
+                // readable modern faceInfo), verified by read-back, with the
+                // TMP_Character.scale compensation as fallback (issue #21).
 
                 // Log the configured metrics for debugging
                 TranslatorCore.LogInfo($"[CustomFontLoader] Configured FaceInfo: PointSize={pointSize}, Ascender={ascender:F2}, Descender={descender:F2}, LineHeight={metrics.lineHeight * pointSize:F2}");
@@ -2271,12 +2374,9 @@ namespace UnityGameTranslator.Core
             }
         }
 
-        // NOTE: ConfigureModernFaceInfo was removed in v0.9.64. It rewrote the modern
-        // UnityEngine.TextCore.FaceInfo struct on cloned assets, which fixed the font-size
-        // mismatch on one runtime but broke the legacy TMP path on others (Hindi rendered
-        // empty text). We now leave m_FaceInfo as inherited from the clone — the legacy
-        // m_fontInfo is still configured by SetupFaceInfo, which is enough for the
-        // supported clone families. Git history before v0.9.64 holds the implementation.
+        // NOTE: ConfigureModernFaceInfo (removed in v0.9.64 for breaking the legacy TMP
+        // path — Hindi rendered empty) lives on as TryRewriteModernFaceInfo above, now
+        // gated to pure modern TMP clones and verified by read-back (issue #21).
 
         /// <summary>
         /// Sets up the glyph list. Tries modern TMP system (m_GlyphTable + m_CharacterTable) first,

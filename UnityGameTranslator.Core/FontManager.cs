@@ -1941,13 +1941,32 @@ namespace UnityGameTranslator.Core
                 try
                 {
                     var ct = component.GetType();
-                    object fs = ct.GetProperty("fontSize", BindingFlags.Public | BindingFlags.Instance)?.GetValue(component, null);
-                    object autoSize = ct.GetProperty("enableAutoSizing", BindingFlags.Public | BindingFlags.Instance)?.GetValue(component, null);
+                    object ReadProp(string name) => ct.GetProperty(name, BindingFlags.Public | BindingFlags.Instance)?.GetValue(component, null);
+                    object fs = ReadProp("fontSize");
+                    object autoSize = ReadProp("enableAutoSizing");
+                    object fsMin = ReadProp("fontSizeMin");
+                    object fsMax = ReadProp("fontSizeMax");
+                    object prefW = ReadProp("preferredWidth");
+                    object prefH = ReadProp("preferredHeight");
+                    string rectStr = "n/a";
+                    try
+                    {
+                        var rt = ReadProp("rectTransform");
+                        if (rt != null)
+                        {
+                            var rect = rt.GetType().GetProperty("rect", BindingFlags.Public | BindingFlags.Instance)?.GetValue(rt, null);
+                            if (rect != null) rectStr = rect.ToString();
+                        }
+                    }
+                    catch (Exception _e) { TranslatorCore.LogDebug($"[FontManager] DIAG rect read failed: {_e.Message}"); }
+                    // fontSize AFTER the forced mesh update = the auto-size RESULT when
+                    // enableAutoSizing is on (TMP writes the computed size back).
+                    object fsAfter = ReadProp("fontSize");
                     string origFace = "n/a";
                     if (originalFontObj != null && CustomFontLoader.TryGetModernFaceInfo(originalFontObj, out var ops, out var osc))
                         origFace = $"pointSize={ops}, scale={osc}";
                     string nowFont = TypeHelper.GetFontName(component);
-                    TranslatorCore.LogInfo($"[FontManager] DIAG replace '{originalFontName}' → '{nowFont}' on {ct.Name}: fontSize={fs}, autoSize={autoSize}, original faceInfo: {origFace}");
+                    TranslatorCore.LogInfo($"[FontManager] DIAG replace '{originalFontName}' → '{nowFont}' on {ct.Name}: fontSize={fs}→{fsAfter}, autoSize={autoSize} [{fsMin}..{fsMax}], preferred={prefW}x{prefH}, rect={rectStr}, original faceInfo: {origFace}");
                 }
                 catch (Exception ex)
                 {

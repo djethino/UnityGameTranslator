@@ -595,9 +595,11 @@ namespace UnityGameTranslator.Core
             SubscribeWillRenderCanvases();
 
             // Every new scene brings components whose text is serialized or set by the
-            // game's own localization (I2.Loc…) BEFORE our patches can see a set_text —
-            // the font replacement only reaches them through a ForceRefreshAllText pass
-            // (issue #21: main-menu items stayed in the original font after a restart).
+            // game BEFORE our patches can see a set_text — the font replacement only
+            // reaches them through refresh/direct-apply passes (issue #21: main-menu
+            // items stayed in the original font after a restart). New scene → fresh
+            // passes and a fresh revert budget.
+            _fontRevertCounts.Clear();
             if (_fallbackAssets.Count > 0)
                 RequestPendingRefresh();
 
@@ -2148,6 +2150,148 @@ namespace UnityGameTranslator.Core
             }
         }
 
+        // Guard: our restore paths assign original fonts through the same TMP setter the
+        // postfix watches — suppress re-application while a restore is in progress.
+        private static bool _suppressFontSetterReapply = false;
+
+        // How many times the game re-asserted its own font on a component after we
+        // replaced it. Past the cap we leave the component alone: the game is actively
+        // driving that font (per-frame animation…) and fighting it inline caused broken
+        // rendering (glyphs sampled in the wrong atlas when we interleaved between the
+        // game's font= and material= assignments).
+        private static readonly Dictionary<int, int> _fontRevertCounts = new Dictionary<int, int>();
+        private const int MaxFontRevertsPerComponent = 3;
+
+        // Nudge: the font-setter postfix requests a direct-apply pass on the next scan
+        // cycle instead of re-applying inline (see OnGameAssignedFont).
+        private static bool _directApplyNudge = false;
+
+        public static bool ConsumeDirectApplyNudge()
+        {
+            if (_directApplyNudge)
+            {
+                _directApplyNudge = false;
+                return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Put back a consumed nudge that couldn't run this cycle (debounce).
+        /// </summary>
+        public static void RearmDirectApplyNudge()
+        {
+            _directApplyNudge = true;
+        }
+
+        /// <summary>
+        /// Called by the TMP font-setter postfix whenever the game assigns a font.
+        /// NEVER re-applies inline: the game often assigns font THEN material, and
+        /// swapping the font back in between leaves the game's material (original
+        /// atlas) bound to our glyph rects → text renders as random atlas cutouts.
+        /// Instead: unmark the component (so the fast-path stops ignoring it) and
+        /// nudge the direct-apply pass, which runs after the game's frame completed.
+        /// Gives up after a few reverts per component. Our own SetFont echoes here
+        /// and no-ops via _createdFallbackFontNames.
+        /// </summary>
+        public static void OnGameAssignedFont(object component)
+        {
+            if (_suppressFontSetterReapply) return;
+            if (_fallbackAssets.Count == 0) return;
+
+            int instanceId = TypeHelper.GetInstanceID(component);
+            if (instanceId == -1) return;
+
+            var fontObj = TypeHelper.GetFont(component);
+            string fontName = (fontObj is UnityEngine.Object fo) ? fo.name : null;
+            if (string.IsNullOrEmpty(fontName)) return;
+
+            // Our own replacement asset — echo of our SetFont, nothing to do
+            if (_createdFallbackFontNames.Contains(fontName)) return;
+
+            string settingsFontName = GetSettingsFontName(instanceId, fontName);
+            if (string.IsNullOrEmpty(GetConfiguredFallback(settingsFontName))) return;
+            if (!IsTranslationEnabled(settingsFontName)) return;
+
+            if (_fontReplacedComponentIds.Remove(instanceId))
+            {
+                _fontRevertCounts.TryGetValue(instanceId, out int reverts);
+                _fontRevertCounts[instanceId] = reverts + 1;
+                if (reverts + 1 > MaxFontRevertsPerComponent)
+                {
+                    TranslatorCore.LogDebug($"[FontReplace] Component {instanceId} keeps being reverted to '{fontName}' by the game — leaving it alone");
+                    return;
+                }
+                TranslatorCore.LogDebug($"[FontReplace] Game re-assigned '{fontName}' on a replaced component — deferred re-apply scheduled");
+            }
+
+            _directApplyNudge = true;
+        }
+
+        /// <summary>
+        /// True when the modern-TMP replacement machinery has something to apply.
+        /// </summary>
+        public static bool HasActiveReplacements =>
+            _fallbackAssets.Count > 0 &&
+            TranslatorCore.Config != null && TranslatorCore.Config.enable_font_replacement &&
+            !TypeHelper.UseAlternateTMP;
+
+        /// <summary>
+        /// Direct font-application pass over the scene's TMP components, WITHOUT
+        /// re-setting any text. Reaches components whose text is fully static (never
+        /// fires set_text — serialized scenes, texts translated once) and components
+        /// activated after scene load (menu intro animations…), which neither the
+        /// set_text prefix nor ForceRefreshAllText can cover (issue #21).
+        /// Called periodically by the scan loop while replacements are active.
+        /// </summary>
+        public static void ApplyReplacementsToScene()
+        {
+            if (!HasActiveReplacements) return;
+            if (TypeHelper.TMP_TextType == null) return;
+
+            try
+            {
+                UnityEngine.Object[] comps;
+                try { comps = UnityEngine.Object.FindObjectsOfType(TypeHelper.TMP_TextType); }
+                catch { comps = Resources.FindObjectsOfTypeAll(TypeHelper.TMP_TextType); }
+                if (comps == null) return;
+
+                int applied = 0;
+                foreach (var c in comps)
+                {
+                    if (c == null) continue;
+                    int id = c.GetInstanceID();
+                    if (_fontReplacedComponentIds.Contains(id)) continue; // already ours
+
+                    // The game actively re-asserts its font on this one — don't fight it
+                    if (_fontRevertCounts.TryGetValue(id, out int reverts) && reverts > MaxFontRevertsPerComponent)
+                        continue;
+
+                    var comp = c as Component;
+                    if (comp != null && TranslatorCore.ShouldSkipTranslation(comp)) continue;
+
+                    var fontObj = TypeHelper.GetFont(c);
+                    string fontName = (fontObj is UnityEngine.Object fo) ? fo.name : null;
+                    if (string.IsNullOrEmpty(fontName)) continue;
+                    if (_createdFallbackFontNames.Contains(fontName)) continue;
+
+                    string settingsFontName = GetSettingsFontName(id, fontName);
+                    if (string.IsNullOrEmpty(GetConfiguredFallback(settingsFontName))) continue;
+                    if (!IsTranslationEnabled(settingsFontName)) continue;
+
+                    ApplyFontReplacement(c, fontObj, settingsFontName);
+                    if (_fontReplacedComponentIds.Contains(id)) applied++;
+                }
+
+                if (applied > 0)
+                    TranslatorCore.LogDebug($"[FontManager] Direct font pass: applied replacement to {applied} component(s)");
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogDebug($"[FontManager] ApplyReplacementsToScene error: {ex.Message}");
+            }
+        }
+
         /// <summary>
         /// Restore original font on a component. Called when translation is disabled.
         /// </summary>
@@ -2159,7 +2303,18 @@ namespace UnityGameTranslator.Core
 
             if (_originalFontsPerComponent.TryGetValue(instanceId, out var originalFont))
             {
-                TypeHelper.SetFont(component, originalFont);
+                // Unmark BEFORE SetFont and suppress the font-setter postfix: restoring
+                // assigns the original font through the same setter it watches.
+                _fontReplacedComponentIds.Remove(instanceId);
+                _suppressFontSetterReapply = true;
+                try
+                {
+                    TypeHelper.SetFont(component, originalFont);
+                }
+                finally
+                {
+                    _suppressFontSetterReapply = false;
+                }
 
                 // Restore the component's ORIGINAL shared material (styling preset) when
                 // still alive; the font's default material loses per-component presets.
@@ -2184,7 +2339,6 @@ namespace UnityGameTranslator.Core
                 TypeHelper.ForceMeshUpdate(component);
                 _originalFontsPerComponent.Remove(instanceId);
                 _originalMaterialsPerComponent.Remove(instanceId);
-                _fontReplacedComponentIds.Remove(instanceId);
             }
         }
 
@@ -2202,6 +2356,9 @@ namespace UnityGameTranslator.Core
             int restoredComponents = 0;
             int removedFallbacks = 0;
             int restoredFontNames = 0;
+
+            // Toggle = explicit user action → fresh revert budget for every component
+            _fontRevertCounts.Clear();
 
             // --- Path 1: per-component replacements (Normal TMP path) ---
             var componentIds = new List<int>(_replacedComponentRefs.Keys);

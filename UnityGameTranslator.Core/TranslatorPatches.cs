@@ -157,6 +157,21 @@ namespace UnityGameTranslator.Core
                         patchCount++;
                     }
 
+                    // TMP_Text.font setter — games re-assign fonts at any time (menu
+                    // animations, presets, localization systems). The postfix re-applies
+                    // our replacement when that happens: without it, the fast-path marker
+                    // keeps a reverted component ignored forever (issue #21: menu items
+                    // stayed in the original font after the intro animation), and
+                    // components that get their font assigned late are covered the moment
+                    // it happens instead of waiting for a refresh pass.
+                    var fontAssetProp = TypeHelper.TMP_TextType.GetProperty("font", BindingFlags.Public | BindingFlags.Instance);
+                    if (fontAssetProp?.SetMethod != null)
+                    {
+                        var postfix = typeof(TranslatorPatches).GetMethod(nameof(TMPText_SetFont_Postfix), BindingFlags.Static | BindingFlags.Public);
+                        patcher(fontAssetProp.SetMethod, null, postfix);
+                        patchCount++;
+                    }
+
                     TranslatorCore.LogDebug($"[Patches] TMP_Text patches applied ({TypeHelper.TMP_TextType.FullName})");
                 }
                 else
@@ -3193,6 +3208,28 @@ namespace UnityGameTranslator.Core
         private static int _dbgMissedSetFont = 0;
         private static int _dbgTouchLog = 0;
         public static bool BypassFontSizePrefix { get => _bypassFontSizePrefix; set => _bypassFontSizePrefix = value; }
+
+        /// <summary>
+        /// Postfix on TMP_Text.font setter: the game assigned a font on a component.
+        /// Delegates to FontManager which re-applies our replacement when relevant
+        /// (reverted replaced component, or a component using a font that has a
+        /// configured fallback). Our own SetFont calls echo here too and no-op fast.
+        /// </summary>
+        public static void TMPText_SetFont_Postfix(object __instance)
+        {
+            if (__instance == null) return;
+
+            try
+            {
+                if (TranslatorCore.Config == null || !TranslatorCore.Config.enable_font_replacement) return;
+                if (TypeHelper.UseAlternateTMP) return; // TMProOld uses the fallback-list path
+                FontManager.OnGameAssignedFont(__instance);
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogDebug($"[Patches] SetFont postfix error: {ex.Message}");
+            }
+        }
 
         public static void TMPText_SetFontSize_Prefix(object __instance, ref float value)
         {

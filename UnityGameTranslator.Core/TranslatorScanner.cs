@@ -444,6 +444,8 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static int _lastTotalComponentCount = 0;
         private static float _lastForceRefreshTime = 0f;
+        // Last periodic direct font-application pass (see ApplyReplacementsToScene)
+        private static float _lastDirectFontApply = 0f;
 
         /// <summary>
         /// Begin a new incremental refresh cycle. Cheap setup; the actual work is done
@@ -2163,6 +2165,27 @@ namespace UnityGameTranslator.Core
                     // Debounced this cycle — don't lose the request
                     FontManager.RearmPendingRefresh();
                 }
+            }
+
+            // Direct font-application pass (no text re-set): reaches components whose
+            // text is fully static and components activated after scene load (menu
+            // intro animations…) that neither set_text nor ForceRefreshAllText cover.
+            // Runs every 5s as a safety net, or within ~1s when the TMP font-setter
+            // postfix nudges (a component was reverted / assigned by the game — the
+            // re-apply is DEFERRED here so we never interleave inside the game's own
+            // font+material assignment sequence, which rendered atlas cutouts).
+            float nowFonts = Time.realtimeSinceStartup;
+            bool nudged = FontManager.ConsumeDirectApplyNudge();
+            float directApplyInterval = nudged ? 1f : 5f;
+            if (nowFonts - _lastDirectFontApply > directApplyInterval && FontManager.HasActiveReplacements)
+            {
+                _lastDirectFontApply = nowFonts;
+                FontManager.ApplyReplacementsToScene();
+            }
+            else if (nudged)
+            {
+                // Too soon this cycle — keep the request for the next one
+                FontManager.RearmDirectApplyNudge();
             }
 
             // Process all pending updates immediately

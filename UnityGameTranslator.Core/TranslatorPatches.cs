@@ -2784,9 +2784,19 @@ namespace UnityGameTranslator.Core
         private static long _profTotal = 0;
         private static float _profLastLog = 0f;
 
+        // Set around our own internal SetText calls (e.g. the render-repair space nudge)
+        // so the whole translation pipeline ignores that text — no target→target
+        // re-translation, no reverse-cache pollution, no re-queue. The game's own
+        // TMP text-changed event still fires (it is independent of this prefix), which is
+        // exactly what the nudge needs to re-run the game's reveal (issue #21).
+        internal static volatile bool BypassTextPrefix = false;
+
         private static void ProcessTextPatchPrefix(object __instance, ref string textValue, string componentType)
         {
             if (string.IsNullOrEmpty(textValue)) return;
+
+            // Early exit: our own internal set_text (nudge) — don't translate/track it.
+            if (BypassTextPrefix) return;
 
             // Early exit: translations globally disabled → zero overhead
             if (!TranslatorCore.Config.enable_translations) return;

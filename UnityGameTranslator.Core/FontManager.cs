@@ -600,6 +600,7 @@ namespace UnityGameTranslator.Core
             // items stayed in the original font after a restart). New scene → fresh
             // passes and a fresh revert budget.
             _fontRevertCounts.Clear();
+            ClearForceComplete();
             if (_fallbackAssets.Count > 0)
                 RequestPendingRefresh();
 
@@ -735,11 +736,81 @@ namespace UnityGameTranslator.Core
             }
         }
 
+        // Issue #21 — components freshly translated async on a game-driven reveal
+        // (typewriter). willRenderCanvases is the last hook before the canvas draws, so
+        // forcing the finished state HERE overwrites the game's per-frame partial reveal
+        // and wins the race deterministically. Value = force deadline (realtime).
+        private static readonly Dictionary<int, float> _forceCompleteWindow = new Dictionary<int, float>();
+        private static readonly Dictionary<int, object> _forceCompleteRefs = new Dictionary<int, object>();
+        private const float ForceCompleteSeconds = 2.0f;
+
+        /// <summary>
+        /// Register a component so its freshly-applied translation is forced to full
+        /// visibility every frame (in willRenderCanvases) for a short window — defeats a
+        /// game typewriter reveal that stalls on our async text change (issue #21).
+        /// </summary>
+        public static void RegisterForceComplete(object comp)
+        {
+            int id = TypeHelper.GetInstanceID(comp);
+            if (id == -1) return;
+            _forceCompleteWindow[id] = UnityEngine.Time.realtimeSinceStartup + ForceCompleteSeconds;
+            _forceCompleteRefs[id] = comp;
+        }
+
+        /// <summary>Drop all pending force-complete entries (scene change).</summary>
+        public static void ClearForceComplete()
+        {
+            _forceCompleteWindow.Clear();
+            _forceCompleteRefs.Clear();
+        }
+
+        private static void TickForceComplete()
+        {
+            if (_forceCompleteWindow.Count == 0) return;
+            float now = UnityEngine.Time.realtimeSinceStartup;
+            List<int> expired = null;
+
+            foreach (var kvp in _forceCompleteWindow)
+            {
+                object comp = _forceCompleteRefs.TryGetValue(kvp.Key, out var c) ? c : null;
+                bool dead = comp == null || (comp is UnityEngine.Object uo && uo == null);
+                if (dead || now > kvp.Value)
+                {
+                    (expired ??= new List<int>()).Add(kvp.Key);
+                    continue;
+                }
+
+                // Last writer before the canvas draws: full visibility + a clean rebuild
+                // regenerates every glyph at full scale/alpha, overwriting the game's
+                // stalled per-char reveal. No-op cost when the text is already complete.
+                TypeHelper.SetMaxVisibleCharacters(comp, int.MaxValue);
+                TypeHelper.ForceMeshUpdate(comp);
+            }
+
+            if (expired != null)
+                foreach (int id in expired)
+                {
+                    _forceCompleteWindow.Remove(id);
+                    _forceCompleteRefs.Remove(id);
+                }
+        }
+
         private static void OnWillRenderCanvases()
         {
             // During teardown Unity still fires this once while canvases/components are
             // being destroyed; touching them (ForceRefreshAllText) would crash natively.
             if (TranslatorCore.ShuttingDown) return;
+
+            // Render-health watchdog (issue #21): HERE — after the game's per-frame vertex
+            // modification and right before the draw — detect a stalled reveal (glyphs
+            // stuck invisible) and repair it in place, so it renders complete this frame.
+            try { TranslatorScanner.TickRenderWatch(); } catch { }
+
+            // Force freshly-translated game-driven components to their finished state, as
+            // the last writer before the draw (issue #21). Runs every frame, independent
+            // of the scene-refresh gate below.
+            TickForceComplete();
+
             if (!_pendingSceneRefresh) return;
             _pendingSceneRefresh = false;
 
@@ -2166,6 +2237,19 @@ namespace UnityGameTranslator.Core
         // game's font= and material= assignments).
         private static readonly Dictionary<int, int> _fontRevertCounts = new Dictionary<int, int>();
         private const int MaxFontRevertsPerComponent = 3;
+
+        /// <summary>
+        /// True when the game keeps re-assigning its own font on this component after our
+        /// replacement — a universal signal that the game itself drives this component's
+        /// rendering (typewriter reveal, per-frame animation…). Static components (menus,
+        /// labels) keep our font and never trip this. Callers use it to STOP generating
+        /// their own mesh events on such components and let the game own the reveal
+        /// (issue #21). Not game-specific: any game that re-asserts fonts trips it.
+        /// </summary>
+        public static bool IsGameManagedFontComponent(int instanceId)
+        {
+            return _fontRevertCounts.TryGetValue(instanceId, out int reverts) && reverts > 0;
+        }
 
         // Nudge: the font-setter postfix requests a direct-apply pass on the next scan
         // cycle instead of re-applying inline (see OnGameAssignedFont).

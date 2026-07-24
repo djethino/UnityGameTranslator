@@ -244,9 +244,7 @@ namespace UnityGameTranslator.Core
             processedTextHashes.Clear();
             inputFieldTextIds.Clear();
             componentOriginals.Clear();
-            _revealFixWindow.Clear();
-            _revealFixRefs.Clear();
-            _revealFixLast.Clear();
+            _renderWatch.Clear();
 
             // Clear all per-type caches and reset discovery strategies
             foreach (var type in _registeredTypes)
@@ -1583,21 +1581,17 @@ namespace UnityGameTranslator.Core
                 {
                     if (type.NeedsForceMeshUpdate)
                     {
-                        // TMP: SELECTIVE refresh (issue #21). The historical behavior
-                        // re-set every component's text with an empty-then-restore hack;
-                        // the refresh fires after EVERY completed AI translation, so game
-                        // typewriter scripts reacted to the "" set (maxVisibleCharacters
-                        // frozen at 0 → dialogue bubbles rendered EMPTY) or restarted
-                        // their animation on every set.
-                        //  - Text already translated (reverse-cache hit): nothing to
-                        //    apply — no text event at all.
-                        //  - Otherwise: ONE direct set (the prefix transforms it inline;
-                        //    when the text actually changes TMP re-renders naturally, no
-                        //    same-text early-out to defeat, so no "" needed).
-                        // The unconditional ForceMeshUpdate + SetAllDirty below covers
-                        // re-render needs without text events (clone-atlas UV updates).
-                        // UI.Text (else branch) keeps the historical single re-set — the
-                        // LongYin-era fixes depend on that exact flow.
+                        // TMP: SELECTIVE refresh (issue #21). This fires after EVERY
+                        // completed AI translation, so touching a game-managed component
+                        // (one the game re-asserts its font on — typewriter/animated) would
+                        // regenerate its mesh mid-reveal and freeze it. Leave those to the
+                        // game entirely. For the rest: apply the translation if the text
+                        // isn't already in target language (prefix transforms inline; a real
+                        // text change makes TMP re-render), then a ForceMeshUpdate for
+                        // static components that need it on IL2CPP (clone-atlas UV updates).
+                        int cid = TypeHelper.GetInstanceID(component);
+                        if (cid != -1 && FontManager.IsGameManagedFontComponent(cid))
+                            return;
                         if (!TranslatorCore.HasCachedTranslation(currentText))
                             SetTextForType(component, type, currentText);
                         TypeHelper.ForceMeshUpdate(component);
@@ -2134,66 +2128,6 @@ namespace UnityGameTranslator.Core
             }
         }
 
-        // Issue #21 — freshly-applied dialogue translations render partial/blank because
-        // the game's per-character typewriter reveal re-runs on our async text change and
-        // stalls (proven: text/font/atlas/mesh all correct, mesh has vertices, but the
-        // per-char scale+alpha reveal freezes mid-way — see screenshot casse.png). The
-        // english was already fully revealed before we translate, so there is NO live
-        // animation to preserve: we re-assert the finished state (full visibility + a
-        // clean mesh rebuild) for a short window, winning against the stalled reveal and
-        // against our own later disruptors (font re-assign, refresh). Value = deadline.
-        private static readonly Dictionary<int, float> _revealFixWindow = new Dictionary<int, float>();
-        private static readonly Dictionary<int, object> _revealFixRefs = new Dictionary<int, object>();
-        private static readonly Dictionary<int, float> _revealFixLast = new Dictionary<int, float>();
-        private const float RevealFixWindowSeconds = 1.5f;
-        private const float RevealFixIntervalSeconds = 0.1f;
-
-        private static void RegisterRevealFix(object comp)
-        {
-            int id = TypeHelper.GetInstanceID(comp);
-            if (id == -1) return;
-            _revealFixWindow[id] = Time.realtimeSinceStartup + RevealFixWindowSeconds;
-            _revealFixRefs[id] = comp;
-            _revealFixLast[id] = 0f;
-        }
-
-        private static void TickRevealFix()
-        {
-            if (_revealFixWindow.Count == 0) return;
-            float now = Time.realtimeSinceStartup;
-            List<int> expired = null;
-
-            foreach (var kvp in _revealFixWindow)
-            {
-                object comp = _revealFixRefs.TryGetValue(kvp.Key, out var c) ? c : null;
-                bool dead = comp == null || (comp is UnityEngine.Object uo && uo == null);
-                if (dead || now > kvp.Value)
-                {
-                    (expired ??= new List<int>()).Add(kvp.Key);
-                    continue;
-                }
-
-                // Throttle: re-assert every ~0.1s over the window (cheap, lands after the
-                // game's font re-assign / typewriter coroutine have settled).
-                if (_revealFixLast.TryGetValue(kvp.Key, out float last) && now - last < RevealFixIntervalSeconds)
-                    continue;
-                _revealFixLast[kvp.Key] = now;
-
-                // Full visibility (covers maxVisibleCharacters-based typewriters) + a clean
-                // mesh rebuild (regenerates every glyph at full scale/alpha, undoing the
-                // per-char reveal that froze). ForceMeshUpdate is the canonical TMP rebuild.
-                TypeHelper.SetMaxVisibleCharacters(comp, int.MaxValue);
-                TypeHelper.ForceMeshUpdate(comp);
-            }
-
-            if (expired != null)
-                foreach (int id in expired)
-                {
-                    _revealFixWindow.Remove(id);
-                    _revealFixRefs.Remove(id);
-                    _revealFixLast.Remove(id);
-                }
-        }
 
         /// <summary>
         /// Process pending translation updates on the main thread.
@@ -2205,8 +2139,13 @@ namespace UnityGameTranslator.Core
             // when multiple cloned fonts share the native font rasterizer
             FontManager.ProtectCloneAtlases();
 
-            // Keep freshly-applied dialogue translations from freezing mid-typewriter
-            TickRevealFix();
+            // Apply any render-repair space nudges here on the main Update thread (the
+            // detection runs in willRenderCanvases; set_text is safer here).
+            ApplyPendingNudges();
+
+            // NOTE: TickRenderWatch runs from FontManager.OnWillRenderCanvases (after the
+            // game's per-frame vertex modification), so it reads the ACTUAL rendered state —
+            // reading here in Update saw only TMP's un-modified base mesh.
 
             // Check for stabilized typewriting texts and trigger their translation
             TranslatorPatches.ProcessStabilizedTypewriting();
@@ -2305,33 +2244,27 @@ namespace UnityGameTranslator.Core
 
                         TypeHelper.SetText(comp, translation);
 
-                        // Visual refresh. ToggleEnabled (disable→enable) was introduced
-                        // for UI.Text clone-atlas rebinding (CanvasRenderer won't rebind
-                        // otherwise), but on TMP it is unnecessary — SetText already
-                        // triggers a full rebuild — AND destructive: the disable/enable
-                        // fires the game typewriter's OnDisable/OnEnable, which resets
-                        // maxVisibleCharacters to 0 and blanks the freshly-set text
-                        // (issue #21 dialogue bubbles). Use the non-destructive path for
-                        // TMP, keep the toggle for UI.Text and other types.
+                        int id = TypeHelper.GetInstanceID(comp);
+
                         if (TypeHelper.IsOfType(comp, TypeHelper.TMP_TextType))
                         {
-                            // Non-destructive refresh for TMP (SetText already rebuilds;
-                            // ToggleEnabled would fire the game typewriter OnDisable/
-                            // OnEnable). The empty/garbled/partial render on dialogue is the
-                            // game's per-character typewriter reveal re-running on our async
-                            // text change and freezing (proven: font/atlas/mesh all correct,
-                            // vertices present, but the per-char reveal stalls). The reveal
-                            // window (below) re-asserts the finished state for ~1.5s.
                             TypeHelper.ForceMeshUpdate(comp);
                             TypeHelper.SetAllDirty(comp);
-                            RegisterRevealFix(comp);
+
+                            // Watch this component: if a game typewriter reveal re-runs on
+                            // our text change and stalls (glyphs stuck invisible), the
+                            // render-health watchdog fixes it (space-nudge when it's the
+                            // same-length quirk, else alpha repair). Self-gating: healthy /
+                            // animated text never trips it (issue #21).
+                            RegisterRenderWatch(comp, originalText, translation);
                         }
                         else
                         {
+                            // UI.Text (LongYin/clone-atlas) needs the enable toggle to rebind
+                            // the CanvasRenderer — untouched path.
                             TypeHelper.ToggleEnabled(comp);
                         }
 
-                        int id = TypeHelper.GetInstanceID(comp);
                         if (id != -1)
                         {
                             TranslatorCore.UpdateSeenText(id, translation);
@@ -2365,6 +2298,170 @@ namespace UnityGameTranslator.Core
                 }
                 catch { }
             }
+        }
+
+        // UNIVERSAL RENDER-HEALTH watchdog (issue #21). After we apply a translation to a
+        // TMP component, a game typewriter reveal may re-run on the text change and STALL,
+        // leaving glyphs stuck invisible (alpha 0) — blank/partial rendering. We watch the
+        // per-glyph alpha (via GetRenderHealth) over a short window: while it changes, the
+        // reveal is animating (leave it — healthy reveals converge to hidden=0). Once it
+        // SETTLES with hidden>0, the reveal froze broken → repair by forcing the glyphs
+        // opaque WITHOUT regenerating the mesh (ForceVertexAlphaOpaque), which the game
+        // can't undo (no text-changed event fires). Game- and language-agnostic; healthy
+        // and continuously-animated text never trip it (hidden 0, or never settles).
+        private sealed class RenderWatchEntry
+        {
+            public object Comp;
+            public string FullOrig;    // source text, to compare LENGTH (the reveal quirk)
+            public string FullTr;      // current shown translation (detect line change)
+            public float Deadline;
+            public int LastHidden;     // to detect "settled" (unchanged)
+            public float StableSince;  // when LastHidden stopped changing
+            public bool Repairing;     // alpha-repair mode (fallback)
+            public bool Nudged;        // space-nudge already tried once for this line
+            public bool NudgePending;  // watchdog asked; the Update pass applies the set_text
+        }
+        private static readonly Dictionary<int, RenderWatchEntry> _renderWatch = new Dictionary<int, RenderWatchEntry>();
+        private const float RenderWatchSeconds = 2.5f;
+        private const float RenderSettleSeconds = 0.3f;  // hidden unchanged this long = reveal stopped
+
+        private static void RegisterRenderWatch(object comp, string originalText, string translation)
+        {
+            int id = TypeHelper.GetInstanceID(comp);
+            if (id == -1) return;
+            _renderWatch[id] = new RenderWatchEntry
+            {
+                Comp = comp,
+                FullOrig = originalText,
+                FullTr = translation,
+                Deadline = Time.realtimeSinceStartup + RenderWatchSeconds,
+                LastHidden = -1,
+                StableSince = Time.realtimeSinceStartup,
+                Repairing = false,
+                Nudged = false,
+                NudgePending = false
+            };
+        }
+
+        /// <summary>
+        /// Apply pending space-nudges on the main Update thread (safer than set_text inside
+        /// willRenderCanvases). Appends a space to the shown translation and re-sets it via
+        /// our OWN pipeline-bypass so it re-fires the game's reveal on a now-longer text
+        /// (which reveals cleanly — see the length-quirk finding, issue #21) without any
+        /// re-translation of our own text.
+        /// </summary>
+        private static void ApplyPendingNudges()
+        {
+            if (_renderWatch.Count == 0) return;
+            foreach (var kvp in _renderWatch)
+            {
+                var e = kvp.Value;
+                if (!e.NudgePending) continue;
+                e.NudgePending = false;
+                bool dead = e.Comp == null || (e.Comp is UnityEngine.Object uo && uo == null);
+                if (dead) continue;
+                try
+                {
+                    string nudged = e.FullTr + " ";
+                    TranslatorPatches.BypassTextPrefix = true;
+                    try { TypeHelper.SetText(e.Comp, nudged); }
+                    finally { TranslatorPatches.BypassTextPrefix = false; }
+                    e.FullTr = nudged;          // so the line-change check still matches
+                    e.LastHidden = -1;          // re-evaluate the reveal on the nudged text
+                    e.StableSince = Time.realtimeSinceStartup;
+                    TranslatorCore.LogDebug($"[RenderWatch] comp={kvp.Key} same-length break — nudged (+space) to re-run reveal cleanly");
+                }
+                catch { }
+            }
+        }
+
+        /// <summary>
+        /// Called from FontManager.OnWillRenderCanvases — the last hook before the canvas
+        /// draws, AFTER the game's per-frame vertex modification. Detects a settled broken
+        /// render (hidden&gt;0 stable) and repairs it in place.
+        /// </summary>
+        public static void TickRenderWatch()
+        {
+            if (_renderWatch.Count == 0) return;
+            float now = Time.realtimeSinceStartup;
+            List<int> expired = null;
+
+            foreach (var kvp in _renderWatch)
+            {
+                var e = kvp.Value;
+                bool dead = e.Comp == null || (e.Comp is UnityEngine.Object uo && uo == null);
+                // The DETECTION phase is time-bounded; once REPAIRING we keep going until
+                // the line changes, because a stuck reveal re-asserts alpha 0 every frame
+                // (transparent case) and would re-hide the text the moment we stop.
+                if (dead || (!e.Repairing && now > e.Deadline))
+                {
+                    (expired ??= new List<int>()).Add(kvp.Key);
+                    continue;
+                }
+                // The reused bubble moved on to another line — stop watching this one.
+                if (TypeHelper.GetText(e.Comp) != e.FullTr)
+                {
+                    (expired ??= new List<int>()).Add(kvp.Key);
+                    continue;
+                }
+
+                // A nudge was requested but not yet applied by the Update pass — wait.
+                if (e.NudgePending) continue;
+
+                try
+                {
+                    if (!TypeHelper.GetRenderHealth(e.Comp, out int vis, out int hidden))
+                        continue;
+
+                    if (e.Repairing)
+                    {
+                        // Re-force opaque each frame while this line is shown: the game
+                        // re-asserts its stuck alpha 0, so we must keep overwriting it as
+                        // the last writer before the draw (until the line advances).
+                        if (hidden > 0) TypeHelper.ForceVertexAlphaOpaque(e.Comp);
+                        continue;
+                    }
+
+                    if (hidden != e.LastHidden)
+                    {
+                        e.LastHidden = hidden;
+                        e.StableSince = now;   // still changing → reveal animating
+                        continue;
+                    }
+
+                    if (hidden > 0 && now - e.StableSince >= RenderSettleSeconds)
+                    {
+                        // Reveal froze broken. FIRST try the clean fix when the game's
+                        // stall is the exact-same-length quirk (see length-quirk finding):
+                        // nudge the shown text +1 char so the reveal re-runs on a longer
+                        // text and completes on its own — ANIMATION PRESERVED, no override.
+                        if (!e.Nudged && e.FullOrig != null && e.FullTr.Length == e.FullOrig.Length)
+                        {
+                            e.Nudged = true;
+                            e.NudgePending = true;   // Update pass applies the set_text
+                        }
+                        else
+                        {
+                            // Not the length quirk, or the nudge didn't fix it → fall back
+                            // to the alpha repair (transparent case, or leftover scale).
+                            if (TypeHelper.ForceVertexAlphaOpaque(e.Comp))
+                            {
+                                e.Repairing = true;
+                                TranslatorCore.LogDebug($"[RenderWatch] comp={kvp.Key} settled broken (hidden={hidden}/{vis}) — forced opaque");
+                            }
+                        }
+                    }
+                    else if (hidden == 0 && now - e.StableSince >= RenderSettleSeconds)
+                    {
+                        // Healthy and settled → nothing to do, stop watching.
+                        (expired ??= new List<int>()).Add(kvp.Key);
+                    }
+                }
+                catch { }
+            }
+
+            if (expired != null)
+                foreach (int id in expired) _renderWatch.Remove(id);
         }
 
         #endregion

@@ -841,6 +841,374 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// UNIVERSAL RENDER-HEALTH detector (issue #21). Reads per-glyph vertex alpha from
+        /// textInfo.meshInfo (one quad = 4 verts per RENDERED glyph) and counts:
+        ///   visible = rendered glyphs, hidden = glyphs whose alpha is ~0 (invisible).
+        /// A game typewriter reveal that stalls on our async text change leaves glyphs
+        /// stuck at alpha 0 → hidden &gt; 0 once the animation settles. Game- and
+        /// language-agnostic: it only looks at what the mesh actually draws. (Quad HEIGHT
+        /// varies naturally between glyphs — 'e' vs 'H' — so it is NOT used as a signal.)
+        /// Returns false when meshInfo is unavailable.
+        /// </summary>
+        public static bool GetRenderHealth(object component, out int visible, out int hidden)
+        {
+            visible = 0; hidden = 0;
+            if (component == null) return false;
+            try
+            {
+                var ti = component.GetType().GetProperty("textInfo", BindingFlags.Public | BindingFlags.Instance)?.GetValue(component, null);
+                var mi = ti?.GetType().GetProperty("meshInfo", BindingFlags.Public | BindingFlags.Instance)?.GetValue(ti, null);
+                if (mi == null) return false;
+                var miLenP = mi.GetType().GetProperty("Length") ?? mi.GetType().GetProperty("Count");
+                int miLen = miLenP != null ? Convert.ToInt32(miLenP.GetValue(mi, null)) : 0;
+                var miItem = mi.GetType().GetProperty("Item");
+                if (miItem == null || miLen <= 0) return false;
+
+                for (int m = 0; m < miLen; m++)
+                {
+                    var info = miItem.GetValue(mi, new object[] { m });
+                    if (info == null) continue;
+                    var colors = info.GetType().GetProperty("colors32", BindingFlags.Public | BindingFlags.Instance)?.GetValue(info, null);
+                    if (colors == null) continue;
+                    // vertexCount = USED verts (TMP over-allocates the buffer; the padding
+                    // would otherwise be counted as hidden glyphs).
+                    var vcP = info.GetType().GetProperty("vertexCount", BindingFlags.Public | BindingFlags.Instance);
+                    int n = vcP != null ? Convert.ToInt32(vcP.GetValue(info, null)) : 0;
+                    var cItem = colors.GetType().GetProperty("Item");
+                    if (cItem == null || n <= 0) continue;
+
+                    for (int q = 0; q + 3 < n; q += 4)
+                    {
+                        int aSum = 0;
+                        for (int k = 0; k < 4; k++)
+                        {
+                            var col = cItem.GetValue(colors, new object[] { q + k });
+                            aSum += Convert.ToInt32(col.GetType().GetField("a").GetValue(col));
+                        }
+                        if (aSum / 4 < 51) hidden++;
+                        visible++;
+                    }
+                }
+                return visible > 0;
+            }
+            catch { return false; }
+        }
+
+        private static MethodInfo _updateVertexDataMethod;
+        private static bool _updateVertexDataResolved;
+
+        /// <summary>
+        /// DIAGNOSTIC (issue #21): compare the max glyph quad HEIGHT as laid out in
+        /// characterInfo (TMP's reference) vs as drawn in meshInfo. If characterInfo is a
+        /// clean full-scale reference, layoutMaxH &gt; meshMaxH on a scale-broken text; if
+        /// the game corrupts characterInfo too, they match (both small) → no usable
+        /// reference to restore scale from.
+        /// </summary>
+        public static void GetLayoutMeshHeights(object component, out float layoutMaxH, out float meshMaxH)
+        {
+            layoutMaxH = -1f; meshMaxH = -1f;
+            if (component == null) return;
+            try
+            {
+                var ti = component.GetType().GetProperty("textInfo", BindingFlags.Public | BindingFlags.Instance)?.GetValue(component, null);
+                if (ti == null) return;
+                var mi = ti.GetType().GetProperty("meshInfo", BindingFlags.Public | BindingFlags.Instance)?.GetValue(ti, null);
+                var ci = ti.GetType().GetProperty("characterInfo", BindingFlags.Public | BindingFlags.Instance)?.GetValue(ti, null);
+                int charCount = Convert.ToInt32(ti.GetType().GetProperty("characterCount", BindingFlags.Public | BindingFlags.Instance)?.GetValue(ti, null) ?? 0);
+                if (mi == null || ci == null || charCount <= 0) return;
+                var ciItem = ci.GetType().GetProperty("Item");
+                var miItem = mi.GetType().GetProperty("Item");
+                if (ciItem == null || miItem == null) return;
+
+                float lMax = 0f, mMax = 0f;
+                for (int i = 0; i < charCount; i++)
+                {
+                    var cinfo = ciItem.GetValue(ci, new object[] { i });
+                    if (cinfo == null) continue;
+                    var cit = cinfo.GetType();
+                    var visF = cit.GetField("isVisible");
+                    if (visF != null && !Convert.ToBoolean(visF.GetValue(cinfo))) continue;
+
+                    var bl = cit.GetField("vertex_BL")?.GetValue(cinfo);
+                    var tl = cit.GetField("vertex_TL")?.GetValue(cinfo);
+                    var blP = bl?.GetType().GetField("position")?.GetValue(bl);
+                    var tlP = tl?.GetType().GetField("position")?.GetValue(tl);
+                    if (blP != null && tlP != null)
+                    {
+                        float h = Convert.ToSingle(tlP.GetType().GetField("y").GetValue(tlP)) - Convert.ToSingle(blP.GetType().GetField("y").GetValue(blP));
+                        if (h > lMax) lMax = h;
+                    }
+
+                    int matRef = Convert.ToInt32((cit.GetField("materialReferenceIndex")?.GetValue(cinfo)) ?? 0);
+                    int vIndex = Convert.ToInt32((cit.GetField("vertexIndex")?.GetValue(cinfo)) ?? -1);
+                    if (vIndex < 0) continue;
+                    var info = miItem.GetValue(mi, new object[] { matRef });
+                    var verts = info?.GetType().GetProperty("vertices", BindingFlags.Public | BindingFlags.Instance)?.GetValue(info, null);
+                    var vItem = verts?.GetType().GetProperty("Item");
+                    if (vItem == null) continue;
+                    var v0 = vItem.GetValue(verts, new object[] { vIndex });      // BL
+                    var v1 = vItem.GetValue(verts, new object[] { vIndex + 1 });  // TL
+                    float mh = Convert.ToSingle(v1.GetType().GetField("y").GetValue(v1)) - Convert.ToSingle(v0.GetType().GetField("y").GetValue(v0));
+                    if (mh > mMax) mMax = mh;
+                }
+                layoutMaxH = lMax; meshMaxH = mMax;
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// UNIVERSAL RENDER REPAIR (issue #21). Force every rendered glyph opaque by
+        /// writing alpha=255 into textInfo.meshInfo colours and pushing them with
+        /// UpdateVertexData() — which uploads the mesh WITHOUT regenerating it, so it does
+        /// NOT fire TMP's text-changed event and therefore does NOT re-trigger a game
+        /// typewriter that re-applies its stalled reveal (unlike ForceMeshUpdate, which
+        /// does regenerate and loses the race). Use only when GetRenderHealth reports a
+        /// settled hidden&gt;0. Returns true when it wrote and pushed.
+        /// </summary>
+        public static bool ForceVertexAlphaOpaque(object component)
+        {
+            if (component == null) return false;
+            try
+            {
+                var ti = component.GetType().GetProperty("textInfo", BindingFlags.Public | BindingFlags.Instance)?.GetValue(component, null);
+                var mi = ti?.GetType().GetProperty("meshInfo", BindingFlags.Public | BindingFlags.Instance)?.GetValue(ti, null);
+                if (mi == null) return false;
+                var miLenP = mi.GetType().GetProperty("Length") ?? mi.GetType().GetProperty("Count");
+                int miLen = miLenP != null ? Convert.ToInt32(miLenP.GetValue(mi, null)) : 0;
+                var miItem = mi.GetType().GetProperty("Item");
+                if (miItem == null || miLen <= 0) return false;
+
+                bool wrote = false;
+                for (int m = 0; m < miLen; m++)
+                {
+                    var info = miItem.GetValue(mi, new object[] { m });
+                    if (info == null) continue;
+                    var colors = info.GetType().GetProperty("colors32", BindingFlags.Public | BindingFlags.Instance)?.GetValue(info, null);
+                    if (colors == null) continue;
+                    var vcP = info.GetType().GetProperty("vertexCount", BindingFlags.Public | BindingFlags.Instance);
+                    int n = vcP != null ? Convert.ToInt32(vcP.GetValue(info, null)) : 0;
+                    var cItem = colors.GetType().GetProperty("Item");
+                    if (cItem == null || n <= 0) continue;
+                    var aField = (FieldInfo)null;
+                    for (int v = 0; v < n; v++)
+                    {
+                        var col = cItem.GetValue(colors, new object[] { v });
+                        if (aField == null) aField = col.GetType().GetField("a");
+                        if (aField == null) break;
+                        if (Convert.ToInt32(aField.GetValue(col)) >= 255) continue;
+                        aField.SetValue(col, (byte)255);         // mutate boxed Color32 copy
+                        cItem.SetValue(colors, col, new object[] { v }); // write it back
+                        wrote = true;
+                    }
+                }
+                if (!wrote) return false;
+
+                if (!_updateVertexDataResolved)
+                {
+                    _updateVertexDataResolved = true;
+                    _updateVertexDataMethod = component.GetType().GetMethod("UpdateVertexData",
+                        BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
+                }
+                if (_updateVertexDataMethod != null)
+                    _updateVertexDataMethod.Invoke(component, null);
+                return true;
+            }
+            catch { return false; }
+        }
+
+        /// <summary>
+        /// UNIVERSAL RENDER REPAIR — full version (issue #21). Restores BOTH alpha AND
+        /// POSITION (scale) of every visible glyph from textInfo.characterInfo, which holds
+        /// TMP's own full-scale layout (a game vertex effect modifies meshInfo, not this
+        /// layout reference). Copies each character's 4 layout vertices into meshInfo and
+        /// forces alpha opaque, then UpdateVertexData (no regeneration → no game re-trigger).
+        /// Fixes the "garbled" case (some glyphs frozen at reduced scale) that the
+        /// alpha-only repair leaves behind. Falls back to alpha-only when characterInfo
+        /// can't be read on this runtime. Returns true when it wrote and pushed.
+        /// </summary>
+        public static bool ForceVertexFullRender(object component)
+        {
+            if (component == null) return false;
+            try
+            {
+                var ti = component.GetType().GetProperty("textInfo", BindingFlags.Public | BindingFlags.Instance)?.GetValue(component, null);
+                if (ti == null) return ForceVertexAlphaOpaque(component);
+                var mi = ti.GetType().GetProperty("meshInfo", BindingFlags.Public | BindingFlags.Instance)?.GetValue(ti, null);
+                var ci = ti.GetType().GetProperty("characterInfo", BindingFlags.Public | BindingFlags.Instance)?.GetValue(ti, null);
+                int charCount = Convert.ToInt32(ti.GetType().GetProperty("characterCount", BindingFlags.Public | BindingFlags.Instance)?.GetValue(ti, null) ?? 0);
+                if (mi == null || ci == null || charCount <= 0) return ForceVertexAlphaOpaque(component);
+
+                var miItem = mi.GetType().GetProperty("Item");
+                var ciItem = ci.GetType().GetProperty("Item");
+                if (miItem == null || ciItem == null) return ForceVertexAlphaOpaque(component);
+
+                bool wrote = false;
+                for (int i = 0; i < charCount; i++)
+                {
+                    var cinfo = ciItem.GetValue(ci, new object[] { i });
+                    if (cinfo == null) continue;
+                    var cit = cinfo.GetType();
+
+                    // isVisible: skip non-rendered (space/newline). If the field can't be
+                    // read, assume visible (the vertex indices below still guard us).
+                    var visF = cit.GetField("isVisible");
+                    if (visF != null && !Convert.ToBoolean(visF.GetValue(cinfo))) continue;
+
+                    int matRef = Convert.ToInt32((cit.GetField("materialReferenceIndex")?.GetValue(cinfo)) ?? 0);
+                    int vIndex = Convert.ToInt32((cit.GetField("vertexIndex")?.GetValue(cinfo)) ?? -1);
+                    if (vIndex < 0) return ForceVertexAlphaOpaque(component); // layout not readable → fallback
+
+                    var info = miItem.GetValue(mi, new object[] { matRef });
+                    var verts = info?.GetType().GetProperty("vertices", BindingFlags.Public | BindingFlags.Instance)?.GetValue(info, null);
+                    var colors = info?.GetType().GetProperty("colors32", BindingFlags.Public | BindingFlags.Instance)?.GetValue(info, null);
+                    if (verts == null || colors == null) continue;
+                    var vItem = verts.GetType().GetProperty("Item");
+                    var cItem = colors.GetType().GetProperty("Item");
+                    var vLenP = verts.GetType().GetProperty("Length") ?? verts.GetType().GetProperty("Count");
+                    int vLen = vLenP != null ? Convert.ToInt32(vLenP.GetValue(verts, null)) : 0;
+                    if (vItem == null || cItem == null || vIndex + 3 >= vLen) continue;
+
+                    // layout positions: vertex_BL/TL/TR/BR (TMP_Vertex.position), in the same
+                    // BL,TL,TR,BR order TMP writes into the mesh quad.
+                    string[] corners = { "vertex_BL", "vertex_TL", "vertex_TR", "vertex_BR" };
+                    var posObjs = new object[4];
+                    float qLo = float.MaxValue, qHi = float.MinValue;
+                    bool posReadable = true;
+                    for (int k = 0; k < 4; k++)
+                    {
+                        var vtx = cit.GetField(corners[k])?.GetValue(cinfo);
+                        var pos = vtx?.GetType().GetField("position")?.GetValue(vtx);
+                        posObjs[k] = pos;
+                        if (pos == null) { posReadable = false; break; }
+                        float y = Convert.ToSingle(pos.GetType().GetField("y").GetValue(pos));
+                        if (y < qLo) qLo = y; if (y > qHi) qHi = y;
+                    }
+
+                    // SAFETY: only trust the layout positions when the reference quad has a
+                    // sane height. A degenerate quad (~0) means the read failed or the
+                    // layout itself is collapsed — writing it would make the glyph vanish
+                    // (the earlier regression). In that case leave positions untouched and
+                    // only fix alpha for this glyph.
+                    bool writePos = posReadable && (qHi - qLo) > 1f;
+
+                    for (int k = 0; k < 4; k++)
+                    {
+                        if (writePos) vItem.SetValue(verts, posObjs[k], new object[] { vIndex + k });
+                        var col = cItem.GetValue(colors, new object[] { vIndex + k });
+                        var aF = col.GetType().GetField("a");
+                        if (aF != null) { aF.SetValue(col, (byte)255); cItem.SetValue(colors, col, new object[] { vIndex + k }); }
+                    }
+                    wrote = true;
+                }
+                if (!wrote) return false;
+
+                if (!_updateVertexDataResolved)
+                {
+                    _updateVertexDataResolved = true;
+                    _updateVertexDataMethod = component.GetType().GetMethod("UpdateVertexData",
+                        BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
+                }
+                if (_updateVertexDataMethod != null)
+                    _updateVertexDataMethod.Invoke(component, null);
+                return true;
+            }
+            catch { return ForceVertexAlphaOpaque(component); }
+        }
+
+        /// <summary>
+        /// DIAGNOSTIC: vertical span (maxY - minY) of a TMP component's vertices. A
+        /// per-character SCALE reveal shrinks glyph quads → span smaller than the
+        /// fully-revealed baseline. Returns -1 when unavailable.
+        /// </summary>
+        public static float GetVertexYSpan(object component)
+        {
+            if (component == null) return -1f;
+            try
+            {
+                var ti = component.GetType().GetProperty("textInfo", BindingFlags.Public | BindingFlags.Instance)?.GetValue(component, null);
+                var mi = ti?.GetType().GetProperty("meshInfo", BindingFlags.Public | BindingFlags.Instance)?.GetValue(ti, null);
+                if (mi == null) return -1f;
+                var lenP = mi.GetType().GetProperty("Length") ?? mi.GetType().GetProperty("Count");
+                int len = lenP != null ? Convert.ToInt32(lenP.GetValue(mi, null)) : 0;
+                var indexer = mi.GetType().GetProperty("Item");
+                float lo = float.MaxValue, hi = float.MinValue;
+                for (int m = 0; m < len; m++)
+                {
+                    var info = indexer.GetValue(mi, new object[] { m });
+                    var verts = info?.GetType().GetProperty("vertices", BindingFlags.Public | BindingFlags.Instance)?.GetValue(info, null);
+                    if (verts == null) continue;
+                    var vlp = verts.GetType().GetProperty("Length") ?? verts.GetType().GetProperty("Count");
+                    int vlen = vlp != null ? Convert.ToInt32(vlp.GetValue(verts, null)) : 0;
+                    var vItem = verts.GetType().GetProperty("Item");
+                    for (int v = 0; v < vlen; v++)
+                    {
+                        var vec = vItem.GetValue(verts, new object[] { v });
+                        float y = Convert.ToSingle(vec.GetType().GetField("y").GetValue(vec));
+                        if (y < lo) lo = y;
+                        if (y > hi) hi = y;
+                    }
+                }
+                if (hi > float.MinValue) return hi - lo;
+            }
+            catch { }
+            return -1f;
+        }
+
+        private static Type _canvasGroupType;
+        private static MethodInfo _getComponentMethod;
+        private static bool _getComponentResolved;
+
+        /// <summary>
+        /// DIAGNOSTIC: nearest CanvasGroup alpha up the parent hierarchy (the "transparent"
+        /// hypothesis — a container fade the game freezes at 0 would render invisible while
+        /// the TMP component's own alpha stays 1). Returns -1 when none found or unavailable.
+        /// Uses reflection (never a direct GetComponent(Type) call, which is stripped on
+        /// IL2CPP and would throw MissingMethodException at JIT time).
+        /// </summary>
+        public static float GetHierarchyCanvasGroupAlpha(object component)
+        {
+            try
+            {
+                if (_canvasGroupType == null)
+                {
+                    foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+                    {
+                        _canvasGroupType = asm.GetType("UnityEngine.CanvasGroup");
+                        if (_canvasGroupType != null) break;
+                    }
+                }
+                if (_canvasGroupType == null) return -1f;
+
+                if (!_getComponentResolved)
+                {
+                    _getComponentResolved = true;
+                    _getComponentMethod = typeof(GameObject).GetMethod("GetComponent",
+                        BindingFlags.Public | BindingFlags.Instance, null, new[] { typeof(Type) }, null);
+                }
+                if (_getComponentMethod == null) return -1f;
+
+                var comp = component as Component;
+                var t = comp?.transform;
+                int guard = 0;
+                while (t != null && guard++ < 64)
+                {
+                    object cg = null;
+                    try { cg = _getComponentMethod.Invoke(t.gameObject, new object[] { _canvasGroupType }); }
+                    catch { return -1f; }
+                    var cgCast = Il2CppCast(cg, _canvasGroupType) ?? cg;
+                    if (cgCast != null)
+                    {
+                        var aProp = _canvasGroupType.GetProperty("alpha", BindingFlags.Public | BindingFlags.Instance);
+                        if (aProp != null) return Convert.ToSingle(aProp.GetValue(cgCast, null));
+                    }
+                    t = t.parent;
+                }
+            }
+            catch { }
+            return -1f;
+        }
+
+        /// <summary>
         /// Read TMP_Text.maxVisibleCharacters (int). Returns -1 when unavailable.
         /// A typewriter effect keeps this below the text length while revealing; a
         /// finished/idle typewriter leaves it at the last-revealed count. Default is a

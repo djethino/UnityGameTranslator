@@ -904,8 +904,20 @@ namespace UnityGameTranslator.Core.UI
 
         private static SseClient _editSessionSseClient;
         private static string _editSessionModKey;
-        // Last applied save (dedupe: the SSE server replays the latest save on reconnection)
-        private static string _lastEditSessionHash;
+        // Hash of the content currently in the server session — set by our own pushes
+        // AND by applying a browser save. Used only to suppress a redundant push (echo).
+        private static string _sessionContentHash;
+        // Hash of the last browser save we already applied. Set ONLY when a save is
+        // applied, NEVER by a push. The SSE server replays the latest save on every
+        // reconnection; without a hash that a push can't clobber, an intervening push
+        // made the dedup "forget" the applied save and every reconnection re-applied it,
+        // overwriting in-game captures made since. This key makes a save idempotent.
+        private static string _lastAppliedSaveHash;
+        // 3-way merge baseline for browser saves: snapshot when the session starts,
+        // updated to the merged result after each apply (never on push). Lets the merge
+        // preserve in-game captures the browser never saw while honoring the browser's
+        // edits and deletions. See analyse/edit-session-sync-bugs.md.
+        private static Dictionary<string, TranslationEntry> _editSessionAncestor;
 
         // Mod → browser live sync: local file changes are pushed to the session
         // (debounced) so new AI translations / in-game edits show up in the editor
@@ -1028,7 +1040,7 @@ namespace UnityGameTranslator.Core.UI
                 }
 
                 string localHash = ComputeLocalFileHash();
-                if (localHash != null && localHash == _lastEditSessionHash)
+                if (localHash != null && localHash == _sessionContentHash)
                 {
                     _pushInFlight = false;
                     return;
@@ -1064,7 +1076,9 @@ namespace UnityGameTranslator.Core.UI
                         return;
                     }
 
-                    _lastEditSessionHash = contentHash;
+                    // Push only advances the "session content" hash (echo suppression) —
+                    // NOT the applied-save hash, so a replayed browser save stays deduped.
+                    _sessionContentHash = contentHash;
                     // A successful push also extended the server TTL
                     _nextKeepaliveTime = Time.realtimeSinceStartup + KeepaliveIntervalSeconds;
                     TranslatorCore.LogDebug("[EditSSE] Local changes pushed to the browser editor");
@@ -1151,7 +1165,12 @@ namespace UnityGameTranslator.Core.UI
 
             StopEditSessionListener();
             _editSessionModKey = modKey;
-            _lastEditSessionHash = null;
+            _sessionContentHash = null;
+            _lastAppliedSaveHash = null;
+            // Baseline for the browser-save merge: the file we just handed to the
+            // browser. Any key captured in-game after this is "local only" (kept);
+            // any key the browser removes relative to this is an honored deletion.
+            _editSessionAncestor = SnapshotTranslationCache();
             _nextKeepaliveTime = Time.realtimeSinceStartup + KeepaliveIntervalSeconds;
 
             string url = ApiClient.GetEditSessionStreamUrl(modKey);
@@ -1223,7 +1242,9 @@ namespace UnityGameTranslator.Core.UI
                 _editSessionSseClient = null;
             }
             _editSessionModKey = null;
-            _lastEditSessionHash = null;
+            _sessionContentHash = null;
+            _lastAppliedSaveHash = null;
+            _editSessionAncestor = null;
             _pendingLocalPush = false;
             _pushInFlight = false;
             _keepaliveInFlight = false;
@@ -1326,8 +1347,10 @@ namespace UnityGameTranslator.Core.UI
                 string contentHash = data["content_hash"]?.Value<string>();
                 int lineCount = data["line_count"]?.Value<int>() ?? 0;
 
-                // Reconnections replay the latest save — skip if already applied
-                if (!string.IsNullOrEmpty(contentHash) && contentHash == _lastEditSessionHash)
+                // Reconnections replay the latest save — skip if already applied.
+                // Dedup on the applied-save hash (never clobbered by our pushes), so a
+                // replay stays idempotent no matter how many pushes happened in between.
+                if (!string.IsNullOrEmpty(contentHash) && contentHash == _lastAppliedSaveHash)
                 {
                     TranslatorCore.LogDebug("[EditSSE] Save already applied (replay), skipping");
                     return;
@@ -1349,12 +1372,20 @@ namespace UnityGameTranslator.Core.UI
                 {
                     if (success && !string.IsNullOrEmpty(content))
                     {
-                        ApplyDownloadedTranslationFile(content);
-                        _lastEditSessionHash = contentHash;
-                        // A save proves the browser is alive
-                        _browserLeftSince = -1f;
-                        TranslatorCore.LogInfo("[EditSSE] Edit applied in-game!");
-                        MainPanel?.RefreshUI();
+                        // MERGE the browser save with the live cache (not a full replace):
+                        // in-game captures made during the session must survive a save that
+                        // predates them, while the browser's edits/deletions are honored.
+                        if (ApplyEditSessionMerge(content))
+                        {
+                            // Both hashes advance: the save is now applied (dedup) and it is
+                            // the current session content (echo). A push of the merged result
+                            // follows via SaveCache→NotifyLocalFileChanged.
+                            _lastAppliedSaveHash = contentHash;
+                            _sessionContentHash = contentHash;
+                            // A save proves the browser is alive
+                            _browserLeftSince = -1f;
+                            MainPanel?.RefreshUI();
+                        }
                     }
                     else
                     {
@@ -1370,6 +1401,104 @@ namespace UnityGameTranslator.Core.UI
                     TranslatorCore.LogError($"[EditSSE] Error handling edit_saved: {errorMsg}");
                 });
             }
+        }
+
+        /// <summary>
+        /// Deep copy (fresh Value/Tag/Index entries) of a translation entry set, decoupled
+        /// from the source so later in-place edits (SetTranslationFromEditor mutates entries)
+        /// can't corrupt it. Metadata keys excluded. Used to snapshot the edit-session merge
+        /// baseline.
+        /// </summary>
+        private static Dictionary<string, TranslationEntry> CopyEntries(IEnumerable<KeyValuePair<string, TranslationEntry>> src)
+        {
+            var copy = new Dictionary<string, TranslationEntry>();
+            if (src == null) return copy;
+            foreach (var kvp in src)
+            {
+                if (kvp.Key.StartsWith("_") || kvp.Value == null) continue;
+                copy[kvp.Key] = new TranslationEntry
+                {
+                    Value = kvp.Value.Value,
+                    Tag = kvp.Value.Tag,
+                    Index = kvp.Value.Index
+                };
+            }
+            return copy;
+        }
+
+        private static Dictionary<string, TranslationEntry> SnapshotTranslationCache()
+            => CopyEntries(TranslatorCore.TranslationCache);
+
+        /// <summary>
+        /// Apply a browser save by MERGING it with the live cache (3-way, tag-aware),
+        /// instead of overwriting the file. local = current cache (in-game captures),
+        /// remote = the browser's saved content, ancestor = the session baseline.
+        /// Keeps captures the browser never saw (Case 1) and honors the browser's edits
+        /// and deletions (Case 5); conflicts default to the browser (editor of record).
+        /// Returns false without touching anything if the content is unusable.
+        /// See analyse/edit-session-sync-bugs.md.
+        /// </summary>
+        private static bool ApplyEditSessionMerge(string content)
+        {
+            // Validate JSON up front: ParseTranslationsFromJson swallows parse errors and
+            // returns an EMPTY dict — merging that would read as "browser deleted every
+            // key" and wipe the file. Refuse anything that isn't valid, non-empty JSON.
+            try
+            {
+                Newtonsoft.Json.Linq.JObject.Parse(content);
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogWarning($"[EditSSE] Refusing to apply: not valid JSON ({e.Message})");
+                return false;
+            }
+
+            var remote = TranslatorCore.ParseTranslationsFromJson(content);
+            if (remote == null || (remote.Count == 0 && TranslatorCore.TranslationCache.Count > 0))
+            {
+                // Empty remote against a non-empty cache is almost certainly a transport
+                // glitch, not a deliberate "delete everything" — refuse to avoid a wipe.
+                TranslatorCore.LogWarning("[EditSSE] Refusing to apply: downloaded content has no entries");
+                return false;
+            }
+
+            // Backup the current file before we rewrite it.
+            try
+            {
+                string backupPath = TranslatorCore.CachePath + ".backup";
+                if (System.IO.File.Exists(TranslatorCore.CachePath))
+                    System.IO.File.Copy(TranslatorCore.CachePath, backupPath, true);
+            }
+            catch { }
+
+            var mergeResult = TranslationMerger.MergeWithTags(
+                TranslatorCore.TranslationCache, remote, _editSessionAncestor);
+
+            // Conflicts are already defaulted to the remote (browser) value inside the
+            // merge — the browser is the editor of record, so take the merged set as-is.
+            TranslatorCore.TranslationCache.Clear();
+            foreach (var kvp in mergeResult.Merged)
+                TranslatorCore.TranslationCache[kvp.Key] = kvp.Value;
+            // The browser side can carry capture-order indices above our counter.
+            TranslatorCore.SyncOrderIndexCounter();
+
+            // Persist the merged result, then reload so in-game text picks up the edits
+            // (RestoreAllOriginals + LoadCache + ClearProcessingCaches). SaveCache also
+            // schedules a push of the merged file back to the browser.
+            TranslatorCore.SaveCache();
+            TranslatorCore.ReloadCache();
+
+            // New baseline = the SERVER content we just merged against, NOT the merged cache.
+            // The merged cache holds captures not yet pushed to the server (push is debounced);
+            // if the ancestor included them, the next browser save — whose complete server file
+            // still lacks them until our push lands — would read them as deletions (Case 5) and
+            // drop them. Anchoring on the remote keeps un-pushed captures "local only" (Case 1 →
+            // preserved), while a genuine browser deletion still shows up as ancestor-had /
+            // remote-lacks. Deep-copied so later in-place edits can't corrupt it.
+            _editSessionAncestor = CopyEntries(remote);
+
+            TranslatorCore.LogInfo($"[EditSSE] Edit merged in-game: {mergeResult.Statistics.GetSummary()}");
+            return true;
         }
 
         #endregion

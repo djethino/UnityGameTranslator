@@ -28,6 +28,9 @@ namespace UnityGameTranslator.Core.UI.Panels
         // Summary display
         private Text _summaryLabel;
 
+        // Contextual help bar
+        private Components.HelpZone _helpZone;
+
         // Callback
         private Action<string, string> _onLanguagesSelected;
 
@@ -53,6 +56,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Use scrollable layout for the content
             CreateScrollablePanelLayout(out var scrollContent, out var buttonRow, PanelWidth - 40);
 
+            // Contextual help bar between content and footer
+            _helpZone = CreateHelpZone(buttonRow, "Hover an element to see what it does");
+
             var card = CreateAdaptiveCard(scrollContent, "LanguageCard", PanelWidth - 40);
 
             var title = CreateTitle(card, "Title", "Select Languages");
@@ -63,14 +69,18 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Source language section
             var sourceTitle = UIStyles.CreateSectionTitle(card, "SourceTitle", "Source Language (original game language)");
             RegisterUIText(sourceTitle);
-            _sourceDropdown.CreateUI(card, (lang) => UpdateSummary(), width: 200);
+            var srcObj = _sourceDropdown.CreateUI(card, (lang) => UpdateSummary(), width: 200);
+            _helpZone?.Describe(srcObj,
+                "The game's original language that the mod reads from. Pick the language the game currently displays.");
 
             UIStyles.CreateSpacer(card, 10);
 
             // Target language section
             var targetTitle = UIStyles.CreateSectionTitle(card, "TargetTitle", "Target Language (translation language)");
             RegisterUIText(targetTitle);
-            _targetDropdown.CreateUI(card, (lang) => UpdateSummary(), width: 200);
+            var tgtObj = _targetDropdown.CreateUI(card, (lang) => UpdateSummary(), width: 200);
+            _helpZone?.Describe(tgtObj,
+                "The language you want the game translated into. The mod converts text from the source language to this one.");
 
             UIStyles.CreateSpacer(card, 10);
 
@@ -92,6 +102,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIStyles.SetBackground(confirmBtn.Component.gameObject, UIStyles.ButtonSuccess);
             confirmBtn.OnClick += ConfirmSelection;
             RegisterUIText(confirmBtn.ButtonText);
+            _helpZone?.Describe(confirmBtn.Component.gameObject,
+                "Confirm the selected source and target languages and continue.");
         }
 
         private void UpdateSummary()

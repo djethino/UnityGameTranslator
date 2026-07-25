@@ -111,6 +111,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             RegisterUIText(urlLabel);
 
             _resourcesUrlInput = CreateStyledInputField(card, "ResourcesUrlInput", "https://... (link to fonts/images)");
+            _helpZone?.Describe(_resourcesUrlInput.Component.gameObject,
+                "Optional public link to the fonts and images pack players need for text to render correctly. Shown to anyone who downloads this translation.");
 
             var urlHint = UIStyles.CreateHint(card, "UrlHint", "External link to custom fonts or replacement images. Not hosted by us.");
             RegisterUIText(urlHint);

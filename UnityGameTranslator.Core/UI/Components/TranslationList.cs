@@ -14,6 +14,7 @@ namespace UnityGameTranslator.Core.UI.Components
     public class TranslationList
     {
         // UI elements
+        private GameObject _root;
         private GameObject _listContent;
         private Text _statusLabel;
 
@@ -45,6 +46,12 @@ namespace UnityGameTranslator.Core.UI.Components
         public int Count => _translations.Count;
 
         /// <summary>
+        /// The scroll view hosting the list. Use it to attach a help description covering
+        /// the whole list area (individual rows are generated dynamically and not described).
+        /// </summary>
+        public GameObject Root => _root;
+
+        /// <summary>
         /// Create a new translation list component.
         /// </summary>
         /// <param name="getCurrentUser">Function to get current logged-in username</param>
@@ -71,6 +78,7 @@ namespace UnityGameTranslator.Core.UI.Components
 
             // Scroll view for list
             var scrollObj = UIFactory.CreateScrollView(parent, "TranslationScroll", out _listContent, out _);
+            _root = scrollObj;
             UIFactory.SetLayoutElement(scrollObj, minHeight: listHeight, flexibleHeight: 9999);
             UIFactory.SetLayoutGroup<VerticalLayoutGroup>(_listContent, false, false, true, true, 5, 5, 5, 5, 5);
             UIStyles.SetBackground(scrollObj, UIStyles.InputBackground);

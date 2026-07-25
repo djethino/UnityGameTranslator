@@ -746,6 +746,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             _cancelBtn.Component.interactable = false;
             UIFactory.SetLayoutElement(_cancelBtn.Component.gameObject, flexibleWidth: 9999);
             RegisterUIText(_cancelBtn.ButtonText);
+            _helpZone?.Describe(_cancelBtn.Component.gameObject,
+                "Deselect the current element and keep inspecting. Nothing is changed.");
 
             // Status label
             UIStyles.CreateSpacer(card, 5);
@@ -757,6 +759,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             var stopBtn = CreatePrimaryButton(buttonRow, "StopBtn", "Stop Inspecting");
             stopBtn.OnClick += OnStopClicked;
             RegisterUIText(stopBtn.ButtonText);
+            _helpZone?.Describe(stopBtn.Component.gameObject,
+                "Leave inspect mode and close this window. Element picking stops.");
 
             // Create the highlight overlay
             CreateHighlightOverlay();

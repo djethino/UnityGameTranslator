@@ -139,6 +139,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             var myTranslationTab = _tabBar.AddTab(TAB_MY_TRANSLATION);
             var communityTab = _tabBar.AddTab(TAB_COMMUNITY);
 
+            _helpZone?.Describe(_tabBar.GetTabButton(TAB_MY_TRANSLATION),
+                "Your own translation for this game: its sync status, role, and the actions you can take on it.");
+            _helpZone?.Describe(_tabBar.GetTabButton(TAB_COMMUNITY),
+                "Translations other players shared for this game. Search and download one to use it.");
+
             // Register tab texts for localization
             foreach (var text in _tabBar.GetTabButtonTexts())
             {
@@ -193,6 +198,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             var closeBtn = CreatePrimaryButton(buttonRow, "CloseBtn", "Close");
             closeBtn.OnClick += () => SetActive(false);
             RegisterUIText(closeBtn.ButtonText);
+            _helpZone?.Describe(closeBtn.Component.gameObject,
+                "Close this window. Translation and syncing keep running in the background.");
 
             RefreshUI();
         }
@@ -269,6 +276,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.SetLayoutElement(_modUpdateBtn.Component.gameObject, minWidth: 90, minHeight: UIStyles.RowHeightNormal);
             _modUpdateBtn.OnClick += OnModUpdateClicked;
             RegisterUIText(_modUpdateBtn.ButtonText);
+            _helpZone?.Describe(_modUpdateBtn.Component.gameObject,
+                "Get the newer mod version: downloads it if available, otherwise opens the release page in your browser.");
 
             // Start hidden
             _modUpdateBanner.SetActive(false);
@@ -572,6 +581,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 UIStyles.CreateCollapsibleSection(parent, "Glossary", "What do Main, Branch and Fork mean?", initiallyExpanded: false);
             RegisterUIText(titleLabel);
             RegisterExcluded(iconLabel);
+            _helpZone?.Describe(header,
+                "Expand a short glossary of the sharing terms Main, Branch and Fork and the line quality tags.");
 
             var headerBtn = header.GetComponent<Button>();
             bool expanded = false;

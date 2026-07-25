@@ -47,6 +47,9 @@ namespace UnityGameTranslator.Core.UI.Panels
         private Text _validationLabel;
         private ButtonRef _continueBtn;
 
+        // Contextual help
+        private Components.HelpZone _helpZone;
+
         public UploadSetupPanel(UIBase owner) : base(owner)
         {
             // Note: Components initialized in ConstructPanelContent() - base constructor calls ConstructUI() first
@@ -200,6 +203,9 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             CreateScrollablePanelLayout(out var scrollContent, out var buttonRow, PanelWidth - 40);
 
+            // Contextual help bar between content and footer
+            _helpZone = CreateHelpZone(buttonRow, "Hover an element to see what it does");
+
             var card = CreateAdaptiveCard(scrollContent, "SetupCard", PanelWidth - 40);
 
             var title = CreateTitle(card, "Title", "New Upload Setup");
@@ -238,11 +244,15 @@ namespace UnityGameTranslator.Core.UI.Panels
             _gameSearchInput = UIFactory.CreateInputField(searchRow, "GameSearchInput", "Search for a game...");
             UIFactory.SetLayoutElement(_gameSearchInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
             UIStyles.SetBackground(_gameSearchInput.Component.gameObject, UIStyles.InputBackground);
+            _helpZone?.Describe(_gameSearchInput.Component.gameObject,
+                "Type a game title to find it in the catalog and online databases. Use this if the detected game is wrong or missing.");
 
             _gameSearchBtn = UIFactory.CreateButton(searchRow, "SearchBtn", "Search");
             UIFactory.SetLayoutElement(_gameSearchBtn.Component.gameObject, minWidth: 70, minHeight: UIStyles.InputHeight);
             _gameSearchBtn.OnClick += PerformGameSearch;
             RegisterUIText(_gameSearchBtn.ButtonText);
+            _helpZone?.Describe(_gameSearchBtn.Component.gameObject,
+                "Run the search for the title you typed and list the matching games below.");
 
             // Search status
             _gameSearchStatus = UIFactory.CreateLabel(gameBox, "SearchStatus", "", TextAnchor.MiddleLeft);
@@ -282,14 +292,18 @@ namespace UnityGameTranslator.Core.UI.Panels
             // === SOURCE LANGUAGE SECTION ===
             var sourceTitle = UIStyles.CreateSectionTitle(card, "SourceTitle", "2. Source Language (original game language)");
             RegisterUIText(sourceTitle);
-            _sourceDropdown.CreateUI(card, (lang) => UpdateValidation(), width: 200);
+            var srcObj = _sourceDropdown.CreateUI(card, (lang) => UpdateValidation(), width: 200);
+            _helpZone?.Describe(srcObj,
+                "The language the game is written in. Pick the original text language, not your translation.");
 
             UIStyles.CreateSpacer(card, 10);
 
             // === TARGET LANGUAGE SECTION ===
             var targetTitle = UIStyles.CreateSectionTitle(card, "TargetTitle", "3. Target Language (your translation)");
             RegisterUIText(targetTitle);
-            _targetDropdown.CreateUI(card, (lang) => UpdateValidation(), width: 200);
+            var tgtObj = _targetDropdown.CreateUI(card, (lang) => UpdateValidation(), width: 200);
+            _helpZone?.Describe(tgtObj,
+                "The language you are translating into. Must be different from the source language.");
 
             UIStyles.CreateSpacer(card, 10);
 
@@ -309,6 +323,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIStyles.SetBackground(_continueBtn.Component.gameObject, UIStyles.ButtonSuccess);
             _continueBtn.OnClick += OnContinue;
             RegisterUIText(_continueBtn.ButtonText);
+            _helpZone?.Describe(_continueBtn.Component.gameObject,
+                "Confirm the game and languages and move on to the upload step. Enabled once all fields are valid.");
 
             // Initial population
             RefreshGameDisplay();

@@ -14,6 +14,7 @@ namespace UnityGameTranslator.Core.UI.Components
     public class HotkeyCapture
     {
         // UI elements
+        private GameObject _root;
         private Toggle _ctrlToggle;
         private Toggle _altToggle;
         private Toggle _shiftToggle;
@@ -40,6 +41,13 @@ namespace UnityGameTranslator.Core.UI.Components
         /// Whether currently capturing a key press.
         /// </summary>
         public bool IsCapturing => _isCapturing;
+
+        /// <summary>
+        /// The widget's container row (modifiers + key button). Use it to attach a help
+        /// description: hovering anywhere over the hotkey control shows the help, since the
+        /// child toggles/buttons are not described themselves.
+        /// </summary>
+        public GameObject Root => _root;
 
         /// <summary>
         /// Sentinel label shown on the key button when the hotkey is disabled (no key set).
@@ -86,6 +94,7 @@ namespace UnityGameTranslator.Core.UI.Components
 
             // Modifier toggles in styled container
             var modContainer = UIStyles.CreateModifierContainer(parent, "HotkeyModContainer");
+            _root = modContainer;
 
             var ctrlObj = UIFactory.CreateToggle(modContainer, "CtrlToggle", out _ctrlToggle, out var ctrlLabel);
             ctrlLabel.text = "Ctrl";

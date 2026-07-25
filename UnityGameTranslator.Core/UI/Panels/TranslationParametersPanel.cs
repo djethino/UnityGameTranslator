@@ -221,6 +221,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             twLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(twObj, minHeight: UIStyles.RowHeightNormal);
             RegisterUIText(twLabel);
+            _helpZone?.Describe(twObj,
+                "Detects text that appears letter by letter, like dialogues, and waits for it to settle before translating. Disable if it causes issues.");
 
             var twHint = UIStyles.CreateHint(card, "TypewritingHint",
                 "Text that appears letter by letter (dialogues, cutscenes). Waits for the text to stabilize before translating.");
@@ -232,6 +234,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             concatLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(concatObj, minHeight: UIStyles.RowHeightNormal);
             RegisterUIText(concatLabel);
+            _helpZone?.Describe(concatObj,
+                "Detects text assembled in parts, like tooltips or item stats, and translates each part for better cache reuse. Disable if it causes issues.");
 
             var concatHint = UIStyles.CreateHint(card, "ConcatHint",
                 "Text built in multiple steps (tooltips, item stats). Translates each part separately for better cache reuse.");
@@ -346,6 +350,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             var inspectorBtn = CreatePrimaryButton(card, "InspectorBtn", "Start Inspector Mode", PanelWidth - 100);
             inspectorBtn.OnClick += OnStartInspectorClicked;
             RegisterUIText(inspectorBtn.ButtonText);
+            _helpZone?.Describe(inspectorBtn.Component.gameObject,
+                "Closes this panel so you can click UI elements in-game to exclude them from translation.");
 
             var inspectorHint = UIStyles.CreateHint(card, "InspectorHint", "Click on UI elements to exclude them");
             RegisterUIText(inspectorHint);
@@ -363,10 +369,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             _manualPatternInput = UIFactory.CreateInputField(addRow, "PatternInput", "e.g., **/ChatPanel/**");
             UIFactory.SetLayoutElement(_manualPatternInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
             UIStyles.SetBackground(_manualPatternInput.Component.gameObject, UIStyles.InputBackground);
+            _helpZone?.Describe(_manualPatternInput.Component.gameObject,
+                "Type a hierarchy path pattern to exclude. Use ** for any depth and * for a single level.");
 
             var addBtn = CreateSecondaryButton(addRow, "AddBtn", "Add", 60);
             addBtn.OnClick += OnAddManualPatternClicked;
             RegisterUIText(addBtn.ButtonText);
+            _helpZone?.Describe(addBtn.Component.gameObject,
+                "Adds the typed pattern to the exclusion list. Takes effect on Apply.");
 
             var patternHint = UIStyles.CreateHint(card, "PatternHint", "Use ** for any depth, * for single level");
             RegisterUIText(patternHint);
@@ -384,10 +394,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             _findByValueInput = UIFactory.CreateInputField(findRow, "FindValueInput", "Enter text visible in-game...");
             UIFactory.SetLayoutElement(_findByValueInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
             UIStyles.SetBackground(_findByValueInput.Component.gameObject, UIStyles.InputBackground);
+            _helpZone?.Describe(_findByValueInput.Component.gameObject,
+                "Type text visible in-game to locate the UI element that shows it, then exclude it.");
 
             var findBtn = CreateSecondaryButton(findRow, "FindBtn", "Find", 60);
             findBtn.OnClick += OnFindByValueClicked;
             RegisterUIText(findBtn.ButtonText);
+            _helpZone?.Describe(findBtn.Component.gameObject,
+                "Searches the scene for UI components displaying the entered text.");
 
             var findHint = UIStyles.CreateHint(card, "FindHint", "Find which UI component displays this text, then exclude it");
             RegisterUIText(findHint);
@@ -741,6 +755,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             foreach (var text in _fontsSubTabBar.GetTabButtonTexts())
                 RegisterUIText(text);
 
+            _helpZone?.Describe(_fontsSubTabBar.GetTabButton("Global"),
+                "Global font settings for every detected font, including fallbacks and sharpness.");
+            _helpZone?.Describe(_fontsSubTabBar.GetTabButton("Overrides"),
+                "Per-element rules that override the font size for specific UI elements.");
+
             CreateFontsGlobalSubTab(globalTab);
             CreateFontsOverridesSubTab(overridesTab);
         }
@@ -765,6 +784,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIHelpers.AddToggleListener(_enableFontReplacementToggle, OnEnableFontReplacementChanged);
             UIFactory.SetLayoutElement(fontEnableObj, minHeight: UIStyles.RowHeightNormal);
             RegisterUIText(fontEnableLabel);
+            _helpZone?.Describe(fontEnableObj,
+                "Replaces game fonts so your language's characters display correctly. Uncheck to debug with the original fonts.");
 
             // Font sharpness = max SDF atlas dimension. Higher = crisper when the translation
             // scales text up, at a VRAM cost. LAYOUT-NEUTRAL (text size unchanged). Options are
@@ -805,6 +826,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             var refreshBtn = CreateSecondaryButton(refreshRow, "RefreshFontsBtn", "Refresh List", 100);
             refreshBtn.OnClick += RefreshFontsList;
             RegisterUIText(refreshBtn.ButtonText);
+            _helpZone?.Describe(refreshBtn.Component.gameObject,
+                "Rescans the game for fonts currently in use and updates the list below.");
 
             _fontsStatusLabel = UIFactory.CreateLabel(refreshRow, "FontsStatus", "", TextAnchor.MiddleLeft);
             _fontsStatusLabel.fontSize = UIStyles.FontSizeSmall;
@@ -844,6 +867,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             var inspectorBtn = CreatePrimaryButton(card, "FontOverrideInspectorBtn", "Inspect Element", PanelWidth - 100);
             inspectorBtn.OnClick += OnStartFontOverrideInspector;
             RegisterUIText(inspectorBtn.ButtonText);
+            _helpZone?.Describe(inspectorBtn.Component.gameObject,
+                "Closes this panel so you can click a UI element in-game to create a font override for it.");
 
             var inspectorHint = UIStyles.CreateHint(card, "InspectorHint", "Click on a UI element to create an override for it");
             RegisterUIText(inspectorHint);
@@ -861,10 +886,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             _fontOverrideFindInput = UIFactory.CreateInputField(findRow, "FindOverrideInput", "Enter text visible in-game...");
             UIFactory.SetLayoutElement(_fontOverrideFindInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
             UIStyles.SetBackground(_fontOverrideFindInput.Component.gameObject, UIStyles.InputBackground);
+            _helpZone?.Describe(_fontOverrideFindInput.Component.gameObject,
+                "Type text visible in-game to locate the UI element that shows it, then create an override.");
 
             var findBtn = CreateSecondaryButton(findRow, "FindOverrideBtn", "Find", 60);
             findBtn.OnClick += OnFindForFontOverride;
             RegisterUIText(findBtn.ButtonText);
+            _helpZone?.Describe(findBtn.Component.gameObject,
+                "Searches the scene for UI components displaying the entered text.");
 
             // Find results (hidden until search)
             var findResultsScroll = UIFactory.CreateScrollView(card, "OverrideFindResults", out var findResultsContent, out _);
@@ -885,10 +914,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             _fontOverrideManualInput = UIFactory.CreateInputField(addRow, "ManualOverrideInput", "path:**/TablePanel/**");
             UIFactory.SetLayoutElement(_fontOverrideManualInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
             UIStyles.SetBackground(_fontOverrideManualInput.Component.gameObject, UIStyles.InputBackground);
+            _helpZone?.Describe(_fontOverrideManualInput.Component.gameObject,
+                "Type a rule to match elements. Prefix with path:, font:, or text: to match by hierarchy, font name, or content.");
 
             var addBtn = CreateSecondaryButton(addRow, "AddOverrideBtn", "Add", 60);
             addBtn.OnClick += OnAddManualFontOverride;
             RegisterUIText(addBtn.ButtonText);
+            _helpZone?.Describe(addBtn.Component.gameObject,
+                "Adds the typed pattern as a new override rule. Takes effect on Apply.");
 
             var patternHint = UIStyles.CreateHint(card, "PatternHint", "Prefixes: path: (hierarchy), font: (name), text: (content)");
             RegisterUIText(patternHint);
@@ -1682,6 +1715,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIHelpers.AddToggleListener(_enableImageReplacementToggle, OnEnableImageReplacementChanged);
             UIFactory.SetLayoutElement(imgEnableObj, minHeight: UIStyles.RowHeightNormal);
             RegisterUIText(imgEnableLabel);
+            _helpZone?.Describe(imgEnableObj,
+                "Swaps images that contain baked-in text for your translated versions. Uncheck to debug with the original images.");
 
             UIStyles.CreateSpacer(card, 5);
 
@@ -1689,6 +1724,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             var inspectorBtn = CreatePrimaryButton(card, "ImageInspectorBtn", "Start Image Inspector", PanelWidth - 100);
             inspectorBtn.OnClick += OnStartImageInspectorClicked;
             RegisterUIText(inspectorBtn.ButtonText);
+            _helpZone?.Describe(inspectorBtn.Component.gameObject,
+                "Closes this panel so you can click images in-game to mark them for replacement.");
 
             var inspectorHint = UIStyles.CreateHint(card, "ImageInspectorHint",
                 "Click on images in the game to mark them for replacement");
@@ -1714,6 +1751,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             applyAllBtn.OnClick += OnLoadAllReplacementsClicked;
             UIFactory.SetLayoutElement(applyAllBtn.Component.gameObject, flexibleWidth: 9999);
             RegisterUIText(applyAllBtn.ButtonText);
+            _helpZone?.Describe(applyAllBtn.Component.gameObject,
+                "Reloads your edited PNG files from disk and applies them in-game. Use after editing the exported templates.");
 
             // Status label
             _imagesStatusLabel = UIFactory.CreateLabel(card, "ImagesStatus", "", TextAnchor.MiddleLeft);
@@ -1861,11 +1900,15 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             _scanValueInput = UIFactory.CreateInputField(captureRow, "ScanValueInput", "Enter value to search...");
             UIFactory.SetLayoutElement(_scanValueInput.UIRoot, minHeight: UIStyles.RowHeightNormal, flexibleWidth: 9999);
+            _helpZone?.Describe(_scanValueInput.Component.gameObject,
+                "Type the current value of a game variable, like your character name, to find it in memory.");
 
             var scanBtn = CreatePrimaryButton(captureRow, "ScanBtn", "Scan");
             scanBtn.OnClick += OnScanClicked;
             UIFactory.SetLayoutElement(scanBtn.Component.gameObject, minWidth: 70);
             RegisterUIText(scanBtn.ButtonText);
+            _helpZone?.Describe(scanBtn.Component.gameObject,
+                "Searches game memory for the entered value so it can be turned into a reusable placeholder.");
 
             UIStyles.CreateSpacer(card, 5);
 

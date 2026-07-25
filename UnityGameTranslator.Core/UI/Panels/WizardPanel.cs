@@ -338,6 +338,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                     _hotkeyDisplayLabel.color = UIStyles.TextAccent;
                 }
             }, includeDisplayLabel: false);
+            _helpZone?.Describe(_hotkeyCapture.Root,
+                "Keyboard shortcut that opens the translator menu in-game. Click to record a new combination; Ctrl, Alt and Shift are supported.");
 
             UIStyles.CreateSpacer(card, 15);
 
@@ -403,7 +405,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 popupHeight: 250,
                 showSearch: true
             );
-            _targetLanguageDropdown.CreateUI(langSection, (lang) => _targetLanguage = lang, width: 200);
+            var targetLangObj = _targetLanguageDropdown.CreateUI(langSection, (lang) => _targetLanguage = lang, width: 200);
+            _helpZone?.Describe(targetLangObj,
+                "Language you want games translated into. The game's original language is detected automatically.");
 
             UIStyles.CreateSpacer(card, 10);
 
@@ -469,6 +473,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             _loginBtn = CreatePrimaryButton(gameSection, "LoginBtn", "Connect Account (optional)", 200);
             _loginBtn.OnClick += OnLoginClicked;
             RegisterUIText(_loginBtn.ButtonText);
+            _helpZone?.Describe(_loginBtn.Component.gameObject,
+                "Connect a website account so you can upload and share your translations later. Optional; downloading works without one.");
 
             UIStyles.CreateSpacer(card, 10);
 
@@ -477,6 +483,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 UpdateActionButtons();
             });
+            _helpZone?.Describe(_translationList.Root,
+                "Community translations found for this game in your language. Select one to download or merge it.");
 
             // Comparison info (shows diff between local and selected remote)
             _comparisonLabel = UIFactory.CreateLabel(card, "ComparisonLabel", "", TextAnchor.MiddleCenter);
@@ -875,6 +883,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             enableLabel.text = "";
             UIHelpers.AddToggleListener(_wizardEnableToggle, OnWizardEnableChanged);
             UIFactory.SetLayoutElement(enableObj, minWidth: UIStyles.ToggleControlWidth);
+            _helpZone?.Describe(enableObj,
+                "Automatically translate texts that have no translation yet. Turn off to use only downloaded community translations.");
 
             var enableTextLabel = UIFactory.CreateLabel(enableRow, "EnableTextLabel", "Enable auto-translation", TextAnchor.MiddleLeft);
             enableTextLabel.fontStyle = FontStyle.Bold;
@@ -901,6 +911,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 isTransApi ? UIStyles.BackendTypeApi : UIStyles.BackendTypeLLM, 100, false);
             var typeObj = _wizardBackendTypeDropdown.CreateUI(typeSection, OnWizardTypeChanged);
             UIFactory.SetLayoutElement(typeObj, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
+            _helpZone?.Describe(typeObj,
+                "Choose the translation backend: a local or cloud AI model, or a translation API such as Google or DeepL.");
 
             UIStyles.CreateSpacer(_wizardBackendTypeSection, 5);
 
@@ -921,10 +933,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             _aiUrlInput.OnValueChanged += (val) => _aiUrl = val;
             UIFactory.SetLayoutElement(_aiUrlInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
             UIStyles.SetBackground(_aiUrlInput.Component.gameObject, UIStyles.InputBackground);
+            _helpZone?.Describe(_aiUrlInput.Component.gameObject,
+                "Address of your OpenAI-compatible AI server (for example Ollama or LM Studio). Defaults to a local server on port 11434.");
 
             var testBtn = CreateSecondaryButton(urlRow, "TestBtn", "Test", 70);
             testBtn.OnClick += TestAIConnection;
             RegisterUIText(testBtn.ButtonText);
+            _helpZone?.Describe(testBtn.Component.gameObject,
+                "Check that the AI server responds at the given URL. On success the model list is refreshed automatically.");
 
             _aiStatusLabel = UIFactory.CreateLabel(urlSection, "StatusLabel", "", TextAnchor.MiddleCenter);
             _aiStatusLabel.fontSize = UIStyles.FontSizeSmall;
@@ -943,6 +959,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             _aiApiKeyInput.OnValueChanged += (val) => _aiApiKey = val;
             UIFactory.SetLayoutElement(_aiApiKeyInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
             UIStyles.SetBackground(_aiApiKeyInput.Component.gameObject, UIStyles.InputBackground);
+            _helpZone?.Describe(_aiApiKeyInput.Component.gameObject,
+                "API key for the AI server. Leave empty for local servers that do not require authentication.");
 
             var keyHint = UIStyles.CreateHint(keySection, "KeyHint", "Optional for local servers (Ollama, LM Studio)");
             RegisterUIText(keyHint);
@@ -959,10 +977,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             _modelDropdown = new SearchableDropdown("ModelDropdown", initialModels, _aiModel, 200, false);
             var modelObj = _modelDropdown.CreateUI(modelRow, (val) => _aiModel = val);
             UIFactory.SetLayoutElement(modelObj, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
+            _helpZone?.Describe(modelObj,
+                "AI model used for translation. Use Refresh to load the models available on the server.");
 
             var refreshBtn = CreateSecondaryButton(modelRow, "RefreshBtn", "Refresh", 70);
             refreshBtn.OnClick += RefreshModels;
             RegisterUIText(refreshBtn.ButtonText);
+            _helpZone?.Describe(refreshBtn.Component.gameObject,
+                "Query the server for its list of available models and fill the dropdown above.");
 
             var contextSection = CreateSection(_wizardLlmSection, "ContextSection");
             var contextLabel = UIFactory.CreateLabel(contextSection, "ContextLabel", "Game Context (optional):", TextAnchor.MiddleLeft);
@@ -977,6 +999,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             _gameContextInput.OnValueChanged += (val) => _gameContext = val;
             UIFactory.SetLayoutElement(_gameContextInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.MultiLineMedium);
             UIStyles.SetBackground(_gameContextInput.Component.gameObject, UIStyles.InputBackground);
+            _helpZone?.Describe(_gameContextInput.Component.gameObject,
+                "Optional hint about the game (genre, setting, tone) added to AI prompts to improve translation accuracy.");
 
             // === TRANSLATION API SECTION ===
             _wizardTransApiSection = UIFactory.CreateVerticalGroup(_wizardBackendTypeSection, "TransApiSection", false, false, true, true, 5);
@@ -994,6 +1018,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             _wizardProviderDropdown = new SearchableDropdown("WizardProvider", providerOptions, currentProvider, 100, false);
             var providerObj = _wizardProviderDropdown.CreateUI(providerSection, OnWizardProviderChanged);
             UIFactory.SetLayoutElement(providerObj, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
+            _helpZone?.Describe(providerObj,
+                "Translation API provider to use, Google Translate or DeepL. Each needs its own API key below.");
 
             UIStyles.CreateSpacer(_wizardTransApiSection, 5);
 
@@ -1015,10 +1041,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             _wizardGoogleKeyInput.OnValueChanged += (val) => _googleApiKey = val;
             UIFactory.SetLayoutElement(_wizardGoogleKeyInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
             UIStyles.SetBackground(_wizardGoogleKeyInput.Component.gameObject, UIStyles.InputBackground);
+            _helpZone?.Describe(_wizardGoogleKeyInput.Component.gameObject,
+                "API key for Google Cloud Translation. Requires a project with the Translation API enabled.");
 
             var googleTestBtn = CreateSecondaryButton(googleKeyRow, "GoogleTestBtn", "Test", 70);
             googleTestBtn.OnClick += WizardTestGoogle;
             RegisterUIText(googleTestBtn.ButtonText);
+            _helpZone?.Describe(googleTestBtn.Component.gameObject,
+                "Send a test request to verify the Google Translation API key works.");
 
             _wizardGoogleStatusLabel = UIFactory.CreateLabel(googleKeySection, "GoogleStatus", "", TextAnchor.MiddleCenter);
             _wizardGoogleStatusLabel.fontSize = UIStyles.FontSizeSmall;
@@ -1045,10 +1075,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             _wizardDeeplKeyInput.OnValueChanged += (val) => _deeplApiKey = val;
             UIFactory.SetLayoutElement(_wizardDeeplKeyInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
             UIStyles.SetBackground(_wizardDeeplKeyInput.Component.gameObject, UIStyles.InputBackground);
+            _helpZone?.Describe(_wizardDeeplKeyInput.Component.gameObject,
+                "API key for the DeepL translation API. Free and Pro keys use different endpoints, set below.");
 
             var deeplTestBtn = CreateSecondaryButton(deeplKeyRow, "DeepLTestBtn", "Test", 70);
             deeplTestBtn.OnClick += WizardTestDeepL;
             RegisterUIText(deeplTestBtn.ButtonText);
+            _helpZone?.Describe(deeplTestBtn.Component.gameObject,
+                "Send a test request to verify the DeepL API key and selected plan type work.");
 
             _wizardDeeplStatusLabel = UIFactory.CreateLabel(deeplKeySection, "DeepLStatus", "", TextAnchor.MiddleCenter);
             _wizardDeeplStatusLabel.fontSize = UIStyles.FontSizeSmall;
@@ -1061,6 +1095,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIHelpers.AddToggleListener(_wizardDeeplFreeToggle, (val) => _deeplUseFree = val);
             UIFactory.SetLayoutElement(deeplFreeObj, minHeight: UIStyles.RowHeightNormal);
             RegisterUIText(deeplFreeLabel);
+            _helpZone?.Describe(deeplFreeObj,
+                "Use the free DeepL endpoint (api-free.deepl.com), 500k characters per month. Uncheck for a Pro API key.");
 
             var deeplHint = UIStyles.CreateHint(_wizardDeeplSection, "DeepLHint", "Free plan: 500k chars/month. Uncheck for Pro API.");
             RegisterUIText(deeplHint);
@@ -1238,6 +1274,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             finishBtn.OnClick += FinishWizard;
             UIStyles.SetBackground(finishBtn.Component.gameObject, UIStyles.ButtonSuccess);
             RegisterUIText(finishBtn.ButtonText);
+            _helpZone?.Describe(finishBtn.Component.gameObject,
+                "Save your setup and close the wizard. The translator starts working in-game right away.");
         }
 
         private void ShowStep(WizardStep step)

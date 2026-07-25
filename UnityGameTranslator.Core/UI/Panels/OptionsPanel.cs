@@ -336,6 +336,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             transLabel.color = UIStyles.TextPrimary;
             UIFactory.SetLayoutElement(transToggleObj, minHeight: UIStyles.RowHeightMedium);
             RegisterUIText(transLabel);
+            _helpZone?.Describe(transToggleObj, "Turn the mod's translations on or off. When off, the game shows its original text.");
 
             UIStyles.CreateSpacer(card, 5);
 
@@ -345,6 +346,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             modUILabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(modUIObj, minHeight: UIStyles.RowHeightNormal);
             RegisterUIText(modUILabel);
+            _helpZone?.Describe(modUIObj, "Translate this mod's own buttons and labels into your target language, alongside the game's text.");
 
             var modUIHint = UIStyles.CreateHint(card, "ModUIHint", "Translate this mod's own buttons and labels");
             RegisterUIText(modUIHint);
@@ -361,6 +363,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIHelpers.AddToggleListener(_notificationsEnabledToggle, OnNotificationsEnabledChanged);
             UIFactory.SetLayoutElement(notifEnabledObj, minHeight: UIStyles.RowHeightNormal);
             RegisterUIText(notifEnabledLabel);
+            _helpZone?.Describe(notifEnabledObj, "Show small corner messages for sync, updates, and translation activity. Turn off for clean screenshots.");
 
             var posRow = UIStyles.CreateFormRow(card, "NotifPosRow", UIStyles.RowHeightMedium, 5);
             var posLabel = UIFactory.CreateLabel(posRow, "NotifPosLabel", "Position:", TextAnchor.MiddleLeft);
@@ -377,6 +380,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             );
             var posDropdownObj = _notificationPositionDropdown.CreateUI(posRow, (_) => { UpdateApplyButtonText(); });
             UIFactory.SetLayoutElement(posDropdownObj, minWidth: 140, minHeight: UIStyles.InputHeight);
+            _helpZone?.Describe(posDropdownObj, "Which screen corner the notification overlay appears in.");
 
             UIStyles.CreateSpacer(card, 10);
 
@@ -390,6 +394,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             eventSystemLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(eventSystemObj, minHeight: UIStyles.RowHeightNormal);
             RegisterUIText(eventSystemLabel);
+            _helpZone?.Describe(eventSystemObj, "Stop the mod from intercepting UI input. Enable if the game's menus or animations stop working. Needs a game restart.");
 
             var eventSystemHint = UIStyles.CreateHint(card, "EventSystemHint", "Enable if game's UI animations or menus don't work. Requires game restart.");
             RegisterUIText(eventSystemHint);
@@ -428,7 +433,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.SetLayoutElement(sourceLangLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
             RegisterUIText(sourceLangLabel);
 
-            _sourceLanguageDropdown.CreateUI(_languagesEditableSection, OnSourceLanguageChanged, width: 200);
+            var sourceLangObj = _sourceLanguageDropdown.CreateUI(_languagesEditableSection, OnSourceLanguageChanged, width: 200);
+            _helpZone?.Describe(sourceLangObj, "The language the game's text is written in. Leave on Auto to detect it automatically.");
 
             UIStyles.CreateSpacer(_languagesEditableSection, 5);
 
@@ -438,7 +444,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.SetLayoutElement(targetLangLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
             RegisterUIText(targetLangLabel);
 
-            _targetLanguageDropdown.CreateUI(_languagesEditableSection, width: 200);
+            var targetLangObj = _targetLanguageDropdown.CreateUI(_languagesEditableSection, width: 200);
+            _helpZone?.Describe(targetLangObj, "The language you want the game translated into. Auto uses your system language.");
 
             // === LOCKED LANGUAGES SECTION ===
             _languagesLockedSection = UIFactory.CreateVerticalGroup(card, "LanguagesLockedSection", false, false, true, true, 0);
@@ -483,6 +490,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             var resetBtn = CreateSecondaryButton(resetRow, "ResetWindowsBtn", "Reset Window Positions", 160);
             resetBtn.OnClick += OnResetWindowPositionsClicked;
             RegisterUIText(resetBtn.ButtonText);
+            _helpZone?.Describe(resetBtn.Component.gameObject, "Move all mod windows back to their default positions and sizes.");
 
             _resetWindowsStatusLabel = UIFactory.CreateLabel(resetRow, "ResetStatus", "", TextAnchor.MiddleLeft);
             _resetWindowsStatusLabel.fontSize = UIStyles.FontSizeSmall;
@@ -528,6 +536,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIStyles.CreateSpacer(card, 5);
 
             _hotkeyCapture.CreateUI(card);
+            _helpZone?.Describe(_hotkeyCapture.Root, "The keyboard shortcut that opens and closes this settings panel.");
 
             UIStyles.CreateSpacer(card, 15);
 
@@ -541,30 +550,40 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIStyles.CreateSpacer(card, 5);
 
             // --- Toggles (actions that turn things on/off) ---
-            CreateHotkeyRow(card, "Toggle translations", "Turn all translations on/off (restores original text)", _hotkeyToggleTranslations);
-            CreateHotkeyRow(card, "Toggle translation backend", "Pause/resume live translation - texts already translated stay translated", _hotkeyToggleAI);
-            CreateHotkeyRow(card, "Toggle image replacement", "Debug: show original images instead of replacements", _hotkeyToggleImages);
-            CreateHotkeyRow(card, "Toggle font replacement", "Debug: show the game's original fonts instead of the mod's replacement fonts", _hotkeyToggleFonts);
-            CreateHotkeyRow(card, "Toggle notifications", "Show/hide the corner notification overlay (for clean screenshots)", _hotkeyToggleOverlay);
+            CreateHotkeyRow(card, "Toggle translations", "Turn all translations on/off (restores original text)", _hotkeyToggleTranslations,
+                "Shortcut to turn all translations on or off, restoring the game's original text.");
+            CreateHotkeyRow(card, "Toggle translation backend", "Pause/resume live translation - texts already translated stay translated", _hotkeyToggleAI,
+                "Shortcut to pause or resume live translation. Texts already translated stay translated.");
+            CreateHotkeyRow(card, "Toggle image replacement", "Debug: show original images instead of replacements", _hotkeyToggleImages,
+                "Shortcut to switch between original and replaced images. Mainly for debugging.");
+            CreateHotkeyRow(card, "Toggle font replacement", "Debug: show the game's original fonts instead of the mod's replacement fonts", _hotkeyToggleFonts,
+                "Shortcut to switch between the game's original fonts and the mod's replacement fonts.");
+            CreateHotkeyRow(card, "Toggle notifications", "Show/hide the corner notification overlay (for clean screenshots)", _hotkeyToggleOverlay,
+                "Shortcut to show or hide the corner notification overlay, handy for clean screenshots.");
 
             UIStyles.CreateSpacer(card, 10);
 
             // --- Quick access (open/close panels) ---
-            CreateHotkeyRow(card, "Toggle Inspector", "Open/close the element inspector panel", _hotkeyOpenInspector);
-            CreateHotkeyRow(card, "Toggle Upload", "Open/close the translation upload panel", _hotkeyOpenUpload);
-            CreateHotkeyRow(card, "Toggle Exclusion mode", "Open/close the inspector in exclusion mode", _hotkeyOpenExclusion);
-            CreateHotkeyRow(card, "Toggle Text editor", "Open/close the in-game text editor (click UI text to edit)", _hotkeyOpenTextEditor);
+            CreateHotkeyRow(card, "Toggle Inspector", "Open/close the element inspector panel", _hotkeyOpenInspector,
+                "Shortcut to open or close the element inspector panel.");
+            CreateHotkeyRow(card, "Toggle Upload", "Open/close the translation upload panel", _hotkeyOpenUpload,
+                "Shortcut to open or close the translation upload panel.");
+            CreateHotkeyRow(card, "Toggle Exclusion mode", "Open/close the inspector in exclusion mode", _hotkeyOpenExclusion,
+                "Shortcut to open or close the inspector in exclusion mode.");
+            CreateHotkeyRow(card, "Toggle Text editor", "Open/close the in-game text editor (click UI text to edit)", _hotkeyOpenTextEditor,
+                "Shortcut to open or close the in-game text editor, where you click UI text to edit it.");
 
             UIStyles.CreateSpacer(card, 10);
 
             // --- Utilities ---
-            CreateHotkeyRow(card, "Force scene rescan", "Re-scan the current scene (useful after scene glitches)", _hotkeyForceScan);
+            CreateHotkeyRow(card, "Force scene rescan", "Re-scan the current scene (useful after scene glitches)", _hotkeyForceScan,
+                "Shortcut to re-scan the current scene, useful after scene glitches.");
         }
 
         /// <summary>
         /// Creates one row per hotkey: label + hint + HotkeyCapture component.
         /// </summary>
-        private void CreateHotkeyRow(GameObject parent, string label, string hint, HotkeyCapture capture)
+        private void CreateHotkeyRow(GameObject parent, string label, string hint, HotkeyCapture capture, string helpText = null)
         {
             var row = UIFactory.CreateVerticalGroup(parent, $"HotkeyRow_{label}", false, false, true, true, 2);
             UIFactory.SetLayoutElement(row, flexibleWidth: 9999);
@@ -579,6 +598,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             RegisterUIText(hintUi);
 
             capture.CreateUI(row, includeDisplayLabel: false);
+            if (!string.IsNullOrEmpty(helpText)) _helpZone?.Describe(capture.Root, helpText);
 
             UIStyles.CreateSpacer(parent, 6);
         }
@@ -597,6 +617,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIHelpers.AddToggleListener(_captureKeysOnlyToggle, OnCaptureKeysOnlyChanged);
             UIFactory.SetLayoutElement(captureObj, minHeight: UIStyles.RowHeightNormal);
             RegisterUIText(captureLabel);
+            _helpZone?.Describe(captureObj, "Record every text the game shows into your translation file as empty entries, to translate later. No automatic translation happens.");
 
             var captureHint = UIStyles.CreateHint(card, "CaptureHint", "Every text the game shows is added to your translation file as an empty entry, so you can translate it later (in-game editor or browser)");
             RegisterUIText(captureHint);
@@ -614,6 +635,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIHelpers.AddToggleListener(_enableTranslationBackendToggle, OnEnableTranslationBackendChanged);
             UIFactory.SetLayoutElement(enableObj, minHeight: UIStyles.RowHeightMedium);
             RegisterUIText(enableLabel);
+            _helpZone?.Describe(enableObj, "Automatically translate untranslated texts using the backend below (your AI, Google or DeepL).");
 
             // Backend type section (shown when enabled)
             _backendTypeSection = UIFactory.CreateVerticalGroup(card, "BackendTypeSection", false, false, true, true, 5);
@@ -649,10 +671,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             _aiUrlInput = UIFactory.CreateInputField(urlRow, "AIUrl", "http://localhost:11434");
             UIFactory.SetLayoutElement(_aiUrlInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
             UIStyles.SetBackground(_aiUrlInput.Component.gameObject, UIStyles.InputBackground);
+            _helpZone?.Describe(_aiUrlInput.Component.gameObject, "Address of your AI server, for example a local Ollama or LM Studio. Default is http://localhost:11434.");
 
             var testBtn = CreateSecondaryButton(urlRow, "TestBtn", "Test", 60);
             testBtn.OnClick += TestAIConnection;
             RegisterUIText(testBtn.ButtonText);
+            _helpZone?.Describe(testBtn.Component.gameObject, "Check that the mod can reach the AI server at the URL above.");
 
             _aiTestStatusLabel = UIFactory.CreateLabel(_llmSection, "TestStatus", "", TextAnchor.MiddleLeft);
             _aiTestStatusLabel.fontSize = UIStyles.FontSizeSmall;
@@ -670,6 +694,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _aiApiKeyInput.Component.contentType = UnityEngine.UI.InputField.ContentType.Password;
             UIFactory.SetLayoutElement(_aiApiKeyInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
             UIStyles.SetBackground(_aiApiKeyInput.Component.gameObject, UIStyles.InputBackground);
+            _helpZone?.Describe(_aiApiKeyInput.Component.gameObject, "API key for your AI server, if it needs one. Leave empty for most local servers.");
 
             var keyHint = UIStyles.CreateHint(_llmSection, "KeyHint", "Optional for local servers (Ollama, LM Studio)");
             RegisterUIText(keyHint);
@@ -684,10 +709,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             _modelDropdown = new SearchableDropdown("ModelDropdown", new string[0], null, 200, false);
             var modelObj = _modelDropdown.CreateUI(modelRow, (val) => { });
             UIFactory.SetLayoutElement(modelObj, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
+            _helpZone?.Describe(modelObj, "Which AI model handles the translations. Use Refresh to load the list from your server.");
 
             var refreshBtn = CreateSecondaryButton(modelRow, "RefreshBtn", "Refresh", 60);
             refreshBtn.OnClick += RefreshModels;
             RegisterUIText(refreshBtn.ButtonText);
+            _helpZone?.Describe(refreshBtn.Component.gameObject, "Load the list of available models from your AI server.");
 
             var modelHint = UIStyles.CreateHint(_llmSection, "ModelHint", "Select a model from your server");
             RegisterUIText(modelHint);
@@ -704,6 +731,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _gameContextInput.Component.lineType = UnityEngine.UI.InputField.LineType.MultiLineNewline;
             UIFactory.SetLayoutElement(_gameContextInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.MultiLineMedium);
             UIStyles.SetBackground(_gameContextInput.Component.gameObject, UIStyles.InputBackground);
+            _helpZone?.Describe(_gameContextInput.Component.gameObject, "Optional note about the game (genre, setting, tone) to help the AI pick better wording.");
 
             var contextHint = UIStyles.CreateHint(_llmSection, "ContextHint", "Helps the AI understand game vocabulary");
             RegisterUIText(contextHint);
@@ -716,6 +744,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             strictLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(strictObj, minHeight: UIStyles.RowHeightNormal);
             RegisterUIText(strictLabel);
+            _helpZone?.Describe(strictObj, "Skip texts that are not in the source language, so foreign or already-translated text is left alone. AI backend only.");
 
             var strictHint = UIStyles.CreateHint(_llmSection, "StrictHint", "Skip texts not matching source language (LLM only)");
             RegisterUIText(strictHint);
@@ -735,6 +764,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 "ProviderDropdown", ProviderOptions, "Google Translate", popupHeight: 100, showSearch: false);
             var providerObj = _providerDropdown.CreateUI(providerRow, OnProviderChanged);
             UIFactory.SetLayoutElement(providerObj, minWidth: 160, minHeight: UIStyles.InputHeight);
+            _helpZone?.Describe(providerObj, "Choose the translation service: Google Translate or DeepL. Each needs its own API key.");
 
             UIStyles.CreateSpacer(_translationApiSection, 5);
 
@@ -752,10 +782,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             _googleApiKeyInput.Component.contentType = UnityEngine.UI.InputField.ContentType.Password;
             UIFactory.SetLayoutElement(_googleApiKeyInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
             UIStyles.SetBackground(_googleApiKeyInput.Component.gameObject, UIStyles.InputBackground);
+            _helpZone?.Describe(_googleApiKeyInput.Component.gameObject, "Your Google Cloud API key with the Translation API enabled.");
 
             var googleTestBtn = CreateSecondaryButton(googleKeyRow, "GoogleTestBtn", "Test", 60);
             googleTestBtn.OnClick += TestGoogleConnection;
             RegisterUIText(googleTestBtn.ButtonText);
+            _helpZone?.Describe(googleTestBtn.Component.gameObject, "Send a test request to check that your Google API key works.");
 
             _googleTestStatusLabel = UIFactory.CreateLabel(_googleSection, "GoogleTestStatus", "", TextAnchor.MiddleLeft);
             _googleTestStatusLabel.fontSize = UIStyles.FontSizeSmall;
@@ -778,10 +810,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             _deeplApiKeyInput.Component.contentType = UnityEngine.UI.InputField.ContentType.Password;
             UIFactory.SetLayoutElement(_deeplApiKeyInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
             UIStyles.SetBackground(_deeplApiKeyInput.Component.gameObject, UIStyles.InputBackground);
+            _helpZone?.Describe(_deeplApiKeyInput.Component.gameObject, "Your DeepL API key (Free or Pro).");
 
             var deeplTestBtn = CreateSecondaryButton(deeplKeyRow, "DeepLTestBtn", "Test", 60);
             deeplTestBtn.OnClick += TestDeepLConnection;
             RegisterUIText(deeplTestBtn.ButtonText);
+            _helpZone?.Describe(deeplTestBtn.Component.gameObject, "Send a test request to check that your DeepL API key works.");
 
             _deeplTestStatusLabel = UIFactory.CreateLabel(_deeplSection, "DeepLTestStatus", "", TextAnchor.MiddleLeft);
             _deeplTestStatusLabel.fontSize = UIStyles.FontSizeSmall;
@@ -792,6 +826,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             deeplFreeLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(deeplFreeObj, minHeight: UIStyles.RowHeightNormal);
             RegisterUIText(deeplFreeLabel);
+            _helpZone?.Describe(deeplFreeObj, "Use the DeepL Free endpoint. Turn off if you have a DeepL Pro key.");
 
             var deeplHint = UIStyles.CreateHint(_deeplSection, "DeepLHint", "Uncheck for Pro API (api.deepl.com). Free plan: 500k chars/month");
             RegisterUIText(deeplHint);
@@ -808,6 +843,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _rateLimitDelayInput.Component.contentType = UnityEngine.UI.InputField.ContentType.DecimalNumber;
             UIFactory.SetLayoutElement(_rateLimitDelayInput.Component.gameObject, minWidth: 50, minHeight: UIStyles.InputHeight);
             UIStyles.SetBackground(_rateLimitDelayInput.Component.gameObject, UIStyles.InputBackground);
+            _helpZone?.Describe(_rateLimitDelayInput.Component.gameObject, "How long to wait before retrying when the translation service asks the mod to slow down.");
 
             var rateLimitUnit = UIFactory.CreateLabel(rateLimitRow, "RateLimitUnit", "seconds", TextAnchor.MiddleLeft);
             rateLimitUnit.color = UIStyles.TextMuted;
@@ -849,12 +885,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             checkLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(checkUpdatesObj, minHeight: UIStyles.RowHeightNormal);
             RegisterUIText(checkLabel);
+            _helpZone?.Describe(checkUpdatesObj, "Check the website for newer versions of your translations each time the game starts.");
 
             var notifyObj = UIFactory.CreateToggle(card, "NotifyToggle", out _notifyUpdatesToggle, out var notifyLabel);
             notifyLabel.text = " Notify when translation updates available";
             notifyLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(notifyObj, minHeight: UIStyles.RowHeightNormal);
             RegisterUIText(notifyLabel);
+            _helpZone?.Describe(notifyObj, "Show a notification when a newer version of a translation is available to download.");
 
             var autoDownloadObj = UIFactory.CreateToggle(card, "AutoDownloadToggle", out _autoDownloadToggle, out var autoLabel);
             autoLabel.text = " Auto-download translation updates (no conflicts)";
@@ -877,16 +915,19 @@ namespace UnityGameTranslator.Core.UI.Panels
             modLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(modUpdatesObj, flexibleWidth: 9999);
             RegisterUIText(modLabel);
+            _helpZone?.Describe(modUpdatesObj, "Check for a new version of the mod itself when the game starts.");
 
             _checkModUpdatesNowBtn = CreateSecondaryButton(modUpdatesRow, "CheckNowBtn", "Check Now", 90);
             _checkModUpdatesNowBtn.OnClick += OnCheckModUpdatesNowClicked;
             RegisterUIText(_checkModUpdatesNowBtn.ButtonText);
+            _helpZone?.Describe(_checkModUpdatesNowBtn.Component.gameObject, "Check for a new mod version right now.");
 
             var prereleaseObj = UIFactory.CreateToggle(card, "PrereleaseToggle", out _notifyPrereleasesToggle, out var prereleaseLabel);
             prereleaseLabel.text = " Also notify about beta releases";
             prereleaseLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(prereleaseObj, minHeight: UIStyles.RowHeightNormal);
             RegisterUIText(prereleaseLabel);
+            _helpZone?.Describe(prereleaseObj, "Also get notified about beta (pre-release) mod versions, not just stable ones.");
 
             var prereleaseHint = UIStyles.CreateHint(card, "PrereleaseHint",
                 "Betas are early builds for testing new features. Leave off to only hear about stable releases.");
@@ -921,6 +962,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 "ProxyModeDropdown", ProxyModeDisplayOptions, ProxyModeDisplayOptions[0], popupHeight: 150, showSearch: false);
             var proxyModeObj = _proxyModeDropdown.CreateUI(proxyModeRow, OnProxyModeChanged);
             UIFactory.SetLayoutElement(proxyModeObj, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
+            _helpZone?.Describe(proxyModeObj, "How the mod connects to the internet. Keep Default unless the game blocks the mod's network calls.");
 
             // Custom-only section (toggled visible by OnProxyModeChanged)
             _proxyCustomSection = UIFactory.CreateVerticalGroup(card, "ProxyCustomSection", false, false, true, true, 3);
@@ -936,6 +978,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _proxyUrlInput = UIFactory.CreateInputField(proxyUrlRow, "ProxyUrl", "http://proxy.example.com:8080");
             UIFactory.SetLayoutElement(_proxyUrlInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
             UIStyles.SetBackground(_proxyUrlInput.Component.gameObject, UIStyles.InputBackground);
+            _helpZone?.Describe(_proxyUrlInput.Component.gameObject, "Address of your proxy server, used only in Custom mode.");
 
             // Username
             var proxyUserRow = UIStyles.CreateFormRow(_proxyCustomSection, "ProxyUserRow", UIStyles.InputHeight, 5);
@@ -947,6 +990,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _proxyUserInput = UIFactory.CreateInputField(proxyUserRow, "ProxyUser", "(optional)");
             UIFactory.SetLayoutElement(_proxyUserInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
             UIStyles.SetBackground(_proxyUserInput.Component.gameObject, UIStyles.InputBackground);
+            _helpZone?.Describe(_proxyUserInput.Component.gameObject, "Proxy username, if your proxy requires sign-in. Optional.");
 
             // Password
             var proxyPassRow = UIStyles.CreateFormRow(_proxyCustomSection, "ProxyPassRow", UIStyles.InputHeight, 5);
@@ -959,6 +1003,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _proxyPassInput.Component.contentType = UnityEngine.UI.InputField.ContentType.Password;
             UIFactory.SetLayoutElement(_proxyPassInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
             UIStyles.SetBackground(_proxyPassInput.Component.gameObject, UIStyles.InputBackground);
+            _helpZone?.Describe(_proxyPassInput.Component.gameObject, "Proxy password, if your proxy requires sign-in. Optional.");
 
             // Bypass local
             var proxyBypassObj = UIFactory.CreateToggle(_proxyCustomSection, "ProxyBypassToggle",
@@ -967,6 +1012,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             proxyBypassLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(proxyBypassObj, minHeight: UIStyles.RowHeightNormal);
             RegisterUIText(proxyBypassLabel);
+            _helpZone?.Describe(proxyBypassObj, "Connect directly to local and private addresses instead of through the proxy.");
 
             // Hidden by default; OnProxyModeChanged toggles it when the user picks "Custom".
             _proxyCustomSection.SetActive(false);

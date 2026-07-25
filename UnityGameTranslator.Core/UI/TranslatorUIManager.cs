@@ -260,6 +260,16 @@ namespace UnityGameTranslator.Core.UI
 
             UiBase = UniversalUI.RegisterUI("UnityGameTranslator", UpdateUI);
 
+            // Register the mod's top-level UI root for hierarchy-based own-UI detection.
+            // Every mod panel, overlay and popup is a descendant of this root, so
+            // IsOwnUIByHierarchy identifies ALL our UI no matter when (or whether) an
+            // individual label calls RegisterUIText/RegisterExcluded. This closes the leak
+            // window where a runtime label (e.g. a corner-overlay notification) set its text
+            // — and thus exposed its font "arial" — before its registration ran, letting the
+            // mod's own font leak into the game's font map.
+            if (UiBase?.RootObject != null)
+                TranslatorCore.RegisterPanelRoot(UiBase.RootObject);
+
             CreatePanels();
 
             _initialized = true;

@@ -2500,6 +2500,11 @@ namespace UnityGameTranslator.Core
             if (_suppressFontSetterReapply) return;
             if (_fallbackAssets.Count == 0) return;
 
+            // Defense-in-depth: never treat our own UI as a font-replacement target. The
+            // mod's font must never enter the game's font pipeline, whatever translate_mod_ui is.
+            var ownComp = component as Component;
+            if (ownComp != null && TranslatorCore.IsOwnUI(ownComp)) return;
+
             int instanceId = TypeHelper.GetInstanceID(component);
             if (instanceId == -1) return;
 

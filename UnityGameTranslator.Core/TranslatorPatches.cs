@@ -714,8 +714,13 @@ namespace UnityGameTranslator.Core
                 string fontName = null;
                 string settingsFontName = null;
 
+                // Own UI reaches here only when translate_mod_ui is ON. Its font must never
+                // enter the game font pipeline (managed separately as the interface font), so
+                // skip font detection/registration for own UI while still translating it.
+                bool isOwnUI = TranslatorCore.IsOwnUITranslatable(component);
+
                 // Get font name if available
-                if (typeInfo?.FontProp != null)
+                if (typeInfo?.FontProp != null && !isOwnUI)
                 {
                     try
                     {
@@ -737,7 +742,6 @@ namespace UnityGameTranslator.Core
                 }
 
                 // Translate
-                bool isOwnUI = TranslatorCore.IsOwnUITranslatable(component);
                 string preVal = value;
                 value = TranslatorCore.TranslateTextWithTracking(value, component, isOwnUI);
 
@@ -767,8 +771,12 @@ namespace UnityGameTranslator.Core
 
                 var typeInfo = FindTypeInfoForInstance(__instance);
 
+                // Own UI reaches here only when translate_mod_ui is ON. Keep its font out of
+                // the game font pipeline (interface font is managed separately); still translate.
+                bool isOwnUI = TranslatorCore.IsOwnUITranslatable(component);
+
                 // Check font-based enable/disable
-                if (typeInfo?.FontProp != null)
+                if (typeInfo?.FontProp != null && !isOwnUI)
                 {
                     try
                     {
@@ -785,7 +793,6 @@ namespace UnityGameTranslator.Core
                     catch { }
                 }
 
-                bool isOwnUI = TranslatorCore.IsOwnUITranslatable(component);
                 __result = TranslatorCore.TranslateTextWithTracking(__result, component, isOwnUI);
             }
             catch { }
@@ -2279,6 +2286,9 @@ namespace UnityGameTranslator.Core
                 var comp = __instance as Component;
                 if (comp == null) return;
 
+                // Defense-in-depth: never re-apply game fonts to our own UI.
+                if (TranslatorCore.IsOwnUI(comp)) return;
+
                 int compId = TypeHelper.GetInstanceID(__instance);
                 if (compId == -1) return;
 
@@ -2903,6 +2913,14 @@ namespace UnityGameTranslator.Core
 
                 if (profiling) { t1 = _profSw.ElapsedTicks; _profSkipTranslation += t1 - t0; }
 
+                // Own UI reaches here only when translate_mod_ui is ON (otherwise
+                // ShouldSkipTranslation returned above). Our own UI must NEVER enter the
+                // game's font pipeline — its font is managed separately (interface font) and
+                // must not pollute the game's _fonts map. Treat it like a no-font component:
+                // skip all font detection/registration/replacement below, but still translate.
+                // Cheap when OFF: IsOwnUITranslatable returns false immediately without a walk.
+                bool isOwnUI = TranslatorCore.IsOwnUITranslatable(comp);
+
                 int compId = TypeHelper.GetInstanceID(__instance);
                 string fontName = null;
                 string settingsFontName = null;
@@ -2958,7 +2976,7 @@ namespace UnityGameTranslator.Core
 
                 if (profiling) { t2 = _profSw.ElapsedTicks; _profGetFont += t2 - t1; }
 
-                if (!string.IsNullOrEmpty(fontName))
+                if (!string.IsNullOrEmpty(fontName) && !isOwnUI)
                 {
                     settingsFontName = FontManager.GetSettingsFontName(compId, fontName);
 
@@ -3077,8 +3095,7 @@ namespace UnityGameTranslator.Core
                     return;
                 }
 
-                // Check if own UI (use UI-specific prompt) - uses hierarchy check
-                bool isOwnUI = TranslatorCore.IsOwnUITranslatable(comp);
+                // Own UI (UI-specific translation prompt) — computed once near the top.
                 string preTranslateText = textValue;
 
                 // Check concat assembled cache: if this exact text was already assembled

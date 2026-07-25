@@ -1222,6 +1222,16 @@ namespace UnityGameTranslator.Core
             }
         }
 
+        /// <summary>
+        /// Toggle debug logging at runtime. DebugMode is a cached mirror of Config.debug
+        /// (set at config load), so a live toggle must update both. Caller persists via SaveConfig.
+        /// </summary>
+        public static void SetRuntimeDebug(bool on)
+        {
+            if (Config != null) Config.debug = on;
+            DebugMode = on;
+        }
+
         #region Public Logging (for use by TranslatorPatches/TranslatorScanner)
 
         public static void LogInfo(string message) => Adapter?.LogInfo(message);
@@ -1560,6 +1570,14 @@ namespace UnityGameTranslator.Core
                                 settings.fallback = fontObj["fallback"]?.Value<string>();
                                 settings.type = fontObj["type"]?.Value<string>();
                                 settings.scale = fontObj["scale"]?.Value<float>() ?? 1.0f;
+                                settings.scale_auto = fontObj["scale_auto"]?.Value<bool>() ?? false;
+                                // Migration: pre-B translations have no size_percent and stored the
+                                // deliberate % directly in `scale` (auto was always off) → carry it
+                                // over so the effective size is preserved exactly (frozen).
+                                var sizePercentToken = fontObj["size_percent"];
+                                settings.size_percent = sizePercentToken != null
+                                    ? sizePercentToken.Value<float>()
+                                    : (settings.scale_auto ? 1.0f : settings.scale);
                             }
                             FontSettingsMap[fontProp.Name] = settings;
                         }
@@ -5092,11 +5110,19 @@ namespace UnityGameTranslator.Core
                                 ["fallback"] = kvp.Value.fallback,
                                 ["type"] = kvp.Value.type
                             };
-                            // Only save scale if not default (1.0)
+                            // Save the effective scale if not default (1.0). This is the value an
+                            // older mod reads (it knows neither scale_auto nor size_percent), so it
+                            // must carry the full materialized product for backward-compatible size.
                             if (Math.Abs(kvp.Value.scale - 1.0f) > 0.001f)
                             {
                                 fontObj["scale"] = kvp.Value.scale;
                             }
+                            // Persist the Phase B decomposition so a newer mod recomputes the
+                            // effective scale from the live design-scale + the deliberate percent.
+                            if (kvp.Value.scale_auto)
+                                fontObj["scale_auto"] = true;
+                            if (Math.Abs(kvp.Value.size_percent - 1.0f) > 0.001f)
+                                fontObj["size_percent"] = kvp.Value.size_percent;
                             fontsObj[kvp.Key] = fontObj;
                         }
                         output["_fonts"] = fontsObj;
@@ -5372,6 +5398,14 @@ namespace UnityGameTranslator.Core
         // can keep them off between sessions. End users should leave these at true.
         public bool enable_image_replacement { get; set; } = true;
         public bool enable_font_replacement { get; set; } = true;
+
+        // Max SDF atlas dimension the auto-quality picker may use when rasterizing a
+        // replacement font. 0 = automatic default (4096). Raising it (e.g. 8192) renders
+        // replacement fonts at a higher SDF resolution → crisper when the translator scales
+        // the text up, at a VRAM cost. Capped by SystemInfo.maxTextureSize. LAYOUT-NEUTRAL
+        // (TMP normalizes the SDF by pointSize → text size is unchanged, only sharpness),
+        // so it is safe on already-published translations. See analyse/font-rendering-target-size.md.
+        public int max_font_atlas_size { get; set; } = 0;
 
         public string settings_hotkey { get; set; } = "F10";
 
@@ -5756,10 +5790,32 @@ namespace UnityGameTranslator.Core
         public string type { get; set; }
 
         /// <summary>
-        /// Font size scale factor. 1.0 = original size, 1.5 = 150%, 0.8 = 80%.
-        /// Applied to translated text only.
+        /// EFFECTIVE font size multiplier applied to translated text = the materialized product
+        /// <c>(scale_auto ? design-scale : 1) × size_percent</c>. Kept materialized so the render
+        /// pipeline reads one value AND an older mod (no scale_auto/size_percent support) still
+        /// renders the right size. 1.0 = original size.
         /// </summary>
         public float scale { get; set; } = 1.0f;
+
+        /// <summary>
+        /// The translator's DELIBERATE size multiplier (the Fonts-tab slider), orthogonal to the
+        /// auto design-scale. 1.0 = 100% (native). Kept for cross-script fit/readability (e.g. a
+        /// CJK→Latin translation is much longer and may need down/up-sizing vs the HUD). Combines
+        /// multiplicatively with the design-scale baseline. Absent in old JSON → migrated from the
+        /// legacy <see cref="scale"/> at load (old translations stored the deliberate % there).
+        /// </summary>
+        public float size_percent { get; set; } = 1.0f;
+
+        /// <summary>
+        /// When true, the design-scale (replaced font's faceInfo.scale — matches the game font's
+        /// native visual size) is folded into the effective <see cref="scale"/> as a baseline, on
+        /// top of which <see cref="size_percent"/> still applies. Set on a freshly DETECTED
+        /// TMP-family font (EnsureFontSettings); toggled by the user in the Fonts tab. Default
+        /// false so entries loaded from an existing translation (field absent in old JSON) keep
+        /// their stored scale — frozen translations are never re-scaled. See
+        /// analyse/font-rendering-target-size.md (Phase B).
+        /// </summary>
+        public bool scale_auto { get; set; } = false;
 
         /// <summary>
         /// Number of times this font has been used for translation.

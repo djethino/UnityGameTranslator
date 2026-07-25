@@ -60,10 +60,14 @@ namespace UnityGameTranslator.Core.UI.Panels
         private Toggle _enableFontReplacementToggle;
         private string[] _systemFonts;
         private List<SearchableDropdown> _fallbackDropdowns = new List<SearchableDropdown>();
+        private SearchableDropdown _fontAtlasSizeDropdown;
+        private int _pendingAtlasSize;  // font sharpness selection, applied on Apply
 
-        // Pending font changes (fontName -> (enabled, fallback, scale))
-        private Dictionary<string, (bool enabled, string fallback, float scale)> _pendingFontSettings = new Dictionary<string, (bool, string, float)>();
-        private Dictionary<string, (bool enabled, string fallback, float scale)> _initialFontSettings = new Dictionary<string, (bool, string, float)>();
+        // Pending font changes (fontName -> (enabled, fallback, sizePercent, scaleAuto)).
+        // sizePercent = the deliberate size slider (orthogonal to the auto design-scale baseline);
+        // scaleAuto = whether the design-scale is folded in. The two combine multiplicatively.
+        private Dictionary<string, (bool enabled, string fallback, float sizePercent, bool scaleAuto)> _pendingFontSettings = new Dictionary<string, (bool, string, float, bool)>();
+        private Dictionary<string, (bool enabled, string fallback, float sizePercent, bool scaleAuto)> _initialFontSettings = new Dictionary<string, (bool, string, float, bool)>();
 
         // Images section
         private GameObject _imagesListContainer;
@@ -766,6 +770,37 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.SetLayoutElement(fontEnableObj, minHeight: UIStyles.RowHeightNormal);
             RegisterUIText(fontEnableLabel);
 
+            // Font sharpness = max SDF atlas dimension. Higher = crisper when the translation
+            // scales text up, at a VRAM cost. LAYOUT-NEUTRAL (text size unchanged). Options are
+            // bounded dynamically by the GPU texture limit; applied immediately (SaveConfig),
+            // takes effect on the next font rebuild (auto-detected — no manual .gen deletion).
+            var sharpRow = UIStyles.CreateFormRow(card, "FontSharpnessRow", UIStyles.RowHeightMedium, 5);
+            var sharpLabel = UIFactory.CreateLabel(sharpRow, "FontSharpnessLabel", "Font sharpness:", TextAnchor.MiddleLeft);
+            sharpLabel.color = UIStyles.TextSecondary;
+            UIFactory.SetLayoutElement(sharpLabel.gameObject, minWidth: 100);
+            RegisterUIText(sharpLabel);
+
+            int maxTex = 8192;
+            try { int sys = UnityEngine.SystemInfo.maxTextureSize; if (sys >= 512) maxTex = sys; } catch { }
+            var sharpOptions = new List<string> { "Auto" };
+            foreach (int s in new[] { 4096, 8192, 16384 })
+                if (s <= maxTex) sharpOptions.Add(s.ToString());
+            int curBudget = TranslatorCore.Config?.max_font_atlas_size ?? 0;
+            string sharpInitial = (curBudget > 0 && sharpOptions.Contains(curBudget.ToString()))
+                ? curBudget.ToString() : "Auto";
+
+            _pendingAtlasSize = curBudget;
+            _fontAtlasSizeDropdown = new SearchableDropdown("FontSharpness", sharpOptions.ToArray(),
+                sharpInitial, popupHeight: 150, showSearch: false);
+            var sharpDropdownObj = _fontAtlasSizeDropdown.CreateUI(sharpRow, (val) =>
+            {
+                // Pending only — applied (and fonts rebuilt) on Apply, like every other setting.
+                _pendingAtlasSize = (val == "Auto" || !int.TryParse(val, out int b)) ? 0 : b;
+                UpdateApplyButtonText();
+            }, width: 140);
+            UIFactory.SetLayoutElement(sharpDropdownObj, minWidth: 140, minHeight: UIStyles.InputHeight);
+            _helpZone?.Describe(sharpDropdownObj, "How finely replacement fonts are rendered. Higher = crisper when the translation scales text up, but uses more video memory. 'Auto' is a safe default. Text size is unchanged. Takes effect on the next font rebuild.");
+
             UIStyles.CreateSpacer(card, 10);
 
             // Refresh button
@@ -1413,7 +1448,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 UIFactory.SetLayoutElement(noFallbackLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
             }
 
-            // Size scale row (for all fonts)
+            // Size row (for all fonts) — the DELIBERATE size percent (fit/readability, e.g. a longer
+            // cross-script translation vs the HUD). Orthogonal to the auto design-scale: the two
+            // combine multiplicatively (Model B). 100% = native.
             var scaleRow = UIStyles.CreateFormRow(row, "ScaleRow", UIStyles.RowHeightNormal, 5);
 
             var scaleLabel = UIFactory.CreateLabel(scaleRow, "ScaleLabel", "Size:", TextAnchor.MiddleLeft);
@@ -1421,16 +1458,18 @@ namespace UnityGameTranslator.Core.UI.Panels
             scaleLabel.fontSize = UIStyles.FontSizeSmall;
             UIFactory.SetLayoutElement(scaleLabel.gameObject, minWidth: 55);
 
-            // Scale slider (1% to 200%)
+            // Size slider (1% to 200%) = the deliberate percent. Always active; it does NOT replace
+            // the auto design-scale, it applies on top of it.
             var sliderObj = UIFactory.CreateSlider(scaleRow, $"ScaleSlider_{capturedFontName}", out UnityEngine.UI.Slider scaleSlider);
             UIFactory.SetLayoutElement(sliderObj, minWidth: 120, flexibleWidth: 1, minHeight: 20);
             scaleSlider.minValue = 0.01f;
             scaleSlider.maxValue = 2.0f;
             scaleSlider.wholeNumbers = false;
-            scaleSlider.value = fontInfo.Scale;
+            float sizePercent = FontManager.GetFontSizePercent(capturedFontName);
+            scaleSlider.value = Math.Min(scaleSlider.maxValue, sizePercent);
 
             var scaleValueLabel = UIFactory.CreateLabel(scaleRow, $"ScaleValue_{capturedFontName}",
-                $"{(int)(fontInfo.Scale * 100)}%", TextAnchor.MiddleCenter);
+                $"{(int)(sizePercent * 100)}%", TextAnchor.MiddleCenter);
             scaleValueLabel.fontSize = UIStyles.FontSizeSmall;
             scaleValueLabel.color = UIStyles.TextPrimary;
             UIFactory.SetLayoutElement(scaleValueLabel.gameObject, minWidth: 40);
@@ -1443,6 +1482,23 @@ namespace UnityGameTranslator.Core.UI.Panels
                 capturedScaleLabel.text = $"{(int)(rounded * 100)}%";
                 OnFontScaleChanged(capturedFontName, rounded);
             });
+
+            // Auto design-scale toggle — folds the font's native design-scale into the size as a
+            // baseline (so an imported font matches the game's original size), on top of which the
+            // slider % still applies. Default ON for freshly detected TMP fonts. HIDDEN for font
+            // types where the design-scale has no meaning (UI.Text / non-TMP clone-atlas preserves
+            // the game's metrics). Commits on Apply only (UX rule: no immediate application).
+            if (FontManager.SupportsDesignScale(fontInfo.Type))
+            {
+                bool fontScaleAuto = FontManager.GetFontSettings(capturedFontName)?.scale_auto ?? false;
+                var autoToggleObj = UIFactory.CreateToggle(scaleRow, $"AutoScale_{capturedFontName}", out UnityEngine.UI.Toggle autoScaleToggle, out var autoScaleLabel);
+                autoScaleToggle.isOn = fontScaleAuto;
+                autoScaleLabel.text = " Auto";
+                autoScaleLabel.color = UIStyles.TextSecondary;
+                autoScaleLabel.fontSize = UIStyles.FontSizeSmall;
+                UIFactory.SetLayoutElement(autoToggleObj, minWidth: 70);
+                UIHelpers.AddToggleListener(autoScaleToggle, (isOn) => OnFontAutoScaleChanged(capturedFontName, isOn));
+            }
         }
 
         // Scale dropdown helpers
@@ -1511,30 +1567,27 @@ namespace UnityGameTranslator.Core.UI.Panels
             _highlightedButton = null;
         }
 
+        /// <summary>
+        /// Resolve a font's current settings for change-tracking: pending edit if any, else the
+        /// captured initial, else the live font state. Single source so each handler mutates one
+        /// field and preserves the others (enabled, fallback, sizePercent, scaleAuto).
+        /// </summary>
+        private (bool enabled, string fallback, float sizePercent, bool scaleAuto) GetEffectiveFontSettings(string fontName)
+        {
+            if (_pendingFontSettings.TryGetValue(fontName, out var pending))
+                return pending;
+            if (_initialFontSettings.TryGetValue(fontName, out var initial))
+                return initial;
+            var settings = FontManager.GetFontSettings(fontName);
+            return (settings?.enabled ?? true, settings?.fallback,
+                    FontManager.GetFontSizePercent(fontName),  // deliberate percent (not the effective)
+                    settings?.scale_auto ?? false);
+        }
+
         private void OnFontEnableChanged(string fontName, bool enabled)
         {
-            // Get current pending state or initial state
-            string fallback;
-            float scale;
-            if (_pendingFontSettings.TryGetValue(fontName, out var pending))
-            {
-                fallback = pending.fallback;
-                scale = pending.scale;
-            }
-            else if (_initialFontSettings.TryGetValue(fontName, out var initial))
-            {
-                fallback = initial.fallback;
-                scale = initial.scale;
-            }
-            else
-            {
-                var settings = FontManager.GetFontSettings(fontName);
-                fallback = settings?.fallback;
-                scale = settings?.scale ?? 1.0f;
-            }
-
-            // Store pending change
-            _pendingFontSettings[fontName] = (enabled, fallback, scale);
+            var cur = GetEffectiveFontSettings(fontName);
+            _pendingFontSettings[fontName] = (enabled, cur.fallback, cur.sizePercent, cur.scaleAuto);
 
             if (_fontsStatusLabel != null)
             {
@@ -1547,28 +1600,8 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private void OnFontFallbackChanged(string fontName, string fallbackFont)
         {
-            // Get current pending state or initial state
-            bool enabled;
-            float scale;
-            if (_pendingFontSettings.TryGetValue(fontName, out var pending))
-            {
-                enabled = pending.enabled;
-                scale = pending.scale;
-            }
-            else if (_initialFontSettings.TryGetValue(fontName, out var initial))
-            {
-                enabled = initial.enabled;
-                scale = initial.scale;
-            }
-            else
-            {
-                var settings = FontManager.GetFontSettings(fontName);
-                enabled = settings?.enabled ?? true;
-                scale = settings?.scale ?? 1.0f;
-            }
-
-            // Store pending change
-            _pendingFontSettings[fontName] = (enabled, fallbackFont, scale);
+            var cur = GetEffectiveFontSettings(fontName);
+            _pendingFontSettings[fontName] = (cur.enabled, fallbackFont, cur.sizePercent, cur.scaleAuto);
 
             if (_fontsStatusLabel != null)
             {
@@ -1586,35 +1619,37 @@ namespace UnityGameTranslator.Core.UI.Panels
             UpdateApplyButtonText();
         }
 
-        private void OnFontScaleChanged(string fontName, float scale)
+        private void OnFontScaleChanged(string fontName, float sizePercent)
         {
-            // Get current pending state or initial state
-            bool enabled;
-            string fallback;
-            if (_pendingFontSettings.TryGetValue(fontName, out var pending))
-            {
-                enabled = pending.enabled;
-                fallback = pending.fallback;
-            }
-            else if (_initialFontSettings.TryGetValue(fontName, out var initial))
-            {
-                enabled = initial.enabled;
-                fallback = initial.fallback;
-            }
-            else
-            {
-                var settings = FontManager.GetFontSettings(fontName);
-                enabled = settings?.enabled ?? true;
-                fallback = settings?.fallback;
-            }
-
-            // Store pending change
-            _pendingFontSettings[fontName] = (enabled, fallback, scale);
+            var cur = GetEffectiveFontSettings(fontName);
+            // The slider is the deliberate size percent — orthogonal to the auto design-scale, so
+            // scaleAuto is preserved (Model B: the two combine).
+            _pendingFontSettings[fontName] = (cur.enabled, cur.fallback, sizePercent, cur.scaleAuto);
 
             if (_fontsStatusLabel != null)
             {
-                int scalePercent = Mathf.RoundToInt(scale * 100f);
-                _fontsStatusLabel.text = $"Font size {scalePercent}% will be applied to {fontName}";
+                int percent = Mathf.RoundToInt(sizePercent * 100f);
+                _fontsStatusLabel.text = $"Font size {percent}% will be applied to {fontName}";
+                _fontsStatusLabel.color = UIStyles.TextSecondary;
+            }
+
+            UpdateApplyButtonText();
+        }
+
+        /// <summary>
+        /// Toggle the auto design-scale for a font. Orthogonal to the size slider: it only folds the
+        /// design-scale baseline in/out; the deliberate percent is preserved. Applied on Apply only.
+        /// </summary>
+        private void OnFontAutoScaleChanged(string fontName, bool scaleAuto)
+        {
+            var cur = GetEffectiveFontSettings(fontName);
+            _pendingFontSettings[fontName] = (cur.enabled, cur.fallback, cur.sizePercent, scaleAuto);
+
+            if (_fontsStatusLabel != null)
+            {
+                _fontsStatusLabel.text = scaleAuto
+                    ? $"Auto native size enabled for {fontName}"
+                    : $"Auto native size disabled for {fontName}";
                 _fontsStatusLabel.color = UIStyles.TextSecondary;
             }
 
@@ -2108,6 +2143,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _enableFontReplacementToggle.isOn = TranslatorCore.Config.enable_font_replacement;
             if (_enableImageReplacementToggle != null)
                 _enableImageReplacementToggle.isOn = TranslatorCore.Config.enable_image_replacement;
+            _pendingAtlasSize = TranslatorCore.Config.max_font_atlas_size;
 
             // Refresh UI lists
             try { RefreshExclusionsList(); }
@@ -2126,8 +2162,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                     var settings = FontManager.GetFontSettings(fontInfo.Name);
                     var enabled = settings?.enabled ?? true;
                     var fallback = settings?.fallback;
-                    var scale = settings?.scale ?? 1.0f;
-                    _initialFontSettings[fontInfo.Name] = (enabled, fallback, scale);
+                    var sizePercent = FontManager.GetFontSizePercent(fontInfo.Name);  // deliberate percent
+                    var scaleAuto = settings?.scale_auto ?? false;
+                    _initialFontSettings[fontInfo.Name] = (enabled, fallback, sizePercent, scaleAuto);
                 }
             }
             catch (Exception ex) { TranslatorCore.LogWarning($"[TranslationParametersPanel] Font settings capture failed: {ex.Message}"); }
@@ -2177,8 +2214,23 @@ namespace UnityGameTranslator.Core.UI.Panels
                     TranslatorCore.SetMetadataDirty();
                 foreach (var kvp in _pendingFontSettings)
                 {
-                    FontManager.UpdateFontSettings(kvp.Key, kvp.Value.enabled, kvp.Value.fallback);
-                    FontManager.UpdateFontScale(kvp.Key, kvp.Value.scale);
+                    string fontName = kvp.Key;
+                    var pending = kvp.Value;
+
+                    // enabled/fallback always applied (does not touch size_percent/scale_auto).
+                    FontManager.UpdateFontSettings(fontName, pending.enabled, pending.fallback);
+
+                    // Auto design-scale toggle (orthogonal to the deliberate percent). SetFontAutoScale
+                    // recompensates the shadow in place (no revert/re-scan).
+                    bool initialAuto = _initialFontSettings.TryGetValue(fontName, out var init0) && init0.scaleAuto;
+                    if (pending.scaleAuto != initialAuto)
+                        FontManager.SetFontAutoScale(fontName, pending.scaleAuto);
+
+                    // Deliberate size percent — pushed only when the slider actually moved (editing
+                    // only fallback/enabled must not touch the size). UpdateFontScale also recompensates
+                    // the shadow in place.
+                    if (Math.Abs(pending.sizePercent - FontManager.GetFontSizePercent(fontName)) > 0.001f)
+                        FontManager.UpdateFontScale(fontName, pending.sizePercent);
                 }
 
                 // Apply pending exclusion changes
@@ -2230,6 +2282,26 @@ namespace UnityGameTranslator.Core.UI.Panels
                     }
                 }
 
+                // Apply font render quality (sharpness). If it changed, rebuild replacement fonts
+                // at the new resolution: revert components + drop derived assets + invalidate the
+                // source atlas — the ForceRefreshAllText below then re-applies, which re-rasterizes
+                // via the .gen budget check. Reuses the proven toggle-off/on paths to stay clear of
+                // the fragile font-application timing (issue #21).
+                if (_fontAtlasSizeDropdown != null && _pendingAtlasSize != TranslatorCore.Config.max_font_atlas_size)
+                {
+                    TranslatorCore.Config.max_font_atlas_size = _pendingAtlasSize;
+                    try
+                    {
+                        FontManager.RestoreAllOriginalFonts();
+                        FontManager.ClearCreatedFontAssets();
+                        CustomFontLoader.InvalidateLoadedFonts();
+                    }
+                    catch (Exception ex)
+                    {
+                        TranslatorCore.LogWarning($"[TranslationParametersPanel] Font sharpness rebuild failed: {ex.Message}");
+                    }
+                }
+
                 TranslatorCore.SaveConfig();
                 TranslatorCore.SaveCache(); // saves _settings to translations.json
 
@@ -2244,7 +2316,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 foreach (var fontInfo in FontManager.GetDetectedFontsInfo())
                 {
                     var settings = FontManager.GetFontSettings(fontInfo.Name);
-                    _initialFontSettings[fontInfo.Name] = (settings?.enabled ?? true, settings?.fallback, settings?.scale ?? 1.0f);
+                    _initialFontSettings[fontInfo.Name] = (settings?.enabled ?? true, settings?.fallback, FontManager.GetFontSizePercent(fontInfo.Name), settings?.scale_auto ?? false);
                 }
                 _pendingFontSettings.Clear();
 
@@ -2289,8 +2361,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 {
                     bool enabledDiff = kvp.Value.enabled != initial.enabled;
                     bool fallbackDiff = kvp.Value.fallback != initial.fallback;
-                    bool scaleDiff = Math.Abs(kvp.Value.scale - initial.scale) > 0.001f;
-                    if (enabledDiff || fallbackDiff || scaleDiff)
+                    bool sizeDiff = Math.Abs(kvp.Value.sizePercent - initial.sizePercent) > 0.001f;
+                    bool autoDiff = kvp.Value.scaleAuto != initial.scaleAuto;
+                    if (enabledDiff || fallbackDiff || sizeDiff || autoDiff)
                     {
                         count++;
                     }
@@ -2316,6 +2389,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Debug toggles (persisted in config.json)
             if (_enableFontReplacementToggle != null && _enableFontReplacementToggle.isOn != TranslatorCore.Config.enable_font_replacement) count++;
             if (_enableImageReplacementToggle != null && _enableImageReplacementToggle.isOn != TranslatorCore.Config.enable_image_replacement) count++;
+
+            // Font sharpness (max atlas budget)
+            if (_fontAtlasSizeDropdown != null && _pendingAtlasSize != TranslatorCore.Config.max_font_atlas_size) count++;
 
             return count;
         }

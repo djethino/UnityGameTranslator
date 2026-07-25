@@ -64,6 +64,8 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         // Translation section
         private Toggle _captureKeysOnlyToggle;
+        private Toggle _debugLoggingToggle;
+        private Toggle _debugAiToggle;
         private Components.HelpZone _helpZone;
         private SearchableDropdown _backendTypeDropdown; // UIStyles.BackendTypeLLM / BackendTypeApi
         private static readonly string[] BackendTypeOptions = { UIStyles.BackendTypeLLM, UIStyles.BackendTypeApi };
@@ -148,6 +150,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             public string open_text_editor_hotkey;
             public string force_scan_hotkey;
             public bool capture_keys_only;
+            public bool debug;
+            public bool debug_ai;
             public string translation_backend;
             public string ai_url;
             public string ai_api_key;
@@ -193,6 +197,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                     open_text_editor_hotkey = TranslatorCore.Config.open_text_editor_hotkey ?? "",
                     force_scan_hotkey = TranslatorCore.Config.force_scan_hotkey ?? "",
                     capture_keys_only = TranslatorCore.Config.capture_keys_only,
+                    debug = TranslatorCore.Config.debug,
+                    debug_ai = TranslatorCore.Config.debug_ai,
                     translation_backend = TranslatorCore.Config.translation_backend ?? "none",
                     ai_url = TranslatorCore.Config.ai_url ?? "http://localhost:11434",
                     ai_api_key = TranslatorCore.Config.ai_api_key ?? "",
@@ -391,6 +397,25 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             var eventSystemHint = UIStyles.CreateHint(card, "EventSystemHint", "Enable if game's UI animations or menus don't work. Requires game restart.");
             RegisterUIText(eventSystemHint);
+
+            // Debug logging toggles — applied immediately (support: ask a user to tick these
+            // to produce logs, no config.json editing needed). Config.debug drives the cached
+            // DebugMode (SetRuntimeDebug syncs both); Config.debug_ai is read live.
+            var debugObj = UIFactory.CreateToggle(card, "DebugLoggingToggle", out _debugLoggingToggle, out var debugLabel);
+            debugLabel.text = " Debug logging";
+            debugLabel.color = UIStyles.TextSecondary;
+            UIHelpers.AddToggleListener(_debugLoggingToggle, _ => UpdateApplyButtonText());
+            UIFactory.SetLayoutElement(debugObj, minHeight: UIStyles.RowHeightNormal);
+            RegisterUIText(debugLabel);
+            _helpZone?.Describe(debugObj, "Write detailed logs to the mod log file. Turn on when reporting an issue, then share the log. Off by default.");
+
+            var debugAiObj = UIFactory.CreateToggle(card, "DebugAiToggle", out _debugAiToggle, out var debugAiLabel);
+            debugAiLabel.text = " Debug AI translation";
+            debugAiLabel.color = UIStyles.TextSecondary;
+            UIHelpers.AddToggleListener(_debugAiToggle, _ => UpdateApplyButtonText());
+            UIFactory.SetLayoutElement(debugAiObj, minHeight: UIStyles.RowHeightNormal);
+            RegisterUIText(debugAiLabel);
+            _helpZone?.Describe(debugAiObj, "Log every AI request and response (prompts, raw output, placeholder handling). Verbose — use only to diagnose translation quality.");
 
             UIStyles.CreateSpacer(card, 10);
 
@@ -1132,6 +1157,8 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Translation (Backend + Capture) — after online mode so UpdateBackendSections sees correct online state
             _captureKeysOnlyToggle.isOn = TranslatorCore.Config.capture_keys_only;
+            if (_debugLoggingToggle != null) _debugLoggingToggle.isOn = TranslatorCore.Config.debug;
+            if (_debugAiToggle != null) _debugAiToggle.isOn = TranslatorCore.Config.debug_ai;
             _aiUrlInput.Text = TranslatorCore.Config.ai_url ?? "http://localhost:11434";
             _aiApiKeyInput.Text = TranslatorCore.Config.ai_api_key ?? "";
             _googleApiKeyInput.Text = TranslatorCore.Config.google_api_key ?? "";
@@ -1577,6 +1604,8 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 // Translation (Backend + Capture)
                 TranslatorCore.Config.capture_keys_only = _captureKeysOnlyToggle.isOn;
+                if (_debugLoggingToggle != null) TranslatorCore.SetRuntimeDebug(_debugLoggingToggle.isOn);
+                if (_debugAiToggle != null) TranslatorCore.Config.debug_ai = _debugAiToggle.isOn;
                 string newBackend = GetSelectedBackendConfig();
                 TranslatorCore.Config.translation_backend = newBackend;
                 TranslatorCore.Config.enable_ai = (newBackend == "llm"); // Keep enable_ai in sync
@@ -1812,6 +1841,8 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Translation (Backend + Capture)
             if (_captureKeysOnlyToggle.isOn != _initialSnapshot.capture_keys_only) count++;
+            if (_debugLoggingToggle != null && _debugLoggingToggle.isOn != _initialSnapshot.debug) count++;
+            if (_debugAiToggle != null && _debugAiToggle.isOn != _initialSnapshot.debug_ai) count++;
             if (GetSelectedBackendConfig() != _initialSnapshot.translation_backend) count++;
             if (_aiUrlInput.Text != _initialSnapshot.ai_url) count++;
             if ((_aiApiKeyInput.Text ?? "") != _initialSnapshot.ai_api_key) count++;

@@ -588,10 +588,16 @@ namespace UnityGameTranslator.Core.UI.Panels
                         ["fallback"] = kvp.Value.fallback,
                         ["type"] = kvp.Value.type
                     };
+                    // Effective scale for older mods (they read only this); Phase B decomposition
+                    // for newer mods (recompute from live design-scale × deliberate percent).
                     if (System.Math.Abs(kvp.Value.scale - 1.0f) > 0.001f)
                     {
                         fontObj["scale"] = kvp.Value.scale;
                     }
+                    if (kvp.Value.scale_auto)
+                        fontObj["scale_auto"] = true;
+                    if (System.Math.Abs(kvp.Value.size_percent - 1.0f) > 0.001f)
+                        fontObj["size_percent"] = kvp.Value.size_percent;
                     fontsObj[kvp.Key] = fontObj;
                 }
                 output["_fonts"] = fontsObj;

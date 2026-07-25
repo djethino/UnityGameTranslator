@@ -131,6 +131,19 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Hardware atlas dimension cap (SystemInfo.maxTextureSize, fallback 8192). Shared by
+        /// the rasterize path and the .gen budget-validity check so both derive the same
+        /// sampling size for a given atlas budget.
+        /// </summary>
+        private static int ResolveMaxAtlasSize()
+        {
+            int maxAtlasSize = 8192;
+            try { int sys = UnityEngine.SystemInfo.maxTextureSize; if (sys >= 512) maxAtlasSize = sys; }
+            catch { }
+            return maxAtlasSize;
+        }
+
+        /// <summary>
         /// Try to load a previously rasterized font from the compressed .gen cache (json + png).
         /// Returns true and populates <c>fontInfo.AtlasData</c>, <c>fontInfo.PngPath</c> and
         /// <c>fontInfo.PngPaths</c> when the cache is fresh; the texture-creation branch in
@@ -180,6 +193,26 @@ namespace UnityGameTranslator.Core
                 {
                     TranslatorCore.LogInfo($"[CustomFontLoader] .gen cache for {fontName} is pipeline v{atlasData.pipelineVersion} (current v{Rasterizer.TtfFontPipeline.PipelineVersion}), forcing re-rasterize");
                     return false;
+                }
+
+                // Font render budget check — ONLY when the user opted into a non-default
+                // budget (max_font_atlas_size > 0). Re-rasterize if that budget would now pick
+                // a different sampling size than the cached one (they changed font sharpness).
+                // Skipped at the default (budget 0) so the masses never re-rasterize spuriously.
+                // Layout-neutral; needs the source TTF.
+                int cfgBudget = TranslatorCore.Config?.max_font_atlas_size ?? 0;
+                float cachedSize = atlasData.atlas?.size
+                    ?? (atlasData.atlases != null && atlasData.atlases.Count > 0 ? atlasData.atlases[0].size : 0f);
+                if (cfgBudget > 0 && cachedSize > 0.5f &&
+                    !string.IsNullOrEmpty(fontInfo.TtfPath) && File.Exists(fontInfo.TtfPath))
+                {
+                    float wouldBe = Rasterizer.TtfFontPipeline.ChooseRenderSize(
+                        atlasData.glyphs.Count, ResolveMaxAtlasSize(), cfgBudget);
+                    if (Math.Abs(wouldBe - cachedSize) > 0.5f)
+                    {
+                        TranslatorCore.LogInfo($"[CustomFontLoader] .gen for {fontName} rendered at {cachedSize}px, font budget now targets {wouldBe}px — re-rasterizing");
+                        return false;
+                    }
                 }
 
                 // Resolve PNG file(s). Same naming convention as the writer side:
@@ -349,6 +382,31 @@ namespace UnityGameTranslator.Core
         /// Gets all available custom fonts (loaded or not).
         /// </summary>
         public static IReadOnlyDictionary<string, CustomFontInfo> CustomFonts => _customFonts;
+
+        /// <summary>
+        /// Reset the loaded state of every custom font so the next load re-runs the full
+        /// pipeline (TryLoadGenCache → budget check → re-rasterize when the render budget
+        /// changed). Keeps the source paths (Json/Png/Ttf); drops the derived atlas/asset so
+        /// they are rebuilt. Used when the font render quality (max_font_atlas_size) changes at
+        /// runtime. Callers must ALSO drop the derived TMP assets (FontManager.ClearCreatedFontAssets)
+        /// and revert components (RestoreAllOriginalFonts) before re-applying.
+        /// </summary>
+        public static void InvalidateLoadedFonts()
+        {
+            int n = 0;
+            foreach (var fi in _customFonts.Values)
+            {
+                if (fi == null) continue;
+                fi.IsLoaded = false;
+                fi.FontAsset = null;
+                fi.AtlasData = null;
+                fi.AtlasTextures = null;
+                fi.RgbaBuffers = null;
+                fi.Error = null;
+                n++;
+            }
+            TranslatorCore.LogInfo($"[CustomFontLoader] Invalidated {n} loaded font(s) for rebuild");
+        }
 
         /// <summary>
         /// Scans the fonts folder and loads all available custom fonts.
@@ -698,22 +756,14 @@ namespace UnityGameTranslator.Core
                         // because the underlying Il2CppReferenceArray can't be resized via
                         // reflection. Fixing the multi-atlas wiring is its own task — until
                         // then, single-atlas-at-max is the safe default.
-                        int maxAtlasSize = 8192;
-                        try
-                        {
-                            int sys = UnityEngine.SystemInfo.maxTextureSize;
-                            if (sys >= 512) maxAtlasSize = sys;
-                            TranslatorCore.LogInfo($"[CustomFontLoader] SystemInfo.maxTextureSize = {sys} → using {maxAtlasSize} for atlas cap");
-                        }
-                        catch (Exception ex)
-                        {
-                            TranslatorCore.LogWarning($"[CustomFontLoader] SystemInfo.maxTextureSize unavailable ({ex.GetType().Name}: {ex.Message}), falling back to {maxAtlasSize}");
-                        }
+                        int maxAtlasSize = ResolveMaxAtlasSize();
+                        int atlasBudget = TranslatorCore.Config?.max_font_atlas_size ?? 0;
+                        TranslatorCore.LogInfo($"[CustomFontLoader] atlas cap = {maxAtlasSize} (hardware), render budget = {(atlasBudget > 0 ? atlasBudget.ToString() : "default 4096")}");
 
                         // renderSize 0 = automatic quality (sampling size picked from the
-                        // charset size — see TtfFontPipeline.ChooseRenderSize)
+                        // charset size + atlas budget — see TtfFontPipeline.ChooseRenderSize)
                         var cached = Rasterizer.TtfFontPipeline.ProcessTtfFont(fontInfo.TtfPath,
-                            renderSize: 0f, maxAtlasSize: maxAtlasSize);
+                            renderSize: 0f, maxAtlasSize: maxAtlasSize, atlasBudget: atlasBudget);
 
                         if (cached != null && cached.AtlasData?.glyphs != null && cached.AtlasData.glyphs.Count > 0)
                         {

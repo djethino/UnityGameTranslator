@@ -25,6 +25,10 @@ namespace UnityGameTranslator.Core
         // Created fallback assets per font (to avoid recreating)
         private static readonly Dictionary<string, object> _fallbackAssets = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
 
+        // Phase B: design-scale (= original faceInfo.scale) cached per font name, computed at
+        // replacement time. Used by GetFontScale when the font's scale_auto is set.
+        private static readonly Dictionary<string, float> _designScaleCache = new Dictionary<string, float>(StringComparer.OrdinalIgnoreCase);
+
         // Created Unity font clones per original game font name (for legacy UI.Text replacement).
         // Keyed by ORIGINAL GAME FONT NAME — each game font gets its own independent clone.
         private static readonly Dictionary<string, Font> _unityFallbackFonts = new Dictionary<string, Font>(StringComparer.OrdinalIgnoreCase);
@@ -1517,8 +1521,54 @@ namespace UnityGameTranslator.Core
                 return 1.0f;
 
             if (TranslatorCore.FontSettingsMap.TryGetValue(fontName, out var settings))
-                return settings.scale;
+                return ComputeEffectiveScale(settings, fontName);
 
+            return 1.0f;
+        }
+
+        /// <summary>
+        /// The effective render multiplier = design-scale baseline (when scale_auto and the metrics
+        /// are known) × the deliberate size_percent. Computed live so it is always correct even
+        /// before the design-scale has been cached (baseline falls back to 1). Frozen translations
+        /// (scale_auto false, size_percent migrated from the legacy scale) reproduce their old size.
+        /// </summary>
+        private static float ComputeEffectiveScale(FontSettings settings, string fontName)
+        {
+            return GetDesignScaleBaseline(settings, fontName) * settings.size_percent;
+        }
+
+        /// <summary>
+        /// The design-scale baseline for a font = its native-size correction (faceInfo.scale) when
+        /// scale_auto is on and the metrics are known, else 1.0. This is the factor that must apply
+        /// regardless of any deliberate percent OR per-component override.
+        /// </summary>
+        private static float GetDesignScaleBaseline(FontSettings settings, string fontName)
+        {
+            if (settings != null && settings.scale_auto
+                && _designScaleCache.TryGetValue(fontName, out float ds) && ds > 1.001f)
+                return ds;
+            return 1f;
+        }
+
+        /// <summary>
+        /// Materialize the effective scale into <see cref="FontSettings.scale"/> so persistence and
+        /// the pipeline read one value (and older mods read a correct size). Call after any change
+        /// to scale_auto / size_percent, or once the design-scale becomes known.
+        /// </summary>
+        private static void RecomputeEffectiveScale(FontSettings settings, string fontName)
+        {
+            settings.scale = ComputeEffectiveScale(settings, fontName);
+        }
+
+        /// <summary>
+        /// The translator's deliberate size percent for a font (Fonts-tab slider value), 1.0 = 100%.
+        /// Orthogonal to the auto design-scale.
+        /// </summary>
+        public static float GetFontSizePercent(string fontName)
+        {
+            if (!string.IsNullOrEmpty(fontName)
+                && TranslatorCore.FontSettingsMap.TryGetValue(fontName, out var settings))
+                return settings.size_percent;
             return 1.0f;
         }
 
@@ -1527,9 +1577,17 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static float GetFontScale(string fontName, int componentId)
         {
-            // Per-component override takes priority (from font override rules)
+            // Per-component override (from font override rules) REPLACES the font-wide deliberate
+            // size_percent for this component — but the design-scale baseline (native-size correction)
+            // must still apply, else an overridden title/label loses it and renders too small.
             if (_componentScaleOverrides.TryGetValue(componentId, out float overrideScale))
-                return overrideScale;
+            {
+                float baseline = 1f;
+                if (!string.IsNullOrEmpty(fontName)
+                    && TranslatorCore.FontSettingsMap.TryGetValue(fontName, out var s))
+                    baseline = GetDesignScaleBaseline(s, fontName);
+                return baseline * overrideScale;
+            }
 
             return GetFontScale(fontName);
         }
@@ -1559,15 +1617,17 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Update the scale factor for a font.
+        /// Set the deliberate size percent for a font (the Fonts-tab slider). Orthogonal to the
+        /// auto design-scale: this does NOT turn scale_auto off — the two combine multiplicatively
+        /// (effective = design-scale baseline × percent).
         /// </summary>
-        public static void UpdateFontScale(string fontName, float scale)
+        public static void UpdateFontScale(string fontName, float percent)
         {
             if (string.IsNullOrEmpty(fontName))
                 return;
 
-            // Clamp scale to reasonable values (1% to 300%)
-            scale = Math.Max(0.01f, Math.Min(3.0f, scale));
+            // Clamp the deliberate percent to reasonable values (1% to 300%).
+            percent = Math.Max(0.01f, Math.Min(3.0f, percent));
 
             if (!TranslatorCore.FontSettingsMap.TryGetValue(fontName, out var settings))
             {
@@ -1575,10 +1635,11 @@ namespace UnityGameTranslator.Core
                 TranslatorCore.FontSettingsMap[fontName] = settings;
             }
 
-            if (Math.Abs(settings.scale - scale) > 0.001f)
+            if (Math.Abs(settings.size_percent - percent) > 0.001f)
             {
-                settings.scale = scale;
-                TranslatorCore.LogDebug($"[FontManager] Updated scale for '{fontName}' to {scale:F2}");
+                settings.size_percent = percent;
+                RecomputeEffectiveScale(settings, fontName);
+                TranslatorCore.LogDebug($"[FontManager] Size% for '{fontName}' -> {percent:F2} (effective scale={settings.scale:F2})");
 
                 // DON'T clear font size cache — it stores TRUE originals
                 // Clearing would cause the scaled size to be read as "original"
@@ -1596,6 +1657,62 @@ namespace UnityGameTranslator.Core
 
                 TranslatorCore.SaveCache();
             }
+        }
+
+        /// <summary>
+        /// Whether the automatic design-scale applies to a font of this type. The design-scale is
+        /// derived from MODERN TMP faceInfo metrics (read via TryGetModernFaceInfo) and applied by
+        /// magnifying a fixed atlas (character.scale). It does NOT apply to:
+        /// - UI.Text / TextMesh (clone-atlas / fontSize scaling — the game's own metrics are kept);
+        /// - "TMP (alt)" / TMProOld, which scales via fontSize on a fallback-list path and whose
+        ///   faceInfo isn't read yet (design-scale for TMProOld is a TODO).
+        /// The Auto toggle is hidden for these and never defaulted on. Manual Size% still works on
+        /// every type (fontSize scaling).
+        /// </summary>
+        public static bool SupportsDesignScale(string fontType)
+        {
+            if (string.IsNullOrEmpty(fontType)) return false;
+            // "TMP (alt)" (TMProOld) contains "TMP" but is not supported yet — exclude it.
+            if (fontType.IndexOf("alt", StringComparison.OrdinalIgnoreCase) >= 0) return false;
+            return fontType.IndexOf("TMP", StringComparison.OrdinalIgnoreCase) >= 0
+                || fontType.IndexOf("TextMeshPro", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+
+        /// <summary>
+        /// Turn the automatic design-scale on/off for a font (Fonts tab "Auto scale" toggle).
+        /// ON: adopt the font's intrinsic design-scale as the effective scale, materialized into
+        /// `scale` when the metrics are known (so an older mod also renders the right size; falls
+        /// back to the live design-scale otherwise). OFF: freeze the current effective scale as a
+        /// manual value so the on-screen size is preserved.
+        /// Only ever called from the Apply flow — UX rule: all settings commit via Apply, never
+        /// immediately (see UpdateFontScale for the manual-scale path, which also clears auto).
+        /// </summary>
+        public static void SetFontAutoScale(string fontName, bool auto)
+        {
+            if (string.IsNullOrEmpty(fontName))
+                return;
+
+            if (!TranslatorCore.FontSettingsMap.TryGetValue(fontName, out var settings))
+            {
+                settings = new FontSettings { type = "Unknown" };
+                TranslatorCore.FontSettingsMap[fontName] = settings;
+            }
+
+            // scale_auto only toggles whether the design-scale baseline folds into the effective
+            // scale; the deliberate size_percent is untouched and keeps applying either way.
+            settings.scale_auto = auto;
+            RecomputeEffectiveScale(settings, fontName);
+
+            TranslatorCore.LogDebug($"[FontManager] Auto-scale for '{fontName}' -> {auto} (effective scale={settings.scale:F2})");
+
+            if (settings.enabled)
+            {
+                TranslatorScanner.RefreshForFont(fontName);
+                TranslatorPatches.ApplyAutoSizeScaleForFont(fontName);
+            }
+
+            TranslatorCore.SaveCache();
         }
 
         /// <summary>
@@ -1629,7 +1746,11 @@ namespace UnityGameTranslator.Core
                     enabled = true,
                     fallback = null,
                     type = fontType,
-                    origin = "game"
+                    origin = "game",
+                    // Freshly detected (not loaded from an existing translation) → eligible for the
+                    // auto design-scale, but only for TMP-family fonts where it means something.
+                    // Entries loaded from JSON keep scale_auto=false (frozen translations).
+                    scale_auto = SupportsDesignScale(fontType)
                 };
             }
         }
@@ -1838,11 +1959,43 @@ namespace UnityGameTranslator.Core
                     adapted.name = origMat.name + " (UGT adapted)";
                     if (fontMat.HasProperty("_MainTex") && adapted.HasProperty("_MainTex"))
                         adapted.SetTexture("_MainTex", fontMat.GetTexture("_MainTex"));
+
+                    // The dev's underlay (shadow)/outline offsets are expressed in units of the GAME
+                    // atlas's SDF spread (_GradientScale). Capture it BEFORE grafting ours.
+                    float origGrad = adapted.HasProperty("_GradientScale") ? adapted.GetFloat("_GradientScale") : float.NaN;
+                    float ourGrad = fontMat.HasProperty("_GradientScale") ? fontMat.GetFloat("_GradientScale") : float.NaN;
+
+                    // Graft OUR atlas's SDF params onto the cloned game material.
                     foreach (var p in new[] { "_TextureWidth", "_TextureHeight", "_GradientScale", "_WeightNormal", "_WeightBold" })
                     {
                         if (fontMat.HasProperty(p) && adapted.HasProperty(p))
                             adapted.SetFloat(p, fontMat.GetFloat(p));
                     }
+
+                    // Recompute TMP's shader ratios for OUR atlas's SDF params (the cloned material's
+                    // _ScaleRatioA/B/C were computed for the game atlas — needed for correct edge AA).
+                    try
+                    {
+                        var shaderUtils = replacementFont.GetType().Assembly.GetType("TMPro.ShaderUtilities");
+                        shaderUtils?.GetMethod("UpdateShaderRatios", BindingFlags.Public | BindingFlags.Static)
+                                  ?.Invoke(null, new object[] { adapted });
+                    }
+                    catch (Exception ex) { TranslatorCore.LogDebug($"[FontReplace] UpdateShaderRatios failed: {ex.Message}"); }
+
+                    // The underlay/outline offsets are relative to the SDF spread (gradientScale). Our
+                    // atlas's gradientScale differs from the game's, so rescale those params by the ratio
+                    // so the effect keeps the dev's authored look — proportional to the font, same relative
+                    // spacing at any size (issue #21: shadow too spaced on replaced text; validated on Frog,
+                    // game grad 21 / our grad 64 = 0.328). Derived per material, universal across games.
+                    float gradRatio = (ourGrad > 0.0001f && !float.IsNaN(origGrad)) ? origGrad / ourGrad : 1f;
+                    if (Math.Abs(gradRatio - 1f) > 0.0001f)
+                    {
+                        foreach (var p in new[] { "_UnderlayOffsetX", "_UnderlayOffsetY", "_UnderlayDilate",
+                                                  "_UnderlaySoftness", "_OutlineWidth", "_OutlineSoftness" })
+                            if (adapted.HasProperty(p)) adapted.SetFloat(p, adapted.GetFloat(p) * gradRatio);
+                        TranslatorCore.LogDebug($"[FontReplace] '{origMat.name}' underlay/outline rescaled ×{gradRatio:F3} (grad {origGrad:F0}→{ourGrad:F0})");
+                    }
+
                     UnityEngine.Object.DontDestroyOnLoad(adapted);
                     adapted.hideFlags |= HideFlags.DontUnloadUnusedAsset;
                     _adaptedMaterials[key] = adapted;
@@ -2100,6 +2253,43 @@ namespace UnityGameTranslator.Core
             if (TranslatorCore.Config != null && !TranslatorCore.Config.enable_font_replacement)
                 return;
 
+            // Phase B: cache the ORIGINAL font's design-scale (= faceInfo.scale) — the value that
+            // makes our standard-normalized replacement match the original's em size. Used by
+            // GetFontScale (when the font's scale_auto is set) and by the material compensation
+            // below. 1.0 for plain fonts or when no modern faceInfo is readable (TMProOld: TBD).
+            if (!string.IsNullOrEmpty(originalFontName) && !_designScaleCache.ContainsKey(originalFontName))
+            {
+                float ds = 1f;
+                try
+                {
+                    if (originalFontObj != null && CustomFontLoader.TryGetModernFaceInfo(originalFontObj, out float ps, out float sc))
+                    {
+                        ds = sc > 0f ? sc : 1f;
+                        TranslatorCore.LogDebug($"[DesignScale] '{originalFontName}' (TMP modern): faceInfo pointSize={ps}, scale={sc} → design-scale={ds:F3}");
+                    }
+                }
+                catch (Exception ex) { TranslatorCore.LogDebug($"[DesignScale] read failed for '{originalFontName}': {ex.Message}"); }
+                _designScaleCache[originalFontName] = ds;
+
+                // Materialize the effective scale (design-scale × size_percent) into the stored
+                // `scale` now that the design-scale is known, so `scale` always carries the effective
+                // value: an older mod (no scale_auto/size_percent support) reads a correct size for a
+                // new translation. Only for auto fonts; frozen entries (scale_auto false) are left as
+                // loaded. SetMetadataDirty only when it actually changes.
+                if (ds > 1.001f
+                    && TranslatorCore.FontSettingsMap.TryGetValue(originalFontName, out var msSettings)
+                    && msSettings.scale_auto)
+                {
+                    float before = msSettings.scale;
+                    RecomputeEffectiveScale(msSettings, originalFontName);
+                    if (Math.Abs(msSettings.scale - before) > 0.001f)
+                    {
+                        TranslatorCore.SetMetadataDirty();
+                        TranslatorCore.LogDebug($"[DesignScale] materialized effective scale={msSettings.scale:F3} for '{originalFontName}' (auto, ds={ds:F3} × {msSettings.size_percent:F2})");
+                    }
+                }
+            }
+
             // Fast check: already replaced this component (skip all reflection)
             int instanceId = TypeHelper.GetInstanceID(component);
             if (instanceId != -1 && _fontReplacedComponentIds.Contains(instanceId))
@@ -2153,7 +2343,8 @@ namespace UnityGameTranslator.Core
             // old font's atlas/shader → empty rectangles. Prefer an ADAPTED clone of the
             // component's original material so the game's styling preset survives
             // (issue #21: green title with drop shadow rendered plain red when the
-            // replacement font's generic material was assigned instead).
+            // replacement font's generic material was assigned instead). ApplyAdaptedMaterial
+            // rescales the shadow/outline for our atlas's gradientScale so they keep the dev's look.
             ApplyAdaptedMaterial(component, replacementFont, originalSharedMaterial);
 
             // Force mesh regeneration so the new font renders immediately
@@ -2571,6 +2762,21 @@ namespace UnityGameTranslator.Core
             TranslatorScanner.ClearProcessedCache();
 
             TranslatorCore.LogInfo($"[FontManager] Restore summary: {restoredComponents} component(s), {removedFallbacks} fallback(s), {restoredFontNames} fontNames array(s). Caches invalidated.");
+        }
+
+        /// <summary>
+        /// Drop the derived TMP replacement/fallback assets and adapted materials so they are
+        /// recreated from the (possibly re-rasterized) source atlas. RestoreAllOriginalFonts
+        /// clears the clone/fallback-applied caches but NOT these two, so a font-quality change
+        /// would otherwise reuse the stale atlas. Pair with CustomFontLoader.InvalidateLoadedFonts
+        /// + RestoreAllOriginalFonts, then re-apply. Only our references are dropped; the old
+        /// Unity objects are left for the engine to unload (a manual quality change is rare).
+        /// </summary>
+        public static void ClearCreatedFontAssets()
+        {
+            _fallbackAssets.Clear();
+            _adaptedMaterials.Clear();
+            TranslatorCore.LogInfo("[FontManager] Cleared derived font assets + adapted materials for rebuild");
         }
 
         /// <summary>

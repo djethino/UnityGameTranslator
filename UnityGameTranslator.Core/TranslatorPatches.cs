@@ -2024,6 +2024,47 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Re-apply the font scale (fontSize + auto-size bounds) to EVERY tracked component, re-derived
+        /// from each component's CURRENT settings scale. Unlike the text-set refresh path, this does not
+        /// depend on a component's text changing or on the game re-triggering it — so it reliably re-fits
+        /// static / game-managed / cache-hit components after a GLOBAL toggle. Issue #21: toggling font
+        /// replacement (or global translation) off left un-retriggered components at their old scaled
+        /// fontSize — the design-scale gate already made GetFontScale correct (1.0 when not replacing),
+        /// only the APPLIED size lagged, so the original font rendered ~designScale× too big. This is the
+        /// same reliable mechanism the per-font Auto toggle uses (ApplyAutoSizeScaleForFont), generalized
+        /// to all fonts. Call ONLY from discrete user toggles, never the periodic refresh (a forced
+        /// re-fit mid-reveal would freeze a typewriter).
+        /// </summary>
+        public static void ReapplyScaleToAllComponents()
+        {
+            var refs = new List<KeyValuePair<int, object>>(PatchedComponentRefs);
+            foreach (var kvp in refs)
+            {
+                if (kvp.Value == null) continue;
+                try
+                {
+                    if (!_fontNameCache.TryGetValue(kvp.Key, out string cachedFontName) ||
+                        string.IsNullOrEmpty(cachedFontName))
+                        continue;
+
+                    string settingsName = FontManager.GetSettingsFontName(kvp.Key, cachedFontName);
+                    // Only re-apply when the resolved name is a REAL settings font. When a component's
+                    // per-component original tracking is absent, GetSettingsFontName falls back to the
+                    // raw current font name; for a fallback/variant font (e.g. a "<family>-Latin" subset
+                    // the game/TMP substitutes for Latin glyphs) that is NOT a settings key, GetFontScale
+                    // returns a bogus 1.0 and would SHRINK the component (issue #21: the title, rendered
+                    // through such a variant, collapsed to scale 1.0 on toggle). Leave those to the patch
+                    // path, which re-tracks the true original before scaling. No suffix stripping — stays
+                    // language/script agnostic.
+                    if (!TranslatorCore.FontSettingsMap.ContainsKey(settingsName))
+                        continue;
+                    ApplyFontScale(kvp.Value, settingsName);
+                }
+                catch { }
+            }
+        }
+
+        /// <summary>
         /// Schedule a delayed scan to apply font replacements to TMP components.
         /// Called after scene change to catch early-initialized text.
         /// </summary>
@@ -2328,7 +2369,15 @@ namespace UnityGameTranslator.Core
             float targetSize = (originalSize + bump) * scale;
 
             float currentSize = TypeHelper.GetFontSize(instance);
-            if (currentSize >= 0 && Math.Abs(currentSize - targetSize) > 0.1f)
+
+            // TMP auto-sizing OWNS fontSize: it recomputes the fit on every layout. Setting fontSize
+            // directly on an auto-sized component is useless AND harmful — each refresh pass re-inflates
+            // it to the scaled value, then the auto-sizer re-fits, producing a visible "grow then settle"
+            // flash (issue #21: the title auto-fits BELOW its max → flashed big and corrected on every
+            // pass; menu items that fit AT the max saw no diff → stayed stable, hence the title-only,
+            // two-step symptom). For auto-sized text only the BOUNDS are scaled (ApplyTMPAutoSizeScale).
+            bool tmpAutoSizing = IsTMPAutoSizingEnabled(instance);
+            if (!tmpAutoSizing && currentSize >= 0 && Math.Abs(currentSize - targetSize) > 0.1f)
             {
                 _bypassFontSizePrefix = true;
                 TypeHelper.SetFontSize(instance, targetSize);
@@ -2359,6 +2408,21 @@ namespace UnityGameTranslator.Core
         /// No-ops on non-TMP components (no enableAutoSizing property) and on
         /// components with auto-sizing off.
         /// </summary>
+        /// <summary>
+        /// True when the component is a TMP text with enableAutoSizing on. Used to skip the direct
+        /// fontSize set (the auto-sizer owns fontSize; setting it re-inflates then re-fits — issue #21).
+        /// Returns false for non-TMP components (no enableAutoSizing property).
+        /// </summary>
+        private static bool IsTMPAutoSizingEnabled(object instance)
+        {
+            try
+            {
+                var autoProp = instance.GetType().GetProperty("enableAutoSizing", BindingFlags.Public | BindingFlags.Instance);
+                return autoProp != null && (bool)autoProp.GetValue(instance, null);
+            }
+            catch { return false; }
+        }
+
         private static void ApplyTMPAutoSizeScale(object instance, int instanceId, float scale)
         {
             try
@@ -2377,10 +2441,14 @@ namespace UnityGameTranslator.Core
                     if (origMax <= 0) return;
                     _originalAutoSizeMax[instanceId] = origMax;
                 }
+                bool boundsChanged = false;
                 float targetMax = origMax * scale;
                 float currentMax = Convert.ToSingle(maxProp.GetValue(instance, null));
                 if (Math.Abs(currentMax - targetMax) > 0.1f)
+                {
                     maxProp.SetValue(instance, targetMax, null);
+                    boundsChanged = true;
+                }
 
                 var minProp = type.GetProperty("fontSizeMin", BindingFlags.Public | BindingFlags.Instance);
                 if (minProp != null && minProp.CanWrite)
@@ -2393,7 +2461,25 @@ namespace UnityGameTranslator.Core
                     float targetMin = origMin * scale;
                     float currentMin = Convert.ToSingle(minProp.GetValue(instance, null));
                     if (Math.Abs(currentMin - targetMin) > 0.1f)
+                    {
                         minProp.SetValue(instance, targetMin, null);
+                        boundsChanged = true;
+                    }
+                }
+
+                // Changing the auto-size bounds does NOT re-run TMP's fit — the component keeps its
+                // previously settled fontSize (TMP caches the auto-size result; a plain ForceMeshUpdate
+                // reuses it). At runtime toggle that left the OLD fontSize with the NEW font (issue #21:
+                // disable grew / enable shrank auto-sized text — racy across components).
+                if (boundsChanged)
+                {
+                    // Settle the container layout FIRST so the fit measures the final RectTransform, not a
+                    // transient one — otherwise a component that fits BELOW its max briefly renders at the
+                    // max ceiling and re-fits a frame later (the title's "grow then settle" flash; menu
+                    // items that fit AT the max don't show it). Then a FULL reparse re-runs auto-sizing
+                    // within the new bounds against the settled layout, in one synchronous pass.
+                    TypeHelper.ForceUpdateCanvases();
+                    TypeHelper.ForceMeshUpdateReparse(instance);
                 }
             }
             catch (Exception ex)
@@ -3386,11 +3472,18 @@ namespace UnityGameTranslator.Core
                 if (string.IsNullOrEmpty(fontName)) return;
 
                 string settingsFontName = FontManager.GetSettingsFontName(instanceId, fontName);
+
+                // Always record the game's fontSize as the TRUE original — even when no scale is
+                // active yet — so a later runtime scale change rescales from the real base. Without
+                // this, toggling font replacement ON at runtime (which caches the design-scale only
+                // then) left the true base uncaptured and ApplyFontScale read back an already-replaced
+                // value → the text shrank until a restart (issue #21). Our own sets bypass this prefix,
+                // so `value` is always the game's intended size.
+                _trueOriginalFontSizes[instanceId] = value;
+
                 float scale = FontManager.GetFontScale(settingsFontName, instanceId);
                 if (Math.Abs(scale - 1.0f) < 0.001f) return;
 
-                // Store the incoming value as the true original size
-                _trueOriginalFontSizes[instanceId] = value;
                 _originalFontSizes[instanceId] = value;
 
                 // Apply scale to the incoming value
@@ -3415,9 +3508,11 @@ namespace UnityGameTranslator.Core
                 if (!_fontNameCache.TryGetValue(instanceId, out fontName)) return;
                 if (string.IsNullOrEmpty(fontName)) return;
                 string settingsFontName = FontManager.GetSettingsFontName(instanceId, fontName);
+                // Always record the true original (see TMPText_SetFontSize_Prefix) so a runtime
+                // scale change rescales from the real base, not an already-replaced value (issue #21).
+                _trueOriginalFontSizes[instanceId] = value;
                 float scale = FontManager.GetFontScale(settingsFontName, instanceId);
                 if (Math.Abs(scale - 1.0f) < 0.001f) return;
-                _trueOriginalFontSizes[instanceId] = value;
                 _originalFontSizes[instanceId] = value;
                 value = (int)(value * scale);
             }

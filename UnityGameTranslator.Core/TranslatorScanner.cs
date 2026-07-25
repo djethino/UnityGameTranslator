@@ -1459,7 +1459,7 @@ namespace UnityGameTranslator.Core
         /// Returns the number of components touched (refreshed + restored) so callers
         /// can detect a too-early pass that found nothing (issue #21).
         /// </summary>
-        public static int ForceRefreshAllText()
+        public static int ForceRefreshAllText(bool reapplyAllScales = false)
         {
             int refreshed = 0;
             int restored = 0;
@@ -1518,6 +1518,15 @@ namespace UnityGameTranslator.Core
                     }
                     catch { }
                 }
+
+                // Discrete toggles (font replacement / global translation): the text-set passes above
+                // only re-run ApplyFontScale on components the game re-triggers, leaving static /
+                // game-managed / cache-hit components at their old scaled fontSize (issue #21). Re-derive
+                // the size for EVERY tracked component from its current (gated) scale — the same reliable
+                // mechanism the per-font Auto toggle uses. Off by default so the periodic refresh never
+                // forces a re-fit mid-typewriter.
+                if (reapplyAllScales)
+                    TranslatorPatches.ReapplyScaleToAllComponents();
 
                 if (restored > 0)
                     TranslatorCore.LogDebug($"[Scanner] Restored {restored} original texts, refreshed {refreshed} components (incl. patch refs)");

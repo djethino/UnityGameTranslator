@@ -4385,6 +4385,28 @@ namespace UnityGameTranslator.Core
             return false;
         }
 
+        /// <summary>
+        /// Reverse cache lookup: given a translated string a component is displaying, find the SOURCE
+        /// it was translated from. Enables restoring a component that received ALREADY-translated text
+        /// (e.g. a title's shadow/duplicate layer copied from the main layer) and so never had an
+        /// original stored (issue #21: such a component could not revert on disable). O(cache) scan —
+        /// call only for the rare untracked-yet-translated component. Returns null if not found.
+        /// </summary>
+        public static string GetSourceForTranslation(string translatedText)
+        {
+            if (string.IsNullOrEmpty(translatedText)) return null;
+            string norm = NormalizeForCacheLookup(translatedText).TrimEnd();
+            foreach (var kv in TranslationCache)
+            {
+                var entry = kv.Value;
+                if (entry == null || entry.IsHumanEmpty || entry.Tag == "S" || string.IsNullOrEmpty(entry.Value))
+                    continue;
+                if (entry.Value == translatedText || NormalizeForCacheLookup(entry.Value).TrimEnd() == norm)
+                    return kv.Key;
+            }
+            return null;
+        }
+
         public static string NormalizeForCacheLookup(string text)
         {
             if (string.IsNullOrEmpty(text)) return text;
@@ -4831,6 +4853,18 @@ namespace UnityGameTranslator.Core
                 if (translatedTexts.ContainsKey(trimmedNormalized))
                 {
                     skippedAlreadyTranslated++;
+                    // This component displays an ALREADY-translated string (e.g. a title's shadow/
+                    // duplicate layer copied from the main layer) and so never had its source stored —
+                    // without it, disabling translation can't revert it (issue #21). Back-fill the
+                    // original from the reverse cache so restore works. Guard on "no original yet" to
+                    // keep the O(cache) scan to once per such component; StoreOriginalText also no-ops
+                    // if an original is already tracked.
+                    if (component != null && TranslatorScanner.GetOriginalText(component) == null)
+                    {
+                        string src = GetSourceForTranslation(text);
+                        if (!string.IsNullOrEmpty(src) && src != text)
+                            TranslatorScanner.StoreOriginalText(component, src);
+                    }
                     return text;
                 }
 

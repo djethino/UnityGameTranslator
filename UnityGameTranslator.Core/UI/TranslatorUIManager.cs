@@ -2408,7 +2408,9 @@ namespace UnityGameTranslator.Core.UI
             config.enable_translations = !config.enable_translations;
             TranslatorCore.SaveConfig();
             TranslatorCore.ClearProcessingCaches();
-            TranslatorScanner.ForceRefreshAllText();
+            // reapplyAllScales: re-derive every tracked component's size from its gated scale, so
+            // components the game doesn't re-trigger don't stay at the old scaled fontSize (issue #21).
+            TranslatorScanner.ForceRefreshAllText(reapplyAllScales: true);
             OptionsPanel?.RefreshFromConfig();
             ShowHotkeyFeedback(config.enable_translations ? "Translations: ON" : "Translations: OFF", config.enable_translations);
         }
@@ -2488,7 +2490,10 @@ namespace UnityGameTranslator.Core.UI
             }
 
             TranslatorCore.ClearProcessingCaches();
-            TranslatorScanner.ForceRefreshAllText();
+            // reapplyAllScales: the design-scale gate makes GetFontScale correct on toggle, but only
+            // re-triggered components get ApplyFontScale — force a re-derive on ALL so static /
+            // game-managed text doesn't keep the old scaled size (issue #21: toggle grew/shrank text).
+            TranslatorScanner.ForceRefreshAllText(reapplyAllScales: true);
             TranslationParamsPanel?.RefreshFromConfig();
             ShowHotkeyFeedback(config.enable_font_replacement ? "Font Replacement: ON" : "Font Replacement: OFF", config.enable_font_replacement);
         }

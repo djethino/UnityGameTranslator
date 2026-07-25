@@ -781,6 +781,33 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Force a FULL TMP re-generation with text reparsing via ForceMeshUpdate(ignoreActiveState,
+        /// forceTextReparsing). Unlike the parameterless overload (which reuses the cached parse and
+        /// auto-size result), forceTextReparsing=true makes TMP re-run auto-sizing — needed after we
+        /// change fontSizeMax/Min so the component re-fits within the new bounds (issue #21: runtime
+        /// font toggle left auto-sized text at its old settled size). Falls back to the plain call.
+        /// </summary>
+        public static void ForceMeshUpdateReparse(object component)
+        {
+            if (component == null) return;
+            try
+            {
+                var type = component.GetType();
+                var m2 = type.GetMethod("ForceMeshUpdate",
+                    BindingFlags.Public | BindingFlags.Instance, null,
+                    new[] { typeof(bool), typeof(bool) }, null);
+                if (m2 != null)
+                {
+                    // ignoreActiveState = false, forceTextReparsing = true
+                    m2.Invoke(component, new object[] { false, true });
+                    return;
+                }
+            }
+            catch { }
+            ForceMeshUpdate(component);
+        }
+
+        /// <summary>
         /// Get the InstanceID from a component (any Unity Object).
         /// Returns -1 if not a Unity Object.
         /// </summary>
@@ -1276,6 +1303,39 @@ namespace UnityGameTranslator.Core
                 var method = type.GetMethod("SetAllDirty", BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
                 method?.Invoke(component, null);
             }
+            catch { }
+        }
+
+        // Canvas.ForceUpdateCanvases() — static, resolved once.
+        private static MethodInfo _forceUpdateCanvasesMethod;
+        private static bool _forceUpdateCanvasesResolved;
+
+        /// <summary>
+        /// Synchronously flush all pending Canvas layout/rebuilds (UnityEngine.Canvas.ForceUpdateCanvases).
+        /// Settles RectTransform sizes NOW so a subsequent TMP auto-size fit measures the final container
+        /// instead of a transient one (issue #21: auto-sized text that fits BELOW its max briefly rendered
+        /// at the max ceiling before re-fitting a frame later — the "grow then settle" flash). Global and
+        /// not cheap; call only on discrete toggles, right before forcing the fit.
+        /// </summary>
+        public static void ForceUpdateCanvases()
+        {
+            if (!_forceUpdateCanvasesResolved)
+            {
+                _forceUpdateCanvasesResolved = true;
+                try
+                {
+                    foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+                    {
+                        var canvasType = asm.GetType("UnityEngine.Canvas");
+                        if (canvasType == null) continue;
+                        _forceUpdateCanvasesMethod = canvasType.GetMethod("ForceUpdateCanvases",
+                            BindingFlags.Public | BindingFlags.Static, null, Type.EmptyTypes, null);
+                        if (_forceUpdateCanvasesMethod != null) break;
+                    }
+                }
+                catch { }
+            }
+            try { _forceUpdateCanvasesMethod?.Invoke(null, null); }
             catch { }
         }
 

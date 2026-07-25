@@ -1695,8 +1695,10 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 TranslatorCore.ClearProcessingCaches();
 
-                // Force refresh all text to apply new settings (fonts, translations)
-                TranslatorScanner.ForceRefreshAllText();
+                // Force refresh all text to apply new settings (fonts, translations).
+                // reapplyAllScales: discrete Apply — re-derive every component's size from its gated
+                // scale so a toggled setting doesn't leave un-retriggered components mis-sized (issue #21).
+                TranslatorScanner.ForceRefreshAllText(reapplyAllScales: true);
 
                 if (TranslatorCore.Config.IsTranslationEnabled)
                 {

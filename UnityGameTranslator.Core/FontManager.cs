@@ -105,6 +105,7 @@ namespace UnityGameTranslator.Core
             {
                 _replacedComponentRefs.Remove(id);
                 _originalFontsPerComponent.Remove(id);
+                _settingsFontNamePerComponent.Remove(id);
             }
         }
 
@@ -1539,12 +1540,21 @@ namespace UnityGameTranslator.Core
 
         /// <summary>
         /// The design-scale baseline for a font = its native-size correction (faceInfo.scale) when
-        /// scale_auto is on and the metrics are known, else 1.0. This is the factor that must apply
-        /// regardless of any deliberate percent OR per-component override.
+        /// scale_auto is on and the metrics are known, else 1.0. Applies regardless of any deliberate
+        /// percent OR per-component override.
+        /// ONLY while the font is actually being REPLACED: the baseline compensates OUR (standard-
+        /// normalized) replacement font rendering smaller than the game's. When replacement is off
+        /// globally, when per-font translation is off (settings.enabled), or when this font has no
+        /// replacement configured, the ORIGINAL font is shown and must NOT be scaled up (issue #21:
+        /// disabling replacement/translation at runtime, or a detected-but-unreplaced font, grew the
+        /// text ~designScale×). Mirrors the replacement gate (enable_font_replacement AND
+        /// IsTranslationEnabled AND fallback).
         /// </summary>
         private static float GetDesignScaleBaseline(FontSettings settings, string fontName)
         {
-            if (settings != null && settings.scale_auto
+            if (settings != null && settings.scale_auto && settings.enabled
+                && (TranslatorCore.Config == null || TranslatorCore.Config.enable_font_replacement)
+                && !string.IsNullOrEmpty(settings.fallback)
                 && _designScaleCache.TryGetValue(fontName, out float ds) && ds > 1.001f)
                 return ds;
             return 1f;
@@ -1827,7 +1837,10 @@ namespace UnityGameTranslator.Core
                 // Each font switch creates a NEW clone with its own glyph cache.
                 // No bump hack needed — the new Font object has no cached glyphs.
                 TranslatorScanner.ClearProcessedCache();
-                TranslatorScanner.ForceRefreshAllText();
+                // reapplyAllScales: per-font enable toggle changes the design-scale gate for this font;
+                // re-derive every component's size so a disabled font's restored original isn't left at
+                // the old scaled fontSize (issue #21).
+                TranslatorScanner.ForceRefreshAllText(reapplyAllScales: true);
             }
 
             // Save changes
@@ -1859,25 +1872,33 @@ namespace UnityGameTranslator.Core
 
             foreach (int instanceId in toRestore)
             {
-                if (!_originalFontsPerComponent.TryGetValue(instanceId, out var originalFont))
+                if (!_originalFontsPerComponent.ContainsKey(instanceId))
                     continue;
 
                 if (_replacedComponentRefs.TryGetValue(instanceId, out var component) && component != null)
                 {
-                    TypeHelper.SetFont(component, originalFont);
-                    SetFontSharedMaterial(component, originalFont);
-                    TypeHelper.ForceMeshUpdate(component);
-                    // Mark Graphic dirty so the UGUI pipeline re-resolves the material —
-                    // this wakes up SoftMaskable wrappers (Coffee.SoftMaskForUGUI) that
-                    // had cached a clone of the previous material; without it the text
-                    // stays invisible inside scroll/mask regions (e.g. Load Game list)
-                    // until the next scene change.
+                    // Route through the canonical restore so the game's material PRESET
+                    // (shadow/outline/face color) comes back, NOT the font's default material
+                    // (issue #21: disabling per-font translation dropped the text styling because
+                    // this path used SetFontSharedMaterial(originalFont)). RestoreOriginalFont
+                    // restores font + original shared material + clears _originalFontsPerComponent /
+                    // _originalMaterialsPerComponent / the replaced-id mark.
+                    RestoreOriginalFont(component);
+                    // Mark Graphic dirty so the UGUI pipeline re-resolves the material — this wakes
+                    // up SoftMaskable wrappers (Coffee.SoftMaskForUGUI) that cached a clone of the
+                    // previous material; without it the text stays invisible inside scroll/mask
+                    // regions (e.g. Load Game list) until the next scene change.
                     TypeHelper.SetAllDirty(component);
                 }
+                else
+                {
+                    // Component gone — just drop the tracking RestoreOriginalFont would have cleared.
+                    _originalFontsPerComponent.Remove(instanceId);
+                    _originalMaterialsPerComponent.Remove(instanceId);
+                    _fontReplacedComponentIds.Remove(instanceId);
+                }
 
-                _originalFontsPerComponent.Remove(instanceId);
                 _replacedComponentRefs.Remove(instanceId);
-                _fontReplacedComponentIds.Remove(instanceId);
             }
         }
 
@@ -2839,9 +2860,44 @@ namespace UnityGameTranslator.Core
         /// <param name="instanceId">Component instance ID</param>
         /// <param name="currentFontName">Current font name on the component (may be replacement)</param>
         /// <returns>Original font name if tracked, otherwise currentFontName</returns>
+        // Stable per-component settings font name: the ORIGINAL (game) font a component is
+        // translated FROM. Resolved once from live tracking (or a current name that is itself a
+        // settings font) and kept, so scale/settings lookups stay correct even after the component's
+        // live font flips to OUR replacement (e.g. "<font>-Latin") or its per-component original
+        // tracking is dropped and not re-established (issue #21: a replaced title resolved to the
+        // replacement font name → design-scale collapsed to 1.0 → shrank, with a delayed periodic
+        // re-resolution). Only consulted when live tracking is absent AND the current name isn't a
+        // known settings font, so a reused instance id showing a real game font still resolves fresh.
+        private static readonly Dictionary<int, string> _settingsFontNamePerComponent = new Dictionary<int, string>();
+
+        /// <summary>Drop a component's cached settings-font resolution (dead/destroyed component).</summary>
+        public static void ClearComponentSettingsFontName(int instanceId)
+        {
+            _settingsFontNamePerComponent.Remove(instanceId);
+        }
+
         public static string GetSettingsFontName(int instanceId, string currentFontName)
         {
-            return GetOriginalFontName(instanceId) ?? currentFontName;
+            // 1. Live tracking is authoritative — the game original captured at replacement time.
+            string tracked = GetOriginalFontName(instanceId);
+            if (!string.IsNullOrEmpty(tracked))
+            {
+                _settingsFontNamePerComponent[instanceId] = tracked;
+                return tracked;
+            }
+            // 2. The current font is itself a configured settings font (component not yet replaced).
+            //    Authoritative and fresh — takes precedence over any stale cached value.
+            if (!string.IsNullOrEmpty(currentFontName) && TranslatorCore.FontSettingsMap.ContainsKey(currentFontName))
+            {
+                _settingsFontNamePerComponent[instanceId] = currentFontName;
+                return currentFontName;
+            }
+            // 3. Stable cache from a previous good resolution — survives the live font flipping to our
+            //    replacement variant and the loss of per-component original tracking.
+            if (_settingsFontNamePerComponent.TryGetValue(instanceId, out var stable) && !string.IsNullOrEmpty(stable))
+                return stable;
+            // 4. Unknown — fall back to the raw current name (may be a replacement variant).
+            return currentFontName;
         }
 
         /// <summary>

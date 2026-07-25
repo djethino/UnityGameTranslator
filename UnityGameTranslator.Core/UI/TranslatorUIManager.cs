@@ -2251,6 +2251,12 @@ namespace UnityGameTranslator.Core.UI
                 }
             }
 
+            // Contextual help bar: resolve the hovered control by geometric poll.
+            // Only while a panel is open (nothing to hover otherwise). Event-based hover
+            // (injected IPointerEnterHandler) is silent on IL2CPP, so we poll instead.
+            if (panelsVisible)
+                Components.HelpZone.PollHover();
+
             // Manage status overlay visibility
             UpdateStatusOverlay();
         }

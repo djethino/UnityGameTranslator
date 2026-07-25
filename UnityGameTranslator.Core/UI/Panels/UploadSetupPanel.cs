@@ -275,7 +275,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 resultsFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
             }
 
-            UIStyles.SetBackground(resultsScroll, UIStyles.CardBackground);
+            UIStyles.SetBackground(resultsScroll, UIStyles.ViewportBackground);  // recessed list area, distinct from the card it sits in
 
             UIStyles.CreateSpacer(card, 10);
 

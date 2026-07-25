@@ -121,16 +121,18 @@ namespace UnityGameTranslator.Core.UI.Components
             var statusRow = UIFactory.CreateHorizontalGroup(_root, "StatusRow", false, false, true, true, UIStyles.SmallSpacing);
             UIFactory.SetLayoutElement(statusRow, minHeight: UIStyles.RowHeightMedium, flexibleWidth: 9999);
 
-            // Status indicator (colored dot)
+            // Status indicator (colored dot). Technical symbol/status/role tags — never translate.
             _statusIcon = UIFactory.CreateLabel(statusRow, "StatusIcon", "●", TextAnchor.MiddleLeft);
             _statusIcon.fontSize = UIStyles.FontSizeNormal;
             UIFactory.SetLayoutElement(_statusIcon.gameObject, minWidth: 25);
+            TranslatorCore.RegisterExcluded(_statusIcon);
 
             // Status text
             _statusLabel = UIFactory.CreateLabel(statusRow, "StatusLabel", "SYNCED", TextAnchor.MiddleLeft);
             _statusLabel.fontStyle = FontStyle.Bold;
             _statusLabel.fontSize = UIStyles.FontSizeNormal;
             UIFactory.SetLayoutElement(_statusLabel.gameObject, flexibleWidth: 9999);
+            TranslatorCore.RegisterExcluded(_statusLabel);
 
             // Role badge
             _roleLabel = UIFactory.CreateLabel(statusRow, "RoleLabel", "[MAIN]", TextAnchor.MiddleRight);
@@ -138,6 +140,7 @@ namespace UnityGameTranslator.Core.UI.Components
             _roleLabel.fontSize = UIStyles.FontSizeSmall;
             _roleLabel.color = UIStyles.TextAccent;
             UIFactory.SetLayoutElement(_roleLabel.gameObject, minWidth: 100);
+            TranslatorCore.RegisterExcluded(_roleLabel);
 
             // Details row: entry count, language
             _detailsLabel = UIFactory.CreateLabel(_root, "DetailsLabel", "", TextAnchor.MiddleLeft);
@@ -147,11 +150,14 @@ namespace UnityGameTranslator.Core.UI.Components
 
             // Quality row: H/V/A bar + score
             _qualityRow = UIFactory.CreateHorizontalGroup(_root, "QualityRow", false, false, true, true, UIStyles.SmallSpacing);
-            UIFactory.SetLayoutElement(_qualityRow, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999);
+            UIFactory.SetLayoutElement(_qualityRow, minHeight: UIStyles.RowHeightMedium, flexibleWidth: 9999);
+            // Center the (thin) bar vertically in the row — otherwise it sticks to the bottom.
+            var qrLayout = _qualityRow.GetComponent<HorizontalLayoutGroup>();
+            if (qrLayout != null) qrLayout.childAlignment = TextAnchor.MiddleLeft;
 
             // Quality bar container (stacked colored segments)
             _qualityBarContainer = UIFactory.CreateHorizontalGroup(_qualityRow, "QualityBar", false, false, true, true, 0);
-            UIFactory.SetLayoutElement(_qualityBarContainer, minHeight: 8, preferredHeight: 8, minWidth: 100, flexibleWidth: 9999);
+            UIFactory.SetLayoutElement(_qualityBarContainer, minHeight: 12, preferredHeight: 12, minWidth: 100, flexibleWidth: 9999);
 
             // H segment (green)
             var humanObj = UIFactory.CreateUIObject("HumanBar", _qualityBarContainer);

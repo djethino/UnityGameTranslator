@@ -75,10 +75,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         private float _toastHideTime = 0f;
         private const float TOAST_DURATION = 1.8f;
 
-        // Toast tone colors (distinct from mod update / sync / AI notifications).
-        private static readonly Color ToastOnBg     = new Color(0.13f, 0.35f, 0.18f, 0.95f);  // Dark green
-        private static readonly Color ToastOffBg    = new Color(0.40f, 0.15f, 0.15f, 0.95f);  // Dark red
-        private static readonly Color ToastInfoBg   = new Color(0.24f, 0.14f, 0.38f, 0.95f);  // Dark purple
+        // Toast tone colors (distinct from mod update / sync / AI notifications) — from the palette.
+        private static readonly Color ToastOnBg     = UIStyles.ToastSuccessBg;
+        private static readonly Color ToastOffBg    = UIStyles.ToastErrorBg;
+        private static readonly Color ToastInfoBg   = UIStyles.ToastInfoBg;
 
         // State - whether main panels are open (affects which boxes are shown)
         private bool _panelsOpenMode = false;

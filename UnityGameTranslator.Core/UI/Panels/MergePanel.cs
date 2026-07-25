@@ -442,12 +442,12 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (_keepMineBtn != null)
             {
-                UIStyles.SetBackground(_keepMineBtn.Component.gameObject, UIStyles.CardBackground);
+                UIStyles.SetBackground(_keepMineBtn.Component.gameObject, UIStyles.ButtonSecondary);
                 _keepMineBtn.ButtonText.fontStyle = FontStyle.Normal;
             }
             if (_takeServerBtn != null)
             {
-                UIStyles.SetBackground(_takeServerBtn.Component.gameObject, UIStyles.CardBackground);
+                UIStyles.SetBackground(_takeServerBtn.Component.gameObject, UIStyles.ButtonSecondary);
                 _takeServerBtn.ButtonText.fontStyle = FontStyle.Normal;
             }
         }
@@ -457,13 +457,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_keepMineBtn != null)
             {
                 UIStyles.SetBackground(_keepMineBtn.Component.gameObject,
-                    isLocal ? UIStyles.TextAccent : UIStyles.CardBackground);
+                    isLocal ? UIStyles.TextAccent : UIStyles.ButtonSecondary);
                 _keepMineBtn.ButtonText.fontStyle = isLocal ? FontStyle.Bold : FontStyle.Normal;
             }
             if (_takeServerBtn != null)
             {
                 UIStyles.SetBackground(_takeServerBtn.Component.gameObject,
-                    !isLocal ? UIStyles.StatusSuccess : UIStyles.CardBackground);
+                    !isLocal ? UIStyles.StatusSuccess : UIStyles.ButtonSecondary);
                 _takeServerBtn.ButtonText.fontStyle = !isLocal ? FontStyle.Bold : FontStyle.Normal;
             }
             OnUserMadeChoice();

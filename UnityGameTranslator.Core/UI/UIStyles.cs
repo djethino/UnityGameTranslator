@@ -93,25 +93,29 @@ namespace UnityGameTranslator.Core.UI
         // Background colors - from website CSS
         // Body: rgb(15, 15, 26) = 0.059, 0.059, 0.102 - dark blue-night
         // Card: rgb(30, 41, 57) = 0.118, 0.161, 0.224 - blue-gray
-        public static readonly Color PanelBackground = new Color(0.059f, 0.059f, 0.102f, 0.98f);   // Body bg
-        public static readonly Color CardBackground = new Color(0.118f, 0.161f, 0.224f, 0.92f);    // Card bg
+        // Dark blue-slate elevation ramp (single hue, even luminance steps). Each tier ≈1.4-1.8× the
+        // luminance of the one below → clearly separated yet harmonious. Controls (0.23-0.26) sit ABOVE
+        // every background tier (body/viewport/card/row) so they read on any container.
+        public static readonly Color PanelBackground = new Color(0.062f, 0.075f, 0.105f, 0.98f);  // E0 body
+        public static readonly Color CardBackground = new Color(0.14f, 0.17f, 0.23f, 0.96f);       // E2 card
         public static readonly Color SectionBackground = Transparent;                               // Transparent (no auto-padding)
-        public static readonly Color InputBackground = new Color(0.212f, 0.255f, 0.325f, 0.95f);   // Slate blue
+        public static readonly Color InputBackground = new Color(0.23f, 0.27f, 0.35f, 1f);         // E4 control fill
 
         // Text colors
-        public static readonly Color TextPrimary = new Color(0.92f, 0.94f, 0.98f);
-        public static readonly Color TextSecondary = new Color(0.65f, 0.70f, 0.78f);
-        public static readonly Color TextMuted = new Color(0.45f, 0.50f, 0.58f);
+        public static readonly Color TextPrimary = new Color(0.93f, 0.95f, 0.98f);
+        public static readonly Color TextSecondary = new Color(0.73f, 0.77f, 0.85f);   // bumped for readability on dark cards
+        public static readonly Color TextMuted = new Color(0.57f, 0.61f, 0.69f);       // bumped: was 0.45 (borderline on dark cards)
         public static readonly Color TextAccent = new Color(0.55f, 0.36f, 0.96f);                  // Purple accent
 
         // Button colors (purple accent + navy blue tones)
         public static readonly Color ButtonPrimary = new Color(0.55f, 0.36f, 0.96f);               // Purple #8b5cf6
-        public static readonly Color ButtonSecondary = new Color(0.12f, 0.16f, 0.26f);             // Navy
+        public static readonly Color ButtonSecondary = new Color(0.26f, 0.31f, 0.40f);             // E4+ slate control surface (renders at full value now — no ×0.25 crush)
         public static readonly Color ButtonSuccess = new Color(0.55f, 0.36f, 0.96f);               // Purple (main CTA)
         public static readonly Color ButtonWarning = new Color(0.95f, 0.73f, 0.29f);               // Amber
-        public static readonly Color ButtonDanger = new Color(0.85f, 0.35f, 0.35f);                // Red
-        public static readonly Color ButtonLink = new Color(0.55f, 0.36f, 0.96f);                  // Purple for links
-        public static readonly Color ButtonHover = new Color(0.65f, 0.48f, 1f);                    // Lighter purple
+        public static readonly Color ButtonDanger = new Color(0.88f, 0.40f, 0.42f);                // Red
+        public static readonly Color ButtonLink = new Color(0.62f, 0.47f, 0.98f);                  // Purple for links
+        public static readonly Color ButtonHover = new Color(0.66f, 0.50f, 1f);                    // Lighter purple
+        public static readonly Color ButtonDisabled = new Color(0.20f, 0.22f, 0.27f, 1f);          // Dim slate for disabled controls (visible, never black)
 
         // Status colors
         public static readonly Color StatusSuccess = new Color(0.34f, 0.80f, 0.48f);               // Green
@@ -120,31 +124,57 @@ namespace UnityGameTranslator.Core.UI
         public static readonly Color StatusInfo = new Color(0.38f, 0.73f, 0.98f);                  // Blue
 
         // Item/List backgrounds (navy blue tones)
-        public static readonly Color ItemBackground = new Color(0.08f, 0.11f, 0.20f, 0.7f);        // Dark navy
-        public static readonly Color ItemBackgroundHover = new Color(0.12f, 0.16f, 0.28f, 0.85f);  // Navy hover
-        public static readonly Color ItemBackgroundSelected = new Color(0.30f, 0.22f, 0.55f, 0.8f); // Purple-navy
-        public static readonly Color ItemBackgroundLineage = new Color(0.20f, 0.18f, 0.40f, 0.7f); // Deep purple-navy
+        public static readonly Color ItemBackground = new Color(0.17f, 0.20f, 0.27f, 1f);          // E3 row (above card)
+        public static readonly Color ItemBackgroundHover = new Color(0.22f, 0.26f, 0.34f, 1f);     // row hover
+        public static readonly Color ItemBackgroundSelected = new Color(0.30f, 0.24f, 0.52f, 1f);  // Purple-navy
+        public static readonly Color ItemBackgroundLineage = new Color(0.23f, 0.21f, 0.42f, 1f);   // Deep purple-navy
 
         // Notification box colors (navy base)
         public static readonly Color NotificationSuccess = new Color(0.08f, 0.18f, 0.14f, 0.95f);  // Navy-green
         public static readonly Color NotificationWarning = new Color(0.22f, 0.18f, 0.10f, 0.95f);  // Navy-amber
         public static readonly Color NotificationInfo = new Color(0.08f, 0.11f, 0.20f, 0.95f);     // Navy
 
+        // Toast (corner) backgrounds — tinted accents, harmonized with the palette
+        public static readonly Color ToastSuccessBg = new Color(0.12f, 0.30f, 0.18f, 0.96f);       // Green-tinted
+        public static readonly Color ToastErrorBg = new Color(0.34f, 0.14f, 0.16f, 0.96f);         // Red-tinted
+        public static readonly Color ToastInfoBg = new Color(0.20f, 0.15f, 0.34f, 0.96f);          // Purple-tinted
+
+        // Elevated surface (a card that must sit clearly above another card, e.g. guidance box)
+        public static readonly Color CardElevated = new Color(0.19f, 0.22f, 0.29f, 0.96f);         // E3+ surface
+
+        // In-game element highlight overlays (Inspector) — semi-transparent info-blue
+        public static readonly Color GameHighlightHover = new Color(0.24f, 0.55f, 0.85f, 0.28f);
+        public static readonly Color GameHighlightSelected = new Color(0.20f, 0.50f, 0.78f, 0.40f);
+
         // Tab bar colors (navy blue tones for cohesive look)
-        public static readonly Color TabBarBackground = new Color(0.06f, 0.08f, 0.14f, 0.95f);     // Dark navy
-        public static readonly Color TabActiveBackground = new Color(0.10f, 0.14f, 0.24f, 1f);    // Same as CardBackground
-        public static readonly Color TabInactiveBackground = new Color(0.05f, 0.07f, 0.12f, 0.8f); // Very dark navy
-        public static readonly Color TabHoverBackground = new Color(0.08f, 0.11f, 0.18f, 0.9f);   // Slightly lighter navy
-        public static readonly Color TabContentBackground = new Color(0.06f, 0.08f, 0.14f, 0.95f); // Navy border around card
+        public static readonly Color TabBarBackground = new Color(0.08f, 0.10f, 0.14f, 1f);        // E1 bar
+        public static readonly Color TabActiveBackground = new Color(0.19f, 0.23f, 0.31f, 1f);     // E3+ active (clearly raised)
+        public static readonly Color TabInactiveBackground = new Color(0.13f, 0.15f, 0.21f, 1f);   // between bar & active → visible
+        public static readonly Color TabHoverBackground = new Color(0.16f, 0.19f, 0.26f, 1f);      // inactive hover
+        public static readonly Color TabContentBackground = new Color(0.08f, 0.10f, 0.14f, 1f);    // Navy border around card
 
         // Scroll view viewport background (replaces UniverseLib's gray default)
-        public static readonly Color ViewportBackground = new Color(0.06f, 0.08f, 0.14f, 1f);     // Dark navy (matches TabContentBackground)
+        public static readonly Color ViewportBackground = new Color(0.09f, 0.11f, 0.15f, 1f);     // E1 viewport
 
         // Dropdown colors (for SearchableDropdown component)
-        public static readonly Color DropdownBackground = new Color(0.118f, 0.161f, 0.224f, 0.98f);  // Same as CardBackground
-        public static readonly Color DropdownItemNormal = new Color(0.08f, 0.11f, 0.18f, 0.9f);      // Dark navy
-        public static readonly Color DropdownItemHighlight = new Color(0.55f, 0.36f, 0.96f, 0.5f);   // Purple highlight
-        public static readonly Color InputFieldBackground = new Color(0.212f, 0.255f, 0.325f, 0.95f); // Slate blue (same as InputBackground)
+        public static readonly Color DropdownBackground = new Color(0.23f, 0.27f, 0.35f, 1f);        // E4 control (= InputBackground)
+        public static readonly Color DropdownItemNormal = new Color(0.17f, 0.20f, 0.27f, 1f);        // E3 row (item in the open list)
+        public static readonly Color DropdownItemHighlight = new Color(0.55f, 0.36f, 0.96f, 0.55f);  // Purple highlight
+        public static readonly Color InputFieldBackground = new Color(0.23f, 0.27f, 0.35f, 1f);      // E4 control (= InputBackground)
+
+        // Toggle/checkbox (wired into UniverseLib.Colors at init so the plugin controls them)
+        public static readonly Color CheckboxUnchecked = new Color(0.42f, 0.47f, 0.58f, 1f);        // Light slate — a small box needs more contrast than a large button to read on dark bg
+        public static readonly Color CheckboxCheckmark = ButtonPrimary;                              // Purple check when on
+        public static readonly Color CheckboxBorder = new Color(0.62f, 0.67f, 0.78f, 0.9f);          // Light edge → box reads on any bg
+
+        // UniverseLib theme extras (no dedicated UGT use yet — kept here so the whole UniverseLib
+        // palette is driven from ONE place; see TranslatorUIManager.Initialize theme sync)
+        public static readonly Color SliderBackgroundColor = new Color(0.14f, 0.17f, 0.23f, 1f);
+        public static readonly Color SliderFillColor = new Color(0.55f, 0.36f, 0.96f, 0.85f);        // Purple
+        public static readonly Color SliderHandleColor = new Color(0.33f, 0.38f, 0.48f, 1f);         // E5
+        public static readonly Color InputBorderColor = new Color(0.33f, 0.38f, 0.48f, 1f);          // E5 border
+        public static readonly Color AccentPressed = new Color(0.45f, 0.28f, 0.85f, 1f);             // Darker purple
+        public static readonly Color ButtonPressed = new Color(0.10f, 0.13f, 0.18f, 1f);
 
         #endregion
 
@@ -263,7 +293,29 @@ namespace UnityGameTranslator.Core.UI
         /// </summary>
         public static void SetBackground(GameObject obj, Color color)
         {
+            // Interactive controls (Button/Toggle/Selectable) keep Image.color = white and tint via
+            // their ColorBlock.normalColor. Writing Image.color alone renders color × normalColor
+            // (UniverseLib's default normalColor dims/crushes it). So on a Selectable, drive the
+            // ColorBlock (normal + hover + pressed) and keep the Image white → renders at FULL color.
+            var selectable = obj.GetComponent<Selectable>();
             var image = obj.GetComponent<Image>();
+            if (selectable != null)
+            {
+                if (image != null) image.color = Color.white;
+                var cb = selectable.colors;
+                cb.normalColor = color;
+                cb.highlightedColor = new Color(
+                    Mathf.Min(color.r * 1.15f, 1f), Mathf.Min(color.g * 1.15f, 1f), Mathf.Min(color.b * 1.15f, 1f), color.a);
+                cb.pressedColor = new Color(color.r * 0.8f, color.g * 0.8f, color.b * 0.8f, color.a);
+                cb.selectedColor = color;
+                // Themed disabled state (dim slate, fully opaque) so a disabled button reads as a clear
+                // "greyed out" control instead of Unity's translucent light-gray default, which looked
+                // like a black smudge over the dark panel (e.g. Upload Translation when not uploadable).
+                cb.disabledColor = ButtonDisabled;
+                cb.colorMultiplier = 1f;
+                selectable.colors = cb;
+                return;
+            }
             if (image != null)
             {
                 image.color = color;
@@ -467,7 +519,7 @@ namespace UnityGameTranslator.Core.UI
         {
             var btn = UIFactory.CreateButton(parent, name, text);
             UIFactory.SetLayoutElement(btn.Component.gameObject, minWidth: minWidth, minHeight: ButtonHeight);
-            SetBackground(btn.Component.gameObject, ButtonPrimary);
+            SetBackground(btn.Component.gameObject, ButtonPrimary);   // smart: sets the full ColorBlock (normal/hover/pressed/disabled)
             return btn;
         }
 
@@ -478,7 +530,7 @@ namespace UnityGameTranslator.Core.UI
         {
             var btn = UIFactory.CreateButton(parent, name, text);
             UIFactory.SetLayoutElement(btn.Component.gameObject, minWidth: minWidth, minHeight: ButtonHeight);
-            SetBackground(btn.Component.gameObject, ButtonSecondary);
+            SetBackground(btn.Component.gameObject, ButtonSecondary); // smart: full ColorBlock (normal/hover/pressed/disabled), renders at full value (no ×0.25 crush)
             return btn;
         }
 
@@ -942,7 +994,12 @@ namespace UnityGameTranslator.Core.UI
             titleLabel.color = TextSecondary;
             titleLabel.fontStyle = FontStyle.Bold;
             titleLabel.fontSize = FontSizeNormal;
-            UIFactory.SetLayoutElement(titleLabel.gameObject, flexibleWidth: 9999);
+            // Overflow, not the Unity default Truncate: in a height-constrained header row a bold 14px
+            // line can exceed the row height and Truncate culls the WHOLE line → the title vanished on
+            // games whose default UI font has taller line metrics. minHeight also reserves the row height.
+            titleLabel.horizontalOverflow = HorizontalWrapMode.Overflow;
+            titleLabel.verticalOverflow = VerticalWrapMode.Overflow;
+            UIFactory.SetLayoutElement(titleLabel.gameObject, minHeight: RowHeightMedium, flexibleWidth: 9999);
 
             // Make header clickable (button will be added by caller to wire up toggle)
             var headerBtn = header.AddComponent<Button>();

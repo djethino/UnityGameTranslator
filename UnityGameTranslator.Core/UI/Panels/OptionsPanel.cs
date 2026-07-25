@@ -270,14 +270,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Contextual help bar between content and footer
             _helpZone = CreateHelpZone(buttonRow, "Hover an element to see what it does");
 
-            // Fixed header: title and tab buttons stay put, only tab content scrolls
+            // Fixed header: tab buttons stay put, only tab content scrolls
             var header = CreateFixedHeader();
 
-            // Title
-            var title = CreateTitle(header, "Title", "Mod Options");
-            RegisterUIText(title);
-
-            UIStyles.CreateSpacer(header, 5);
+            // No big title here — the window title bar already shows "Mod Options" (redundant).
 
             // Create tab bar — buttons in the fixed header, contents in the scroll area
             _tabBar = new TabBar();

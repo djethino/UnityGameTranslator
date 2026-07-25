@@ -102,7 +102,9 @@ namespace UnityGameTranslator.Core.UI.Components
 
             Image buttonImage = _buttonObject.AddComponent<Image>();
             buttonImage.type = Image.Type.Sliced;
-            buttonImage.color = UIStyles.DropdownBackground;
+            // Image stays white; the ColorBlock below tints it. Setting Image.color = DropdownBackground
+            // too would render DropdownBackground² (crushed dark) since final = Image.color × normalColor.
+            buttonImage.color = Color.white;
 
             Button button = _buttonObject.AddComponent<Button>();
             button.targetGraphic = buttonImage;
@@ -278,7 +280,7 @@ namespace UnityGameTranslator.Core.UI.Components
             viewportRect.sizeDelta = new Vector2(-8, scrollHeight);
 
             Image viewportBg = viewport.AddComponent<Image>();
-            viewportBg.color = new Color(0.1f, 0.1f, 0.12f);
+            viewportBg.color = UIStyles.ViewportBackground;
             viewport.AddComponent<RectMask2D>();
 
             // Content container
@@ -433,7 +435,9 @@ namespace UnityGameTranslator.Core.UI.Components
 
             Image itemBg = itemObj.AddComponent<Image>();
             bool isSelected = option == _selectedValue;
-            itemBg.color = isSelected ? UIStyles.ButtonPrimary : UIStyles.DropdownItemNormal;
+            // Image stays white; the ColorBlock tints it (final = Image.color × normalColor). Setting
+            // Image.color to the same color would render color² — normal items came out near-black.
+            itemBg.color = Color.white;
 
             Button itemButton = itemObj.AddComponent<Button>();
             itemButton.targetGraphic = itemBg;

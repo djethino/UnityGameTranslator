@@ -104,14 +104,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Contextual help bar between content and footer
             _helpZone = CreateHelpZone(buttonRow, "Hover an element to see what it does");
 
-            // Fixed header: title and tab buttons stay put, only tab content scrolls
+            // Fixed header: tab buttons stay put, only tab content scrolls
             var header = CreateFixedHeader();
 
-            // Title
-            var title = CreateTitle(header, "Title", "Translation Tools");
-            RegisterUIText(title);
-
-            UIStyles.CreateSpacer(header, 5);
+            // No big title here — the window title bar already shows "Translation Tools" (redundant).
 
             // Create tab bar — buttons in the fixed header, contents in the scroll area
             _tabBar = new TabBar();
@@ -1275,8 +1271,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             fontLabel.fontSize = UIStyles.FontSizeNormal;
             UIFactory.SetLayoutElement(fontLabel.gameObject, flexibleWidth: 9999);
 
-            // Identify button: highlight in-game texts using this font
-            var identifyBtn = UIFactory.CreateButton(headerRow, "IdentifyBtn", "?");
+            // Identify button: highlight in-game texts using this font. This button swaps its color at
+            // runtime (?/slate ↔ X/accent) via Image.color, so create it with a WHITE ColorBlock
+            // normalColor and let Image.color drive the visible color directly (otherwise rendered =
+            // Image.color × 0.25 default, which crushed the slate to near-black).
+            var identifyBtn = UIFactory.CreateButton(headerRow, "IdentifyBtn", "?", Color.white);
             UIFactory.SetLayoutElement(identifyBtn.GameObject, minWidth: 28, minHeight: 22);
             identifyBtn.ButtonText.fontSize = UIStyles.FontSizeSmall;
             identifyBtn.ButtonText.color = UIStyles.TextSecondary;

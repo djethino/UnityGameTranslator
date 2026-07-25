@@ -211,11 +211,37 @@ namespace UnityGameTranslator.Core.UI
 
             TranslatorCore.LogInfo("[UIManager] Initializing UniverseLib...");
 
-            // Configure UniverseLib default colors to match our theme (navy blue)
+            // Drive the ENTIRE UniverseLib color palette from our UIStyles theme, so every UI color is
+            // controlled from ONE place (the plugin). Runs before any panel is built. Elements created
+            // by UniverseLib itself (toggles/checkboxes, sliders, default buttons, dropdowns, inputs)
+            // now follow the theme too — previously only DefaultLayoutBackground was wired, so e.g. the
+            // unchecked checkbox stayed on UniverseLib's own hardcoded default.
             UIFactory.Colors.DefaultLayoutBackground = UIStyles.ViewportBackground;
             UIFactory.Colors.DefaultLayoutPadding = new Vector4(
                 UIStyles.SmallSpacing, UIStyles.SmallSpacing,
                 UIStyles.SmallSpacing, UIStyles.SmallSpacing);
+            UIFactory.Colors.PanelBackground       = UIStyles.CardBackground;
+            UIFactory.Colors.SlightBackground      = UIStyles.ItemBackground;
+            UIFactory.Colors.DarkBackground        = UIStyles.PanelBackground;
+            UIFactory.Colors.TitleBarBackground    = UIStyles.TabBarBackground;
+            UIFactory.Colors.Accent                = UIStyles.ButtonPrimary;
+            UIFactory.Colors.AccentHighlight       = UIStyles.ButtonHover;
+            UIFactory.Colors.AccentPressed         = UIStyles.AccentPressed;
+            UIFactory.Colors.ButtonNormal          = UIStyles.ButtonSecondary;
+            UIFactory.Colors.ButtonHighlight       = UIStyles.InputBackground;
+            UIFactory.Colors.ButtonPressed         = UIStyles.ButtonPressed;
+            UIFactory.Colors.SliderBackground      = UIStyles.SliderBackgroundColor;
+            UIFactory.Colors.SliderFill            = UIStyles.SliderFillColor;
+            UIFactory.Colors.SliderHandle          = UIStyles.SliderHandleColor;
+            UIFactory.Colors.InputBackground       = UIStyles.InputBackground;
+            UIFactory.Colors.InputBorder           = UIStyles.InputBorderColor;
+            UIFactory.Colors.PlaceholderText       = UIStyles.TextMuted;
+            UIFactory.Colors.ToggleBackground      = UIStyles.CheckboxUnchecked;
+            UIFactory.Colors.ToggleCheckmark       = UIStyles.CheckboxCheckmark;
+            UIFactory.Colors.ToggleBorder          = UIStyles.CheckboxBorder;
+            UIFactory.Colors.DropdownBackground    = UIStyles.DropdownBackground;
+            UIFactory.Colors.DropdownItemNormal    = UIStyles.DropdownItemNormal;
+            UIFactory.Colors.DropdownItemHighlight = UIStyles.DropdownItemHighlight;
 
             // Use per-game setting for EventSystem override (stored in translations.json as _settings.disable_eventsystem_override)
             // Default is false (UniverseLib CAN override). Set to true in translations.json if the game's UI animations break.

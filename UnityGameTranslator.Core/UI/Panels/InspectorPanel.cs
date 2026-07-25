@@ -93,9 +93,9 @@ namespace UnityGameTranslator.Core.UI.Panels
         private RectTransform _hoverHighlightRect;
         private RectTransform _selectedHighlightRect;
 
-        // Colors for highlights (DevTools-style)
-        private static readonly Color HoverHighlightColor = new Color(0.20f, 0.56f, 0.85f, 0.25f);    // Blue 25% — like Chrome
-        private static readonly Color SelectedHighlightColor = new Color(0.16f, 0.50f, 0.73f, 0.35f);  // Deeper blue 35%
+        // Colors for highlights (DevTools-style) — from the palette
+        private static readonly Color HoverHighlightColor = UIStyles.GameHighlightHover;
+        private static readonly Color SelectedHighlightColor = UIStyles.GameHighlightSelected;
 
         #region IL2CPP-safe Raycast Infrastructure
 

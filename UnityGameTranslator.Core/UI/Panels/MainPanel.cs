@@ -121,10 +121,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // === FIXED HEADER (outside the scroll — only tab content scrolls) ===
             var header = CreateFixedHeader();
 
-            var title = CreateTitle(header, "Title", "Unity Game Translator");
-            RegisterExcluded(title); // Mod name - never translate
-
-            UIStyles.CreateSpacer(header, 5);
+            // No big title here — the window title bar already shows the mod name (redundant, wasted height).
 
             // Account Section (compact, inline)
             CreateAccountSection(header);
@@ -230,7 +227,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             var sectionTitle = UIStyles.CreateSectionTitle(parent, "AccountSectionLabel", "Account");
             RegisterUIText(sectionTitle);
 
-            var accountBox = CreateSection(parent, "AccountBox");
+            // Grouped in a card (like "Current Translation") so the account block reads as a unit.
+            var accountBox = UIStyles.CreateAdaptiveCard(parent, "AccountBox", PanelWidth - 60);
 
             var accountRow = UIStyles.CreateFormRow(accountBox, "AccountRow", UIStyles.RowHeightLarge);
 
@@ -304,7 +302,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.SetLayoutElement(_loginCTASection, flexibleWidth: 9999);
 
             var ctaCard = UIStyles.CreateAdaptiveCard(_loginCTASection, "CTACard", PanelWidth - 60);
-            UIStyles.SetBackground(ctaCard, UIStyles.SectionBackground);
+            UIStyles.SetBackground(ctaCard, UIStyles.CardElevated);  // a prominent CTA — must read as a card, not blend into the panel
 
             var ctaTitle = UIFactory.CreateLabel(ctaCard, "CTATitle", "Login to sync your translations", TextAnchor.MiddleCenter);
             ctaTitle.fontStyle = FontStyle.Bold;
@@ -351,12 +349,12 @@ namespace UnityGameTranslator.Core.UI.Panels
                 "Your translation at a glance: sync state with the website, your role (Main = owner, Branch = contributor), and quality (Human / Validated / AI lines)");
 
             // External Resources section (visible only when ResourcesUrl is set)
-            _resourcesLinkSection = UIFactory.CreateVerticalGroup(_statusSection, "ResourcesLinkSection", false, false, true, true, 2);
+            _resourcesLinkSection = UIFactory.CreateVerticalGroup(_statusSection, "ResourcesLinkSection", false, false, true, true, UIStyles.SmallSpacing);
             UIFactory.SetLayoutElement(_resourcesLinkSection, flexibleWidth: 9999);
-            UIStyles.SetBackground(_resourcesLinkSection, UIStyles.CardBackground);
+            UIStyles.SetBackground(_resourcesLinkSection, UIStyles.CardElevated);
             var rlPadding = _resourcesLinkSection.GetComponent<VerticalLayoutGroup>();
             if (rlPadding != null)
-                rlPadding.padding = Compat.MakeRectOffset(8, 8, 6, 6);
+                rlPadding.padding = Compat.MakeRectOffset(12, 12, 10, 10);
 
             // "External Resources uploaded by @username"
             _resourcesByLabel = UIFactory.CreateLabel(_resourcesLinkSection, "ResourcesByLabel",
@@ -380,6 +378,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (openBtnLayout != null) openBtnLayout.childAlignment = TextAnchor.MiddleCenter;
 
             _resourcesLinkBtn = CreateSecondaryButton(openBtnRow, "ResourcesOpenBtn", "Open in Browser", 140);
+            // Fill the card width (bounded, no floating/overflowing button) and keep a consistent height.
+            UIFactory.SetLayoutElement(_resourcesLinkBtn.Component.gameObject, minWidth: 140, minHeight: UIStyles.ButtonHeight, flexibleWidth: 9999);
             UIStyles.SetBackground(_resourcesLinkBtn.Component.gameObject, UIStyles.ButtonLink);
             _resourcesLinkBtn.OnClick += OnResourcesLinkClicked;
             RegisterUIText(_resourcesLinkBtn.ButtonText);
@@ -603,7 +603,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.SetLayoutElement(_guidanceSection, flexibleWidth: 9999);
 
             var guidanceBox = UIStyles.CreateAdaptiveCard(_guidanceSection, "GuidanceBox", PanelWidth - 60);
-            UIStyles.SetBackground(guidanceBox, new Color(0.15f, 0.2f, 0.25f, 0.9f));
+            UIStyles.SetBackground(guidanceBox, UIStyles.CardElevated);
 
             _guidanceLabel = UIFactory.CreateLabel(guidanceBox, "GuidanceLabel", "", TextAnchor.MiddleCenter);
             _guidanceLabel.fontSize = UIStyles.FontSizeNormal;

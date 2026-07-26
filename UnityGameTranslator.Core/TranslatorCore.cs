@@ -5539,7 +5539,30 @@ namespace UnityGameTranslator.Core
                 translation_backend = "llm";
                 _configMigrated = true;
             }
+
+            if (config_version < CurrentConfigVersion)
+            {
+                // v1 — translate_mod_ui became tri-state. Every config written before that carries
+                // an explicit `false`, because the mod always serialised the default, and the
+                // option did nothing at all until it was made effective. Reading those as a
+                // deliberate refusal would hide the feature from everyone who upgrades, so they
+                // go back to "undecided" and the translation decides.
+                //
+                // This runs ONCE (guarded by config_version): a false the user sets from here on
+                // is their choice and is honoured for good.
+                if (config_version < 1 && translate_mod_ui == false)
+                    translate_mod_ui = null;
+
+                config_version = CurrentConfigVersion;
+                _configMigrated = true;
+            }
         }
+
+        /// <summary>Config schema version, bumped when a one-shot migration is added above.</summary>
+        private const int CurrentConfigVersion = 1;
+
+        // 0 = written before migrations were versioned. Persisted so each migration runs once.
+        public int config_version { get; set; } = 0;
 
         [JsonIgnore]
         internal bool _configMigrated = false;

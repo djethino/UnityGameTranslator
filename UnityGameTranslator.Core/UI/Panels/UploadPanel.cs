@@ -617,19 +617,27 @@ namespace UnityGameTranslator.Core.UI.Panels
                 output["_exclusions"] = exclusionsArray;
             }
 
-            // Publish the interface font with the translation: uploading IS publishing, so the font
-            // this translated UI needs travels with it. The font FILES come separately, from the
-            // author's resources link (fonts/ folder).
-            // NOTE: the other _settings (typewriting/concat detection…) are deliberately left out —
-            // they have never been shared, widening that is a separate decision.
+            // Settings that travel with the translation. These describe the GAME, not a personal
+            // preference: whoever worked out that a game needs the EventSystem left alone, or that
+            // its text is typewritten, spares everyone else the same diagnosis. Only non-default
+            // values are written, same convention as SaveCache.
+            var sharedSettings = new System.Collections.Generic.Dictionary<string, object>();
+
+            if (TranslatorCore.DisableEventSystemOverride)
+                sharedSettings["disable_eventsystem_override"] = true;
+            if (!TranslatorCore.TypewritingDetection)
+                sharedSettings["typewriting_detection"] = false;
+            if (!TranslatorCore.ConcatDetection)
+                sharedSettings["concat_detection"] = false;
+
+            // Uploading IS publishing, so the font this translated UI needs travels with it. The
+            // font FILES come separately, from the author's resources link (fonts/ folder).
             string uiFont = TranslatorCore.EffectiveInterfaceFont;
             if (!string.IsNullOrEmpty(uiFont))
-            {
-                output["_settings"] = new System.Collections.Generic.Dictionary<string, object>
-                {
-                    ["ui_font"] = uiFont
-                };
-            }
+                sharedSettings["ui_font"] = uiFont;
+
+            if (sharedSettings.Count > 0)
+                output["_settings"] = sharedSettings;
 
             // Include image replacements
             var imgReplacements = ImageReplacer.SaveToJson();

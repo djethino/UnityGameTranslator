@@ -138,6 +138,15 @@ namespace UnityGameTranslator.Core.UI.Panels
             _helpZone?.Describe(_tabBar.GetTabButton("Variables"),
                 "Protect dynamic values (numbers, names) inside translated texts");
 
+            // Host for the Fonts sub-tab buttons: they belong to the chrome, not to the content,
+            // so they sit in the fixed header like the main tabs instead of scrolling away with
+            // the settings they switch between. Shown only while the Fonts tab is open.
+            _fontsSubTabHost = UIFactory.CreateVerticalGroup(header, "FontsSubTabHost",
+                false, false, true, true, 0, default, Color.clear);
+            UIFactory.SetLayoutElement(_fontsSubTabHost, flexibleWidth: 9999, flexibleHeight: 0);
+            _tabBar.OnTabChanged += (_, tabName) => _fontsSubTabHost.SetActive(tabName == "Fonts");
+            _fontsSubTabHost.SetActive(_tabBar.SelectedName == "Fonts");
+
             // Build each tab's content
             CreateBehaviorTabContent(behaviorTab);
             CreateExclusionsTabContent(exclusionsTab);
@@ -744,12 +753,14 @@ namespace UnityGameTranslator.Core.UI.Panels
         // Font overrides UI
         private GameObject _fontOverridesListContainer;
         private TabBar _fontsSubTabBar;
+        private GameObject _fontsSubTabHost;
 
         private void CreateFontsTabContent(GameObject parent)
         {
-            // Sub-tab bar for Global / Overrides
+            // Sub-tab buttons in the fixed header, their contents in the scrolling tab body:
+            // the scrollbar then covers the settings only, not the switcher above them.
             _fontsSubTabBar = new TabBar();
-            _fontsSubTabBar.CreateUI(parent, tabRowHeight: 26); // Compact height for sub-tabs
+            _fontsSubTabBar.CreateUI(_fontsSubTabHost, parent, tabRowHeight: 26); // Compact height for sub-tabs
 
             var globalTab = _fontsSubTabBar.AddTab("Global");
             var overridesTab = _fontsSubTabBar.AddTab("Overrides");

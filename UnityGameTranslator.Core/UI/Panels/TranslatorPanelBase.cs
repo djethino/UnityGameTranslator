@@ -398,6 +398,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         // Flag to ignore OnPanelResized during programmatic resizes
         private bool _isProgrammaticResize;
 
+        // True once the panel wears a size the USER picked (restored from preferences or set by
+        // dragging). Dynamic sizing must not overwrite it. Cleared by ResetWindowPreferences.
+        private bool _userChoseSize;
+
         // Every constructed panel, so "Reset Window Positions" can act on the
         // LIVE windows immediately instead of only clearing the saved config
         private static readonly List<TranslatorPanelBase> _livePanels = new List<TranslatorPanelBase>();
@@ -427,6 +431,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (!UsesCenterAnchors) return;
 
+            // Hand the panel back to dynamic sizing, otherwise the reset would keep the very
+            // size the user asked to drop.
+            _userChoseSize = false;
+
             // SetDefaultSizeAndPosition restores anchors/pivot (user resizes
             // shift anchors), re-applies the default or dynamic size, centers
             // the panel and clamps it back on screen
@@ -445,8 +453,14 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (Dragger != null)
             {
+                // Scoped, not one-shot: OnEndResize raises OnFinishResize synchronously, so the
+                // handler sees the flag while it runs. Clearing it here rather than in the handler
+                // matters because this also runs BEFORE LateConstructUI subscribes — with nobody
+                // listening the flag would stay armed and swallow the user's next real resize,
+                // which then never got saved and reverted to the dynamic size on reopen.
                 _isProgrammaticResize = true;
-                Dragger.OnEndResize();
+                try { Dragger.OnEndResize(); }
+                finally { _isProgrammaticResize = false; }
             }
         }
 
@@ -766,6 +780,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 // User manually resized - apply saved size and skip dynamic sizing
                 Rect.sizeDelta = new Vector2(pref.width, pref.height);
+                _userChoseSize = true;
                 _needsFirstShowSizing = false;
                 _initialSizingComplete = true;
                 // Dynamic sizing (and its clamp) will NOT run for this panel:
@@ -801,12 +816,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Invalidate content measurement cache since size changed
             _contentMeasured = false;
 
-            // Ignore programmatic resizes (dynamic sizing, etc.)
+            // Ignore programmatic resizes (dynamic sizing, etc.) — the flag is cleared by the
+            // scope that set it, never here (see UpdateDraggerCache).
             if (_isProgrammaticResize)
-            {
-                _isProgrammaticResize = false;
                 return;
-            }
 
             // Growing a center-pivot panel pushes its top edge UP: a resize
             // can move the title bar above the screen — clamp it back
@@ -818,6 +831,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Save size only (not position) - position is saved separately when dragging
             if (PersistWindowPreferences && HasSizeChanged())
             {
+                _userChoseSize = true;
                 SaveWindowPreference(savePosition: false, saveSize: true);
             }
         }
@@ -1146,6 +1160,17 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (!UseDynamicSizing)
             {
                 Rect.sizeDelta = new Vector2(PanelWidth, PanelHeight);
+                UpdateDraggerCache();
+                return;
+            }
+
+            // A size the user set by hand wins over any later recalculation. Content changes
+            // (opening a tab, a list filling in) call RecalculateSize, and this method always
+            // resets the width back to the declared PanelWidth — so a hand-widened window
+            // silently snapped back as soon as the content moved. Overflow is not lost: the
+            // panel body scrolls.
+            if (_userChoseSize)
+            {
                 UpdateDraggerCache();
                 return;
             }

@@ -710,8 +710,37 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 RefreshUI();
 
+                // Reserve the height of the TALLEST tab, like the other tabbed panels do.
+                // Without it the panel was sized for whichever tab happened to be open, so
+                // switching to Community resized the whole window under the user.
+                if (!_tabHeightFixed && _tabBar != null)
+                {
+                    UniverseLib.RuntimeHelper.StartCoroutine(DelayedFixTabHeight());
+                }
+
                 // Auto-search community translations if conditions are met
                 TryAutoSearchCommunity();
+            }
+        }
+
+        private bool _tabHeightFixed;
+
+        private System.Collections.IEnumerator DelayedFixTabHeight()
+        {
+            // Let Unity settle the layouts before measuring them
+            yield return null;
+            yield return null;
+            yield return null;
+
+            if (_tabBar != null && _tabBar.ContentContainer != null)
+            {
+                float maxTabHeight = _tabBar.MeasureMaxContentHeight();
+                if (maxTabHeight > 0)
+                {
+                    UIFactory.SetLayoutElement(_tabBar.ContentContainer, minHeight: Mathf.CeilToInt(maxTabHeight));
+                    _tabHeightFixed = true;
+                    RecalculateSize();
+                }
             }
         }
 
@@ -1405,14 +1434,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     "Logout",
                     () =>
                     {
-                        TranslatorCore.Config.api_token = null;
-                        TranslatorCore.Config.api_user = null;
-                        TranslatorCore.Config.api_token_server = null;
-                        TranslatorCore.SaveConfig();
-                        ApiClient.SetAuthToken(null);
-
-                        // Reset server state since we're no longer authenticated
-                        TranslatorCore.ServerState = null;
+                        TranslatorCore.ClearApiSession();
 
                         // Refresh all UI components
                         RefreshUI();

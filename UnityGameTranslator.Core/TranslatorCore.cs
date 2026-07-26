@@ -164,6 +164,9 @@ namespace UnityGameTranslator.Core
         private static Queue<string> translationQueue = new Queue<string>();
         // Texts queued explicitly as mod-UI (guarded by lockObj, like the queue itself).
         private static readonly HashSet<string> pendingOwnUITexts = new HashSet<string>();
+        // Own-UI texts already submitted in this session, so a label rewritten every frame is
+        // submitted once even when the answer never produces a cache entry. Cleared on cache reload.
+        private static readonly HashSet<string> ownUISubmitted = new HashSet<string>();
         // Note: Own UI detection now happens at processing time using IsOwnUITranslatable(component)
         // instead of string-based tracking which caused false positives when game text matched mod UI text
         private static object lockObj = new object();
@@ -200,6 +203,11 @@ namespace UnityGameTranslator.Core
         public static int QueueCount { get { lock (lockObj) { return translationQueue.Count; } } }
         public static bool IsTranslating => isTranslating;
         public static string CurrentText => currentlyTranslating;
+        /// <summary>True while the text being translated belongs to the mod's own interface.
+        /// The overlay excerpt is meant to show GAME text; showing our own label there reads as
+        /// the mod translating itself ("Translating: Translating:").</summary>
+        public static bool CurrentTextIsOwnUI => currentTextIsOwnUI;
+        private static bool currentTextIsOwnUI = false;
 
         // Own UI component tracking (mod interface)
         private static HashSet<int> ownUIExcluded = new HashSet<int>();      // Never translate (title, lang codes, config values)
@@ -1533,6 +1541,23 @@ namespace UnityGameTranslator.Core
             }
         }
 
+        /// <summary>
+        /// Drop the API session locally: forget the token, the account it belonged to and the
+        /// server state derived from it. Used both by the Logout button and when the server
+        /// refuses our token (revoked from the website, or deleted along with a ban) — in that
+        /// case keeping a "signed in" account would only produce actions that silently fail.
+        /// The caller refreshes the UI; translations and local work are untouched.
+        /// </summary>
+        public static void ClearApiSession()
+        {
+            Config.api_token = null;
+            Config.api_user = null;
+            Config.api_token_server = null;
+            SaveConfig();
+            ApiClient.SetAuthToken(null);
+            ServerState = null;
+        }
+
         public static void SaveConfig()
         {
             try
@@ -1580,6 +1605,8 @@ namespace UnityGameTranslator.Core
                 // Parse as JObject to handle metadata
                 var parsed = JObject.Parse(json);
                 TranslationCache = new Dictionary<string, TranslationEntry>();
+                // Fresh cache: allow own-UI labels that failed once to be submitted again.
+                lock (lockObj) { ownUISubmitted.Clear(); }
 
                 // Track saved _game.steam_id to compare with current detection
                 string savedSteamId = null;
@@ -1865,6 +1892,8 @@ namespace UnityGameTranslator.Core
             {
                 Adapter.LogError($"Failed to load cache: {e.Message}");
                 TranslationCache = new Dictionary<string, TranslationEntry>();
+                // Fresh cache: allow own-UI labels that failed once to be submitted again.
+                lock (lockObj) { ownUISubmitted.Clear(); }
                 FileUuid = Guid.NewGuid().ToString();
                 lock (lockObj)
                 {
@@ -3300,6 +3329,7 @@ namespace UnityGameTranslator.Core
                             }
                         }
                     }
+                    currentTextIsOwnUI = isOwnUI;
 
                     try
                     {
@@ -4809,8 +4839,17 @@ namespace UnityGameTranslator.Core
             // patch — so a code-owned label has no submitter at all: the whitelist refresh only
             // walks RegisterUIText'd components, and these labels are RegisterExcluded by contract.
             // Same direct-enqueue route as TranslatorUIManager.RetriggerOwnUIText.
+            //
+            // Once per text per session: an answer that yields no cache entry (backend returned
+            // nothing) would otherwise leave the miss standing, and a label rewritten every frame
+            // — the overlay status line — would re-submit forever.
             if (result == englishText && !IsOwnUITextKnown(englishText))
-                QueueForTranslation(englishText, component, isOwnUI: true);
+            {
+                bool firstSubmission;
+                lock (lockObj) { firstSubmission = ownUISubmitted.Add(englishText); }
+                if (firstSubmission)
+                    QueueForTranslation(englishText, component, isOwnUI: true);
+            }
 
             return result;
         }

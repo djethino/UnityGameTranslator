@@ -93,6 +93,62 @@ namespace UnityGameTranslator.Core
             return $"{WebsiteBaseUrl}/translations/{translationId}";
         }
 
+        /// <summary>
+        /// Raised when the server refuses our token: it was revoked from the website, or the
+        /// account was banned (banning deletes the account's API tokens). Carries the reason the
+        /// server gave, when it gave one.
+        /// </summary>
+        public static event Action<string> OnAuthenticationRejected;
+
+        /// <summary>
+        /// Watches every response for "this token is no longer accepted" so the mod signs itself
+        /// out instead of showing a signed-in account whose every action silently fails. A single
+        /// handler covers all call sites, including ones added later.
+        /// </summary>
+        private class AuthRejectionHandler : DelegatingHandler
+        {
+            public AuthRejectionHandler(HttpMessageHandler inner) : base(inner) { }
+
+            protected override async Task<HttpResponseMessage> SendAsync(
+                HttpRequestMessage request, System.Threading.CancellationToken cancellationToken)
+            {
+                var response = await base.SendAsync(request, cancellationToken);
+
+                // Only meaningful when we actually presented a token.
+                bool sentToken = request.Headers.Authorization != null
+                    || client.DefaultRequestHeaders.Contains("Authorization");
+                bool unauthorized = response.StatusCode == System.Net.HttpStatusCode.Unauthorized;
+                bool forbidden = response.StatusCode == System.Net.HttpStatusCode.Forbidden;
+
+                if (sentToken && (unauthorized || forbidden))
+                {
+                    string error = null, reason = null;
+                    try
+                    {
+                        var body = ParseJsonSafe(await response.Content.ReadAsStringAsync());
+                        error = body?["error"]?.Value<string>();
+                        reason = body?["reason"]?.Value<string>() ?? body?["message"]?.Value<string>();
+                    }
+                    catch { /* body not JSON: fall back to the status code alone */ }
+
+                    // 401 always means the credential itself was refused (revoked token, or one
+                    // deleted along with a ban). 403 does NOT: it also covers ordinary refusals
+                    // such as voting on a non-public translation, which must not sign anyone out
+                    // — so only the server's explicit ban marker counts here.
+                    bool credentialRefused = unauthorized
+                        || string.Equals(error, "Account banned", StringComparison.OrdinalIgnoreCase);
+
+                    if (credentialRefused)
+                    {
+                        try { OnAuthenticationRejected?.Invoke(reason); }
+                        catch (Exception e) { TranslatorCore.LogWarning($"[ApiClient] Auth rejection handler failed: {e.Message}"); }
+                    }
+                }
+
+                return response;
+            }
+        }
+
         static ApiClient()
         {
             // Disable automatic redirects to prevent token leakage via malicious redirects
@@ -100,7 +156,7 @@ namespace UnityGameTranslator.Core
             {
                 AllowAutoRedirect = false
             };
-            client = new HttpClient(handler);
+            client = new HttpClient(new AuthRejectionHandler(handler));
             client.Timeout = TimeSpan.FromSeconds(30);
             client.DefaultRequestHeaders.Add("User-Agent", "UnityGameTranslator/1.0");
             client.DefaultRequestHeaders.Add("Accept", "application/json");
@@ -383,6 +439,8 @@ namespace UnityGameTranslator.Core
                 Notes = t["notes"]?.Value<string>(),
                 ResourcesUrl = t["resources_url"]?.Value<string>(),
                 VoteCount = t["vote_count"]?.Value<int>() ?? 0,
+                // Null for anonymous callers and for servers older than this field.
+                UserVote = t["user_vote"]?.Value<int?>(),
                 DownloadCount = t["download_count"]?.Value<int>() ?? 0,
                 HumanCount = t["human_count"]?.Value<int>() ?? 0,
                 ValidatedCount = t["validated_count"]?.Value<int>() ?? 0,
@@ -1521,6 +1579,9 @@ namespace UnityGameTranslator.Core
         public string Notes { get; set; }
         public string ResourcesUrl { get; set; }
         public int VoteCount { get; set; }
+        /// <summary>This user's own vote (+1 / -1), null when they haven't voted, aren't
+        /// signed in, or the server predates the field.</summary>
+        public int? UserVote { get; set; }
         public int DownloadCount { get; set; }
         public int HumanCount { get; set; }
         public int ValidatedCount { get; set; }

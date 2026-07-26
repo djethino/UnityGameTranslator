@@ -302,7 +302,7 @@ namespace UnityGameTranslator.Core.UI.Components
 
             // Vote buttons (right side)
             var voteButtons = new VoteButtons();
-            voteButtons.Create(itemRow, translation.Id, translation.VoteCount, OnVoteChanged);
+            voteButtons.Create(itemRow, translation.Id, translation.VoteCount, OnVoteChanged, translation.UserVote);
             voteButtons.SetLoggedIn(isLoggedIn);
             _voteButtons[translation.Id] = voteButtons;
         }

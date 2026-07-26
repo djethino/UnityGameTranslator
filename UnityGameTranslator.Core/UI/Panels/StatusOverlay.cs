@@ -731,9 +731,18 @@ namespace UnityGameTranslator.Core.UI.Panels
                     // Flattened first: game strings often carry line breaks, and a single one made
                     // this label two lines tall, pushing the queue line below it. The overlay then
                     // jumped on every such text and settled back on the next one.
-                    string text = Flatten(TranslatorCore.CurrentText);
-                    if (text.Length > 25) text = text.Substring(0, 25) + "...";
-                    _aiStatusLabel.text = Tr("Translating:") + $" {text}";
+                    // No excerpt for our own interface: quoting our own labels here reads as the
+                    // mod translating itself ("Translating: Translating:").
+                    if (TranslatorCore.CurrentTextIsOwnUI)
+                    {
+                        SetDynamicText(_aiStatusLabel, "Translating the interface...");
+                    }
+                    else
+                    {
+                        string text = Flatten(TranslatorCore.CurrentText);
+                        if (text.Length > 25) text = text.Substring(0, 25) + "...";
+                        _aiStatusLabel.text = Tr("Translating:") + $" {text}";
+                    }
                     _aiStatusLabel.gameObject.SetActive(true);
                 }
                 else

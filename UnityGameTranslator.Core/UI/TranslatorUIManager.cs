@@ -224,6 +224,8 @@ namespace UnityGameTranslator.Core.UI
 
             TranslatorCore.LogInfo("[UIManager] Initializing UniverseLib...");
 
+            ApiClient.OnAuthenticationRejected += HandleAuthenticationRejected;
+
             // Drive the ENTIRE UniverseLib color palette from our UIStyles theme, so every UI color is
             // controlled from ONE place (the plugin). Runs before any panel is built. Elements created
             // by UniverseLib itself (toggles/checkboxes, sliders, default buttons, dropdowns, inputs)
@@ -1140,6 +1142,33 @@ namespace UnityGameTranslator.Core.UI
 
             _mergeSseClient.Connect(url);
             TranslatorCore.LogInfo($"[MergeSSE] Listening for merge completion (token: {token.Substring(0, 8)}...)");
+        }
+
+        /// <summary>
+        /// The server refused our token — revoked from the website, or deleted along with a ban.
+        /// Sign out locally rather than keep showing a connected account whose every sync silently
+        /// fails, and say why: the reason comes from the server when it gave one. Fires from a
+        /// background thread (HTTP), so the UI work is marshalled to the main thread.
+        /// </summary>
+        private static void HandleAuthenticationRejected(string reason)
+        {
+            RunOnMainThread(() =>
+            {
+                // Already signed out (several calls can fail back-to-back): nothing to announce.
+                if (string.IsNullOrEmpty(TranslatorCore.Config.api_token)) return;
+
+                TranslatorCore.LogWarning($"[Auth] Token refused by the server — signing out locally. {reason}");
+                TranslatorCore.ClearApiSession();
+
+                string message = string.IsNullOrEmpty(reason)
+                    ? "Signed out: the server refused this account's token."
+                    : "Signed out: " + reason;
+                StatusOverlay?.ShowToast(message, Panels.StatusOverlay.ToastTone.Off);
+
+                MainPanel?.RefreshUI();
+                StatusOverlay?.RefreshOverlay();
+                NotificationDismissed = false;
+            });
         }
 
         /// <summary>

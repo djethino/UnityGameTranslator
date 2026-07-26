@@ -30,11 +30,14 @@ namespace UnityGameTranslator.Core.UI.Components
         /// <summary>
         /// Create the vote buttons UI.
         /// </summary>
-        public GameObject Create(GameObject parent, int translationId, int voteCount, Action<int, int> onVoteChanged = null)
+        /// <param name="userVote">This user's existing vote, so the arrows show it straight away
+        /// instead of only after voting again. Null when unknown (not signed in, never voted, or
+        /// an older server that doesn't report it).</param>
+        public GameObject Create(GameObject parent, int translationId, int voteCount, Action<int, int> onVoteChanged = null, int? userVote = null)
         {
             _translationId = translationId;
             _currentVoteCount = voteCount;
-            _userVote = null;
+            _userVote = userVote;
             _onVoteChanged = onVoteChanged;
 
             // Container

@@ -118,22 +118,24 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static readonly string[] ReasoningEffortLadder = { "none", "low", null };
 
-        // Rung known to work for the current provider+model (negotiated on 400, see SendChatRequest)
-        private static int _reasoningEffortStep = 0;
-        private static string _reasoningEffortCacheKey = null;
+        // What this provider+model turned out to need. All negotiated from rejections (see
+        // SendChatRequest) rather than guessed from the URL or the model name: users point the mod
+        // at local servers, proxies and gateways whose name says nothing about what they accept.
+        private static int _reasoningEffortStep;      // rung in ReasoningEffortLadder
+        private static bool _useMaxCompletionTokens;  // OpenAI reasoning models reject max_tokens
+        private static bool _omitTemperature;         // ...and reject any temperature but their own
+        private static string _providerQuirksKey;
 
-        /// <summary>
-        /// First reasoning rung to try, reset whenever the provider or model changes.
-        /// </summary>
-        private static int GetReasoningEffortStep()
+        /// <summary>Forget what we learned when the provider or the model changes.</summary>
+        private static void EnsureProviderQuirks()
         {
-            string currentKey = $"{Config?.ai_url}|{Config?.ai_model}";
-            if (_reasoningEffortCacheKey != currentKey)
-            {
-                _reasoningEffortCacheKey = currentKey;
-                _reasoningEffortStep = 0;
-            }
-            return _reasoningEffortStep;
+            string key = $"{Config?.ai_url}|{Config?.ai_model}";
+            if (_providerQuirksKey == key) return;
+
+            _providerQuirksKey = key;
+            _reasoningEffortStep = 0;
+            _useMaxCompletionTokens = false;
+            _omitTemperature = false;
         }
 
         /// <summary>
@@ -3743,35 +3745,42 @@ namespace UnityGameTranslator.Core
 
         /// <summary>
         /// Send a chat/completions request and return the raw assistant content (trimmed).
-        /// Handles the "think" parameter negotiation, rate limiting and HTTP errors.
+        /// Negotiates the request body against whatever this provider accepts (see
+        /// AdaptToRejection), and handles rate limiting and HTTP errors.
         /// Returns null on transport/HTTP failure.
         /// </summary>
         private static string SendChatRequest(JArray messagesArray, double temperature, int maxTokens)
         {
             string aiEndpoint = ResolveAIEndpoint(Config.ai_url, "chat/completions");
+            EnsureProviderQuirks();
 
-            // Walk down the reasoning ladder: a 400 usually means this provider/model rejects the
-            // value we asked for, so try a lesser one. Only remember a rung once it actually
-            // WORKED — a 400 caused by something else must not permanently disable the parameter.
-            // Built once and only the effort field is swapped between attempts: re-assigning the
-            // same messages array into a new JObject each time would make Json.NET deep-clone it.
+            // Built once, then only the negotiated fields are swapped between attempts:
+            // re-assigning the same messages array into a fresh JObject would make Json.NET
+            // deep-clone it on every try.
             var requestObj = new JObject
             {
                 ["model"] = Config.ai_model,
                 ["messages"] = messagesArray,
-                ["temperature"] = temperature,
-                ["max_tokens"] = maxTokens,
                 ["stream"] = false
             };
 
-            for (int step = GetReasoningEffortStep(); step < ReasoningEffortLadder.Length; step++)
+            // One attempt per thing we can still give up on, plus the successful one
+            const int maxAttempts = 5;
+            for (int attempt = 0; attempt < maxAttempts; attempt++)
             {
-                string effort = ReasoningEffortLadder[step];
+                // max_tokens is the field every OpenAI-compatible server understands; OpenAI's
+                // reasoning models are the exception and demand max_completion_tokens. Sending the
+                // newer name by default would be worse than useless: Ollama accepts it and IGNORES
+                // it (measured), silently removing the cap. Never send both — OpenAI rejects that.
+                requestObj.Remove(_useMaxCompletionTokens ? "max_tokens" : "max_completion_tokens");
+                requestObj[_useMaxCompletionTokens ? "max_completion_tokens" : "max_tokens"] = maxTokens;
 
-                if (effort != null)
-                    requestObj["reasoning_effort"] = effort;
-                else
-                    requestObj.Remove("reasoning_effort");
+                if (_omitTemperature) requestObj.Remove("temperature");
+                else requestObj["temperature"] = temperature;
+
+                string effort = ReasoningEffortLadder[_reasoningEffortStep];
+                if (effort != null) requestObj["reasoning_effort"] = effort;
+                else requestObj.Remove("reasoning_effort");
 
                 var request = new HttpRequestMessage(HttpMethod.Post, aiEndpoint)
                 {
@@ -3784,12 +3793,6 @@ namespace UnityGameTranslator.Core
 
                 if (response.IsSuccessStatusCode)
                 {
-                    if (_reasoningEffortStep != step)
-                    {
-                        _reasoningEffortStep = step;
-                        Adapter?.LogInfo($"[AI] Provider settled on reasoning_effort={effort ?? "(omitted)"}");
-                    }
-
                     string responseJson = response.Content.ReadAsStringAsync().Result;
                     var responseObj = ApiClient.ParseJsonSafe(responseJson);
                     return responseObj["choices"]?[0]?["message"]?["content"]?.ToString()?.Trim();
@@ -3799,24 +3802,58 @@ namespace UnityGameTranslator.Core
                 string errorBody = "";
                 try { errorBody = response.Content.ReadAsStringAsync().Result; } catch { }
 
-                // Step down only on codes that mean "your request body is not acceptable" — 400 is
-                // what OpenAI/Grok return for an unsupported value, 422 what some other
-                // OpenAI-compatible servers use. Anything else (401, 404, 429, 5xx) is not about
-                // this parameter and must not burn the ladder.
-                bool rejectedBody = statusCode == 400 || statusCode == 422;
-                if (rejectedBody && step + 1 < ReasoningEffortLadder.Length)
+                // Only these mean "this body is not acceptable". 401/404/429/5xx say nothing about
+                // our parameters and must not make us give any of them up.
+                if (statusCode != 400 && statusCode != 422)
                 {
-                    LogDebug($"[AI] reasoning_effort={effort} rejected (HTTP {statusCode}), trying {ReasoningEffortLadder[step + 1] ?? "without the parameter"}");
-                    continue;
+                    if (statusCode == 429) _apiRateLimited = true;
+                    Adapter?.LogWarning($"[AI] HTTP {statusCode} {response.StatusCode}: {errorBody}");
+                    return null;
                 }
 
-                if (statusCode == 429)
-                    _apiRateLimited = true;
+                // Adapt the parameter the server actually named, before blaming the reasoning
+                // ladder — several of these can be wrong at once on the same model.
+                if (AdaptToRejection(errorBody))
+                    continue;
+
                 Adapter?.LogWarning($"[AI] HTTP {statusCode} {response.StatusCode}: {errorBody}");
                 return null;
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// Give up on whatever the rejection points at, one thing per call. Returns false when
+        /// there is nothing left to concede, meaning the failure is not about our parameters.
+        /// </summary>
+        private static bool AdaptToRejection(string errorBody)
+        {
+            string body = errorBody ?? "";
+
+            if (!_useMaxCompletionTokens && body.IndexOf("max_completion_tokens", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                _useMaxCompletionTokens = true;
+                Adapter?.LogInfo("[AI] Provider wants max_completion_tokens instead of max_tokens");
+                return true;
+            }
+
+            if (!_omitTemperature && body.IndexOf("temperature", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                _omitTemperature = true;
+                Adapter?.LogInfo("[AI] Provider rejects our temperature — dropping it, model default applies");
+                return true;
+            }
+
+            if (_reasoningEffortStep + 1 < ReasoningEffortLadder.Length)
+            {
+                _reasoningEffortStep++;
+                string next = ReasoningEffortLadder[_reasoningEffortStep];
+                Adapter?.LogInfo($"[AI] reasoning_effort rejected, falling back to {next ?? "no reasoning parameter"}");
+                return true;
+            }
+
+            return false;
         }
 
         /// <summary>

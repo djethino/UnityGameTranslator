@@ -243,11 +243,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             _accountLabel.fontStyle = FontStyle.Italic;
             _accountLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(_accountLabel.gameObject, flexibleWidth: 9999);
-            RegisterUIText(_accountLabel);
+            RegisterExcluded(_accountLabel);
 
             _loginLogoutBtn = CreateSecondaryButton(accountRow, "LoginLogoutBtn", "Login", 80);
             _loginLogoutBtn.OnClick += OnLoginLogoutClicked;
-            RegisterUIText(_loginLogoutBtn.ButtonText);
+            RegisterExcluded(_loginLogoutBtn.ButtonText);
             _helpZone?.Describe(_loginLogoutBtn.Component.gameObject,
                 "An account is only needed to SHARE translations. Downloading and playing work without one.");
         }
@@ -270,12 +270,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             _modUpdateLabel.fontStyle = FontStyle.Bold;
             _modUpdateLabel.color = Color.white;
             UIFactory.SetLayoutElement(_modUpdateLabel.gameObject, flexibleWidth: 9999);
-            RegisterUIText(_modUpdateLabel);
+            RegisterExcluded(_modUpdateLabel);
 
             _modUpdateBtn = UIFactory.CreateButton(_modUpdateBanner, "ModUpdateBtn", "Download");
             UIFactory.SetLayoutElement(_modUpdateBtn.Component.gameObject, minWidth: 90, minHeight: UIStyles.RowHeightNormal);
             _modUpdateBtn.OnClick += OnModUpdateClicked;
-            RegisterUIText(_modUpdateBtn.ButtonText);
+            RegisterExcluded(_modUpdateBtn.ButtonText);
             _helpZone?.Describe(_modUpdateBtn.Component.gameObject,
                 "Get the newer mod version: downloads it if available, otherwise opens the release page in your browser.");
 
@@ -421,30 +421,30 @@ namespace UnityGameTranslator.Core.UI.Panels
             _entriesLabel = UIFactory.CreateLabel(infoBox, "EntriesLabel", "Entries: 0", TextAnchor.MiddleLeft);
             _entriesLabel.color = UIStyles.TextPrimary;
             UIFactory.SetLayoutElement(_entriesLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
-            RegisterUIText(_entriesLabel);
+            RegisterExcluded(_entriesLabel);
 
             _targetLabel = UIFactory.CreateLabel(infoBox, "TargetLabel", "Target: auto", TextAnchor.MiddleLeft);
             _targetLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(_targetLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
-            RegisterUIText(_targetLabel);
+            RegisterExcluded(_targetLabel);
 
             _sourceLabel = UIFactory.CreateLabel(infoBox, "SourceLabel", "Source: Local", TextAnchor.MiddleLeft);
             _sourceLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(_sourceLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
-            RegisterUIText(_sourceLabel);
+            RegisterExcluded(_sourceLabel);
 
             _roleLabel = UIFactory.CreateLabel(infoBox, "RoleLabel", "", TextAnchor.MiddleLeft);
             _roleLabel.fontStyle = FontStyle.Bold;
             UIFactory.SetLayoutElement(_roleLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
-            RegisterUIText(_roleLabel);
+            RegisterExcluded(_roleLabel);
 
             _syncStatusLabel = UIFactory.CreateLabel(infoBox, "SyncStatusLabel", "", TextAnchor.MiddleLeft);
             _syncStatusLabel.fontStyle = FontStyle.Bold;
             UIFactory.SetLayoutElement(_syncStatusLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
-            RegisterUIText(_syncStatusLabel);
+            RegisterExcluded(_syncStatusLabel);
 
             _aiStatusLabel = CreateSmallLabel(infoBox, "AIStatusLabel", "");
-            RegisterUIText(_aiStatusLabel);
+            RegisterExcluded(_aiStatusLabel);
         }
 
         private void CreateActionsSection(GameObject parent)
@@ -457,12 +457,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             _uploadBtn = CreatePrimaryButton(actionsBox, "UploadBtn", "Upload Translation", 200);
             UIFactory.SetLayoutElement(_uploadBtn.Component.gameObject, flexibleWidth: 9999);
             _uploadBtn.OnClick += OnUploadClicked;
-            RegisterUIText(_uploadBtn.ButtonText);
+            RegisterExcluded(_uploadBtn.ButtonText);
             _helpZone?.Describe(_uploadBtn.Component.gameObject,
                 "Send your local translation to the website so others can use it");
 
             _uploadHintLabel = UIStyles.CreateHint(actionsBox, "UploadHintLabel", "");
-            RegisterUIText(_uploadHintLabel);
+            RegisterExcluded(_uploadHintLabel);
 
             // Role-specific action buttons row
             var roleActionsRow = UIStyles.CreateFormRow(actionsBox, "RoleActionsRow", UIStyles.RowHeightLarge);
@@ -481,7 +481,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _compareWithServerBtn = CreateSecondaryButton(roleActionsRow, "CompareBtn", "Compare", 100);
             UIStyles.SetBackground(_compareWithServerBtn.Component.gameObject, UIStyles.ButtonSecondary);
             _compareWithServerBtn.OnClick += OnCompareWithServerClicked;
-            RegisterUIText(_compareWithServerBtn.ButtonText);
+            RegisterExcluded(_compareWithServerBtn.ButtonText);
             _helpZone?.Describe(_compareWithServerBtn.Component.gameObject,
                 "See the differences between your local file and the version on the website");
 
@@ -495,7 +495,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // One-line explanation for whichever role buttons are visible
             _roleActionsHint = UIStyles.CreateHint(actionsBox, "RoleActionsHint", "");
-            RegisterUIText(_roleActionsHint);
+            RegisterExcluded(_roleActionsHint);
         }
 
         /// <summary>
@@ -540,7 +540,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIStyles.SetBackground(_downloadLatestBtn.Component.gameObject, UIStyles.ButtonPrimary);
             UIFactory.SetLayoutElement(_downloadLatestBtn.Component.gameObject, flexibleWidth: 9999);
             _downloadLatestBtn.OnClick += OnDownloadLatestClicked;
-            RegisterUIText(_downloadLatestBtn.ButtonText);
+            RegisterExcluded(_downloadLatestBtn.ButtonText);
             _helpZone?.Describe(_downloadLatestBtn.Component.gameObject,
                 "Replace your local file with the owner's latest version from the website");
 
@@ -620,7 +620,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _guidanceLabel.fontSize = UIStyles.FontSizeNormal;
             _guidanceLabel.color = UIStyles.StatusInfo;
             UIFactory.SetLayoutElement(_guidanceLabel.gameObject, flexibleWidth: 9999, minHeight: UIStyles.RowHeightLarge);
-            RegisterUIText(_guidanceLabel);
+            RegisterExcluded(_guidanceLabel);
         }
 
         private void CreateCommunitySection(GameObject parent)
@@ -638,7 +638,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _communityGameLabel = UIFactory.CreateLabel(searchRow, "GameLabel", "Game: Unknown", TextAnchor.MiddleLeft);
             _communityGameLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(_communityGameLabel.gameObject, flexibleWidth: 9999);
-            RegisterUIText(_communityGameLabel);
+            RegisterExcluded(_communityGameLabel);
 
             _searchBtn = CreateSecondaryButton(searchRow, "SearchBtn", "Search", 80);
             _searchBtn.OnClick += OnSearchCommunityClicked;

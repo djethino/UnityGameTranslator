@@ -30,6 +30,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         // General section
         private Toggle _enableTranslationsToggle;
         private Toggle _translateModUIToggle;
+        private SearchableDropdown _interfaceFontDropdown; // mod UI font, shown only when translating the mod UI
+        private GameObject _interfaceFontRow;              // container toggled with the checkbox
         private SearchableDropdown _sourceLanguageDropdown;
         private SearchableDropdown _targetLanguageDropdown;
         private string[] _languages;
@@ -136,6 +138,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             public bool enable_translations;
             public bool translate_mod_ui;
+            public string interface_font;
             public string source_language;
             public string target_language;
             public string settings_hotkey;
@@ -183,6 +186,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 {
                     enable_translations = TranslatorCore.Config.enable_translations,
                     translate_mod_ui = TranslatorCore.Config.translate_mod_ui,
+                    interface_font = TranslatorCore.Config.interface_font,
                     source_language = TranslatorCore.Config.source_language ?? "auto",
                     target_language = TranslatorCore.Config.target_language ?? "auto",
                     settings_hotkey = TranslatorCore.Config.settings_hotkey ?? "F10",
@@ -319,7 +323,10 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             _applyBtn = CreatePrimaryButton(buttonRow, "ApplyBtn", "Apply");
             _applyBtn.OnClick += OnApplyClicked;
-            RegisterUIText(_applyBtn.ButtonText);
+            // EXCLUDE from translation: this button's text is code-managed and dynamic
+            // ("Apply" / "Close" / "Apply (N)" via UpdateApplyButtonText). Async translation would
+            // race with those updates and leave the button stuck / inconsistent with its state.
+            RegisterExcluded(_applyBtn.ButtonText);
 
             // Setup change listeners for tracking pending changes
             SetupChangeListeners();
@@ -350,6 +357,34 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             var modUIHint = UIStyles.CreateHint(card, "ModUIHint", "Translate this mod's own buttons and labels");
             RegisterUIText(modUIHint);
+
+            // Interface font — shown directly under the checkbox, only while translating the mod UI.
+            // Lets the user pick a font that can render the target script (e.g. CJK) for the mod's own
+            // interface. The picker appears immediately when the box is checked; the value applies on Apply.
+            _interfaceFontRow = UIStyles.CreateFormRow(card, "InterfaceFontRow", UIStyles.RowHeightNormal, 5);
+            var interfaceFontLabel = UIFactory.CreateLabel(_interfaceFontRow, "InterfaceFontLabel", "Interface font:", TextAnchor.MiddleLeft);
+            interfaceFontLabel.color = UIStyles.TextSecondary;
+            interfaceFontLabel.fontSize = UIStyles.FontSizeSmall;
+            UIFactory.SetLayoutElement(interfaceFontLabel.gameObject, minWidth: 90);
+            RegisterUIText(interfaceFontLabel);
+
+            string[] interfaceFontOptions = BuildInterfaceFontOptions();
+            string initialInterfaceFont = string.IsNullOrEmpty(TranslatorCore.Config.interface_font)
+                ? "(None)" : TranslatorCore.Config.interface_font;
+            if (!Array.Exists(interfaceFontOptions, o => o == initialInterfaceFont))
+                initialInterfaceFont = "(None)";
+            _interfaceFontDropdown = new SearchableDropdown("InterfaceFont", interfaceFontOptions,
+                initialInterfaceFont, popupHeight: 250, showSearch: true);
+            var interfaceFontObj = _interfaceFontDropdown.CreateUI(_interfaceFontRow,
+                (_) => { if (!_isLoadingSettings) UpdateApplyButtonText(); }, width: 260);
+            _helpZone?.Describe(interfaceFontObj, "Font for this mod's interface when it is translated. Only fonts usable by the interface are listed; pick one that supports your target language's characters.");
+
+            _interfaceFontRow.SetActive(_translateModUIToggle.isOn);
+            UIHelpers.AddToggleListener(_translateModUIToggle, (isOn) =>
+            {
+                if (_interfaceFontRow != null) _interfaceFontRow.SetActive(isOn);
+                if (!_isLoadingSettings) UpdateApplyButtonText();
+            });
 
             UIStyles.CreateSpacer(card, 10);
 
@@ -681,7 +716,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _aiTestStatusLabel = UIFactory.CreateLabel(_llmSection, "TestStatus", "", TextAnchor.MiddleLeft);
             _aiTestStatusLabel.fontSize = UIStyles.FontSizeSmall;
             UIFactory.SetLayoutElement(_aiTestStatusLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
-            RegisterUIText(_aiTestStatusLabel);
+            RegisterExcluded(_aiTestStatusLabel);
 
             // API Key row
             var keyRow = UIStyles.CreateFormRow(_llmSection, "KeyRow", UIStyles.InputHeight, 5);
@@ -1141,6 +1176,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             // General
             _enableTranslationsToggle.isOn = TranslatorCore.Config.enable_translations;
             _translateModUIToggle.isOn = TranslatorCore.Config.translate_mod_ui;
+
+            // Interface font: sync the picker visibility with the checkbox on (re)load.
+            if (_interfaceFontRow != null)
+                _interfaceFontRow.SetActive(TranslatorCore.Config.translate_mod_ui);
 
             // Source language
             string configSourceLang = TranslatorCore.Config.source_language;
@@ -1615,6 +1654,42 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
         }
 
+        /// <summary>
+        /// Build the interface-font picker options. The mod UI is uGUI Text, which needs a
+        /// UnityEngine.Font — so we ONLY offer fonts usable as such: the game's own Unity (uGUI)
+        /// fonts and system fonts. Custom fonts are DELIBERATELY excluded: they are SDF TMP atlases
+        /// (built for TMP text) and cannot be assigned to a uGUI Text. A game's uGUI font may already
+        /// carry the needed script (e.g. a CJK game's own font), which is exactly what to reuse.
+        /// </summary>
+        private static string[] BuildInterfaceFontOptions()
+        {
+            var options = new List<string> { "(None)" };
+
+            var gameUnity = FontManager.GetGameUnityFontNames();
+            if (gameUnity != null && gameUnity.Length > 0)
+            {
+                options.Add("--- Game Fonts ---");
+                foreach (var g in gameUnity) options.Add("[Game] " + g);
+            }
+
+            var sys = FontManager.SystemFonts;
+            if (sys != null && sys.Length > 0)
+            {
+                options.Add("--- System Fonts ---");
+                options.AddRange(sys);
+            }
+
+            return options.ToArray();
+        }
+
+        /// <summary>Normalize an interface-font picker selection to a stored value (null = default UI font).</summary>
+        private static string NormalizeInterfaceFont(string selected)
+        {
+            if (string.IsNullOrEmpty(selected) || selected == "(None)") return null;
+            if (selected.StartsWith("--- ")) return null; // separator row, not a real choice
+            return selected;
+        }
+
         private void ApplySettings()
         {
             TranslatorCore.LogInfo("[Options] Applying settings...");
@@ -1623,6 +1698,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // General
                 TranslatorCore.Config.enable_translations = _enableTranslationsToggle.isOn;
                 TranslatorCore.Config.translate_mod_ui = _translateModUIToggle.isOn;
+                TranslatorCore.Config.interface_font = _interfaceFontDropdown != null
+                    ? NormalizeInterfaceFont(_interfaceFontDropdown.SelectedValue)
+                    : TranslatorCore.Config.interface_font;
 
                 // Languages
                 string selectedSourceLang = _sourceLanguageDropdown.SelectedValue;
@@ -1734,6 +1812,14 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
 
                 TranslatorCore.LogInfo("[Options] Settings saved successfully");
+
+                // Interface font: (re)apply the mod UI font from the committed config.
+                TranslatorUIManager.ApplyInterfaceFont();
+                // Mod UI translation: enable → submit our text; disable → restore English.
+                if (TranslatorCore.Config.translate_mod_ui)
+                    TranslatorUIManager.RefreshOwnUITranslation();
+                else
+                    TranslatorUIManager.RestoreOwnUIEnglish();
 
                 TranslatorCore.ClearProcessingCaches();
 
@@ -1860,6 +1946,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // General
             if (_enableTranslationsToggle.isOn != _initialSnapshot.enable_translations) count++;
             if (_translateModUIToggle.isOn != _initialSnapshot.translate_mod_ui) count++;
+            if (NormalizeInterfaceFont(_interfaceFontDropdown?.SelectedValue) != _initialSnapshot.interface_font) count++;
 
             // Languages
             string currentSource = _sourceLanguageDropdown.SelectedValue;
@@ -1932,14 +2019,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_applyBtn == null) return;
 
             int changes = CountPendingChanges();
-            if (changes > 0)
-            {
-                _applyBtn.ButtonText.text = $"Apply ({changes})";
-            }
-            else
-            {
-                _applyBtn.ButtonText.text = "Close";
-            }
+            string label = changes > 0 ? $"Apply ({changes})" : "Close";
+            // Translate at set-time (cache-aware, placeholder-aware) so this code-managed button shows
+            // the right state in the current language without racing the async pipeline. English when off.
+            _applyBtn.ButtonText.text = TranslatorCore.TranslateOwnUIDynamic(label, _applyBtn.ButtonText);
         }
     }
 }

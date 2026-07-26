@@ -1509,6 +1509,18 @@ namespace UnityGameTranslator.Core
             return settings;
         }
 
+        /// <summary>
+        /// Load a uGUI <see cref="Font"/> from a game/system/custom font name for the mod interface
+        /// font. Public wrapper over the internal system-font loader; unlike GetUnityReplacementFont
+        /// it is NOT gated on enable_font_replacement and creates no game-clone bookkeeping. Handles
+        /// the "[Game] " / "[Custom] " picker prefixes the same way as game-font fallback loading.
+        /// </summary>
+        public static Font LoadUIFont(string fontName)
+        {
+            if (string.IsNullOrEmpty(fontName)) return null;
+            return CreateUnityFontFromSystem(fontName);
+        }
+
         // Per-component scale overrides from font override rules
         private static Dictionary<int, float> _componentScaleOverrides = new Dictionary<int, float>();
 

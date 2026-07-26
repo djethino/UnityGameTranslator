@@ -58,7 +58,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _instructionLabel.fontSize = UIStyles.FontSizeNormal;
             _instructionLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(_instructionLabel.gameObject, minHeight: UIStyles.MultiLineSmall);
-            RegisterUIText(_instructionLabel);
+            RegisterExcluded(_instructionLabel);
 
             UIStyles.CreateSpacer(card, 10);
 
@@ -78,7 +78,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Copy button
             _copyCodeBtn = CreateSecondaryButton(_codeRow, "CopyCodeBtn", "Copy", 60);
             _copyCodeBtn.OnClick += CopyCodeToClipboard;
-            RegisterUIText(_copyCodeBtn.ButtonText);
+            RegisterExcluded(_copyCodeBtn.ButtonText);
 
             // Open website button (initially hidden)
             _openWebsiteBtn = CreatePrimaryButton(card, "OpenWebsiteBtn", "Open Website", 200);
@@ -89,7 +89,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Status label
             _statusLabel = CreateStatusLabel(card, "Status");
-            RegisterUIText(_statusLabel);
+            RegisterExcluded(_statusLabel);
 
             // Start login button
             _startLoginBtn = CreatePrimaryButton(card, "StartLoginBtn", "Start Login", 200);

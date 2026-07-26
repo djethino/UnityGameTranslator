@@ -32,6 +32,12 @@ namespace UnityGameTranslator.Core.UI
     {
         public static UIBase UiBase { get; private set; }
 
+        // UniverseLib's original UI font, captured at init — restored when the interface font is cleared.
+        private static UnityEngine.Font _originalUIFont;
+        // The interface font + mod-UI translation are applied lazily on first show: at init the custom
+        // fonts aren't loaded yet and the translation worker isn't ready, so an early pass is a no-op.
+        private static bool _uiFontBootstrapped;
+
         private static bool _initialized;
         public static bool IsInitialized => _initialized;
 
@@ -270,6 +276,11 @@ namespace UnityGameTranslator.Core.UI
             if (UiBase?.RootObject != null)
                 TranslatorCore.RegisterPanelRoot(UiBase.RootObject);
 
+            // Remember UniverseLib's original UI font so we can restore it if the user clears
+            // the interface font. Captured before any panel is created.
+            if (_originalUIFont == null)
+                _originalUIFont = UniversalUI.DefaultFont;
+
             CreatePanels();
 
             _initialized = true;
@@ -355,9 +366,174 @@ namespace UnityGameTranslator.Core.UI
             StatusOverlay.SetActive(false);
         }
 
+        /// <summary>
+        /// Apply the mod's interface font. When translate_mod_ui is on and the user has assigned a
+        /// font in config (Config.interface_font), load that font and use it for the whole mod UI;
+        /// otherwise restore UniverseLib's original UI font. Sets
+        /// UniversalUI.DefaultFont for future text and re-fonts every existing mod UI Text.
+        /// Applied separately from the game font pipeline (which never touches our UI).
+        /// </summary>
+        public static void ApplyInterfaceFont()
+        {
+            if (UiBase?.RootObject == null || _originalUIFont == null) return;
+
+            UnityEngine.Font font = _originalUIFont;
+            if (TranslatorCore.Config.translate_mod_ui && !string.IsNullOrEmpty(TranslatorCore.Config.interface_font))
+            {
+                var loaded = FontManager.LoadUIFont(TranslatorCore.Config.interface_font);
+                if (loaded != null) font = loaded;
+                else TranslatorCore.LogWarning($"[UIManager] Interface font '{TranslatorCore.Config.interface_font}' could not be loaded; keeping current UI font");
+            }
+
+            if (font == null) return;
+            UniversalUI.DefaultFont = font;
+            int changed = 0;
+            RefontModUIText(UiBase.RootObject.transform, font, ref changed);
+            TranslatorCore.LogInfo($"[UIManager] Interface font applied to {changed} UI text component(s): {font.name}");
+        }
+
+        /// <summary>
+        /// Recursively set the uGUI Text font across the mod UI subtree. Manual traversal
+        /// (GetComponent per node) to stay IL2CPP-safe, mirroring ExcludeAllTextComponents.
+        /// </summary>
+        private static void RefontModUIText(Transform node, UnityEngine.Font font, ref int changed)
+        {
+            if (node == null) return;
+            var text = node.GetComponent<UnityEngine.UI.Text>();
+            if (text != null && text.font != font)
+            {
+                text.font = font;
+                // Warm the atlas with THIS label's glyphs at its size/style, exactly like the game
+                // font-replacement pipeline does (FontManager RequestCharactersInTexture). Without this
+                // a dynamic font renders transparent/blank on IL2CPP (the glyphs aren't in the atlas
+                // yet when the CanvasRenderer binds) — which is why the change wasn't visible.
+                if (!string.IsNullOrEmpty(text.text))
+                {
+                    try { font.RequestCharactersInTexture(text.text, text.fontSize, text.fontStyle); }
+                    catch { }
+                }
+                text.SetAllDirty();
+                // Toggle enabled off/on to rebind the CanvasRenderer to the (now warmed) atlas.
+                if (text.gameObject.activeInHierarchy)
+                {
+                    text.enabled = false;
+                    text.enabled = true;
+                }
+                changed++;
+            }
+            int count = node.childCount;
+            for (int i = 0; i < count; i++)
+                RefontModUIText(node.GetChild(i), font, ref changed);
+        }
+
+        /// <summary>
+        /// Kick off translation of the mod's own UI text. Static labels are created during
+        /// construction mode (translation skipped) and never re-set, so they never reach the
+        /// text patch — nothing submits them for translation. Re-assigning each Text's value
+        /// re-invokes the patched setter: with translate_mod_ui on it queues the string and
+        /// tracks the component (PatchedComponentRefs), so the async result is applied back
+        /// like any other text. No-op when the mod UI isn't being translated.
+        /// </summary>
+        public static void RefreshOwnUITranslation()
+        {
+            if (UiBase?.RootObject == null) return;
+            if (!TranslatorCore.Config.translate_mod_ui || !TranslatorCore.Config.enable_translations) return;
+
+            int count = 0;
+            RetriggerOwnUIText(UiBase.RootObject.transform, ref count);
+            TranslatorCore.LogInfo($"[UIManager] Re-submitted {count} mod UI text(s) for translation");
+        }
+
+        private static void RetriggerOwnUIText(Transform node, ref int count)
+        {
+            if (node == null) return;
+            var text = node.GetComponent<UnityEngine.UI.Text>();
+            // WHITELIST: only submit text that was EXPLICITLY registered as translatable UI chrome
+            // (labels, buttons, hints). Never the rest — dropdown VALUES, input-field text, language/
+            // font names, hotkeys, tags: those are data/identifiers/user input and translating them
+            // corrupts the UI. IsOwnUITranslatable(int) checks explicit registration only (no hierarchy).
+            if (text != null && !string.IsNullOrEmpty(text.text)
+                && TranslatorCore.IsOwnUITranslatable(text.GetInstanceID()))
+            {
+                // Enqueue directly (not via a text re-assignment): re-setting the same value does
+                // not fire the set_text patch (the setter short-circuits on equal values), so the
+                // patch route never queued anything. QueueForTranslation registers this component in
+                // pendingComponents AND enqueues; isOwnUI is resolved at processing time from those
+                // components (UI-specific prompt + tag "M"). When the worker finishes, the result is
+                // applied back to this component via the normal completion path.
+                if (!TranslatorCore.HasCachedTranslation(text.text))
+                {
+                    TranslatorCore.QueueForTranslation(text.text, text, isOwnUI: true);
+                    count++;
+                }
+                else
+                {
+                    // Already translated in the cache — apply it now. Wrap the assignment in
+                    // BypassTextPrefix so the set_text patch doesn't re-process the translated value.
+                    string translated = TranslatorCore.TranslateTextWithTracking(text.text, text, isOwnUI: true);
+                    if (!string.IsNullOrEmpty(translated) && translated != text.text)
+                    {
+                        TranslatorPatches.BypassTextPrefix = true;
+                        try { text.text = translated; }
+                        finally { TranslatorPatches.BypassTextPrefix = false; }
+                        count++;
+                    }
+                }
+            }
+            int n = node.childCount;
+            for (int i = 0; i < n; i++)
+                RetriggerOwnUIText(node.GetChild(i), ref count);
+        }
+
+        /// <summary>
+        /// Restore every own-UI label we translated back to its original (English) text. Called when
+        /// the mod-UI translation is turned off. Wraps each assignment in BypassTextPrefix so the
+        /// set_text patch doesn't re-translate on the way back.
+        /// </summary>
+        public static void RestoreOwnUIEnglish()
+        {
+            if (UiBase?.RootObject == null) return;
+
+            int restored = 0;
+            TranslatorPatches.BypassTextPrefix = true;
+            try { RestoreOwnUIWalk(UiBase.RootObject.transform, ref restored); }
+            finally { TranslatorPatches.BypassTextPrefix = false; }
+            TranslatorCore.LogInfo($"[UIManager] Restored {restored} mod UI text(s) to original (English)");
+        }
+
+        /// <summary>
+        /// Walk the mod UI and restore each Text that has a stored original (i.e. was translated by
+        /// ANY path — the startup set_text patch or the runtime re-submit) back to English. Uses the
+        /// mod's own original tracking (StoreOriginalText/GetOriginalText), which a per-enqueue
+        /// snapshot misses (that only covered the panels built at bootstrap time).
+        /// </summary>
+        private static void RestoreOwnUIWalk(Transform node, ref int restored)
+        {
+            if (node == null) return;
+            var text = node.GetComponent<UnityEngine.UI.Text>();
+            if (text != null)
+            {
+                int id = text.GetInstanceID();
+                string original = TranslatorScanner.GetOriginalText(id);
+                if (original != null && text.text != original)
+                {
+                    text.text = original;
+                    text.SetAllDirty();
+                    TranslatorScanner.ClearOriginalText(id);
+                    restored++;
+                }
+            }
+            int n = node.childCount;
+            for (int i = 0; i < n; i++)
+                RestoreOwnUIWalk(node.GetChild(i), ref restored);
+        }
+
         private static void InitializeUIState()
         {
             TranslatorCore.LogInfo($"[UIManager] InitializeUIState, first_run_completed={TranslatorCore.Config.first_run_completed}");
+
+            // Interface font + mod-UI translation are applied lazily on first show
+            // (BootstrapInterfaceFontOnce): at this point custom fonts and the worker aren't ready yet.
 
             // Restore API token if saved
             if (!string.IsNullOrEmpty(TranslatorCore.Config.api_token))
@@ -2135,6 +2311,20 @@ namespace UnityGameTranslator.Core.UI
             ShowUI = true;
             WizardPanel.SetActive(false);
             MainPanel.SetActive(true);
+            BootstrapInterfaceFontOnce();
+        }
+
+        /// <summary>
+        /// First-show bootstrap for the mod UI font + translation. Runs once, when the UI is first
+        /// opened: custom fonts are loaded, panels are active and the translation worker is running —
+        /// unlike init time, where an early pass finds no custom font and no worker.
+        /// </summary>
+        private static void BootstrapInterfaceFontOnce()
+        {
+            if (_uiFontBootstrapped) return;
+            _uiFontBootstrapped = true;
+            ApplyInterfaceFont();
+            RefreshOwnUITranslation();
         }
 
         /// <summary>

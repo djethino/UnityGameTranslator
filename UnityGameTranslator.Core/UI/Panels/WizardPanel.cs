@@ -496,7 +496,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _downloadStatusLabel = UIFactory.CreateLabel(card, "DownloadStatus", "", TextAnchor.MiddleCenter);
             _downloadStatusLabel.fontSize = UIStyles.FontSizeSmall;
             UIFactory.SetLayoutElement(_downloadStatusLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
-            RegisterUIText(_downloadStatusLabel);
+            RegisterExcluded(_downloadStatusLabel);
 
             // Action buttons row (Download / Upload / Merge)
             _actionButtonsRow = UIStyles.CreateFormRow(card, "ActionBtnsRow", UIStyles.RowHeightLarge);

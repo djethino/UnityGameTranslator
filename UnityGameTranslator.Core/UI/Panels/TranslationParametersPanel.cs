@@ -162,7 +162,9 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             _applyBtn = CreatePrimaryButton(buttonRow, "ApplyBtn", "Apply");
             _applyBtn.OnClick += OnApplyClicked;
-            RegisterUIText(_applyBtn.ButtonText);
+            // EXCLUDE: code-managed dynamic text ("Apply"/"Close"/"Apply (N)") — async translation
+            // would race with UpdateApplyButtonText and break the button. Static labels stay translatable.
+            RegisterExcluded(_applyBtn.ButtonText);
         }
 
         #region Tools Tab (formerly Behavior)
@@ -197,12 +199,12 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             _browserEditorBtn = CreatePrimaryButton(card, "BrowserEditorBtn", "Edit in browser", PanelWidth - 100);
             _browserEditorBtn.OnClick += OnBrowserEditorClicked;
-            RegisterUIText(_browserEditorBtn.ButtonText);
+            RegisterExcluded(_browserEditorBtn.ButtonText);
             _helpZone?.Describe(_browserEditorBtn.Component.gameObject,
                 "Open your translation in a browser editor: search, filters, and every save applied in-game live");
 
             _browserEditorStatus = UIStyles.CreateHint(card, "BrowserEditorStatus", "");
-            RegisterUIText(_browserEditorStatus);
+            RegisterExcluded(_browserEditorStatus);
             RefreshBrowserEditorUI();
 
             UIStyles.CreateSpacer(card, 15);
@@ -2467,14 +2469,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_applyBtn == null) return;
 
             int changes = CountPendingChanges();
-            if (changes > 0)
-            {
-                _applyBtn.ButtonText.text = $"Apply ({changes})";
-            }
-            else
-            {
-                _applyBtn.ButtonText.text = "Close";
-            }
+            string label = changes > 0 ? $"Apply ({changes})" : "Close";
+            // Translate at set-time (cache/placeholder-aware) — no race with the async pipeline.
+            _applyBtn.ButtonText.text = TranslatorCore.TranslateOwnUIDynamic(label, _applyBtn.ButtonText);
         }
 
         #endregion

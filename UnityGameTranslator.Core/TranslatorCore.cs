@@ -739,9 +739,13 @@ namespace UnityGameTranslator.Core
             // Explicitly translatable - skip only if translate_mod_ui is disabled
             if (ownUITranslatable.Contains(instanceId))
                 return !Config.translate_mod_ui;
-            // Check hierarchy - if part of our UI, skip if translate_mod_ui is disabled
+            // Part of our UI by hierarchy but NOT explicitly registered as translatable:
+            // WHITELIST for the mod GUI — only RegisterUIText'd chrome (labels/buttons/hints) is
+            // ever translated. Everything else in our UI (dropdown VALUES, input-field text,
+            // font/language names, tags, user input) is skipped, so translating it can't corrupt
+            // the UI. This is GUI-only: game text (not own UI) falls through to `return false`.
             if (IsOwnUIByHierarchy(component))
-                return !Config.translate_mod_ui;
+                return true;
             return false;
         }
 
@@ -4616,6 +4620,23 @@ namespace UnityGameTranslator.Core
         /// Treats multiline text as a single unit to ensure proper component tracking.
         /// </summary>
         /// <param name="isOwnUI">If true, use UI-specific prompt for mod interface translation.</param>
+        /// <summary>
+        /// Translate a DYNAMIC own-UI label synchronously, at the moment the code sets it. For text the
+        /// mod rewrites itself — a state button ("Apply (N)" / "Close"), a live counter, a status line —
+        /// the async translation pipeline would RACE with the code (two writers on one Text), leaving it
+        /// stuck or inconsistent. So the code translates HERE instead: cache hit → returns the translation
+        /// immediately (numbers handled as placeholders, e.g. "Apply (NUM)"); cache miss → returns the
+        /// English and queues it for next time. Returns English unchanged when translate_mod_ui is off, so
+        /// the label follows the current language automatically (no separate restore needed). The label
+        /// must be RegisterExcluded so the set_text patch doesn't translate it a second time.
+        /// </summary>
+        public static string TranslateOwnUIDynamic(string englishText, object component = null)
+        {
+            if (string.IsNullOrEmpty(englishText) || Config == null || !Config.translate_mod_ui)
+                return englishText;
+            return TranslateTextWithTracking(englishText, component, isOwnUI: true);
+        }
+
         public static string TranslateTextWithTracking(string text, object component, bool isOwnUI = false, bool skipTypewriting = false, bool skipQueueing = false)
         {
             // Check if translations are disabled
@@ -5415,6 +5436,9 @@ namespace UnityGameTranslator.Core
         // General settings
         public bool capture_keys_only { get; set; } = false;
         public bool translate_mod_ui { get; set; } = false; // Translate the mod's own interface
+        // Font applied to the mod's own UI when translate_mod_ui is on (game/system/custom font name,
+        // possibly with a "[Game] "/"[Custom] " picker prefix). null = UniverseLib's default UI font.
+        public string interface_font { get; set; } = null;
 
         /// <summary>
         /// Advanced fallback: Translate at localization string level (ToString/op_Implicit).

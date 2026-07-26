@@ -2240,6 +2240,12 @@ namespace UnityGameTranslator.Core
                     // Skip destroyed components (IL2CPP proxy still exists but Unity object is gone)
                     if (comp is UnityEngine.Object uobj && uobj == null) continue;
 
+                    // Own UI + mod-UI translation turned OFF: don't apply a late/in-flight translation
+                    // result — it would overwrite the English we just restored (the enable/disable race).
+                    // Cheap when ON (translate_mod_ui short-circuits). Game text is never affected.
+                    if (!TranslatorCore.Config.translate_mod_ui && comp is Component ownc && TranslatorCore.IsOwnUI(ownc))
+                        continue;
+
                     string actualText = TypeHelper.GetText(comp);
                     if (actualText == null) continue;
 

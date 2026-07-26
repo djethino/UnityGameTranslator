@@ -611,7 +611,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Title
             _titleLabel = CreateTitle(scrollContent, "Title", "Element Inspector");
-            RegisterUIText(_titleLabel);
+            RegisterExcluded(_titleLabel);
 
             UIStyles.CreateSpacer(scrollContent, 5);
 

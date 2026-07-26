@@ -236,7 +236,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _gameSourceLabel.fontSize = UIStyles.FontSizeSmall;
             _gameSourceLabel.color = UIStyles.TextMuted;
             UIFactory.SetLayoutElement(_gameSourceLabel.gameObject, minWidth: 100);
-            RegisterUIText(_gameSourceLabel);
+            RegisterExcluded(_gameSourceLabel);
 
             // Game search row
             var searchRow = UIStyles.CreateFormRow(gameBox, "SearchRow", UIStyles.RowHeightLarge, 5);
@@ -259,7 +259,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _gameSearchStatus.fontSize = UIStyles.FontSizeSmall;
             _gameSearchStatus.color = UIStyles.TextMuted;
             UIFactory.SetLayoutElement(_gameSearchStatus.gameObject, minHeight: UIStyles.RowHeightSmall);
-            RegisterUIText(_gameSearchStatus);
+            RegisterExcluded(_gameSearchStatus);
 
             // Legend for the search result markers
             var resultsLegend = UIStyles.CreateHint(gameBox, "ResultsLegend",

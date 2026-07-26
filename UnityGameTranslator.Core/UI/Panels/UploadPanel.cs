@@ -69,7 +69,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Title
             _titleLabel = CreateTitle(card, "TitleLabel", "Upload Translation");
-            RegisterUIText(_titleLabel);
+            RegisterExcluded(_titleLabel);
 
             UIStyles.CreateSpacer(card, 5);
 
@@ -79,19 +79,19 @@ namespace UnityGameTranslator.Core.UI.Panels
             _entriesLabel = UIFactory.CreateLabel(infoBox, "EntriesLabel", "Entries: 0", TextAnchor.MiddleLeft);
             _entriesLabel.color = UIStyles.TextPrimary;
             UIFactory.SetLayoutElement(_entriesLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
-            RegisterUIText(_entriesLabel);
+            RegisterExcluded(_entriesLabel);
 
             _gameLabel = UIFactory.CreateLabel(infoBox, "GameLabel", "Game: Unknown", TextAnchor.MiddleLeft);
             _gameLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(_gameLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
-            RegisterUIText(_gameLabel);
+            RegisterExcluded(_gameLabel);
 
             _modeInfoLabel = UIFactory.CreateLabel(infoBox, "ModeInfoLabel", "", TextAnchor.MiddleLeft);
             _modeInfoLabel.fontStyle = FontStyle.Italic;
             _modeInfoLabel.fontSize = UIStyles.FontSizeSmall;
             _modeInfoLabel.color = UIStyles.TextMuted;
             UIFactory.SetLayoutElement(_modeInfoLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
-            RegisterUIText(_modeInfoLabel);
+            RegisterExcluded(_modeInfoLabel);
 
             UIStyles.CreateSpacer(card, 10);
 
@@ -119,7 +119,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Status
             _statusLabel = CreateStatusLabel(card, "Status");
-            RegisterUIText(_statusLabel);
+            RegisterExcluded(_statusLabel);
 
             // Buttons - in fixed footer (outside scroll)
             var cancelBtn = CreateSecondaryButton(buttonRow, "CancelBtn", "Cancel");
@@ -150,7 +150,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     TranslatorCore.LogError($"[UploadPanel] Exception in click handler: {e}");
                 }
             };
-            RegisterUIText(_uploadBtn.ButtonText);
+            RegisterExcluded(_uploadBtn.ButtonText);
             DescribeUploadButton("Publish this translation online so others can find and download it for this game");
         }
 

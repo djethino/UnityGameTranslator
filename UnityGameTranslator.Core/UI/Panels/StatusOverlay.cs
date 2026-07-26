@@ -294,14 +294,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             _modUpdateLabel = UIFactory.CreateLabel(_modUpdateBox, "ModUpdateLabel", "Mod update available: v?.?.?", TextAnchor.MiddleLeft);
             _modUpdateLabel.fontStyle = FontStyle.Bold;
             UIFactory.SetLayoutElement(_modUpdateLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
-            RegisterUIText(_modUpdateLabel);
+            RegisterExcluded(_modUpdateLabel);
 
             var btnRow = UIStyles.CreateFormRow(_modUpdateBox, "ModBtnRow", UIStyles.RowHeightMedium, 5);
 
             _modUpdateBtn = UIFactory.CreateButton(btnRow, "ModDownloadBtn", "Download");
             UIFactory.SetLayoutElement(_modUpdateBtn.Component.gameObject, minWidth: 80, minHeight: UIStyles.RowHeightNormal);
             _modUpdateBtn.OnClick += OnModUpdateClicked;
-            RegisterUIText(_modUpdateBtn.ButtonText);
+            RegisterExcluded(_modUpdateBtn.ButtonText);
 
             _modIgnoreBtn = UIFactory.CreateButton(btnRow, "ModIgnoreBtn", "Ignore");
             UIFactory.SetLayoutElement(_modIgnoreBtn.Component.gameObject, minWidth: 60, minHeight: UIStyles.RowHeightNormal);
@@ -326,7 +326,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _syncLabel = UIFactory.CreateLabel(_syncBox, "SyncLabel", "Sync status", TextAnchor.MiddleLeft);
             _syncLabel.fontStyle = FontStyle.Bold;
             UIFactory.SetLayoutElement(_syncLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
-            RegisterUIText(_syncLabel);
+            RegisterExcluded(_syncLabel);
 
             var syncBtnRow = UIStyles.CreateFormRow(_syncBox, "SyncBtnRow", UIStyles.RowHeightMedium, 3);
 
@@ -348,7 +348,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _syncActionBtn = UIFactory.CreateButton(syncBtnRow, "SyncActionBtn", "Action");
             UIFactory.SetLayoutElement(_syncActionBtn.Component.gameObject, minWidth: 75, minHeight: UIStyles.RowHeightNormal);
             _syncActionBtn.OnClick += OnSyncActionClicked;
-            RegisterUIText(_syncActionBtn.ButtonText);
+            RegisterExcluded(_syncActionBtn.ButtonText);
 
             // Settings button
             _syncSettingsBtn = UIFactory.CreateButton(syncBtnRow, "SyncSettingsBtn", "Settings");
@@ -364,7 +364,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Plain-words explanation of the Branch/Fork choice (only shown with those buttons)
             _syncHintLabel = UIStyles.CreateHint(_syncBox, "SyncHintLabel", "");
-            RegisterUIText(_syncHintLabel);
+            RegisterExcluded(_syncHintLabel);
 
             _syncBox.SetActive(false);
 
@@ -390,7 +390,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _webNotifLabel = UIFactory.CreateLabel(_webNotifBox, "WebNotifLabel", "", TextAnchor.MiddleLeft);
             _webNotifLabel.fontStyle = FontStyle.Bold;
             UIFactory.SetLayoutElement(_webNotifLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
-            RegisterUIText(_webNotifLabel);
+            RegisterExcluded(_webNotifLabel);
 
             var notifBtnRow = UIStyles.CreateFormRow(_webNotifBox, "WebNotifBtnRow", UIStyles.RowHeightMedium, 3);
 

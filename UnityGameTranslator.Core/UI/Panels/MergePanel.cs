@@ -134,7 +134,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _summaryLabel.fontSize = UIStyles.FontSizeNormal;
             _summaryLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(_summaryLabel.gameObject, minHeight: UIStyles.RowHeightMedium);
-            RegisterUIText(_summaryLabel);
+            RegisterExcluded(_summaryLabel);
 
             // Conflict list scroll view
             var scrollObj = UIFactory.CreateScrollView(card, "ConflictScroll", out _conflictListContent, out _);

@@ -74,7 +74,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _titleLabel.fontStyle = FontStyle.Bold;
             _titleLabel.color = UIStyles.TextPrimary;
             UIFactory.SetLayoutElement(_titleLabel.gameObject, minHeight: UIStyles.TitleHeight);
-            RegisterUIText(_titleLabel);
+            RegisterExcluded(_titleLabel);
 
             UIStyles.CreateSpacer(card, 10);
 
@@ -83,7 +83,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _messageLabel.fontSize = UIStyles.FontSizeNormal;
             _messageLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(_messageLabel.gameObject, minHeight: UIStyles.MultiLineSmall);
-            RegisterUIText(_messageLabel);
+            RegisterExcluded(_messageLabel);
 
             // Buttons in fixed footer
             _cancelBtn = CreateSecondaryButton(buttonRow, "CancelBtn", "Cancel");
@@ -92,7 +92,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             _confirmBtn = CreatePrimaryButton(buttonRow, "ConfirmBtn", "Confirm");
             _confirmBtn.OnClick += OnConfirmClicked;
-            RegisterUIText(_confirmBtn.ButtonText);
+            RegisterExcluded(_confirmBtn.ButtonText);
         }
 
         private void OnConfirmClicked()

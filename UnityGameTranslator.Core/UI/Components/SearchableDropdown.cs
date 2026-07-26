@@ -5,6 +5,7 @@ using UnityEngine.UI;
 using UniverseLib;
 using UniverseLib.UI;
 using UniverseLib.UI.Models;
+using UniverseLib.UI.Widgets;
 
 namespace UnityGameTranslator.Core.UI.Components
 {
@@ -29,10 +30,15 @@ namespace UnityGameTranslator.Core.UI.Components
         private GameObject _rootObject;
         private GameObject _buttonObject;
         private Text _buttonText;
+        private EllipsisLabel _buttonEllipsis;
         private GameObject _popupRoot;
         private InputFieldRef _searchInputRef;
         private GameObject _listContent;
         private ScrollRect _scrollRect;
+        private AutoSliderScrollbar _autoScrollbar;
+
+        // Ellipsis handles of the visible option rows, used to size the popup to its content
+        private readonly List<EllipsisLabel> _itemEllipsis = new List<EllipsisLabel>();
 
         // Track selected item index for scroll positioning
         private int _selectedItemIndex = -1;
@@ -132,6 +138,11 @@ namespace UnityGameTranslator.Core.UI.Components
 
             // Register BEFORE setting text (the patch intercepts text assignment)
             TranslatorCore.RegisterExcluded(_buttonText);
+
+            // A long value used to wrap onto a second line that the button then clipped away,
+            // leaving only the head visible (e.g. "[Custom]" and nothing else). Keep it on one
+            // line and end it with an ellipsis instead; the popup shows entries in full.
+            _buttonEllipsis = UIFactory.ConfigureEllipsis(_buttonText);
             UpdateButtonText();
 
             // Arrow
@@ -176,12 +187,12 @@ namespace UnityGameTranslator.Core.UI.Components
             float now = Time.realtimeSinceStartup;
             if (now - _lastToggleTime < 0.15f)
             {
-                TranslatorCore.LogInfo($"[SearchableDropdown] TogglePopup IGNORED (debounce), delta={now - _lastToggleTime:F3}s");
+                TranslatorCore.LogDebug($"[SearchableDropdown] TogglePopup IGNORED (debounce), delta={now - _lastToggleTime:F3}s");
                 return;
             }
             _lastToggleTime = now;
 
-            TranslatorCore.LogInfo($"[SearchableDropdown] TogglePopup called, _isOpen={_isOpen}");
+            TranslatorCore.LogDebug($"[SearchableDropdown] TogglePopup called, _isOpen={_isOpen}");
             if (_isOpen)
                 ClosePopup();
             else
@@ -193,13 +204,12 @@ namespace UnityGameTranslator.Core.UI.Components
         /// </summary>
         public void OpenPopup()
         {
-            TranslatorCore.LogInfo($"[SearchableDropdown] OpenPopup called");
             if (_isOpen) return;
             _isOpen = true;
 
             CreatePopup();
             RefreshList();
-            TranslatorCore.LogInfo($"[SearchableDropdown] Popup created with {_options?.Length ?? 0} options");
+            TranslatorCore.LogDebug($"[SearchableDropdown] Popup opened with {_options?.Length ?? 0} options");
         }
 
         /// <summary>
@@ -215,11 +225,14 @@ namespace UnityGameTranslator.Core.UI.Components
 
         private void CreatePopup()
         {
-            // Get button dimensions
-            float buttonWidth = 200f;
-            var layoutElem = _rootObject.GetComponent<LayoutElement>();
-            if (layoutElem != null && layoutElem.minWidth > 0)
-                buttonWidth = layoutElem.minWidth;
+            // Get button dimensions — the laid-out width first (a parent layout group may have
+            // stretched the dropdown well past its minWidth), falling back to the requested one.
+            float buttonWidth = _rootObject.GetComponent<RectTransform>().rect.width;
+            if (buttonWidth <= 0f)
+            {
+                var layoutElem = _rootObject.GetComponent<LayoutElement>();
+                buttonWidth = layoutElem != null && layoutElem.minWidth > 0 ? layoutElem.minWidth : 200f;
+            }
             float popupHeight = _popupHeight + (_showSearch ? 35 : 10);
 
             // Create popup as child of the button
@@ -239,7 +252,7 @@ namespace UnityGameTranslator.Core.UI.Components
             popupRect.anchoredPosition = Vector2.zero; // At button's bottom-left
             popupRect.sizeDelta = new Vector2(buttonWidth, popupHeight);
 
-            TranslatorCore.LogInfo($"[SearchableDropdown] Popup created with overrideSorting, size=({buttonWidth}, {popupHeight})");
+            TranslatorCore.LogDebug($"[SearchableDropdown] Popup created with overrideSorting, size=({buttonWidth}, {popupHeight})");
 
             // Add background to popup root
             Image bgImage = _popupRoot.AddComponent<Image>();
@@ -247,7 +260,6 @@ namespace UnityGameTranslator.Core.UI.Components
 
             float yOffset = 4f;
             float searchHeight = _showSearch ? 25f : 0f;
-            float scrollHeight = _popupHeight - (_showSearch ? 35 : 10);
 
             // Search input
             if (_showSearch)
@@ -270,40 +282,43 @@ namespace UnityGameTranslator.Core.UI.Components
                 yOffset += searchHeight + 4f;
             }
 
-            // Viewport with RectMask2D
-            GameObject viewport = UIFactory.CreateUIObject("Viewport", _popupRoot);
-            RectTransform viewportRect = viewport.GetComponent<RectTransform>();
-            viewportRect.anchorMin = new Vector2(0, 1);
-            viewportRect.anchorMax = new Vector2(1, 1);
-            viewportRect.pivot = new Vector2(0.5f, 1);
-            viewportRect.anchoredPosition = new Vector2(0, -yOffset);
-            viewportRect.sizeDelta = new Vector2(-8, scrollHeight);
+            // Option list — built with the same ScrollView as every other list in the mod, so it
+            // gets the standard auto-hiding scrollbar (the hand-rolled viewport this replaces had
+            // no scrollbar at all: long lists could only be reached with the mouse wheel).
+            var scrollObj = UIFactory.CreateScrollView(_popupRoot, "OptionsScroll", out _listContent, out _autoScrollbar);
+            UIFactory.SetLayoutGroup<VerticalLayoutGroup>(_listContent, true, false, true, true,
+                ITEM_SPACING, CONTENT_PADDING, CONTENT_PADDING, CONTENT_PADDING, CONTENT_PADDING);
 
-            Image viewportBg = viewport.AddComponent<Image>();
-            viewportBg.color = UIStyles.ViewportBackground;
-            viewport.AddComponent<RectMask2D>();
+            // Fill the popup below the search box; anchored so it follows the popup when resized.
+            RectTransform scrollTransform = scrollObj.GetComponent<RectTransform>();
+            scrollTransform.anchorMin = Vector2.zero;
+            scrollTransform.anchorMax = Vector2.one;
+            scrollTransform.pivot = new Vector2(0.5f, 0.5f);
+            scrollTransform.offsetMin = new Vector2(4f, 4f);
+            scrollTransform.offsetMax = new Vector2(-4f, -yOffset);
 
-            // Content container
-            _listContent = UIFactory.CreateUIObject("Content", viewport);
-            RectTransform contentRect = _listContent.GetComponent<RectTransform>();
-            contentRect.anchorMin = new Vector2(0, 1);
-            contentRect.anchorMax = new Vector2(1, 1);
-            contentRect.pivot = new Vector2(0.5f, 1);
-            contentRect.anchoredPosition = Vector2.zero;
-            contentRect.sizeDelta = new Vector2(0, 0);
+            UIStyles.ConfigureScrollViewNoScrollbar(scrollObj);
 
-            // ScrollRect
-            _scrollRect = viewport.AddComponent<ScrollRect>();
-            _scrollRect.content = contentRect;
-            _scrollRect.viewport = viewportRect;
-            _scrollRect.horizontal = false;
-            _scrollRect.vertical = true;
-            _scrollRect.movementType = ScrollRect.MovementType.Clamped;
-            _scrollRect.scrollSensitivity = 20f;
-            _scrollRect.inertia = false;
+            // The popup draws in a nested Canvas with overrideSorting (so it can appear above the
+            // panel). Stencil Masks do not survive that: the grip — a child of the SliderScrollbar's
+            // Mask — was culled outright (correct size and colour, but never drawn), while the track
+            // still showed because a Mask always draws its own graphic. The grip never leaves its
+            // track, so it does not need masking.
+            var gripImage = _autoScrollbar?.Slider != null && _autoScrollbar.Slider.handleRect != null
+                ? _autoScrollbar.Slider.handleRect.GetComponent<Image>()
+                : null;
+            if (gripImage != null) gripImage.maskable = false;
+
+            _scrollRect = scrollObj.GetComponent<ScrollRect>();
+            if (_scrollRect != null)
+            {
+                _scrollRect.movementType = ScrollRect.MovementType.Clamped;
+                _scrollRect.scrollSensitivity = 20f;
+                _scrollRect.inertia = false;
+            }
 
             Canvas.ForceUpdateCanvases();
-            TranslatorCore.LogInfo($"[SearchableDropdown] Popup created");
+            TranslatorCore.LogDebug($"[SearchableDropdown] Popup created");
         }
 
         private void DestroyPopup()
@@ -317,6 +332,8 @@ namespace UnityGameTranslator.Core.UI.Components
             _searchInputRef = null;
             _listContent = null;
             _scrollRect = null;
+            _autoScrollbar = null;
+            _itemEllipsis.Clear();
         }
 
         private void OnSearchChanged(string searchText)
@@ -331,6 +348,7 @@ namespace UnityGameTranslator.Core.UI.Components
             // Reset item index for positioning
             _itemIndex = 0;
             _selectedItemIndex = -1;
+            _itemEllipsis.Clear();
 
             // Clear existing items (manual iteration for IL2CPP compatibility)
             for (int i = _listContent.transform.childCount - 1; i >= 0; i--)
@@ -356,8 +374,20 @@ namespace UnityGameTranslator.Core.UI.Components
                 currentFilteredIndex++;
             }
 
+            // Size the popup on the FULL list only (open / options changed). Doing it per keystroke
+            // while filtering would make the popup jump wider and narrower as the user types.
+            if (string.IsNullOrEmpty(filter))
+                SizePopupToContent();
+
             // Force canvas update before scrolling
             Canvas.ForceUpdateCanvases();
+            if (_listContent != null)
+                LayoutRebuilder.ForceRebuildLayoutImmediate(_listContent.GetComponent<RectTransform>());
+
+            // Size the scrollbar grip NOW that the rows exist. The scroll view is built before the
+            // list is filled, so the grip was sized against an empty content (height 0 → grip
+            // collapsed to nothing, which read as "no grip at all").
+            _autoScrollbar?.UpdateSliderHandle();
 
             // Scroll to selected item (only on initial open, not when filtering)
             if (_scrollRect != null && string.IsNullOrEmpty(filter))
@@ -371,6 +401,53 @@ namespace UnityGameTranslator.Core.UI.Components
             }
         }
 
+        /// <summary>
+        /// Grow the popup so its entries are readable in full, capped by the room actually left to
+        /// the right of the dropdown inside the canvas (never wider than the screen). Entries still
+        /// too long for that cap keep their ellipsis. The popup is never narrower than its button.
+        /// </summary>
+        private void SizePopupToContent()
+        {
+            if (_popupRoot == null || _itemEllipsis.Count == 0) return;
+
+            float widestEntry = 0f;
+            foreach (var label in _itemEllipsis)
+            {
+                if (label == null) continue;
+                float width = label.PreferredFullWidth;
+                if (width > widestEntry) widestEntry = width;
+            }
+            if (widestEntry <= 0f) return;
+
+            RectTransform popupRect = _popupRoot.GetComponent<RectTransform>();
+            float buttonWidth = _rootObject.GetComponent<RectTransform>().rect.width;
+            if (buttonWidth <= 0f) buttonWidth = popupRect.sizeDelta.x;
+
+            float wanted = widestEntry + POPUP_CHROME_WIDTH;
+            float width2 = Mathf.Clamp(wanted, buttonWidth, GetAvailableWidth(buttonWidth));
+
+            if (!Mathf.Approximately(width2, popupRect.sizeDelta.x))
+                popupRect.sizeDelta = new Vector2(width2, popupRect.sizeDelta.y);
+        }
+
+        /// <summary>
+        /// Horizontal room from the dropdown's left edge to the right edge of the canvas.
+        /// Uses TransformPoint/InverseTransformPoint only — RectTransformUtility takes array
+        /// parameters that crash on IL2CPP.
+        /// </summary>
+        private float GetAvailableWidth(float fallbackWidth)
+        {
+            var canvas = _rootObject.GetComponentInParent<Canvas>();
+            var canvasRect = canvas != null ? canvas.rootCanvas.GetComponent<RectTransform>() : null;
+            if (canvasRect == null) return fallbackWidth * 2f;
+
+            Vector3 local = canvasRect.InverseTransformPoint(_rootObject.transform.position);
+            float leftEdge = local.x - (fallbackWidth / 2f); // rootObject pivot is centred
+            float available = canvasRect.rect.xMax - leftEdge - 12f;
+
+            return Mathf.Max(fallbackWidth, available);
+        }
+
         private void ScrollToSelectedItem()
         {
             if (_selectedItemIndex < 0 || _scrollRect == null || _listContent == null)
@@ -379,7 +456,8 @@ namespace UnityGameTranslator.Core.UI.Components
             RectTransform contentRect = _listContent.GetComponent<RectTransform>();
             RectTransform viewportRect = _scrollRect.viewport;
 
-            float contentHeight = contentRect.sizeDelta.y;
+            // Height now comes from the layout group + ContentSizeFitter, not a manual sizeDelta
+            float contentHeight = contentRect.rect.height;
             float viewportHeight = viewportRect.rect.height;
 
             // If content fits in viewport, no scroll needed
@@ -389,9 +467,9 @@ namespace UnityGameTranslator.Core.UI.Components
                 return;
             }
 
-            // Calculate position of selected item
-            float itemTop = _selectedItemIndex * (ITEM_HEIGHT + ITEM_SPACING);
-            float itemBottom = itemTop + ITEM_HEIGHT;
+            // Calculate position of selected item (rows are a fixed height, stacked by the layout
+            // group under its top padding)
+            float itemTop = CONTENT_PADDING + _selectedItemIndex * (ITEM_HEIGHT + ITEM_SPACING);
 
             // Calculate scroll range
             float scrollableHeight = contentHeight - viewportHeight;
@@ -407,31 +485,25 @@ namespace UnityGameTranslator.Core.UI.Components
             float normalizedPos = 1f - (targetScrollY / scrollableHeight);
             _scrollRect.verticalNormalizedPosition = normalizedPos;
 
-            TranslatorCore.LogInfo($"[SearchableDropdown] Scrolled to item {_selectedItemIndex}, normalizedPos={normalizedPos:F2}");
+            TranslatorCore.LogDebug($"[SearchableDropdown] Scrolled to item {_selectedItemIndex}, normalizedPos={normalizedPos:F2}");
         }
 
         private int _itemIndex = 0;
-        private const float ITEM_HEIGHT = 25f;
-        private const float ITEM_SPACING = 2f;
+        private const int ITEM_HEIGHT = 25;
+        private const int ITEM_SPACING = 2;
+        private const int CONTENT_PADDING = 2;
+
+        // Horizontal room an option row needs on top of its text: row text insets (8 + 8),
+        // content padding, the scrollbar column and the popup margins.
+        private const float ITEM_TEXT_INSETS = 16f;
+        private const float POPUP_CHROME_WIDTH = ITEM_TEXT_INSETS + (CONTENT_PADDING * 2) + 28f + 8f;
 
         private void CreateOptionItem(string option)
         {
-            // Create item in content container
+            // Create item in content container — height/stacking handled by the layout group
             GameObject itemObj = UIFactory.CreateUIObject($"Option_{option}", _listContent);
-
-            // Position manually based on index
-            float yPos = _itemIndex * (ITEM_HEIGHT + ITEM_SPACING);
-            RectTransform itemRect = itemObj.GetComponent<RectTransform>();
-            itemRect.anchorMin = new Vector2(0, 1);
-            itemRect.anchorMax = new Vector2(1, 1);
-            itemRect.pivot = new Vector2(0.5f, 1);
-            itemRect.anchoredPosition = new Vector2(0, -yPos);
-            itemRect.sizeDelta = new Vector2(0, ITEM_HEIGHT);
+            UIFactory.SetLayoutElement(itemObj, minHeight: ITEM_HEIGHT, preferredHeight: ITEM_HEIGHT, flexibleWidth: 9999);
             _itemIndex++;
-
-            // Update content height
-            RectTransform contentRect = _listContent.GetComponent<RectTransform>();
-            contentRect.sizeDelta = new Vector2(0, _itemIndex * (ITEM_HEIGHT + ITEM_SPACING));
 
             Image itemBg = itemObj.AddComponent<Image>();
             bool isSelected = option == _selectedValue;
@@ -463,7 +535,15 @@ namespace UnityGameTranslator.Core.UI.Components
 
             // Register BEFORE setting text to exclude from translation
             TranslatorCore.RegisterExcluded(itemText);
-            itemText.text = option;
+
+            // Rows show the entry in full — the popup widens to its content (SizePopupToContent).
+            // The ellipsis only kicks in for entries too long even for the widened popup, so a
+            // huge name never spills over the row below it.
+            var itemEllipsis = UIFactory.ConfigureEllipsis(itemText, option);
+            if (itemEllipsis != null)
+                _itemEllipsis.Add(itemEllipsis);
+            else
+                itemText.text = option;
         }
 
         private void SelectOption(string option)
@@ -478,10 +558,13 @@ namespace UnityGameTranslator.Core.UI.Components
 
         private void UpdateButtonText()
         {
-            if (_buttonText != null)
-            {
-                _buttonText.text = string.IsNullOrEmpty(_selectedValue) ? "(none)" : _selectedValue;
-            }
+            if (_buttonText == null) return;
+
+            string value = string.IsNullOrEmpty(_selectedValue) ? "(none)" : _selectedValue;
+            if (_buttonEllipsis != null)
+                _buttonEllipsis.FullText = value; // the component owns Text.text (trims to fit)
+            else
+                _buttonText.text = value;
         }
 
         /// <summary>

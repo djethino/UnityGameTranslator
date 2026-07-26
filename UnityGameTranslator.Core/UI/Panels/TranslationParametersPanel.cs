@@ -434,7 +434,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Scrollable container for exclusions
             var scrollObj = UIFactory.CreateScrollView(card, "ExclusionsScroll", out var scrollContent, out var scrollbar);
-            UIFactory.SetLayoutElement(scrollObj, minHeight: 200, flexibleHeight: 9999, flexibleWidth: 9999);
+            UIFactory.SetLayoutElement(scrollObj, minHeight: 200, preferredHeight: 400, flexibleHeight: 9999, flexibleWidth: 9999);
             UIStyles.SetBackground(scrollObj, UIStyles.InputBackground);
             UIFactory.ConfigureAutoHideScrollbar(scrollObj);
 
@@ -856,7 +856,17 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Scrollable container for fonts
             var scrollObj = UIFactory.CreateScrollView(card, "FontsScroll", out var scrollContent, out var scrollbar);
-            UIFactory.SetLayoutElement(scrollObj, minHeight: 180, flexibleHeight: 9999, flexibleWidth: 9999);
+            // Three heights, and all three matter (measured in-game, see [SizeDiag] logs):
+            //  - preferred = a COMFORTABLE height, not the minimum. The panel sizes itself to the
+            //    content's preferred height exactly, so a list asking for its minimum leaves the
+            //    panel no slack at all: one pixel over and it grows its own scrollbar next to the
+            //    list's. Asking for more gives the panel room it can take back under pressure.
+            //  - min = how far the list may be squeezed on a small screen before the panel scrolls.
+            //  - flexible = it soaks up any spare height when the window is enlarged.
+            // Without the preferred height the tab would instead claim the WHOLE list's height,
+            // which overflows the screen for the same double-scrollbar result.
+            UIFactory.SetLayoutElement(scrollObj, minHeight: 180, preferredHeight: 420,
+                flexibleHeight: 9999, flexibleWidth: 9999);
             UIStyles.SetBackground(scrollObj, UIStyles.InputBackground);
             UIFactory.ConfigureAutoHideScrollbar(scrollObj);
 
@@ -949,7 +959,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Scrollable list of overrides
             var scrollObj = UIFactory.CreateScrollView(card, "OverridesScroll", out var scrollContent, out var scrollbar);
-            UIFactory.SetLayoutElement(scrollObj, minHeight: 200, flexibleHeight: 9999, flexibleWidth: 9999);
+            UIFactory.SetLayoutElement(scrollObj, minHeight: 200, preferredHeight: 400, flexibleHeight: 9999, flexibleWidth: 9999);
             UIStyles.SetBackground(scrollObj, UIStyles.InputBackground);
             UIFactory.ConfigureAutoHideScrollbar(scrollObj);
 
@@ -1754,7 +1764,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             RegisterUIText(listLabel);
 
             var scrollObj = UIFactory.CreateScrollView(card, "ImagesScroll", out var scrollContent, out var scrollbar);
-            UIFactory.SetLayoutElement(scrollObj, minHeight: 200, flexibleHeight: 9999);
+            UIFactory.SetLayoutElement(scrollObj, minHeight: 200, preferredHeight: 400, flexibleHeight: 9999);
             _imagesListContainer = scrollContent;
 
             // Apply All button
@@ -1941,7 +1951,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             RegisterUIText(listLabel);
 
             var scrollObj = UIFactory.CreateScrollView(card, "VarsScroll", out var scrollContent, out _);
-            UIFactory.SetLayoutElement(scrollObj, minHeight: 200, flexibleHeight: 9999);
+            UIFactory.SetLayoutElement(scrollObj, minHeight: 200, preferredHeight: 400, flexibleHeight: 9999);
             _variablesListContainer = scrollContent;
 
             // Status label

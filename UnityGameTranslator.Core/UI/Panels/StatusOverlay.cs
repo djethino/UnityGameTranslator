@@ -857,8 +857,12 @@ namespace UnityGameTranslator.Core.UI.Panels
                     break;
 
                 default:
-                    // Default to upload if we have local changes
-                    if (TranslatorCore.LocalChangesCount > 0)
+                    // Nothing pending from the server: this is the owner-side "Update" —
+                    // either new lines to push, or only the settings that travel with the
+                    // translation (fonts, images, exclusions, variables). Metadata-only
+                    // changes leave LocalChangesCount at 0, so gating on it alone made the
+                    // button inert for the very case its own notification announces.
+                    if (TranslatorCore.LocalChangesCount > 0 || TranslatorCore.MetadataDirty)
                     {
                         TranslatorUIManager.UploadPanel?.SetActive(true);
                     }
@@ -876,8 +880,13 @@ namespace UnityGameTranslator.Core.UI.Panels
                 return;
             }
 
-            // Use centralized methods
-            if (TranslatorCore.LocalChangesCount > 0)
+            // Use centralized methods. MetadataDirty counts as "we have something local":
+            // DownloadUpdate overwrites translations.json wholesale and reloads, which drops
+            // locally edited settings (fonts, images, exclusions, variables), while the merge
+            // flow only rewrites the translation entries and leaves them intact. The direction
+            // was already decided with metadata in mind (TranslatorUIManager, hasLocalChanges);
+            // deciding again on LocalChangesCount alone contradicted it.
+            if (TranslatorCore.LocalChangesCount > 0 || TranslatorCore.MetadataDirty)
             {
                 // Need merge - use centralized merge flow
                 await TranslatorUIManager.DownloadForMerge();

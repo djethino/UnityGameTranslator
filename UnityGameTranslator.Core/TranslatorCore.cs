@@ -3753,20 +3753,25 @@ namespace UnityGameTranslator.Core
             // Walk down the reasoning ladder: a 400 usually means this provider/model rejects the
             // value we asked for, so try a lesser one. Only remember a rung once it actually
             // WORKED — a 400 caused by something else must not permanently disable the parameter.
+            // Built once and only the effort field is swapped between attempts: re-assigning the
+            // same messages array into a new JObject each time would make Json.NET deep-clone it.
+            var requestObj = new JObject
+            {
+                ["model"] = Config.ai_model,
+                ["messages"] = messagesArray,
+                ["temperature"] = temperature,
+                ["max_tokens"] = maxTokens,
+                ["stream"] = false
+            };
+
             for (int step = GetReasoningEffortStep(); step < ReasoningEffortLadder.Length; step++)
             {
                 string effort = ReasoningEffortLadder[step];
 
-                var requestObj = new JObject
-                {
-                    ["model"] = Config.ai_model,
-                    ["messages"] = messagesArray,
-                    ["temperature"] = temperature,
-                    ["max_tokens"] = maxTokens,
-                    ["stream"] = false
-                };
                 if (effort != null)
                     requestObj["reasoning_effort"] = effort;
+                else
+                    requestObj.Remove("reasoning_effort");
 
                 var request = new HttpRequestMessage(HttpMethod.Post, aiEndpoint)
                 {
@@ -3794,11 +3799,14 @@ namespace UnityGameTranslator.Core
                 string errorBody = "";
                 try { errorBody = response.Content.ReadAsStringAsync().Result; } catch { }
 
-                // Worth trying a lesser rung only on 400, and only while one is left
-                bool canDegrade = statusCode == 400 && step + 1 < ReasoningEffortLadder.Length;
-                if (canDegrade)
+                // Step down only on codes that mean "your request body is not acceptable" — 400 is
+                // what OpenAI/Grok return for an unsupported value, 422 what some other
+                // OpenAI-compatible servers use. Anything else (401, 404, 429, 5xx) is not about
+                // this parameter and must not burn the ladder.
+                bool rejectedBody = statusCode == 400 || statusCode == 422;
+                if (rejectedBody && step + 1 < ReasoningEffortLadder.Length)
                 {
-                    LogDebug($"[AI] reasoning_effort={effort} rejected (HTTP 400), trying {ReasoningEffortLadder[step + 1] ?? "without the parameter"}");
+                    LogDebug($"[AI] reasoning_effort={effort} rejected (HTTP {statusCode}), trying {ReasoningEffortLadder[step + 1] ?? "without the parameter"}");
                     continue;
                 }
 

@@ -9,6 +9,10 @@ namespace UnityGameTranslator.Core.UI.Panels
     /// <summary>
     /// Corner notification overlay showing mod updates, sync status, and AI queue.
     /// Displays when no main panels are open.
+    ///
+    /// Every line here must stay ONE line tall: the boxes are stacked, so a label that grows to
+    /// two lines shifts everything under it and the overlay visibly jumps. Game text shown here is
+    /// therefore always passed through <see cref="Flatten"/> first.
     /// </summary>
     public class StatusOverlay : TranslatorPanelBase
     {
@@ -220,6 +224,30 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// While the toast is active, all other overlay boxes are hidden so the
         /// hotkey feedback is unambiguous. The toast auto-hides after TOAST_DURATION.
         /// </summary>
+        /// <summary>
+        /// Collapse any run of whitespace — line breaks included — into single spaces, so a piece
+        /// of game text can be shown on one line whatever it contains.
+        /// </summary>
+        private static string Flatten(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return "";
+
+            var sb = new System.Text.StringBuilder(text.Length);
+            bool inWhitespace = false;
+            foreach (char c in text)
+            {
+                if (char.IsWhiteSpace(c))
+                {
+                    inWhitespace = true;
+                    continue;
+                }
+                if (inWhitespace && sb.Length > 0) sb.Append(' ');
+                inWhitespace = false;
+                sb.Append(c);
+            }
+            return sb.ToString();
+        }
+
         public void ShowToast(string message, ToastTone tone = ToastTone.Info)
         {
             if (_toastBox == null || _toastLabel == null) return;
@@ -422,10 +450,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             _webNotifBox.SetActive(show);
             if (show)
             {
-                string text = result.Items[0].Text ?? "";
+                // Comes from the website, so it may carry line breaks — same one-line rule
+                string text = Flatten(result.Items[0].Text);
                 if (result.Unread > 1)
                 {
-                    text += $" (+{result.Unread - 1} more)";
+                    text += " " + Tr($"(+{result.Unread - 1} more)");
                 }
                 _webNotifLabel.text = text;
             }
@@ -671,8 +700,11 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 if (isTranslating)
                 {
-                    // The excerpt is GAME text being translated — data, never sent for translation
-                    string text = TranslatorCore.CurrentText ?? "";
+                    // The excerpt is GAME text being translated — data, never sent for translation.
+                    // Flattened first: game strings often carry line breaks, and a single one made
+                    // this label two lines tall, pushing the queue line below it. The overlay then
+                    // jumped on every such text and settled back on the next one.
+                    string text = Flatten(TranslatorCore.CurrentText);
                     if (text.Length > 25) text = text.Substring(0, 25) + "...";
                     _aiStatusLabel.text = Tr("Translating:") + $" {text}";
                     _aiStatusLabel.gameObject.SetActive(true);

@@ -106,36 +106,34 @@ namespace UnityGameTranslator.Core
         public static bool ConcatDetection { get; set; } = true;
 
         /// <summary>
-        /// Cached flag for whether the current AI provider supports the "think" parameter.
-        /// null = unknown (will try), true = supported, false = not supported (got 400).
-        /// Invalidated when ai_url or ai_model changes.
+        /// Reasoning budgets to try, best first. Reasoning wastes the output budget on a task as
+        /// small as translating a menu line — left on, a reasoning model can spend it all thinking
+        /// and return an EMPTY translation.
+        ///
+        /// The ladder exists because accepted values differ per provider: "none" works on Ollama,
+        /// vLLM (it injects enable_thinking=false), LM Studio and recent Grok, but OpenAI only
+        /// accepts it from gpt-5.1 on, and some models cannot disable reasoning at all. "low" is
+        /// the common denominator — it does not remove reasoning but keeps it minimal. null =
+        /// send nothing, for models that reject the parameter outright.
         /// </summary>
-        private static bool? _providerSupportsThinkParam = null;
-        private static string _thinkParamCacheKey = null;
+        private static readonly string[] ReasoningEffortLadder = { "none", "low", null };
+
+        // Rung known to work for the current provider+model (negotiated on 400, see SendChatRequest)
+        private static int _reasoningEffortStep = 0;
+        private static string _reasoningEffortCacheKey = null;
 
         /// <summary>
-        /// Build a cache key from current AI config to detect provider/model changes.
+        /// First reasoning rung to try, reset whenever the provider or model changes.
         /// </summary>
-        private static string GetThinkParamCacheKey()
+        private static int GetReasoningEffortStep()
         {
-            return $"{Config?.ai_url}|{Config?.ai_model}";
-        }
-
-        /// <summary>
-        /// Check if the think parameter should be sent based on cached provider capability.
-        /// Returns true if we should include "think": false in the request.
-        /// </summary>
-        private static bool ShouldSendThinkParam()
-        {
-            string currentKey = GetThinkParamCacheKey();
-            if (_thinkParamCacheKey != currentKey)
+            string currentKey = $"{Config?.ai_url}|{Config?.ai_model}";
+            if (_reasoningEffortCacheKey != currentKey)
             {
-                // Provider or model changed, reset cache
-                _providerSupportsThinkParam = null;
-                _thinkParamCacheKey = currentKey;
+                _reasoningEffortCacheKey = currentKey;
+                _reasoningEffortStep = 0;
             }
-            // Send if supported or unknown (optimistic)
-            return _providerSupportsThinkParam != false;
+            return _reasoningEffortStep;
         }
 
         /// <summary>
@@ -3464,17 +3462,10 @@ namespace UnityGameTranslator.Core
             }
         }
 
-        /// <summary>
-        /// Detect if a model is a "thinking" model that needs special handling
-        /// to disable the reasoning phase (e.g., /no_think, assistant prefill).
-        /// </summary>
-        private static bool IsThinkingModel(string modelName)
-        {
-            if (string.IsNullOrEmpty(modelName)) return false;
-            string lower = modelName.ToLowerInvariant();
-            // Known thinking model families
-            return lower.StartsWith("qwen3") || lower.Contains("deepseek-r1") || lower.Contains("deepseek-r2");
-        }
+        // A name-based "is this a thinking model" list used to live here. It was removed with the
+        // /no_think hack: reasoning_effort applies to every model, and the list was wrong anyway —
+        // it missed models that do reason (Gemma 4), leaving them slow and occasionally answering
+        // with nothing at all.
 
         private static string TranslateWithAI(string textWithPlaceholders, List<string> extractedNumbers, bool isOwnUI = false)
         {
@@ -3608,8 +3599,12 @@ namespace UnityGameTranslator.Core
                 }
 
                 // === BUILD REQUEST ===
-                bool isThinkingModel = IsThinkingModel(Config.ai_model);
-                string userContent = isThinkingModel ? textForAI + " /no_think" : textForAI;
+                // Reasoning is disabled through the reasoning_effort parameter (see
+                // SendChatRequest), never by appending a marker to the text: the model treats such
+                // a marker as content and TRANSLATES it, leaving "/inga_tänkningar" style residue
+                // glued to the result — measured on every model tested, including ones that do not
+                // reason at all. See analyse/no-think-hack-tests.md.
+                string userContent = textForAI;
                 int maxTokens = Math.Max(200, textToTranslate.Length * 2);
 
                 // Frozen sequences: placeholders + the game's own delimiters around them.
@@ -3652,7 +3647,7 @@ namespace UnityGameTranslator.Core
                             new JObject { ["role"] = "system", ["content"] = systemPrompt },
                             new JObject { ["role"] = "user", ["content"] = userContent },
                             new JObject { ["role"] = "assistant", ["content"] = failedResponse },
-                            new JObject { ["role"] = "user", ["content"] = isThinkingModel ? correction + " /no_think" : correction }
+                            new JObject { ["role"] = "user", ["content"] = correction }
                         };
                         if (Config.debug_ai)
                             Adapter?.LogInfo($"[AI] Retry 1 (corrective dialogue):\n{correction}");
@@ -3668,12 +3663,6 @@ namespace UnityGameTranslator.Core
                         };
                         if (Config.debug_ai)
                             Adapter?.LogInfo("[AI] Retry 2 (fresh reinforced prompt, temperature 0.3)");
-                    }
-
-                    // Extra safety for known thinking models: assistant prefill to skip reasoning
-                    if (isThinkingModel)
-                    {
-                        messagesArray.Add(new JObject { ["role"] = "assistant", ["content"] = "<think>\n\n</think>\n\n" });
                     }
 
                     translation = SendChatRequest(messagesArray, temperature, maxTokens);
@@ -3759,78 +3748,67 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static string SendChatRequest(JArray messagesArray, double temperature, int maxTokens)
         {
-            var requestObj = new JObject
-            {
-                ["model"] = Config.ai_model,
-                ["messages"] = messagesArray,
-                ["temperature"] = temperature,
-                ["max_tokens"] = maxTokens,
-                ["stream"] = false
-            };
-
-            // Send "think": false to disable reasoning on providers that support it (e.g. Ollama).
-            // Some providers (OpenAI, Grok, etc.) reject unknown parameters with 400.
-            // We use a cached flag to avoid retrying on every request.
-            bool sendThink = ShouldSendThinkParam();
-            if (sendThink)
-            {
-                requestObj["think"] = false;
-            }
-
             string aiEndpoint = ResolveAIEndpoint(Config.ai_url, "chat/completions");
-            string jsonRequest = requestObj.ToString(Newtonsoft.Json.Formatting.None);
-            var httpContent = new StringContent(jsonRequest, Encoding.UTF8, "application/json");
 
-            var request = new HttpRequestMessage(HttpMethod.Post, aiEndpoint);
-            request.Content = httpContent;
-            AddAIAuthHeader(request);
-
-            var response = httpClient.SendAsync(request).Result;
-
-            // Handle providers that reject the "think" parameter with 400
-            if (!response.IsSuccessStatusCode && sendThink && (int)response.StatusCode == 400)
+            // Walk down the reasoning ladder: a 400 usually means this provider/model rejects the
+            // value we asked for, so try a lesser one. Only remember a rung once it actually
+            // WORKED — a 400 caused by something else must not permanently disable the parameter.
+            for (int step = GetReasoningEffortStep(); step < ReasoningEffortLadder.Length; step++)
             {
-                string body = "";
-                try { body = response.Content.ReadAsStringAsync().Result; } catch { }
+                string effort = ReasoningEffortLadder[step];
 
-                if (body.Contains("think"))
+                var requestObj = new JObject
                 {
-                    // This provider doesn't support "think" param — cache and retry without it
-                    _providerSupportsThinkParam = false;
-                    LogDebug("[AI] Provider does not support 'think' parameter, retrying without it");
+                    ["model"] = Config.ai_model,
+                    ["messages"] = messagesArray,
+                    ["temperature"] = temperature,
+                    ["max_tokens"] = maxTokens,
+                    ["stream"] = false
+                };
+                if (effort != null)
+                    requestObj["reasoning_effort"] = effort;
 
-                    requestObj.Remove("think");
-                    jsonRequest = requestObj.ToString(Newtonsoft.Json.Formatting.None);
-                    httpContent = new StringContent(jsonRequest, Encoding.UTF8, "application/json");
+                var request = new HttpRequestMessage(HttpMethod.Post, aiEndpoint)
+                {
+                    Content = new StringContent(requestObj.ToString(Newtonsoft.Json.Formatting.None),
+                        Encoding.UTF8, "application/json")
+                };
+                AddAIAuthHeader(request);
 
-                    request = new HttpRequestMessage(HttpMethod.Post, aiEndpoint);
-                    request.Content = httpContent;
-                    AddAIAuthHeader(request);
+                var response = httpClient.SendAsync(request).Result;
 
-                    response = httpClient.SendAsync(request).Result;
+                if (response.IsSuccessStatusCode)
+                {
+                    if (_reasoningEffortStep != step)
+                    {
+                        _reasoningEffortStep = step;
+                        Adapter?.LogInfo($"[AI] Provider settled on reasoning_effort={effort ?? "(omitted)"}");
+                    }
+
+                    string responseJson = response.Content.ReadAsStringAsync().Result;
+                    var responseObj = ApiClient.ParseJsonSafe(responseJson);
+                    return responseObj["choices"]?[0]?["message"]?["content"]?.ToString()?.Trim();
                 }
-            }
 
-            // Mark provider as supporting think param on success (if we sent it)
-            if (response.IsSuccessStatusCode && sendThink && _providerSupportsThinkParam == null)
-            {
-                _providerSupportsThinkParam = true;
-            }
-
-            if (!response.IsSuccessStatusCode)
-            {
                 int statusCode = (int)response.StatusCode;
-                if (statusCode == 429)
-                    _apiRateLimited = true;
                 string errorBody = "";
                 try { errorBody = response.Content.ReadAsStringAsync().Result; } catch { }
+
+                // Worth trying a lesser rung only on 400, and only while one is left
+                bool canDegrade = statusCode == 400 && step + 1 < ReasoningEffortLadder.Length;
+                if (canDegrade)
+                {
+                    LogDebug($"[AI] reasoning_effort={effort} rejected (HTTP 400), trying {ReasoningEffortLadder[step + 1] ?? "without the parameter"}");
+                    continue;
+                }
+
+                if (statusCode == 429)
+                    _apiRateLimited = true;
                 Adapter?.LogWarning($"[AI] HTTP {statusCode} {response.StatusCode}: {errorBody}");
                 return null;
             }
 
-            string responseJson = response.Content.ReadAsStringAsync().Result;
-            var responseObj = ApiClient.ParseJsonSafe(responseJson);
-            return responseObj["choices"]?[0]?["message"]?["content"]?.ToString()?.Trim();
+            return null;
         }
 
         /// <summary>
@@ -4095,7 +4073,10 @@ namespace UnityGameTranslator.Core
             // Remove <think> blocks from thinking models (qwen3, etc.)
             text = Regex.Replace(text, @"<think>[\s\S]*?</think>\s*", "", RegexOptions.IgnoreCase);
 
-            // Remove /no_think and /think artifacts from qwen3 models
+            // Strip /no_think and /think if they ever come back verbatim. The mod no longer sends
+            // them (reasoning is turned off through reasoning_effort), but a model or a server-side
+            // template may still emit one. Only the literal form is handled: once TRANSLATED by the
+            // model it becomes unrecognisable, which is exactly why the marker was dropped.
             text = text.Replace(" /no_think", "").Replace("/no_think", "");
             text = text.Replace(" /think", "").Replace("/think", "");
 

@@ -9,8 +9,12 @@ namespace UnityGameTranslator.Core.UI.Components
     /// Contextual help bar pinned at the bottom of a panel (game-options pattern):
     /// hovering a described control shows its explanation in plain words, without
     /// popups or tooltips that could cover other controls.
-    /// The label is a regular registered UI text, so its content follows the
-    /// translate_mod_ui option like every other mod text.
+    ///
+    /// The label is written by the CODE on every hover change, so it is excluded from
+    /// the async pipeline and translated at the moment it is written (translate_mod_ui
+    /// still governs whether anything is translated at all). Registering it as regular
+    /// UI text instead would put two writers on one Text: the pipeline would keep
+    /// restoring whatever string it was queued with while hovering writes another.
     ///
     /// Hover detection is done by a per-frame geometric poll (RectangleContainsScreenPoint)
     /// driven from TranslatorUIManager.UpdateUI, NOT by pointer-enter events. The event
@@ -34,15 +38,22 @@ namespace UnityGameTranslator.Core.UI.Components
         private static readonly Dictionary<int, Entry> entries = new Dictionary<int, Entry>();
         private static int _currentId;
 
+        // One zone per panel, alive for the whole session — walked by ApplyPendingTranslations.
+        private static readonly List<HelpZone> zones = new List<HelpZone>();
+
         private GameObject _root;
         private Text _label;
         private string _defaultText;
 
+        // Source text currently displayed untranslated (cache miss at write time), or null
+        // when the label is up to date. See ApplyPendingTranslations.
+        private string _pendingSource;
+
         /// <summary>
-        /// Create the help bar inside <paramref name="parent"/>. Returns the label so the
-        /// panel can RegisterUIText it. Use SetSiblingIndex to pin it above a footer.
+        /// Create the help bar inside <paramref name="parent"/>.
+        /// Use SetSiblingIndex to pin it above a footer.
         /// </summary>
-        public Text CreateUI(GameObject parent, string defaultText = "")
+        public void CreateUI(GameObject parent, string defaultText = "")
         {
             _defaultText = defaultText ?? "";
 
@@ -56,12 +67,17 @@ namespace UnityGameTranslator.Core.UI.Components
                 layout.childAlignment = TextAnchor.MiddleLeft;
             }
 
-            _label = UIFactory.CreateLabel(_root, "HelpZoneLabel", _defaultText, TextAnchor.MiddleLeft);
+            // Created empty on purpose: the set_text patch ignores empty strings, so the label
+            // never enters the async pipeline before being excluded from it on the next line.
+            _label = UIFactory.CreateLabel(_root, "HelpZoneLabel", "", TextAnchor.MiddleLeft);
             _label.fontSize = UIStyles.FontSizeSmall;
             _label.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(_label.gameObject, flexibleWidth: 9999, minHeight: UIStyles.MultiLineSmall - 8);
 
-            return _label;
+            TranslatorCore.RegisterExcluded(_label);
+            zones.Add(this);
+
+            SetText(_defaultText);
         }
 
         /// <summary>The root GameObject of the bar (for sibling reordering / visibility).</summary>
@@ -99,6 +115,8 @@ namespace UnityGameTranslator.Core.UI.Components
         /// </summary>
         public static void PollHover()
         {
+            ApplyPendingTranslations();
+
             if (entries.Count == 0) return;
 
             Vector3 mp = UniverseLib.Input.InputManager.MousePosition;
@@ -181,10 +199,46 @@ namespace UnityGameTranslator.Core.UI.Components
             return d;
         }
 
+        /// <summary>
+        /// Write a help text, translated here rather than by the async pipeline (see the class
+        /// summary). On a cache miss the source text is shown as-is and remembered, so
+        /// ApplyPendingTranslations can swap it in as soon as the translation lands.
+        /// </summary>
         private void SetText(string text)
         {
-            if (_label != null)
-                _label.text = text;
+            if (_label == null) return;
+
+            string shown = TranslatorCore.TranslateOwnUIDynamic(text);
+            _label.text = shown;
+
+            // Still waiting only if nothing came back AND nothing is cached: when a cached entry
+            // translates to itself (validated identity), there is nothing more to wait for.
+            _pendingSource = (shown == text
+                              && TranslatorCore.ShouldTranslateOwnUI
+                              && !TranslatorCore.HasCachedTranslation(text))
+                ? text
+                : null;
+        }
+
+        /// <summary>
+        /// Apply translations that landed after their text was written. Hovering a control writes
+        /// its help immediately; a cache miss goes out to the backend and only comes back a moment
+        /// later. Driven by the hover poll (no timer), so the text appears as soon as it is ready
+        /// instead of on the next hover.
+        /// </summary>
+        private static void ApplyPendingTranslations()
+        {
+            for (int i = 0; i < zones.Count; i++)
+            {
+                HelpZone zone = zones[i];
+                if (zone._pendingSource == null || zone._label == null) continue;
+                if (!TranslatorCore.HasCachedTranslation(zone._pendingSource)) continue;
+
+                string translated = TranslatorCore.TranslateOwnUIDynamic(zone._pendingSource);
+                if (translated != zone._pendingSource)
+                    zone._label.text = translated;
+                zone._pendingSource = null;
+            }
         }
     }
 }

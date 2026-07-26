@@ -162,6 +162,8 @@ namespace UnityGameTranslator.Core
         private static Dictionary<int, string> lastSeenText = new Dictionary<int, string>();
         private static HashSet<string> pendingTranslations = new HashSet<string>();
         private static Queue<string> translationQueue = new Queue<string>();
+        // Texts queued explicitly as mod-UI (guarded by lockObj, like the queue itself).
+        private static readonly HashSet<string> pendingOwnUITexts = new HashSet<string>();
         // Note: Own UI detection now happens at processing time using IsOwnUITranslatable(component)
         // instead of string-based tracking which caused false positives when game text matched mod UI text
         private static object lockObj = new object();
@@ -2493,6 +2495,29 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// List the placeholder tokens an AI answer contains but its source text never had.
+        /// Returns null when nothing was invented. A token absent from the source can only be
+        /// a hallucination — small models have answered a bare "[!STR*0]", or appended one to
+        /// an otherwise correct sentence — and such an entry would both replace the text on
+        /// screen and be shared with the community on upload.
+        /// </summary>
+        private static string FindInventedPlaceholders(string source, string answer)
+        {
+            // Fast path: no token syntax at all in the answer (the overwhelming majority).
+            if (string.IsNullOrEmpty(answer) || answer.IndexOf("[!", StringComparison.Ordinal) < 0)
+                return null;
+
+            List<string> invented = null;
+            foreach (Match m in PlaceholderTokenPattern.Matches(answer))
+            {
+                if (source != null && source.Contains(m.Value)) continue;
+                if (invented == null) invented = new List<string>();
+                if (!invented.Contains(m.Value)) invented.Add(m.Value);
+            }
+            return invented == null ? null : string.Join(", ", invented);
+        }
+
+        /// <summary>
         /// Create or update a translation entry from the in-game text editor (human edit).
         /// Keeps the reverse cache in sync, rebuilds pattern entries when the key contains
         /// placeholders, and persists the cache.
@@ -3213,6 +3238,7 @@ namespace UnityGameTranslator.Core
 
                 string textToTranslate = null;
                 List<object> componentsToUpdate = null;
+                bool queuedAsOwnUI = false;
 
                 lock (lockObj)
                 {
@@ -3237,6 +3263,12 @@ namespace UnityGameTranslator.Core
                         // Remove from pending so same text can be re-queued with new components
                         pendingTranslations.Remove(textToTranslate);
 
+                        // Take the own-UI intent recorded at queue time: a code-owned label is
+                        // often queued WITHOUT a component (a fragment concatenated with data, a
+                        // help text applied by its own zone), and the components are the only
+                        // other way to recognise our own UI.
+                        queuedAsOwnUI = pendingOwnUITexts.Remove(textToTranslate);
+
                         if (Config.debug_ai)
                             Adapter?.LogInfo($"[Worker] Dequeued: {textToTranslate?.Substring(0, Math.Min(30, textToTranslate?.Length ?? 0))}...");
                     }
@@ -3256,8 +3288,8 @@ namespace UnityGameTranslator.Core
                     // Check if this text is from our own UI by examining the pending components
                     // Use IsOwnUI (not IsOwnUITranslatable) for tagging - it doesn't depend on translate_mod_ui config
                     // This is more accurate than string-based tracking which caused false positives
-                    bool isOwnUI = false;
-                    if (componentsToUpdate != null && componentsToUpdate.Count > 0)
+                    bool isOwnUI = queuedAsOwnUI;
+                    if (!isOwnUI && componentsToUpdate != null && componentsToUpdate.Count > 0)
                     {
                         foreach (var comp in componentsToUpdate)
                         {
@@ -3274,10 +3306,14 @@ namespace UnityGameTranslator.Core
                         if (Config.debug_ai)
                             Adapter?.LogInfo($"[Worker] Calling AI...{(isOwnUI ? " (UI prompt)" : "")}");
 
-                        // Extract variables then numbers BEFORE sending to AI
+                        // Extract variables then numbers BEFORE sending to AI.
+                        // Never on our own GUI: variables hold GAME state (player name, seed…) and
+                        // substitution is a plain Replace of their current value. A value that happens
+                        // to equal one of our labels would swallow it whole ("Current Translation" →
+                        // "[!STR*0]") and poison that cache entry for good.
                         string normalizedOriginal = textToTranslate;
                         List<KeyValuePair<int, string>> workerExtractedVars = null;
-                        if (VariableManager.HasVariables)
+                        if (VariableManager.HasVariables && !isOwnUI)
                         {
                             normalizedOriginal = VariableManager.ExtractVariables(normalizedOriginal, out workerExtractedVars);
                         }
@@ -3357,6 +3393,21 @@ namespace UnityGameTranslator.Core
                                 int delayMs = (int)(delaySec * 1000);
                                 for (int i = 0; i < delayMs && !ShuttingDown; i += 100)
                                     Thread.Sleep(Math.Min(100, delayMs - i));
+                            }
+
+                            // Discard an answer that invented placeholders: treated as no answer at
+                            // all, so nothing is cached and nothing reaches the screen.
+                            if (!string.IsNullOrEmpty(translation))
+                            {
+                                string invented = FindInventedPlaceholders(normalizedOriginal, translation);
+                                if (invented != null)
+                                {
+                                    string badPreview = normalizedOriginal.Length > 40
+                                        ? normalizedOriginal.Substring(0, 40) + "..."
+                                        : normalizedOriginal;
+                                    Adapter?.LogWarning($"[Worker] Discarded answer inventing {invented} (absent from source): '{badPreview}'");
+                                    translation = null;
+                                }
                             }
 
                             if (!string.IsNullOrEmpty(translation))
@@ -3515,6 +3566,10 @@ namespace UnityGameTranslator.Core
                 bool hasNlPlaceholders = textForAI.Contains("[!nl]");
                 bool hasTagPlaceholders = extractedTags != null && extractedTags.Count > 0;
                 bool hasNumberPlaceholders = extractedNumbers != null && extractedNumbers.Count > 0;
+                // Presence in THIS text, not "variables exist somewhere": announcing a placeholder
+                // the text does not contain invites the model to invent one — small models answered
+                // "[!STR*0]" alone, or appended it to an otherwise correct translation.
+                bool hasVarPlaceholders = textForAI.Contains(VariableManager.Prefix);
 
                 // === BUILD PROMPT based on processed text ===
                 var promptBuilder = new StringBuilder();
@@ -3540,7 +3595,7 @@ namespace UnityGameTranslator.Core
                         promptBuilder.AppendLine("- IMPORTANT: Keep [!t*0], [!t*1], etc. tag placeholders exactly as-is, do not modify or remove them");
                     if (hasNumberPlaceholders)
                         promptBuilder.AppendLine("- IMPORTANT: Keep [!v*0], [!v*1], etc. placeholders exactly as-is, do not modify them");
-                    if (VariableManager.HasVariables)
+                    if (hasVarPlaceholders)
                         promptBuilder.AppendLine("- IMPORTANT: Keep [!STR*0], [!STR*1], etc. string variable placeholders exactly as-is, do not translate or modify them");
 
                     if (textType == TextType.SingleWord)
@@ -3583,7 +3638,7 @@ namespace UnityGameTranslator.Core
                         promptBuilder.AppendLine("- IMPORTANT: Keep [!t*0], [!t*1], etc. tag placeholders exactly as-is, do not modify or remove them");
                     if (hasNumberPlaceholders)
                         promptBuilder.AppendLine("- IMPORTANT: Keep [!v*0], [!v*1], etc. placeholders exactly as-is, do not modify them");
-                    if (VariableManager.HasVariables)
+                    if (hasVarPlaceholders)
                         promptBuilder.AppendLine("- IMPORTANT: Keep [!STR*0], [!STR*1], etc. string variable placeholders exactly as-is, do not translate or modify them");
 
                     if (textType == TextType.SingleWord)
@@ -4551,8 +4606,11 @@ namespace UnityGameTranslator.Core
                     pendingComponents[text].Add(component);
                 }
 
-                // Note: isOwnUI is determined at processing time by checking pendingComponents
-                // This avoids false positives when game text matches mod UI text
+                // Record the own-UI intent: the worker also infers it from the components, but a
+                // code-owned label may be queued without any (see the dequeue). Never set from
+                // game text, so it cannot turn a game string into mod UI by coincidence.
+                if (isOwnUI)
+                    pendingOwnUITexts.Add(text);
 
                 if (pendingTranslations.Contains(text)) return;
 
@@ -4743,7 +4801,39 @@ namespace UnityGameTranslator.Core
         {
             if (string.IsNullOrEmpty(englishText) || Config == null || !ShouldTranslateOwnUI)
                 return englishText;
-            return TranslateTextWithTracking(englishText, component, isOwnUI: true);
+
+            string result = TranslateTextWithTracking(englishText, component, isOwnUI: true);
+
+            // Submit explicitly on a miss. The shared path refuses to queue ANY own-UI text — an
+            // anti-loop guard against our own translated writes coming back through the set_text
+            // patch — so a code-owned label has no submitter at all: the whitelist refresh only
+            // walks RegisterUIText'd components, and these labels are RegisterExcluded by contract.
+            // Same direct-enqueue route as TranslatorUIManager.RetriggerOwnUIText.
+            if (result == englishText && !IsOwnUITextKnown(englishText))
+                QueueForTranslation(englishText, component, isOwnUI: true);
+
+            return result;
+        }
+
+        /// <summary>
+        /// True when the cache already holds an entry for this own-UI text, WHATEVER its verdict
+        /// (translated, skipped, or "same as the source"). Deliberately not HasCachedTranslation,
+        /// which answers "is there a usable translation" and stays false for a skipped or identical
+        /// entry — a label written on every refresh would then be re-queued forever.
+        /// </summary>
+        private static bool IsOwnUITextKnown(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return false;
+
+            // Same key shape as the storage path: line endings, then numbers as placeholders.
+            // No variable extraction — own UI never goes through it (see the worker).
+            string key = NormalizeLineEndings(text);
+            if (Config != null && Config.normalize_numbers)
+                key = ExtractNumbersToPlaceholders(key, out _);
+
+            if (TranslationCache.ContainsKey(key)) return true;
+            string trimmed = key.Trim();
+            return trimmed != key && TranslationCache.ContainsKey(trimmed);
         }
 
         public static string TranslateTextWithTracking(string text, object component, bool isOwnUI = false, bool skipTypewriting = false, bool skipQueueing = false)
@@ -4871,10 +4961,11 @@ namespace UnityGameTranslator.Core
             // Cache keys are stored with normalized line endings (\n only)
             string lineNormalized = NormalizeLineEndings(text);
 
-            // Extract string variables BEFORE numbers
+            // Extract string variables BEFORE numbers — never on our own GUI (game variables
+            // have no meaning there, and a colliding value would eat the label; see the worker).
             string afterVars = lineNormalized;
             List<KeyValuePair<int, string>> extractedVars = null;
-            if (VariableManager.HasVariables)
+            if (VariableManager.HasVariables && !isOwnUI)
             {
                 afterVars = VariableManager.ExtractVariables(lineNormalized, out extractedVars);
             }

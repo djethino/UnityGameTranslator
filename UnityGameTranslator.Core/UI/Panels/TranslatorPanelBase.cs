@@ -112,14 +112,14 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// <summary>
         /// Creates a contextual help bar pinned between the scroll area and the footer
         /// buttons. Hovering any control described via helpZone.Describe(...) shows its
-        /// explanation there. The label is registered as UI text (translate_mod_ui).
+        /// explanation there. The zone translates its own label as it writes it (the code
+        /// owns that Text), so there is nothing to register here.
         /// </summary>
         protected Components.HelpZone CreateHelpZone(GameObject buttonRow, string defaultText = "")
         {
             var helpZone = new Components.HelpZone();
             var parent = buttonRow != null ? buttonRow.transform.parent.gameObject : ContentRoot;
-            var label = helpZone.CreateUI(parent, defaultText);
-            RegisterUIText(label);
+            helpZone.CreateUI(parent, defaultText);
 
             // Pin the bar just above the footer buttons
             if (buttonRow != null && helpZone.Root != null)

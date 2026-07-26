@@ -373,18 +373,26 @@ namespace UnityGameTranslator.Core.UI.Panels
             _resourcesByLabel.color = UIStyles.TextPrimary;
             UIFactory.SetLayoutElement(_resourcesByLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
 
-            // URL displayed in full (so user sees where they're going)
+            // URL displayed in FULL, never shortened: the user must see where the link leads before
+            // opening it. A long URL therefore wraps, so the label has to reserve the height it
+            // draws — otherwise its second line ran under the button below.
             _resourcesUrlLabel = UIFactory.CreateLabel(_resourcesLinkSection, "ResourcesUrlLabel",
-                "", TextAnchor.MiddleLeft);
+                "", TextAnchor.UpperLeft);
             _resourcesUrlLabel.fontSize = UIStyles.FontSizeHint;
             _resourcesUrlLabel.color = UIStyles.TextAccent;
-            UIFactory.SetLayoutElement(_resourcesUrlLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+            UIFactory.SetLayoutElement(_resourcesUrlLabel.gameObject, minHeight: UIStyles.RowHeightSmall,
+                flexibleWidth: 9999);
+            UIFactory.ConfigureAutoHeight(_resourcesUrlLabel, UIStyles.SmallSpacing);
 
-            // Open button (centered)
+            // Open button (centered), kept clear of the URL above it
             var openBtnRow = UIFactory.CreateHorizontalGroup(_resourcesLinkSection, "OpenBtnRow", false, false, true, true, 0);
             UIFactory.SetLayoutElement(openBtnRow, minHeight: UIStyles.RowHeightLarge, flexibleWidth: 9999);
             var openBtnLayout = openBtnRow.GetComponent<HorizontalLayoutGroup>();
-            if (openBtnLayout != null) openBtnLayout.childAlignment = TextAnchor.MiddleCenter;
+            if (openBtnLayout != null)
+            {
+                openBtnLayout.childAlignment = TextAnchor.MiddleCenter;
+                openBtnLayout.padding = Compat.MakeRectOffset(0, 0, UIStyles.SmallSpacing, 0);
+            }
 
             _resourcesLinkBtn = CreateSecondaryButton(openBtnRow, "ResourcesOpenBtn", "Open in Browser", 140);
             // Fill the card width (bounded, no floating/overflowing button) and keep a consistent height.
@@ -1013,12 +1021,40 @@ namespace UnityGameTranslator.Core.UI.Panels
                 if (hasResources)
                 {
                     string uploader = serverState?.Uploader;
-                    _resourcesByLabel.text = !string.IsNullOrEmpty(uploader)
+                    string by = !string.IsNullOrEmpty(uploader)
                         ? $"External Resources uploaded by @{uploader}"
                         : "External Resources";
+
+                    // Say whether the link still has something for this user. The fonts and images a
+                    // translation names never travel with it, so a missing one means the link is
+                    // worth following — and it explains boxes or untranslated art in the game.
+                    var missing = AssetAvailability.GetMissingResources();
+                    if (missing.Any)
+                    {
+                        _resourcesByLabel.text = $"{by} — {DescribeMissing(missing)} missing";
+                        _resourcesByLabel.color = UIStyles.StatusWarning;
+                        UIStyles.SetBackground(_resourcesLinkSection, UIStyles.CardElevated);
+                    }
+                    else
+                    {
+                        _resourcesByLabel.text = by;
+                        _resourcesByLabel.color = UIStyles.TextPrimary;
+                        UIStyles.SetBackground(_resourcesLinkSection, UIStyles.CardBackground);
+                    }
+
                     _resourcesUrlLabel.text = resourcesUrl;
                 }
             }
+        }
+
+        /// <summary>"2 fonts, 3 images" — only the kinds actually missing, singular where it fits.</summary>
+        private static string DescribeMissing(AssetAvailability.MissingResources missing)
+        {
+            string fonts = missing.Fonts > 0 ? $"{missing.Fonts} font{(missing.Fonts > 1 ? "s" : "")}" : null;
+            string images = missing.Images > 0 ? $"{missing.Images} image{(missing.Images > 1 ? "s" : "")}" : null;
+
+            if (fonts != null && images != null) return $"{fonts}, {images}";
+            return fonts ?? images ?? "";
         }
 
         private void RefreshAccountSection()

@@ -503,6 +503,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                         ResourcesUrl = string.IsNullOrEmpty(resourcesUrl) ? null : resourcesUrl
                     };
                     TranslatorCore.LastSyncedHash = result.FileHash;
+                    // Keep the local file in step with what was just published
+                    TranslatorCore.TranslationUIFont = TranslatorCore.EffectiveInterfaceFont;
                     TranslatorCore.ResetMetadataDirty();
                     TranslatorCore.SaveCache();
                     TranslatorCore.SaveAncestorCache();
@@ -613,6 +615,20 @@ namespace UnityGameTranslator.Core.UI.Panels
                 foreach (var pattern in exclusions)
                     exclusionsArray.Add(pattern);
                 output["_exclusions"] = exclusionsArray;
+            }
+
+            // Publish the interface font with the translation: uploading IS publishing, so the font
+            // this translated UI needs travels with it. The font FILES come separately, from the
+            // author's resources link (fonts/ folder).
+            // NOTE: the other _settings (typewriting/concat detection…) are deliberately left out —
+            // they have never been shared, widening that is a separate decision.
+            string uiFont = TranslatorCore.EffectiveInterfaceFont;
+            if (!string.IsNullOrEmpty(uiFont))
+            {
+                output["_settings"] = new System.Collections.Generic.Dictionary<string, object>
+                {
+                    ["ui_font"] = uiFont
+                };
             }
 
             // Include image replacements

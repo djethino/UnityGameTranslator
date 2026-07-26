@@ -676,12 +676,83 @@ namespace UnityGameTranslator.Core
             return IsOwnUI(instanceId) || IsOwnUIByHierarchy(component);
         }
 
+        // ── Mod-interface translation: what the translation asks for vs what the user overrides ──
+
+        /// <summary>
+        /// Font the translation wants the mod interface rendered with ("_settings.ui_font"), so a
+        /// translator shipping a non-Latin UI can name the font that renders it. Travels with the
+        /// file; the font FILES themselves come from the author's resources link (fonts/ folder).
+        /// </summary>
+        public static string TranslationUIFont { get; set; }
+
+        /// <summary>True once the loaded translation contains mod-UI lines (tag "M").</summary>
+        public static bool TranslationHasUILines { get; private set; }
+
+        private static string _fontAvailabilityCheckedFor;
+        private static bool _fontAvailabilityResult;
+
+        /// <summary>
+        /// Interface font in effect: the local choice wins, otherwise what the translation asks for.
+        /// </summary>
+        public static string EffectiveInterfaceFont
+        {
+            get
+            {
+                string local = Config?.interface_font;
+                return !string.IsNullOrEmpty(local) ? local : TranslationUIFont;
+            }
+        }
+
+        /// <summary>
+        /// An interface font is required but absent from this machine. Cached: this is read from
+        /// translation hot paths, and resolving a font name touches the filesystem.
+        /// </summary>
+        public static bool InterfaceFontMissing
+        {
+            get
+            {
+                string font = EffectiveInterfaceFont;
+                if (string.IsNullOrEmpty(font)) return false;
+
+                if (_fontAvailabilityCheckedFor != font)
+                {
+                    _fontAvailabilityCheckedFor = font;
+                    _fontAvailabilityResult = AssetAvailability.IsFontAvailable(font);
+                }
+                return !_fontAvailabilityResult;
+            }
+        }
+
+        /// <summary>Forget the cached font-availability verdict (after fonts are (un)installed).</summary>
+        public static void InvalidateInterfaceFontAvailability() => _fontAvailabilityCheckedFor = null;
+
+        /// <summary>
+        /// Whether the mod's own interface should be translated right now.
+        ///
+        /// The local setting wins when the user expressed one; otherwise the translation decides
+        /// (a file carrying "M" lines was authored with a translated UI).
+        ///
+        /// Overriding both: if the required font is missing we keep the interface in English. The
+        /// alternative is a UI full of boxes — and unlike the game, where boxes prompt the user to
+        /// open this very interface and see what resources are missing, an unreadable interface
+        /// leaves nowhere to go.
+        /// </summary>
+        public static bool ShouldTranslateOwnUI
+        {
+            get
+            {
+                if (InterfaceFontMissing) return false;
+                bool? local = Config?.translate_mod_ui;
+                return local ?? TranslationHasUILines;
+            }
+        }
+
         /// <summary>
         /// Check if a component should use UI-specific prompt (own UI).
-        /// Returns false if translate_mod_ui is disabled in config.
+        /// Returns false when the mod interface is not being translated.
         /// Uses hierarchy check if not explicitly registered.
         /// </summary>
-        public static bool IsOwnUITranslatable(int instanceId) => Config.translate_mod_ui && ownUITranslatable.Contains(instanceId);
+        public static bool IsOwnUITranslatable(int instanceId) => ShouldTranslateOwnUI && ownUITranslatable.Contains(instanceId);
 
         /// <summary>
         /// Check if a component should use UI-specific prompt (own UI).
@@ -689,7 +760,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static bool IsOwnUITranslatable(Component component)
         {
-            if (!Config.translate_mod_ui) return false;
+            if (!ShouldTranslateOwnUI) return false;
             if (component == null) return false;
             int instanceId = component.GetInstanceID();
             // Check explicit registration first, then hierarchy
@@ -711,7 +782,7 @@ namespace UnityGameTranslator.Core
                 return true;
             if (ownUIExcluded.Contains(instanceId))
                 return true;
-            if (ownUITranslatable.Contains(instanceId) && !Config.translate_mod_ui)
+            if (ownUITranslatable.Contains(instanceId) && !ShouldTranslateOwnUI)
                 return true;
             return false;
         }
@@ -736,9 +807,9 @@ namespace UnityGameTranslator.Core
             // Explicitly excluded - always skip
             if (ownUIExcluded.Contains(instanceId))
                 return true;
-            // Explicitly translatable - skip only if translate_mod_ui is disabled
+            // Explicitly translatable - skip only if the mod interface isn't being translated
             if (ownUITranslatable.Contains(instanceId))
-                return !Config.translate_mod_ui;
+                return !ShouldTranslateOwnUI;
             // Part of our UI by hierarchy but NOT explicitly registered as translatable:
             // WHITELIST for the mod GUI — only RegisterUIText'd chrome (labels/buttons/hints) is
             // ever translated. Everything else in our UI (dropdown VALUES, input-field text,
@@ -1484,6 +1555,11 @@ namespace UnityGameTranslator.Core
             // Reset server state (will be populated by check-uuid if online)
             ServerState = null;
 
+            // Re-derived from the file being loaded (a reload may drop what a previous file carried)
+            TranslationHasUILines = false;
+            TranslationUIFont = null;
+            InvalidateInterfaceFontAvailability();
+
             if (!File.Exists(CachePath))
             {
                 // Generate UUID for new translation file
@@ -1620,6 +1696,8 @@ namespace UnityGameTranslator.Core
                             DisableEventSystemOverride = settingsObj["disable_eventsystem_override"]?.Value<bool>() ?? false;
                             TypewritingDetection = settingsObj["typewriting_detection"]?.Value<bool>() ?? true;
                             ConcatDetection = settingsObj["concat_detection"]?.Value<bool>() ?? true;
+                            TranslationUIFont = settingsObj["ui_font"]?.Value<string>();
+                            InvalidateInterfaceFontAvailability();
                             LogDebug($"[LoadCache] Loaded settings: DisableEventSystemOverride={DisableEventSystemOverride}, TW={TypewritingDetection}, Concat={ConcatDetection}");
                         }
                     }
@@ -1674,6 +1752,10 @@ namespace UnityGameTranslator.Core
                         {
                             TranslationCache[normalizedKey] = newEntry;
                         }
+
+                        // "M" lines mean this file was authored with a translated mod interface —
+                        // that's what decides for users who never set the option themselves.
+                        if (newEntry.Tag == "M") TranslationHasUILines = true;
 
                         // Mark modified if key was normalized
                         if (normalizedKey != prop.Name)
@@ -4157,6 +4239,7 @@ namespace UnityGameTranslator.Core
 
                 TranslationCache[normalizedKey] = entry;
                 cacheModified = true;
+                if (entry.Tag == "M") TranslationHasUILines = true;
 
                 // Track local changes (if different from ancestor or new)
                 if (AncestorCache.Count > 0)
@@ -4632,7 +4715,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static string TranslateOwnUIDynamic(string englishText, object component = null)
         {
-            if (string.IsNullOrEmpty(englishText) || Config == null || !Config.translate_mod_ui)
+            if (string.IsNullOrEmpty(englishText) || Config == null || !ShouldTranslateOwnUI)
                 return englishText;
             return TranslateTextWithTracking(englishText, component, isOwnUI: true);
         }
@@ -5212,6 +5295,8 @@ namespace UnityGameTranslator.Core
                             settingsObj["typewriting_detection"] = false;
                         if (!ConcatDetection)
                             settingsObj["concat_detection"] = false;
+                        if (!string.IsNullOrEmpty(TranslationUIFont))
+                            settingsObj["ui_font"] = TranslationUIFont;
                         if (settingsObj.Count > 0)
                             output["_settings"] = settingsObj;
                     }
@@ -5435,9 +5520,13 @@ namespace UnityGameTranslator.Core
 
         // General settings
         public bool capture_keys_only { get; set; } = false;
-        public bool translate_mod_ui { get; set; } = false; // Translate the mod's own interface
-        // Font applied to the mod's own UI when translate_mod_ui is on (game/system/custom font name,
-        // possibly with a "[Game] "/"[Custom] " picker prefix). null = UniverseLib's default UI font.
+        // Translate the mod's own interface. THREE states: true/false = the user decided and that
+        // wins; ABSENT = let the translation decide (a file carrying "M" lines was authored with a
+        // translated UI). See TranslatorCore.ShouldTranslateOwnUI.
+        public bool? translate_mod_ui { get; set; } = null;
+        // Local override for the interface font (game/system/custom font name, possibly with a
+        // "[Game] "/"[Custom] " picker prefix). null = use whatever the translation asks for
+        // (_settings.ui_font), or UniverseLib's default when it asks for nothing.
         public string interface_font { get; set; } = null;
 
         /// <summary>

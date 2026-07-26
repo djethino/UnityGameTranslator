@@ -4823,6 +4823,19 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Whether the OS name→path font map could be built on this runtime. When it could not,
+        /// "no path found" means "unknown", not "not installed".
+        /// </summary>
+        public static bool HasSystemFontPathMap
+        {
+            get
+            {
+                if (_systemFontPaths == null) { var _ = SystemFonts; }
+                return _systemFontPaths != null && _systemFontPaths.Count > 0;
+            }
+        }
+
+        /// <summary>
         /// Origin of a font picker entry, for the dropdown category filter: "Game", "Custom" or
         /// "System". Returns null for non-font entries such as "(None)", which must stay visible
         /// whatever the selected category.

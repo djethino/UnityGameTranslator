@@ -40,6 +40,7 @@ namespace UnityGameTranslator.Core.UI
         private static bool _uiFontRebacked;            // true = IL2CPP reback path in effect (vs Mono object swap)
         private static string _pendingRebackFont;       // IL2CPP: font to reback after the deferred restore→reback gap
         private static int _rebackDelay;                // frames left before the pending reback fires
+        private static string _missingInterfaceFontReported; // font we already warned about (warn once per value)
         // The interface font + mod-UI translation are applied lazily on first show: at init the custom
         // fonts aren't loaded yet and the translation worker isn't ready, so an early pass is a no-op.
         private static bool _uiFontBootstrapped;
@@ -389,13 +390,38 @@ namespace UnityGameTranslator.Core.UI
             // UI font in place — rewrite its fontNames to the chosen system font's family, and FreeType
             // re-rasterizes with it. Same mechanism the game font-replacement uses (FontManager reback via
             // TextureHelper.SetFontNames). Works on Mono AND IL2CPP.
-            bool wantCustom = TranslatorCore.Config.translate_mod_ui && !string.IsNullOrEmpty(TranslatorCore.Config.interface_font);
+            // The font in effect: the user's local override, else the one the translation asks for.
+            string requestedFont = TranslatorCore.EffectiveInterfaceFont;
+
+            // The font may simply not be here: the translation names one whose files come from the
+            // author's resources link, or a config arrived from another machine. The interface then
+            // stays English (ShouldTranslateOwnUI is false) rather than showing boxes — so say what
+            // is missing, since this window is where the user comes to find out.
+            if (!string.IsNullOrEmpty(requestedFont) && TranslatorCore.InterfaceFontMissing)
+            {
+                if (_missingInterfaceFontReported != requestedFont)
+                {
+                    _missingInterfaceFontReported = requestedFont;
+                    TranslatorCore.LogWarning($"[UIManager] Interface font '{requestedFont}' is missing — " +
+                        "mod interface kept in English (get the translation's resources to install it)");
+                    StatusOverlay?.ShowToast(
+                        $"Missing font '{requestedFont}' — interface kept in English. Install the translation's resources.",
+                        Panels.StatusOverlay.ToastTone.Off);
+                }
+            }
+            else
+            {
+                _missingInterfaceFontReported = null;
+            }
+
+            bool wantCustom = TranslatorCore.ShouldTranslateOwnUI && !string.IsNullOrEmpty(requestedFont)
+                && !TranslatorCore.InterfaceFontMissing;
 
             // The split is by RUNTIME CAPABILITY, not by platform: wherever a fresh OS-backed Font can
             // be created (Mono, and IL2CPP builds that kept CreateDynamicFontFromOSFont) we swap the
             // font object — an empty atlas re-renders cleanly at runtime. Where it was stripped, we
             // reback the existing UI font's OS backing (fontNames) instead.
-            UnityEngine.Font freshFont = wantCustom ? FontManager.LoadUIFont(TranslatorCore.Config.interface_font) : null;
+            UnityEngine.Font freshFont = wantCustom ? FontManager.LoadUIFont(requestedFont) : null;
             TranslatorCore.LogDebug($"[UIManager] Interface font: want={wantCustom} fresh={(freshFont != null ? freshFont.name : "null")} " +
                 $"path={(wantCustom && freshFont != null ? "swap" : wantCustom ? "reback" : "restore")}");
 
@@ -417,7 +443,7 @@ namespace UnityGameTranslator.Core.UI
                 FontManager.RestoreFontToOriginal(_originalUIFont, _originalUIFontFamily);
                 UniversalUI.DefaultFont = _originalUIFont;
                 RerenderModUIFont(false);
-                _pendingRebackFont = TranslatorCore.Config.interface_font;
+                _pendingRebackFont = requestedFont;
                 _rebackDelay = 60; // ~1s — the slowest atlas we've seen (Frog); LongYin tolerates it too
                 _uiFontRebacked = true;
             }
@@ -559,7 +585,7 @@ namespace UnityGameTranslator.Core.UI
         public static void RefreshOwnUITranslation()
         {
             if (UiBase?.RootObject == null) return;
-            if (!TranslatorCore.Config.translate_mod_ui || !TranslatorCore.Config.enable_translations) return;
+            if (!TranslatorCore.ShouldTranslateOwnUI || !TranslatorCore.Config.enable_translations) return;
 
             int count = 0;
             RetriggerOwnUIText(UiBase.RootObject.transform, ref count);

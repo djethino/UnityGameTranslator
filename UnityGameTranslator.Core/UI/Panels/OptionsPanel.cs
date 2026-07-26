@@ -185,7 +185,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 return new ConfigSnapshot
                 {
                     enable_translations = TranslatorCore.Config.enable_translations,
-                    translate_mod_ui = TranslatorCore.Config.translate_mod_ui,
+                    // Compare against what is in effect, so the Apply counter reacts to the toggle
+                    // the same way whether or not the user had already made an explicit choice.
+                    translate_mod_ui = TranslatorCore.ShouldTranslateOwnUI,
                     interface_font = TranslatorCore.Config.interface_font,
                     source_language = TranslatorCore.Config.source_language ?? "auto",
                     target_language = TranslatorCore.Config.target_language ?? "auto",
@@ -369,8 +371,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             RegisterUIText(interfaceFontLabel);
 
             string[] interfaceFontOptions = BuildInterfaceFontOptions();
-            string initialInterfaceFont = string.IsNullOrEmpty(TranslatorCore.Config.interface_font)
-                ? "(None)" : TranslatorCore.Config.interface_font;
+            // Show the font IN EFFECT — the local override if set, else the one the translation
+            // asks for — so the picker reflects what the user actually sees.
+            string initialInterfaceFont = string.IsNullOrEmpty(TranslatorCore.EffectiveInterfaceFont)
+                ? "(None)" : TranslatorCore.EffectiveInterfaceFont;
             if (!Array.Exists(interfaceFontOptions, o => o == initialInterfaceFont))
                 initialInterfaceFont = "(None)";
             _interfaceFontDropdown = new SearchableDropdown("InterfaceFont", interfaceFontOptions,
@@ -1176,11 +1180,13 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // General
             _enableTranslationsToggle.isOn = TranslatorCore.Config.enable_translations;
-            _translateModUIToggle.isOn = TranslatorCore.Config.translate_mod_ui;
+            // Tri-state: show what is IN EFFECT (the user's choice, or the translation's when they
+            // never made one). Ticking the box then records an explicit choice.
+            _translateModUIToggle.isOn = TranslatorCore.ShouldTranslateOwnUI;
 
             // Interface font: sync the picker visibility with the checkbox on (re)load.
             if (_interfaceFontRow != null)
-                _interfaceFontRow.SetActive(TranslatorCore.Config.translate_mod_ui);
+                _interfaceFontRow.SetActive(_translateModUIToggle.isOn);
 
             // Source language
             string configSourceLang = TranslatorCore.Config.source_language;
@@ -1667,10 +1673,15 @@ namespace UnityGameTranslator.Core.UI.Panels
             var options = new List<string> { "(None)" };
 
             var sys = FontManager.SystemFonts;
-            if (sys != null && sys.Length > 0)
+            if (sys != null)
             {
-                options.Add("--- System Fonts ---");
-                options.AddRange(sys);
+                // Only offer fonts the OS can actually hand us a file for — an entry the runtime
+                // cannot resolve would silently render as the default font instead.
+                foreach (string font in sys)
+                {
+                    if (AssetAvailability.IsSystemFontAvailable(font))
+                        options.Add(font);
+                }
             }
 
             return options.ToArray();
@@ -1691,10 +1702,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 // General
                 TranslatorCore.Config.enable_translations = _enableTranslationsToggle.isOn;
+                // Applying records an EXPLICIT choice (tri-state leaves "undecided" for users who
+                // never opened this, letting the translation decide for them).
                 TranslatorCore.Config.translate_mod_ui = _translateModUIToggle.isOn;
                 TranslatorCore.Config.interface_font = _interfaceFontDropdown != null
                     ? NormalizeInterfaceFont(_interfaceFontDropdown.SelectedValue)
                     : TranslatorCore.Config.interface_font;
+                TranslatorCore.InvalidateInterfaceFontAvailability();
 
                 // Languages
                 string selectedSourceLang = _sourceLanguageDropdown.SelectedValue;
@@ -1809,8 +1823,8 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 // Interface font: (re)apply the mod UI font from the committed config.
                 TranslatorUIManager.ApplyInterfaceFont();
-                // Mod UI translation: enable → submit our text; disable → restore English.
-                if (TranslatorCore.Config.translate_mod_ui)
+                // Mod UI translation: enable → submit our text; disable (or missing font) → English.
+                if (TranslatorCore.ShouldTranslateOwnUI)
                     TranslatorUIManager.RefreshOwnUITranslation();
                 else
                     TranslatorUIManager.RestoreOwnUIEnglish();

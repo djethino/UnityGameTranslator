@@ -271,6 +271,24 @@ namespace UnityGameTranslator.Core.UI.Panels
         }
 
         /// <summary>
+        /// Write a label the CODE owns (status lines, state buttons, counters), translated at the
+        /// moment it is written. Such labels are RegisterExcluded — letting the async pipeline also
+        /// write them would put two writers on one Text and leave it stuck or inconsistent — so the
+        /// translation has to happen here instead.
+        ///
+        /// Pass the label as the component so the worker can drop the translation in once it lands
+        /// (a cache miss returns English now and queues it for next time). Numbers inside the text
+        /// are turned into placeholders by the pipeline, so "Apply (1)" and "Apply (7)" share one
+        /// cache entry — but any OTHER data (a username, a language, a game name) must be kept OUT
+        /// of the string and concatenated by the caller, or the cache fills with one entry per value.
+        /// </summary>
+        protected static void SetDynamicText(Text label, string english)
+        {
+            if (label == null) return;
+            label.text = TranslatorCore.TranslateOwnUIDynamic(english, label);
+        }
+
+        /// <summary>
         /// Registers a TMPro text component as excluded from translation.
         /// Use for: mod title, language codes, config values, technical labels.
         /// </summary>

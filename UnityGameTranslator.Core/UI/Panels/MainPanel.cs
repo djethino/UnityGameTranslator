@@ -819,11 +819,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (showBanner)
             {
                 var info = TranslatorUIManager.ModUpdateInfo;
-                _modUpdateLabel.text = $"Mod update available: v{info?.LatestVersion ?? "?"}";
+                // Version number appended: it is data, and it changes with every release
+                _modUpdateLabel.text = TranslatorCore.TranslateOwnUIDynamic("Mod update available:", _modUpdateLabel)
+                    + $" v{info?.LatestVersion ?? "?"}";
 
                 // Show appropriate button text
                 bool hasDirectDownload = !string.IsNullOrEmpty(info?.DownloadUrl);
-                _modUpdateBtn.ButtonText.text = hasDirectDownload ? "Download" : "View Release";
+                SetDynamicText(_modUpdateBtn.ButtonText, hasDirectDownload ? "Download" : "View Release");
             }
         }
 
@@ -917,7 +919,10 @@ namespace UnityGameTranslator.Core.UI.Panels
                         int localChanges = TranslatorCore.LocalChangesCount;
                         if (localChanges > 0)
                         {
-                            message = $"You have {localChanges} changes compared to @{serverState.Uploader}'s translation.";
+                            // Count inline (placeholdered), uploader appended as data
+                            message = TranslatorCore.TranslateOwnUIDynamic(
+                                          $"You have {localChanges} changes compared to the translation of", _guidanceLabel)
+                                      + $" @{serverState.Uploader}";
                         }
                     }
                     break;
@@ -936,7 +941,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             _guidanceSection.SetActive(hasMessage);
             if (hasMessage)
             {
-                _guidanceLabel.text = message;
+                // The ContributorSameUuid branch already translated (it appends a username);
+                // the others are plain sentences translated here.
+                _guidanceLabel.text = _currentLayoutState == LayoutState.ContributorSameUuid
+                    ? message
+                    : TranslatorCore.TranslateOwnUIDynamic(message, _guidanceLabel);
             }
         }
 
@@ -1066,15 +1075,17 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             if (isLoggedIn)
             {
-                _accountLabel.text = $"Connected as @{currentUser ?? "Unknown"}";
+                // Username concatenated, never sent for translation (one cache entry per user otherwise)
+                _accountLabel.text = TranslatorCore.TranslateOwnUIDynamic("Connected as", _accountLabel)
+                    + $" @{currentUser ?? "Unknown"}";
                 _accountLabel.fontStyle = FontStyle.Normal;
-                _loginLogoutBtn.ButtonText.text = "Logout";
+                SetDynamicText(_loginLogoutBtn.ButtonText, "Logout");
             }
             else
             {
-                _accountLabel.text = "Not connected";
+                SetDynamicText(_accountLabel, "Not connected");
                 _accountLabel.fontStyle = FontStyle.Italic;
-                _loginLogoutBtn.ButtonText.text = "Login";
+                SetDynamicText(_loginLogoutBtn.ButtonText, "Login");
 
                 // Disable login if offline mode
                 _loginLogoutBtn.Component.interactable = TranslatorCore.Config.online_mode;
@@ -1096,12 +1107,15 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             TranslatorCore.LogDebug($"[MainPanel] RefreshTranslationInfo: entries={entryCount}, target={targetLang}, serverState={(serverState == null ? "null" : $"checked={serverState.Checked}")}");
 
-            _entriesLabel.text = $"Entries: {entryCount}";
-            _targetLabel.text = $"Target: {targetLang}";
+            // Counts stay inside the string: the pipeline turns numbers into placeholders, so every
+            // count shares one cache entry. Languages, usernames and ids are concatenated instead.
+            SetDynamicText(_entriesLabel, $"Entries: {entryCount}");
+            _targetLabel.text = TranslatorCore.TranslateOwnUIDynamic("Target:", _targetLabel) + $" {targetLang}";
 
             if (existsOnServer)
             {
-                _sourceLabel.text = $"Source: {serverState.Uploader ?? "Website"} (#{serverState.SiteId})";
+                _sourceLabel.text = TranslatorCore.TranslateOwnUIDynamic("Source:", _sourceLabel)
+                    + $" {serverState.Uploader ?? "Website"} (#{serverState.SiteId})";
 
                 // Role indicator
                 switch (serverState.Role)
@@ -1109,16 +1123,18 @@ namespace UnityGameTranslator.Core.UI.Panels
                     case TranslationRole.Main:
                         if (serverState.BranchesCount > 0)
                         {
-                            _roleLabel.text = $"[MAIN] {serverState.BranchesCount} contribution(s) from other players";
+                            SetDynamicText(_roleLabel, $"[MAIN] {serverState.BranchesCount} contribution(s) from other players");
                         }
                         else
                         {
-                            _roleLabel.text = "[MAIN] You own this translation";
+                            SetDynamicText(_roleLabel, "[MAIN] You own this translation");
                         }
                         _roleLabel.color = UIStyles.StatusSuccess;
                         break;
                     case TranslationRole.Branch:
-                        _roleLabel.text = $"[BRANCH] Your changes go to @{serverState.MainUsername ?? serverState.Uploader} for review";
+                        _roleLabel.text = "[BRANCH] "
+                            + TranslatorCore.TranslateOwnUIDynamic("Your changes are reviewed by", _roleLabel)
+                            + $" @{serverState.MainUsername ?? serverState.Uploader}";
                         _roleLabel.color = UIStyles.StatusWarning;
                         break;
                     default:
@@ -1135,23 +1151,23 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 if (needsMerge)
                 {
-                    _syncStatusLabel.text = $"SYNC NEEDED - Both local ({localChanges}) and server changed";
+                    SetDynamicText(_syncStatusLabel, $"SYNC NEEDED - Both local ({localChanges}) and server changed");
                     _syncStatusLabel.color = UIStyles.StatusWarning;
                 }
                 else if (localChanges > 0)
                 {
-                    _syncStatusLabel.text = $"OUT OF SYNC - {localChanges} local changes to upload";
+                    SetDynamicText(_syncStatusLabel, $"OUT OF SYNC - {localChanges} local changes to upload");
                     _syncStatusLabel.color = UIStyles.StatusWarning;
                 }
                 else if (hasServerUpdate)
                 {
                     int serverLines = TranslatorUIManager.PendingUpdateInfo?.LineCount ?? 0;
-                    _syncStatusLabel.text = $"OUT OF SYNC - Server has update ({serverLines} lines)";
+                    SetDynamicText(_syncStatusLabel, $"OUT OF SYNC - Server has update ({serverLines} lines)");
                     _syncStatusLabel.color = UIStyles.StatusWarning;
                 }
                 else
                 {
-                    _syncStatusLabel.text = "SYNCED with server";
+                    SetDynamicText(_syncStatusLabel, "SYNCED with server");
                     _syncStatusLabel.color = UIStyles.StatusSuccess;
                 }
             }
@@ -1162,24 +1178,24 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 if (serverState != null && serverState.Checked)
                 {
-                    _sourceLabel.text = "Source: Local only (not on server)";
-                    _syncStatusLabel.text = $"All {entryCount} entries are local";
+                    SetDynamicText(_sourceLabel, "Source: Local only (not on server)");
+                    SetDynamicText(_syncStatusLabel, $"All {entryCount} entries are local");
                     _syncStatusLabel.color = UIStyles.TextMuted;
                 }
                 else if (!TranslatorCore.Config.online_mode)
                 {
-                    _sourceLabel.text = "Source: Local (offline mode)";
+                    SetDynamicText(_sourceLabel, "Source: Local (offline mode)");
                     _syncStatusLabel.text = "";
                 }
                 else if (string.IsNullOrEmpty(TranslatorCore.Config.api_token))
                 {
                     // Online mode but not logged in - can't check server state
-                    _sourceLabel.text = "Source: Local (login to sync)";
+                    SetDynamicText(_sourceLabel, "Source: Local (login to sync)");
                     _syncStatusLabel.text = "";
                 }
                 else
                 {
-                    _sourceLabel.text = "Source: Local (checking...)";
+                    SetDynamicText(_sourceLabel, "Source: Local (checking...)");
                     _syncStatusLabel.text = "";
                 }
             }
@@ -1188,9 +1204,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (TranslatorCore.Config.IsTranslationEnabled)
             {
                 int queueCount = TranslatorCore.QueueCount;
+                // Backend name is a brand, kept out of the translated part
                 string backendLabel = TranslatorCore.Config.translation_backend == "llm" ? "AI" :
                     TranslatorCore.Config.translation_backend == "google" ? "Google" : "DeepL";
-                _aiStatusLabel.text = queueCount > 0 ? $"{backendLabel}: {queueCount} in queue" : $"{backendLabel}: Ready";
+                _aiStatusLabel.text = $"{backendLabel}: " + (queueCount > 0
+                    ? TranslatorCore.TranslateOwnUIDynamic($"{queueCount} in queue", _aiStatusLabel)
+                    : TranslatorCore.TranslateOwnUIDynamic("Ready", _aiStatusLabel));
             }
             else
             {
@@ -1220,37 +1239,43 @@ namespace UnityGameTranslator.Core.UI.Panels
             bool needsMerge = TranslatorUIManager.HasPendingUpdate &&
                 TranslatorUIManager.PendingUpdateDirection == UpdateDirection.Merge;
 
+            // Hints are translated as they are built: counts and ids stay inline (the pipeline
+            // placeholders numbers), usernames are appended so they never reach the translator.
             if (needsMerge)
             {
                 // Merge needed - show sync button with clear explanation
                 uploadAction = "Sync Translation";
-                uploadHint = $"Both local ({TranslatorCore.LocalChangesCount} changes) and server were updated. Click to sync.";
+                uploadHint = TranslatorCore.TranslateOwnUIDynamic(
+                    $"Both local ({TranslatorCore.LocalChangesCount} changes) and server were updated. Click to sync.",
+                    _uploadHintLabel);
             }
             else if (isInSync)
             {
                 // In sync - no need to show upload button
                 uploadAction = "Up to date";
-                uploadHint = "Your translation is synchronized with the server";
+                uploadHint = TranslatorCore.TranslateOwnUIDynamic(
+                    "Your translation is synchronized with the server", _uploadHintLabel);
             }
             else if (existsOnServer && state.IsOwner)
             {
                 uploadAction = "Update Translation";
-                uploadHint = hasLocalChanges
+                uploadHint = TranslatorCore.TranslateOwnUIDynamic(hasLocalChanges
                     ? $"Update #{state.SiteId} ({TranslatorCore.LocalChangesCount} local changes)"
-                    : $"Update your translation #{state.SiteId}";
+                    : $"Update your translation #{state.SiteId}", _uploadHintLabel);
             }
             else if (existsOnServer && !state.IsOwner)
             {
                 uploadAction = "Contribute";
-                uploadHint = $"Contribute as a branch to @{state.Uploader}'s translation";
+                uploadHint = TranslatorCore.TranslateOwnUIDynamic("Contribute as a branch to", _uploadHintLabel)
+                    + $" @{state.Uploader}";
             }
             else
             {
                 uploadAction = "Upload Translation";
-                uploadHint = "Create a new translation";
+                uploadHint = TranslatorCore.TranslateOwnUIDynamic("Create a new translation", _uploadHintLabel);
             }
 
-            _uploadBtn.ButtonText.text = uploadAction;
+            SetDynamicText(_uploadBtn.ButtonText, uploadAction);
 
             // Enable/disable based on conditions
             // Disable if in sync (nothing to upload) or other conditions not met
@@ -1261,19 +1286,19 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Update hint
             if (!TranslatorCore.Config.online_mode)
             {
-                _uploadHintLabel.text = "Offline mode - upload disabled";
+                SetDynamicText(_uploadHintLabel, "Offline mode - upload disabled");
             }
             else if (!isLoggedIn)
             {
-                _uploadHintLabel.text = "Login required";
+                SetDynamicText(_uploadHintLabel, "Login required");
             }
             else if (TranslatorCore.TranslationCache.Count == 0)
             {
-                _uploadHintLabel.text = "No translations to upload";
+                SetDynamicText(_uploadHintLabel, "No translations to upload");
             }
             else
             {
-                _uploadHintLabel.text = uploadHint;
+                _uploadHintLabel.text = uploadHint; // already translated above
             }
 
             // Role-specific buttons visibility
@@ -1309,12 +1334,15 @@ namespace UnityGameTranslator.Core.UI.Panels
                 {
                     string hint = "";
                     if (isBranch)
-                        hint = "Fork = leave @" + (state.MainUsername ?? state.Uploader ?? "the owner") +
-                               "'s translation and continue on your own";
+                        hint = TranslatorCore.TranslateOwnUIDynamic(
+                                   "Fork = continue on your own, leaving the translation of", _roleActionsHint)
+                               + " @" + (state.MainUsername ?? state.Uploader ?? "?");
                     else if (isMain && hasBranches)
-                        hint = "Review Branches opens the website to accept or reject contributions";
+                        hint = TranslatorCore.TranslateOwnUIDynamic(
+                            "Review Branches opens the website to accept or reject contributions", _roleActionsHint);
                     else if (canCompare)
-                        hint = "Compare shows your changes against the website version";
+                        hint = TranslatorCore.TranslateOwnUIDynamic(
+                            "Compare shows your changes against the website version", _roleActionsHint);
                     _roleActionsHint.text = hint;
                     _roleActionsHint.gameObject.SetActive(!string.IsNullOrEmpty(hint));
                 }
@@ -1461,7 +1489,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_downloadLatestBtn != null)
             {
                 _downloadLatestBtn.Component.interactable = false;
-                _downloadLatestBtn.ButtonText.text = "Downloading...";
+                SetDynamicText(_downloadLatestBtn.ButtonText, "Downloading...");
             }
 
             try
@@ -1491,7 +1519,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     if (_downloadLatestBtn != null)
                     {
                         _downloadLatestBtn.Component.interactable = true;
-                        _downloadLatestBtn.ButtonText.text = "Download Latest";
+                        SetDynamicText(_downloadLatestBtn.ButtonText, "Download Latest");
                     }
                 });
             }
@@ -1501,7 +1529,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 if (_downloadLatestBtn != null)
                 {
                     _downloadLatestBtn.Component.interactable = true;
-                    _downloadLatestBtn.ButtonText.text = "Download Latest";
+                    SetDynamicText(_downloadLatestBtn.ButtonText, "Download Latest");
                 }
             }
         }
@@ -1550,7 +1578,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_compareWithServerBtn != null)
             {
                 _compareWithServerBtn.Component.interactable = false;
-                _compareWithServerBtn.ButtonText.text = "Loading...";
+                SetDynamicText(_compareWithServerBtn.ButtonText, "Loading...");
             }
 
             // Capture values for closure
@@ -1594,7 +1622,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     if (_compareWithServerBtn != null)
                     {
                         _compareWithServerBtn.Component.interactable = true;
-                        _compareWithServerBtn.ButtonText.text = "Compare";
+                        SetDynamicText(_compareWithServerBtn.ButtonText, "Compare");
                     }
                 });
             }
@@ -1609,7 +1637,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     if (_compareWithServerBtn != null)
                     {
                         _compareWithServerBtn.Component.interactable = true;
-                        _compareWithServerBtn.ButtonText.text = "Compare";
+                        SetDynamicText(_compareWithServerBtn.ButtonText, "Compare");
                     }
                 });
             }
@@ -1626,7 +1654,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             var game = TranslatorCore.CurrentGame;
             if (!isOnline)
             {
-                _communityGameLabel.text = "Offline mode - enable Online Mode in Mod Options";
+                SetDynamicText(_communityGameLabel, "Offline mode - enable Online Mode in Mod Options");
                 _communityGameLabel.color = UIStyles.StatusWarning;
                 _searchBtn.Component.interactable = false;
 
@@ -1636,13 +1664,15 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
             else if (game != null && !string.IsNullOrEmpty(game.name))
             {
-                _communityGameLabel.text = $"Game: {game.name}";
+                // Game name is data — never translated
+                _communityGameLabel.text = TranslatorCore.TranslateOwnUIDynamic("Game:", _communityGameLabel)
+                    + $" {game.name}";
                 _communityGameLabel.color = UIStyles.TextSecondary;
                 _searchBtn.Component.interactable = true;
             }
             else
             {
-                _communityGameLabel.text = "Game: Not detected";
+                SetDynamicText(_communityGameLabel, "Game: Not detected");
                 _communityGameLabel.color = UIStyles.TextSecondary;
                 _searchBtn.Component.interactable = false;
             }

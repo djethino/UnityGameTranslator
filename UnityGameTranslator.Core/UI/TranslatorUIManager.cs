@@ -34,6 +34,12 @@ namespace UnityGameTranslator.Core.UI
 
         // UniverseLib's original UI font, captured at init — restored when the interface font is cleared.
         private static UnityEngine.Font _originalUIFont;
+        private static string _originalUIFontFamily;   // its original family (to restore fontNames)
+        private static int _uiFontBumpDelta;            // current +1 atlas-invalidation bump (0 or 1)
+        private static int _fontRerenderCountdown;      // frames until a deferred re-dirty (atlas warms async)
+        private static bool _uiFontRebacked;            // true = IL2CPP reback path in effect (vs Mono object swap)
+        private static string _pendingRebackFont;       // IL2CPP: font to reback after the deferred restore→reback gap
+        private static int _rebackDelay;                // frames left before the pending reback fires
         // The interface font + mod-UI translation are applied lazily on first show: at init the custom
         // fonts aren't loaded yet and the translation worker isn't ready, so an early pass is a no-op.
         private static bool _uiFontBootstrapped;
@@ -376,44 +382,81 @@ namespace UnityGameTranslator.Core.UI
         public static void ApplyInterfaceFont()
         {
             if (UiBase?.RootObject == null || _originalUIFont == null) return;
+            if (_originalUIFontFamily == null) _originalUIFontFamily = _originalUIFont.name;
 
-            UnityEngine.Font font = _originalUIFont;
-            if (TranslatorCore.Config.translate_mod_ui && !string.IsNullOrEmpty(TranslatorCore.Config.interface_font))
+            // IL2CPP can't create a fresh OS-backed Font (CreateDynamicFontFromOSFont / new Font are
+            // stripped → MissingMethodException). So we don't swap the Font object: we REBACK UniverseLib's
+            // UI font in place — rewrite its fontNames to the chosen system font's family, and FreeType
+            // re-rasterizes with it. Same mechanism the game font-replacement uses (FontManager reback via
+            // TextureHelper.SetFontNames). Works on Mono AND IL2CPP.
+            bool wantCustom = TranslatorCore.Config.translate_mod_ui && !string.IsNullOrEmpty(TranslatorCore.Config.interface_font);
+
+            // The split is by RUNTIME CAPABILITY, not by platform: wherever a fresh OS-backed Font can
+            // be created (Mono, and IL2CPP builds that kept CreateDynamicFontFromOSFont) we swap the
+            // font object — an empty atlas re-renders cleanly at runtime. Where it was stripped, we
+            // reback the existing UI font's OS backing (fontNames) instead.
+            UnityEngine.Font freshFont = wantCustom ? FontManager.LoadUIFont(TranslatorCore.Config.interface_font) : null;
+            TranslatorCore.LogDebug($"[UIManager] Interface font: want={wantCustom} fresh={(freshFont != null ? freshFont.name : "null")} " +
+                $"path={(wantCustom && freshFont != null ? "swap" : wantCustom ? "reback" : "restore")}");
+
+            if (wantCustom && freshFont != null)
             {
-                var loaded = FontManager.LoadUIFont(TranslatorCore.Config.interface_font);
-                if (loaded != null) font = loaded;
-                else TranslatorCore.LogWarning($"[UIManager] Interface font '{TranslatorCore.Config.interface_font}' could not be loaded; keeping current UI font");
+                UniversalUI.DefaultFont = freshFont;
+                int changed = 0;
+                SwapModUIFont(UiBase.RootObject.transform, freshFont, ref changed);
+                _uiFontRebacked = false;
+                _pendingRebackFont = null;
             }
-
-            if (font == null) return;
-            UniversalUI.DefaultFont = font;
-            int changed = 0;
-            RefontModUIText(UiBase.RootObject.transform, font, ref changed);
-            TranslatorCore.LogInfo($"[UIManager] Interface font applied to {changed} UI text component(s): {font.name}");
+            else if (wantCustom)
+            {
+                // IL2CPP: fresh Font creation is stripped, so reback the UI font's OS backing (fontNames).
+                // Rebacking directly over a previous font leaves the atlas stale at runtime — the change
+                // only shows after an off→on toggle (as the user found). So do that cycle automatically:
+                // restore the original font NOW, then reback the chosen font after a gap (TickFontRerender)
+                // long enough for the atlas to re-rasterize between the two — like two Apply clicks.
+                FontManager.RestoreFontToOriginal(_originalUIFont, _originalUIFontFamily);
+                UniversalUI.DefaultFont = _originalUIFont;
+                RerenderModUIFont(false);
+                _pendingRebackFont = TranslatorCore.Config.interface_font;
+                _rebackDelay = 60; // ~1s — the slowest atlas we've seen (Frog); LongYin tolerates it too
+                _uiFontRebacked = true;
+            }
+            else
+            {
+                // Restore original. Cancel any pending reback first, else a queued reback would re-apply
+                // the font after the user turned the feature off ("keeps the first fallback" bug).
+                _pendingRebackFont = null;
+                _fontRerenderCountdown = 0;
+                if (_uiFontRebacked)
+                {
+                    FontManager.RestoreFontToOriginal(_originalUIFont, _originalUIFontFamily);
+                    RerenderModUIFont(false);
+                    _uiFontRebacked = false;
+                }
+                UniversalUI.DefaultFont = _originalUIFont;
+                int changed = 0;
+                SwapModUIFont(UiBase.RootObject.transform, _originalUIFont, ref changed);
+            }
         }
 
         /// <summary>
-        /// Recursively set the uGUI Text font across the mod UI subtree. Manual traversal
-        /// (GetComponent per node) to stay IL2CPP-safe, mirroring ExcludeAllTextComponents.
+        /// Swap the uGUI Text font across the mod UI subtree to <paramref name="font"/> (Mono path /
+        /// restore). Warms the atlas at each label's size and toggles enabled to rebind — a fresh font
+        /// object has an empty atlas so this renders at runtime.
         /// </summary>
-        private static void RefontModUIText(Transform node, UnityEngine.Font font, ref int changed)
+        private static void SwapModUIFont(Transform node, UnityEngine.Font font, ref int changed)
         {
             if (node == null) return;
             var text = node.GetComponent<UnityEngine.UI.Text>();
             if (text != null && text.font != font)
             {
                 text.font = font;
-                // Warm the atlas with THIS label's glyphs at its size/style, exactly like the game
-                // font-replacement pipeline does (FontManager RequestCharactersInTexture). Without this
-                // a dynamic font renders transparent/blank on IL2CPP (the glyphs aren't in the atlas
-                // yet when the CanvasRenderer binds) — which is why the change wasn't visible.
                 if (!string.IsNullOrEmpty(text.text))
                 {
                     try { font.RequestCharactersInTexture(text.text, text.fontSize, text.fontStyle); }
                     catch { }
                 }
                 text.SetAllDirty();
-                // Toggle enabled off/on to rebind the CanvasRenderer to the (now warmed) atlas.
                 if (text.gameObject.activeInHierarchy)
                 {
                     text.enabled = false;
@@ -423,7 +466,86 @@ namespace UnityGameTranslator.Core.UI
             }
             int count = node.childCount;
             for (int i = 0; i < count; i++)
-                RefontModUIText(node.GetChild(i), font, ref changed);
+                SwapModUIFont(node.GetChild(i), font, ref changed);
+        }
+
+        /// <summary>Deferred re-dirty tick (called from UpdateUI): once the atlas has warmed after a
+        /// font reback, rebuild the mod UI meshes so they pick up the new glyphs.</summary>
+        private static void TickFontRerender()
+        {
+            if (UiBase?.RootObject == null) return;
+
+            // Deferred reback (IL2CPP): the original font was restored on Apply; after the gap that lets
+            // the atlas re-rasterize, reback the chosen font — the off→on cycle automated.
+            if (_pendingRebackFont != null)
+            {
+                if (--_rebackDelay <= 0)
+                {
+                    string font = _pendingRebackFont;
+                    _pendingRebackFont = null;
+                    FontManager.RebackFontToSystem(_originalUIFont, font);
+                    UniversalUI.DefaultFont = _originalUIFont;
+                    RerenderModUIFont(true);
+                    _fontRerenderCountdown = 30;
+                }
+                return;
+            }
+
+            if (_fontRerenderCountdown <= 0) return;
+            _fontRerenderCountdown--;
+            // Re-request glyphs + re-dirty every frame in the window (no size bump — applied once, no
+            // enable toggle — would flicker). When the async atlas rebuild finishes, the next dirty
+            // rebuild picks it up. Toggle once at the end to force a final rebind.
+            bool last = _fontRerenderCountdown == 0;
+            int changed = 0;
+            RerenderModUIWalk(UiBase.RootObject.transform, 0, last, ref changed);
+        }
+
+        /// <summary>
+        /// Re-render the mod UI after a font reback. The glyph atlas caches by (char, size); the current
+        /// sizes still hold the old glyphs, so re-requesting them returns the cached ones. Bumping the
+        /// size by +1 while a custom interface font is active forces FreeType to rasterize fresh entries
+        /// with the new fontNames (1px larger — negligible, opt-in only); dropping the bump on restore
+        /// returns to the original glyphs. Then warm + toggle enabled to rebind the CanvasRenderer.
+        /// (Limitation: switching between two custom fonts reuses the +1 size and may not re-raster; the
+        /// common arial↔custom flow does.)
+        /// </summary>
+        private static void RerenderModUIFont(bool custom)
+        {
+            int target = custom ? 1 : 0;
+            int delta = target - _uiFontBumpDelta;
+            _uiFontBumpDelta = target;
+
+            int changed = 0;
+            RerenderModUIWalk(UiBase.RootObject.transform, delta, true, ref changed);
+            TranslatorCore.LogInfo($"[UIManager] Interface font re-render: {changed} Text (bump {_uiFontBumpDelta}, custom={custom})");
+        }
+
+        private static void RerenderModUIWalk(Transform node, int sizeDelta, bool toggle, ref int changed)
+        {
+            if (node == null) return;
+            var text = node.GetComponent<UnityEngine.UI.Text>();
+            if (text != null)
+            {
+                if (sizeDelta != 0) text.fontSize += sizeDelta;
+                if (!string.IsNullOrEmpty(text.text))
+                {
+                    try { text.font.RequestCharactersInTexture(text.text, text.fontSize, text.fontStyle); }
+                    catch { }
+                }
+                text.SetAllDirty();
+                // Toggle enabled only on the initial pass (rebind); the per-frame tick must not toggle
+                // (would flicker for the whole window).
+                if (toggle && text.gameObject.activeInHierarchy)
+                {
+                    text.enabled = false;
+                    text.enabled = true;
+                }
+                changed++;
+            }
+            int count = node.childCount;
+            for (int i = 0; i < count; i++)
+                RerenderModUIWalk(node.GetChild(i), sizeDelta, toggle, ref changed);
         }
 
         /// <summary>
@@ -2456,6 +2578,9 @@ namespace UnityGameTranslator.Core.UI
             // (injected IPointerEnterHandler) is silent on IL2CPP, so we poll instead.
             if (panelsVisible)
                 Components.HelpZone.PollHover();
+
+            // Deferred interface-font re-dirty (atlas warms async after a reback).
+            TickFontRerender();
 
             // Manage status overlay visibility
             UpdateStatusOverlay();

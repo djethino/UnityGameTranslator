@@ -1655,22 +1655,15 @@ namespace UnityGameTranslator.Core.UI.Panels
         }
 
         /// <summary>
-        /// Build the interface-font picker options. The mod UI is uGUI Text, which needs a
-        /// UnityEngine.Font — so we ONLY offer fonts usable as such: the game's own Unity (uGUI)
-        /// fonts and system fonts. Custom fonts are DELIBERATELY excluded: they are SDF TMP atlases
-        /// (built for TMP text) and cannot be assigned to a uGUI Text. A game's uGUI font may already
-        /// carry the needed script (e.g. a CJK game's own font), which is exactly what to reuse.
+        /// Build the interface-font picker options: SYSTEM fonts only. The mod UI font is applied by
+        /// rebacking its fontNames to a font family the OS can resolve (FontManager.RebackFontToSystem)
+        /// — the IL2CPP-safe way, since a fresh OS-backed Font can't be created there. Game-bundled and
+        /// custom (SDF/TMP) fonts aren't OS-installed families, so they can't be rebacked and are omitted.
+        /// A system font that covers the target script (e.g. Malgun Gothic for Korean) is what to pick.
         /// </summary>
         private static string[] BuildInterfaceFontOptions()
         {
             var options = new List<string> { "(None)" };
-
-            var gameUnity = FontManager.GetGameUnityFontNames();
-            if (gameUnity != null && gameUnity.Length > 0)
-            {
-                options.Add("--- Game Fonts ---");
-                foreach (var g in gameUnity) options.Add("[Game] " + g);
-            }
 
             var sys = FontManager.SystemFonts;
             if (sys != null && sys.Length > 0)

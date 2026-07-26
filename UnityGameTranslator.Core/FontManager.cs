@@ -1510,15 +1510,125 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Load a uGUI <see cref="Font"/> from a game/system/custom font name for the mod interface
-        /// font. Public wrapper over the internal system-font loader; unlike GetUnityReplacementFont
-        /// it is NOT gated on enable_font_replacement and creates no game-clone bookkeeping. Handles
-        /// the "[Game] " / "[Custom] " picker prefixes the same way as game-font fallback loading.
+        /// Try to load a FRESH OS-backed <see cref="Font"/> object for the mod interface font. Returns
+        /// a dynamic font when the runtime can create one (Mono, and IL2CPP builds where
+        /// CreateDynamicFontFromOSFont survived stripping), else null — callers then fall back to
+        /// RebackFontToSystem on the existing UI font. A fresh object has an empty atlas, so it
+        /// re-renders cleanly at runtime.
+        ///
+        /// The font is created from the RESOLVED OS family, never from the raw picker entry: the
+        /// picker lists font FILE names ("BKANT", "C64_Pro_Mono-STYLE") while FreeType only knows
+        /// FAMILY names ("Book Antiqua", "C64 Pro Mono") — creating from the file name yields a font
+        /// that silently renders as Arial. Deliberately does NOT reuse a game font (unlike
+        /// CreateUnityFontFromSystem): it would be the wrong typeface, and rebacking it would change
+        /// the game's own text.
         /// </summary>
         public static Font LoadUIFont(string fontName)
         {
             if (string.IsNullOrEmpty(fontName)) return null;
-            return CreateUnityFontFromSystem(fontName);
+            string clean = StripFontPrefix(fontName);
+            string family = ResolveSystemFontFamily(clean, out _);
+
+            var font = CreateDynamicOSFont(family);
+            if (font == null && !string.Equals(family, clean, StringComparison.OrdinalIgnoreCase))
+                font = CreateDynamicOSFont(clean);
+            if (font == null) return null;
+
+            // Pin the glyph source to the resolved family (file name kept as second candidate).
+            ApplyFontFamilyNames(font, clean, family);
+            return font;
+        }
+
+        /// <summary>
+        /// Create a fresh dynamic OS-backed Font for a font FAMILY name via reflection
+        /// (CreateDynamicFontFromOSFont). Returns null when the runtime stripped it — the single
+        /// place that call is made, so the availability flag stays consistent.
+        /// </summary>
+        private static Font CreateDynamicOSFont(string family)
+        {
+            if (string.IsNullOrEmpty(family) || !_dynamicFontCreationAvailable) return null;
+            try
+            {
+                var method = typeof(Font).GetMethod("CreateDynamicFontFromOSFont",
+                    BindingFlags.Public | BindingFlags.Static,
+                    null, new Type[] { typeof(string), typeof(int) }, null);
+                if (method == null) return null;
+
+                var font = method.Invoke(null, new object[] { family, 32 }) as Font;
+                if (font != null)
+                    TranslatorCore.LogDebug($"[FontManager] Created dynamic Unity font: {family}");
+                return font;
+            }
+            catch (Exception ex)
+            {
+                var msg = ex.InnerException?.Message ?? ex.Message;
+                if (msg.Contains("unstripping") || msg.Contains("Method not found"))
+                {
+                    _dynamicFontCreationAvailable = false;
+                    TranslatorCore.LogWarning($"[FontManager] CreateDynamicFontFromOSFont unavailable on this runtime");
+                }
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Resolve a system/custom font's real family name (as the OS FreeType resolves it) plus its
+        /// TTF path. Shared by the GAME font-replacement reback (GetUnityReplacementFont) and the
+        /// INTERFACE-font reback (RebackFontToSystem) so the resolution logic lives in one place.
+        /// </summary>
+        public static string ResolveSystemFontFamily(string fontName, out string ttfPath)
+        {
+            string clean = StripFontPrefix(fontName);
+            ttfPath = CustomFontLoader.FindSystemTtfPath(clean);
+            string family = clean;
+            if (ttfPath != null)
+            {
+                try
+                {
+                    var parser = new Rasterizer.TtfParser(System.IO.File.ReadAllBytes(ttfPath));
+                    if (!string.IsNullOrEmpty(parser.Metrics.FontName)) family = parser.Metrics.FontName;
+                }
+                catch { }
+            }
+            return family;
+        }
+
+        /// <summary>
+        /// Reback a Font's OS glyph source by rewriting its <c>fontNames</c> to a system font family,
+        /// so FreeType re-rasterizes it with that font. This is the IL2CPP-safe way to change a uGUI
+        /// font (same mechanism the game font-replacement uses via TextureHelper.SetFontNames) — you
+        /// cannot create a fresh OS-backed Font on IL2CPP. Used for the mod's interface font.
+        /// NOTE: the atlas caches by (char, size); after rebacking, existing glyphs stay cached until
+        /// re-requested at a new size — callers must force a rebuild (see TranslatorUIManager).
+        /// </summary>
+        public static bool RebackFontToSystem(Font target, string systemFontName)
+        {
+            if (target == null || string.IsNullOrEmpty(systemFontName)) return false;
+            string clean = StripFontPrefix(systemFontName);
+            return ApplyFontFamilyNames(target, clean, ResolveSystemFontFamily(clean, out _));
+        }
+
+        /// <summary>
+        /// Point a Font's glyph source at a system font: family first, then the file name as a
+        /// second candidate. Shared by RebackFontToSystem and LoadUIFont so both spell the
+        /// fontNames the same way (and the family is resolved only once per call site).
+        /// </summary>
+        private static bool ApplyFontFamilyNames(Font target, string clean, string family)
+        {
+            var names = new List<string> { family };
+            if (!string.Equals(family, clean, StringComparison.OrdinalIgnoreCase))
+                names.Add(clean);
+
+            bool ok = UniverseLib.Runtime.TextureHelper.SetFontNames(target, names.ToArray());
+            if (ok) TranslatorCore.LogInfo($"[FontManager] Rebacked '{target.name}' fontNames=[{string.Join(", ", names)}]");
+            return ok;
+        }
+
+        /// <summary>Restore a Font's fontNames to its own family name (undo RebackFontToSystem).</summary>
+        public static bool RestoreFontToOriginal(Font target, string originalFamily)
+        {
+            if (target == null) return false;
+            return UniverseLib.Runtime.TextureHelper.SetFontNames(target, new[] { originalFamily ?? target.name });
         }
 
         // Per-component scale overrides from font override rules
@@ -3429,20 +3539,9 @@ namespace UnityGameTranslator.Core
                 {
                     string cleanFallback = StripFontPrefix(settings.fallback);
 
-                    // Get real font family name from TTF
-                    string realFontName = cleanFallback;
-                    string ttfPath = CustomFontLoader.FindSystemTtfPath(cleanFallback);
-                    if (ttfPath != null)
-                    {
-                        try
-                        {
-                            var ttfBytes = System.IO.File.ReadAllBytes(ttfPath);
-                            var parser = new Rasterizer.TtfParser(ttfBytes);
-                            if (!string.IsNullOrEmpty(parser.Metrics.FontName))
-                                realFontName = parser.Metrics.FontName;
-                        }
-                        catch { }
-                    }
+                    // Real font family name (+ TTF path for the cmap probe below) — shared resolver,
+                    // also used by the interface-font reback (RebackFontToSystem).
+                    string realFontName = ResolveSystemFontFamily(settings.fallback, out string ttfPath);
 
                     // Save original fontNames BEFORE modifying (only first time)
                     if (!_originalFontNames.ContainsKey(originalFontName))
@@ -3686,34 +3785,9 @@ namespace UnityGameTranslator.Core
                 }
             }
 
-            // On Mono, try CreateDynamicFontFromOSFont via reflection
-            if (_dynamicFontCreationAvailable)
-            {
-                try
-                {
-                    var method = typeof(Font).GetMethod("CreateDynamicFontFromOSFont",
-                        BindingFlags.Public | BindingFlags.Static,
-                        null, new Type[] { typeof(string), typeof(int) }, null);
-                    if (method != null)
-                    {
-                        var font = method.Invoke(null, new object[] { cleanName, 32 }) as Font;
-                        if (font != null)
-                        {
-                            TranslatorCore.LogDebug($"[FontManager] Created dynamic Unity font: {cleanName}");
-                            return font;
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    var msg = ex.InnerException?.Message ?? ex.Message;
-                    if (msg.Contains("unstripping") || msg.Contains("Method not found"))
-                    {
-                        _dynamicFontCreationAvailable = false;
-                        TranslatorCore.LogWarning($"[FontManager] CreateDynamicFontFromOSFont unavailable on this runtime");
-                    }
-                }
-            }
+            // Try a fresh OS-backed dynamic font (works on Mono, and on IL2CPP builds that kept it)
+            var dynamicFont = CreateDynamicOSFont(cleanName);
+            if (dynamicFont != null) return dynamicFont;
 
             // On IL2CPP, CreateDynamicFontFromOSFont is stripped.
             // Return null here — GetUnityReplacementFont will modify the original font's fontNames instead.

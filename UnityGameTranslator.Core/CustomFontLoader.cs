@@ -783,10 +783,9 @@ namespace UnityGameTranslator.Core
                     // Cache always goes in the mod's fonts/ folder
                     string cacheDir = fontInfo.Source == "system" ? _cacheFolderPath : Path.GetDirectoryName(fontInfo.TtfPath ?? "");
 
-                    // FAST PATH: try the .gen.json + .gen.png(s) compressed cache first.
-                    // These are written at the end of LoadFont's PNG-encode round-trip and
-                    // are the canonical cache going forward (the historical .cache.png
-                    // raw-RGBA format wrote ~1 GB per font asset; PNG is ~80 MB).
+                    // FAST PATH: .gen.json metadata plus the atlas pixels. TryLoadGenCache picks
+                    // the raw DEFLATE atlases when present (what we write today) and only falls
+                    // back to the legacy .gen.png when there is no TTF left to rebuild from.
                     if (TryLoadGenCache(fontInfo, cacheDir, fontName))
                     {
                         // Either cache flavour may be the one that answered: raw atlases
@@ -802,17 +801,15 @@ namespace UnityGameTranslator.Core
                     {
                         TranslatorCore.LogInfo($"[CustomFontLoader] No .gen cache for {fontName}, rasterizing TTF");
 
-                        // Atlas size cap. We use SystemInfo.maxTextureSize directly — the
-                        // 8192 cap we briefly added to dodge Unity EncodeToPNG failures on
-                        // huge RGBA32 atlases is no longer needed now that the texture
-                        // format is Alpha8 (16384² Alpha8 = 256 MB, well within encode
-                        // limits). Keeping the larger atlas means a single texture can hold
-                        // 40k+ glyphs and we don't trigger the multi-atlas path, whose
-                        // wiring of m_AtlasTextures[1+] currently fails on IL2CPP clones
-                        // ("Failed to set m_AtlasTextures[N]: ... target of an invocation")
-                        // because the underlying Il2CppReferenceArray can't be resized via
-                        // reflection. Fixing the multi-atlas wiring is its own task — until
-                        // then, single-atlas-at-max is the safe default.
+                        // Atlas size cap: SystemInfo.maxTextureSize, i.e. as large as the hardware
+                        // allows. Fewer, bigger atlases mean fewer textures to upload and bind at
+                        // render time. The 8192 cap once added to dodge Unity EncodeToPNG failures
+                        // is moot — the format is Alpha8 now, and the cache no longer goes through
+                        // PNG at all (see RawAtlasCache).
+                        //
+                        // Going past one atlas is fine: multi-atlas wiring works (a CJK font needs
+                        // two 16384² and renders correctly). It used to be avoided because
+                        // m_AtlasTextures[1+] never got assigned on IL2CPP — that is fixed.
                         int maxAtlasSize = ResolveMaxAtlasSize();
                         int atlasBudget = TranslatorCore.Config?.max_font_atlas_size ?? 0;
                         TranslatorCore.LogInfo($"[CustomFontLoader] atlas cap = {maxAtlasSize} (hardware), render budget = {(atlasBudget > 0 ? atlasBudget.ToString() : "default 4096")}");

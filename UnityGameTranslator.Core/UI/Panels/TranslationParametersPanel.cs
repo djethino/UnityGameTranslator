@@ -1458,6 +1458,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     popupHeight: 250,
                     showSearch: true
                 );
+                dropdown.CategoryProvider = FontManager.GetFontOrigin;
 
                 dropdown.CreateUI(fallbackRow, (selectedValue) =>
                 {

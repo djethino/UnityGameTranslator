@@ -40,6 +40,11 @@ namespace UnityGameTranslator.Core.UI.Components
         // Ellipsis handles of the visible option rows, used to size the popup to its content
         private readonly List<EllipsisLabel> _itemEllipsis = new List<EllipsisLabel>();
 
+        // Category filter bar (only when CategoryProvider yields more than one category)
+        private readonly List<string> _categories = new List<string>();
+        private readonly List<KeyValuePair<string, ButtonRef>> _categoryChips = new List<KeyValuePair<string, ButtonRef>>();
+        private string _activeCategory; // null = all categories
+
         // Track selected item index for scroll positioning
         private int _selectedItemIndex = -1;
 
@@ -66,6 +71,16 @@ namespace UnityGameTranslator.Core.UI.Components
         /// Event fired when selection changes.
         /// </summary>
         public event Action<string> OnSelectionChanged;
+
+        /// <summary>
+        /// Optional: classify an entry to offer a category filter bar in the popup (e.g. a font
+        /// picker splitting Game / Custom / System). Return null for entries that belong to no
+        /// category — those stay visible whatever the filter (e.g. "(None)").
+        ///
+        /// The bar is ADAPTIVE (only categories actually present are offered) and OPTIONAL: leave
+        /// this null, or produce a single category, and no bar is shown.
+        /// </summary>
+        public Func<string, string> CategoryProvider { get; set; }
 
         /// <summary>
         /// Create a new searchable dropdown.
@@ -233,7 +248,10 @@ namespace UnityGameTranslator.Core.UI.Components
                 var layoutElem = _rootObject.GetComponent<LayoutElement>();
                 buttonWidth = layoutElem != null && layoutElem.minWidth > 0 ? layoutElem.minWidth : 200f;
             }
-            float popupHeight = _popupHeight + (_showSearch ? 35 : 10);
+            BuildCategories();
+            bool showCategories = _categories.Count > 1;
+            float popupHeight = _popupHeight + (_showSearch ? 35 : 10)
+                + (showCategories ? CHIP_HEIGHT + 4f : 0f);
 
             // Create popup as child of the button
             _popupRoot = UIFactory.CreateUIObject($"SearchableDropdown_Popup_{_name}", _rootObject);
@@ -280,6 +298,13 @@ namespace UnityGameTranslator.Core.UI.Components
                     searchBg.color = UIStyles.InputFieldBackground;
 
                 yOffset += searchHeight + 4f;
+            }
+
+            // Category chips — only when the entries actually split into several categories
+            if (showCategories)
+            {
+                CreateCategoryBar(yOffset);
+                yOffset += CHIP_HEIGHT + 4f;
             }
 
             // Option list — built with the same ScrollView as every other list in the mod, so it
@@ -334,11 +359,81 @@ namespace UnityGameTranslator.Core.UI.Components
             _scrollRect = null;
             _autoScrollbar = null;
             _itemEllipsis.Clear();
+            _categoryChips.Clear();
         }
 
         private void OnSearchChanged(string searchText)
         {
             RefreshList();
+        }
+
+        /// <summary>
+        /// Collect the categories actually present in the options, in order of first appearance
+        /// (so the caller controls the order simply by ordering its entries).
+        /// </summary>
+        private void BuildCategories()
+        {
+            _categories.Clear();
+            _activeCategory = null;
+            if (CategoryProvider == null) return;
+
+            foreach (string option in _options)
+            {
+                string category = CategoryProvider(option);
+                if (string.IsNullOrEmpty(category) || _categories.Contains(category)) continue;
+                _categories.Add(category);
+            }
+        }
+
+        private void CreateCategoryBar(float yOffset)
+        {
+            _categoryChips.Clear();
+
+            var row = UIFactory.CreateUIObject("CategoryRow", _popupRoot);
+            RectTransform rowRect = row.GetComponent<RectTransform>();
+            rowRect.anchorMin = new Vector2(0, 1);
+            rowRect.anchorMax = new Vector2(1, 1);
+            rowRect.pivot = new Vector2(0.5f, 1);
+            rowRect.anchoredPosition = new Vector2(0, -yOffset);
+            rowRect.sizeDelta = new Vector2(-8, CHIP_HEIGHT);
+            UIFactory.SetLayoutGroup<HorizontalLayoutGroup>(row, false, false, true, true, 4);
+
+            AddCategoryChip(row, null, "All");
+            foreach (string category in _categories)
+                AddCategoryChip(row, category, category);
+
+            UpdateCategoryChips();
+        }
+
+        private void AddCategoryChip(GameObject parent, string category, string label)
+        {
+            var chip = UIFactory.CreateButton(parent, $"Chip_{label}", label);
+            UIFactory.SetLayoutElement(chip.Component.gameObject, minHeight: (int)CHIP_HEIGHT, flexibleWidth: 1);
+            chip.ButtonText.fontSize = UIStyles.FontSizeSmall;
+
+            // Filter on the CAPTURED category, never on the displayed label — the label is mod UI
+            // and may be translated, the category key must not follow it.
+            string captured = category;
+            chip.OnClick = () =>
+            {
+                if (_activeCategory == captured) return;
+                _activeCategory = captured;
+                UpdateCategoryChips();
+                RefreshList();
+            };
+
+            TranslatorCore.RegisterUIText(chip.ButtonText);
+            _categoryChips.Add(new KeyValuePair<string, ButtonRef>(category, chip));
+        }
+
+        private void UpdateCategoryChips()
+        {
+            foreach (var chip in _categoryChips)
+            {
+                bool active = chip.Key == _activeCategory;
+                UIStyles.SetBackground(chip.Value.Component.gameObject,
+                    active ? UIStyles.ButtonPrimary : UIStyles.ButtonSecondary);
+            }
         }
 
         private void RefreshList()
@@ -366,6 +461,14 @@ namespace UnityGameTranslator.Core.UI.Components
                 if (!string.IsNullOrEmpty(filter) && !option.ToLowerInvariant().Contains(filter))
                     continue;
 
+                // Category filter: entries with no category (e.g. "(None)") always stay visible
+                if (_activeCategory != null && CategoryProvider != null)
+                {
+                    string category = CategoryProvider(option);
+                    if (!string.IsNullOrEmpty(category) && category != _activeCategory)
+                        continue;
+                }
+
                 // Track selected item's index in the filtered list
                 if (option == _selectedValue)
                     _selectedItemIndex = currentFilteredIndex;
@@ -375,8 +478,9 @@ namespace UnityGameTranslator.Core.UI.Components
             }
 
             // Size the popup on the FULL list only (open / options changed). Doing it per keystroke
-            // while filtering would make the popup jump wider and narrower as the user types.
-            if (string.IsNullOrEmpty(filter))
+            // while filtering — or per category switch — would make the popup jump wider and
+            // narrower under the pointer.
+            if (string.IsNullOrEmpty(filter) && _activeCategory == null)
                 SizePopupToContent();
 
             // Force canvas update before scrolling
@@ -492,6 +596,7 @@ namespace UnityGameTranslator.Core.UI.Components
         private const int ITEM_HEIGHT = 25;
         private const int ITEM_SPACING = 2;
         private const int CONTENT_PADDING = 2;
+        private const float CHIP_HEIGHT = 22f;
 
         // Horizontal room an option row needs on top of its text: row text insets (8 + 8),
         // content padding, the scrollbar column and the popup margins.

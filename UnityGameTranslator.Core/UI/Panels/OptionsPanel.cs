@@ -375,6 +375,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 initialInterfaceFont = "(None)";
             _interfaceFontDropdown = new SearchableDropdown("InterfaceFont", interfaceFontOptions,
                 initialInterfaceFont, popupHeight: 250, showSearch: true);
+            _interfaceFontDropdown.CategoryProvider = FontManager.GetFontOrigin;
             var interfaceFontObj = _interfaceFontDropdown.CreateUI(_interfaceFontRow,
                 (_) => { if (!_isLoadingSettings) UpdateApplyButtonText(); }, width: 260);
             _helpZone?.Describe(interfaceFontObj, "Font for this mod's interface when it is translated. Only fonts usable by the interface are listed; pick one that supports your target language's characters.");

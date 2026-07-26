@@ -4823,6 +4823,19 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Origin of a font picker entry, for the dropdown category filter: "Game", "Custom" or
+        /// "System". Returns null for non-font entries such as "(None)", which must stay visible
+        /// whatever the selected category.
+        /// </summary>
+        public static string GetFontOrigin(string fontEntry)
+        {
+            if (string.IsNullOrEmpty(fontEntry) || fontEntry.StartsWith("(")) return null;
+            if (fontEntry.StartsWith("[Game] ")) return "Game";
+            if (fontEntry.StartsWith("[Custom] ")) return "Custom";
+            return "System";
+        }
+
+        /// <summary>
         /// Check if a font name corresponds to an actual game font (detected in game assets).
         /// </summary>
         public static bool IsGameFont(string fontName)

@@ -289,6 +289,21 @@ namespace UnityGameTranslator.Core.UI.Panels
         }
 
         /// <summary>
+        /// Translate a FRAGMENT that the caller then concatenates with data
+        /// (<c>Tr("Connected as") + " @" + user</c>).
+        ///
+        /// Deliberately does NOT register the label: on a cache miss the worker writes the finished
+        /// translation straight into the component it was given, which for a composed label would
+        /// replace the whole line with just this fragment — dropping the username. Without a
+        /// component the translation only lands in the cache, and the next refresh renders the
+        /// complete line correctly.
+        /// </summary>
+        protected static string Tr(string english)
+        {
+            return TranslatorCore.TranslateOwnUIDynamic(english);
+        }
+
+        /// <summary>
         /// Registers a TMPro text component as excluded from translation.
         /// Use for: mod title, language codes, config values, technical labels.
         /// </summary>

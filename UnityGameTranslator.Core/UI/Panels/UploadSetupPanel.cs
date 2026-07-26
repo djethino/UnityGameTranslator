@@ -340,7 +340,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // Game confirmed by user selection
                 _gameDisplayLabel.text = _selectedGame.name;
                 _gameDisplayLabel.color = UIStyles.StatusSuccess;
-                _gameSourceLabel.text = "✓ confirmed";
+                _gameSourceLabel.text = "✓ " + Tr("confirmed");
                 _gameSourceLabel.color = UIStyles.StatusSuccess;
             }
             else
@@ -351,14 +351,14 @@ namespace UnityGameTranslator.Core.UI.Panels
                 {
                     _gameDisplayLabel.text = detected.name;
                     _gameDisplayLabel.color = UIStyles.StatusWarning;
-                    _gameSourceLabel.text = "⚠ confirm below";
+                    _gameSourceLabel.text = "⚠ " + Tr("confirm below");
                     _gameSourceLabel.color = UIStyles.StatusWarning;
                 }
                 else
                 {
-                    _gameDisplayLabel.text = "No game detected";
+                    SetDynamicText(_gameDisplayLabel, "No game detected");
                     _gameDisplayLabel.color = UIStyles.StatusWarning;
-                    _gameSourceLabel.text = "- please search";
+                    _gameSourceLabel.text = "- " + Tr("please search");
                     _gameSourceLabel.color = UIStyles.TextMuted;
                 }
             }
@@ -413,13 +413,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             string query = _gameSearchInput?.Text?.Trim();
             if (string.IsNullOrEmpty(query) || query.Length < 2)
             {
-                _gameSearchStatus.text = "Enter at least 2 characters";
+                SetDynamicText(_gameSearchStatus, "Enter at least 2 characters");
                 _gameSearchStatus.color = UIStyles.StatusWarning;
                 return;
             }
 
             _gameSearchBtn.Component.interactable = false;
-            _gameSearchStatus.text = "Searching...";
+            SetDynamicText(_gameSearchStatus, "Searching...");
             _gameSearchStatus.color = UIStyles.TextMuted;
 
             // Clear previous results
@@ -439,14 +439,14 @@ namespace UnityGameTranslator.Core.UI.Panels
                     if (success && games != null && games.Count > 0)
                     {
                         _gameSearchResults = games;
-                        _gameSearchStatus.text = $"Found {games.Count} game(s)";
+                        SetDynamicText(_gameSearchStatus, $"Found {games.Count} game(s)");
                         _gameSearchStatus.color = UIStyles.StatusSuccess;
 
                         PopulateGameResults();
                     }
                     else if (success)
                     {
-                        _gameSearchStatus.text = "No games found";
+                        SetDynamicText(_gameSearchStatus, "No games found");
                         _gameSearchStatus.color = UIStyles.TextMuted;
                     }
                     else
@@ -562,25 +562,25 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             if (!hasGame)
             {
-                _validationLabel.text = "Please select a game";
+                SetDynamicText(_validationLabel, "Please select a game");
                 _validationLabel.color = UIStyles.StatusWarning;
                 _continueBtn.Component.interactable = false;
             }
             else if (!hasValidSource)
             {
-                _validationLabel.text = "Please select a source language (original game language)";
+                SetDynamicText(_validationLabel, "Please select a source language (original game language)");
                 _validationLabel.color = UIStyles.StatusWarning;
                 _continueBtn.Component.interactable = false;
             }
             else if (!hasValidTarget)
             {
-                _validationLabel.text = "Please select a target language";
+                SetDynamicText(_validationLabel, "Please select a target language");
                 _validationLabel.color = UIStyles.StatusWarning;
                 _continueBtn.Component.interactable = false;
             }
             else if (!differentLangs)
             {
-                _validationLabel.text = "Source and target must be different!";
+                SetDynamicText(_validationLabel, "Source and target must be different!");
                 _validationLabel.color = UIStyles.StatusError;
                 _continueBtn.Component.interactable = false;
             }

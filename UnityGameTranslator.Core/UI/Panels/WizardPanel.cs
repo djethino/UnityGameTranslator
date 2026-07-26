@@ -557,7 +557,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     _detectedGame = GameDetector.DetectGame();
                     if (_detectedGame != null)
                     {
-                        _gameLabel.text = $"Game: {_detectedGame.name}";
+                        _gameLabel.text = Tr("Game:") + $" {_detectedGame.name}";
                         if (_onlineMode && !_translationList.IsSearching)
                         {
                             // Use the selected target language from wizard
@@ -572,7 +572,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     }
                     else
                     {
-                        _gameLabel.text = "Game: Unknown";
+                        SetDynamicText(_gameLabel, "Game: Unknown");
                     }
                 }
 
@@ -589,7 +589,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     int localCount = TranslatorCore.TranslationCache.Count;
                     if (localCount > 0)
                     {
-                        _localTranslationsLabel.text = $"You already have {localCount} local translations";
+                        SetDynamicText(_localTranslationsLabel, $"You already have {localCount} local translations");
                         var serverState = TranslatorCore.ServerState;
                         if (serverState != null && serverState.Exists && !string.IsNullOrEmpty(serverState.Uploader))
                         {
@@ -633,7 +633,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (selected == null && localCount == 0)
             {
                 // No local, no remote selected
-                _comparisonLabel.text = "No translation found for your language";
+                SetDynamicText(_comparisonLabel, "No translation found for your language");
                 _comparisonLabel.color = UIStyles.TextMuted;
                 return;
             }
@@ -652,7 +652,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // Local only, no remote
                 if (isLoggedIn)
                 {
-                    _comparisonLabel.text = $"You have {localCount} local translations (not uploaded yet)";
+                    SetDynamicText(_comparisonLabel, $"You have {localCount} local translations (not uploaded yet)");
                     _comparisonLabel.color = UIStyles.StatusSuccess;
                     _uploadBtn.Component.gameObject.SetActive(true);
                 }
@@ -660,7 +660,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 {
                     // Not logged in - hide button row entirely, only show message
                     _actionButtonsRow.SetActive(false);
-                    _comparisonLabel.text = $"You have {localCount} local translations. Login to upload!";
+                    SetDynamicText(_comparisonLabel, $"You have {localCount} local translations. Login to upload!");
                     _comparisonLabel.color = UIStyles.TextSecondary;
                 }
                 return;
@@ -669,7 +669,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (localCount == 0 && selected != null)
             {
                 // Remote only, no local
-                _comparisonLabel.text = $"On the server: {remoteCount} lines by @{selected.Uploader}";
+                _comparisonLabel.text = Tr($"On the server: {remoteCount} lines by") + $" @{selected.Uploader}";
                 _comparisonLabel.color = UIStyles.TextPrimary;
                 _downloadBtn.Component.gameObject.SetActive(true);
                 return;
@@ -742,7 +742,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 var selected = _translationList?.SelectedTranslation;
                 if (selected == null) return;
 
-                _downloadStatusLabel.text = "Downloading for merge...";
+                SetDynamicText(_downloadStatusLabel, "Downloading for merge...");
                 _downloadStatusLabel.color = UIStyles.StatusWarning;
                 SetButtonsInteractable(false);
 
@@ -799,13 +799,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (isLoggedIn)
             {
                 string currentUser = TranslatorCore.Config.api_user;
-                _accountStatusLabel.text = $"Connected as @{currentUser}";
+                _accountStatusLabel.text = Tr("Connected as") + $" @{currentUser}";
                 _accountStatusLabel.fontStyle = FontStyle.Italic;
                 _loginBtn.Component.gameObject.SetActive(false);
             }
             else
             {
-                _accountStatusLabel.text = "Optional: connect an account to share your translation later";
+                SetDynamicText(_accountStatusLabel, "Optional: connect an account to share your translation later");
                 _loginBtn.Component.gameObject.SetActive(true);
             }
 
@@ -831,7 +831,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 if (selected == null || _isDownloading) return;
 
                 _isDownloading = true;
-                _downloadStatusLabel.text = "Downloading...";
+                SetDynamicText(_downloadStatusLabel, "Downloading...");
                 _downloadStatusLabel.color = UIStyles.StatusWarning;
                 SetButtonsInteractable(false);
 
@@ -1194,11 +1194,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 if (string.IsNullOrEmpty(_googleApiKey))
                 {
-                    _wizardGoogleStatusLabel.text = "Enter an API key first";
+                    SetDynamicText(_wizardGoogleStatusLabel, "Enter an API key first");
                     _wizardGoogleStatusLabel.color = UIStyles.StatusWarning;
                     return;
                 }
-                _wizardGoogleStatusLabel.text = "Testing...";
+                SetDynamicText(_wizardGoogleStatusLabel, "Testing...");
                 _wizardGoogleStatusLabel.color = UIStyles.TextSecondary;
 
                 bool success = await TranslatorCore.TestGoogleConnection(_googleApiKey);
@@ -1220,11 +1220,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 if (string.IsNullOrEmpty(_deeplApiKey))
                 {
-                    _wizardDeeplStatusLabel.text = "Enter an API key first";
+                    SetDynamicText(_wizardDeeplStatusLabel, "Enter an API key first");
                     _wizardDeeplStatusLabel.color = UIStyles.StatusWarning;
                     return;
                 }
-                _wizardDeeplStatusLabel.text = "Testing...";
+                SetDynamicText(_wizardDeeplStatusLabel, "Testing...");
                 _wizardDeeplStatusLabel.color = UIStyles.TextSecondary;
 
                 bool success = await TranslatorCore.TestDeepLConnection(_deeplApiKey, _deeplUseFree);
@@ -1334,7 +1334,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (_aiStatusLabel == null) return;
 
-            _aiStatusLabel.text = "Testing...";
+            SetDynamicText(_aiStatusLabel, "Testing...");
             _aiStatusLabel.color = UIStyles.StatusWarning;
 
             // Capture values before await
@@ -1350,14 +1350,14 @@ namespace UnityGameTranslator.Core.UI.Panels
                 {
                     if (success)
                     {
-                        _aiStatusLabel.text = "Connection successful!";
+                        SetDynamicText(_aiStatusLabel, "Connection successful!");
                         _aiStatusLabel.color = UIStyles.StatusSuccess;
                         // Auto-refresh models on successful test
                         RefreshModels();
                     }
                     else
                     {
-                        _aiStatusLabel.text = "Connection failed";
+                        SetDynamicText(_aiStatusLabel, "Connection failed");
                         _aiStatusLabel.color = UIStyles.StatusError;
                     }
                 });
@@ -1367,7 +1367,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 var errorMsg = e.Message;
                 TranslatorUIManager.RunOnMainThread(() =>
                 {
-                    _aiStatusLabel.text = $"Error: {errorMsg}";
+                    _aiStatusLabel.text = Tr("Error:") + $" {errorMsg}";
                     _aiStatusLabel.color = UIStyles.StatusError;
                 });
             }

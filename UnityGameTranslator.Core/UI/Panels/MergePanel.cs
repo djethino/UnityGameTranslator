@@ -213,11 +213,11 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 if (conflictCount > 0)
                 {
-                    _summaryLabel.text = $"{conflictCount} conflict(s) to resolve  |  {stats.GetSummary()}";
+                    _summaryLabel.text = Tr($"{conflictCount} conflict(s) to resolve") + $"  |  {stats.GetSummary()}";
                 }
                 else
                 {
-                    _summaryLabel.text = $"No conflicts! All changes merged automatically.  |  {stats.GetSummary()}";
+                    _summaryLabel.text = Tr("No conflicts! All changes merged automatically.") + $"  |  {stats.GetSummary()}";
                 }
 
                 var conflicts = _pendingMergeWithTags.Conflicts;
@@ -233,11 +233,11 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 if (conflictCount > 0)
                 {
-                    _summaryLabel.text = $"{conflictCount} conflict(s) to resolve  |  {stats.GetSummary()}";
+                    _summaryLabel.text = Tr($"{conflictCount} conflict(s) to resolve") + $"  |  {stats.GetSummary()}";
                 }
                 else
                 {
-                    _summaryLabel.text = $"No conflicts! All changes merged automatically.  |  {stats.GetSummary()}";
+                    _summaryLabel.text = Tr("No conflicts! All changes merged automatically.") + $"  |  {stats.GetSummary()}";
                 }
 
                 var conflicts = _pendingMerge.Conflicts;

@@ -533,13 +533,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 _modUpdateBox.SetActive(true);
                 var info = TranslatorUIManager.ModUpdateInfo;
-                string kind = info?.IsPrerelease == true ? " (beta)"
-                    : info?.IsMajorUpdate == true ? " (major)" : "";
-                _modUpdateLabel.text = $"Mod update available: v{info?.LatestVersion ?? "?"}{kind}";
+                string kind = info?.IsPrerelease == true ? " " + Tr("(beta)")
+                    : info?.IsMajorUpdate == true ? " " + Tr("(major)") : "";
+                // Version number is data, appended after the translated part
+                _modUpdateLabel.text = Tr("Mod update available:") + $" v{info?.LatestVersion ?? "?"}{kind}";
 
                 // Show appropriate button
                 bool hasDirectDownload = !string.IsNullOrEmpty(info?.DownloadUrl);
-                _modUpdateBtn.ButtonText.text = hasDirectDownload ? "Download" : "View Release";
+                SetDynamicText(_modUpdateBtn.ButtonText, hasDirectDownload ? "Download" : "View Release");
             }
             else
             {
@@ -579,16 +580,14 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // Get owner name for context
                 string ownerName = serverState?.Uploader ?? "owner";
 
+                // Translated as each message is built. Counts stay inline (the pipeline replaces
+                // numbers with placeholders, so every count shares one cache entry); the uploader
+                // name is appended, never sent for translation.
                 if (needsMerge)
                 {
-                    if (isOwner)
-                    {
-                        message = "Both local and server changed. Sync needed!";
-                    }
-                    else
-                    {
-                        message = $"@{ownerName}'s translation updated. Sync needed!";
-                    }
+                    message = isOwner
+                        ? Tr("Both local and server changed. Sync needed!")
+                        : Tr("Sync needed — translation updated by") + $" @{ownerName}";
                     actionText = "Sync";
                 }
                 else if (hasServerUpdate)
@@ -596,17 +595,17 @@ namespace UnityGameTranslator.Core.UI.Panels
                     if (isBranch)
                     {
                         // Branch owner: parent (Main) has been updated
-                        message = "Parent translation update available!";
+                        message = Tr("Parent translation update available!");
                     }
                     else if (isOwner)
                     {
                         // Main owner: server has update (multi-device scenario)
-                        message = "Server update available!";
+                        message = Tr("Server update available!");
                     }
                     else
                     {
                         // Non-owner: the Main they downloaded from has been updated
-                        message = $"@{ownerName} updated the translation!";
+                        message = Tr("Translation updated by") + $" @{ownerName}";
                     }
                     actionText = "Download";
                 }
@@ -615,14 +614,14 @@ namespace UnityGameTranslator.Core.UI.Panels
                     if (isOwner)
                     {
                         // Owner: show Update button
-                        message = $"You have {TranslatorCore.LocalChangesCount} local changes to upload!";
+                        message = Tr($"You have {TranslatorCore.LocalChangesCount} local changes to upload!");
                         actionText = "Update";
                     }
                     else
                     {
                         // Non-owner: show Branch AND Fork options
                         // User must choose to contribute (branch) or go independent (fork)
-                        message = $"You changed {TranslatorCore.LocalChangesCount} line(s). Share them?";
+                        message = Tr($"You changed {TranslatorCore.LocalChangesCount} line(s). Share them?");
                         showBranchFork = true;
                         showAction = false;
                     }
@@ -630,7 +629,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 else
                 {
                     // Fallback for edge case (shouldn't happen with current logic)
-                    message = $"{TranslatorCore.LocalChangesCount} local changes";
+                    message = Tr($"{TranslatorCore.LocalChangesCount} local changes");
                     actionText = "Sync";
                 }
 
@@ -644,14 +643,15 @@ namespace UnityGameTranslator.Core.UI.Panels
                 if (_syncHintLabel != null)
                 {
                     _syncHintLabel.text = showBranchFork
-                        ? $"Branch: send them to @{ownerName} for review • Fork: start your own independent translation"
+                        ? Tr("Branch: send them for review to") + $" @{ownerName} • "
+                          + Tr("Fork: start your own independent translation")
                         : "";
                     _syncHintLabel.gameObject.SetActive(showBranchFork);
                 }
 
                 if (showAction)
                 {
-                    _syncActionBtn.ButtonText.text = actionText;
+                    SetDynamicText(_syncActionBtn.ButtonText, actionText);
                 }
             }
             else
@@ -671,9 +671,10 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 if (isTranslating)
                 {
+                    // The excerpt is GAME text being translated — data, never sent for translation
                     string text = TranslatorCore.CurrentText ?? "";
                     if (text.Length > 25) text = text.Substring(0, 25) + "...";
-                    _aiStatusLabel.text = $"Translating: {text}";
+                    _aiStatusLabel.text = Tr("Translating:") + $" {text}";
                     _aiStatusLabel.gameObject.SetActive(true);
                 }
                 else
@@ -683,7 +684,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 if (queueCount > 0)
                 {
-                    _aiQueueLabel.text = $"Queue: {queueCount} pending";
+                    SetDynamicText(_aiQueueLabel, $"Queue: {queueCount} pending");
                     _aiQueueLabel.gameObject.SetActive(true);
                 }
                 else
@@ -707,7 +708,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                         showConnection = true;
                         if (_connectionLabel != null)
                         {
-                            _connectionLabel.text = "Connected";
+                            SetDynamicText(_connectionLabel, "Connected");
                             _connectionLabel.color = UIStyles.StatusSuccess;
                         }
                         break;
@@ -715,7 +716,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                         showConnection = true;
                         if (_connectionLabel != null)
                         {
-                            _connectionLabel.text = "Connecting...";
+                            SetDynamicText(_connectionLabel, "Connecting...");
                             _connectionLabel.color = UIStyles.StatusWarning;
                         }
                         break;
@@ -723,7 +724,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                         showConnection = true;
                         if (_connectionLabel != null)
                         {
-                            _connectionLabel.text = "Reconnecting...";
+                            SetDynamicText(_connectionLabel, "Reconnecting...");
                             _connectionLabel.color = UIStyles.StatusWarning;
                         }
                         break;

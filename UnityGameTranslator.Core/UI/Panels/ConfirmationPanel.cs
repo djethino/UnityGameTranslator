@@ -48,9 +48,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             Action onCancel = null,
             bool isDanger = true)
         {
-            _titleLabel.text = title;
-            _messageLabel.text = message;
-            _confirmBtn.ButtonText.text = confirmText;
+            SetDynamicText(_titleLabel, title);
+            SetDynamicText(_messageLabel, message);
+            SetDynamicText(_confirmBtn.ButtonText, confirmText);
             _onConfirm = onConfirm;
             _onCancel = onCancel;
 

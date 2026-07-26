@@ -119,13 +119,13 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             if (!TranslatorCore.Config.online_mode)
             {
-                _statusLabel.text = "Offline mode - enable Online Mode in Mod Options first";
+                SetDynamicText(_statusLabel, "Offline mode - enable Online Mode in Mod Options first");
                 _statusLabel.color = UIStyles.StatusError;
                 return;
             }
 
             _startLoginBtn.Component.interactable = false;
-            _statusLabel.text = "Requesting code...";
+            SetDynamicText(_statusLabel, "Requesting code...");
             _statusLabel.color = UIStyles.StatusWarning;
 
             try
@@ -154,8 +154,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                         _openWebsiteBtn.Component.gameObject.SetActive(true);
                         _startLoginBtn.Component.gameObject.SetActive(false);
 
-                        _instructionLabel.text = "Click the button below to open the website,\nthen enter this code:";
-                        _statusLabel.text = "Waiting for authorization...";
+                        SetDynamicText(_instructionLabel, "Click the button below to open the website,\nthen enter this code:");
+                        SetDynamicText(_statusLabel, "Waiting for authorization...");
                         _statusLabel.color = UIStyles.StatusInfo;
 
                         // Recalculate size after content changed
@@ -165,7 +165,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     }
                     else
                     {
-                        _statusLabel.text = $"Error: {error}";
+                        _statusLabel.text = Tr("Error:") + $" {error}";
                         _statusLabel.color = UIStyles.StatusError;
                         _startLoginBtn.Component.interactable = true;
                     }
@@ -176,7 +176,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 var errorMsg = e.Message;
                 TranslatorUIManager.RunOnMainThread(() =>
                 {
-                    _statusLabel.text = $"Error: {errorMsg}";
+                    _statusLabel.text = Tr("Error:") + $" {errorMsg}";
                     _statusLabel.color = UIStyles.StatusError;
                     _startLoginBtn.Component.interactable = true;
                 });
@@ -218,11 +218,11 @@ namespace UnityGameTranslator.Core.UI.Panels
                     switch (state)
                     {
                         case SseConnectionState.Reconnecting:
-                            _statusLabel.text = "Connection lost, reconnecting...";
+                            SetDynamicText(_statusLabel, "Connection lost, reconnecting...");
                             _statusLabel.color = UIStyles.StatusWarning;
                             break;
                         case SseConnectionState.Connected:
-                            _statusLabel.text = "Waiting for authorization...";
+                            SetDynamicText(_statusLabel, "Waiting for authorization...");
                             _statusLabel.color = UIStyles.StatusInfo;
                             break;
                     }
@@ -234,7 +234,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 var errorMsg = error;
                 TranslatorUIManager.RunOnMainThread(() =>
                 {
-                    _statusLabel.text = $"Error: {errorMsg}";
+                    _statusLabel.text = Tr("Error:") + $" {errorMsg}";
                     _statusLabel.color = UIStyles.StatusError;
                     _sseClient = null;
                     ResetUI();
@@ -261,7 +261,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TranslatorCore.SaveConfig();
                 ApiClient.SetAuthToken(token);
 
-                _statusLabel.text = $"Logged in as {userName}!";
+                _statusLabel.text = Tr("Logged in as") + $" {userName}!";
                 _statusLabel.color = UIStyles.StatusSuccess;
 
                 // Refresh panels that show login status
@@ -279,7 +279,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             catch (Exception e)
             {
                 TranslatorCore.LogError($"[Login] Error handling auth response: {e.Message}");
-                _statusLabel.text = "Login succeeded but error processing response";
+                SetDynamicText(_statusLabel, "Login succeeded but error processing response");
                 _statusLabel.color = UIStyles.StatusError;
             }
         }
@@ -288,7 +288,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             _sseClient?.Disconnect();
             _sseClient = null;
-            _statusLabel.text = "Code expired. Please try again.";
+            SetDynamicText(_statusLabel, "Code expired. Please try again.");
             _statusLabel.color = UIStyles.StatusError;
             ResetUI();
         }
@@ -303,7 +303,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
             catch
             {
-                _statusLabel.text = "Connection error";
+                SetDynamicText(_statusLabel, "Connection error");
             }
             _statusLabel.color = UIStyles.StatusError;
             _sseClient?.Disconnect();
@@ -333,13 +333,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (!string.IsNullOrEmpty(_userCode))
             {
                 GUIUtility.systemCopyBuffer = _userCode;
-                _copyCodeBtn.ButtonText.text = "Copied!";
+                SetDynamicText(_copyCodeBtn.ButtonText, "Copied!");
 
                 // Reset button text after 2 seconds
                 TranslatorUIManager.RunDelayed(2f, () =>
                 {
                     if (_copyCodeBtn?.ButtonText != null)
-                        _copyCodeBtn.ButtonText.text = "Copy";
+                        SetDynamicText(_copyCodeBtn.ButtonText, "Copy");
                 });
             }
         }
@@ -350,7 +350,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _startLoginBtn.Component.gameObject.SetActive(true);
             _openWebsiteBtn.Component.gameObject.SetActive(false);
             _codeRow.SetActive(false);
-            _copyCodeBtn.ButtonText.text = "Copy";
+            SetDynamicText(_copyCodeBtn.ButtonText, "Copy");
             _instructionLabel.text = "Click the button below to start the login process.\n" +
                                       "You will receive a code to enter on the website.";
             _statusLabel.text = "";

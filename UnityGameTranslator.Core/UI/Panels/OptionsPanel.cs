@@ -1371,14 +1371,14 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // clearing the config alone only took effect on the next launch
                 TranslatorPanelBase.ResetAllLiveWindows();
 
-                _resetWindowsStatusLabel.text = "Positions reset!";
+                SetDynamicText(_resetWindowsStatusLabel, "Positions reset!");
                 _resetWindowsStatusLabel.color = UIStyles.StatusSuccess;
 
                 TranslatorCore.LogInfo("[Options] Window preferences reset");
             }
             catch (Exception e)
             {
-                _resetWindowsStatusLabel.text = $"Error: {e.Message}";
+                _resetWindowsStatusLabel.text = Tr("Error:") + $" {e.Message}";
                 _resetWindowsStatusLabel.color = UIStyles.StatusError;
             }
         }
@@ -1471,12 +1471,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             string apiKey = _googleApiKeyInput?.Text;
             if (string.IsNullOrEmpty(apiKey))
             {
-                _googleTestStatusLabel.text = "Enter an API key first";
+                SetDynamicText(_googleTestStatusLabel, "Enter an API key first");
                 _googleTestStatusLabel.color = UIStyles.StatusWarning;
                 return;
             }
 
-            _googleTestStatusLabel.text = "Testing...";
+            SetDynamicText(_googleTestStatusLabel, "Testing...");
             _googleTestStatusLabel.color = UIStyles.TextSecondary;
 
             bool success = await TranslatorCore.TestGoogleConnection(apiKey);
@@ -1485,12 +1485,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 if (success)
                 {
-                    _googleTestStatusLabel.text = "Connected!";
+                    SetDynamicText(_googleTestStatusLabel, "Connected!");
                     _googleTestStatusLabel.color = UIStyles.StatusSuccess;
                 }
                 else
                 {
-                    _googleTestStatusLabel.text = "Failed - check API key";
+                    SetDynamicText(_googleTestStatusLabel, "Failed - check API key");
                     _googleTestStatusLabel.color = UIStyles.StatusError;
                 }
             });
@@ -1501,12 +1501,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             string apiKey = _deeplApiKeyInput?.Text;
             if (string.IsNullOrEmpty(apiKey))
             {
-                _deeplTestStatusLabel.text = "Enter an API key first";
+                SetDynamicText(_deeplTestStatusLabel, "Enter an API key first");
                 _deeplTestStatusLabel.color = UIStyles.StatusWarning;
                 return;
             }
 
-            _deeplTestStatusLabel.text = "Testing...";
+            SetDynamicText(_deeplTestStatusLabel, "Testing...");
             _deeplTestStatusLabel.color = UIStyles.TextSecondary;
 
             bool useFree = _deeplUseFreeToggle.isOn;
@@ -1516,12 +1516,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 if (success)
                 {
-                    _deeplTestStatusLabel.text = "Connected!";
+                    SetDynamicText(_deeplTestStatusLabel, "Connected!");
                     _deeplTestStatusLabel.color = UIStyles.StatusSuccess;
                 }
                 else
                 {
-                    _deeplTestStatusLabel.text = "Failed - check API key and plan type";
+                    SetDynamicText(_deeplTestStatusLabel, "Failed - check API key and plan type");
                     _deeplTestStatusLabel.color = UIStyles.StatusError;
                 }
             });
@@ -1531,13 +1531,13 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (!TranslatorCore.Config.online_mode)
             {
-                _checkModUpdatesStatusLabel.text = "Enable online mode first";
+                SetDynamicText(_checkModUpdatesStatusLabel, "Enable online mode first");
                 _checkModUpdatesStatusLabel.color = UIStyles.StatusWarning;
                 return;
             }
 
             _checkModUpdatesNowBtn.Component.interactable = false;
-            _checkModUpdatesStatusLabel.text = "Checking...";
+            SetDynamicText(_checkModUpdatesStatusLabel, "Checking...");
             _checkModUpdatesStatusLabel.color = UIStyles.TextSecondary;
 
             try
@@ -1561,19 +1561,19 @@ namespace UnityGameTranslator.Core.UI.Panels
                         TranslatorUIManager.ModUpdateInfo = result;
                         TranslatorUIManager.ModUpdateDismissed = false;
 
-                        _checkModUpdatesStatusLabel.text = $"Update available: v{latestVersion}";
+                        _checkModUpdatesStatusLabel.text = Tr("Update available:") + $" v{latestVersion}";
                         _checkModUpdatesStatusLabel.color = UIStyles.StatusSuccess;
 
                         TranslatorUIManager.MainPanel?.RefreshUI();
                     }
                     else if (success)
                     {
-                        _checkModUpdatesStatusLabel.text = $"Up to date (v{currentVersion})";
+                        _checkModUpdatesStatusLabel.text = Tr("Up to date") + $" (v{currentVersion})";
                         _checkModUpdatesStatusLabel.color = UIStyles.StatusSuccess;
                     }
                     else
                     {
-                        _checkModUpdatesStatusLabel.text = $"Error: {error}";
+                        _checkModUpdatesStatusLabel.text = Tr("Error:") + $" {error}";
                         _checkModUpdatesStatusLabel.color = UIStyles.StatusError;
                     }
 
@@ -1585,7 +1585,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 var errorMsg = e.Message;
                 TranslatorUIManager.RunOnMainThread(() =>
                 {
-                    _checkModUpdatesStatusLabel.text = $"Error: {errorMsg}";
+                    _checkModUpdatesStatusLabel.text = Tr("Error:") + $" {errorMsg}";
                     _checkModUpdatesStatusLabel.color = UIStyles.StatusError;
                     _checkModUpdatesNowBtn.Component.interactable = true;
                 });
@@ -1594,7 +1594,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private async void TestAIConnection()
         {
-            _aiTestStatusLabel.text = "Testing...";
+            SetDynamicText(_aiTestStatusLabel, "Testing...");
             _aiTestStatusLabel.color = UIStyles.StatusWarning;
 
             string url = _aiUrlInput.Text;
@@ -1608,14 +1608,14 @@ namespace UnityGameTranslator.Core.UI.Panels
                 {
                     if (success)
                     {
-                        _aiTestStatusLabel.text = "Connection successful!";
+                        SetDynamicText(_aiTestStatusLabel, "Connection successful!");
                         _aiTestStatusLabel.color = UIStyles.StatusSuccess;
                         // Auto-refresh models on successful test
                         RefreshModels();
                     }
                     else
                     {
-                        _aiTestStatusLabel.text = "Connection failed";
+                        SetDynamicText(_aiTestStatusLabel, "Connection failed");
                         _aiTestStatusLabel.color = UIStyles.StatusError;
                     }
                 });
@@ -1626,7 +1626,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TranslatorCore.LogWarning($"[Options] TestAIConnection threw: {e.GetType().Name}: {errorMsg}");
                 TranslatorUIManager.RunOnMainThread(() =>
                 {
-                    _aiTestStatusLabel.text = $"Error: {errorMsg}";
+                    _aiTestStatusLabel.text = Tr("Error:") + $" {errorMsg}";
                     _aiTestStatusLabel.color = UIStyles.StatusError;
                 });
             }
@@ -1885,7 +1885,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             catch (Exception e)
             {
                 TranslatorCore.LogError($"[Options] Failed to save settings: {e.GetType().Name}: {e.Message}\n{e.StackTrace}");
-                _aiTestStatusLabel.text = $"Error: {e.Message}";
+                _aiTestStatusLabel.text = Tr("Error:") + $" {e.Message}";
                 _aiTestStatusLabel.color = UIStyles.StatusError;
             }
         }

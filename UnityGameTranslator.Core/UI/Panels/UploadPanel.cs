@@ -209,9 +209,9 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Update display
             _uploadMode = UploadMode.New;
-            _titleLabel.text = "Upload Translation";
-            _modeInfoLabel.text = $"Languages: {sourceLanguage} -> {targetLanguage}";
-            _uploadBtn.ButtonText.text = "Upload";
+            SetDynamicText(_titleLabel, "Upload Translation");
+            _modeInfoLabel.text = Tr("Languages:") + $" {sourceLanguage} -> {targetLanguage}";
+            SetDynamicText(_uploadBtn.ButtonText, "Upload");
             _statusLabel.text = "";
 
             // Enable upload button (we're ready to upload after setup)
@@ -231,7 +231,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             TranslatorCore.LogInfo("[UploadPanel] CheckUploadMode started");
             _isChecking = true;
-            _statusLabel.text = "Checking...";
+            SetDynamicText(_statusLabel, "Checking...");
             _statusLabel.color = UIStyles.StatusWarning;
             _uploadBtn.Component.interactable = false;
 
@@ -255,7 +255,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     var errorMsg = result.Error;
                     TranslatorUIManager.RunOnMainThread(() =>
                     {
-                        _statusLabel.text = $"Error: {errorMsg}";
+                        _statusLabel.text = Tr("Error:") + $" {errorMsg}";
                         _statusLabel.color = UIStyles.StatusError;
                         _isChecking = false;
                         _uploadBtn.Component.interactable = false;
@@ -292,9 +292,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                         TranslatorUIManager.RunOnMainThread(() =>
                         {
                             _uploadMode = UploadMode.Update;
-                            _titleLabel.text = "Update Translation";
-                            _modeInfoLabel.text = $"Updating: ID #{siteId}";
-                            _uploadBtn.ButtonText.text = "Update";
+                            SetDynamicText(_titleLabel, "Update Translation");
+                            SetDynamicText(_modeInfoLabel, $"Updating: ID #{siteId}");
+                            SetDynamicText(_uploadBtn.ButtonText, "Update");
                             DescribeUploadButton("Replace your published version with your current local file");
 
                             // Note: Type is now auto-calculated by server from HVASM tags
@@ -329,9 +329,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                         TranslatorUIManager.RunOnMainThread(() =>
                         {
                             _uploadMode = UploadMode.Branch;
-                            _titleLabel.text = "Contribute as Branch";
-                            _modeInfoLabel.text = $"Contributing to: @{uploader}";
-                            _uploadBtn.ButtonText.text = "Contribute";
+                            SetDynamicText(_titleLabel, "Contribute as Branch");
+                            _modeInfoLabel.text = Tr("Contributing to:") + $" @{uploader}";
+                            SetDynamicText(_uploadBtn.ButtonText, "Contribute");
                             DescribeUploadButton($"Send your changes to @{uploader} for review — they can merge them into the main translation");
                             // Note: Type is now auto-calculated by server from HVASM tags
                             _statusLabel.text = "";
@@ -363,9 +363,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                             _selectedTargetLanguage = forkTargetLang;
                             _setupComplete = true;
 
-                            _titleLabel.text = "Upload Fork";
-                            _modeInfoLabel.text = $"Languages: {forkSourceLang} -> {forkTargetLang} (from forked translation)";
-                            _uploadBtn.ButtonText.text = "Upload";
+                            SetDynamicText(_titleLabel, "Upload Fork");
+                            _modeInfoLabel.text = Tr("Languages:") + $" {forkSourceLang} -> {forkTargetLang} " + Tr("(from forked translation)");
+                            SetDynamicText(_uploadBtn.ButtonText, "Upload");
                             DescribeUploadButton("Publish your independent translation — you become its owner on the website");
                             _statusLabel.text = "";
                             _isChecking = false;
@@ -400,7 +400,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 var errorMsg = e.Message;
                 TranslatorUIManager.RunOnMainThread(() =>
                 {
-                    _statusLabel.text = $"Error: {errorMsg}";
+                    _statusLabel.text = Tr("Error:") + $" {errorMsg}";
                     _statusLabel.color = UIStyles.StatusError;
                     _isChecking = false;
                     _uploadBtn.Component.interactable = true;
@@ -412,7 +412,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (_entriesLabel == null) return;
 
-            _entriesLabel.text = $"Entries: {TranslatorCore.TranslationCache.Count}";
+            SetDynamicText(_entriesLabel, $"Entries: {TranslatorCore.TranslationCache.Count}");
 
             var gameInfo = TranslatorCore.CurrentGame;
             _gameLabel.text = gameInfo != null ? $"Game: {gameInfo.name}" : "Game: Unknown";
@@ -431,7 +431,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (string.IsNullOrEmpty(TranslatorCore.Config.api_token))
             {
                 TranslatorCore.LogWarning("[UploadPanel] DoUpload blocked - no API token");
-                _statusLabel.text = "Please login first";
+                SetDynamicText(_statusLabel, "Please login first");
                 _statusLabel.color = UIStyles.StatusError;
                 return;
             }
@@ -441,7 +441,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             string actionText = _uploadMode == UploadMode.Update ? "Updating..." :
                                (_uploadMode == UploadMode.Branch ? "Contributing..." : "Uploading...");
-            _statusLabel.text = actionText;
+            SetDynamicText(_statusLabel, actionText);
             _statusLabel.color = UIStyles.StatusWarning;
 
             // Capture values before async (for use in RunOnMainThread callbacks)
@@ -524,7 +524,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     // Update UI on main thread
                     TranslatorUIManager.RunOnMainThread(() =>
                     {
-                        _statusLabel.text = $"{successMsg}! ID: {translationId}";
+                        _statusLabel.text = Tr(successMsg + "!") + $" ID: {translationId}";
                         _statusLabel.color = UIStyles.StatusSuccess;
                     });
 
@@ -545,7 +545,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     var errorMsg = result.Error;
                     TranslatorUIManager.RunOnMainThread(() =>
                     {
-                        _statusLabel.text = $"Error: {errorMsg}";
+                        _statusLabel.text = Tr("Error:") + $" {errorMsg}";
                         _statusLabel.color = UIStyles.StatusError;
                         _isUploading = false;
                         _uploadBtn.Component.interactable = true;
@@ -558,7 +558,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 var errorMsg = e.Message;
                 TranslatorUIManager.RunOnMainThread(() =>
                 {
-                    _statusLabel.text = $"Error: {errorMsg}";
+                    _statusLabel.text = Tr("Error:") + $" {errorMsg}";
                     _statusLabel.color = UIStyles.StatusError;
                     _isUploading = false;
                     _uploadBtn.Component.interactable = true;

@@ -120,7 +120,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
             else
             {
-                _summaryLabel.text = "Select a target language";
+                SetDynamicText(_summaryLabel, "Select a target language");
                 _summaryLabel.color = UIStyles.TextMuted;
             }
         }
@@ -131,7 +131,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             if (string.IsNullOrEmpty(target))
             {
-                _summaryLabel.text = "Please select a target language!";
+                SetDynamicText(_summaryLabel, "Please select a target language!");
                 _summaryLabel.color = UIStyles.StatusError;
                 return;
             }

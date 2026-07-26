@@ -194,7 +194,7 @@ namespace UnityGameTranslator.Core.UI.Components
                     ApplyKeyButtonStyle();
 
                     if (_displayLabel != null)
-                        _displayLabel.text = "Click button and press a key to change";
+                        _displayLabel.text = TranslatorCore.TranslateOwnUIDynamic("Click button and press a key to change", _displayLabel);
 
                     NotifyChange();
                     return;
@@ -223,7 +223,7 @@ namespace UnityGameTranslator.Core.UI.Components
 
             if (_displayLabel != null)
             {
-                _displayLabel.text = "Press any key...";
+                _displayLabel.text = TranslatorCore.TranslateOwnUIDynamic("Press any key...", _displayLabel);
                 _displayLabel.color = UIStyles.StatusWarning;
             }
 

@@ -215,32 +215,32 @@ namespace UnityGameTranslator.Core.UI.Components
             {
                 case SyncStatusType.Synced:
                     _statusIcon.color = UIStyles.StatusSuccess;
-                    _statusLabel.text = "SYNCED";
+                    _statusLabel.text = TranslatorCore.TranslateOwnUIDynamic("SYNCED", _statusLabel);
                     _statusLabel.color = UIStyles.StatusSuccess;
                     break;
                 case SyncStatusType.OutOfSync:
                     _statusIcon.color = UIStyles.StatusWarning;
-                    _statusLabel.text = "OUT OF SYNC";
+                    _statusLabel.text = TranslatorCore.TranslateOwnUIDynamic("OUT OF SYNC", _statusLabel);
                     _statusLabel.color = UIStyles.StatusWarning;
                     break;
                 case SyncStatusType.Conflict:
                     _statusIcon.color = UIStyles.StatusError;
-                    _statusLabel.text = "CONFLICT";
+                    _statusLabel.text = TranslatorCore.TranslateOwnUIDynamic("CONFLICT", _statusLabel);
                     _statusLabel.color = UIStyles.StatusError;
                     break;
                 case SyncStatusType.LocalOnly:
                     _statusIcon.color = UIStyles.TextMuted;
-                    _statusLabel.text = "NOT SHARED";
+                    _statusLabel.text = TranslatorCore.TranslateOwnUIDynamic("NOT SHARED", _statusLabel);
                     _statusLabel.color = UIStyles.TextMuted;
                     break;
                 case SyncStatusType.NotLoggedIn:
                     _statusIcon.color = UIStyles.TextMuted;
-                    _statusLabel.text = "NOT LOGGED IN";
+                    _statusLabel.text = TranslatorCore.TranslateOwnUIDynamic("NOT LOGGED IN", _statusLabel);
                     _statusLabel.color = UIStyles.TextMuted;
                     break;
                 case SyncStatusType.NoLocal:
                     _statusIcon.color = UIStyles.TextMuted;
-                    _statusLabel.text = "NO TRANSLATION";
+                    _statusLabel.text = TranslatorCore.TranslateOwnUIDynamic("NO TRANSLATION", _statusLabel);
                     _statusLabel.color = UIStyles.TextMuted;
                     break;
             }

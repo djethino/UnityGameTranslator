@@ -887,10 +887,10 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Update title
             if (_titleLabel != null)
-                _titleLabel.text = isImage ? "Image Inspector"
+                SetDynamicText(_titleLabel, isImage ? "Image Inspector"
                     : isFontOverride ? "Font Override — Click on an element"
                     : isTextEdit ? "Text Editor — Click on text to edit"
-                    : "Element Inspector";
+                    : "Element Inspector");
 
             // Toggle action button visibility per mode
             if (_exclusionActionsRow != null) _exclusionActionsRow.SetActive(!isImage && !isFontOverride && !isTextEdit);
@@ -1122,7 +1122,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                         _excludePatternBtn.Component.interactable = true;
                     }
 
-                    _statusLabel.text = "Element selected";
+                    SetDynamicText(_statusLabel, "Element selected");
                     _statusLabel.color = UIStyles.StatusSuccess;
 
                     // Position selected highlight
@@ -1298,7 +1298,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_lastHoveredPath != "")
             {
                 _lastHoveredPath = "";
-                _hoveredPathLabel.text = "(move cursor over a UI element)";
+                SetDynamicText(_hoveredPathLabel, "(move cursor over a UI element)");
                 _hoveredPathLabel.color = UIStyles.TextMuted;
                 _hoveredPathLabel.fontStyle = FontStyle.Italic;
             }
@@ -1315,7 +1315,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _lastSelectedPath = "";
             _lastSelectedObject = null;
             _lastSelectedSpriteObj = null;
-            _selectedPathLabel.text = "(click to select)";
+            SetDynamicText(_selectedPathLabel, "(click to select)");
             _selectedPathLabel.color = UIStyles.TextMuted;
             _selectedPathLabel.fontStyle = FontStyle.Italic;
             _excludeThisBtn.Component.interactable = false;
@@ -1341,7 +1341,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             TranslatorCore.AddExclusion(_lastSelectedPath);
 
-            _statusLabel.text = "Excluded!";
+            SetDynamicText(_statusLabel, "Excluded!");
             _statusLabel.color = UIStyles.StatusSuccess;
 
             ClearSelection();
@@ -1357,7 +1357,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             TranslatorCore.AddExclusion(pattern);
             TranslatorCore.SaveCache();
 
-            _statusLabel.text = $"Excluded: {pattern}";
+            _statusLabel.text = Tr("Excluded:") + $" {pattern}";
             _statusLabel.color = UIStyles.StatusSuccess;
 
             ClearSelection();
@@ -1378,7 +1378,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             var spriteName = ImageReplacer.GetSpriteName(_lastSelectedSpriteObj);
             if (string.IsNullOrEmpty(spriteName))
             {
-                _statusLabel.text = "Cannot export: sprite has no name";
+                SetDynamicText(_statusLabel, "Cannot export: sprite has no name");
                 _statusLabel.color = UIStyles.StatusError;
                 return;
             }
@@ -1398,7 +1398,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
             else
             {
-                _statusLabel.text = "Export failed (check log)";
+                SetDynamicText(_statusLabel, "Export failed (check log)");
                 _statusLabel.color = UIStyles.StatusError;
             }
         }
@@ -1410,14 +1410,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             var spriteName = ImageReplacer.GetSpriteName(_lastSelectedSpriteObj);
             if (string.IsNullOrEmpty(spriteName))
             {
-                _statusLabel.text = "Cannot mark: sprite has no name";
+                SetDynamicText(_statusLabel, "Cannot mark: sprite has no name");
                 _statusLabel.color = UIStyles.StatusError;
                 return;
             }
 
             MarkCurrentForReplace(spriteName);
 
-            _statusLabel.text = $"Marked: {spriteName}";
+            _statusLabel.text = Tr("Marked:") + $" {spriteName}";
             _statusLabel.color = UIStyles.StatusSuccess;
 
             TranslatorCore.SaveCache();
@@ -1464,7 +1464,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             if (textEntries.Count == 0)
             {
-                _statusLabel.text = "No text components found";
+                SetDynamicText(_statusLabel, "No text components found");
                 _statusLabel.color = UIStyles.StatusWarning;
                 return;
             }
@@ -1475,7 +1475,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Show the edit UI
             _textEditRow.SetActive(true);
-            _textEditCountLabel.text = $"{textEntries.Count} text(s) found:";
+            SetDynamicText(_textEditCountLabel, $"{textEntries.Count} text(s) found:");
 
             // Create an editable row for each text
             for (int i = 0; i < textEntries.Count; i++)
@@ -1483,7 +1483,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 CreateTextEditRow(textEntries[i]);
             }
 
-            _statusLabel.text = "Edit translations and click Save";
+            SetDynamicText(_statusLabel, "Edit translations and click Save");
             _statusLabel.color = UIStyles.TextSecondary;
         }
 
@@ -1617,7 +1617,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
                 catch { }
 
-                _statusLabel.text = "Saved!";
+                SetDynamicText(_statusLabel, "Saved!");
                 _statusLabel.color = UIStyles.StatusSuccess;
                 keyLabel.text = $"[H] {capturedKey}";
             };
@@ -1628,7 +1628,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 TranslatorCore.RemoveTranslationForRetranslate(capturedKey);
 
-                _statusLabel.text = "Queued for AI...";
+                SetDynamicText(_statusLabel, "Queued for AI...");
                 _statusLabel.color = UIStyles.TextAccent;
                 keyLabel.text = $"[AI...] {capturedKey}";
             };

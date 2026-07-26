@@ -325,9 +325,9 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (_browserEditorBtn?.ButtonText != null)
             {
-                _browserEditorBtn.ButtonText.text = TranslatorUIManager.IsEditSessionActive
+                SetDynamicText(_browserEditorBtn.ButtonText, TranslatorUIManager.IsEditSessionActive
                     ? "Stop browser session"
-                    : "Edit in browser";
+                    : "Edit in browser");
             }
         }
 
@@ -490,7 +490,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             if (string.IsNullOrEmpty(pattern))
             {
-                _exclusionsStatusLabel.text = "Enter a pattern first";
+                SetDynamicText(_exclusionsStatusLabel, "Enter a pattern first");
                 _exclusionsStatusLabel.color = UIStyles.StatusWarning;
                 return;
             }
@@ -502,7 +502,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             if (alreadyExists && !wasRemoved)
             {
-                _exclusionsStatusLabel.text = "Pattern already exists";
+                SetDynamicText(_exclusionsStatusLabel, "Pattern already exists");
                 _exclusionsStatusLabel.color = UIStyles.StatusWarning;
                 return;
             }
@@ -518,7 +518,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
 
             _manualPatternInput.Text = "";
-            _exclusionsStatusLabel.text = "Pattern will be added on Apply";
+            SetDynamicText(_exclusionsStatusLabel, "Pattern will be added on Apply");
             _exclusionsStatusLabel.color = UIStyles.TextSecondary;
 
             RefreshExclusionsList();
@@ -530,7 +530,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             string searchValue = _findByValueInput?.Text?.Trim();
             if (string.IsNullOrEmpty(searchValue))
             {
-                _exclusionsStatusLabel.text = "Enter text to search for";
+                SetDynamicText(_exclusionsStatusLabel, "Enter text to search for");
                 _exclusionsStatusLabel.color = UIStyles.StatusWarning;
                 return;
             }
@@ -598,7 +598,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 emptyLabel.fontStyle = FontStyle.Italic;
                 UIFactory.SetLayoutElement(emptyLabel.gameObject, minHeight: 30, flexibleWidth: 9999);
 
-                _exclusionsStatusLabel.text = "No results";
+                SetDynamicText(_exclusionsStatusLabel, "No results");
                 _exclusionsStatusLabel.color = UIStyles.StatusWarning;
                 return;
             }
@@ -623,13 +623,13 @@ namespace UnityGameTranslator.Core.UI.Panels
                         _pendingExclusionAdds.Add(capturedPath);
                         RefreshExclusionsList();
                         UpdateApplyButtonText();
-                        _exclusionsStatusLabel.text = $"Added: {capturedPath}";
+                        _exclusionsStatusLabel.text = Tr("Added:") + $" {capturedPath}";
                         _exclusionsStatusLabel.color = UIStyles.StatusSuccess;
                     }
                 };
             }
 
-            _exclusionsStatusLabel.text = $"Found {found.Count} component(s)";
+            SetDynamicText(_exclusionsStatusLabel, $"Found {found.Count} component(s)");
             _exclusionsStatusLabel.color = UIStyles.StatusSuccess;
         }
 
@@ -722,14 +722,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_pendingExclusionAdds.Contains(pattern))
             {
                 _pendingExclusionAdds.Remove(pattern);
-                _exclusionsStatusLabel.text = "Pending pattern cancelled";
+                SetDynamicText(_exclusionsStatusLabel, "Pending pattern cancelled");
                 _exclusionsStatusLabel.color = UIStyles.TextSecondary;
             }
             else
             {
                 // Mark for removal on Apply
                 _pendingExclusionRemoves.Add(pattern);
-                _exclusionsStatusLabel.text = "Pattern will be removed on Apply";
+                SetDynamicText(_exclusionsStatusLabel, "Pattern will be removed on Apply");
                 _exclusionsStatusLabel.color = UIStyles.TextSecondary;
             }
 
@@ -1013,7 +1013,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             string pattern = _fontOverrideManualInput?.Text?.Trim();
             if (string.IsNullOrEmpty(pattern))
             {
-                _fontOverrideStatusLabel.text = "Enter a pattern first";
+                SetDynamicText(_fontOverrideStatusLabel, "Enter a pattern first");
                 _fontOverrideStatusLabel.color = UIStyles.StatusWarning;
                 return;
             }
@@ -1027,7 +1027,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             string searchValue = _fontOverrideFindInput?.Text?.Trim();
             if (string.IsNullOrEmpty(searchValue))
             {
-                _fontOverrideStatusLabel.text = "Enter text to search for";
+                SetDynamicText(_fontOverrideStatusLabel, "Enter text to search for");
                 _fontOverrideStatusLabel.color = UIStyles.StatusWarning;
                 return;
             }
@@ -1088,7 +1088,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 emptyLabel.color = UIStyles.TextMuted;
                 emptyLabel.fontStyle = FontStyle.Italic;
                 UIFactory.SetLayoutElement(emptyLabel.gameObject, minHeight: 30, flexibleWidth: 9999);
-                _fontOverrideStatusLabel.text = "No results";
+                SetDynamicText(_fontOverrideStatusLabel, "No results");
                 _fontOverrideStatusLabel.color = UIStyles.StatusWarning;
                 return;
             }
@@ -1109,7 +1109,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 addPathBtn.OnClick += () => AddFontOverrideForPath("path:" + capturedPath);
             }
 
-            _fontOverrideStatusLabel.text = $"Found {found.Count} component(s)";
+            SetDynamicText(_fontOverrideStatusLabel, $"Found {found.Count} component(s)");
             _fontOverrideStatusLabel.color = UIStyles.StatusSuccess;
         }
 
@@ -1263,7 +1263,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 if (_fontsStatusLabel != null)
                 {
-                    _fontsStatusLabel.text = "0 fonts detected";
+                    SetDynamicText(_fontsStatusLabel, "0 fonts detected");
                     _fontsStatusLabel.color = UIStyles.TextMuted;
                 }
                 return;
@@ -1282,7 +1282,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             if (_fontsStatusLabel != null)
             {
-                _fontsStatusLabel.text = $"{fonts.Count} font(s) detected";
+                SetDynamicText(_fontsStatusLabel, $"{fonts.Count} font(s) detected");
                 _fontsStatusLabel.color = UIStyles.StatusSuccess;
             }
         }
@@ -1847,7 +1847,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     ImageReplacer.RemoveReplacement(capturedName);
                     TranslatorCore.SaveCache();
                     RefreshImageReplacementsList();
-                    _imagesStatusLabel.text = $"Removed: {capturedName}";
+                    _imagesStatusLabel.text = Tr("Removed:") + $" {capturedName}";
                     _imagesStatusLabel.color = UIStyles.TextSecondary;
                 };
             }
@@ -1862,12 +1862,12 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             if (loaded > 0)
             {
-                _imagesStatusLabel.text = $"Loaded {loaded} replacement(s)";
+                SetDynamicText(_imagesStatusLabel, $"Loaded {loaded} replacement(s)");
                 _imagesStatusLabel.color = UIStyles.StatusSuccess;
             }
             else
             {
-                _imagesStatusLabel.text = "No new replacements to load";
+                SetDynamicText(_imagesStatusLabel, "No new replacements to load");
                 _imagesStatusLabel.color = UIStyles.TextMuted;
             }
         }
@@ -1950,13 +1950,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             string value = _scanValueInput?.Text?.Trim();
             if (string.IsNullOrEmpty(value))
             {
-                _variablesStatusLabel.text = "Enter a value to search for";
+                SetDynamicText(_variablesStatusLabel, "Enter a value to search for");
                 _variablesStatusLabel.color = UIStyles.StatusWarning;
                 return;
             }
 
             _isScanning = true;
-            _variablesStatusLabel.text = "Scanning...";
+            SetDynamicText(_variablesStatusLabel, "Scanning...");
             _variablesStatusLabel.color = UIStyles.TextSecondary;
 
             // Show results container
@@ -1979,7 +1979,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     emptyLabel.fontStyle = FontStyle.Italic;
                     UIFactory.SetLayoutElement(emptyLabel.gameObject, minHeight: 30, flexibleWidth: 9999);
 
-                    _variablesStatusLabel.text = "No results found";
+                    SetDynamicText(_variablesStatusLabel, "No results found");
                     _variablesStatusLabel.color = UIStyles.StatusWarning;
                 }
                 else
@@ -2017,7 +2017,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                         };
                     }
 
-                    _variablesStatusLabel.text = $"Found {candidates.Count} candidate(s). Click + to add.";
+                    SetDynamicText(_variablesStatusLabel, $"Found {candidates.Count} candidate(s). Click + to add.");
                     _variablesStatusLabel.color = UIStyles.StatusSuccess;
                 }
             }
@@ -2091,7 +2091,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     VariableManager.RemoveVariable(capturedId);
                     TranslatorCore.SaveCache();
                     RefreshVariablesList();
-                    _variablesStatusLabel.text = "Variable removed";
+                    SetDynamicText(_variablesStatusLabel, "Variable removed");
                     _variablesStatusLabel.color = UIStyles.TextSecondary;
                 };
             }

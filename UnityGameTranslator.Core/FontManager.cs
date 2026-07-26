@@ -3815,7 +3815,13 @@ namespace UnityGameTranslator.Core
                         TranslatorCore.LogDebug($"[FontManager] Created fallback from custom font: {cleanName}");
                         return customAsset;
                     }
-                    TranslatorCore.LogWarning($"[FontManager] Failed to load custom font: {cleanName}");
+                    // A null here usually means "not yet", not "broken": the asset needs a game
+                    // TMP_FontAsset to clone from, and none is loaded this early. Saying "Failed"
+                    // in both cases sent us hunting a bug that did not exist.
+                    if (CustomFontLoader.IsFontDeferred(cleanName))
+                        TranslatorCore.LogDebug($"[FontManager] Custom font not ready yet, will retry once a game font is loaded: {cleanName}");
+                    else
+                        TranslatorCore.LogWarning($"[FontManager] Failed to load custom font: {cleanName}");
                     return null;
                 }
 

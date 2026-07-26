@@ -62,6 +62,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private Text _uploadHintLabel;
         private ButtonRef _reviewOnWebsiteBtn;
         private ButtonRef _compareWithServerBtn;
+        private ButtonRef _editDetailsBtn;
         private ButtonRef _forkBtn;
         private Text _roleActionsHint;
         private Components.HelpZone _helpZone;
@@ -462,12 +463,25 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             var actionsBox = CreateSection(parent, "ActionsBox");
 
-            _uploadBtn = CreatePrimaryButton(actionsBox, "UploadBtn", "Upload Translation", 200);
+            // Pushing your content and inspecting what you are about to push are the same
+            // question, so they share a row. Everything else (reviewing others' work, editing the
+            // description, forking) is a different subject and lives on the row below.
+            var syncRow = UIStyles.CreateFormRow(actionsBox, "SyncActionsRow", UIStyles.RowHeightLarge, UIStyles.SmallSpacing);
+
+            _uploadBtn = CreatePrimaryButton(syncRow, "UploadBtn", "Upload Translation", 200);
             UIFactory.SetLayoutElement(_uploadBtn.Component.gameObject, flexibleWidth: 9999);
             _uploadBtn.OnClick += OnUploadClicked;
             RegisterExcluded(_uploadBtn.ButtonText);
             _helpZone?.Describe(_uploadBtn.Component.gameObject,
                 "Send your local translation to the website so others can use it");
+
+            // Compare with Server — belongs next to the push it qualifies
+            _compareWithServerBtn = CreateSecondaryButton(syncRow, "CompareBtn", "Compare", 100);
+            UIStyles.SetBackground(_compareWithServerBtn.Component.gameObject, UIStyles.ButtonSecondary);
+            _compareWithServerBtn.OnClick += OnCompareWithServerClicked;
+            RegisterExcluded(_compareWithServerBtn.ButtonText);
+            _helpZone?.Describe(_compareWithServerBtn.Component.gameObject,
+                "See the differences between your local file and the version on the website");
 
             _uploadHintLabel = UIStyles.CreateHint(actionsBox, "UploadHintLabel", "");
             RegisterExcluded(_uploadHintLabel);
@@ -485,13 +499,15 @@ namespace UnityGameTranslator.Core.UI.Panels
             _helpZone?.Describe(_reviewOnWebsiteBtn.Component.gameObject,
                 "Open the website to accept or reject changes proposed by other players");
 
-            // Compare with Server button (Main and Branch) - opens diff view
-            _compareWithServerBtn = CreateSecondaryButton(roleActionsRow, "CompareBtn", "Compare", 100);
-            UIStyles.SetBackground(_compareWithServerBtn.Component.gameObject, UIStyles.ButtonSecondary);
-            _compareWithServerBtn.OnClick += OnCompareWithServerClicked;
-            RegisterExcluded(_compareWithServerBtn.ButtonText);
-            _helpZone?.Describe(_compareWithServerBtn.Component.gameObject,
-                "See the differences between your local file and the version on the website");
+            // Edit details (owners) — the description and the resources link were only reachable
+            // through the upload screen, which is closed once everything is in sync. Fixing a dead
+            // link or rewording a description then had no path at all.
+            _editDetailsBtn = CreateSecondaryButton(roleActionsRow, "EditDetailsBtn", "Edit details", 110);
+            UIStyles.SetBackground(_editDetailsBtn.Component.gameObject, UIStyles.ButtonSecondary);
+            _editDetailsBtn.OnClick += OnEditDetailsClicked;
+            RegisterUIText(_editDetailsBtn.ButtonText);
+            _helpZone?.Describe(_editDetailsBtn.Component.gameObject,
+                "Change the description and the resources link of your published translation, without waiting for new translated lines");
 
             // Fork button (Branch only) - creates independent fork
             _forkBtn = CreateSecondaryButton(roleActionsRow, "ForkBtn", "Fork", 80);
@@ -971,8 +987,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 syncStatus = SyncStatusType.OutOfSync;
             }
-            else if (localChanges > 0 || hasServerUpdate)
+            else if (localChanges > 0 || hasServerUpdate || TranslatorCore.MetadataDirty)
             {
+                // Metadata counts: settings edited but not pushed are still something to sync.
+                // Leaving it out showed SYNCED next to a button offering an update.
                 syncStatus = SyncStatusType.OutOfSync;
             }
             else if (serverState != null && serverState.Exists)
@@ -984,15 +1002,19 @@ namespace UnityGameTranslator.Core.UI.Panels
                 syncStatus = SyncStatusType.LocalOnly;
             }
 
+            // Identity leads the card: which languages, whatever the mode
+            _statusCard.SetIdentity(TranslatorCore.Config.GetSourceLanguage(), targetLang);
+
             // Configure card based on layout state
             switch (_currentLayoutState)
             {
                 case LayoutState.OwnerMain:
-                    _statusCard.ConfigureAsMainOwner(
-                        syncStatus,
-                        entryCount,
-                        targetLang,
-                        serverState?.BranchesCount ?? 0);
+                    int branches = serverState?.BranchesCount ?? 0;
+                    _statusCard.ConfigureAsMainOwner(syncStatus, entryCount, targetLang, branches);
+                    // One key action per mode, next to what motivates it. Contributions to review
+                    // live on the website, which is where a maintainer accepts or rejects them.
+                    if (branches > 0 && _reviewOnWebsiteBtn != null)
+                        _statusCard.SetModeAction($"{branches} contribution(s) waiting", "Review", OnReviewOnWebsiteClicked);
                     break;
 
                 case LayoutState.OwnerBranch:
@@ -1001,6 +1023,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                         entryCount,
                         targetLang,
                         serverState?.MainUsername ?? serverState?.Uploader);
+                    // A branch owner's question is "what did I change?" — comparing answers it.
+                    if (localChanges > 0)
+                        _statusCard.SetModeAction($"{localChanges} change(s) not submitted", "Compare", OnCompareWithServerClicked);
                     break;
 
                 case LayoutState.ContributorSameUuid:
@@ -1013,6 +1038,9 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 case LayoutState.VisitorDiffUuid:
                     _statusCard.ConfigureAsLocalOnly(entryCount, targetLang);
+                    // Nothing shared yet: the one thing worth doing is sharing it.
+                    if (entryCount > 0)
+                        _statusCard.SetModeAction("Not shared yet", "Upload", OnUploadClicked);
                     break;
 
                 default:
@@ -1225,8 +1253,15 @@ namespace UnityGameTranslator.Core.UI.Panels
             bool existsOnServer = state != null && state.Exists && state.SiteId.HasValue;
             bool hasLocalChanges = TranslatorCore.LocalChangesCount > 0;
 
-            // Check if we're in sync (no local changes and hash matches)
-            bool isInSync = existsOnServer && state.IsOwner && !hasLocalChanges &&
+            // Settings that travel with the translation — replacement fonts, images, exclusions,
+            // variables, the interface font — can change without a single new translated line.
+            // Sync used to be judged on line count alone, so those edits had no way out: the
+            // upload button stayed disabled on "Up to date" and the work stayed on the machine.
+            // That also blocked editing the resources link, which is entered on the upload screen.
+            bool hasMetadataChanges = TranslatorCore.MetadataDirty;
+
+            // In sync means nothing left to push: neither lines NOR settings
+            bool isInSync = existsOnServer && state.IsOwner && !hasLocalChanges && !hasMetadataChanges &&
                            !string.IsNullOrEmpty(state.Hash) &&
                            state.Hash == TranslatorCore.LastSyncedHash;
 
@@ -1255,9 +1290,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             else if (existsOnServer && state.IsOwner)
             {
                 uploadAction = "Update Translation";
-                uploadHint = Tr(hasLocalChanges
-                    ? $"Update #{state.SiteId} ({TranslatorCore.LocalChangesCount} local changes)"
-                    : $"Update your translation #{state.SiteId}");
+                // Say WHICH kind of change is pending, otherwise an update offered after a mere
+                // font or exclusion edit looks like the mod lost track of what was synced.
+                if (hasLocalChanges)
+                    uploadHint = Tr($"Update #{state.SiteId} ({TranslatorCore.LocalChangesCount} local changes)");
+                else if (hasMetadataChanges)
+                    uploadHint = Tr($"Update #{state.SiteId} — settings changed (fonts, images, exclusions)");
+                else
+                    uploadHint = Tr($"Update your translation #{state.SiteId}");
             }
             else if (existsOnServer && !state.IsOwner)
             {
@@ -1314,6 +1354,16 @@ namespace UnityGameTranslator.Core.UI.Panels
                 if (canCompare)
                 {
                     _compareWithServerBtn.Component.interactable = isLoggedIn;
+                }
+
+                // Edit details — for owners of a published translation, whatever the sync state.
+                // That is the point: it exists precisely for when there is nothing else to push.
+                bool canEditDetails = existsOnServer && state.IsOwner;
+                if (_editDetailsBtn != null)
+                {
+                    _editDetailsBtn.Component.gameObject.SetActive(canEditDetails);
+                    if (canEditDetails)
+                        _editDetailsBtn.Component.interactable = isLoggedIn && TranslatorCore.Config.online_mode;
                 }
 
                 // Fork button - only for Branch role
@@ -1394,6 +1444,22 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 TranslatorUIManager.UploadPanel?.SetActive(true);
             }
+        }
+
+        /// <summary>
+        /// Open the upload screen for the sole purpose of editing what describes the translation:
+        /// its notes and its resources link. Both are prefilled from the published version, so the
+        /// user edits rather than retypes.
+        ///
+        /// Deliberately reuses the upload path instead of a dedicated call: publishing metadata
+        /// alone would need a server route that does not exist. The cost is that the file is sent
+        /// again unchanged — acceptable for an action taken once in a while, and it keeps the
+        /// server as the single source of truth for what a published translation contains.
+        /// </summary>
+        private void OnEditDetailsClicked()
+        {
+            if (!TranslatorCore.Config.online_mode) return;
+            TranslatorUIManager.UploadPanel?.SetActive(true);
         }
 
         private void OnReviewOnWebsiteClicked()

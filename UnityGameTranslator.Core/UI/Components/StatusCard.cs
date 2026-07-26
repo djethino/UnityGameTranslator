@@ -73,18 +73,25 @@ namespace UnityGameTranslator.Core.UI.Components
     {
         // UI elements
         private GameObject _root;
+        private Text _identityLabel;
+        private GameObject _roleBadge;
+        private Image _roleBadgeImage;
         private Text _statusIcon;
         private Text _statusLabel;
         private Text _roleLabel;
         private Text _detailsLabel;
         private GameObject _qualityRow;
+        private GameObject _legendRow;
         private Text _qualityLabel;
         private GameObject _qualityBarContainer;
         private Image _humanBar;
         private Image _validatedBar;
         private Image _aiBar;
         private Text _qualityLegend;
+        private GameObject _modeRow;
         private Text _secondaryLabel;
+        private UniverseLib.UI.Models.ButtonRef _modeActionBtn;
+        private Action _modeAction;
 
         /// <summary>
         /// The root GameObject of the status card.
@@ -117,47 +124,73 @@ namespace UnityGameTranslator.Core.UI.Components
                 }
             }
 
-            // First row: Status icon + label + Role badge
+            // Row 1 — WHAT this translation is, plus the role badge. Identity leads: you know what
+            // you are looking at before you are told how it is doing.
+            var identityRow = UIFactory.CreateHorizontalGroup(_root, "IdentityRow", false, false, true, true, UIStyles.SmallSpacing);
+            UIFactory.SetLayoutElement(identityRow, minHeight: UIStyles.RowHeightMedium, flexibleWidth: 9999);
+            UIStyles.ClearRowBackground(identityRow);
+            var idLayout = identityRow.GetComponent<HorizontalLayoutGroup>();
+            if (idLayout != null) idLayout.childAlignment = TextAnchor.MiddleLeft;
+
+            // "English → Français" — language names are data, never translated
+            _identityLabel = UIFactory.CreateLabel(identityRow, "IdentityLabel", "", TextAnchor.MiddleLeft);
+            _identityLabel.fontStyle = FontStyle.Bold;
+            _identityLabel.fontSize = UIStyles.FontSizeNormal;
+            _identityLabel.color = UIStyles.TextPrimary;
+            UIFactory.SetLayoutElement(_identityLabel.gameObject, flexibleWidth: 9999);
+            TranslatorCore.RegisterExcluded(_identityLabel);
+
+            // Role badge: a coloured chip rather than a raw "[MAIN]" tag, so the mode reads at a
+            // glance and each role owns a colour.
+            _roleBadge = UIFactory.CreateUIObject("RoleBadge", identityRow);
+            _roleBadgeImage = _roleBadge.AddComponent<Image>();
+            _roleBadgeImage.color = UIStyles.ButtonSecondary;
+            UIFactory.SetLayoutGroup<HorizontalLayoutGroup>(_roleBadge, true, true, true, true, 0, 8, 8, 3, 3);
+            UIFactory.SetLayoutElement(_roleBadge, minWidth: 62, minHeight: 20, flexibleWidth: 0);
+
+            _roleLabel = UIFactory.CreateLabel(_roleBadge, "RoleLabel", "MAIN", TextAnchor.MiddleCenter);
+            _roleLabel.fontStyle = FontStyle.Bold;
+            _roleLabel.fontSize = UIStyles.FontSizeHint;
+            _roleLabel.color = Color.white;
+            TranslatorCore.RegisterExcluded(_roleLabel);
+
+            // Row 2 — how it is doing, and how much of it there is
             var statusRow = UIFactory.CreateHorizontalGroup(_root, "StatusRow", false, false, true, true, UIStyles.SmallSpacing);
-            UIFactory.SetLayoutElement(statusRow, minHeight: UIStyles.RowHeightMedium, flexibleWidth: 9999);
+            UIFactory.SetLayoutElement(statusRow, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999);
+
+            UIStyles.ClearRowBackground(statusRow);
 
             // Status indicator (colored dot). Technical symbol/status/role tags — never translate.
             _statusIcon = UIFactory.CreateLabel(statusRow, "StatusIcon", "●", TextAnchor.MiddleLeft);
             _statusIcon.fontSize = UIStyles.FontSizeNormal;
-            UIFactory.SetLayoutElement(_statusIcon.gameObject, minWidth: 25);
+            UIFactory.SetLayoutElement(_statusIcon.gameObject, minWidth: 16, flexibleWidth: 0);
             TranslatorCore.RegisterExcluded(_statusIcon);
 
-            // Status text
             _statusLabel = UIFactory.CreateLabel(statusRow, "StatusLabel", "SYNCED", TextAnchor.MiddleLeft);
             _statusLabel.fontStyle = FontStyle.Bold;
-            _statusLabel.fontSize = UIStyles.FontSizeNormal;
-            UIFactory.SetLayoutElement(_statusLabel.gameObject, flexibleWidth: 9999);
+            _statusLabel.fontSize = UIStyles.FontSizeSmall;
+            UIFactory.SetLayoutElement(_statusLabel.gameObject, flexibleWidth: 0);
             TranslatorCore.RegisterExcluded(_statusLabel);
 
-            // Role badge
-            _roleLabel = UIFactory.CreateLabel(statusRow, "RoleLabel", "[MAIN]", TextAnchor.MiddleRight);
-            _roleLabel.fontStyle = FontStyle.Bold;
-            _roleLabel.fontSize = UIStyles.FontSizeSmall;
-            _roleLabel.color = UIStyles.TextAccent;
-            UIFactory.SetLayoutElement(_roleLabel.gameObject, minWidth: 100);
-            TranslatorCore.RegisterExcluded(_roleLabel);
-
-            // Details row: entry count, language
-            _detailsLabel = UIFactory.CreateLabel(_root, "DetailsLabel", "", TextAnchor.MiddleLeft);
-            _detailsLabel.fontSize = UIStyles.FontSizeNormal;
+            // Volume + game, kept next to the status so the second line reads as one sentence
+            _detailsLabel = UIFactory.CreateLabel(statusRow, "DetailsLabel", "", TextAnchor.MiddleLeft);
+            _detailsLabel.fontSize = UIStyles.FontSizeSmall;
             _detailsLabel.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(_detailsLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+            UIFactory.SetLayoutElement(_detailsLabel.gameObject, flexibleWidth: 9999);
+            TranslatorCore.RegisterExcluded(_detailsLabel);
 
-            // Quality row: H/V/A bar + score
-            _qualityRow = UIFactory.CreateHorizontalGroup(_root, "QualityRow", false, false, true, true, UIStyles.SmallSpacing);
-            UIFactory.SetLayoutElement(_qualityRow, minHeight: UIStyles.RowHeightMedium, flexibleWidth: 9999);
-            // Center the (thin) bar vertically in the row — otherwise it sticks to the bottom.
+            // Row 3 — quality bar, FULL WIDTH. It used to share a row with the score label, which
+            // shortened it and made the proportions harder to read; the score moved to the legend.
+            _qualityRow = UIFactory.CreateHorizontalGroup(_root, "QualityRow", false, false, true, true, 0);
+            UIFactory.SetLayoutElement(_qualityRow, minHeight: 14, flexibleWidth: 9999);
+            UIStyles.ClearRowBackground(_qualityRow);
             var qrLayout = _qualityRow.GetComponent<HorizontalLayoutGroup>();
             if (qrLayout != null) qrLayout.childAlignment = TextAnchor.MiddleLeft;
 
             // Quality bar container (stacked colored segments)
             _qualityBarContainer = UIFactory.CreateHorizontalGroup(_qualityRow, "QualityBar", false, false, true, true, 0);
-            UIFactory.SetLayoutElement(_qualityBarContainer, minHeight: 12, preferredHeight: 12, minWidth: 100, flexibleWidth: 9999);
+            UIFactory.SetLayoutElement(_qualityBarContainer, minHeight: 10, preferredHeight: 10, flexibleWidth: 9999);
+            UIStyles.SetBackground(_qualityBarContainer, UIStyles.ViewportBackground);
 
             // H segment (green)
             var humanObj = UIFactory.CreateUIObject("HumanBar", _qualityBarContainer);
@@ -177,31 +210,50 @@ namespace UnityGameTranslator.Core.UI.Components
             _aiBar.color = UIStyles.StatusWarning;
             UIFactory.SetLayoutElement(aiObj, minHeight: 8, flexibleWidth: 0);
 
-            // Quality label
-            _qualityLabel = UIFactory.CreateLabel(_qualityRow, "QualityLabel", "", TextAnchor.MiddleRight);
-            _qualityLabel.fontSize = UIStyles.FontSizeSmall;
-            _qualityLabel.color = UIStyles.TextMuted;
-            UIFactory.SetLayoutElement(_qualityLabel.gameObject, minWidth: 80);
+            // Row 4 — legend carrying the PERCENTAGES (asked for: the bar shows proportions, the
+            // legend says what they are worth), with the overall score at the right end.
+            var legendRow = UIFactory.CreateHorizontalGroup(_root, "LegendRow", false, false, true, true, UIStyles.SmallSpacing);
+            UIFactory.SetLayoutElement(legendRow, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999);
 
-            // Legend so the colored segments are self-explanatory
-            _qualityLegend = UIFactory.CreateLabel(_root, "QualityLegend",
-                $"<color=#{ColorUtility.ToHtmlStringRGB(UIStyles.StatusSuccess)}>■ Human</color>  " +
-                $"<color=#{ColorUtility.ToHtmlStringRGB(UIStyles.StatusInfo)}>■ Validated</color>  " +
-                $"<color=#{ColorUtility.ToHtmlStringRGB(UIStyles.StatusWarning)}>■ AI</color>",
-                TextAnchor.MiddleLeft);
+            UIStyles.ClearRowBackground(legendRow);
+
+            _qualityLegend = UIFactory.CreateLabel(legendRow, "QualityLegend", "", TextAnchor.MiddleLeft);
             _qualityLegend.fontSize = UIStyles.FontSizeHint;
             _qualityLegend.color = UIStyles.TextMuted;
-            UIFactory.SetLayoutElement(_qualityLegend.gameObject, minHeight: UIStyles.RowHeightSmall);
+            UIFactory.SetLayoutElement(_qualityLegend.gameObject, flexibleWidth: 9999);
+            TranslatorCore.RegisterExcluded(_qualityLegend);
+
+            _qualityLabel = UIFactory.CreateLabel(legendRow, "QualityLabel", "", TextAnchor.MiddleRight);
+            _qualityLabel.fontSize = UIStyles.FontSizeHint;
+            _qualityLabel.color = UIStyles.TextMuted;
+            UIFactory.SetLayoutElement(_qualityLabel.gameObject, minWidth: 90, flexibleWidth: 0);
+            TranslatorCore.RegisterExcluded(_qualityLabel);
+
+            _legendRow = legendRow;
 
             // Hide quality row by default
             _qualityRow.SetActive(false);
-            _qualityLegend.gameObject.SetActive(false);
+            _legendRow.SetActive(false);
 
-            // Secondary info row: branches count or main owner
-            _secondaryLabel = UIFactory.CreateLabel(_root, "SecondaryLabel", "", TextAnchor.MiddleLeft);
+            // Row 5 — the ONE thing this mode wants to tell you, and the ONE action that answers
+            // it. Reading them side by side is what makes the card self-sufficient per mode.
+            _modeRow = UIFactory.CreateHorizontalGroup(_root, "ModeRow", false, false, true, true, UIStyles.SmallSpacing);
+            UIFactory.SetLayoutElement(_modeRow, minHeight: UIStyles.RowHeightMedium, flexibleWidth: 9999);
+            UIStyles.ClearRowBackground(_modeRow);
+            var modeLayout = _modeRow.GetComponent<HorizontalLayoutGroup>();
+            if (modeLayout != null) modeLayout.childAlignment = TextAnchor.MiddleLeft;
+
+            _secondaryLabel = UIFactory.CreateLabel(_modeRow, "SecondaryLabel", "", TextAnchor.MiddleLeft);
             _secondaryLabel.fontSize = UIStyles.FontSizeSmall;
             _secondaryLabel.color = UIStyles.TextMuted;
-            UIFactory.SetLayoutElement(_secondaryLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+            UIFactory.SetLayoutElement(_secondaryLabel.gameObject, flexibleWidth: 9999);
+            TranslatorCore.RegisterExcluded(_secondaryLabel);
+
+            _modeActionBtn = UIStyles.CreateSecondaryButton(_modeRow, "ModeActionBtn", "", 110);
+            _modeActionBtn.Component.gameObject.SetActive(false);
+            TranslatorCore.RegisterExcluded(_modeActionBtn.ButtonText);
+
+            _modeRow.SetActive(false);
         }
 
         /// <summary>
@@ -253,28 +305,76 @@ namespace UnityGameTranslator.Core.UI.Components
         {
             if (_roleLabel == null) return;
 
+            // A coloured chip, one colour per role: the mode is recognised before being read.
             switch (role)
             {
                 case TranslationRoleType.Main:
-                    _roleLabel.text = "[MAIN]";
-                    _roleLabel.color = UIStyles.StatusSuccess;
-                    _roleLabel.gameObject.SetActive(true);
+                    _roleLabel.text = "MAIN";
+                    _roleBadgeImage.color = UIStyles.StatusSuccess;
+                    _roleBadge.SetActive(true);
                     break;
                 case TranslationRoleType.Branch:
-                    _roleLabel.text = "[BRANCH]";
-                    _roleLabel.color = UIStyles.StatusInfo;
-                    _roleLabel.gameObject.SetActive(true);
+                    _roleLabel.text = "BRANCH";
+                    _roleBadgeImage.color = UIStyles.StatusInfo;
+                    _roleBadge.SetActive(true);
                     break;
                 case TranslationRoleType.Contributor:
-                    _roleLabel.text = "[CONTRIBUTOR]";
-                    _roleLabel.color = UIStyles.TextAccent;
-                    _roleLabel.gameObject.SetActive(true);
+                    _roleLabel.text = "CONTRIBUTOR";
+                    _roleBadgeImage.color = UIStyles.ButtonPrimary;
+                    _roleBadge.SetActive(true);
                     break;
                 case TranslationRoleType.None:
                 default:
-                    _roleLabel.gameObject.SetActive(false);
+                    _roleBadge.SetActive(false);
                     break;
             }
+        }
+
+        /// <summary>
+        /// Set the identity line: which languages this translation goes between. Language names
+        /// are data — shown as-is, never translated.
+        /// </summary>
+        public void SetIdentity(string sourceLanguage, string targetLanguage)
+        {
+            if (_identityLabel == null) return;
+
+            // An empty source means auto-detection is on, not a missing value — saying "?" reads as
+            // data we failed to record, and sent the user hunting for an upload that skipped it.
+            string source = string.IsNullOrEmpty(sourceLanguage)
+                ? TranslatorCore.TranslateOwnUIDynamic("Auto")
+                : sourceLanguage;
+            string target = string.IsNullOrEmpty(targetLanguage)
+                ? TranslatorCore.TranslateOwnUIDynamic("Auto")
+                : targetLanguage;
+            _identityLabel.text = $"{source} → {target}";
+        }
+
+        /// <summary>
+        /// The one thing this mode has to say, and the one action that answers it. Pass a null
+        /// action label to show the information alone.
+        /// </summary>
+        public void SetModeAction(string info, string actionLabel = null, Action onClick = null)
+        {
+            if (_modeRow == null) return;
+
+            bool hasInfo = !string.IsNullOrEmpty(info);
+            bool hasAction = !string.IsNullOrEmpty(actionLabel) && onClick != null;
+
+            if (hasInfo)
+                _secondaryLabel.text = TranslatorCore.TranslateOwnUIDynamic(info, _secondaryLabel);
+            _secondaryLabel.gameObject.SetActive(hasInfo);
+
+            if (hasAction)
+            {
+                _modeAction = onClick;
+                _modeActionBtn.ButtonText.text = TranslatorCore.TranslateOwnUIDynamic(actionLabel, _modeActionBtn.ButtonText);
+                // Rebound every time: OnClick is a single delegate here, so assigning replaces the
+                // previous mode's action instead of stacking them.
+                _modeActionBtn.OnClick = () => _modeAction?.Invoke();
+            }
+            _modeActionBtn.Component.gameObject.SetActive(hasAction);
+
+            _modeRow.SetActive(hasInfo || hasAction);
         }
 
         /// <summary>
@@ -284,11 +384,12 @@ namespace UnityGameTranslator.Core.UI.Components
         {
             if (_detailsLabel == null) return;
 
-            string details = $"{entryCount} entries • {targetLanguage}";
+            // Sits right after the status on the same line, so it reads as one sentence:
+            // "● SYNCED · 1 248 entries". The language moved up to the identity row, so it is not
+            // repeated here. Counts and game names are data — concatenated, never translated.
+            string details = "· " + TranslatorCore.TranslateOwnUIDynamic($"{entryCount} entries");
             if (!string.IsNullOrEmpty(gameName))
-            {
-                details += $" • {gameName}";
-            }
+                details += $" · {gameName}";
             _detailsLabel.text = details;
         }
 
@@ -297,17 +398,8 @@ namespace UnityGameTranslator.Core.UI.Components
         /// </summary>
         public void SetSecondaryInfo(string info)
         {
-            if (_secondaryLabel == null) return;
-
-            if (string.IsNullOrEmpty(info))
-            {
-                _secondaryLabel.gameObject.SetActive(false);
-            }
-            else
-            {
-                _secondaryLabel.text = info;
-                _secondaryLabel.gameObject.SetActive(true);
-            }
+            // Same row as the mode action — information alone, no button.
+            SetModeAction(info);
         }
 
         /// <summary>
@@ -320,7 +412,7 @@ namespace UnityGameTranslator.Core.UI.Components
             if (stats == null)
             {
                 _qualityRow.SetActive(false);
-                _qualityLegend?.gameObject.SetActive(false);
+                _legendRow?.SetActive(false);
                 return;
             }
 
@@ -328,7 +420,7 @@ namespace UnityGameTranslator.Core.UI.Components
             if (total == 0)
             {
                 _qualityRow.SetActive(false);
-                _qualityLegend?.gameObject.SetActive(false);
+                _legendRow?.SetActive(false);
                 return;
             }
 
@@ -341,14 +433,27 @@ namespace UnityGameTranslator.Core.UI.Components
             if (validatedLayout != null) validatedLayout.flexibleWidth = stats.ValidatedCount;
             if (aiLayout != null) aiLayout.flexibleWidth = stats.AiCount;
 
-            // Update label
+            // Percentages in the legend: the bar shows the proportions, the legend says what they
+            // are worth. Rounded to whole percents — a decimal here is noise, not information.
+            int humanPct = Mathf.RoundToInt(stats.HumanCount * 100f / total);
+            int validatedPct = Mathf.RoundToInt(stats.ValidatedCount * 100f / total);
+            int aiPct = 100 - humanPct - validatedPct; // absorbs the rounding so the three read 100
+
+            if (_qualityLegend != null)
+            {
+                _qualityLegend.text =
+                    $"<color=#{ColorUtility.ToHtmlStringRGB(UIStyles.StatusSuccess)}>■</color> {TranslatorCore.TranslateOwnUIDynamic("Human")} {humanPct}%   " +
+                    $"<color=#{ColorUtility.ToHtmlStringRGB(UIStyles.StatusInfo)}>■</color> {TranslatorCore.TranslateOwnUIDynamic("Validated")} {validatedPct}%   " +
+                    $"<color=#{ColorUtility.ToHtmlStringRGB(UIStyles.StatusWarning)}>■</color> {TranslatorCore.TranslateOwnUIDynamic("AI")} {aiPct}%";
+            }
+
             if (_qualityLabel != null)
             {
-                _qualityLabel.text = $"{stats.QualityScore:F1}/3 ({stats.QualityLabel})";
+                _qualityLabel.text = $"{stats.QualityScore:F1}/3";
             }
 
             _qualityRow.SetActive(true);
-            _qualityLegend?.gameObject.SetActive(true);
+            _legendRow?.SetActive(true);
         }
 
         /// <summary>

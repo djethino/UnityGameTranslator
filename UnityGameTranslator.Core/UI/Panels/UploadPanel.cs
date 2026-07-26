@@ -505,6 +505,18 @@ namespace UnityGameTranslator.Core.UI.Panels
                     TranslatorCore.LastSyncedHash = result.FileHash;
                     // Keep the local file in step with what was just published
                     TranslatorCore.TranslationUIFont = TranslatorCore.EffectiveInterfaceFont;
+
+                    // Remember the source language declared at setup. It used to be sent to the
+                    // server and forgotten: the user states "this game is written in X" — a fact
+                    // about the game, not a preference — and the mod kept guessing it on every
+                    // launch, which also left strict_source_language with nothing to enforce.
+                    if (!string.IsNullOrEmpty(srcLang)
+                        && !string.Equals(TranslatorCore.Config.source_language, srcLang, StringComparison.OrdinalIgnoreCase))
+                    {
+                        TranslatorCore.Config.source_language = srcLang;
+                        TranslatorCore.SaveConfig();
+                        TranslatorCore.LogInfo($"[UploadPanel] Source language recorded from upload: {srcLang}");
+                    }
                     TranslatorCore.ResetMetadataDirty();
                     TranslatorCore.SaveCache();
                     TranslatorCore.SaveAncestorCache();

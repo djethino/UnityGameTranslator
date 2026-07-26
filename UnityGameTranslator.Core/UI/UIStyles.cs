@@ -291,6 +291,27 @@ namespace UnityGameTranslator.Core.UI
         /// <summary>
         /// Sets background color on a UI element (Image component)
         /// </summary>
+        /// <summary>
+        /// Make a layout row blend into the surface it sits on.
+        ///
+        /// CreateHorizontalGroup/CreateVerticalGroup paint every row with
+        /// <c>Colors.DefaultLayoutBackground</c> and add its padding, which is what we want for a
+        /// standalone block — but rows INSIDE a card then read as separate stacked boxes instead of
+        /// one continuous surface. Passing Color.clear at creation does not help: the factory
+        /// treats (0,0,0,0) as "no colour given" and applies the default anyway.
+        /// </summary>
+        public static void ClearRowBackground(GameObject row, bool clearPadding = true)
+        {
+            if (row == null) return;
+
+            var image = row.GetComponent<Image>();
+            if (image != null) image.color = Color.clear;
+
+            if (!clearPadding) return;
+            var layout = row.GetComponent<HorizontalOrVerticalLayoutGroup>();
+            if (layout != null) layout.padding = Compat.MakeRectOffset(0, 0, 0, 0);
+        }
+
         public static void SetBackground(GameObject obj, Color color)
         {
             // Interactive controls (Button/Toggle/Selectable) keep Image.color = white and tint via

@@ -112,11 +112,15 @@ namespace UnityGameTranslator.Core.UI.Panels
             var serverState = TranslatorCore.ServerState;
             bool existsOnServer = serverState != null && serverState.Exists && serverState.SiteId.HasValue;
             bool hasLocalChanges = existsOnServer && TranslatorCore.LocalChangesCount > 0;
+            // Settings that ship with the translation (fonts, images, exclusions, variables) are
+            // pending work too — they had no notification at all, so the user had no way of
+            // knowing anything was waiting until they happened to open the panel.
+            bool hasMetadataChanges = existsOnServer && TranslatorCore.MetadataDirty;
             bool hasServerUpdate = TranslatorUIManager.HasPendingUpdate &&
                 TranslatorUIManager.PendingUpdateDirection == UpdateDirection.Download;
             bool needsMerge = TranslatorUIManager.HasPendingUpdate &&
                 TranslatorUIManager.PendingUpdateDirection == UpdateDirection.Merge;
-            bool showSyncNotification = (hasLocalChanges || hasServerUpdate || needsMerge) &&
+            bool showSyncNotification = (hasLocalChanges || hasMetadataChanges || hasServerUpdate || needsMerge) &&
                 !TranslatorUIManager.NotificationDismissed;
 
             return showModUpdate || showSyncNotification;
@@ -525,11 +529,15 @@ namespace UnityGameTranslator.Core.UI.Panels
             var serverState = TranslatorCore.ServerState;
             bool existsOnServer = serverState != null && serverState.Exists && serverState.SiteId.HasValue;
             bool hasLocalChanges = existsOnServer && TranslatorCore.LocalChangesCount > 0;
+            // Settings that ship with the translation (fonts, images, exclusions, variables) are
+            // pending work too — they had no notification at all, so the user had no way of
+            // knowing anything was waiting until they happened to open the panel.
+            bool hasMetadataChanges = existsOnServer && TranslatorCore.MetadataDirty;
             bool hasServerUpdate = TranslatorUIManager.HasPendingUpdate &&
                 TranslatorUIManager.PendingUpdateDirection == UpdateDirection.Download;
             bool needsMerge = TranslatorUIManager.HasPendingUpdate &&
                 TranslatorUIManager.PendingUpdateDirection == UpdateDirection.Merge;
-            bool showSyncNotification = (hasLocalChanges || hasServerUpdate || needsMerge) &&
+            bool showSyncNotification = (hasLocalChanges || hasMetadataChanges || hasServerUpdate || needsMerge) &&
                 !TranslatorUIManager.NotificationDismissed;
 
             // 3. AI queue status
@@ -580,13 +588,17 @@ namespace UnityGameTranslator.Core.UI.Panels
             var serverState = TranslatorCore.ServerState;
             bool existsOnServer = serverState != null && serverState.Exists && serverState.SiteId.HasValue;
             bool hasLocalChanges = existsOnServer && TranslatorCore.LocalChangesCount > 0;
+            // Settings that ship with the translation (fonts, images, exclusions, variables) are
+            // pending work too — they had no notification at all, so the user had no way of
+            // knowing anything was waiting until they happened to open the panel.
+            bool hasMetadataChanges = existsOnServer && TranslatorCore.MetadataDirty;
             bool hasServerUpdate = TranslatorUIManager.HasPendingUpdate &&
                 TranslatorUIManager.PendingUpdateDirection == UpdateDirection.Download;
             bool needsMerge = TranslatorUIManager.HasPendingUpdate &&
                 TranslatorUIManager.PendingUpdateDirection == UpdateDirection.Merge;
 
             bool showSyncNotification = !_panelsOpenMode &&
-                                        (hasLocalChanges || hasServerUpdate || needsMerge) &&
+                                        (hasLocalChanges || hasMetadataChanges || hasServerUpdate || needsMerge) &&
                                         !TranslatorUIManager.NotificationDismissed;
 
             if (showSyncNotification && _syncBox != null)
@@ -651,6 +663,21 @@ namespace UnityGameTranslator.Core.UI.Panels
                         // Non-owner: show Branch AND Fork options
                         // User must choose to contribute (branch) or go independent (fork)
                         message = Tr($"You changed {TranslatorCore.LocalChangesCount} line(s). Share them?");
+                        showBranchFork = true;
+                        showAction = false;
+                    }
+                }
+                else if (hasMetadataChanges)
+                {
+                    // No new lines, but settings that travel with the translation were edited
+                    if (isOwner)
+                    {
+                        message = Tr("Translation settings changed — not uploaded yet");
+                        actionText = "Update";
+                    }
+                    else
+                    {
+                        message = Tr("You changed translation settings. Share them?");
                         showBranchFork = true;
                         showAction = false;
                     }

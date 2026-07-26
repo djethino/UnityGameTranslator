@@ -1959,9 +1959,24 @@ namespace UnityGameTranslator.Core
                 // Each font switch creates a NEW clone with its own glyph cache.
                 // No bump hack needed — the new Font object has no cached glyphs.
                 TranslatorScanner.ClearProcessedCache();
-                // reapplyAllScales: per-font enable toggle changes the design-scale gate for this font;
-                // re-derive every component's size so a disabled font's restored original isn't left at
-                // the old scaled fontSize (issue #21).
+
+                // Re-APPLY the replacement on the components we just restored. This must come
+                // first and must NOT rely on ForceRefreshAllText: its TMP branch only re-sets
+                // the text when the string isn't already cached (issue #21 — never regenerate a
+                // mesh mid-typewriter after every AI translation), so a component whose text is
+                // already translated never sees its setter fire again, the set_text prefix never
+                // runs, and the component stays on the original font it was just restored to.
+                // That was the whole "changing the font in-game has no effect, but changing the
+                // size applies it" report: the size path already goes through RefreshForFont,
+                // which forces the setter with the empty-then-restore trick.
+                // oldFallback is passed so components still showing the PREVIOUS replacement
+                // (not restored — tracking lost, activated since) are matched too.
+                TranslatorScanner.RefreshForFont(fontName, oldFallback);
+
+                // Then the global pass: covers components living only in the patch refs (pass 2
+                // re-sets their text unconditionally) and, with reapplyAllScales, re-derives every
+                // component's size — a per-font enable toggle changes the design-scale gate, so a
+                // disabled font's restored original must not stay at the old scaled fontSize.
                 TranslatorScanner.ForceRefreshAllText(reapplyAllScales: true);
             }
 
@@ -2028,11 +2043,24 @@ namespace UnityGameTranslator.Core
         /// Set fontSharedMaterial on a TMP component from a font asset's material.
         /// Uses IL2CPP-safe casting for proxy objects.
         /// </summary>
-        // Materials adapted from a component's ORIGINAL material to our replacement
-        // atlas, keyed by original material instance ID. Preserves the game's per-material
-        // styling presets (face color, underlay/shadow, outline). Shared original material
-        // → shared adapted clone, so TMP batching is preserved.
-        private static readonly Dictionary<int, Material> _adaptedMaterials = new Dictionary<int, Material>();
+        // Materials adapted from a component's ORIGINAL material to our replacement atlas.
+        // Preserves the game's per-material styling presets (face color, underlay/shadow,
+        // outline). Same original material + same replacement font → same shared clone, so
+        // TMP batching is preserved.
+        // Keyed by the PAIR (original material, replacement font): the grafted _MainTex and
+        // SDF params belong to one specific atlas. Keying on the material alone handed back
+        // the previous atlas whenever the same original material was paired with a different
+        // replacement font — a runtime font change then rendered the OLD font's glyphs
+        // (both atlases share the layout, so the swap was invisible and read as "no effect"),
+        // and a font-override rule redirecting part of a font to another replacement hit the
+        // same stale clone.
+        private static readonly Dictionary<long, Material> _adaptedMaterials = new Dictionary<long, Material>();
+
+        /// <summary>Composite cache key for an (original material, replacement font) pair.</summary>
+        private static long AdaptedMaterialKey(int originalMaterialId, int replacementFontId)
+        {
+            return ((long)originalMaterialId << 32) ^ (uint)replacementFontId;
+        }
         // Original shared material per component (for faithful restore)
         private static readonly Dictionary<int, object> _originalMaterialsPerComponent = new Dictionary<int, object>();
 
@@ -2095,7 +2123,14 @@ namespace UnityGameTranslator.Core
                     return;
                 }
 
-                int key = origMat.GetInstanceID();
+                // Identify the replacement font by instance id; on the rare path where the
+                // proxy exposes none, its name still separates one font from another — the
+                // point is only that two different replacements never share a clone.
+                int fontId = TypeHelper.GetInstanceID(replacementFont);
+                if (fontId == -1)
+                    fontId = ((replacementFont as UnityEngine.Object)?.name ?? string.Empty).GetHashCode();
+
+                long key = AdaptedMaterialKey(origMat.GetInstanceID(), fontId);
                 if (!_adaptedMaterials.TryGetValue(key, out var adapted) || !TypeHelper.IsUnityObjectAlive(adapted))
                 {
                     adapted = new Material(origMat);
@@ -2142,7 +2177,7 @@ namespace UnityGameTranslator.Core
                     UnityEngine.Object.DontDestroyOnLoad(adapted);
                     adapted.hideFlags |= HideFlags.DontUnloadUnusedAsset;
                     _adaptedMaterials[key] = adapted;
-                    TranslatorCore.LogDebug($"[FontReplace] Adapted material '{origMat.name}' → replacement atlas (preset preserved)");
+                    TranslatorCore.LogDebug($"[FontReplace] Adapted material '{origMat.name}' → atlas of '{(replacementFont as UnityEngine.Object)?.name}' (preset preserved)");
                 }
 
                 var sharedMatProp = component.GetType().GetProperty("fontSharedMaterial", BindingFlags.Public | BindingFlags.Instance);
@@ -2551,7 +2586,19 @@ namespace UnityGameTranslator.Core
                             // Cast original font for IL2CPP compatibility
                             var castedOriginal = TypeHelper.Il2CppCast(originalFontObj,
                                 TypeHelper.TMP_FontAssetType ?? originalFontObj.GetType());
-                            addMethod.Invoke(fallbackList, new[] { castedOriginal });
+                            // The "_reverse" mark is dropped on every font-settings change, so
+                            // switching A→B→A would append the original a second time to A's
+                            // list. Ask the list itself rather than trusting the mark.
+                            bool alreadyThere = false;
+                            try
+                            {
+                                var containsMethod = fallbackList.GetType().GetMethod("Contains");
+                                if (containsMethod != null)
+                                    alreadyThere = (bool)containsMethod.Invoke(fallbackList, new[] { castedOriginal });
+                            }
+                            catch { }
+                            if (!alreadyThere)
+                                addMethod.Invoke(fallbackList, new[] { castedOriginal });
                             _fallbackAppliedFonts.Add(originalFontName + "_reverse");
                         }
                         catch { }

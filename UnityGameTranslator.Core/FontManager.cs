@@ -4978,6 +4978,51 @@ namespace UnityGameTranslator.Core
         /// Shows all fonts from saved settings + newly detected fonts.
         /// Deduplicates by font name (case-insensitive) to avoid showing duplicates.
         /// </summary>
+        /// <summary>
+        /// Text components currently in the scene, counted per SETTINGS font name (the game
+        /// original, so a component already wearing our replacement still counts for the font the
+        /// user configures). Returns null when no text type could be scanned, which the caller
+        /// distinguishes from "zero components" — an unknown count must not look like an absent font.
+        /// Walks the live scene rather than a cache: it is taken on an explicit list refresh, and
+        /// the whole point is to describe the screen as it is now.
+        /// </summary>
+        public static Dictionary<string, int> CountFontComponentsInScene()
+        {
+            var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            bool scannedAnything = false;
+
+            foreach (var type in new[] { TypeHelper.TMP_TextType, TypeHelper.UI_TextType })
+            {
+                if (type == null) continue;
+                try
+                {
+                    var comps = TypeHelper.FindAllObjectsOfType(type);
+                    if (comps == null) continue;
+                    scannedAnything = true;
+
+                    foreach (var c in comps)
+                    {
+                        if (c == null) continue;
+                        var fontObj = TypeHelper.GetFont(c);
+                        string fontName = (fontObj is UnityEngine.Object fo) ? fo.name : null;
+                        if (string.IsNullOrEmpty(fontName)) continue;
+
+                        string settingsFontName = GetSettingsFontName(c.GetInstanceID(), fontName);
+                        if (string.IsNullOrEmpty(settingsFontName)) continue;
+
+                        counts.TryGetValue(settingsFontName, out int n);
+                        counts[settingsFontName] = n + 1;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    TranslatorCore.LogDebug($"[FontManager] Scene font count failed for {type.Name}: {ex.Message}");
+                }
+            }
+
+            return scannedAnything ? counts : null;
+        }
+
         public static List<FontDisplayInfo> GetDetectedFontsInfo()
         {
             var result = new List<FontDisplayInfo>();
@@ -5045,9 +5090,30 @@ namespace UnityGameTranslator.Core
                 });
             }
 
-            // Sort by usage count (most used first), then by name
+            // How present each font is on screen right now, and whether the user already decided
+            // something about it. Both feed the ordering below.
+            var sceneCounts = CountFontComponentsInScene();
+            foreach (var info in result)
+            {
+                if (sceneCounts != null && sceneCounts.TryGetValue(info.Name, out int n))
+                    info.SceneCount = n;
+                else if (sceneCounts != null)
+                    info.SceneCount = 0;
+
+                TranslatorCore.FontSettingsMap.TryGetValue(info.Name, out var s);
+                info.IsConfigured = s != null
+                    && (!string.IsNullOrEmpty(s.fallback) || Math.Abs(s.size_percent - 1.0f) > 0.001f);
+            }
+
+            // Fonts the user already configured first — their own decisions must stay easy to find
+            // back — then the ones most present in the current scene. UsageCount only breaks ties
+            // now: it counts set_text calls, so an animated timer inflates it out of all proportion
+            // to what the font actually covers on screen.
             result.Sort((a, b) =>
             {
+                if (a.IsConfigured != b.IsConfigured) return a.IsConfigured ? -1 : 1;
+                int sceneCompare = b.SceneCount.CompareTo(a.SceneCount);
+                if (sceneCompare != 0) return sceneCompare;
                 int usageCompare = b.UsageCount.CompareTo(a.UsageCount);
                 if (usageCompare != 0) return usageCompare;
                 return string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
@@ -5183,5 +5249,14 @@ namespace UnityGameTranslator.Core
         public string FallbackFont { get; set; }
         public float Scale { get; set; } = 1.0f;
         public int UsageCount { get; set; } = 0;
+        /// <summary>
+        /// Text components wearing this font in the scene at the moment the list was built.
+        /// -1 when the count could not be taken. Answers "where is this font, right now", which
+        /// UsageCount cannot: that one counts set_text calls, so a single animated timer outweighs
+        /// hundreds of static labels.
+        /// </summary>
+        public int SceneCount { get; set; } = -1;
+        /// <summary>The user gave this font a fallback or a non-default size.</summary>
+        public bool IsConfigured { get; set; }
     }
 }

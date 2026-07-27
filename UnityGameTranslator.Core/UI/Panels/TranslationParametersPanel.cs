@@ -837,7 +837,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             var refreshRow = UIStyles.CreateFormRow(card, "RefreshRow", UIStyles.RowHeightNormal, 5);
 
             var refreshBtn = CreateSecondaryButton(refreshRow, "RefreshFontsBtn", "Refresh List", 100);
-            refreshBtn.OnClick += RefreshFontsList;
+            // Explicit user request: this is the one place the ranking is allowed to re-rank.
+            refreshBtn.OnClick += () => { InvalidateFontOrder(); RefreshFontsList(); };
             RegisterUIText(refreshBtn.ButtonText);
             _helpZone?.Describe(refreshBtn.Component.gameObject,
                 "Rescans the game for fonts currently in use and updates the list below.");
@@ -1273,6 +1274,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
 
             var fonts = FontManager.GetDetectedFontsInfo();
+            fonts = ApplyStableFontOrder(fonts);
 
             if (fonts.Count == 0)
             {
@@ -1308,6 +1310,54 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
         }
 
+        // Row order held for the whole editing session. Rebuilt only when the user opens the panel
+        // or asks for a refresh — never behind their back.
+        private List<string> _fontRowOrder;
+
+        /// <summary>Forget the frozen order so the next list build re-ranks from scratch.</summary>
+        private void InvalidateFontOrder() => _fontRowOrder = null;
+
+        /// <summary>
+        /// Keep the rows where the user last saw them. The ranking (configured first, then presence
+        /// in the scene) is a good STARTING order, but it must not move under the user's hands:
+        /// ApplySettings rebuilds this list, and the scene keeps changing while the panel is open,
+        /// so re-ranking there moved the very row that had just been edited. Fonts appearing since
+        /// the order was taken are appended, keeping their relative ranking.
+        /// </summary>
+        private List<FontDisplayInfo> ApplyStableFontOrder(List<FontDisplayInfo> fonts)
+        {
+            if (fonts == null || fonts.Count == 0) return fonts;
+
+            if (_fontRowOrder == null)
+            {
+                _fontRowOrder = new List<string>(fonts.Count);
+                foreach (var f in fonts) _fontRowOrder.Add(f.Name);
+                return fonts;
+            }
+
+            var byName = new Dictionary<string, FontDisplayInfo>(StringComparer.OrdinalIgnoreCase);
+            foreach (var f in fonts) byName[f.Name] = f;
+
+            var ordered = new List<FontDisplayInfo>(fonts.Count);
+            foreach (var name in _fontRowOrder)
+            {
+                if (byName.TryGetValue(name, out var f))
+                {
+                    ordered.Add(f);
+                    byName.Remove(name);
+                }
+            }
+            // Newly detected fonts: appended in ranking order, and joining the frozen order so they
+            // stay put from now on.
+            foreach (var f in fonts)
+            {
+                if (!byName.ContainsKey(f.Name)) continue;
+                ordered.Add(f);
+                _fontRowOrder.Add(f.Name);
+            }
+            return ordered;
+        }
+
         private void CreateFontRow(FontDisplayInfo fontInfo)
         {
             // Main row container with padding
@@ -1326,6 +1376,19 @@ namespace UnityGameTranslator.Core.UI.Panels
             fontLabel.color = UIStyles.TextPrimary;
             fontLabel.fontSize = UIStyles.FontSizeNormal;
             UIFactory.SetLayoutElement(fontLabel.gameObject, flexibleWidth: 9999);
+
+            // How present this font is on the screen right now — the figure that tells the user
+            // whether a font is worth configuring. -1 means the count couldn't be taken; say
+            // nothing rather than show a misleading zero.
+            if (fontInfo.SceneCount >= 0)
+            {
+                var countLabel = UIFactory.CreateLabel(headerRow, "SceneCount",
+                    $"{fontInfo.SceneCount} " + Tr("in scene"), TextAnchor.MiddleRight);
+                countLabel.color = fontInfo.SceneCount > 0 ? UIStyles.TextSecondary : UIStyles.TextMuted;
+                countLabel.fontSize = UIStyles.FontSizeSmall;
+                UIFactory.SetLayoutElement(countLabel.gameObject, minWidth: 70);
+                RegisterExcluded(countLabel);
+            }
 
             // Identify button: highlight in-game texts using this font. This button swaps its color at
             // runtime (?/slate ↔ X/accent) via Image.color, so create it with a WHITE ColorBlock
@@ -2215,6 +2278,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             try { RefreshExclusionsList(); }
             catch (Exception ex) { TranslatorCore.LogWarning($"[TranslationParametersPanel] RefreshExclusionsList failed: {ex.Message}"); }
 
+            // Opening the panel is the other moment a fresh ranking is expected.
+            InvalidateFontOrder();
             try { RefreshFontsList(); }
             catch (Exception ex) { TranslatorCore.LogWarning($"[TranslationParametersPanel] RefreshFontsList failed: {ex.Message}"); }
 

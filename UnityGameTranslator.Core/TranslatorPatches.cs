@@ -2337,6 +2337,26 @@ namespace UnityGameTranslator.Core
         /// Apply font scale to a text component (TMP or UI.Text).
         /// Stores original size on first call and applies scale relative to it.
         /// </summary>
+        /// <summary>
+        /// Apply the per-font scale from inside the set_text prefix, honouring the clone-font gate:
+        /// scaling before the Unity clone is actually on the component cumulates sizes when the clone
+        /// lands later. Shared by the prefix's normal tail AND its early exits — a component that
+        /// keeps our translated text still had its font replaced further up, so skipping the scale
+        /// left it at the unscaled size while its neighbours were scaled (mixed sizes down a menu or
+        /// a scoreboard).
+        /// </summary>
+        private static void ApplyFontScaleGated(object instance, Font unityCloneFont, string unityCloneName, string fontNameForScale)
+        {
+            if (unityCloneFont != null)
+            {
+                object curFont = TypeHelper.GetFont(instance);
+                string curFontName = (curFont is UnityEngine.Object cfo) ? cfo.name : null;
+                if (!string.Equals(curFontName, unityCloneName, StringComparison.OrdinalIgnoreCase))
+                    return;
+            }
+            ApplyFontScale(instance, fontNameForScale);
+        }
+
         private static void ApplyFontScale(object instance, string fontName)
         {
             if (instance == null || string.IsNullOrEmpty(fontName)) return;
@@ -3028,45 +3048,15 @@ namespace UnityGameTranslator.Core
                     else if (componentType == "Unity")
                     {
                         if (fontObj == null) fontObj = TypeHelper.GetFont(__instance);
-                        FontManager.RegisterUnityFontObject(settingsFontName, fontObj);
 
-                        var replacementFont = FontManager.GetUnityReplacementFont(settingsFontName);
+                        // Single implementation, shared with the direct UI.Text scene pass
+                        // (FontManager.ApplyUnityClonesToScene) so the coverage rule and the
+                        // CanvasRenderer rebind can't drift between the two entry points.
+                        var replacementFont = FontManager.TryApplyUnityClone(__instance, fontObj, settingsFontName, textValue);
                         if (replacementFont != null)
                         {
-                            FontManager.TrackOriginalFont(compId, fontObj, __instance);
-                            string currentName = (fontObj is UnityEngine.Object co) ? co.name : null;
-                            string replaceName = replacementFont.name;
-                            // Only apply clone if the text will be translated (has a cache entry).
-                            // Untranslated CJK text keeps the original game font.
-                            bool willTranslate = TranslatorCore.HasCachedTranslation(textValue);
-                            if (willTranslate && !string.Equals(currentName, replaceName, StringComparison.OrdinalIgnoreCase))
-                            {
-                                TypeHelper.SetFont(__instance, replacementFont);
-                                FontManager.PreWarmCloneAtlas(settingsFontName, replacementFont);
-                                TypeHelper.SetAllDirty(__instance);
-
-                                // Toggle enabled to rebind CanvasRenderer to clone texture,
-                                // but ONLY if atlas is ready (willRenderCanvases already fired).
-                                // Before willRenderCanvases: skip toggle (atlas not warmed yet,
-                                // would bind to empty texture → transparent on Continue).
-                                // After willRenderCanvases: toggle safe (atlas warmed).
-                                try
-                                {
-                                    var c = __instance as Component;
-                                    if (c != null)
-                                    {
-                                        var enabledProp = c.GetType().GetProperty("enabled", BindingFlags.Public | BindingFlags.Instance);
-                                        if (enabledProp != null)
-                                        {
-                                            enabledProp.SetValue(c, false, null);
-                                            enabledProp.SetValue(c, true, null);
-                                        }
-                                    }
-                                }
-                                catch { }
-                            }
                             unityCloneFont = replacementFont;
-                            unityCloneName = replaceName;          // Clone's display name for font comparisons
+                            unityCloneName = replacementFont.name;  // Clone's display name for font comparisons
                             unityCloneFallback = settingsFontName;  // Original game font name for cache key lookups
                         }
                     }
@@ -3124,6 +3114,12 @@ namespace UnityGameTranslator.Core
                     if (_lastTranslatedText.TryGetValue(compId, out lastTransCheck)
                         && textValue == lastTransCheck)
                     {
+                        // Nothing to translate, but the font work above already ran on this
+                        // component — leaving without the scale left it at the unscaled size
+                        // while neighbours that took the full path were scaled, so a menu or a
+                        // scoreboard ended up with mismatched line sizes. The size is idempotent
+                        // (derived from the cached true original), so re-asserting it is free.
+                        ApplyFontScaleGated(__instance, unityCloneFont, unityCloneName, settingsFontName ?? fontName);
                         return;
                     }
                 }
@@ -3370,17 +3366,7 @@ namespace UnityGameTranslator.Core
                 // Apply font scale only if the component has the clone font.
                 // Scaling on the original font before clone is applied causes size
                 // cumulation when the clone is applied later.
-                if (unityCloneFont != null)
-                {
-                    object curFont = TypeHelper.GetFont(__instance);
-                    string curFontName = (curFont is UnityEngine.Object cfo) ? cfo.name : null;
-                    if (string.Equals(curFontName, unityCloneName, StringComparison.OrdinalIgnoreCase))
-                        ApplyFontScale(__instance, settingsFontName ?? fontName);
-                }
-                else
-                {
-                    ApplyFontScale(__instance, settingsFontName ?? fontName);
-                }
+                ApplyFontScaleGated(__instance, unityCloneFont, unityCloneName, settingsFontName ?? fontName);
 
                 if (profiling)
                 {
@@ -3462,6 +3448,30 @@ namespace UnityGameTranslator.Core
             }
         }
 
+        /// <summary>
+        /// Font name for the fontSize prefixes, memoized in _fontNameCache.
+        /// These prefixes used to bail out on any component absent from that cache, i.e. any
+        /// component the game sized BEFORE its text first went through set_text. Whether a row got
+        /// its scale then depended on the order the game happened to assign text and size — inside
+        /// one list some rows were scaled and others not. Resolving (and caching) the font here
+        /// makes it order-independent; the scale==1 test below still shorts out every font the user
+        /// never configured, so unrelated components cost one reflection call, once.
+        /// </summary>
+        private static string ResolveFontNameForSizePrefix(object instance, int instanceId)
+        {
+            if (_fontNameCache.TryGetValue(instanceId, out string cached))
+                return cached;
+
+            string resolved = null;
+            var fontObj = TypeHelper.GetFont(instance);
+            if (fontObj is UnityEngine.Object uobj)
+                resolved = uobj.name;
+            // Cached even when null: a component without a readable font must not pay the
+            // reflection on every size assignment (animated sizes hit this per frame).
+            _fontNameCache[instanceId] = resolved;
+            return resolved;
+        }
+
         public static void TMPText_SetFontSize_Prefix(object __instance, ref float value)
         {
             if (_bypassFontSizePrefix) return;
@@ -3472,19 +3482,9 @@ namespace UnityGameTranslator.Core
                 int instanceId = TypeHelper.GetInstanceID(__instance);
                 if (instanceId == -1) return;
 
-                // Skip components we've never seen (mod's own UI, etc.)
-                if (!_fontNameCache.ContainsKey(instanceId)) return;
+                if (TranslatorCore.ShouldSkipTranslation(instanceId)) return;
 
-                // Get the font name for this component
-                string fontName = null;
-                if (_fontNameCache.TryGetValue(instanceId, out string cached))
-                    fontName = cached;
-                else
-                {
-                    var fontObj = TypeHelper.GetFont(__instance);
-                    if (fontObj is UnityEngine.Object uobj)
-                        fontName = uobj.name;
-                }
+                string fontName = ResolveFontNameForSizePrefix(__instance, instanceId);
 
                 if (string.IsNullOrEmpty(fontName)) return;
 
@@ -3520,9 +3520,8 @@ namespace UnityGameTranslator.Core
             {
                 int instanceId = TypeHelper.GetInstanceID(__instance);
                 if (instanceId == -1) return;
-                if (!_fontNameCache.ContainsKey(instanceId)) return;
-                string fontName;
-                if (!_fontNameCache.TryGetValue(instanceId, out fontName)) return;
+                if (TranslatorCore.ShouldSkipTranslation(instanceId)) return;
+                string fontName = ResolveFontNameForSizePrefix(__instance, instanceId);
                 if (string.IsNullOrEmpty(fontName)) return;
                 string settingsFontName = FontManager.GetSettingsFontName(instanceId, fontName);
                 // Always record the true original (see TMPText_SetFontSize_Prefix) so a runtime

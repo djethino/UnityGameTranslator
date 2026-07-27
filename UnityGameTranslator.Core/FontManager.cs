@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -466,6 +466,120 @@ namespace UnityGameTranslator.Core
 
             _ensuringChars = false;
         }
+
+        // Chars the clone's source face can actually render, resolved lazily per original font.
+        // Mirror of _excludedCharsPerClone (known misses); together they memoize the cmap lookups so
+        // the per-write coverage test below costs one hash probe per character after warm-up.
+        // Kept separate from _knownCharsPerClone on purpose: that one drives what gets requested into
+        // the atlas, and must not grow with characters we only ever probed.
+        private static readonly Dictionary<string, HashSet<char>> _cloneSupportedChars =
+            new Dictionary<string, HashSet<char>>(StringComparer.OrdinalIgnoreCase);
+        private static MethodInfo _fontHasCharacterMethod;
+        private static bool _fontHasCharacterResolved;
+
+        private static MethodInfo FontHasCharacterMethod
+        {
+            get
+            {
+                if (!_fontHasCharacterResolved)
+                {
+                    _fontHasCharacterResolved = true;
+                    try
+                    {
+                        _fontHasCharacterMethod = typeof(Font).GetMethod("HasCharacter",
+                            BindingFlags.Public | BindingFlags.Instance, null, new[] { typeof(char) }, null);
+                    }
+                    catch (Exception ex) { TranslatorCore.LogDebug($"[FontManager] Font.HasCharacter lookup failed: {ex.Message}"); }
+                    if (_fontHasCharacterMethod == null)
+                        TranslatorCore.LogDebug("[FontManager] Font.HasCharacter unavailable — clone coverage falls back to the cached-translation rule");
+                }
+                return _fontHasCharacterMethod;
+            }
+        }
+
+        /// <summary>
+        /// Whether the engine exposes a glyph-coverage probe (Font.HasCharacter). Callers that gate
+        /// the clone on coverage must fall back to their previous rule when this is false, rather
+        /// than assume coverage and render blanks.
+        /// </summary>
+        public static bool CloneCoverageProbeAvailable => FontHasCharacterMethod != null;
+
+        /// <summary>
+        /// True when the clone's face can render every character of the text, so swapping the game
+        /// font for it is safe. This is the capability question the UI.Text path actually needs to
+        /// answer. It used to gate on "is this text already translated?", a TIMING condition: a line
+        /// whose translation had not landed yet never got the clone, and if its text was never
+        /// written again it kept the game font for good — mismatched line sizes and faces inside a
+        /// single menu or scoreboard, healed only by a manual font switch.
+        /// Text with no renderable content (empty, whitespace, control chars) counts as covered:
+        /// nothing to render wrong, and a blank row must follow its neighbours.
+        /// Surrogate pairs are reported as uncovered (the probe is per UTF-16 unit) — conservative,
+        /// such text keeps the game font.
+        /// </summary>
+        public static bool CloneCoversText(string originalFontName, Font clone, string text)
+        {
+            if (clone == null || string.IsNullOrEmpty(originalFontName)) return false;
+            if (string.IsNullOrEmpty(text)) return true;
+
+            var probe = FontHasCharacterMethod;
+            if (probe == null) return false;
+
+            HashSet<char> excluded;
+            if (!_excludedCharsPerClone.TryGetValue(originalFontName, out excluded))
+                excluded = null;
+
+            HashSet<char> supported;
+            if (!_cloneSupportedChars.TryGetValue(originalFontName, out supported))
+            {
+                supported = new HashSet<char>();
+                _cloneSupportedChars[originalFontName] = supported;
+            }
+
+            var args = new object[1];
+            foreach (char c in text)
+            {
+                if (c <= 31) continue;                       // control chars never render
+                if (supported.Contains(c)) continue;
+                if (excluded != null && excluded.Contains(c)) return false;
+
+                bool has;
+                try
+                {
+                    args[0] = c;
+                    has = (bool)probe.Invoke(clone, args);
+                }
+                catch (Exception ex)
+                {
+                    // A failing probe must not silently downgrade to "covered".
+                    TranslatorCore.LogDebug($"[FontManager] HasCharacter probe failed on '{originalFontName}': {ex.Message}");
+                    return false;
+                }
+
+                if (!has)
+                {
+                    if (excluded == null)
+                    {
+                        excluded = new HashSet<char>();
+                        _excludedCharsPerClone[originalFontName] = excluded;
+                    }
+                    excluded.Add(c);
+                    if (_coverageRejectLogCount < CoverageRejectLogBudget)
+                    {
+                        _coverageRejectLogCount++;
+                        TranslatorCore.LogDebug($"[FontReplace] '{originalFontName}' keeps the game font: clone '{clone.name}' has no glyph for '{c}' (U+{((int)c):X4})");
+                    }
+                    return false;
+                }
+                supported.Add(c);
+            }
+            return true;
+        }
+
+        // Silent when everything renders; names the missing glyph when a font legitimately can't be
+        // swapped, which is the first question asked when a line keeps the game face. Budgeted so a
+        // single unsupported character can't flood the log.
+        private const int CoverageRejectLogBudget = 12;
+        private static int _coverageRejectLogCount;
 
         /// <summary>
         /// Mark all components using a clone font as dirty so they re-render with the updated atlas.
@@ -1111,6 +1225,7 @@ namespace UnityGameTranslator.Core
                 _knownCharsStringCache.Remove(originalFontName);
                 _preWarmedClones.Remove(originalFontName);
                 _excludedCharsPerClone.Remove(originalFontName);
+                _cloneSupportedChars.Remove(originalFontName);
             }
 
             // _failedFallbackFontNames is keyed by fallback display name
@@ -1936,6 +2051,7 @@ namespace UnityGameTranslator.Core
                 _knownCharsStringCache.Remove(fontName);
                 _preWarmedClones.Remove(fontName);
                 _excludedCharsPerClone.Remove(fontName);
+                _cloneSupportedChars.Remove(fontName);
 
                 // Restore original fontNames if we modified the game font
                 RestoreOriginalFontNames(fontName);
@@ -2810,6 +2926,126 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Put the UI.Text clone on a component when the clone can render its text.
+        /// Single implementation shared by the set_text prefix and the direct scene pass below, so
+        /// the two can never drift on the coverage rule or the CanvasRenderer rebind.
+        /// Returns the clone whenever one EXISTS for this font — even if it was not applied — because
+        /// callers use it to decide whether the per-font scale is due (a component left on the game
+        /// font must keep the game size).
+        /// </summary>
+        public static Font TryApplyUnityClone(object component, object fontObj, string settingsFontName, string text)
+        {
+            if (component == null || string.IsNullOrEmpty(settingsFontName)) return null;
+
+            RegisterUnityFontObject(settingsFontName, fontObj);
+
+            var replacementFont = GetUnityReplacementFont(settingsFontName);
+            if (replacementFont == null) return null;
+
+            int instanceId = TypeHelper.GetInstanceID(component);
+            TrackOriginalFont(instanceId, fontObj, component);
+
+            string currentName = (fontObj is UnityEngine.Object co) ? co.name : null;
+            string replaceName = replacementFont.name;
+
+            // Apply the clone whenever it can actually render the text — the real question, and the
+            // one that keeps a menu or a scoreboard visually coherent. The former rule ("is this text
+            // already translated?") was a TIMING condition: a line whose translation had not landed
+            // yet never got the clone, and if its text was never written again it kept the game font
+            // for good. Text the clone can't cover (other scripts, rare diacritics) still keeps the
+            // game font — that intent is preserved, now decided on capability.
+            // With no coverage probe we can't tell, so keep the previous rule rather than risk blanks.
+            bool applyClone = CloneCoverageProbeAvailable
+                ? CloneCoversText(settingsFontName, replacementFont, text)
+                : TranslatorCore.HasCachedTranslation(text);
+
+            if (applyClone && !string.Equals(currentName, replaceName, StringComparison.OrdinalIgnoreCase))
+            {
+                TypeHelper.SetFont(component, replacementFont);
+                PreWarmCloneAtlas(settingsFontName, replacementFont);
+                TypeHelper.SetAllDirty(component);
+
+                // Toggle enabled to rebind CanvasRenderer to clone texture, but ONLY if atlas is
+                // ready (willRenderCanvases already fired). Before that the toggle would bind an
+                // empty texture and the text renders transparent.
+                try
+                {
+                    var c = component as Component;
+                    if (c != null)
+                    {
+                        var enabledProp = c.GetType().GetProperty("enabled", BindingFlags.Public | BindingFlags.Instance);
+                        if (enabledProp != null)
+                        {
+                            enabledProp.SetValue(c, false, null);
+                            enabledProp.SetValue(c, true, null);
+                        }
+                    }
+                }
+                catch (Exception ex) { TranslatorCore.LogDebug($"[FontReplace] clone rebind toggle failed: {ex.Message}"); }
+            }
+
+            return replacementFont;
+        }
+
+        /// <summary>
+        /// UI.Text counterpart of ApplyReplacementsToScene, and for the same reason: components whose
+        /// text is serialized in the scene and never re-written, and components living on objects that
+        /// were INACTIVE when the scanner ran (popups, folded panels, menus opened later). Neither the
+        /// set_text prefix nor ForceRefreshAllText can ever reach those, so they kept the game font
+        /// while their neighbours were swapped — mixed faces down a single menu. The TMP path had this
+        /// net from the start; the UI.Text path had none.
+        /// Runs off the same periodic tick as the TMP pass and applies no text, only the font.
+        /// </summary>
+        public static void ApplyUnityClonesToScene()
+        {
+            if (TranslatorCore.Config == null || !TranslatorCore.Config.enable_font_replacement) return;
+            if (_unityFallbackFonts.Count == 0) return;   // no clone built yet — nothing to spread
+            if (TypeHelper.UI_TextType == null) return;
+
+            try
+            {
+                var comps = TypeHelper.FindAllObjectsOfType(TypeHelper.UI_TextType);
+                if (comps == null) return;
+
+                int applied = 0;
+                foreach (var c in comps)
+                {
+                    if (c == null) continue;
+                    int id = c.GetInstanceID();
+
+                    var comp = c as Component;
+                    if (comp != null && TranslatorCore.ShouldSkipTranslation(comp)) continue;
+
+                    var fontObj = TypeHelper.GetFont(c);
+                    string fontName = (fontObj is UnityEngine.Object fo) ? fo.name : null;
+                    if (string.IsNullOrEmpty(fontName)) continue;
+
+                    string settingsFontName = GetSettingsFontName(id, fontName);
+                    // Already wearing its clone — the common case, keep it cheap.
+                    if (!string.Equals(settingsFontName, fontName, StringComparison.OrdinalIgnoreCase)) continue;
+                    if (!IsTranslationEnabled(settingsFontName)) continue;
+                    if (string.IsNullOrEmpty(GetConfiguredFallback(settingsFontName))) continue;
+
+                    string text = TypeHelper.GetText(c);
+                    var clone = TryApplyUnityClone(c, fontObj, settingsFontName, text);
+                    if (clone != null && !string.IsNullOrEmpty(text))
+                        EnsureCharsInCloneAtlasDirect(text, clone, settingsFontName);
+
+                    var nowFont = TypeHelper.GetFont(c);
+                    string nowName = (nowFont is UnityEngine.Object nfo) ? nfo.name : null;
+                    if (!string.Equals(nowName, fontName, StringComparison.OrdinalIgnoreCase)) applied++;
+                }
+
+                if (applied > 0)
+                    TranslatorCore.LogDebug($"[FontManager] Direct UI.Text pass: applied clone to {applied} component(s)");
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogDebug($"[FontManager] ApplyUnityClonesToScene error: {ex.Message}");
+            }
+        }
+
+        /// <summary>
         /// Restore original font on a component. Called when translation is disabled.
         /// </summary>
         public static void RestoreOriginalFont(object component)
@@ -2949,6 +3185,7 @@ namespace UnityGameTranslator.Core
             _knownCharsStringCache.Clear();
             _preWarmedClones.Clear();
             _excludedCharsPerClone.Clear();
+            _cloneSupportedChars.Clear();
             _originalFontsPerComponent.Clear();
             _fontReplacedComponentIds.Clear();
 
@@ -4831,6 +5068,7 @@ namespace UnityGameTranslator.Core
             _unityFallbackFonts.Clear();
             _cloneToOriginal.Clear();
             _excludedCharsPerClone.Clear();
+            _cloneSupportedChars.Clear();
             _bitmapAtlasResults.Clear();
             _bitmapAtlasObjects.Clear();
             _createdFallbackFontNames.Clear();

@@ -1865,6 +1865,10 @@ namespace UnityGameTranslator.Core
             EnsureLateUpdateRunner();
             var processedIds = new HashSet<int>();
 
+            _hlMatched = 0;
+            _hlReplaced = 0;
+            _hlLaggards.Clear();
+
             try
             {
                 ForceRefreshCache();
@@ -1906,12 +1910,24 @@ namespace UnityGameTranslator.Core
 
                 // Keep Animators disabled during highlight (diagnostic mode).
                 // They override text color every frame when enabled.
+
+                string wanted = FontManager.GetConfiguredFallback(fontName);
+                TranslatorCore.LogInfo($"[HighlightAudit] '{fontName}' → fallback '{wanted ?? "(none)"}': {_hlMatched} component(s), {_hlReplaced} wearing the replacement, {_hlMatched - _hlReplaced} still on the original");
+                foreach (var laggard in _hlLaggards)
+                    TranslatorCore.LogInfo($"[HighlightAudit]   not replaced: {laggard}");
             }
             catch (Exception ex)
             {
                 TranslatorCore.LogWarning($"[Scanner] HighlightFont error: {ex.Message}");
             }
         }
+
+        // Audit counters filled by HighlightComponent (see there). Diagnostic for the mixed-font
+        // report: highlighting a font now also states how many of its components actually wear the
+        // replacement, and names the ones that don't.
+        private static int _hlMatched;
+        private static int _hlReplaced;
+        private static readonly List<string> _hlLaggards = new List<string>();
 
         /// <summary>
         /// Clear all font highlights, restoring original colors.
@@ -1968,6 +1984,24 @@ namespace UnityGameTranslator.Core
             string compFont = TypeHelper.GetFontName(component);
             string settingsFont = FontManager.GetSettingsFontName(id, compFont);
             bool matches = !string.IsNullOrEmpty(settingsFont) && string.Equals(settingsFont, targetFontName, StringComparison.OrdinalIgnoreCase);
+
+            // Audit riding along with the highlight: among the components using this font, which
+            // ones are actually wearing the replacement? A component still showing the settings
+            // name never got swapped. Reporting its path and type is what tells us WHY.
+            if (matches)
+            {
+                _hlMatched++;
+                bool replaced = !string.Equals(compFont, settingsFont, StringComparison.OrdinalIgnoreCase);
+                if (replaced) _hlReplaced++;
+                else if (_hlLaggards.Count < 8)
+                {
+                    string path = comp != null ? TranslatorCore.GetGameObjectPath(comp.gameObject) : "(no path)";
+                    string text = TypeHelper.GetText(component) ?? "";
+                    if (text.Length > 32) text = text.Substring(0, 32) + "...";
+                    text = text.Replace("\r", "").Replace("\n", "\\n");
+                    _hlLaggards.Add($"{component.GetType().Name} '{text}' @ {path}");
+                }
+            }
 
             // Store original color
             Color originalColor = TypeHelper.GetTextColor(component);
@@ -2206,10 +2240,14 @@ namespace UnityGameTranslator.Core
             float nowFonts = Time.realtimeSinceStartup;
             bool nudged = FontManager.ConsumeDirectApplyNudge();
             float directApplyInterval = nudged ? 1f : 5f;
-            if (nowFonts - _lastDirectFontApply > directApplyInterval && FontManager.HasActiveReplacements)
+            if (nowFonts - _lastDirectFontApply > directApplyInterval)
             {
+                // The UI.Text pass has its own gate (a built clone), so it must not be hidden
+                // behind HasActiveReplacements, which only speaks for the TMP side.
+                bool tmpPass = FontManager.HasActiveReplacements;
                 _lastDirectFontApply = nowFonts;
-                FontManager.ApplyReplacementsToScene();
+                if (tmpPass) FontManager.ApplyReplacementsToScene();
+                FontManager.ApplyUnityClonesToScene();
             }
             else if (nudged)
             {

@@ -291,6 +291,20 @@ namespace UnityGameTranslator.Core.UI.Panels
             RefreshBrowserEditorUI();
         }
 
+        /// <summary>
+        /// Called by TranslatorUIManager when a session left open by a previous
+        /// run is picked back up at startup. The button must say "Stop", not
+        /// "Edit in browser": the session is live and the page is likely still
+        /// open — offering to start a second one would strand the first.
+        /// </summary>
+        public void OnEditSessionResumed()
+        {
+            SetBrowserEditorStatus(
+                "Session resumed — your browser tab is connected again.",
+                UIStyles.StatusSuccess);
+            RefreshBrowserEditorUI();
+        }
+
         private async void StartBrowserEditorSession()
         {
             SetBrowserEditorStatus("Starting session...", UIStyles.TextSecondary);

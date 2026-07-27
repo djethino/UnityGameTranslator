@@ -717,6 +717,14 @@ namespace UnityGameTranslator.Core.UI
                     CheckForModUpdates();
                 }
 
+                // Pick up an edit session the last run left open (crash, kill,
+                // power cut — none of them send the DELETE). No account needed:
+                // live edit sessions are anonymous, hence no token check here.
+                if (TranslatorCore.Config.online_mode)
+                {
+                    ResumePersistedEditSession();
+                }
+
                 // Start SSE sync stream (replaces FetchServerState + CheckForUpdates)
                 // The SSE 'state' event combines check-uuid + check in one real-time payload
                 if (TranslatorCore.Config.online_mode && !string.IsNullOrEmpty(TranslatorCore.Config.api_token))
@@ -1402,6 +1410,7 @@ namespace UnityGameTranslator.Core.UI
                     {
                         TranslatorCore.LogInfo("[EditSSE] Session no longer exists server-side, stopping");
                         StopEditSessionListener();
+                        ClearPersistedEditSession();
                         TranslationParamsPanel?.OnEditSessionEnded("Session expired — stopped.");
                     }
                 });
@@ -1453,6 +1462,7 @@ namespace UnityGameTranslator.Core.UI
                     {
                         TranslatorCore.LogInfo("[EditSSE] Session no longer exists server-side, stopping");
                         StopEditSessionListener();
+                        ClearPersistedEditSession();
                         TranslationParamsPanel?.OnEditSessionEnded("Session expired — stopped.");
                         return;
                     }
@@ -1526,6 +1536,7 @@ namespace UnityGameTranslator.Core.UI
         {
             string modKey = _editSessionModKey;
             StopEditSessionListener();
+            ClearPersistedEditSession();
 
             if (!string.IsNullOrEmpty(modKey))
             {
@@ -1544,7 +1555,19 @@ namespace UnityGameTranslator.Core.UI
         /// Unlike the merge listener, the stream stays open across many saves:
         /// each one is downloaded and hot-reloaded so the user sees it in-game.
         /// </summary>
-        public static void StartEditSessionListener(string modKey)
+        /// <param name="modKey">Session credential returned by init (or restored from disk).</param>
+        /// <param name="resuming">
+        /// True when picking a session back up after the game restarted. The merge
+        /// baseline is then UNKNOWN — the state the two sides last shared died with
+        /// the process — so it must stay empty rather than be guessed. An empty
+        /// baseline makes the merge purely additive: keys captured in-game are kept,
+        /// the browser wins genuine conflicts, and nothing can be read as a deletion.
+        /// Snapshotting the cache instead would be actively wrong: every line
+        /// captured in-game and never pushed would look like a browser deletion and
+        /// be dropped. The price is that a deletion the browser made while the game
+        /// was away comes back — visible and undoable, unlike lost work.
+        /// </param>
+        public static void StartEditSessionListener(string modKey, bool resuming = false)
         {
             if (string.IsNullOrEmpty(modKey))
             {
@@ -1559,8 +1582,9 @@ namespace UnityGameTranslator.Core.UI
             // Baseline for the browser-save merge: the file we just handed to the
             // browser. Any key captured in-game after this is "local only" (kept);
             // any key the browser removes relative to this is an honored deletion.
-            _editSessionAncestor = SnapshotTranslationCache();
+            _editSessionAncestor = resuming ? null : SnapshotTranslationCache();
             _nextKeepaliveTime = Time.realtimeSinceStartup + KeepaliveIntervalSeconds;
+            PersistEditSession(modKey);
 
             string url = ApiClient.GetEditSessionStreamUrl(modKey);
 
@@ -1581,6 +1605,7 @@ namespace UnityGameTranslator.Core.UI
                     {
                         TranslatorCore.LogInfo("[EditSSE] Edit session ended from the browser");
                         StopEditSessionListener();
+                        ClearPersistedEditSession();
                         TranslationParamsPanel?.OnEditSessionEnded("Session ended from the browser.");
                     }
                     else if (eventType == "browser_left")
@@ -1650,6 +1675,7 @@ namespace UnityGameTranslator.Core.UI
         {
             string modKey = _editSessionModKey;
             StopEditSessionListener();
+            ClearPersistedEditSession();
             if (string.IsNullOrEmpty(modKey)) return;
 
             try
@@ -1658,6 +1684,148 @@ namespace UnityGameTranslator.Core.UI
                 TranslatorCore.LogInfo("[EditSSE] Session ended (game shutdown)");
             }
             catch { }
+        }
+
+        // ── Surviving a game restart ─────────────────────────────────────────
+        // A crash, a kill or a power cut never sends the DELETE: the session
+        // outlives the process, and the browser page is very likely still open
+        // with work in it. The mod key is all that is needed to pick it back up,
+        // so it is written next to the cache (same convention as ".ancestor" and
+        // ".backup") and read once at startup.
+        //
+        // The file is removed only when the session is really over — never on a
+        // mere SSE drop, which would throw away a session the server still holds.
+
+        private static string EditSessionStatePath => TranslatorCore.CachePath + ".editsession";
+
+        /// <summary>
+        /// Remember the session credential for the next launch. Encrypted at
+        /// rest like the mod's other secrets: `mod_key` is the sole credential
+        /// for the session content, and this file sits in a game folder users
+        /// routinely hand around (support archives, cloud saves).
+        /// </summary>
+        private static void PersistEditSession(string modKey)
+        {
+            try
+            {
+                var state = new JObject
+                {
+                    ["mod_key"] = TokenProtection.EncryptToken(modKey)
+                };
+                System.IO.File.WriteAllText(EditSessionStatePath, state.ToString());
+            }
+            catch (Exception e)
+            {
+                // Never fatal: losing this costs the resume, not the session
+                TranslatorCore.LogWarning($"[EditSSE] Could not save the session for resuming: {e.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Forget the persisted session. Called only where the session is known
+        /// to be finished: ended from either side, or reported gone (404).
+        /// </summary>
+        private static void ClearPersistedEditSession()
+        {
+            try
+            {
+                if (System.IO.File.Exists(EditSessionStatePath))
+                    System.IO.File.Delete(EditSessionStatePath);
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogWarning($"[EditSSE] Could not clear the persisted session: {e.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Mod key of the session left behind by a previous run, or null.
+        /// A file we cannot read or decrypt is worthless — drop it rather than
+        /// keep retrying at every launch.
+        /// </summary>
+        private static string ReadPersistedEditSession()
+        {
+            try
+            {
+                if (!System.IO.File.Exists(EditSessionStatePath)) return null;
+
+                var state = JObject.Parse(System.IO.File.ReadAllText(EditSessionStatePath));
+                string modKey = TokenProtection.DecryptToken(state["mod_key"]?.Value<string>());
+
+                if (string.IsNullOrEmpty(modKey))
+                {
+                    TranslatorCore.LogWarning("[EditSSE] Persisted session unreadable (machine changed?), discarding it");
+                    ClearPersistedEditSession();
+                    return null;
+                }
+
+                return modKey;
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogWarning($"[EditSSE] Persisted session unusable: {e.Message}");
+                ClearPersistedEditSession();
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Pick up a session the previous run left open. Called at startup.
+        ///
+        /// The download does double duty: it proves the session still exists
+        /// (404 = over) AND it brings back everything saved from the browser
+        /// while the game was away — which is the whole point, since those saves
+        /// had nowhere to land at the time.
+        /// </summary>
+        public static async void ResumePersistedEditSession()
+        {
+            if (IsEditSessionActive) return;
+
+            string modKey = ReadPersistedEditSession();
+            if (string.IsNullOrEmpty(modKey)) return;
+
+            var result = await ApiClient.GetEditSessionContent(modKey);
+
+            // Capture before RunOnMainThread (IL2CPP safety)
+            var success = result.Success;
+            var content = result.Content;
+            var sessionGone = result.SessionGone;
+            var error = result.Error;
+
+            RunOnMainThread(() =>
+            {
+                if (sessionGone)
+                {
+                    TranslatorCore.LogInfo("[EditSSE] The saved session no longer exists, forgetting it");
+                    ClearPersistedEditSession();
+                    return;
+                }
+
+                if (!success || string.IsNullOrEmpty(content))
+                {
+                    // Network trouble, not a dead session: keep the file so the
+                    // next launch tries again rather than stranding the browser
+                    TranslatorCore.LogWarning($"[EditSSE] Could not resume the session: {error}");
+                    return;
+                }
+
+                // Listener first: the merge below writes the cache, and the
+                // resulting push must reach the browser
+                StartEditSessionListener(modKey, resuming: true);
+
+                // Applying the server content also sets the merge baseline for
+                // everything that follows (see ApplyEditSessionMerge)
+                ApplyEditSessionMerge(content);
+
+                TranslatorCore.LogInfo("[EditSSE] Edit session resumed after game restart");
+                TranslationParamsPanel?.OnEditSessionResumed();
+                MainPanel?.RefreshUI();
+                // Say it on screen: nothing on the player's side asked for this,
+                // and without it they would think the session died with the game
+                // — and quite possibly start a second one, stranding the tab that
+                // is already open on the first.
+                StatusOverlay?.ShowToast("Live edit session resumed", Panels.StatusOverlay.ToastTone.On);
+            });
         }
 
         // Request ids already honored: the browser RE-EMITS its retranslate

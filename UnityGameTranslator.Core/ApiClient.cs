@@ -1461,7 +1461,12 @@ namespace UnityGameTranslator.Core
                 {
                     var errorData = ParseJsonSafe(body);
                     string errorMsg = errorData["error"]?.Value<string>() ?? $"HTTP {response.StatusCode}";
-                    return new EditSessionContentResult { Success = false, Error = errorMsg };
+                    return new EditSessionContentResult
+                    {
+                        Success = false,
+                        Error = errorMsg,
+                        SessionGone = response.StatusCode == System.Net.HttpStatusCode.NotFound
+                    };
                 }
 
                 return new EditSessionContentResult { Success = true, Content = body };
@@ -1782,6 +1787,12 @@ namespace UnityGameTranslator.Core
         public string Error { get; set; }
         /// <summary>Raw JSON of the session translations file</summary>
         public string Content { get; set; }
+        /// <summary>
+        /// True when the server no longer knows the session (404). Distinguishes
+        /// "the session is over" — forget it — from a transient network failure,
+        /// which must keep a resumable session on disk.
+        /// </summary>
+        public bool SessionGone { get; set; }
     }
 
     public class EditSessionUpdateResult

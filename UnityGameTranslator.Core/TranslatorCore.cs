@@ -191,7 +191,12 @@ namespace UnityGameTranslator.Core
         // keys. Comparing on a decoration-insensitive form recognises it, synchronously, with no delay.
         // See analyse/readback-substitution-fr-keys-analysis.md.
         private static ConcurrentDictionary<string, byte> readbackTranslations = new ConcurrentDictionary<string, byte>();
-        private const int ReadbackMinLetters = 4;
+        // A text qualifies once it carries a real word: at least two letters, at least two of them
+        // adjacent. Deliberately NOT a letter COUNT — one ideograph is one letter, so a threshold
+        // tuned on the alphabet protected a Latin sentence while leaving its Chinese equivalent
+        // exposed. Measured across the bench: identical results, minus the Latin assumption.
+        private const int ReadbackMinLetters = 2;
+        private const int ReadbackMinLetterRun = 2;
         private const int ReadbackSkipLogBudget = 10;
         private static int _readbackSkipLogCount;
         private static int _readbackStoreLogged;
@@ -212,6 +217,7 @@ namespace UnityGameTranslator.Core
 
             var sb = new System.Text.StringBuilder(text.Length);
             int letters = 0;
+            int run = 0, longestRun = 0;
             bool lastWasSpace = true;   // leading whitespace is dropped
 
             for (int i = 0; i < text.Length; i++)
@@ -236,7 +242,7 @@ namespace UnityGameTranslator.Core
                     int close = text.IndexOf(']', i + 2);
                     if (close > i && close - i <= 16)
                     {
-                        sb.Append('#'); lastWasSpace = false; i = close; continue;
+                        sb.Append('#'); lastWasSpace = false; run = 0; i = close; continue;
                     }
                 }
                 if (char.IsDigit(c))
@@ -254,7 +260,7 @@ namespace UnityGameTranslator.Core
                         break;
                     }
                     if (i + 1 < text.Length && text[i + 1] == '%') i++;
-                    sb.Append('#'); lastWasSpace = false; continue;
+                    sb.Append('#'); lastWasSpace = false; run = 0; continue;
                 }
 
                 // Decoration the game adds or removes around the same words
@@ -263,15 +269,22 @@ namespace UnityGameTranslator.Core
                 if (char.IsWhiteSpace(c))
                 {
                     if (!lastWasSpace) { sb.Append(' '); lastWasSpace = true; }
+                    run = 0;
                     continue;
                 }
 
-                if (char.IsLetter(c)) letters++;
+                if (char.IsLetter(c))
+                {
+                    letters++;
+                    run++;
+                    if (run > longestRun) longestRun = run;
+                }
+                else run = 0;
                 sb.Append(char.ToLowerInvariant(c));
                 lastWasSpace = false;
             }
 
-            if (letters < ReadbackMinLetters) return null;
+            if (letters < ReadbackMinLetters || longestRun < ReadbackMinLetterRun) return null;
             // Trailing space, if any
             if (sb.Length > 0 && sb[sb.Length - 1] == ' ') sb.Length--;
             return sb.Length == 0 ? null : sb.ToString();

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -2801,8 +2801,12 @@ namespace UnityGameTranslator.Core
 
             string normalizedText = TranslatorCore.NormalizeForCacheLookup(text);
             bool inCache = TranslatorCore.TranslationCache.ContainsKey(normalizedText);
-            // Also check reverse cache — text might already be translated (FR re-set by game)
-            bool alreadyTranslated = !inCache && TranslatorCore.HasCachedTranslation(text);
+            // Also check reverse cache — text might already be translated (FR re-set by game).
+            // The exact probe alone missed the re-decorated form, so the stabilizer queued our own
+            // translation for a second pass: the entry was refused at storage, but the AI call had
+            // already been paid for and the "translating" overlay shown.
+            bool alreadyTranslated = !inCache &&
+                (TranslatorCore.HasCachedTranslation(text) || TranslatorCore.IsReadbackOfOwnTranslation(text));
 
             if (TranslatorCore.DebugMode)
             {

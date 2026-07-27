@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
@@ -182,6 +182,139 @@ namespace UnityGameTranslator.Core
 
         // Reverse cache: all translated values (to detect already-translated text)
         private static ConcurrentDictionary<string, byte> translatedTexts = new ConcurrentDictionary<string, byte>();
+
+        // Decoration-insensitive form of the same translated values. The exact reverse cache above
+        // misses a whole family: games that build text from templates re-format their slots when they
+        // read a component back — {0} becomes 3, or <color=#F4FF58>3</color>. What comes back is OUR
+        // translation wearing a decoration we never produced, so it looks like new source text and
+        // gets re-translated, drifting on each round trip and polluting the cache with target-language
+        // keys. Comparing on a decoration-insensitive form recognises it, synchronously, with no delay.
+        // See analyse/readback-substitution-fr-keys-analysis.md.
+        private static ConcurrentDictionary<string, byte> readbackTranslations = new ConcurrentDictionary<string, byte>();
+        private const int ReadbackMinLetters = 4;
+        private const int ReadbackSkipLogBudget = 10;
+        private static int _readbackSkipLogCount;
+        private static int _readbackStoreLogged;
+
+        /// <summary>
+        /// Decoration-insensitive form of a text: rich-text tags dropped, every number and every one
+        /// of our placeholders collapsed to '#', brace/bracket/emphasis decoration removed, whitespace
+        /// collapsed, lowercased. Letters are preserved untouched, which is what makes the comparison
+        /// safe: two texts only collide when they carry the same words.
+        /// Returns null when the result holds fewer than ReadbackMinLetters letters — short numeric or
+        /// symbolic strings ("3", "x2", "100%") all collapse onto each other and must never be matched
+        /// this way.
+        /// Hand-rolled rather than regex: this runs on the set_text path, thousands of calls per second.
+        /// </summary>
+        internal static string NormalizeForReadbackMatch(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return null;
+
+            var sb = new System.Text.StringBuilder(text.Length);
+            int letters = 0;
+            bool lastWasSpace = true;   // leading whitespace is dropped
+
+            for (int i = 0; i < text.Length; i++)
+            {
+                char c = text[i];
+
+                // Rich-text tag: <color=#...>, </color>, <b>, <size=..>…
+                if (c == '<')
+                {
+                    int close = text.IndexOf('>', i + 1);
+                    if (close > i && close - i <= 64)
+                    {
+                        char next = text[i + 1];
+                        if (next == '/' || char.IsLetter(next)) { i = close; continue; }
+                    }
+                }
+
+                // Our own placeholders ([!v*0], [!t*1], [!STR*2]) and any literal number the game
+                // re-injected in their place — one and the same slot, so one and the same token.
+                if (c == '[' && i + 2 < text.Length && text[i + 1] == '!')
+                {
+                    int close = text.IndexOf(']', i + 2);
+                    if (close > i && close - i <= 16)
+                    {
+                        sb.Append('#'); lastWasSpace = false; i = close; continue;
+                    }
+                }
+                if (char.IsDigit(c))
+                {
+                    while (i + 1 < text.Length)
+                    {
+                        char nx = text[i + 1];
+                        if (char.IsDigit(nx)) { i++; continue; }
+                        // A separator belongs to the number only when a digit follows it: "3,5" is
+                        // one number, "= 3, les points" is a number then punctuation. Swallowing that
+                        // comma made the SAME sentence normalise differently depending on whether the
+                        // slot still held our placeholder or the value the game had re-injected — so
+                        // the guards upstream never recognised what the storage guard did.
+                        if ((nx == '.' || nx == ',') && i + 2 < text.Length && char.IsDigit(text[i + 2])) { i += 2; continue; }
+                        break;
+                    }
+                    if (i + 1 < text.Length && text[i + 1] == '%') i++;
+                    sb.Append('#'); lastWasSpace = false; continue;
+                }
+
+                // Decoration the game adds or removes around the same words
+                if (c == '{' || c == '}' || c == '[' || c == ']' || c == '*') continue;
+
+                if (char.IsWhiteSpace(c))
+                {
+                    if (!lastWasSpace) { sb.Append(' '); lastWasSpace = true; }
+                    continue;
+                }
+
+                if (char.IsLetter(c)) letters++;
+                sb.Append(char.ToLowerInvariant(c));
+                lastWasSpace = false;
+            }
+
+            if (letters < ReadbackMinLetters) return null;
+            // Trailing space, if any
+            if (sb.Length > 0 && sb[sb.Length - 1] == ' ') sb.Length--;
+            return sb.Length == 0 ? null : sb.ToString();
+        }
+
+        /// <summary>
+        /// Index a produced translation for decoration-insensitive recognition.
+        /// Only entries whose value is a REAL translation are indexed: when the normalized value
+        /// equals the normalized key, the "translation" is the source text itself (unchanged output,
+        /// or a typewriter frame whose only difference is a tag). Indexing those would let the gate
+        /// refuse genuine source text — measured on the bench, that single guard took one game from
+        /// 42 wrong matches down to zero.
+        /// </summary>
+        private static void IndexReadbackTranslation(string key, string value)
+        {
+            if (string.IsNullOrEmpty(key) || string.IsNullOrEmpty(value)) return;
+            string nv = NormalizeForReadbackMatch(value);
+            if (nv == null) return;
+            string nk = NormalizeForReadbackMatch(key);
+            if (nk != null && string.Equals(nk, nv, StringComparison.Ordinal)) return;
+            readbackTranslations.TryAdd(nv, 0);
+        }
+
+        /// <summary>
+        /// True when the text is one of our own translations handed back by the game with a different
+        /// decoration. Callers must treat it exactly like an exact reverse-cache hit: leave the text
+        /// alone. Nothing on screen changes — the game's own rendering is kept as the developer built
+        /// it; we simply refuse to learn from it.
+        /// </summary>
+        public static bool IsReadbackOfOwnTranslation(string text)
+        {
+            if (readbackTranslations.Count == 0) return false;
+            string n = NormalizeForReadbackMatch(text);
+            if (n == null) return false;
+            if (!readbackTranslations.ContainsKey(n)) return false;
+
+            if (_readbackSkipLogCount < ReadbackSkipLogBudget)
+            {
+                _readbackSkipLogCount++;
+                LogDebug($"[Readback] Not queued, this is our own translation re-decorated by the game: '{(text.Length > 60 ? text.Substring(0, 60) + "..." : text)}'");
+            }
+            return true;
+        }
 
         // Component tracking: components waiting for a translation (using object to avoid Unity dependencies)
         private static Dictionary<string, List<object>> pendingComponents = new Dictionary<string, List<object>>();
@@ -1579,7 +1712,13 @@ namespace UnityGameTranslator.Core
 
         private static void LoadCache()
         {
-            // Reset server state (will be populated by check-uuid if online)
+            // Reset server state (will be populated by check-uuid if online). Kept aside first:
+            // a reload that lands on the SAME lineage has learned nothing new about the server, and
+            // dropping what we knew made the panel fall back to "Not shared yet" until the next
+            // check-uuid answered — the translation appeared to leave the server and come back after
+            // validating a comparison. Only a different UUID is genuinely unknown territory.
+            var previousServerState = ServerState;
+            string previousUuid = FileUuid;
             ServerState = null;
 
             // Re-derived from the file being loaded (a reload may drop what a previous file carried)
@@ -1878,6 +2017,8 @@ namespace UnityGameTranslator.Core
                 // Values must be normalized the same way as incoming text in TranslateTextWithTracking
                 // ALSO trim trailing whitespace/newlines because TMP often strips them when displaying
                 translatedTexts.Clear();
+                readbackTranslations.Clear();
+                _readbackSkipLogCount = 0;
                 foreach (var kv in TranslationCache)
                 {
                     if (kv.Key != kv.Value.Value && !string.IsNullOrEmpty(kv.Value.Value))
@@ -1889,11 +2030,22 @@ namespace UnityGameTranslator.Core
                         }
                         normalizedValue = normalizedValue.TrimEnd();
                         translatedTexts.TryAdd(normalizedValue, 0);
+                        IndexReadbackTranslation(kv.Key, kv.Value.Value);
                     }
                 }
 
                 BuildPatternEntries();
-                Adapter.LogInfo($"Loaded {TranslationCache.Count} cached translations, {translatedTexts.Count} reverse entries, UUID: {FileUuid}");
+                // Same lineage as before the reload: keep what we already knew about the server
+                // instead of claiming the translation isn't shared until check-uuid answers again.
+                // The hash it carries may be stale, which is harmless — sync detection re-reads it
+                // from the next check — whereas a null reads as "never uploaded".
+                if (previousServerState != null && !string.IsNullOrEmpty(previousUuid)
+                    && string.Equals(previousUuid, FileUuid, StringComparison.OrdinalIgnoreCase))
+                {
+                    ServerState = previousServerState;
+                }
+
+                Adapter.LogInfo($"Loaded {TranslationCache.Count} cached translations, {translatedTexts.Count} reverse entries, {readbackTranslations.Count} decoration-insensitive, UUID: {FileUuid}");
             }
             catch (Exception e)
             {
@@ -2185,8 +2337,20 @@ namespace UnityGameTranslator.Core
                 }
             }
 
+            // Entries the ancestor had and we no longer do. Walking only the local cache made
+            // deletions invisible: the count stayed at zero, so "in sync" was judged true while the
+            // file no longer matched the server. The mod then read the divergence as a SERVER update
+            // and offered to download — which would have silently restored what the user deleted.
+            int removed = 0;
+            foreach (var kvp in AncestorCache)
+            {
+                if (kvp.Key.StartsWith("_")) continue;
+                if (!TranslationCache.ContainsKey(kvp.Key)) removed++;
+            }
+            changes += removed;
+
             LocalChangesCount = changes;
-            LogDebug($"[LocalChanges] Recalculated: {changes} local changes");
+            LogDebug($"[LocalChanges] Recalculated: {changes} local changes ({removed} deleted)");
         }
 
         /// <summary>
@@ -2584,6 +2748,7 @@ namespace UnityGameTranslator.Core
             if (Config.normalize_numbers)
                 normalizedTranslation = ExtractNumbersToPlaceholders(normalizedTranslation, out _);
             translatedTexts.TryAdd(normalizedTranslation.TrimEnd(), 0);
+            IndexReadbackTranslation(key, newValue);
 
             if (key.Contains(PlaceholderPrefix))
                 BuildPatternEntries();
@@ -4340,6 +4505,22 @@ namespace UnityGameTranslator.Core
                 if (TranslationCache.ContainsKey(normalizedKey))
                     return;
 
+                // Last stop before an entry exists: every route that creates one passes here, so this
+                // is where the read-back guard finally belongs. Guarding the queue, then the
+                // synchronous translate path, each time left another route open — the same
+                // target-language key kept coming back. A key we can recognise as our own translation
+                // wearing a different decoration must never become an entry, whoever asked for it.
+                // The stack is logged once so the caller that got this far is named, not guessed at.
+                if (!TranslationCache.ContainsKey(normalizedKey) && IsReadbackOfOwnTranslation(normalizedKey))
+                {
+                    if (_readbackStoreLogged < 3)
+                    {
+                        _readbackStoreLogged++;
+                        Adapter.LogWarning($"[Readback] Refused to store a re-decorated translation as a new key: '{(normalizedKey.Length > 70 ? normalizedKey.Substring(0, 70) + "..." : normalizedKey)}'\n{Environment.StackTrace}");
+                    }
+                    return;
+                }
+
                 // Re-adding an existing key keeps its original capture order;
                 // only genuinely new keys consume a new index
                 long? orderIndex;
@@ -4385,6 +4566,7 @@ namespace UnityGameTranslator.Core
                     }
                     normalizedTranslation = normalizedTranslation.TrimEnd();
                     translatedTexts.TryAdd(normalizedTranslation, 0);
+                    IndexReadbackTranslation(normalizedKey, entry.Value);
                 }
 
                 // Note: No longer clearing lastSeenText here.
@@ -4633,6 +4815,12 @@ namespace UnityGameTranslator.Core
             if (Config.ActiveBackendRequiresOnline && !Config.online_mode) return;
             if (string.IsNullOrEmpty(text)) return;
             if (IsNumericOrSymbol(text)) return;
+            // Last line of defence, here rather than only at the call sites: this is the single door
+            // into the queue, and guarding the two obvious callers still let target-language text
+            // through by other routes (a stored entry whose translation was already indexed came back
+            // and was translated again, drifting). Own UI is exempt: its labels are source text we
+            // produce ourselves, never a read-back of the game's rendering.
+            if (!isOwnUI && IsReadbackOfOwnTranslation(text)) return;
 
             lock (lockObj)
             {
@@ -4680,6 +4868,12 @@ namespace UnityGameTranslator.Core
             if (IsNumericOrSymbol(text))
                 return text;
 
+            // Third door into translation, alongside the queue and the tracking path: this one
+            // translates synchronously and so never met the guard placed on QueueForTranslation.
+            // It is how target-language text kept being re-translated after that guard was added.
+            if (IsReadbackOfOwnTranslation(text))
+                return text;
+
             // No line splitting - treat multiline as single unit for context preservation
             string result = TranslateSingleText(text);
             if (result != text)
@@ -4691,6 +4885,9 @@ namespace UnityGameTranslator.Core
                 normalizedResult = normalizedResult.TrimEnd();
                 if (!translatedTexts.ContainsKey(normalizedResult))
                     translatedTexts.TryAdd(normalizedResult, 0);
+                // Index straight away: the read-back happens within the same session, often within
+                // the same frame, so waiting for the next cache load would miss the whole point.
+                IndexReadbackTranslation(text, result);
             }
             return result;
         }
@@ -4788,6 +4985,15 @@ namespace UnityGameTranslator.Core
                 // TrimEnd because TMP often strips trailing whitespace/newlines when displaying
                 string trimmedNormalized = normalizedText.TrimEnd();
                 if (translatedTexts.ContainsKey(trimmedNormalized))
+                {
+                    skippedAlreadyTranslated++;
+                    return text;
+                }
+
+                // Same verdict, one step wider: our own translation handed back by the game with a
+                // decoration we never produced. Refusing keeps the developer's rendering exactly as
+                // it is on screen; queueing it would re-translate our own French and drift.
+                if (IsReadbackOfOwnTranslation(text))
                 {
                     skippedAlreadyTranslated++;
                     return text;
@@ -4913,6 +5119,9 @@ namespace UnityGameTranslator.Core
                 normalizedResult = normalizedResult.TrimEnd();
                 if (!translatedTexts.ContainsKey(normalizedResult))
                     translatedTexts.TryAdd(normalizedResult, 0);
+                // Index straight away: the read-back happens within the same session, often within
+                // the same frame, so waiting for the next cache load would miss the whole point.
+                IndexReadbackTranslation(text, result);
             }
             return result;
         }
@@ -5117,7 +5326,9 @@ namespace UnityGameTranslator.Core
                 // Check reverse cache with NORMALIZED text (translations are stored normalized + trimmed)
                 // TrimEnd because TMP often strips trailing whitespace/newlines when displaying
                 string trimmedNormalized = normalizedText.TrimEnd();
-                if (translatedTexts.ContainsKey(trimmedNormalized))
+                // Widened exactly like the other gate: an exact hit, or our own translation returned
+                // by the game under a different decoration. Both mean "leave this text alone".
+                if (translatedTexts.ContainsKey(trimmedNormalized) || IsReadbackOfOwnTranslation(text))
                 {
                     skippedAlreadyTranslated++;
                     // This component displays an ALREADY-translated string (e.g. a title's shadow/

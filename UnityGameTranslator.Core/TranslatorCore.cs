@@ -314,6 +314,26 @@ namespace UnityGameTranslator.Core
         /// alone. Nothing on screen changes — the game's own rendering is kept as the developer built
         /// it; we simply refuse to learn from it.
         /// </summary>
+        /// <summary>
+        /// "This text is ALREADY in the target language — do not translate it." The single question
+        /// every gate must ask, and the single place that answers it: the exact reverse cache, then
+        /// the decoration-insensitive index.
+        /// Deliberately NOT merged into HasCachedTranslation, which answers the opposite question —
+        /// "does a translation exist for this SOURCE text?" — for the mod's own labels and the
+        /// scanner refresh. A read-back match there would be a false yes on an untranslated label.
+        /// Conflating the two is what let each new path re-implement its own variant and forget a
+        /// case; every gate calls this now, so a path added later asks the right thing by default.
+        /// </summary>
+        /// <param name="normalizedTrimmed">Already-normalized+trimmed form when the caller has it,
+        /// to avoid normalizing twice on the set_text path.</param>
+        public static bool IsAlreadyTargetText(string text, string normalizedTrimmed = null)
+        {
+            if (string.IsNullOrEmpty(text)) return false;
+            string probe = normalizedTrimmed ?? NormalizeForCacheLookup(text).TrimEnd();
+            if (translatedTexts.ContainsKey(probe)) return true;
+            return IsReadbackOfOwnTranslation(text);
+        }
+
         public static bool IsReadbackOfOwnTranslation(string text)
         {
             if (readbackTranslations.Count == 0) return false;
@@ -4833,7 +4853,7 @@ namespace UnityGameTranslator.Core
             // through by other routes (a stored entry whose translation was already indexed came back
             // and was translated again, drifting). Own UI is exempt: its labels are source text we
             // produce ourselves, never a read-back of the game's rendering.
-            if (!isOwnUI && IsReadbackOfOwnTranslation(text)) return;
+            if (!isOwnUI && IsAlreadyTargetText(text)) return;
 
             lock (lockObj)
             {
@@ -4884,7 +4904,7 @@ namespace UnityGameTranslator.Core
             // Third door into translation, alongside the queue and the tracking path: this one
             // translates synchronously and so never met the guard placed on QueueForTranslation.
             // It is how target-language text kept being re-translated after that guard was added.
-            if (IsReadbackOfOwnTranslation(text))
+            if (IsAlreadyTargetText(text))
                 return text;
 
             // No line splitting - treat multiline as single unit for context preservation
@@ -4997,16 +5017,7 @@ namespace UnityGameTranslator.Core
                 // Check reverse cache with NORMALIZED text (translations are stored normalized + trimmed)
                 // TrimEnd because TMP often strips trailing whitespace/newlines when displaying
                 string trimmedNormalized = normalizedText.TrimEnd();
-                if (translatedTexts.ContainsKey(trimmedNormalized))
-                {
-                    skippedAlreadyTranslated++;
-                    return text;
-                }
-
-                // Same verdict, one step wider: our own translation handed back by the game with a
-                // decoration we never produced. Refusing keeps the developer's rendering exactly as
-                // it is on screen; queueing it would re-translate our own French and drift.
-                if (IsReadbackOfOwnTranslation(text))
+                if (IsAlreadyTargetText(text, trimmedNormalized))
                 {
                     skippedAlreadyTranslated++;
                     return text;
@@ -5339,9 +5350,7 @@ namespace UnityGameTranslator.Core
                 // Check reverse cache with NORMALIZED text (translations are stored normalized + trimmed)
                 // TrimEnd because TMP often strips trailing whitespace/newlines when displaying
                 string trimmedNormalized = normalizedText.TrimEnd();
-                // Widened exactly like the other gate: an exact hit, or our own translation returned
-                // by the game under a different decoration. Both mean "leave this text alone".
-                if (translatedTexts.ContainsKey(trimmedNormalized) || IsReadbackOfOwnTranslation(text))
+                if (IsAlreadyTargetText(text, trimmedNormalized))
                 {
                     skippedAlreadyTranslated++;
                     // This component displays an ALREADY-translated string (e.g. a title's shadow/

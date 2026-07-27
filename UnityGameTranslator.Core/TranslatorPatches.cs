@@ -2805,8 +2805,9 @@ namespace UnityGameTranslator.Core
             // The exact probe alone missed the re-decorated form, so the stabilizer queued our own
             // translation for a second pass: the entry was refused at storage, but the AI call had
             // already been paid for and the "translating" overlay shown.
-            bool alreadyTranslated = !inCache &&
-                (TranslatorCore.HasCachedTranslation(text) || TranslatorCore.IsReadbackOfOwnTranslation(text));
+            // Same question as every other gate, same answer: inCache already covered the key, so
+            // what remains is "is this text itself target language?".
+            bool alreadyTranslated = !inCache && TranslatorCore.IsAlreadyTargetText(text);
 
             if (TranslatorCore.DebugMode)
             {

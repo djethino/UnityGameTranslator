@@ -1586,6 +1586,13 @@ namespace UnityGameTranslator.Core
             TranslationHasUILines = false;
             TranslationUIFont = null;
             InvalidateInterfaceFontAvailability();
+            // Both are written only when non-default, so their ABSENCE from the file means "clean".
+            // Without resetting them here the parse below simply never assigns, and the in-memory
+            // value survives the reload: after downloading the server's copy — which carries
+            // neither key — the mod still claimed unsynced settings and local changes, with no way
+            // for the user to clear it.
+            MetadataDirty = false;
+            LocalChangesCount = 0;
 
             if (!File.Exists(CachePath))
             {

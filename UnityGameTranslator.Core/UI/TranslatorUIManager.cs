@@ -818,6 +818,14 @@ namespace UnityGameTranslator.Core.UI
         private static float _syncCheckIntervalSeconds;
         private static bool _syncCheckInFlight;
 
+        // Auto resolves against the role, which only the site can tell us. Set
+        // once per watch so a later state event does not restart the stream.
+        private static bool _autoRegimeApplied;
+
+        // The periodic tick serves two different calls: the authenticated sync
+        // state, or the public check for someone with no account
+        private static bool _publicWatchActive;
+
         /// <summary>
         /// Ask the site about the translation, the way the player chose to.
         ///
@@ -834,8 +842,8 @@ namespace UnityGameTranslator.Core.UI
         {
             StopSyncStream();
             _nextSyncCheckTime = 0f;
-
-            if (!CanWatchSync()) return;
+            _autoRegimeApplied = false;
+            _publicWatchActive = false;
 
             string frequency = UpdateCheckFrequency.Normalize(
                 TranslatorCore.Config.sync.update_check_frequency);
@@ -843,6 +851,25 @@ namespace UnityGameTranslator.Core.UI
             if (frequency == UpdateCheckFrequency.Never)
             {
                 TranslatorCore.LogInfo("[Sync] Update checks disabled by the player");
+                return;
+            }
+
+            // No account, but a translation downloaded from the site: the public
+            // check is the only signal they can receive, and until now they got
+            // none at all. Periodic too, at the same rhythm — the endpoint is
+            // ETag'd, so an unchanged translation costs a 304.
+            if (!CanWatchSync(logReason: false))
+            {
+                StartPublicWatch(frequency);
+                return;
+            }
+
+            // Auto cannot decide yet: the role comes from the site. Ask once, and
+            // ApplyAutoRegime settles the rhythm when the answer arrives.
+            if (frequency == UpdateCheckFrequency.Auto)
+            {
+                TranslatorCore.LogInfo("[Sync] Automatic rhythm — asking the site who we are");
+                CheckSyncStateNow();
                 return;
             }
 
@@ -863,6 +890,125 @@ namespace UnityGameTranslator.Core.UI
             TranslatorCore.LogInfo(interval > 0f
                 ? $"[Sync] Checking for updates every {interval / 60f:0} min"
                 : "[Sync] Checking for updates at startup only");
+        }
+
+        /// <summary>
+        /// Watch for updates WITHOUT an account, through the public endpoint.
+        ///
+        /// Needs only the site id kept at download time. Silent when there is
+        /// none: a translation typed locally has no upstream to watch.
+        /// </summary>
+        private static void StartPublicWatch(string frequency)
+        {
+            if (!TranslatorCore.Config.online_mode) return;
+            if (!TranslatorCore.SourceSiteId.HasValue) return;
+
+            // Automatic means hourly here: with no account there is nothing of
+            // one's own to keep in sync, only a new version to hear about.
+            float interval = frequency == UpdateCheckFrequency.Auto
+                ? UpdateCheckFrequency.IntervalSeconds(UpdateCheckFrequency.Hourly)
+                : UpdateCheckFrequency.IntervalSeconds(frequency);
+
+            CheckPublicUpdateNow();
+
+            _publicWatchActive = true;
+            _syncCheckIntervalSeconds = interval;
+            _nextSyncCheckTime = interval > 0f ? Time.realtimeSinceStartup + interval : 0f;
+
+            TranslatorCore.LogInfo(interval > 0f
+                ? $"[Sync] No account — checking the published translation every {interval / 60f:0} min"
+                : "[Sync] No account — checking the published translation at startup only");
+        }
+
+        /// <summary>
+        /// One public check. Builds the minimal server state an anonymous user
+        /// can have: which translation, its hash, and nothing about ownership.
+        /// </summary>
+        private static async void CheckPublicUpdateNow()
+        {
+            if (_syncCheckInFlight) return;
+            if (!TranslatorCore.SourceSiteId.HasValue) return;
+
+            _syncCheckInFlight = true;
+            int siteId = TranslatorCore.SourceSiteId.Value;
+
+            try
+            {
+                string localHash = TranslatorCore.ComputeContentHash();
+                var result = await ApiClient.CheckPublicUpdate(siteId, localHash);
+
+                var success = result.Success;
+                var hasUpdate = result.HasUpdate;
+                var fileHash = result.FileHash;
+                var lineCount = result.LineCount;
+                var voteCount = result.VoteCount;
+
+                RunOnMainThread(() =>
+                {
+                    _syncCheckInFlight = false;
+                    if (!success) return;
+
+                    var state = TranslatorCore.ServerState ?? new ServerTranslationState();
+                    state.Checked = true;
+                    state.Exists = true;
+                    state.IsOwner = false;
+                    state.Role = TranslationRole.None;
+                    state.SiteId = siteId;
+                    if (!string.IsNullOrEmpty(fileHash)) state.Hash = fileHash;
+                    TranslatorCore.ServerState = state;
+
+                    if (hasUpdate)
+                    {
+                        TranslatorCore.LogInfo("[Sync] The published translation has a newer version");
+                        DetermineAndApplyUpdateDirection(fileHash, lineCount, voteCount);
+                    }
+
+                    MainPanel?.RefreshUI();
+                });
+            }
+            catch (Exception e)
+            {
+                var errorMsg = e.Message;
+                RunOnMainThread(() =>
+                {
+                    _syncCheckInFlight = false;
+                    TranslatorCore.LogWarning($"[Sync] Public update check failed: {errorMsg}");
+                });
+            }
+        }
+
+        /// <summary>
+        /// Settle the automatic rhythm now that the site has told us the role.
+        ///
+        /// Owning a translation means having work in flight — corrections made on
+        /// the website or on another machine must come back on their own, and an
+        /// open connection is both the fastest and, measured, the cheapest way to
+        /// do that. Everyone else is told at a calm pace.
+        ///
+        /// Runs once per watch: a later state event must not tear down the very
+        /// stream it arrived on.
+        /// </summary>
+        private static void ApplyAutoRegime()
+        {
+            if (_autoRegimeApplied) return;
+            if (UpdateCheckFrequency.Normalize(TranslatorCore.Config.sync.update_check_frequency)
+                != UpdateCheckFrequency.Auto) return;
+
+            var role = TranslatorCore.ServerState?.Role ?? TranslationRole.None;
+            string resolved = UpdateCheckFrequency.ResolveAuto(role);
+            _autoRegimeApplied = true;
+
+            if (resolved == UpdateCheckFrequency.Realtime)
+            {
+                TranslatorCore.LogInfo($"[Sync] Automatic: {role} owns a translation — staying connected");
+                StartSyncStream();
+                return;
+            }
+
+            float interval = UpdateCheckFrequency.IntervalSeconds(resolved);
+            _syncCheckIntervalSeconds = interval;
+            _nextSyncCheckTime = interval > 0f ? Time.realtimeSinceStartup + interval : 0f;
+            TranslatorCore.LogInfo($"[Sync] Automatic: no translation of our own — checking every {interval / 60f:0} min");
         }
 
         /// <summary>
@@ -1041,7 +1187,9 @@ namespace UnityGameTranslator.Core.UI
             if (now < _nextSyncCheckTime) return;
 
             _nextSyncCheckTime = now + _syncCheckIntervalSeconds;
-            CheckSyncStateNow();
+
+            if (_publicWatchActive) CheckPublicUpdateNow();
+            else CheckSyncStateNow();
         }
 
         /// <summary>
@@ -1125,6 +1273,7 @@ namespace UnityGameTranslator.Core.UI
         {
             StopSyncStream();
             _nextSyncCheckTime = 0f;
+            _publicWatchActive = false;
         }
 
         /// <summary>
@@ -1211,6 +1360,10 @@ namespace UnityGameTranslator.Core.UI
                 TranslatorCore.ServerState = serverState;
 
                 TranslatorCore.LogDebug($"[SyncSSE] State: exists={exists}, role={role}, siteId={serverState.SiteId}");
+
+                // The role is only knowable here, so this is where "automatic"
+                // stops being a promise and becomes a rhythm
+                ApplyAutoRegime();
 
                 // Client-side update detection (URL hash may be stale after reconnection)
                 string serverHash = serverState.Hash;
@@ -2541,6 +2694,9 @@ namespace UnityGameTranslator.Core.UI
 
                         // Update LastSyncedHash for multi-device sync detection
                         TranslatorCore.LastSyncedHash = fileHash;
+                        // Remember where this file came from: without an account,
+                        // this id is the only way to ever hear about a new version
+                        TranslatorCore.SourceSiteId = siteId;
 
                         // Save cache and ancestor
                         TranslatorCore.SaveCache();
@@ -2798,6 +2954,8 @@ namespace UnityGameTranslator.Core.UI
                             translationUploader.Equals(currentUser, StringComparison.OrdinalIgnoreCase);
 
                         // Update server state
+                        TranslatorCore.SourceSiteId = translationId;
+
                         TranslatorCore.ServerState = new ServerTranslationState
                         {
                             Checked = true,

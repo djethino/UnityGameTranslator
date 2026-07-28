@@ -124,9 +124,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         private static readonly string[] UpdateFrequencyDisplayOptions =
         {
-            // Reads as a sentence after "Ask the website every:" — except the two
-            // ends, which are states rather than rhythms
-            "Never", "Startup only", "30 minutes", "hour", "3 hours", "Real-time (stay connected)"
+            // Reads as a sentence after "Ask the website every:" — except the ends,
+            // which are states rather than rhythms
+            "Automatic (recommended)", "Never", "Startup only", "30 minutes", "hour",
+            "3 hours", "Real-time (stay connected)"
         };
 
         private static string FrequencyConfigToDisplay(string value)
@@ -955,17 +956,17 @@ namespace UnityGameTranslator.Core.UI.Panels
             _checkFrequencyDropdown = new SearchableDropdown(
                 "CheckFrequency",
                 UpdateFrequencyDisplayOptions,
-                FrequencyConfigToDisplay(UpdateCheckFrequency.Hourly),
+                FrequencyConfigToDisplay(UpdateCheckFrequency.Auto),
                 popupHeight: 190,
                 showSearch: false
             );
             var freqDropdownObj = _checkFrequencyDropdown.CreateUI(freqRow, (_) => { UpdateApplyButtonText(); });
             UIFactory.SetLayoutElement(freqDropdownObj, minWidth: 200, minHeight: UIStyles.InputHeight);
             _helpZone?.Describe(freqDropdownObj,
-                "How often the mod asks the website what changed: your own translation updated elsewhere (another computer, the website editor), contributions waiting for your review if you own it, and the original translation if you contribute to someone else's. Editing in the browser is a separate, instant channel and is never affected by this. Real-time keeps a connection open for the whole session, which is only worth it if you edit on the website while playing.");
+                "How often the mod asks the website what changed: your own translation updated elsewhere (another computer, the website editor), contributions waiting for your review if you own it, and the original translation if you contribute to someone else's. Automatic picks for you: while you own a translation it stays connected, so corrections made on your other machine appear without waiting; otherwise it asks once an hour. Editing in the browser is a separate, instant channel and is never affected by this setting.");
 
             var freqHint = UIStyles.CreateHint(card, "CheckFreqHint",
-                "Your online version, contributions from others, and the original you follow. Editing in the browser stays instant.");
+                "Automatic stays connected while you own a translation, so your own edits made elsewhere come back at once, and asks hourly otherwise.");
             RegisterUIText(freqHint);
 
             var freqStartupHint = UIStyles.CreateHint(card, "CheckFreqStartupHint",

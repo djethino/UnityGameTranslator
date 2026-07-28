@@ -319,6 +319,67 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Public update check for a translation, by site id. NO ACCOUNT NEEDED.
+        ///
+        /// The one path someone without an account has to hear that the
+        /// translation they installed has moved: searching and downloading are
+        /// public, but every update signal went through the authenticated sync
+        /// state, leaving them with a file frozen at install time.
+        ///
+        /// Returns the server hash, or null when the answer is unusable. The
+        /// endpoint refuses branches to anyone but their Main, so nothing
+        /// private can be reached this way.
+        /// </summary>
+        public static async Task<TranslationCheckResult> CheckPublicUpdate(int siteId, string localHash)
+        {
+            try
+            {
+                var url = $"{DefaultBaseUrl}/translations/{siteId}/check";
+                if (!string.IsNullOrEmpty(localHash))
+                {
+                    url += $"?hash={Uri.EscapeDataString(localHash)}";
+                }
+
+                var response = await client.GetAsync(url);
+
+                // Nothing changed since our hash — the server saved itself the body
+                if (response.StatusCode == System.Net.HttpStatusCode.NotModified)
+                {
+                    return new TranslationCheckResult { Success = true, HasUpdate = false };
+                }
+
+                string json = await response.Content.ReadAsStringAsync();
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    TranslatorCore.LogWarning($"[ApiClient] Public update check failed: {DescribeHttpError(response, json)}");
+                    return new TranslationCheckResult { Success = false, Error = DescribeHttpError(response, json) };
+                }
+
+                var data = ParseJsonSafe(json);
+                string serverHash = data["file_hash"]?.Value<string>();
+
+                return new TranslationCheckResult
+                {
+                    Success = true,
+                    FileHash = serverHash,
+                    LineCount = data["line_count"]?.Value<int>() ?? 0,
+                    VoteCount = data["vote_count"]?.Value<int>() ?? 0,
+                    // Trust our own comparison rather than the optional flag:
+                    // the caller always knows the hash it is holding
+                    HasUpdate = !string.IsNullOrEmpty(serverHash)
+                                && !string.IsNullOrEmpty(localHash)
+                                && serverHash != localHash,
+                };
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogWarning($"[ApiClient] Public update check error: {e.Message}");
+                return new TranslationCheckResult { Success = false, Error = e.Message };
+            }
+        }
+
+        /// <summary>
         /// Build the SSE URL for merge preview completion stream.
         /// Points to the Node.js SSE micro-server.
         /// </summary>

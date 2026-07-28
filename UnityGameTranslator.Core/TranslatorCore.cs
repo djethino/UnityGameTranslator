@@ -105,6 +105,21 @@ namespace UnityGameTranslator.Core
         public static string LastMergedMainHash { get; set; } = null;
 
         /// <summary>
+        /// Site id of the translation this file came from, kept in
+        /// translations.json as _source.site_id.
+        ///
+        /// Exists for the ONE case that had no way of hearing about an update:
+        /// someone with no account. Searching and downloading need no account,
+        /// but every update path went through the authenticated sync state, so
+        /// they installed a translation and were never told it had moved again.
+        /// With the id, the public check endpoint answers them.
+        ///
+        /// Public identifier of a public translation: nothing to protect here,
+        /// and the endpoint already refuses branches to anyone but their Main.
+        /// </summary>
+        public static int? SourceSiteId { get; set; } = null;
+
+        /// <summary>
         /// If true, UniverseLib won't override the game's EventSystem.
         /// Enable this if the game's UI animations or navigation don't work with the mod.
         /// Stored in translations.json as _settings.disable_eventsystem_override
@@ -1681,7 +1696,7 @@ namespace UnityGameTranslator.Core
                 if (Config.sync != null && Config.sync.check_update_on_start.HasValue)
                 {
                     Config.sync.update_check_frequency = Config.sync.check_update_on_start.Value
-                        ? UpdateCheckFrequency.Hourly
+                        ? UpdateCheckFrequency.Auto
                         : UpdateCheckFrequency.Never;
                     Config.sync.check_update_on_start = null;
                     LogDebug($"[Config] Migrated check_update_on_start -> update_check_frequency={Config.sync.update_check_frequency}");
@@ -1843,6 +1858,7 @@ namespace UnityGameTranslator.Core
                         var source = prop.Value as JObject;
                         LastSyncedHash = source?["hash"]?.Value<string>();
                         LastMergedMainHash = source?["main_hash"]?.Value<string>();
+                        SourceSiteId = source?["site_id"]?.Value<int?>();
                     }
                     else if (prop.Name == "_game" && prop.Value.Type == JTokenType.Object)
                     {
@@ -5686,7 +5702,9 @@ namespace UnityGameTranslator.Core
 
                     // Save _source with hash for multi-device sync detection, plus the
                     // Main's hash at the last merge from it (branches only)
-                    if (!string.IsNullOrEmpty(LastSyncedHash) || !string.IsNullOrEmpty(LastMergedMainHash))
+                    if (!string.IsNullOrEmpty(LastSyncedHash)
+                        || !string.IsNullOrEmpty(LastMergedMainHash)
+                        || SourceSiteId.HasValue)
                     {
                         var source = new JObject();
                         if (!string.IsNullOrEmpty(LastSyncedHash))
@@ -5696,6 +5714,10 @@ namespace UnityGameTranslator.Core
                         if (!string.IsNullOrEmpty(LastMergedMainHash))
                         {
                             source["main_hash"] = LastMergedMainHash;
+                        }
+                        if (SourceSiteId.HasValue)
+                        {
+                            source["site_id"] = SourceSiteId.Value;
                         }
                         output["_source"] = source;
                     }
@@ -5867,6 +5889,7 @@ namespace UnityGameTranslator.Core
             // A fork is detached: it has no upstream Main any more, so the memory of
             // one would make the mod offer to merge from a lineage it just left
             LastMergedMainHash = null;
+            SourceSiteId = null;
             LocalChangesCount = TranslationCache.Count; // All entries are now "local changes"
 
             // Clear ancestor cache - no longer relevant for the new lineage
@@ -6150,6 +6173,19 @@ namespace UnityGameTranslator.Core
     /// </summary>
     public static class UpdateCheckFrequency
     {
+        /// <summary>
+        /// Let the mod pick, from the role the site reports.
+        ///
+        /// The right rhythm is not the same for everyone, and the measurements
+        /// settled which way round: for someone who OWNS a translation, an open
+        /// connection costs the server LESS than polling fast (one descriptor out
+        /// of 32768 and no CPU, against a PHP request every couple of minutes),
+        /// and they are the few. Someone who merely uses a translation has
+        /// nothing to synchronise and only needs to hear that a newer version
+        /// exists. See analyse/edit-session-lifecycle-scale.md.
+        /// </summary>
+        public const string Auto = "auto";
+
         public const string Never = "never";
         public const string Startup = "startup";
         public const string HalfHourly = "30m";
@@ -6160,7 +6196,7 @@ namespace UnityGameTranslator.Core
         /// <summary>Ordered as shown in the options dropdown.</summary>
         public static readonly string[] All =
         {
-            Never, Startup, HalfHourly, Hourly, ThreeHourly, Realtime
+            Auto, Never, Startup, HalfHourly, Hourly, ThreeHourly, Realtime
         };
 
         /// <summary>
@@ -6178,15 +6214,28 @@ namespace UnityGameTranslator.Core
             }
         }
 
-        /// <summary>True when the mod should look once as the game starts.</summary>
-        public static bool ChecksAtStartup(string frequency)
-        {
-            return frequency != Never && frequency != Realtime;
-        }
-
+        /// <summary>
+        /// Anything unknown on disk falls back to Auto rather than being read as
+        /// "never": a typo must not silently stop someone from ever hearing about
+        /// an update.
+        /// </summary>
         public static string Normalize(string frequency)
         {
-            return Array.IndexOf(All, frequency) >= 0 ? frequency : Hourly;
+            return Array.IndexOf(All, frequency) >= 0 ? frequency : Auto;
+        }
+
+        /// <summary>
+        /// What Auto resolves to, once the site has told us who we are.
+        ///
+        /// Owning a translation means having work in flight — corrections made on
+        /// the website or on another machine must come back without the player
+        /// having to think about it. Everyone else is told at a calm pace.
+        /// </summary>
+        public static string ResolveAuto(TranslationRole role)
+        {
+            return role == TranslationRole.Main || role == TranslationRole.Branch
+                ? Realtime
+                : Hourly;
         }
     }
 
@@ -6205,7 +6254,7 @@ namespace UnityGameTranslator.Core
         /// Every value except "never" and "realtime" also checks once at startup:
         /// that is the moment an update can be applied without interrupting play.
         /// </summary>
-        public string update_check_frequency { get; set; } = UpdateCheckFrequency.Hourly;
+        public string update_check_frequency { get; set; } = UpdateCheckFrequency.Auto;
 
         /// <summary>
         /// Superseded by <see cref="update_check_frequency"/>. Read ONCE to migrate

@@ -1770,20 +1770,64 @@ namespace UnityGameTranslator.Core.UI
         }
 
         /// <summary>
-        /// Pick up a session the previous run left open. Called at startup.
+        /// Offer to pick up a session the previous run left open. Called at startup.
         ///
-        /// The download does double duty: it proves the session still exists
-        /// (404 = over) AND it brings back everything saved from the browser
-        /// while the game was away — which is the whole point, since those saves
-        /// had nowhere to land at the time.
+        /// ASKS rather than acts: resuming merges the browser's saves into the
+        /// player's translations file, and doing that unannounced at every launch
+        /// turns a helpful feature into an unexplained edit of their data. Only a
+        /// cheap keepalive runs before the question — nothing is downloaded and
+        /// nothing is written until the player says yes.
         /// </summary>
         public static async void ResumePersistedEditSession()
         {
-            if (IsEditSessionActive) return;
+            if (IsEditSessionActive || _resumeOfferDeclined) return;
 
             string modKey = ReadPersistedEditSession();
             if (string.IsNullOrEmpty(modKey)) return;
 
+            // Existence check only. Downloading here would pull megabytes for a
+            // session the player may well decline.
+            bool alive = await ApiClient.KeepAliveEditSession(modKey);
+
+            RunOnMainThread(() =>
+            {
+                if (!alive)
+                {
+                    TranslatorCore.LogInfo("[EditSSE] The saved session no longer exists, forgetting it");
+                    ClearPersistedEditSession();
+                    return;
+                }
+
+                if (ConfirmationPanel == null) return;
+
+                // The mod's UI is hidden at startup: a dialog nobody can see is
+                // the same as no dialog at all
+                ShowUI = true;
+                ConfirmationPanel.Show(
+                    "Live edit session",
+                    "A browser edit session was still open when this game last closed.\n\n"
+                        + "Resuming brings back what you saved in the browser since, and merges it into your "
+                        + "local translations file. Nothing is downloaded or written until you choose.\n\n"
+                        + "Declining changes nothing: the session stays as it is, and you will be asked again "
+                        + "next time the game starts.",
+                    "Resume session",
+                    () => CompleteEditSessionResume(modKey),
+                    () => _resumeOfferDeclined = true,
+                    isDanger: false);
+            });
+        }
+
+        /// <summary>Declined this run: do not ask twice in the same session.</summary>
+        private static bool _resumeOfferDeclined;
+
+        /// <summary>
+        /// Second half of the resume, once the player has agreed: fetch the
+        /// session content, start listening, and merge. The download does double
+        /// duty — it brings back everything saved from the browser while the game
+        /// was away, which had nowhere to land at the time.
+        /// </summary>
+        private static async void CompleteEditSessionResume(string modKey)
+        {
             var result = await ApiClient.GetEditSessionContent(modKey);
 
             // Capture before RunOnMainThread (IL2CPP safety)
@@ -1804,8 +1848,9 @@ namespace UnityGameTranslator.Core.UI
                 if (!success || string.IsNullOrEmpty(content))
                 {
                     // Network trouble, not a dead session: keep the file so the
-                    // next launch tries again rather than stranding the browser
+                    // next launch can offer it again rather than stranding the browser
                     TranslatorCore.LogWarning($"[EditSSE] Could not resume the session: {error}");
+                    StatusOverlay?.ShowToast("Could not resume the edit session", Panels.StatusOverlay.ToastTone.Off);
                     return;
                 }
 
@@ -1820,12 +1865,28 @@ namespace UnityGameTranslator.Core.UI
                 TranslatorCore.LogInfo("[EditSSE] Edit session resumed after game restart");
                 TranslationParamsPanel?.OnEditSessionResumed();
                 MainPanel?.RefreshUI();
-                // Say it on screen: nothing on the player's side asked for this,
-                // and without it they would think the session died with the game
-                // — and quite possibly start a second one, stranding the tab that
-                // is already open on the first.
                 StatusOverlay?.ShowToast("Live edit session resumed", Panels.StatusOverlay.ToastTone.On);
             });
+        }
+
+        /// <summary>
+        /// Close a session left over from a previous run, before opening a new one.
+        ///
+        /// Without this, every declined or failed resume would strand its session
+        /// server-side until it expires, holding one of the few concurrent slots
+        /// the site can offer — multiplied by every player who restarts a game.
+        /// The mod is the only one able to do this: sessions are anonymous, so the
+        /// site cannot tell that two of them belong to the same person.
+        /// </summary>
+        public static async Task DiscardPersistedEditSession()
+        {
+            string modKey = ReadPersistedEditSession();
+            ClearPersistedEditSession();
+
+            if (string.IsNullOrEmpty(modKey)) return;
+
+            TranslatorCore.LogInfo("[EditSSE] Closing the session left by a previous run");
+            await ApiClient.EndEditSession(modKey);
         }
 
         // Request ids already honored: the browser RE-EMITS its retranslate

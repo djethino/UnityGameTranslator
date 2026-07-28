@@ -309,6 +309,11 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             SetBrowserEditorStatus("Starting session...", UIStyles.TextSecondary);
 
+            // Close whatever a previous run left behind first. Starting a second
+            // session while the first is still alive server-side would strand it
+            // until it expires — and those slots are shared by every user.
+            await TranslatorUIManager.DiscardPersistedEditSession();
+
             // Flush in-memory changes so the browser edits the current state
             TranslatorCore.SaveCache();
 

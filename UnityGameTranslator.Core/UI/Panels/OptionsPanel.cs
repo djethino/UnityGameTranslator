@@ -124,7 +124,9 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         private static readonly string[] UpdateFrequencyDisplayOptions =
         {
-            "Never", "At startup only", "Every 30 minutes", "Every hour", "Every 3 hours", "Real-time"
+            // Reads as a sentence after "Ask the website every:" — except the two
+            // ends, which are states rather than rhythms
+            "Never", "Startup only", "30 minutes", "hour", "3 hours", "Real-time (stay connected)"
         };
 
         private static string FrequencyConfigToDisplay(string value)
@@ -943,7 +945,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             RegisterUIText(syncSectionTitle);
 
             var freqRow = UIStyles.CreateFormRow(card, "CheckFreqRow", UIStyles.RowHeightMedium, 5);
-            var freqLabel = UIFactory.CreateLabel(freqRow, "CheckFreqLabel", "Check for updates:", TextAnchor.MiddleLeft);
+            // Not just "Check for updates": the word alone left people guessing what
+            // was being checked, and for which role
+            var freqLabel = UIFactory.CreateLabel(freqRow, "CheckFreqLabel", "Ask the website every:", TextAnchor.MiddleLeft);
             freqLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(freqLabel.gameObject, minWidth: 130);
             RegisterUIText(freqLabel);
@@ -958,11 +962,15 @@ namespace UnityGameTranslator.Core.UI.Panels
             var freqDropdownObj = _checkFrequencyDropdown.CreateUI(freqRow, (_) => { UpdateApplyButtonText(); });
             UIFactory.SetLayoutElement(freqDropdownObj, minWidth: 200, minHeight: UIStyles.InputHeight);
             _helpZone?.Describe(freqDropdownObj,
-                "How often the mod asks the website whether your translation changed. Every option except Real-time is a quick call; Real-time keeps a connection open the whole session, which is only worth it if you edit on the website while playing.");
+                "How often the mod asks the website what changed: your own translation updated elsewhere (another computer, the website editor), contributions waiting for your review if you own it, and the original translation if you contribute to someone else's. Editing in the browser is a separate, instant channel and is never affected by this. Real-time keeps a connection open for the whole session, which is only worth it if you edit on the website while playing.");
 
             var freqHint = UIStyles.CreateHint(card, "CheckFreqHint",
-                "All options except Never also check once when the game starts.");
+                "Your online version, contributions from others, and the original you follow. Editing in the browser stays instant.");
             RegisterUIText(freqHint);
+
+            var freqStartupHint = UIStyles.CreateHint(card, "CheckFreqStartupHint",
+                "Every option except Never also checks once when the game starts.");
+            RegisterUIText(freqStartupHint);
 
             var notifyObj = UIFactory.CreateToggle(card, "NotifyToggle", out _notifyUpdatesToggle, out var notifyLabel);
             notifyLabel.text = " Notify when translation updates available";

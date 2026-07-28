@@ -1575,6 +1575,17 @@ namespace UnityGameTranslator.Core.UI
                 return;
             }
 
+            // A session running under another key is being abandoned here. Stopping
+            // the listener only drops OUR end: the session stays alive server-side,
+            // holding one of the slots shared by every user, and the browser tab
+            // still attached to it keeps it that way for as long as it is open.
+            // Nothing else would ever close it, so close it now.
+            string abandonedKey = _editSessionModKey;
+            if (!string.IsNullOrEmpty(abandonedKey) && abandonedKey != modKey)
+            {
+                CloseAbandonedEditSession(abandonedKey);
+            }
+
             StopEditSessionListener();
             _editSessionModKey = modKey;
             _sessionContentHash = null;
@@ -1642,6 +1653,24 @@ namespace UnityGameTranslator.Core.UI
 
             _editSessionSseClient.Connect(url);
             TranslatorCore.LogInfo($"[EditSSE] Listening for edit session saves (key: {modKey.Substring(0, 8)}...)");
+        }
+
+        /// <summary>
+        /// Release a session the mod no longer follows. Fire-and-forget by
+        /// design — the new session must not wait on the old one — but never
+        /// unobserved: a failure here only means the server TTL does the job.
+        /// </summary>
+        private static async void CloseAbandonedEditSession(string modKey)
+        {
+            try
+            {
+                TranslatorCore.LogInfo($"[EditSSE] Releasing the replaced session (key: {modKey.Substring(0, 8)}...)");
+                await ApiClient.EndEditSession(modKey);
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogWarning($"[EditSSE] Could not release the replaced session: {e.Message}");
+            }
         }
 
         /// <summary>

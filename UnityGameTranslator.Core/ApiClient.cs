@@ -203,6 +203,48 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Human-readable reason for a failed response, meant to be shown as-is.
+        /// Rate limits get their own sentence: the server answers "Too Many
+        /// Requests", which reads as a breakage when in fact the only thing to
+        /// do is wait — and the wait is short and known.
+        /// Never throws: an error body can be anything, including an HTML page
+        /// from a proxy the application never saw.
+        /// </summary>
+        public static string DescribeHttpError(HttpResponseMessage response, string body)
+        {
+            if ((int)response.StatusCode == 429)
+            {
+                int seconds = 60;
+                if (response.Headers.TryGetValues("Retry-After", out var values))
+                {
+                    foreach (var value in values)
+                    {
+                        if (int.TryParse(value, out int parsed) && parsed > 0)
+                        {
+                            seconds = parsed;
+                            break;
+                        }
+                    }
+                }
+                return $"too many attempts in a row, wait {seconds}s and try again";
+            }
+
+            try
+            {
+                var parsed = ParseJsonSafe(body);
+                string message = parsed["error"]?.Value<string>()
+                    ?? parsed["message"]?.Value<string>();
+                if (!string.IsNullOrEmpty(message)) return message;
+            }
+            catch
+            {
+                // Not JSON (proxy error page): the status code is all we can say
+            }
+
+            return $"HTTP {(int)response.StatusCode} {response.StatusCode}";
+        }
+
+        /// <summary>
         /// Get the HttpClient configured for SSE streaming (infinite timeout, no gzip).
         /// </summary>
         public static HttpClient GetSseHttpClient() => sseClient;
@@ -1210,10 +1252,7 @@ namespace UnityGameTranslator.Core
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    var errorData = ParseJsonSafe(json);
-                    string errorMsg = errorData["error"]?.Value<string>()
-                        ?? errorData["message"]?.Value<string>()
-                        ?? $"HTTP {response.StatusCode}";
+                    string errorMsg = DescribeHttpError(response, json);
 
                     TranslatorCore.LogWarning($"[ApiClient] Merge preview init failed: {errorMsg}");
                     return new MergePreviewInitResult { Success = false, Error = errorMsg };
@@ -1318,10 +1357,7 @@ namespace UnityGameTranslator.Core
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    var errorData = ParseJsonSafe(json);
-                    string errorMsg = errorData["error"]?.Value<string>()
-                        ?? errorData["message"]?.Value<string>()
-                        ?? $"HTTP {response.StatusCode}";
+                    string errorMsg = DescribeHttpError(response, json);
 
                     TranslatorCore.LogWarning($"[ApiClient] Edit session init failed: {errorMsg}");
                     return new EditSessionInitResult { Success = false, Error = errorMsg };

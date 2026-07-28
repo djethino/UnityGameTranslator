@@ -43,8 +43,11 @@ namespace UnityGameTranslator.Core.UI.Panels
         private ButtonRef _applyBtn;
         private ButtonRef _keepMineBtn;
         private ButtonRef _takeServerBtn;
+        private ButtonRef _reviewBtn;
         private Components.HelpZone _helpZone;
         private bool _userMadeChoice = false;
+        // True while the review page round trip is in flight (see OpenReviewPage)
+        private bool _reviewInFlight;
 
         public MergePanel(UIBase owner) : base(owner)
         {
@@ -186,7 +189,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 "Throw away ALL your local changes and take the website's version as-is");
 
             // Review on Website in the footer (secondary action)
-            var reviewBtn = CreateSecondaryButton(buttonRow, "ReviewBtn", "Review on Website", 140);
+            _reviewBtn = CreateSecondaryButton(buttonRow, "ReviewBtn", "Review on Website", 140);
+            var reviewBtn = _reviewBtn;
             UIStyles.SetBackground(reviewBtn.Component.gameObject, UIStyles.ButtonLink);
             reviewBtn.OnClick += () => TranslatorUIManager.MergePanel?.OpenReviewPage();
             RegisterUIText(reviewBtn.ButtonText);
@@ -628,6 +632,12 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         internal void OpenReviewPage()
         {
+            // Same trap as the browser editor: the upload takes seconds and the tab
+            // opens behind a fullscreen game, so the player clicks again. Each click
+            // would send the whole file once more and burn one of the ten merge
+            // previews allowed per minute.
+            if (_reviewInFlight) return;
+
             var serverState = TranslatorCore.ServerState;
             if (serverState?.SiteId == null)
             {
@@ -636,7 +646,23 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
 
             // Use merge-preview flow: send local content to server, open returned URL
+            SetReviewBusy(true);
             PerformOpenReviewPage(serverState.SiteId.Value);
+        }
+
+        /// <summary>
+        /// Locks the review button while its round trip is in flight. Every exit
+        /// path releases it, so a failure can never leave the button dead.
+        /// </summary>
+        private void SetReviewBusy(bool busy)
+        {
+            _reviewInFlight = busy;
+
+            if (_reviewBtn?.Component != null)
+                _reviewBtn.Component.interactable = !busy;
+
+            if (_reviewBtn?.ButtonText != null)
+                SetDynamicText(_reviewBtn.ButtonText, busy ? "Opening..." : "Review on Website");
         }
 
         private async void PerformOpenReviewPage(int translationId)
@@ -669,12 +695,27 @@ namespace UnityGameTranslator.Core.UI.Panels
                     else
                     {
                         TranslatorCore.LogWarning($"[MergePanel] Failed to init merge preview: {error}");
+                        // Without this the failure is silent: no tab opens and the
+                        // player has no way to know whether it is still loading
+                        TranslatorUIManager.StatusOverlay?.ShowToast(
+                            $"Could not open the review page: {error}",
+                            Panels.StatusOverlay.ToastTone.Off);
                     }
+
+                    SetReviewBusy(false);
                 });
             }
             catch (Exception e)
             {
-                TranslatorCore.LogError($"[MergePanel] Open review page failed: {e.Message}");
+                var errorMsg = e.Message;
+                TranslatorCore.LogError($"[MergePanel] Open review page failed: {errorMsg}");
+                TranslatorUIManager.RunOnMainThread(() =>
+                {
+                    TranslatorUIManager.StatusOverlay?.ShowToast(
+                        $"Could not open the review page: {errorMsg}",
+                        Panels.StatusOverlay.ToastTone.Off);
+                    SetReviewBusy(false);
+                });
             }
         }
 

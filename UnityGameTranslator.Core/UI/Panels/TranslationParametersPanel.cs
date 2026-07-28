@@ -87,6 +87,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         // Tools tab — browser editor (live edit session)
         private ButtonRef _browserEditorBtn;
         private Text _browserEditorStatus;
+        // True while a start or stop round trip is in flight (see OnBrowserEditorClicked)
+        private bool _browserEditorBusy;
 
         // Font highlight tracking
         private string _highlightedFontName = null;
@@ -269,10 +271,19 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private void OnBrowserEditorClicked()
         {
+            // Repeat clicks are the normal reaction here, not user error: the init
+            // uploads the whole translation file (megabytes on a large game) and the
+            // browser usually opens BEHIND a fullscreen window, so nothing seems to
+            // happen for several seconds. Every extra click used to create one more
+            // server-side session, one more tab, and burn one of the six init calls
+            // allowed per minute — the last ones failing with a raw 429.
+            if (_browserEditorBusy) return;
+
             if (TranslatorUIManager.IsEditSessionActive)
             {
                 // Ends server-side too (deletes the session file) and
                 // calls back OnEditSessionEnded to refresh this UI
+                SetBrowserEditorBusy(true, "Stopping...");
                 TranslatorUIManager.EndEditSessionFromMod("Session stopped.");
                 return;
             }
@@ -288,7 +299,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         public void OnEditSessionEnded(string reason)
         {
             SetBrowserEditorStatus(reason, UIStyles.TextMuted);
-            RefreshBrowserEditorUI();
+            // Also the end of the "Stopping..." round trip when the user clicked Stop
+            SetBrowserEditorBusy(false);
         }
 
         /// <summary>
@@ -302,44 +314,64 @@ namespace UnityGameTranslator.Core.UI.Panels
             SetBrowserEditorStatus(
                 "Session resumed — your browser tab is connected again.",
                 UIStyles.StatusSuccess);
-            RefreshBrowserEditorUI();
+            SetBrowserEditorBusy(false);
         }
 
         private async void StartBrowserEditorSession()
         {
-            SetBrowserEditorStatus("Starting session...", UIStyles.TextSecondary);
+            // Says what is actually slow (the upload) and where the tab will show
+            // up, so the wait is understood instead of read as a dead button
+            SetBrowserEditorBusy(true, "Opening...");
+            SetBrowserEditorStatus(
+                "Sending your translation file... your browser opens when it is ready (the tab may appear behind the game).",
+                UIStyles.TextSecondary);
 
-            // Close whatever a previous run left behind first. Starting a second
-            // session while the first is still alive server-side would strand it
-            // until it expires — and those slots are shared by every user.
-            await TranslatorUIManager.DiscardPersistedEditSession();
-
-            // Flush in-memory changes so the browser edits the current state
-            TranslatorCore.SaveCache();
-
-            var result = await ApiClient.InitEditSession();
-
-            // Capture values before RunOnMainThread (IL2CPP safety)
-            var success = result.Success;
-            var error = result.Error;
-            var modKey = result.ModKey;
-            var url = result.Url;
-
-            TranslatorUIManager.RunOnMainThread(() =>
+            try
             {
-                if (!success || string.IsNullOrEmpty(modKey) || string.IsNullOrEmpty(url))
+                // Close whatever a previous run left behind first. Starting a second
+                // session while the first is still alive server-side would strand it
+                // until it expires — and those slots are shared by every user.
+                await TranslatorUIManager.DiscardPersistedEditSession();
+
+                // Flush in-memory changes so the browser edits the current state
+                TranslatorCore.SaveCache();
+
+                var result = await ApiClient.InitEditSession();
+
+                // Capture values before RunOnMainThread (IL2CPP safety)
+                var success = result.Success;
+                var error = result.Error;
+                var modKey = result.ModKey;
+                var url = result.Url;
+
+                TranslatorUIManager.RunOnMainThread(() =>
                 {
-                    SetBrowserEditorStatus($"Failed to start: {error ?? "unknown error"}", UIStyles.StatusError);
-                    return;
-                }
+                    if (!success || string.IsNullOrEmpty(modKey) || string.IsNullOrEmpty(url))
+                    {
+                        SetBrowserEditorStatus($"Failed to start: {error ?? "unknown error"}", UIStyles.StatusError);
+                        SetBrowserEditorBusy(false);
+                        return;
+                    }
 
-                string fullUrl = ApiClient.GetMergePreviewFullUrl(url);
-                TranslatorCore.OpenUrlSafe(fullUrl);
+                    string fullUrl = ApiClient.GetMergePreviewFullUrl(url);
+                    TranslatorCore.OpenUrlSafe(fullUrl);
 
-                TranslatorUIManager.StartEditSessionListener(modKey);
-                SetBrowserEditorStatus("Session active — edit in your browser, each save is applied in-game.", UIStyles.StatusSuccess);
-                RefreshBrowserEditorUI();
-            });
+                    TranslatorUIManager.StartEditSessionListener(modKey);
+                    SetBrowserEditorStatus("Session active — edit in your browser, each save is applied in-game.", UIStyles.StatusSuccess);
+                    SetBrowserEditorBusy(false);
+                });
+            }
+            catch (Exception e)
+            {
+                // Never leave the button stuck: an exception here (network, disk)
+                // would otherwise lock the only way to open the editor
+                var errorMsg = e.Message;
+                TranslatorUIManager.RunOnMainThread(() =>
+                {
+                    SetBrowserEditorStatus($"Failed to start: {errorMsg}", UIStyles.StatusError);
+                    SetBrowserEditorBusy(false);
+                });
+            }
         }
 
         private void SetBrowserEditorStatus(string message, Color color)
@@ -347,6 +379,29 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_browserEditorStatus == null) return;
             _browserEditorStatus.text = message;
             _browserEditorStatus.color = color;
+        }
+
+        /// <summary>
+        /// Locks the button for the whole duration of a start or stop round trip.
+        /// Releasing it always goes through here, so the button can never stay
+        /// dead after a failure.
+        /// </summary>
+        /// <param name="busyLabel">Label shown while locked; ignored when releasing.</param>
+        private void SetBrowserEditorBusy(bool busy, string busyLabel = null)
+        {
+            _browserEditorBusy = busy;
+
+            if (_browserEditorBtn?.Component != null)
+                _browserEditorBtn.Component.interactable = !busy;
+
+            if (busy)
+            {
+                if (busyLabel != null && _browserEditorBtn?.ButtonText != null)
+                    SetDynamicText(_browserEditorBtn.ButtonText, busyLabel);
+                return;
+            }
+
+            RefreshBrowserEditorUI();
         }
 
         private void RefreshBrowserEditorUI()

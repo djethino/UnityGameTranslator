@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using UnityEngine;
 using UnityEngine.UI;
 using UniverseLib.UI;
@@ -127,7 +127,10 @@ namespace UnityGameTranslator.Core.UI.Components
             // Row 1 — WHAT this translation is, plus the role badge. Identity leads: you know what
             // you are looking at before you are told how it is doing.
             var identityRow = UIFactory.CreateHorizontalGroup(_root, "IdentityRow", false, false, true, true, UIStyles.SmallSpacing);
-            UIFactory.SetLayoutElement(identityRow, minHeight: UIStyles.RowHeightMedium, flexibleWidth: 9999);
+            // flexibleHeight 0: this is a line, and it must stay one. Without it the
+            // row absorbed the card's spare height — the badge stretched into a tall
+            // green column and the language pair floated in the middle of the void.
+            UIFactory.SetLayoutElement(identityRow, minHeight: UIStyles.RowHeightMedium, flexibleWidth: 9999, flexibleHeight: 0);
             UIStyles.ClearRowBackground(identityRow);
             var idLayout = identityRow.GetComponent<HorizontalLayoutGroup>();
             if (idLayout != null) idLayout.childAlignment = TextAnchor.MiddleLeft;
@@ -146,7 +149,9 @@ namespace UnityGameTranslator.Core.UI.Components
             _roleBadgeImage = _roleBadge.AddComponent<Image>();
             _roleBadgeImage.color = UIStyles.ButtonSecondary;
             UIFactory.SetLayoutGroup<HorizontalLayoutGroup>(_roleBadge, true, true, true, true, 0, 8, 8, 3, 3);
-            UIFactory.SetLayoutElement(_roleBadge, minWidth: 62, minHeight: 20, flexibleWidth: 0);
+            // A chip has the size of its text, never the size of what surrounds it
+            UIFactory.SetLayoutElement(_roleBadge, minWidth: 62, minHeight: 20, preferredHeight: 20,
+                flexibleWidth: 0, flexibleHeight: 0);
 
             _roleLabel = UIFactory.CreateLabel(_roleBadge, "RoleLabel", "MAIN", TextAnchor.MiddleCenter);
             _roleLabel.fontStyle = FontStyle.Bold;
@@ -156,7 +161,7 @@ namespace UnityGameTranslator.Core.UI.Components
 
             // Row 2 — how it is doing, and how much of it there is
             var statusRow = UIFactory.CreateHorizontalGroup(_root, "StatusRow", false, false, true, true, UIStyles.SmallSpacing);
-            UIFactory.SetLayoutElement(statusRow, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999);
+            UIFactory.SetLayoutElement(statusRow, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999, flexibleHeight: 0);
 
             UIStyles.ClearRowBackground(statusRow);
 
@@ -182,14 +187,14 @@ namespace UnityGameTranslator.Core.UI.Components
             // Row 3 — quality bar, FULL WIDTH. It used to share a row with the score label, which
             // shortened it and made the proportions harder to read; the score moved to the legend.
             _qualityRow = UIFactory.CreateHorizontalGroup(_root, "QualityRow", false, false, true, true, 0);
-            UIFactory.SetLayoutElement(_qualityRow, minHeight: 14, flexibleWidth: 9999);
+            UIFactory.SetLayoutElement(_qualityRow, minHeight: 14, flexibleWidth: 9999, flexibleHeight: 0);
             UIStyles.ClearRowBackground(_qualityRow);
             var qrLayout = _qualityRow.GetComponent<HorizontalLayoutGroup>();
             if (qrLayout != null) qrLayout.childAlignment = TextAnchor.MiddleLeft;
 
             // Quality bar container (stacked colored segments)
             _qualityBarContainer = UIFactory.CreateHorizontalGroup(_qualityRow, "QualityBar", false, false, true, true, 0);
-            UIFactory.SetLayoutElement(_qualityBarContainer, minHeight: 10, preferredHeight: 10, flexibleWidth: 9999);
+            UIFactory.SetLayoutElement(_qualityBarContainer, minHeight: 10, preferredHeight: 10, flexibleWidth: 9999, flexibleHeight: 0);
             UIStyles.SetBackground(_qualityBarContainer, UIStyles.ViewportBackground);
 
             // H segment (green)
@@ -213,7 +218,7 @@ namespace UnityGameTranslator.Core.UI.Components
             // Row 4 — legend carrying the PERCENTAGES (asked for: the bar shows proportions, the
             // legend says what they are worth), with the overall score at the right end.
             var legendRow = UIFactory.CreateHorizontalGroup(_root, "LegendRow", false, false, true, true, UIStyles.SmallSpacing);
-            UIFactory.SetLayoutElement(legendRow, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999);
+            UIFactory.SetLayoutElement(legendRow, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999, flexibleHeight: 0);
 
             UIStyles.ClearRowBackground(legendRow);
 
@@ -238,7 +243,7 @@ namespace UnityGameTranslator.Core.UI.Components
             // Row 5 — the ONE thing this mode wants to tell you, and the ONE action that answers
             // it. Reading them side by side is what makes the card self-sufficient per mode.
             _modeRow = UIFactory.CreateHorizontalGroup(_root, "ModeRow", false, false, true, true, UIStyles.SmallSpacing);
-            UIFactory.SetLayoutElement(_modeRow, minHeight: UIStyles.RowHeightMedium, flexibleWidth: 9999);
+            UIFactory.SetLayoutElement(_modeRow, minHeight: UIStyles.RowHeightMedium, flexibleWidth: 9999, flexibleHeight: 0);
             UIStyles.ClearRowBackground(_modeRow);
             var modeLayout = _modeRow.GetComponent<HorizontalLayoutGroup>();
             if (modeLayout != null) modeLayout.childAlignment = TextAnchor.MiddleLeft;

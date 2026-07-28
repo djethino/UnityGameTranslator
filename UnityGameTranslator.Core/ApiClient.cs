@@ -112,11 +112,15 @@ namespace UnityGameTranslator.Core
             protected override async Task<HttpResponseMessage> SendAsync(
                 HttpRequestMessage request, System.Threading.CancellationToken cancellationToken)
             {
-                var response = await base.SendAsync(request, cancellationToken);
-
-                // Only meaningful when we actually presented a token.
+                // Read BEFORE sending: evaluating this after the round trip made it
+                // race with SetAuthToken. A request that left before the saved token
+                // was restored came back 401, by then the header existed, and the
+                // handler concluded the token had been revoked — signing the player
+                // out on startup because of a call that never carried a token.
                 bool sentToken = request.Headers.Authorization != null
                     || client.DefaultRequestHeaders.Contains("Authorization");
+
+                var response = await base.SendAsync(request, cancellationToken);
                 bool unauthorized = response.StatusCode == System.Net.HttpStatusCode.Unauthorized;
                 bool forbidden = response.StatusCode == System.Net.HttpStatusCode.Forbidden;
 
@@ -334,6 +338,14 @@ namespace UnityGameTranslator.Core
         /// <summary>
         /// Set the API token for authenticated requests
         /// </summary>
+        /// <summary>
+        /// True once the token is actually on the client, which is NOT the same as
+        /// having one in the config: the header is set during UI init, and anything
+        /// firing before that would send an anonymous request to an authenticated
+        /// endpoint — answered 401, and read as a revoked token.
+        /// </summary>
+        public static bool HasAuthToken => client.DefaultRequestHeaders.Contains("Authorization");
+
         public static void SetAuthToken(string token)
         {
             if (client.DefaultRequestHeaders.Contains("Authorization"))

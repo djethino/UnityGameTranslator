@@ -976,6 +976,16 @@ namespace UnityGameTranslator.Core.UI
                 return false;
             }
 
+            // Having a token in the config is not having presented it: the header is
+            // installed during UI init, and a panel refreshing before that would send
+            // an anonymous call to an authenticated endpoint. The 401 that comes back
+            // is indistinguishable from a revoked token, and signs the player out.
+            if (!ApiClient.HasAuthToken)
+            {
+                if (logReason) TranslatorCore.LogInfo("[Sync] Auth token not installed yet, not watching for updates");
+                return false;
+            }
+
             if (string.IsNullOrEmpty(TranslatorCore.FileUuid))
             {
                 if (logReason) TranslatorCore.LogInfo("[Sync] No FileUuid, not watching for updates");

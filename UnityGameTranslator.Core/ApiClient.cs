@@ -273,6 +273,48 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// One-shot sync state, straight from the website.
+        ///
+        /// Returns the RAW payload on purpose: it is byte-for-byte what the SSE
+        /// 'state' event carries, so the caller feeds it to the very same handler
+        /// and the two paths can never drift apart. This is what lets a player
+        /// who only wants to hear about updates now and then stop holding a
+        /// stream open for the whole session.
+        ///
+        /// Null on any failure — a missed check is not an error worth surfacing,
+        /// the next one comes on its own.
+        /// </summary>
+        public static async Task<string> FetchSyncState(string uuid, string localHash)
+        {
+            if (string.IsNullOrEmpty(uuid)) return null;
+
+            try
+            {
+                var url = $"{DefaultBaseUrl}/sync/state?uuid={Uri.EscapeDataString(uuid)}";
+                if (!string.IsNullOrEmpty(localHash))
+                {
+                    url += $"&hash={Uri.EscapeDataString(localHash)}";
+                }
+
+                var response = await client.GetAsync(url);
+                string json = await response.Content.ReadAsStringAsync();
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    TranslatorCore.LogWarning($"[ApiClient] Sync state check failed: {DescribeHttpError(response, json)}");
+                    return null;
+                }
+
+                return json;
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogWarning($"[ApiClient] Sync state check error: {e.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>
         /// Build the SSE URL for merge preview completion stream.
         /// Points to the Node.js SSE micro-server.
         /// </summary>

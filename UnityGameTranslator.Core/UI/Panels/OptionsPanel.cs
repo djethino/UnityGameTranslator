@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
@@ -115,7 +115,29 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         // Online section
         private Toggle _onlineModeToggle;
-        private Toggle _checkUpdatesToggle;
+        private SearchableDropdown _checkFrequencyDropdown;
+
+        /// <summary>
+        /// Frequency labels, in the same order as UpdateCheckFrequency.All so the
+        /// two conversions below stay a simple index lookup. "Real-time" sits last
+        /// because it is the costly one, not the natural choice.
+        /// </summary>
+        private static readonly string[] UpdateFrequencyDisplayOptions =
+        {
+            "Never", "At startup only", "Every 30 minutes", "Every hour", "Every 3 hours", "Real-time"
+        };
+
+        private static string FrequencyConfigToDisplay(string value)
+        {
+            int index = System.Array.IndexOf(UpdateCheckFrequency.All, UpdateCheckFrequency.Normalize(value));
+            return UpdateFrequencyDisplayOptions[index];
+        }
+
+        private static string FrequencyDisplayToConfig(string display)
+        {
+            int index = System.Array.IndexOf(UpdateFrequencyDisplayOptions, display);
+            return index >= 0 ? UpdateCheckFrequency.All[index] : UpdateCheckFrequency.Hourly;
+        }
         private Toggle _notifyUpdatesToggle;
         private Toggle _autoDownloadToggle;
         private Toggle _notificationsEnabledToggle;
@@ -166,7 +188,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             public bool deepl_use_free;
             public float rate_limit_retry_delay;
             public bool online_mode;
-            public bool check_update_on_start;
+            public string update_check_frequency;
             public bool notify_updates;
             public bool notifications_enabled;
             public string notification_position;
@@ -216,7 +238,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     deepl_use_free = TranslatorCore.Config.deepl_use_free,
                     rate_limit_retry_delay = TranslatorCore.Config.rate_limit_retry_delay,
                     online_mode = TranslatorCore.Config.online_mode,
-                    check_update_on_start = TranslatorCore.Config.sync.check_update_on_start,
+                    update_check_frequency = UpdateCheckFrequency.Normalize(TranslatorCore.Config.sync.update_check_frequency),
                     notify_updates = TranslatorCore.Config.sync.notify_updates,
                     notifications_enabled = TranslatorCore.Config.sync.notifications_enabled,
                     notification_position = TranslatorCore.Config.sync.notification_position ?? "top-right",
@@ -920,12 +942,27 @@ namespace UnityGameTranslator.Core.UI.Panels
             var syncSectionTitle = UIStyles.CreateSectionTitle(card, "SyncLabel", "Translation Sync");
             RegisterUIText(syncSectionTitle);
 
-            var checkUpdatesObj = UIFactory.CreateToggle(card, "CheckUpdatesToggle", out _checkUpdatesToggle, out var checkLabel);
-            checkLabel.text = " Check for translation updates on start";
-            checkLabel.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(checkUpdatesObj, minHeight: UIStyles.RowHeightNormal);
-            RegisterUIText(checkLabel);
-            _helpZone?.Describe(checkUpdatesObj, "Check the website for newer versions of your translations each time the game starts.");
+            var freqRow = UIStyles.CreateFormRow(card, "CheckFreqRow", UIStyles.RowHeightMedium, 5);
+            var freqLabel = UIFactory.CreateLabel(freqRow, "CheckFreqLabel", "Check for updates:", TextAnchor.MiddleLeft);
+            freqLabel.color = UIStyles.TextSecondary;
+            UIFactory.SetLayoutElement(freqLabel.gameObject, minWidth: 130);
+            RegisterUIText(freqLabel);
+
+            _checkFrequencyDropdown = new SearchableDropdown(
+                "CheckFrequency",
+                UpdateFrequencyDisplayOptions,
+                FrequencyConfigToDisplay(UpdateCheckFrequency.Hourly),
+                popupHeight: 190,
+                showSearch: false
+            );
+            var freqDropdownObj = _checkFrequencyDropdown.CreateUI(freqRow, (_) => { UpdateApplyButtonText(); });
+            UIFactory.SetLayoutElement(freqDropdownObj, minWidth: 200, minHeight: UIStyles.InputHeight);
+            _helpZone?.Describe(freqDropdownObj,
+                "How often the mod asks the website whether your translation changed. Every option except Real-time is a quick call; Real-time keeps a connection open the whole session, which is only worth it if you edit on the website while playing.");
+
+            var freqHint = UIStyles.CreateHint(card, "CheckFreqHint",
+                "All options except Never also check once when the game starts.");
+            RegisterUIText(freqHint);
 
             var notifyObj = UIFactory.CreateToggle(card, "NotifyToggle", out _notifyUpdatesToggle, out var notifyLabel);
             notifyLabel.text = " Notify when translation updates available";
@@ -1225,7 +1262,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Online mode (must be loaded BEFORE translation backend — UpdateBackendSections checks online state)
             _onlineModeToggle.isOn = TranslatorCore.Config.online_mode;
-            _checkUpdatesToggle.isOn = TranslatorCore.Config.sync.check_update_on_start;
+            _checkFrequencyDropdown.SelectedValue = FrequencyConfigToDisplay(TranslatorCore.Config.sync.update_check_frequency);
             _notifyUpdatesToggle.isOn = TranslatorCore.Config.sync.notify_updates;
             _autoDownloadToggle.isOn = TranslatorCore.Config.sync.auto_download;
             _checkModUpdatesToggle.isOn = TranslatorCore.Config.sync.check_mod_updates;
@@ -1318,7 +1355,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private void OnOnlineModeChanged(bool enabled)
         {
-            _checkUpdatesToggle.interactable = enabled;
+            _checkFrequencyDropdown.SetInteractable(enabled);
             _notifyUpdatesToggle.interactable = enabled;
             _autoDownloadToggle.interactable = enabled;
             _checkModUpdatesToggle.interactable = enabled;
@@ -1761,7 +1798,13 @@ namespace UnityGameTranslator.Core.UI.Panels
                 bool wasOnline = TranslatorCore.Config.online_mode;
                 bool nowOnline = _onlineModeToggle.isOn;
                 TranslatorCore.Config.online_mode = nowOnline;
-                TranslatorCore.Config.sync.check_update_on_start = _checkUpdatesToggle.isOn;
+
+                // Applied in place, not "next launch": switching to Real-time must
+                // open the stream now, and leaving it must close it now
+                string previousFrequency = UpdateCheckFrequency.Normalize(TranslatorCore.Config.sync.update_check_frequency);
+                string newFrequency = FrequencyDisplayToConfig(_checkFrequencyDropdown.SelectedValue);
+                bool frequencyChanged = previousFrequency != newFrequency;
+                TranslatorCore.Config.sync.update_check_frequency = newFrequency;
                 TranslatorCore.Config.sync.notify_updates = _notifyUpdatesToggle.isOn;
                 TranslatorCore.Config.sync.auto_download = _autoDownloadToggle.isOn;
                 TranslatorCore.Config.sync.check_mod_updates = _checkModUpdatesToggle.isOn;
@@ -1849,18 +1892,24 @@ namespace UnityGameTranslator.Core.UI.Panels
                 if (nowOnline && !wasOnline)
                 {
                     // Switched from offline to online - start sync stream and check for updates
-                    TranslatorCore.LogInfo("[Options] Online mode enabled, starting sync stream...");
-                    TranslatorUIManager.StartSyncStream();
+                    TranslatorCore.LogInfo("[Options] Online mode enabled, watching for updates...");
+                    TranslatorUIManager.StartSyncWatch();
                     if (TranslatorCore.Config.sync.check_mod_updates)
                     {
                         TranslatorUIManager.CheckForModUpdates();
                     }
                 }
+                else if (nowOnline && frequencyChanged)
+                {
+                    // Same online state, different rhythm: restart on the new one
+                    TranslatorCore.LogInfo($"[Options] Update check frequency changed to {newFrequency}");
+                    TranslatorUIManager.StartSyncWatch();
+                }
                 else if (!nowOnline && wasOnline)
                 {
                     // Switched from online to offline - stop sync stream and clear server state
                     TranslatorCore.LogInfo("[Options] Online mode disabled, stopping sync stream...");
-                    TranslatorUIManager.StopSyncStream();
+                    TranslatorUIManager.StopSyncWatch();
 
                     // Reset server state - we're offline, server info is no longer relevant
                     TranslatorCore.ServerState = null;
@@ -1997,7 +2046,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Online
             if (_onlineModeToggle.isOn != _initialSnapshot.online_mode) count++;
-            if (_checkUpdatesToggle.isOn != _initialSnapshot.check_update_on_start) count++;
+            if (FrequencyDisplayToConfig(_checkFrequencyDropdown.SelectedValue) != _initialSnapshot.update_check_frequency) count++;
             if (_notifyUpdatesToggle.isOn != _initialSnapshot.notify_updates) count++;
             if (_autoDownloadToggle.isOn != _initialSnapshot.auto_download) count++;
             if (_checkModUpdatesToggle.isOn != _initialSnapshot.check_mod_updates) count++;

@@ -842,6 +842,12 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         public void RefreshUI()
         {
+            // Whoever set update checks to "Never" still needs a panel that knows
+            // its role, its site id and whether an upload is possible — those come
+            // from the same sync state. Fetched on demand here, so the choice
+            // silences notifications without blinding the interface.
+            TranslatorUIManager.EnsureServerStateKnown();
+
             // Detect and cache current state
             _currentLayoutState = DetectCurrentState();
 

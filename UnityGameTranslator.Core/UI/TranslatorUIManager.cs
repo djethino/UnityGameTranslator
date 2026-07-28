@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -179,6 +179,16 @@ namespace UnityGameTranslator.Core.UI
                 {
                     TranslatorCore.LogError($"[UIManager] RunOnMainThread callback error: {e.GetType().Name}: {e.Message}\n{e.StackTrace}");
                 }
+            }
+
+            // Polled update check, when the player did not ask for a live stream
+            try
+            {
+                TickSyncCheck();
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogWarning($"[Sync] Update check tick failed: {e.Message}");
             }
 
             // Live edit session housekeeping (debounced pushes, browser grace timer)
@@ -729,7 +739,7 @@ namespace UnityGameTranslator.Core.UI
                 // The SSE 'state' event combines check-uuid + check in one real-time payload
                 if (TranslatorCore.Config.online_mode && !string.IsNullOrEmpty(TranslatorCore.Config.api_token))
                 {
-                    StartSyncStream();
+                    StartSyncWatch();
                     StartNotificationsPolling();
                 }
             }
@@ -800,34 +810,160 @@ namespace UnityGameTranslator.Core.UI
 
         #endregion
 
-        #region SSE Sync Stream
+        #region Sync Watch (polled check, or permanent stream when asked for)
+
+        // Polled update check. 0 means "no timer running": either the player chose
+        // a frequency that never repeats, or nothing is being watched at all.
+        private static float _nextSyncCheckTime;
+        private static float _syncCheckIntervalSeconds;
+        private static bool _syncCheckInFlight;
 
         /// <summary>
-        /// Start the SSE sync stream. Replaces FetchServerState + CheckForUpdates with a
-        /// single real-time connection. The 'state' event provides initial state on connect,
-        /// and 'translation_updated' events push live changes.
-        /// Called at startup and after successful login.
+        /// Ask the site about the translation, the way the player chose to.
+        ///
+        /// Only "realtime" opens a stream. Every other frequency does a plain HTTP
+        /// call — at startup and then on a timer — because a permanent connection
+        /// costs one for the whole session, and knowing within two seconds that a
+        /// new version exists is worth that price to almost nobody. The one case
+        /// where it is: editing on the website while the game runs.
+        ///
+        /// Called at startup, after a successful login, and whenever the setting
+        /// changes (Apply in the options).
         /// </summary>
-        public static void StartSyncStream()
+        public static void StartSyncWatch()
+        {
+            StopSyncStream();
+            _nextSyncCheckTime = 0f;
+
+            if (!CanWatchSync()) return;
+
+            string frequency = UpdateCheckFrequency.Normalize(
+                TranslatorCore.Config.sync.update_check_frequency);
+
+            if (frequency == UpdateCheckFrequency.Never)
+            {
+                TranslatorCore.LogInfo("[Sync] Update checks disabled by the player");
+                return;
+            }
+
+            if (frequency == UpdateCheckFrequency.Realtime)
+            {
+                StartSyncStream();
+                return;
+            }
+
+            // Look once now — before play starts is when an update can be applied
+            // without interrupting anything — then let the timer take over.
+            CheckSyncStateNow();
+
+            float interval = UpdateCheckFrequency.IntervalSeconds(frequency);
+            _syncCheckIntervalSeconds = interval;
+            _nextSyncCheckTime = interval > 0f ? Time.realtimeSinceStartup + interval : 0f;
+
+            TranslatorCore.LogInfo(interval > 0f
+                ? $"[Sync] Checking for updates every {interval / 60f:0} min"
+                : "[Sync] Checking for updates at startup only");
+        }
+
+        /// <summary>
+        /// Fetch the sync state once if it has never arrived. Called when a panel
+        /// needs it: "Never" must mean "do not interrupt me", not "leave the mod
+        /// ignorant of its own translation". Cheap and idempotent — it does
+        /// nothing once the state is known, and never runs twice at a time.
+        /// </summary>
+        public static void EnsureServerStateKnown()
+        {
+            if (TranslatorCore.ServerState != null && TranslatorCore.ServerState.Checked) return;
+            if (_syncCheckInFlight) return;
+            // Silent: this runs on every panel refresh, and a reason logged that
+            // often is noise, not information
+            if (!CanWatchSync(logReason: false)) return;
+
+            CheckSyncStateNow();
+        }
+
+        /// <summary>Preconditions shared by both the stream and the polled check.</summary>
+        private static bool CanWatchSync(bool logReason = true)
         {
             if (!TranslatorCore.Config.online_mode)
             {
-                TranslatorCore.LogInfo("[SyncSSE] Online mode disabled, skipping sync stream");
-                return;
+                if (logReason) TranslatorCore.LogInfo("[Sync] Online mode disabled, not watching for updates");
+                return false;
             }
 
             if (string.IsNullOrEmpty(TranslatorCore.Config.api_token))
             {
-                TranslatorCore.LogInfo("[SyncSSE] Not authenticated, skipping sync stream");
-                return;
+                if (logReason) TranslatorCore.LogInfo("[Sync] Not authenticated, not watching for updates");
+                return false;
             }
 
-            string uuid = TranslatorCore.FileUuid;
-            if (string.IsNullOrEmpty(uuid))
+            if (string.IsNullOrEmpty(TranslatorCore.FileUuid))
             {
-                TranslatorCore.LogInfo("[SyncSSE] No FileUuid, skipping sync stream");
-                return;
+                if (logReason) TranslatorCore.LogInfo("[Sync] No FileUuid, not watching for updates");
+                return false;
             }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Poll the sync state once. The payload is identical to the SSE 'state'
+        /// event, so it goes through the same handler: the two paths cannot drift.
+        /// </summary>
+        private static async void CheckSyncStateNow()
+        {
+            if (_syncCheckInFlight) return;
+            _syncCheckInFlight = true;
+
+            try
+            {
+                string uuid = TranslatorCore.FileUuid;
+                string localHash = TranslatorCore.ComputeContentHash();
+
+                string json = await ApiClient.FetchSyncState(uuid, localHash);
+
+                RunOnMainThread(() =>
+                {
+                    _syncCheckInFlight = false;
+                    if (string.IsNullOrEmpty(json)) return;
+                    HandleSyncStateEvent(json);
+                });
+            }
+            catch (Exception e)
+            {
+                var errorMsg = e.Message;
+                RunOnMainThread(() =>
+                {
+                    _syncCheckInFlight = false;
+                    TranslatorCore.LogWarning($"[Sync] Update check failed: {errorMsg}");
+                });
+            }
+        }
+
+        /// <summary>
+        /// Per-frame housekeeping for the polled update check (called from
+        /// DrainMainThreadQueue, next to the edit-session tick).
+        /// </summary>
+        private static void TickSyncCheck()
+        {
+            if (_nextSyncCheckTime <= 0f || _syncCheckInFlight) return;
+
+            float now = Time.realtimeSinceStartup;
+            if (now < _nextSyncCheckTime) return;
+
+            _nextSyncCheckTime = now + _syncCheckIntervalSeconds;
+            CheckSyncStateNow();
+        }
+
+        /// <summary>
+        /// Open the permanent stream. Reserved to the "realtime" frequency —
+        /// go through StartSyncWatch, which honours the player's choice.
+        /// </summary>
+        private static void StartSyncStream()
+        {
+            if (!CanWatchSync()) return;
+
+            string uuid = TranslatorCore.FileUuid;
 
             StopSyncStream();
 
@@ -892,9 +1028,21 @@ namespace UnityGameTranslator.Core.UI
         }
 
         /// <summary>
-        /// Stop the SSE sync stream. Called on logout, offline mode toggle, or shutdown.
+        /// Stop watching entirely: the stream AND the polled check. Use this on
+        /// logout, offline mode or shutdown — stopping only the stream would leave
+        /// the timer firing calls nobody asked for any more.
         /// </summary>
-        public static void StopSyncStream()
+        public static void StopSyncWatch()
+        {
+            StopSyncStream();
+            _nextSyncCheckTime = 0f;
+        }
+
+        /// <summary>
+        /// Stop the SSE sync stream only. Internal: callers outside this region
+        /// want StopSyncWatch.
+        /// </summary>
+        private static void StopSyncStream()
         {
             if (_syncSseClient != null)
             {
@@ -967,7 +1115,13 @@ namespace UnityGameTranslator.Core.UI
                 string localHash = TranslatorCore.ComputeContentHash();
                 bool hasUpdate = !string.IsNullOrEmpty(serverHash) && serverHash != localHash;
 
-                if (hasUpdate && TranslatorCore.Config.sync.check_update_on_start)
+                // A state can arrive even under "Never": a panel asked for it so it
+                // could show the role and the site id. Filling that in is fine;
+                // raising an update notice is exactly what was declined.
+                bool wantsUpdateNotices = UpdateCheckFrequency.Normalize(
+                    TranslatorCore.Config.sync.update_check_frequency) != UpdateCheckFrequency.Never;
+
+                if (hasUpdate && wantsUpdateNotices)
                 {
                     int lineCount = translation?["line_count"]?.Value<int>()
                                     ?? main?["line_count"]?.Value<int>()

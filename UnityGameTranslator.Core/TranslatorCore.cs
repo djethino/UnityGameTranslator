@@ -1418,7 +1418,7 @@ namespace UnityGameTranslator.Core
             Adapter?.LogInfo("[Shutdown] Starting cleanup...");
 
             // Stop SSE streams (background tasks with HTTP connections)
-            try { TranslatorUIManager.StopSyncStream(); } catch { }
+            try { TranslatorUIManager.StopSyncWatch(); } catch { }
             try { TranslatorUIManager.StopMergeCompletionListener(); } catch { }
 
             // Closing the game is one of the two legitimate session-end
@@ -1659,6 +1659,21 @@ namespace UnityGameTranslator.Core
                     aiUri.Scheme == Uri.UriSchemeHttp && !aiUri.IsLoopback)
                 {
                     Adapter.LogWarning($"[Security] ai_url points to a remote server over plain http ({Sanitize.Url(Config.ai_url)}) - your AI API key is sent unencrypted. Use https for remote AI servers.");
+                }
+
+                // The "check on start" switch became a frequency. false meant "never
+                // look", true meant "look on every connection" — which is what the
+                // permanent stream did. Existing users land on the new default rather
+                // than keeping a stream open for the whole session; the choice is
+                // theirs to change, and the reason is in the option's help text.
+                if (Config.sync != null && Config.sync.check_update_on_start.HasValue)
+                {
+                    Config.sync.update_check_frequency = Config.sync.check_update_on_start.Value
+                        ? UpdateCheckFrequency.Hourly
+                        : UpdateCheckFrequency.Never;
+                    Config.sync.check_update_on_start = null;
+                    LogDebug($"[Config] Migrated check_update_on_start -> update_check_frequency={Config.sync.update_check_frequency}");
+                    needsResave = true;
                 }
 
                 if (Config._configMigrated)
@@ -6040,9 +6055,79 @@ namespace UnityGameTranslator.Core
         }
     }
 
+    /// <summary>
+    /// The values <see cref="SyncConfig.update_check_frequency"/> accepts, and the
+    /// only place that knows what each one costs in seconds. Anything unknown on
+    /// disk falls back to hourly rather than being silently treated as "never":
+    /// a typo must not stop someone from ever hearing about an update.
+    /// </summary>
+    public static class UpdateCheckFrequency
+    {
+        public const string Never = "never";
+        public const string Startup = "startup";
+        public const string HalfHourly = "30m";
+        public const string Hourly = "1h";
+        public const string ThreeHourly = "3h";
+        public const string Realtime = "realtime";
+
+        /// <summary>Ordered as shown in the options dropdown.</summary>
+        public static readonly string[] All =
+        {
+            Never, Startup, HalfHourly, Hourly, ThreeHourly, Realtime
+        };
+
+        /// <summary>
+        /// Seconds between two checks, or 0 when this frequency never repeats
+        /// ("never", "startup" and "realtime" — the last one is pushed, not polled).
+        /// </summary>
+        public static float IntervalSeconds(string frequency)
+        {
+            switch (frequency)
+            {
+                case HalfHourly:  return 30f * 60f;
+                case Hourly:      return 60f * 60f;
+                case ThreeHourly: return 3f * 60f * 60f;
+                default:          return 0f;
+            }
+        }
+
+        /// <summary>True when the mod should look once as the game starts.</summary>
+        public static bool ChecksAtStartup(string frequency)
+        {
+            return frequency != Never && frequency != Realtime;
+        }
+
+        public static string Normalize(string frequency)
+        {
+            return Array.IndexOf(All, frequency) >= 0 ? frequency : Hourly;
+        }
+    }
+
     public class SyncConfig
     {
-        public bool check_update_on_start { get; set; } = true;
+        /// <summary>
+        /// How often the mod asks the site whether the translation changed.
+        /// Values: "never", "startup", "30m", "1h", "3h", "realtime".
+        ///
+        /// Every value but "realtime" is a plain HTTP call. "realtime" keeps a
+        /// stream open for the whole session, which is only worth its cost to
+        /// someone editing on the website while the game runs — a player just
+        /// wanting to know that a new version exists does not need to learn it
+        /// within two seconds. See analyse/edit-session-lifecycle-scale.md.
+        ///
+        /// Every value except "never" and "realtime" also checks once at startup:
+        /// that is the moment an update can be applied without interrupting play.
+        /// </summary>
+        public string update_check_frequency { get; set; } = UpdateCheckFrequency.Hourly;
+
+        /// <summary>
+        /// Superseded by <see cref="update_check_frequency"/>. Read ONCE to migrate
+        /// existing config files (false meant "never look"), then removed from disk.
+        /// Nullable so an absent property is distinguishable from a stored false.
+        /// </summary>
+        [JsonProperty(NullValueHandling = NullValueHandling.Ignore)]
+        public bool? check_update_on_start { get; set; }
+
         public bool auto_download { get; set; } = false;
         public bool notify_updates { get; set; } = true;
 

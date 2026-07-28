@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEngine.UI;
 using UniverseLib;
 using UniverseLib.UI;
@@ -100,6 +100,50 @@ namespace UnityGameTranslator.Core.UI.Panels
         }
 
         /// <summary>
+        /// What the sync state means for the player, right now.
+        ///
+        /// The same four questions were answered by three copies of the same
+        /// dozen lines; they drifted apart the moment one of them learned about
+        /// pending settings. One place, one answer.
+        /// </summary>
+        private struct PendingSyncWork
+        {
+            public ServerTranslationState ServerState;
+            /// <summary>Lines captured or edited in game, not sent yet.</summary>
+            public bool HasLocalChanges;
+            /// <summary>Fonts, images, exclusions, variables — shipped with the translation.</summary>
+            public bool HasMetadataChanges;
+            /// <summary>A newer version waits on the site and nothing local conflicts.</summary>
+            public bool HasServerUpdate;
+            /// <summary>Both sides moved: this one always speaks up.</summary>
+            public bool NeedsMerge;
+
+            public static PendingSyncWork Current()
+            {
+                var serverState = TranslatorCore.ServerState;
+                bool existsOnServer = serverState != null && serverState.Exists && serverState.SiteId.HasValue;
+                var direction = TranslatorUIManager.PendingUpdateDirection;
+
+                // "Notify me about updates" only ever governs the case it names: a
+                // newer version waiting, which costs nothing to learn about later.
+                // A merge is work at risk and a local change is the player's own
+                // unsent work — silencing those would hide, not calm.
+                bool notifyUpdates = TranslatorCore.Config.sync.notify_updates;
+
+                return new PendingSyncWork
+                {
+                    ServerState = serverState,
+                    HasLocalChanges = existsOnServer && TranslatorCore.LocalChangesCount > 0,
+                    HasMetadataChanges = existsOnServer && TranslatorCore.MetadataDirty,
+                    HasServerUpdate = notifyUpdates && TranslatorUIManager.HasPendingUpdate &&
+                        direction == UpdateDirection.Download,
+                    NeedsMerge = TranslatorUIManager.HasPendingUpdate &&
+                        direction == UpdateDirection.Merge,
+                };
+            }
+        }
+
+        /// <summary>
         /// Returns true if there's notification content (mod update or sync) to display.
         /// Does NOT include AI queue (which is handled separately).
         /// </summary>
@@ -109,17 +153,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             bool showModUpdate = TranslatorUIManager.HasModUpdate && !TranslatorUIManager.ModUpdateDismissed;
 
             // Translation sync notification
-            var serverState = TranslatorCore.ServerState;
-            bool existsOnServer = serverState != null && serverState.Exists && serverState.SiteId.HasValue;
-            bool hasLocalChanges = existsOnServer && TranslatorCore.LocalChangesCount > 0;
-            // Settings that ship with the translation (fonts, images, exclusions, variables) are
-            // pending work too — they had no notification at all, so the user had no way of
-            // knowing anything was waiting until they happened to open the panel.
-            bool hasMetadataChanges = existsOnServer && TranslatorCore.MetadataDirty;
-            bool hasServerUpdate = TranslatorUIManager.HasPendingUpdate &&
-                TranslatorUIManager.PendingUpdateDirection == UpdateDirection.Download;
-            bool needsMerge = TranslatorUIManager.HasPendingUpdate &&
-                TranslatorUIManager.PendingUpdateDirection == UpdateDirection.Merge;
+            var pending = PendingSyncWork.Current();
+            var serverState = pending.ServerState;
+            bool hasLocalChanges = pending.HasLocalChanges;
+            bool hasMetadataChanges = pending.HasMetadataChanges;
+            bool hasServerUpdate = pending.HasServerUpdate;
+            bool needsMerge = pending.NeedsMerge;
             bool showSyncNotification = (hasLocalChanges || hasMetadataChanges || hasServerUpdate || needsMerge) &&
                 !TranslatorUIManager.NotificationDismissed;
 
@@ -526,17 +565,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             bool showModUpdate = TranslatorUIManager.HasModUpdate && !TranslatorUIManager.ModUpdateDismissed;
 
             // 2. Translation sync notification
-            var serverState = TranslatorCore.ServerState;
-            bool existsOnServer = serverState != null && serverState.Exists && serverState.SiteId.HasValue;
-            bool hasLocalChanges = existsOnServer && TranslatorCore.LocalChangesCount > 0;
-            // Settings that ship with the translation (fonts, images, exclusions, variables) are
-            // pending work too — they had no notification at all, so the user had no way of
-            // knowing anything was waiting until they happened to open the panel.
-            bool hasMetadataChanges = existsOnServer && TranslatorCore.MetadataDirty;
-            bool hasServerUpdate = TranslatorUIManager.HasPendingUpdate &&
-                TranslatorUIManager.PendingUpdateDirection == UpdateDirection.Download;
-            bool needsMerge = TranslatorUIManager.HasPendingUpdate &&
-                TranslatorUIManager.PendingUpdateDirection == UpdateDirection.Merge;
+            var pending = PendingSyncWork.Current();
+            var serverState = pending.ServerState;
+            bool hasLocalChanges = pending.HasLocalChanges;
+            bool hasMetadataChanges = pending.HasMetadataChanges;
+            bool hasServerUpdate = pending.HasServerUpdate;
+            bool needsMerge = pending.NeedsMerge;
             bool showSyncNotification = (hasLocalChanges || hasMetadataChanges || hasServerUpdate || needsMerge) &&
                 !TranslatorUIManager.NotificationDismissed;
 
@@ -585,17 +619,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
 
             // 2. Translation sync notification (hidden when panels open - shown in MainPanel instead)
-            var serverState = TranslatorCore.ServerState;
-            bool existsOnServer = serverState != null && serverState.Exists && serverState.SiteId.HasValue;
-            bool hasLocalChanges = existsOnServer && TranslatorCore.LocalChangesCount > 0;
-            // Settings that ship with the translation (fonts, images, exclusions, variables) are
-            // pending work too — they had no notification at all, so the user had no way of
-            // knowing anything was waiting until they happened to open the panel.
-            bool hasMetadataChanges = existsOnServer && TranslatorCore.MetadataDirty;
-            bool hasServerUpdate = TranslatorUIManager.HasPendingUpdate &&
-                TranslatorUIManager.PendingUpdateDirection == UpdateDirection.Download;
-            bool needsMerge = TranslatorUIManager.HasPendingUpdate &&
-                TranslatorUIManager.PendingUpdateDirection == UpdateDirection.Merge;
+            var pending = PendingSyncWork.Current();
+            var serverState = pending.ServerState;
+            bool hasLocalChanges = pending.HasLocalChanges;
+            bool hasMetadataChanges = pending.HasMetadataChanges;
+            bool hasServerUpdate = pending.HasServerUpdate;
+            bool needsMerge = pending.NeedsMerge;
 
             bool showSyncNotification = !_panelsOpenMode &&
                                         (hasLocalChanges || hasMetadataChanges || hasServerUpdate || needsMerge) &&

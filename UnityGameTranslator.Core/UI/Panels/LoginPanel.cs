@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
@@ -268,8 +268,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TranslatorUIManager.WizardPanel?.UpdateAccountStatus();
                 TranslatorUIManager.MainPanel?.RefreshUI();
 
-                // Start SSE sync stream now that we're authenticated
-                TranslatorUIManager.StartSyncStream();
+                // Start watching for updates now that we're authenticated
+                TranslatorUIManager.StartSyncWatch();
 
                 TranslatorUIManager.RunDelayed(2f, () =>
                 {

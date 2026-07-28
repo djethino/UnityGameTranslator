@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using UnityEngine;
@@ -10,7 +10,8 @@ namespace UnityGameTranslator.Core.UI.Panels
 {
     /// <summary>
     /// Merge panel for resolving conflicts between local and remote translations.
-    /// Supports both legacy (string) and new (TranslationEntry with tags) merge results.
+    /// Every path goes through the tag-aware merge: a merge that loses tags demotes
+    /// human and validated work to "AI" (see analyse/sync-paths-audit.md).
     /// </summary>
     public class MergePanel : TranslatorPanelBase
     {
@@ -25,14 +26,9 @@ namespace UnityGameTranslator.Core.UI.Panels
         // Conflict list grows with the panel height to show more rows at once.
         protected override bool HasFlexibleContent => true;
 
-        // Legacy merge (string-based)
-        private MergeResult _pendingMerge;
-        private Dictionary<string, string> _remoteTranslations;
-
-        // Tag-aware merge (TranslationEntry-based)
+        // Merge in progress: values carry their tags, always
         private MergeResultWithTags _pendingMergeWithTags;
         private Dictionary<string, TranslationEntry> _remoteTranslationsWithTags;
-        private bool _useTagAwareMerge = false;
 
         private Dictionary<string, ConflictResolution> _resolutions = new Dictionary<string, ConflictResolution>();
         private string _serverHash;
@@ -44,6 +40,11 @@ namespace UnityGameTranslator.Core.UI.Panels
         private ButtonRef _keepMineBtn;
         private ButtonRef _takeServerBtn;
         private ButtonRef _reviewBtn;
+        // Upstream merge (Main -> branch): separate ancestor and separate hash from
+        // this translation's own line on the site — see ApplyMerge
+        private bool _isUpstreamMerge;
+        private Dictionary<string, TranslationEntry> _upstreamContent;
+        private string _upstreamHash;
         private Components.HelpZone _helpZone;
         private bool _userMadeChoice = false;
         // True while the review page round trip is in flight (see OpenReviewPage)
@@ -54,44 +55,21 @@ namespace UnityGameTranslator.Core.UI.Panels
         }
 
         /// <summary>
-        /// Set merge data (legacy string-based merge).
-        /// </summary>
-        public void SetMergeData(MergeResult mergeResult, Dictionary<string, string> remoteTranslations, string serverHash = null)
-        {
-            _useTagAwareMerge = false;
-            _pendingMerge = mergeResult;
-            _remoteTranslations = remoteTranslations;
-            _pendingMergeWithTags = null;
-            _remoteTranslationsWithTags = null;
-            _serverHash = serverHash ?? TranslatorCore.ServerState?.Hash;
-            _resolutions.Clear();
-            _userMadeChoice = false;
-            SetApplyButtonEnabled(false);
-            ResetBulkButtonStyles();
-
-            // Initialize resolutions to use remote by default
-            foreach (var conflict in mergeResult.Conflicts)
-            {
-                _resolutions[conflict.Key] = ConflictResolution.TakeRemote;
-            }
-
-            RefreshConflictList();
-        }
-
-        /// <summary>
         /// Set merge data with tags (tag-aware merge).
         /// </summary>
         public void SetMergeDataWithTags(MergeResultWithTags mergeResult, Dictionary<string, TranslationEntry> remoteTranslations, string serverHash = null)
         {
             TranslatorCore.LogInfo($"[MergePanel] SetMergeDataWithTags called - conflicts={mergeResult?.Conflicts?.Count ?? -1}");
-            _useTagAwareMerge = true;
             _pendingMergeWithTags = mergeResult;
             _remoteTranslationsWithTags = remoteTranslations;
-            _pendingMerge = null;
-            _remoteTranslations = null;
             _serverHash = serverHash ?? TranslatorCore.ServerState?.Hash;
             _resolutions.Clear();
             _userMadeChoice = false;
+            // Cleared here, set by SetUpstreamMerge right after when it applies:
+            // a later ordinary merge must never inherit the upstream bookkeeping
+            _isUpstreamMerge = false;
+            _upstreamContent = null;
+            _upstreamHash = null;
             SetApplyButtonEnabled(false);
             ResetBulkButtonStyles();
 
@@ -201,8 +179,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void RefreshConflictList()
         {
             if (_conflictListContent == null) return;
-            if (!_useTagAwareMerge && _pendingMerge == null) return;
-            if (_useTagAwareMerge && _pendingMergeWithTags == null) return;
+            if (_pendingMergeWithTags == null) return;
 
             // Clear existing items (manual iteration for IL2CPP compatibility)
             for (int i = _conflictListContent.transform.childCount - 1; i >= 0; i--)
@@ -210,51 +187,18 @@ namespace UnityGameTranslator.Core.UI.Panels
                 UnityEngine.Object.Destroy(_conflictListContent.transform.GetChild(i).gameObject);
             }
 
-            if (_useTagAwareMerge)
+            var stats = _pendingMergeWithTags.Statistics;
+            int conflictCount = _pendingMergeWithTags.Conflicts.Count;
+
+            _summaryLabel.text = conflictCount > 0
+                ? Tr($"{conflictCount} conflict(s) to resolve") + $"  |  {stats.GetSummary()}"
+                : Tr("No conflicts! All changes merged automatically.") + $"  |  {stats.GetSummary()}";
+
+            var conflicts = _pendingMergeWithTags.Conflicts;
+            for (int i = 0; i < conflicts.Count; i++)
             {
-                var stats = _pendingMergeWithTags.Statistics;
-                int conflictCount = _pendingMergeWithTags.Conflicts.Count;
-
-                if (conflictCount > 0)
-                {
-                    _summaryLabel.text = Tr($"{conflictCount} conflict(s) to resolve") + $"  |  {stats.GetSummary()}";
-                }
-                else
-                {
-                    _summaryLabel.text = Tr("No conflicts! All changes merged automatically.") + $"  |  {stats.GetSummary()}";
-                }
-
-                var conflicts = _pendingMergeWithTags.Conflicts;
-                for (int i = 0; i < conflicts.Count; i++)
-                {
-                    CreateConflictRowWithTags(conflicts[i]);
-                }
+                CreateConflictRowWithTags(conflicts[i]);
             }
-            else
-            {
-                var stats = _pendingMerge.Statistics;
-                int conflictCount = _pendingMerge.Conflicts.Count;
-
-                if (conflictCount > 0)
-                {
-                    _summaryLabel.text = Tr($"{conflictCount} conflict(s) to resolve") + $"  |  {stats.GetSummary()}";
-                }
-                else
-                {
-                    _summaryLabel.text = Tr("No conflicts! All changes merged automatically.") + $"  |  {stats.GetSummary()}";
-                }
-
-                var conflicts = _pendingMerge.Conflicts;
-                for (int i = 0; i < conflicts.Count; i++)
-                {
-                    CreateConflictRow(conflicts[i]);
-                }
-            }
-        }
-
-        private void CreateConflictRow(MergeConflict conflict)
-        {
-            CreateConflictRowInternal(conflict.Key, conflict.LocalValue ?? "(none)", null, conflict.RemoteValue ?? "(none)", null);
         }
 
         private void CreateConflictRowWithTags(MergeConflictWithTags conflict)
@@ -475,40 +419,22 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private void SetAllResolutions(ConflictResolution resolution)
         {
-            TranslatorCore.LogInfo($"[MergePanel] SetAllResolutions({resolution}) - _useTagAwareMerge={_useTagAwareMerge}, " +
-                $"_pendingMergeWithTags null={_pendingMergeWithTags == null}, _pendingMerge null={_pendingMerge == null}, " +
-                $"_resolutions null={_resolutions == null}, _resolutions count={_resolutions?.Count ?? -1}");
-
             if (_resolutions == null)
             {
                 _resolutions = new Dictionary<string, ConflictResolution>();
             }
 
-            // Determine conflicts source - check both since _useTagAwareMerge might not be reliable on IL2CPP
-            List<string> conflictKeys = new List<string>();
-
-            if (_pendingMergeWithTags != null && _pendingMergeWithTags.Conflicts != null && _pendingMergeWithTags.Conflicts.Count > 0)
+            if (_pendingMergeWithTags?.Conflicts == null || _pendingMergeWithTags.Conflicts.Count == 0)
             {
-                var conflicts = _pendingMergeWithTags.Conflicts;
-                for (int i = 0; i < conflicts.Count; i++)
-                {
-                    conflictKeys.Add(conflicts[i].Key);
-                }
-                TranslatorCore.LogInfo($"[MergePanel] Using tag-aware conflicts: {conflictKeys.Count} keys");
-            }
-            else if (_pendingMerge != null && _pendingMerge.Conflicts != null && _pendingMerge.Conflicts.Count > 0)
-            {
-                var conflicts = _pendingMerge.Conflicts;
-                for (int i = 0; i < conflicts.Count; i++)
-                {
-                    conflictKeys.Add(conflicts[i].Key);
-                }
-                TranslatorCore.LogInfo($"[MergePanel] Using legacy conflicts: {conflictKeys.Count} keys");
-            }
-            else
-            {
-                TranslatorCore.LogError("[MergePanel] No conflicts found in either merge result");
+                TranslatorCore.LogError("[MergePanel] No conflicts to resolve");
                 return;
+            }
+
+            var conflicts = _pendingMergeWithTags.Conflicts;
+            var conflictKeys = new List<string>();
+            for (int i = 0; i < conflicts.Count; i++)
+            {
+                conflictKeys.Add(conflicts[i].Key);
             }
 
             for (int i = 0; i < conflictKeys.Count; i++)
@@ -519,29 +445,48 @@ namespace UnityGameTranslator.Core.UI.Panels
             RefreshConflictList();
         }
 
+        /// <summary>
+        /// Mark this merge as coming from the UPSTREAM Main rather than from this
+        /// translation's own line on the site. The difference matters at apply
+        /// time: the two sides have separate ancestors and separate hashes, and
+        /// writing one over the other is what would make a branch lose everything
+        /// it owns (analyse/main-to-branch-sync.md §2).
+        ///
+        /// Also unlocks Apply when there is nothing to resolve: the summary itself
+        /// is what the player is agreeing to, so an empty conflict list must not
+        /// leave the button dead.
+        /// </summary>
+        internal void SetUpstreamMerge(Dictionary<string, TranslationEntry> mainContent, string mainHash)
+        {
+            _isUpstreamMerge = true;
+            _upstreamContent = mainContent;
+            _upstreamHash = mainHash;
+
+            bool nothingToResolve = _pendingMergeWithTags == null || _pendingMergeWithTags.ConflictCount == 0;
+            if (nothingToResolve)
+            {
+                _userMadeChoice = true;
+                SetApplyButtonEnabled(true);
+            }
+        }
+
         internal void ApplyMerge()
         {
             if (!_userMadeChoice) return;
+            if (_pendingMergeWithTags == null) return;
 
-            if (_useTagAwareMerge)
+            // Apply resolutions to get final merged result
+            ApplyResolutionsWithTags(_pendingMergeWithTags, _resolutions);
+
+            if (_isUpstreamMerge)
             {
-                if (_pendingMergeWithTags == null) return;
-
-                // Apply resolutions to get final merged result
-                ApplyResolutionsWithTags(_pendingMergeWithTags, _resolutions);
-
-                // Use TranslatorUIManager.ApplyMergeWithTags to preserve tags
-                TranslatorUIManager.ApplyMergeWithTags(_pendingMergeWithTags, _serverHash, _remoteTranslationsWithTags);
+                // From the Main: separate ancestor, separate hash
+                TranslatorUIManager.ApplyUpstreamMergeWithTags(
+                    _pendingMergeWithTags, _upstreamContent, _upstreamHash);
             }
             else
             {
-                if (_pendingMerge == null) return;
-
-                // Apply resolutions to get final merged result
-                TranslationMerger.ApplyResolutions(_pendingMerge, _resolutions);
-
-                // Use TranslatorUIManager.ApplyMerge to handle hash updates
-                TranslatorUIManager.ApplyMerge(_pendingMerge, _serverHash, _remoteTranslations);
+                TranslatorUIManager.ApplyMergeWithTags(_pendingMergeWithTags, _serverHash, _remoteTranslationsWithTags);
             }
 
             SetActive(false);
@@ -606,7 +551,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 () =>
                 {
                     // Clear pending merge state
-                    _pendingMerge = null;
+                    _pendingMergeWithTags = null;
                     _resolutions.Clear();
 
                     // Download and apply remote directly (discards local changes)
@@ -722,7 +667,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         internal void CancelMerge()
         {
             // Clear pending state
-            _pendingMerge = null;
+            _pendingMergeWithTags = null;
             _resolutions.Clear();
 
             // Clear pending update flags

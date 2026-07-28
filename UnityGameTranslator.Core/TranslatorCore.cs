@@ -93,6 +93,18 @@ namespace UnityGameTranslator.Core
         public static string LastSyncedHash { get; set; } = null;
 
         /// <summary>
+        /// Hash of the MAIN as it stood the last time this branch merged from it.
+        /// Stored in translations.json as _source.main_hash.
+        ///
+        /// Without it a branch cannot tell "the Main moved" from "I differ from the
+        /// Main", which is true permanently and would notify forever. Distinct from
+        /// LastSyncedHash on purpose: that one tracks this translation's own line on
+        /// the site, this one tracks the upstream it derives from. Never mix them —
+        /// see analyse/main-to-branch-sync.md §2.
+        /// </summary>
+        public static string LastMergedMainHash { get; set; } = null;
+
+        /// <summary>
         /// If true, UniverseLib won't override the game's EventSystem.
         /// Enable this if the game's UI animations or navigation don't work with the mod.
         /// Stored in translations.json as _settings.disable_eventsystem_override
@@ -1830,6 +1842,7 @@ namespace UnityGameTranslator.Core
                         // Load source info for sync detection
                         var source = prop.Value as JObject;
                         LastSyncedHash = source?["hash"]?.Value<string>();
+                        LastMergedMainHash = source?["main_hash"]?.Value<string>();
                     }
                     else if (prop.Name == "_game" && prop.Value.Type == JTokenType.Object)
                     {
@@ -2189,6 +2202,97 @@ namespace UnityGameTranslator.Core
             ClearProcessingCaches();
         }
 
+        // ── Upstream ancestor (branches only) ────────────────────────────────
+        // The Main as it stood at the last merge from it. SEPARATE from
+        // AncestorCache on purpose: that one is this translation's own last synced
+        // state, and feeding it to a Main→branch merge would make every key the
+        // branch owns (present locally and in its ancestor, absent from the Main)
+        // look like a remote deletion. See analyse/main-to-branch-sync.md §2.
+
+        private static string MainAncestorPath => CachePath + ".mainancestor";
+
+        /// <summary>
+        /// The Main's content at the last merge from it, or an EMPTY dictionary
+        /// when unknown. Empty is the safe answer, not a degraded one: with no
+        /// ancestor entries the merger can never conclude to a deletion, so the
+        /// merge becomes purely additive.
+        /// </summary>
+        public static Dictionary<string, TranslationEntry> LoadMainAncestor()
+        {
+            var result = new Dictionary<string, TranslationEntry>();
+
+            try
+            {
+                if (!File.Exists(MainAncestorPath)) return result;
+
+                string json = File.ReadAllText(MainAncestorPath).Replace("\r\n", "\n");
+                var parsed = JObject.Parse(json);
+
+                foreach (var prop in parsed.Properties())
+                {
+                    if (prop.Name.StartsWith("_")) continue;
+
+                    string key = NormalizeLineEndings(prop.Name);
+                    if (prop.Value.Type == JTokenType.Object)
+                    {
+                        var obj = prop.Value as JObject;
+                        result[key] = new TranslationEntry
+                        {
+                            Value = NormalizeLineEndings(obj?["v"]?.ToString() ?? ""),
+                            Tag = obj?["t"]?.ToString() ?? "A"
+                        };
+                    }
+                    else if (prop.Value.Type == JTokenType.String)
+                    {
+                        result[key] = new TranslationEntry
+                        {
+                            Value = NormalizeLineEndings(prop.Value.ToString()),
+                            Tag = "A"
+                        };
+                    }
+                }
+
+                LogDebug($"Loaded {result.Count} upstream ancestor entries");
+            }
+            catch (Exception e)
+            {
+                // Unreadable: an empty ancestor is safe, a wrong one is not
+                Adapter.LogWarning($"Failed to load upstream ancestor ({e.Message}) - merging additively");
+                return new Dictionary<string, TranslationEntry>();
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Remember the Main exactly as it was merged, so the NEXT merge can tell
+        /// what upstream changed instead of asking about everything again.
+        /// </summary>
+        public static void SaveMainAncestor(Dictionary<string, TranslationEntry> mainContent, string mainHash)
+        {
+            try
+            {
+                var output = new JObject();
+                foreach (var kvp in mainContent)
+                {
+                    if (kvp.Key.StartsWith("_")) continue;
+                    output[kvp.Key] = new JObject
+                    {
+                        ["v"] = kvp.Value.Value,
+                        ["t"] = kvp.Value.Tag ?? "A"
+                    };
+                }
+
+                File.WriteAllText(MainAncestorPath, output.ToString(Formatting.Indented));
+                LastMergedMainHash = mainHash;
+                LogDebug($"Saved upstream ancestor with {output.Count} entries");
+            }
+            catch (Exception e)
+            {
+                Adapter.LogWarning($"Failed to save upstream ancestor: {e.Message}");
+            }
+        }
+
         /// <summary>
         /// Save the current cache as ancestor (for 3-way merge)
         /// Call this after downloading from website before any local changes
@@ -2399,33 +2503,6 @@ namespace UnityGameTranslator.Core
 
             LocalChangesCount = changes;
             LogDebug($"[LocalChanges] Recalculated: {changes} local changes ({removed} deleted)");
-        }
-
-        /// <summary>
-        /// Convert TranslationCache to a simple string dictionary (for legacy merge support).
-        /// Values are extracted without tags.
-        /// </summary>
-        public static Dictionary<string, string> GetCacheAsStrings()
-        {
-            var result = new Dictionary<string, string>();
-            foreach (var kvp in TranslationCache)
-            {
-                result[kvp.Key] = kvp.Value.Value;
-            }
-            return result;
-        }
-
-        /// <summary>
-        /// Convert AncestorCache to a simple string dictionary (for legacy merge support).
-        /// </summary>
-        public static Dictionary<string, string> GetAncestorAsStrings()
-        {
-            var result = new Dictionary<string, string>();
-            foreach (var kvp in AncestorCache)
-            {
-                result[kvp.Key] = kvp.Value.Value;
-            }
-            return result;
         }
 
         /// <summary>
@@ -5607,13 +5684,20 @@ namespace UnityGameTranslator.Core
                         };
                     }
 
-                    // Save _source with hash for multi-device sync detection
-                    if (!string.IsNullOrEmpty(LastSyncedHash))
+                    // Save _source with hash for multi-device sync detection, plus the
+                    // Main's hash at the last merge from it (branches only)
+                    if (!string.IsNullOrEmpty(LastSyncedHash) || !string.IsNullOrEmpty(LastMergedMainHash))
                     {
-                        output["_source"] = new JObject
+                        var source = new JObject();
+                        if (!string.IsNullOrEmpty(LastSyncedHash))
                         {
-                            ["hash"] = LastSyncedHash
-                        };
+                            source["hash"] = LastSyncedHash;
+                        }
+                        if (!string.IsNullOrEmpty(LastMergedMainHash))
+                        {
+                            source["main_hash"] = LastMergedMainHash;
+                        }
+                        output["_source"] = source;
                     }
 
                     if (LocalChangesCount > 0)
@@ -5780,6 +5864,9 @@ namespace UnityGameTranslator.Core
 
             // Reset sync tracking - local changes will be counted from this point
             LastSyncedHash = null;
+            // A fork is detached: it has no upstream Main any more, so the memory of
+            // one would make the mod offer to merge from a lineage it just left
+            LastMergedMainHash = null;
             LocalChangesCount = TranslationCache.Count; // All entries are now "local changes"
 
             // Clear ancestor cache - no longer relevant for the new lineage
@@ -6242,6 +6329,23 @@ namespace UnityGameTranslator.Core
 
         /// <summary>If Main, the number of branches</summary>
         public int BranchesCount { get; set; }
+
+        /// <summary>
+        /// If Main, how many branches have never been reviewed or changed since.
+        /// The plain count above cannot answer that: it does not move when a
+        /// contributor pushes more work to a branch already counted.
+        /// </summary>
+        public int BranchesPendingReview { get; set; }
+
+        /// <summary>
+        /// If Branch, the Main this translation derives from — id and hash, so the
+        /// mod can tell that upstream moved without downloading anything.
+        /// Null for a Main, for a detached fork, and for any server that does not
+        /// report it yet (older site: absence must read as "unknown", not "gone").
+        /// </summary>
+        public int? MainSiteId { get; set; }
+        public string MainHash { get; set; }
+        public int MainLineCount { get; set; }
 
         /// <summary>Source language of the translation (original game language)</summary>
         public string SourceLanguage { get; set; }

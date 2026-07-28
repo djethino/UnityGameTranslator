@@ -866,6 +866,85 @@ namespace UnityGameTranslator.Core.UI
         }
 
         /// <summary>
+        /// True when the Main this branch derives from has moved since the last
+        /// merge from it.
+        ///
+        /// Compares against LastMergedMainHash, never against the local content:
+        /// a branch differs from its Main permanently — that is what being a branch
+        /// means — so comparing content would notify forever.
+        /// Unknown upstream (older site, or Main never merged) answers false: the
+        /// mod stays quiet rather than crying wolf on its first launch.
+        /// </summary>
+        public static bool HasMainUpdate()
+        {
+            var state = TranslatorCore.ServerState;
+            if (state == null || state.Role != TranslationRole.Branch) return false;
+            if (string.IsNullOrEmpty(state.MainHash)) return false;
+
+            // Never merged from upstream: nothing to compare, so nothing to claim.
+            // The offer to merge is still reachable from the panel at any time.
+            if (string.IsNullOrEmpty(TranslatorCore.LastMergedMainHash)) return false;
+
+            return state.MainHash != TranslatorCore.LastMergedMainHash;
+        }
+
+        /// <summary>
+        /// Pull the Main into this branch: download it, merge it in, and ALWAYS
+        /// let the player look before anything is written.
+        ///
+        /// Two rules, both deliberate (analyse/main-to-branch-sync.md):
+        /// - the ancestor is the UPSTREAM one, never AncestorCache — feeding this
+        ///   merge the branch's own ancestor would read every key the branch owns
+        ///   as a deletion made by the Main;
+        /// - it is proposed, never auto-applied, even with zero conflicts: content
+        ///   coming from someone else does not enter a translation unattended.
+        /// </summary>
+        public static async Task MergeFromMain()
+        {
+            var state = TranslatorCore.ServerState;
+            if (state?.MainSiteId == null)
+            {
+                TranslatorCore.LogWarning("[MainMerge] No upstream Main to merge from");
+                return;
+            }
+
+            int mainId = state.MainSiteId.Value;
+            string expectedHash = state.MainHash;
+
+            var result = await ApiClient.Download(mainId);
+
+            var success = result.Success;
+            var content = result.Content;
+            var fileHash = result.FileHash;
+            var error = result.Error;
+
+            RunOnMainThread(() =>
+            {
+                if (!success || string.IsNullOrEmpty(content))
+                {
+                    TranslatorCore.LogWarning($"[MainMerge] Could not download the Main: {error}");
+                    StatusOverlay?.ShowToast($"Could not fetch the Main: {error}",
+                        Panels.StatusOverlay.ToastTone.Off);
+                    return;
+                }
+
+                var mainContent = TranslatorCore.ParseTranslationsFromJson(content);
+                var upstreamAncestor = TranslatorCore.LoadMainAncestor();
+
+                var mergeResult = TranslationMerger.MergeWithTags(
+                    TranslatorCore.TranslationCache, mainContent, upstreamAncestor);
+
+                TranslatorCore.LogInfo($"[MainMerge] {mergeResult.Statistics.GetSummary()} " +
+                    $"(upstream ancestor: {upstreamAncestor.Count} entries)");
+
+                // Shown whatever the conflict count: the summary IS the decision point
+                MergePanel?.SetActive(true);
+                MergePanel?.SetMergeDataWithTags(mergeResult, mainContent, fileHash ?? expectedHash);
+                MergePanel?.SetUpstreamMerge(mainContent, fileHash ?? expectedHash);
+            });
+        }
+
+        /// <summary>
         /// Fetch the sync state once if it has never arrived. Called when a panel
         /// needs it: "Never" must mean "do not interrupt me", not "leave the mod
         /// ignorant of its own translation". Cheap and idempotent — it does
@@ -1096,6 +1175,19 @@ namespace UnityGameTranslator.Core.UI
                     serverState.Type = translation["type"]?.Value<string>();
                     serverState.Notes = translation["notes"]?.Value<string>();
                     serverState.ResourcesUrl = translation["resources_url"]?.Value<string>();
+
+                    // A branch now also hears about the Main it derives from. Absent
+                    // from an older site: stays null, which reads as "unknown" and
+                    // never as "the Main is gone".
+                    if (role == TranslationRole.Branch && main != null && main.Type != JTokenType.Null)
+                    {
+                        serverState.MainSiteId = main["id"]?.Value<int>();
+                        serverState.MainHash = main["file_hash"]?.Value<string>();
+                        serverState.MainLineCount = main["line_count"]?.Value<int>() ?? 0;
+                        serverState.MainUsername = main["uploader"]?.Value<string>();
+                    }
+
+                    serverState.BranchesPendingReview = data["branches_pending_review"]?.Value<int>() ?? 0;
                 }
                 else if (main != null && main.Type != JTokenType.Null)
                 {
@@ -2547,75 +2639,55 @@ namespace UnityGameTranslator.Core.UI
         /// <param name="mergeResult">The merge result containing resolved translations</param>
         /// <param name="serverHash">The server hash for sync tracking</param>
         /// <param name="remoteTranslations">The remote translations to save as ancestor (null = use merged)</param>
-        public static void ApplyMerge(MergeResult mergeResult, string serverHash, Dictionary<string, string> remoteTranslations = null)
+        /// <summary>
+        /// Apply a merge that came from the UPSTREAM Main, not from this
+        /// translation's own line on the site.
+        ///
+        /// Deliberately does NOT touch LastSyncedHash nor AncestorCache: those
+        /// track this branch against its own published version, and overwriting
+        /// them with the Main's would both lie about what was last uploaded and
+        /// destroy the baseline that protects the branch's own keys.
+        /// What it does record is the upstream ancestor, so the next merge knows
+        /// what the Main changed instead of asking about everything again.
+        ///
+        /// After this, the branch legitimately differs from its published version:
+        /// the imported lines become work to upload.
+        /// </summary>
+        public static void ApplyUpstreamMergeWithTags(
+            MergeResultWithTags mergeResult,
+            Dictionary<string, TranslationEntry> mainContent,
+            string mainHash)
         {
-            // Apply the merged translations (convert to TranslationEntry with AI tag for legacy merge)
+            TranslatorCore.TranslationCache.Clear();
             foreach (var kvp in mergeResult.Merged)
             {
-                // For now, merged values get AI tag by default
-                // Full tag support will be added when TranslationMerger is updated.
-                // The capture-order index of an existing local entry survives the
-                // rewrite; keys new to us stay index-less until LoadCache backfills.
-                long? existingIndex = null;
-                if (TranslatorCore.TranslationCache.TryGetValue(kvp.Key, out var existingEntry))
-                    existingIndex = existingEntry.Index;
-
-                TranslatorCore.TranslationCache[kvp.Key] = new TranslationEntry
-                {
-                    Value = kvp.Value,
-                    Tag = "A",  // TODO: Preserve original tags when merger is updated
-                    Index = existingIndex
-                };
+                TranslatorCore.TranslationCache[kvp.Key] = kvp.Value;
             }
+            // The Main can carry capture-order indices above our counter
             TranslatorCore.SyncOrderIndexCounter();
 
-            // Update server state
-            var serverState = TranslatorCore.ServerState;
-            if (serverState != null)
-            {
-                serverState.Hash = serverHash;
-            }
-            TranslatorCore.LastSyncedHash = serverHash;
-
-            // Save cache
             TranslatorCore.SaveCache();
 
-            // Save REMOTE content as ancestor (not merged!)
-            // This way LocalChangesCount = our additions that need uploading
-            if (remoteTranslations != null)
+            if (mainContent != null)
             {
-                TranslatorCore.SaveAncestorFromRemote(remoteTranslations);
-            }
-            else
-            {
-                TranslatorCore.SaveAncestorCache();
+                TranslatorCore.SaveMainAncestor(mainContent, mainHash);
             }
 
-            // Recalculate local changes (merged vs remote ancestor)
+            // Against OUR ancestor, untouched above: what we just imported counts
+            // as changes waiting to be published on our own translation
             TranslatorCore.RecalculateLocalChanges();
 
-            // Set pending update state based on local changes
-            // After merge, if we have local additions/changes, we need to upload
             HasPendingUpdate = TranslatorCore.LocalChangesCount > 0;
             PendingUpdateInfo = null;
             PendingUpdateDirection = HasPendingUpdate ? UpdateDirection.Upload : UpdateDirection.None;
+            NotificationDismissed = false;
 
-            TranslatorCore.LogInfo($"[Merge] Applied successfully. LocalChangesCount={TranslatorCore.LocalChangesCount}, direction={PendingUpdateDirection}");
-
-            // Clear processing caches so scanner re-evaluates all text with merged translations
-            TranslatorCore.ClearProcessingCaches();
-
-            // Refresh MainPanel to show updated translation count and sync status
+            TranslatorCore.ReloadCache();
             MainPanel?.RefreshUI();
+
+            TranslatorCore.LogInfo($"[MainMerge] Applied: {TranslatorCore.LocalChangesCount} line(s) now waiting to be uploaded");
         }
 
-        /// <summary>
-        /// Apply a merge result with tags and update sync state.
-        /// This version preserves tags from the merge result (critical for scoring system).
-        /// </summary>
-        /// <param name="mergeResult">The merge result containing resolved translations with tags</param>
-        /// <param name="serverHash">The server hash for sync tracking</param>
-        /// <param name="remoteTranslations">The remote translations to save as ancestor</param>
         public static void ApplyMergeWithTags(MergeResultWithTags mergeResult, string serverHash, Dictionary<string, TranslationEntry> remoteTranslations = null)
         {
             // Apply the merged translations with their tags preserved
@@ -2802,25 +2874,22 @@ namespace UnityGameTranslator.Core.UI
                 {
                     if (success && !string.IsNullOrEmpty(content))
                     {
-                        // Parse remote translations
-                        var parsed = Newtonsoft.Json.JsonConvert.DeserializeObject<Dictionary<string, object>>(content);
-                        var remoteTranslations = new Dictionary<string, string>();
+                        // Same parser and same merger as every other path.
+                        //
+                        // What stood here before read the file as Dictionary<string,object>
+                        // and kept only the entries whose value `is string`, i.e. the LEGACY
+                        // format alone: against a file written as {"v":...,"t":...} — every
+                        // file today — it collected nothing. And the merge that followed ran
+                        // on flattened strings, so the applied result rewrote every tag to
+                        // "A", quietly demoting human and validated lines to "AI".
+                        // This is the wizard, the very first contact with a community
+                        // translation. See analyse/sync-paths-audit.md §2.
+                        var remoteTranslations = TranslatorCore.ParseTranslationsFromJson(content);
 
-                        foreach (var kvp in parsed)
-                        {
-                            if (!kvp.Key.StartsWith("_") && kvp.Value is string strValue)
-                            {
-                                // Normalize line endings for cross-platform consistency
-                                string normalizedKey = TranslatorCore.NormalizeLineEndings(kvp.Key);
-                                string normalizedValue = TranslatorCore.NormalizeLineEndings(strValue);
-                                remoteTranslations[normalizedKey] = normalizedValue;
-                            }
-                        }
-
-                        // Perform 3-way merge (using string dictionaries for legacy merge support)
-                        var local = TranslatorCore.GetCacheAsStrings();
-                        var ancestor = TranslatorCore.GetAncestorAsStrings();
-                        var mergeResult = TranslationMerger.Merge(local, remoteTranslations, ancestor);
+                        var mergeResult = TranslationMerger.MergeWithTags(
+                            TranslatorCore.TranslationCache,
+                            remoteTranslations,
+                            TranslatorCore.AncestorCache);
 
                         TranslatorCore.LogInfo($"[Merge] Result: {mergeResult.Statistics.GetSummary()}");
 
@@ -2849,13 +2918,13 @@ namespace UnityGameTranslator.Core.UI
                             // Show merge panel for user to resolve conflicts
                             // SetActive first to ensure UI is constructed before setting data
                             MergePanel?.SetActive(true);
-                            MergePanel?.SetMergeData(mergeResult, remoteTranslations, fileHash);
+                            MergePanel?.SetMergeDataWithTags(mergeResult, remoteTranslations, fileHash);
                             // Don't call onComplete - MergePanel handles the rest
                         }
                         else
                         {
                             // No conflicts - apply merge directly
-                            ApplyMerge(mergeResult, fileHash, remoteTranslations);
+                            ApplyMergeWithTags(mergeResult, fileHash, remoteTranslations);
                             onComplete?.Invoke(true, "Merged successfully!");
                         }
                     }

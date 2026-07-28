@@ -87,6 +87,11 @@ namespace UnityGameTranslator.Core.UI.Panels
         // State - whether main panels are open (affects which boxes are shown)
         private bool _panelsOpenMode = false;
 
+        // Set while rendering: the visible action pulls from the Main, not from
+        // this translation's own published version
+        private bool _syncActionIsUpstream = false;
+        private bool _syncActionIsReview = false;
+
         public StatusOverlay(UIBase owner) : base(owner)
         {
         }
@@ -118,6 +123,20 @@ namespace UnityGameTranslator.Core.UI.Panels
             /// <summary>Both sides moved: this one always speaks up.</summary>
             public bool NeedsMerge;
 
+            /// <summary>
+            /// Branch only: the Main it derives from has published something since
+            /// the last merge from it. A different source entirely from the three
+            /// above, which all concern this translation's own line on the site.
+            /// </summary>
+            public bool HasMainUpdate;
+
+            /// <summary>Main only: branches never reviewed, or changed since.</summary>
+            public int BranchesPendingReview;
+
+            /// <summary>Anything at all worth showing.</summary>
+            public bool Any => HasLocalChanges || HasMetadataChanges || HasServerUpdate
+                               || NeedsMerge || HasMainUpdate || BranchesPendingReview > 0;
+
             public static PendingSyncWork Current()
             {
                 var serverState = TranslatorCore.ServerState;
@@ -139,6 +158,12 @@ namespace UnityGameTranslator.Core.UI.Panels
                         direction == UpdateDirection.Download,
                     NeedsMerge = TranslatorUIManager.HasPendingUpdate &&
                         direction == UpdateDirection.Merge,
+                    // Same switch as a server update: it is an update, just from
+                    // upstream. Nothing is at risk if it waits.
+                    HasMainUpdate = notifyUpdates && TranslatorUIManager.HasMainUpdate(),
+                    BranchesPendingReview = notifyUpdates && serverState != null
+                        ? serverState.BranchesPendingReview
+                        : 0,
                 };
             }
         }
@@ -159,8 +184,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             bool hasMetadataChanges = pending.HasMetadataChanges;
             bool hasServerUpdate = pending.HasServerUpdate;
             bool needsMerge = pending.NeedsMerge;
-            bool showSyncNotification = (hasLocalChanges || hasMetadataChanges || hasServerUpdate || needsMerge) &&
-                !TranslatorUIManager.NotificationDismissed;
+            bool showSyncNotification = pending.Any && !TranslatorUIManager.NotificationDismissed;
 
             return showModUpdate || showSyncNotification;
         }
@@ -571,8 +595,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             bool hasMetadataChanges = pending.HasMetadataChanges;
             bool hasServerUpdate = pending.HasServerUpdate;
             bool needsMerge = pending.NeedsMerge;
-            bool showSyncNotification = (hasLocalChanges || hasMetadataChanges || hasServerUpdate || needsMerge) &&
-                !TranslatorUIManager.NotificationDismissed;
+            bool showSyncNotification = pending.Any && !TranslatorUIManager.NotificationDismissed;
 
             // 3. AI queue status
             bool aiEnabled = TranslatorCore.Config.IsTranslationEnabled;
@@ -626,8 +649,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             bool hasServerUpdate = pending.HasServerUpdate;
             bool needsMerge = pending.NeedsMerge;
 
-            bool showSyncNotification = !_panelsOpenMode &&
-                                        (hasLocalChanges || hasMetadataChanges || hasServerUpdate || needsMerge) &&
+            bool showSyncNotification = !_panelsOpenMode && pending.Any &&
                                         !TranslatorUIManager.NotificationDismissed;
 
             if (showSyncNotification && _syncBox != null)
@@ -646,6 +668,12 @@ namespace UnityGameTranslator.Core.UI.Panels
                 bool showBranchFork = false;
                 bool showAction = true;
                 string actionText = "Sync";
+                // The action button reads PendingUpdateDirection, which only ever
+                // describes THIS translation's own line. An upstream merge is a
+                // different exchange, so it is flagged here rather than smuggled
+                // into that enum — the two sources must not converge again.
+                bool actionIsUpstream = false;
+                bool actionIsReview = false;
 
                 // Get owner name for context
                 string ownerName = serverState?.Uploader ?? "owner";
@@ -662,14 +690,13 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
                 else if (hasServerUpdate)
                 {
-                    if (isBranch)
+                    if (isOwner)
                     {
-                        // Branch owner: parent (Main) has been updated
-                        message = Tr("Parent translation update available!");
-                    }
-                    else if (isOwner)
-                    {
-                        // Main owner: server has update (multi-device scenario)
+                        // Owner, Main or branch alike: it is THEIR OWN published
+                        // version that moved — another machine, or the site editor.
+                        // This used to claim "Parent translation update available!"
+                        // for a branch, which named the wrong source entirely: the
+                        // hash compared here has never been the Main's.
                         message = Tr("Server update available!");
                     }
                     else
@@ -678,6 +705,14 @@ namespace UnityGameTranslator.Core.UI.Panels
                         message = Tr("Translation updated by") + $" @{ownerName}";
                     }
                     actionText = "Download";
+                }
+                else if (pending.HasMainUpdate)
+                {
+                    // Genuinely upstream this time, and a different exchange: it is
+                    // merged into the branch, never downloaded over it
+                    message = Tr("The original translation has been updated by") + $" @{ownerName}";
+                    actionText = "Update";
+                    actionIsUpstream = true;
                 }
                 else if (hasLocalChanges)
                 {
@@ -711,6 +746,16 @@ namespace UnityGameTranslator.Core.UI.Panels
                         showAction = false;
                     }
                 }
+                else if (pending.BranchesPendingReview > 0)
+                {
+                    // Last, and rightly so: nothing degrades while it waits. But a
+                    // contribution nobody ever hears about is a contributor lost —
+                    // and the branch COUNT never moved when someone pushed more
+                    // work to a branch already counted.
+                    message = Tr($"{pending.BranchesPendingReview} contribution(s) waiting for your review");
+                    actionText = "Review";
+                    actionIsReview = true;
+                }
                 else
                 {
                     // Fallback for edge case (shouldn't happen with current logic)
@@ -733,6 +778,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                         : "";
                     _syncHintLabel.gameObject.SetActive(showBranchFork);
                 }
+
+                _syncActionIsUpstream = actionIsUpstream;
+                _syncActionIsReview = actionIsReview;
 
                 if (showAction)
                 {
@@ -867,6 +915,26 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private void OnSyncActionClicked()
         {
+            if (_syncActionIsReview)
+            {
+                // Reviewing contributions happens on the website: bigger screen,
+                // line-by-line tools, and the Main owner decides there
+                string uuid = TranslatorCore.FileUuid;
+                if (!string.IsNullOrEmpty(uuid))
+                {
+                    TranslatorCore.OpenUrlSafe(ApiClient.GetMergeReviewUrl(uuid));
+                }
+                return;
+            }
+
+            if (_syncActionIsUpstream)
+            {
+                // Opens the merge panel with a summary; nothing is written until
+                // the player confirms there
+                _ = TranslatorUIManager.MergeFromMain();
+                return;
+            }
+
             var direction = TranslatorUIManager.PendingUpdateDirection;
 
             switch (direction)

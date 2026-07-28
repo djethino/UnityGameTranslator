@@ -63,6 +63,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         private ButtonRef _reviewOnWebsiteBtn;
         private ButtonRef _compareWithServerBtn;
         private ButtonRef _editDetailsBtn;
+        private ButtonRef _updateFromMainBtn;
+        private bool _updateFromMainInFlight;
         private ButtonRef _forkBtn;
         private Text _roleActionsHint;
         private Components.HelpZone _helpZone;
@@ -508,6 +510,17 @@ namespace UnityGameTranslator.Core.UI.Panels
             RegisterUIText(_editDetailsBtn.ButtonText);
             _helpZone?.Describe(_editDetailsBtn.Component.gameObject,
                 "Change the description and the resources link of your published translation, without waiting for new translated lines");
+
+            // Update from Main (Branch only) — the other direction of the exchange.
+            // A branch could publish its work but never take in what the Main had
+            // published since: it drifted further apart with every update, without
+            // anything ever saying so.
+            _updateFromMainBtn = CreateSecondaryButton(roleActionsRow, "UpdateFromMainBtn", "Update from Main", 150);
+            UIStyles.SetBackground(_updateFromMainBtn.Component.gameObject, UIStyles.ButtonSuccess);
+            _updateFromMainBtn.OnClick += OnUpdateFromMainClicked;
+            RegisterUIText(_updateFromMainBtn.ButtonText);
+            _helpZone?.Describe(_updateFromMainBtn.Component.gameObject,
+                "Bring in what the original translation added or corrected since your last update. Your own lines are kept, and you review everything before it applies.");
 
             // Fork button (Branch only) - creates independent fork
             _forkBtn = CreateSecondaryButton(roleActionsRow, "ForkBtn", "Fork", 80);
@@ -1401,6 +1414,19 @@ namespace UnityGameTranslator.Core.UI.Panels
                         _editDetailsBtn.Component.interactable = isLoggedIn && TranslatorCore.Config.online_mode;
                 }
 
+                // Update from Main — a branch only. Shown even when nothing new is
+                // known upstream: the very first merge is what teaches the mod where
+                // the Main stood, so it must be reachable before any notice exists.
+                if (_updateFromMainBtn != null)
+                {
+                    bool canUpdateFromMain = isBranch && state.MainSiteId.HasValue;
+                    _updateFromMainBtn.Component.gameObject.SetActive(canUpdateFromMain);
+                    if (canUpdateFromMain && !_updateFromMainInFlight)
+                    {
+                        _updateFromMainBtn.Component.interactable = isLoggedIn && TranslatorCore.Config.online_mode;
+                    }
+                }
+
                 // Fork button - only for Branch role
                 _forkBtn.Component.gameObject.SetActive(isBranch);
 
@@ -1414,7 +1440,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 if (_roleActionsHint != null)
                 {
                     string hint = "";
-                    if (isBranch)
+                    if (isBranch && TranslatorUIManager.HasMainUpdate())
+                        hint = Tr("The original translation has changed — Update from Main brings it in");
+                    else if (isBranch)
                         hint = Tr("Fork = continue on your own, leaving the translation of")
                                + " @" + (state.MainUsername ?? state.Uploader ?? "?");
                     else if (isMain && hasBranches)
@@ -1503,6 +1531,45 @@ namespace UnityGameTranslator.Core.UI.Panels
             string url = ApiClient.GetMergeReviewUrl(uuid);
             TranslatorCore.LogInfo($"[MainPanel] Opening review page: {url}");
             TranslatorCore.OpenUrlSafe(url);
+        }
+
+        /// <summary>
+        /// Pull the Main into this branch. Nothing is written here: the merge is
+        /// prepared and shown, and only the player's confirmation applies it —
+        /// content coming from someone else never enters a translation unattended
+        /// (analyse/main-to-branch-sync.md §5.2).
+        /// </summary>
+        private async void OnUpdateFromMainClicked()
+        {
+            if (_updateFromMainInFlight) return;
+
+            SetUpdateFromMainBusy(true);
+
+            try
+            {
+                await TranslatorUIManager.MergeFromMain();
+            }
+            catch (System.Exception e)
+            {
+                var errorMsg = e.Message;
+                TranslatorUIManager.RunOnMainThread(() =>
+                    TranslatorCore.LogWarning($"[MainMerge] Failed: {errorMsg}"));
+            }
+            finally
+            {
+                TranslatorUIManager.RunOnMainThread(() => SetUpdateFromMainBusy(false));
+            }
+        }
+
+        private void SetUpdateFromMainBusy(bool busy)
+        {
+            _updateFromMainInFlight = busy;
+
+            if (_updateFromMainBtn?.Component != null)
+                _updateFromMainBtn.Component.interactable = !busy;
+
+            if (_updateFromMainBtn?.ButtonText != null)
+                SetDynamicText(_updateFromMainBtn.ButtonText, busy ? "Fetching..." : "Update from Main");
         }
 
         private void OnForkClicked()

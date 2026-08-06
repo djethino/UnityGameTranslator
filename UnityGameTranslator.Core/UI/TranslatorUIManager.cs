@@ -1785,7 +1785,64 @@ namespace UnityGameTranslator.Core.UI
                 // does not exist yet (lot 3): the button stays hidden rather
                 // than pointing at a screen that cannot show them.
                 null,
-                () => ApplySettingsChoice(arbitratedNames, ours, theirs, incomingAlreadyApplied, new List<string>()));
+                () => ApplySettingsChoice(arbitratedNames, ours, theirs, incomingAlreadyApplied, new List<string>()),
+                // The backup note belongs to the paths that replaced the file — the ones that
+                // took one. Restoring settings touches no file until Apply.
+                fileWasBackedUp: incomingAlreadyApplied);
+        }
+
+        /// <summary>
+        /// Copy the translation file aside before something replaces it. Every path that
+        /// overwrites the player's file wholesale calls this — one of them did not, and left no
+        /// way back after a community version had taken the place of someone's own work.
+        ///
+        /// Failure is swallowed on purpose: a backup that cannot be written must not stop the
+        /// operation the player asked for, and it is reported rather than silently skipped.
+        /// </summary>
+        public static void BackupCacheFile()
+        {
+            try
+            {
+                if (System.IO.File.Exists(TranslatorCore.CachePath))
+                    System.IO.File.Copy(TranslatorCore.CachePath, TranslatorCore.CachePath + ".backup", true);
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogWarning($"[UIManager] Could not back up the translation file: {e.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Put the settings back to the online version's, section by section.
+        ///
+        /// The way back the player had no way to take: after declining a replacement at download
+        /// time — or after configuring things locally — nothing could undo it, and nothing even
+        /// said the settings had drifted.
+        ///
+        /// Goes through the same panel and the same code as a download so the gesture reads the
+        /// same and the rule holds: nothing is applied until Apply is pressed.
+        /// </summary>
+        public static void RestoreOnlineSettings()
+        {
+            var reference = TranslatorCore.GetOnlineSettingsReference();
+            if (reference == null || !reference.HasDifferences)
+            {
+                // The button is hidden in this case; reaching it means the state changed
+                // underneath, and doing nothing is the right answer
+                TranslatorCore.LogInfo("[Settings] Nothing to restore - settings already match the online version");
+                return;
+            }
+
+            // ancestor: null and explicitRequest: true — this is not a sync, it is a request.
+            // Every section that differs is put to the player, ticked on the online side, and
+            // nothing has been applied to the file yet (incomingAlreadyApplied: false).
+            ReconcileSettings(
+                TranslationSettings.FromCurrentState(),
+                reference.Settings,
+                null,
+                false,
+                reference.Label,
+                explicitRequest: true);
         }
 
         private static void ApplySettingsChoice(
@@ -1826,11 +1883,7 @@ namespace UnityGameTranslator.Core.UI
                 return false;
             }
 
-            string backupPath = TranslatorCore.CachePath + ".backup";
-            if (System.IO.File.Exists(TranslatorCore.CachePath))
-            {
-                System.IO.File.Copy(TranslatorCore.CachePath, backupPath, true);
-            }
+            BackupCacheFile();
 
             // Snapshot our settings BEFORE the file replaces them: the reload
             // below applies the incoming ones wholesale, and this is the only
@@ -2663,13 +2716,7 @@ namespace UnityGameTranslator.Core.UI
             }
 
             // Backup the current file before we rewrite it.
-            try
-            {
-                string backupPath = TranslatorCore.CachePath + ".backup";
-                if (System.IO.File.Exists(TranslatorCore.CachePath))
-                    System.IO.File.Copy(TranslatorCore.CachePath, backupPath, true);
-            }
-            catch { }
+            BackupCacheFile();
 
             var mergeResult = TranslationMerger.MergeWithTags(
                 TranslatorCore.TranslationCache, remote, _editSessionAncestor);
@@ -2817,11 +2864,7 @@ namespace UnityGameTranslator.Core.UI
                     if (success && !string.IsNullOrEmpty(content))
                     {
                         // Backup current file
-                        string backupPath = TranslatorCore.CachePath + ".backup";
-                        if (System.IO.File.Exists(TranslatorCore.CachePath))
-                        {
-                            System.IO.File.Copy(TranslatorCore.CachePath, backupPath, true);
-                        }
+                        BackupCacheFile();
 
                         // Our settings, captured before the incoming file replaces them
                         var ourSettings = TranslationSettings.FromCurrentState();
@@ -3120,6 +3163,12 @@ namespace UnityGameTranslator.Core.UI
                         // Our settings, captured before the incoming file replaces them
                         var ourSettings = TranslationSettings.FromCurrentState();
                         var ancestorSettings = TranslatorCore.AncestorSettings;
+
+                        // Same safety net as the other two paths that replace the file wholesale
+                        // (ApplyDownloadedTranslationFile, DownloadUpdate). This one overwrote a
+                        // player's own work with a community version and left nothing behind —
+                        // and the settings dialog was meanwhile promising a backup.
+                        BackupCacheFile();
 
                         // Write content to file
                         System.IO.File.WriteAllText(TranslatorCore.CachePath, content);

@@ -2593,6 +2593,45 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// The online settings this translation can be put back to, or null when there are none
+        /// to go back to.
+        ///
+        /// Exists because declining a replacement — or simply configuring things locally — leaves
+        /// no way back: the player has settings that no longer match the version everyone else
+        /// downloads, and nothing in the mod could tell them so, let alone undo it.
+        ///
+        /// Deliberately stateless: it does not remember that a download was declined, it COMPARES
+        /// what we hold with what the online side holds. So it stays right across restarts, and
+        /// after the player changes their mind twice.
+        ///
+        /// Source order matters. A branch answers to its Main, so the Main's settings win when we
+        /// have them; otherwise the reference is our own last synced version. Null when neither
+        /// exists — a purely local translation has no online settings to restore, and ancestors
+        /// written before settings were stored carry none (nothing to offer, and inventing one
+        /// would be worse).
+        /// </summary>
+        public static SettingsReference GetOnlineSettingsReference()
+        {
+            var ours = TranslationSettings.FromCurrentState();
+
+            var mainSettings = LoadMainAncestorSettings();
+            if (mainSettings != null)
+            {
+                string who = ServerState != null && !string.IsNullOrEmpty(ServerState.Uploader)
+                    ? "@" + ServerState.Uploader + "'s version"
+                    : "the original translation";
+                return SettingsReference.Build(mainSettings, who, ours);
+            }
+
+            if (AncestorSettings != null)
+            {
+                return SettingsReference.Build(AncestorSettings, "your published version", ours);
+            }
+
+            return null;
+        }
+
+        /// <summary>
         /// The Main's SETTINGS at the last merge from it, or null when unknown.
         /// Same rule as AncestorSettings: null means "no common baseline", which
         /// makes the mod ask rather than decide.

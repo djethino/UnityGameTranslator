@@ -57,26 +57,36 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// <param name="onApply">Receives the sections to replace — possibly empty, which means "keep everything of mine"</param>
         /// <param name="onCompare">Optional: open a side-by-side comparison. The button is hidden when null.</param>
         /// <param name="onCancel">Closing without applying anything</param>
+        /// <param name="fileWasBackedUp">
+        /// Whether a backup of the file was actually taken before this. Only the download paths
+        /// take one; saying so on a path that did not would be a promise the mod cannot keep.
+        /// </param>
         public void Show(
             List<SettingsSectionPlan> decisions,
             string sourceLabel,
             Action<List<string>> onApply,
             Action onCompare = null,
-            Action onCancel = null)
+            Action onCancel = null,
+            bool fileWasBackedUp = true)
         {
             _onApply = onApply;
             _onCompare = onCompare;
             _onCancel = onCancel;
 
+            // Says only what is true on EVERY path that opens this panel. It used to claim both
+            // sides had changed, which is right for a conflict but wrong for a download the
+            // player asked for (where any difference is submitted) and wrong again when they
+            // deliberately come to take the online settings back.
             SetDynamicText(_introLabel,
-                $"These settings were changed both here and in {sourceLabel}.\n"
-                + "Tick what you want to replace with the downloaded version. "
+                $"These settings differ between your version and {sourceLabel}.\n"
+                + $"Tick what you want to replace with the settings from {sourceLabel}. "
                 + "Anything left unticked keeps your own setting.");
 
             BuildSectionRows(decisions);
 
             // The button is only honest when there is somewhere to go
             _compareBtn?.Component?.gameObject?.SetActive(onCompare != null);
+            _backupLabel?.gameObject?.SetActive(fileWasBackedUp);
 
             SetActive(true);
         }

@@ -150,6 +150,11 @@ namespace UnityGameTranslator.Core.UI.Panels
         private ButtonRef _checkModUpdatesNowBtn;
         private Text _checkModUpdatesStatusLabel;
 
+        // Shown only while the file settings differ from the online version
+        private GameObject _settingsDriftRow;
+        private Text _settingsDriftLabel;
+        private ButtonRef _restoreSettingsBtn;
+
         // Apply button tracking
         private ButtonRef _applyBtn;
         private ConfigSnapshot _initialSnapshot;
@@ -988,6 +993,25 @@ namespace UnityGameTranslator.Core.UI.Panels
             _helpZone?.Describe(autoDownloadObj,
                 "Only applies when you have no local changes — otherwise the mod always asks first");
 
+            // The way back from a declined replacement — or from local tinkering. Hidden unless
+            // the settings actually differ from the online version, so it never suggests undoing
+            // something that was not done. Filled by RefreshSettingsDriftRow.
+            _settingsDriftRow = UIStyles.CreateFormRow(card, "SettingsDriftRow", UIStyles.RowHeightMedium, 5);
+
+            _settingsDriftLabel = UIFactory.CreateLabel(_settingsDriftRow, "SettingsDriftLabel", "", TextAnchor.MiddleLeft);
+            _settingsDriftLabel.fontSize = UIStyles.FontSizeSmall;
+            _settingsDriftLabel.color = UIStyles.TextSecondary;
+            UIFactory.SetLayoutElement(_settingsDriftLabel.gameObject, flexibleWidth: 9999);
+            RegisterExcluded(_settingsDriftLabel);
+
+            _restoreSettingsBtn = CreateSecondaryButton(_settingsDriftRow, "RestoreSettingsBtn", "Review…", 100);
+            _restoreSettingsBtn.OnClick += OnRestoreSettingsClicked;
+            RegisterUIText(_restoreSettingsBtn.ButtonText);
+            _helpZone?.Describe(_restoreSettingsBtn.Component.gameObject,
+                "Compare your fonts, exclusions and other file settings with the online version, and choose section by section which ones to take back. Nothing changes until you press Apply.");
+
+            _settingsDriftRow.SetActive(false);
+
             UIStyles.CreateSpacer(card, 10);
 
             // Mod updates section
@@ -1220,9 +1244,42 @@ namespace UnityGameTranslator.Core.UI.Panels
             UpdateApplyButtonText();
         }
 
+        /// <summary>
+        /// Show the way back only when there is somewhere to go back to. Recomputed on every
+        /// opening rather than remembered: the settings can drift, and come back, at any time.
+        /// </summary>
+        private void RefreshSettingsDriftRow()
+        {
+            if (_settingsDriftRow == null) return;
+
+            var reference = TranslatorCore.GetOnlineSettingsReference();
+            bool drifted = reference != null && reference.HasDifferences;
+            _settingsDriftRow.SetActive(drifted);
+
+            if (!drifted) return;
+
+            int count = reference.DifferingSections.Count;
+            string what = string.Join(", ", reference.DifferingSections
+                .Select(SettingsSection.DisplayName).ToArray());
+
+            // Names the sections rather than counting them: "2 sections differ" tells nobody
+            // whether their fonts or their exclusions are the ones that moved.
+            SetDynamicText(_settingsDriftLabel,
+                TranslatorCore.TranslateOwnUIDynamic(count == 1
+                    ? $"Your settings differ from {reference.Label}:"
+                    : $"Your settings differ from {reference.Label} in {count} sections:") + " " + what);
+        }
+
+        private void OnRestoreSettingsClicked()
+        {
+            TranslatorUIManager.RestoreOnlineSettings();
+        }
+
         private void LoadCurrentSettings()
         {
             _isLoadingSettings = true;
+
+            RefreshSettingsDriftRow();
 
             // General
             _enableTranslationsToggle.isOn = TranslatorCore.Config.enable_translations;

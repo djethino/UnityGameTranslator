@@ -77,6 +77,34 @@ namespace UnityGameTranslator.Core
         }
     }
 
+    /// <summary>
+    /// The online settings a translation can be put back to, and how far it has drifted from
+    /// them. Built by TranslatorCore.GetOnlineSettingsReference.
+    /// </summary>
+    public class SettingsReference
+    {
+        /// <summary>The settings held by the online version.</summary>
+        public TranslationSettings Settings { get; private set; }
+
+        /// <summary>Who they belong to, in the player's words ("@alice's version").</summary>
+        public string Label { get; private set; }
+
+        /// <summary>Sections where we no longer match, in display order.</summary>
+        public List<string> DifferingSections { get; private set; }
+
+        public bool HasDifferences { get { return DifferingSections.Count > 0; } }
+
+        public static SettingsReference Build(TranslationSettings reference, string label, TranslationSettings ours)
+        {
+            return new SettingsReference
+            {
+                Settings = reference,
+                Label = label,
+                DifferingSections = (ours ?? TranslationSettings.Empty()).SectionsDifferingFrom(reference),
+            };
+        }
+    }
+
     /// <summary>What happened to one settings section since the last sync.</summary>
     public enum SettingsSectionState
     {

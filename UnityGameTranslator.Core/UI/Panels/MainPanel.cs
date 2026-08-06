@@ -1740,39 +1740,11 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             try
             {
-                // Call API to init merge preview with local content
-                var result = await ApiClient.InitMergePreview(
-                    siteId,
-                    TranslatorCore.TranslationCache
-                );
-
-                // After await, we may be on a background thread (IL2CPP issue)
-                var success = result.Success;
-                var url = result.Url;
-                var token = result.Token;
-                var error = result.Error;
-
-                TranslatorUIManager.RunOnMainThread(() =>
+                // Publishing comparison: this is our own translation, and validating it there
+                // updates the online version. Shared with the settings dialog's Compare, which
+                // opens the same page in the other direction.
+                await TranslatorUIManager.OpenComparison(siteId, toLocal: false, onFinished: () =>
                 {
-                    if (success && !string.IsNullOrEmpty(url))
-                    {
-                        string fullUrl = ApiClient.GetMergePreviewFullUrl(url);
-                        // Debug only: the merge preview URL carries a one-time login token
-                        TranslatorCore.LogDebug($"[MainPanel] Opening compare page: {fullUrl}");
-                        TranslatorCore.OpenUrlSafe(fullUrl);
-
-                        // Listen for merge completion via SSE — auto-downloads result
-                        if (!string.IsNullOrEmpty(token))
-                        {
-                            TranslatorUIManager.StartMergeCompletionListener(token, siteId);
-                        }
-                    }
-                    else
-                    {
-                        TranslatorCore.LogWarning($"[MainPanel] Failed to init merge preview: {error}");
-                    }
-
-                    // Re-enable button
                     if (_compareWithServerBtn != null)
                     {
                         _compareWithServerBtn.Component.interactable = true;

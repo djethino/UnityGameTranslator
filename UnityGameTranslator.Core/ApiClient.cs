@@ -1331,7 +1331,13 @@ namespace UnityGameTranslator.Core
         /// Sends local content to server and returns a URL to open in browser.
         /// Requires authentication.
         /// </summary>
-        public static async Task<MergePreviewInitResult> InitMergePreview(int translationId, Dictionary<string, TranslationEntry> localContent)
+        /// <param name="toLocal">
+        /// True to compare WITHOUT publishing: the arbitrated result comes back to this machine
+        /// and the online version is left alone. It is also the only mode allowed against a
+        /// translation we do not own — a branch measuring itself against its Main — since
+        /// publishing there is refused.
+        /// </param>
+        public static async Task<MergePreviewInitResult> InitMergePreview(int translationId, Dictionary<string, TranslationEntry> localContent, bool toLocal = false)
         {
             try
             {
@@ -1358,7 +1364,8 @@ namespace UnityGameTranslator.Core
                 var payload = new
                 {
                     translation_id = translationId,
-                    local_content = contentForApi
+                    local_content = contentForApi,
+                    destination = toLocal ? "local" : "server"
                 };
 
                 var jsonPayload = JsonConvert.SerializeObject(payload);
@@ -1391,6 +1398,45 @@ namespace UnityGameTranslator.Core
             {
                 TranslatorCore.LogWarning($"[ApiClient] Merge preview init error: {e.Message}");
                 return new MergePreviewInitResult { Success = false, Error = e.Message };
+            }
+        }
+
+        /// <summary>
+        /// Collect the result of a comparison that ends here rather than on the server.
+        ///
+        /// Only exists for that mode: a published comparison BECAME the online version, so it is
+        /// read back through the ordinary download. Here nothing was published, and the file the
+        /// player arbitrated lives with the token.
+        /// </summary>
+        public static async Task<TranslationDownloadResult> GetMergePreviewResult(string token)
+        {
+            try
+            {
+                var response = await client.GetAsync($"{DefaultBaseUrl}/merge-preview/{Uri.EscapeDataString(token)}/result");
+                string json = await response.Content.ReadAsStringAsync();
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    return new TranslationDownloadResult { Success = false, Error = DescribeHttpError(response, json) };
+                }
+
+                var data = ParseJsonSafe(json);
+                var content = data["content"];
+                if (content == null || content.Type == Newtonsoft.Json.Linq.JTokenType.Null)
+                {
+                    return new TranslationDownloadResult { Success = false, Error = "Merge result was empty" };
+                }
+
+                return new TranslationDownloadResult
+                {
+                    Success = true,
+                    Content = content.ToString(Newtonsoft.Json.Formatting.None)
+                };
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogWarning($"[ApiClient] Merge result fetch error: {e.Message}");
+                return new TranslationDownloadResult { Success = false, Error = e.Message };
             }
         }
 

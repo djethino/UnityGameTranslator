@@ -1525,6 +1525,12 @@ namespace UnityGameTranslator.Core.UI
         private static SseClient _mergeSseClient;
 
         /// <summary>
+        /// Token of the comparison in flight. A comparison that ends on the server is read back
+        /// through the ordinary download; one that ends here can only be read back through it.
+        /// </summary>
+        private static string _mergeToken;
+
+        /// <summary>
         /// Start listening for merge preview completion via SSE.
         /// When the user completes a merge in the browser, auto-downloads the result.
         /// Called after opening the merge preview URL in the browser.
@@ -1540,6 +1546,9 @@ namespace UnityGameTranslator.Core.UI
             }
 
             StopMergeCompletionListener();
+            // Kept because a comparison that ends HERE has no published version to download:
+            // its result is fetched back through the token that produced it.
+            _mergeToken = token;
 
             string url = ApiClient.GetMergeStreamUrl(token);
 
@@ -1616,6 +1625,99 @@ namespace UnityGameTranslator.Core.UI
         /// <summary>
         /// Handle the merge_completed SSE event — auto-download the merged translation.
         /// </summary>
+        /// <summary>
+        /// Open the comparison page in the browser for a translation.
+        ///
+        /// <paramref name="toLocal"/> decides what the page is FOR: publishing our version, or
+        /// bringing the online one back into our own file without publishing anything. The second
+        /// is the only mode that works against a translation we do not own — a branch measuring
+        /// itself against its Main.
+        /// </summary>
+        public static async Task OpenComparison(int translationId, bool toLocal, Action onFinished = null)
+        {
+            var result = await ApiClient.InitMergePreview(translationId, TranslatorCore.TranslationCache, toLocal);
+
+            // After the await we may be off the main thread (IL2CPP)
+            var success = result.Success;
+            var url = result.Url;
+            var token = result.Token;
+            var error = result.Error;
+
+            RunOnMainThread(() =>
+            {
+                if (success && !string.IsNullOrEmpty(url))
+                {
+                    // Debug only: the URL carries a one-time login token
+                    TranslatorCore.LogDebug($"[Compare] Opening {(toLocal ? "local" : "publish")} comparison");
+                    TranslatorCore.OpenUrlSafe(ApiClient.GetMergePreviewFullUrl(url));
+
+                    if (!string.IsNullOrEmpty(token))
+                    {
+                        StartMergeCompletionListener(token, translationId);
+                    }
+                }
+                else
+                {
+                    TranslatorCore.LogWarning($"[Compare] Could not open the comparison: {error}");
+                    StatusOverlay?.ShowToast("Could not open the comparison page",
+                        Panels.StatusOverlay.ToastTone.Off);
+                }
+
+                onFinished?.Invoke();
+            });
+        }
+
+        /// <summary>
+        /// Take back the result of a comparison that was arbitrated in the browser but never
+        /// published.
+        ///
+        /// This file IS ours — our lines, our settings, our lineage — with the decisions applied.
+        /// So it replaces the local file wholesale rather than being merged into it: merging
+        /// would re-introduce, as "local changes", precisely what the player just chose to drop.
+        ///
+        /// The content still goes through the same door as any downloaded file
+        /// (ApplyDownloadedTranslationFile): valid JSON, non-empty, backed up first. It comes
+        /// from our own server round-trip, but "we sent it" is not a reason to skip the checks.
+        /// </summary>
+        private static async Task ApplyLocalMergeResult(string token)
+        {
+            if (string.IsNullOrEmpty(token))
+            {
+                TranslatorCore.LogWarning("[MergeSSE] Comparison ended locally but its token is gone - nothing to apply");
+                return;
+            }
+
+            var result = await ApiClient.GetMergePreviewResult(token);
+            var success = result.Success;
+            var content = result.Content;
+            var error = result.Error;
+
+            RunOnMainThread(() =>
+            {
+                if (!success || string.IsNullOrEmpty(content))
+                {
+                    TranslatorCore.LogWarning($"[MergeSSE] Could not collect the comparison result: {error}");
+                    StatusOverlay?.ShowToast("Could not retrieve the comparison result", Panels.StatusOverlay.ToastTone.Off);
+                    MainPanel?.RefreshUI();
+                    return;
+                }
+
+                if (!ApplyDownloadedTranslationFile(content))
+                {
+                    StatusOverlay?.ShowToast("The comparison result could not be applied", Panels.StatusOverlay.ToastTone.Off);
+                    return;
+                }
+
+                // Deliberately NOT touching ServerState.Hash or LastSyncedHash: nothing was
+                // published, so the online version is exactly where it was. Claiming to be in
+                // step with it would hide the update the player still has to send.
+                TranslatorCore.ClearProcessingCaches();
+                TranslatorCore.LogInfo("[MergeSSE] Comparison result applied locally (nothing published)");
+                StatusOverlay?.ShowToast("Comparison applied to your translation", Panels.StatusOverlay.ToastTone.On);
+                MainPanel?.RefreshUI();
+            });
+        }
+
         private static async void HandleMergeCompleted(string jsonData, int translationId)
         {
             try
@@ -1623,11 +1725,23 @@ namespace UnityGameTranslator.Core.UI
                 var data = ApiClient.ParseJsonSafe(jsonData);
                 string fileHash = data["file_hash"]?.Value<string>();
                 int lineCount = data["line_count"]?.Value<int>() ?? 0;
+                bool toLocal = data["destination"]?.Value<string>() == "local";
 
-                TranslatorCore.LogInfo($"[MergeSSE] Merge completed! hash={fileHash?.Substring(0, 16)}..., lines={lineCount}");
+                TranslatorCore.LogInfo($"[MergeSSE] Merge completed! destination={(toLocal ? "local" : "server")}, lines={lineCount}");
+
+                string mergeToken = _mergeToken;
 
                 // Stop listening — we only need one event
                 StopMergeCompletionListener();
+
+                if (toLocal)
+                {
+                    // Nothing was published: the result is the player's own file, arbitrated.
+                    // Downloading the online version here would throw their decisions away and
+                    // hand them back exactly what they just chose against.
+                    await ApplyLocalMergeResult(mergeToken);
+                    return;
+                }
 
                 // Auto-download the merged translation
                 var result = await ApiClient.Download(translationId);
@@ -1777,14 +1891,20 @@ namespace UnityGameTranslator.Core.UI
 
             // A dialog nobody can see is the same as no dialog at all
             ShowUI = true;
+            // "Compare" opens the browser side-by-side view — settings included since it can now
+            // show them one by one. Offered only when we know WHICH online translation to compare
+            // against; without that there is nowhere to go, and a button that leads nowhere is
+            // worse than no button.
+            int? compareTarget = TranslatorCore.ServerState?.SiteId;
+            Action onCompare = compareTarget.HasValue
+                ? () => { var _ = OpenComparison(compareTarget.Value, toLocal: true); }
+                : (Action)null;
+
             SettingsChoicePanel.Show(
                 arbitrated,
                 sourceLabel,
                 chosen => ApplySettingsChoice(arbitratedNames, ours, theirs, incomingAlreadyApplied, chosen),
-                // "Compare" opens a side-by-side view of the settings, which
-                // does not exist yet (lot 3): the button stays hidden rather
-                // than pointing at a screen that cannot show them.
-                null,
+                onCompare,
                 () => ApplySettingsChoice(arbitratedNames, ours, theirs, incomingAlreadyApplied, new List<string>()),
                 // The backup note belongs to the paths that replaced the file — the ones that
                 // took one. Restoring settings touches no file until Apply.

@@ -5179,6 +5179,93 @@ namespace UnityGameTranslator.Core
             return !string.IsNullOrEmpty(fontName) && fontName.StartsWith("[Game] ");
         }
 
+        /// <summary>Suffix marking a font the translation knows but the game has not loaded yet.</summary>
+        public const string UnloadedMarker = " (not loaded)";
+
+        /// <summary>Suffix marking a configured fallback that no list can offer.</summary>
+        public const string IncompatibleMarker = " (incompatible)";
+
+        /// <summary>
+        /// Remove the display-only suffix a picker entry may carry. Only strips a KNOWN marker at
+        /// the very end — font names do contain parentheses, and cutting on any of them would
+        /// silently rename the font the user picked.
+        /// </summary>
+        public static string StripOptionMarker(string entry)
+        {
+            if (string.IsNullOrEmpty(entry)) return entry;
+            if (entry.EndsWith(UnloadedMarker))
+                return entry.Substring(0, entry.Length - UnloadedMarker.Length);
+            if (entry.EndsWith(IncompatibleMarker))
+                return entry.Substring(0, entry.Length - IncompatibleMarker.Length);
+            return entry;
+        }
+
+        /// <summary>
+        /// Fonts this translation KNOWS about but that are not loaded right now, for the given
+        /// family ("TMP" family or the Unity/legacy one.)
+        ///
+        /// Why this exists: the two font lists in the parameters panel do not share a source. The
+        /// main list comes from <see cref="TranslatorCore.FontSettingsMap"/>, a PERSISTENT
+        /// inventory — a font met once stays there forever. The fallback picker only offered what
+        /// is in memory AT THAT MOMENT: TMP assets currently loaded, and for Unity fonts only
+        /// those a Harmony prefix has actually seen since launch. So a font used as a fallback in
+        /// a previous session vanished from the picker while still showing in the list above it,
+        /// depending on which scenes had been visited — the intermittent behaviour reported in
+        /// game. Arial never disappeared because the engine keeps it loaded at all times.
+        ///
+        /// Offering them is sound: a fallback is stored by NAME and resolved lazily
+        /// (CreateFallbackAsset), and every scene change rescans and applies it. Choosing one that
+        /// is not loaded yet simply takes effect when the game loads it. They are marked so the
+        /// picker never claims a font is available here and now — a downloaded translation carries
+        /// the inventory of ANOTHER player's game, which may hold fonts this install does not have.
+        /// </summary>
+        public static string[] GetKnownUnloadedFontNames(bool tmpFamily)
+        {
+            var result = new List<string>();
+
+            foreach (var kvp in TranslatorCore.FontSettingsMap)
+            {
+                string name = kvp.Key;
+                if (string.IsNullOrEmpty(name)) continue;
+
+                // Already offered by the loaded-fonts lists — never propose it twice
+                if (_gameTMPFonts.ContainsKey(name) || _gameUnityFonts.ContainsKey(name)) continue;
+
+                // Fonts we built ourselves are not game fonts
+                if (_createdFallbackFontNames.Contains(name)) continue;
+
+                if (!BelongsToFamily(kvp.Value?.type, tmpFamily)) continue;
+
+                result.Add(name);
+            }
+
+            var names = result.ToArray();
+            System.Array.Sort(names, StringComparer.OrdinalIgnoreCase);
+            return names;
+        }
+
+        /// <summary>
+        /// Whether a stored font type belongs to the asked family. An unknown or missing type
+        /// belongs to BOTH: it is exactly the case we must not lose (older translations stored no
+        /// type), and a wrong guess only costs a fallback that resolves to nothing, whereas
+        /// dropping it makes the font unpickable. A type from the OTHER family is excluded —
+        /// offering it would be a promise we know to be false.
+        /// </summary>
+        private static bool BelongsToFamily(string storedType, bool tmpFamily)
+        {
+            if (string.IsNullOrEmpty(storedType) || storedType == "Unknown") return true;
+
+            bool isTmp = storedType == "TMP" || storedType == "TextMeshPro" || storedType == "TMP (alt)";
+            if (isTmp) return tmpFamily;
+
+            bool isUnity = storedType == "Unity" || storedType == "Unity Font" || storedType == "TextMesh";
+            if (isUnity) return !tmpFamily;
+
+            // Anything else (tk2d and friends) renders through its own pipeline and cannot serve
+            // as a fallback for either family.
+            return false;
+        }
+
         /// <summary>
         /// Whether the OS name→path font map could be built on this runtime. When it could not,
         /// "no path found" means "unknown", not "not installed".

@@ -1432,6 +1432,25 @@ namespace UnityGameTranslator.Core.UI.Panels
             return ordered;
         }
 
+        /// <summary>
+        /// The picker entry matching <paramref name="wanted"/>, ignoring display-only markers on
+        /// either side, or null. Marker-insensitive because the same font is offered as
+        /// "[Game] X" or "[Game] X (not loaded)" depending on what the game currently holds in
+        /// memory — a stored fallback must select its entry in both cases.
+        /// </summary>
+        private static string FindOption(List<string> options, string wanted)
+        {
+            if (options == null || string.IsNullOrEmpty(wanted)) return null;
+
+            string target = FontManager.StripOptionMarker(wanted);
+            foreach (var option in options)
+            {
+                if (string.Equals(FontManager.StripOptionMarker(option), target, StringComparison.Ordinal))
+                    return option;
+            }
+            return null;
+        }
+
         private void CreateFontRow(FontDisplayInfo fontInfo)
         {
             // Main row container with padding
@@ -1524,11 +1543,17 @@ namespace UnityGameTranslator.Core.UI.Panels
                 else if (isTMPFont)
                 {
                     var gameFonts = FontManager.GetGameFontNames();
-                    if (gameFonts.Length > 0)
+                    var knownFonts = FontManager.GetKnownUnloadedFontNames(tmpFamily: true);
+                    if (gameFonts.Length > 0 || knownFonts.Length > 0)
                     {
                         options.Add("--- Game Fonts ---");
                         foreach (var gf in gameFonts)
                             options.Add("[Game] " + gf);
+                        // Known from the translation but not in memory right now — see
+                        // FontManager.GetKnownUnloadedFontNames. Without them, a font used as a
+                        // fallback in a past session could not be picked again.
+                        foreach (var kf in knownFonts)
+                            options.Add("[Game] " + kf + FontManager.UnloadedMarker);
                     }
 
                     if (_systemFonts != null && _systemFonts.Length > 0)
@@ -1541,11 +1566,14 @@ namespace UnityGameTranslator.Core.UI.Panels
                 {
                     // Unity Font: game fonts first (with [Game] prefix), then system fonts
                     var gameUnityFonts = FontManager.GetGameUnityFontNames();
-                    if (gameUnityFonts.Length > 0)
+                    var knownFonts = FontManager.GetKnownUnloadedFontNames(tmpFamily: false);
+                    if (gameUnityFonts.Length > 0 || knownFonts.Length > 0)
                     {
                         options.Add("--- Game Fonts ---");
                         foreach (var gf in gameUnityFonts)
                             options.Add("[Game] " + gf);
+                        foreach (var kf in knownFonts)
+                            options.Add("[Game] " + kf + FontManager.UnloadedMarker);
                     }
                     availableFonts = _systemFonts;
                 }
@@ -1580,32 +1608,26 @@ namespace UnityGameTranslator.Core.UI.Panels
                     return;
                 }
 
-                // Determine initial value
+                // Determine initial value.
+                // Matched against the options AS DISPLAYED but marker-insensitive: the same font
+                // shows as "[Game] X" or "[Game] X (not loaded)" depending on what the game has
+                // loaded right now, and a configured fallback must find its entry either way.
+                // The selected value must BE one of the options, otherwise the list opens with
+                // nothing highlighted and the user cannot see what is currently set.
                 string initialValue = "(None)";
                 if (!string.IsNullOrEmpty(fontInfo.FallbackFont))
                 {
-                    bool foundInList = (availableFonts != null && Array.Exists(availableFonts, f => f == fontInfo.FallbackFont));
-                    bool foundInCustom = (customFonts != null && Array.Exists(customFonts, f => "[Custom] " + f == fontInfo.FallbackFont || f == fontInfo.FallbackFont));
-                    bool foundInGame = options.Contains(fontInfo.FallbackFont); // Covers [Game] prefixed entries
-
-                    if (foundInList || foundInCustom || foundInGame)
-                    {
-                        initialValue = fontInfo.FallbackFont;
-                    }
-                    else
-                    {
+                    string match = FindOption(options, fontInfo.FallbackFont)
                         // Migration: old JSON might have a game font name without [Game] prefix
-                        string withGamePrefix = "[Game] " + fontInfo.FallbackFont;
-                        if (options.Contains(withGamePrefix))
-                        {
-                            initialValue = withGamePrefix;
-                        }
-                        else
-                        {
-                            initialValue = fontInfo.FallbackFont;
-                            options.Add(fontInfo.FallbackFont + " (incompatible)");
-                        }
+                        ?? FindOption(options, "[Game] " + fontInfo.FallbackFont);
+
+                    if (match == null)
+                    {
+                        match = fontInfo.FallbackFont + FontManager.IncompatibleMarker;
+                        options.Add(match);
                     }
+
+                    initialValue = match;
                 }
 
                 // Create searchable dropdown with filter
@@ -1620,11 +1642,8 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 dropdown.CreateUI(fallbackRow, (selectedValue) =>
                 {
-                    // Handle incompatible marker
-                    if (selectedValue != null && selectedValue.EndsWith(" (incompatible)"))
-                    {
-                        selectedValue = selectedValue.Replace(" (incompatible)", "");
-                    }
+                    // Markers are display only — what gets stored is the font name
+                    selectedValue = FontManager.StripOptionMarker(selectedValue);
                     string fallback = selectedValue == "(None)" ? null : selectedValue;
                     OnFontFallbackChanged(capturedFontName, fallback);
                 }, width: 350);

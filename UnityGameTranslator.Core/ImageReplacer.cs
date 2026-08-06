@@ -605,7 +605,11 @@ namespace UnityGameTranslator.Core
                 return false;
             }
 
-            string fullPath = Path.Combine(_imagesFolder, pngFilename);
+            // Reached with names read straight out of the translation file (LoadAllReplacements),
+            // so the name is resolved rather than trusted — see ResolveImagePath.
+            string fullPath = ResolveImagePath(pngFilename);
+            if (fullPath == null) return false;
+
             if (!File.Exists(fullPath))
             {
                 TranslatorCore.LogWarning($"[ImageReplacer] File not found: {Sanitize.Path(fullPath)}");
@@ -689,8 +693,34 @@ namespace UnityGameTranslator.Core
         public static bool HasReplacementFile(string spriteName)
         {
             if (!_replacements.TryGetValue(spriteName, out var entry)) return false;
-            if (string.IsNullOrEmpty(entry.File)) return false;
-            return System.IO.File.Exists(Path.Combine(_imagesFolder, entry.File));
+
+            string path = ResolveImagePath(entry.File);
+            return path != null && System.IO.File.Exists(path);
+        }
+
+        /// <summary>
+        /// The full path of a replacement image, or null when the name does not designate one.
+        ///
+        /// The name comes from the translation file, which is downloaded from another player, so
+        /// it is treated as input rather than as data we wrote: it must name a file INSIDE the
+        /// images folder — a plain file name, with no directory part and no "..". Path.Combine
+        /// would otherwise happily return a location anywhere on the disk.
+        /// </summary>
+        private static string ResolveImagePath(string fileName)
+        {
+            if (string.IsNullOrEmpty(fileName)) return null;
+
+            if (fileName.IndexOf('/') >= 0 || fileName.IndexOf('\\') >= 0
+                || fileName.IndexOf("..", StringComparison.Ordinal) >= 0
+                || Path.IsPathRooted(fileName)
+                || fileName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+            {
+                TranslatorCore.LogWarning(
+                    $"[ImageReplacer] Ignoring image entry: '{Sanitize.Path(fileName)}' is not a file name in the images folder");
+                return null;
+            }
+
+            return Path.Combine(_imagesFolder, fileName);
         }
 
         /// <summary>

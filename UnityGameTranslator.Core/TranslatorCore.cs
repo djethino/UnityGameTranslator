@@ -86,6 +86,17 @@ namespace UnityGameTranslator.Core
         public static Dictionary<string, TranslationEntry> AncestorCache { get; private set; } = new Dictionary<string, TranslationEntry>();
 
         /// <summary>
+        /// The SETTINGS as they stood at the last sync, or null when unknown
+        /// (ancestor written before settings travelled with it, or an ancestor
+        /// built from a source whose settings we never saw).
+        ///
+        /// null is not a degraded value, it is an honest one: with no common
+        /// baseline the mod cannot tell who changed a section, so it asks
+        /// instead of guessing. See analyse/metadata-visibility-and-sync.md.
+        /// </summary>
+        public static TranslationSettings AncestorSettings { get; private set; }
+
+        /// <summary>
         /// Hash of the translation at last sync (download or upload).
         /// Used to detect if server has changed since our last sync.
         /// Stored in translations.json as _source.hash
@@ -515,6 +526,343 @@ namespace UnityGameTranslator.Core
             TranslatorPatches.ClearLastTranslatedCache();
             SetMetadataDirty();
         }
+
+        #region Settings sections (fonts, rules, images, exclusions, variables, game settings)
+
+        // These six sections travel inside translations.json alongside the lines.
+        // Building and applying them lives here, in ONE place, so that loading a
+        // file, saving it, and replacing a single section on the player's request
+        // can never drift apart. See analyse/metadata-visibility-and-sync.md.
+
+        /// <summary>
+        /// The section as it stands in memory, in the exact shape SaveCache
+        /// writes to disk. Returns null when the section is empty.
+        /// </summary>
+        internal static JToken BuildSettingsSection(string section)
+        {
+            switch (section)
+            {
+                case SettingsSection.Fonts:
+                    return BuildFontsSection();
+                case SettingsSection.FontRules:
+                    return BuildFontOverridesSection();
+                case SettingsSection.Images:
+                    return ImageReplacer.SaveToJson();
+                case SettingsSection.Exclusions:
+                    return BuildExclusionsSection();
+                case SettingsSection.Variables:
+                    return VariableManager.SaveToJson();
+                case SettingsSection.GameSettings:
+                    return BuildGameSettingsSection();
+                default:
+                    return null;
+            }
+        }
+
+        private static JObject BuildFontsSection()
+        {
+            if (FontSettingsMap.Count == 0) return null;
+
+            var fontsObj = new JObject();
+            foreach (var kvp in FontSettingsMap)
+            {
+                var fontObj = new JObject
+                {
+                    ["enabled"] = kvp.Value.enabled,
+                    ["fallback"] = kvp.Value.fallback,
+                    ["type"] = kvp.Value.type
+                };
+                // Save the effective scale if not default (1.0). This is the value an
+                // older mod reads (it knows neither scale_auto nor size_percent), so it
+                // must carry the full materialized product for backward-compatible size.
+                if (Math.Abs(kvp.Value.scale - 1.0f) > 0.001f)
+                {
+                    fontObj["scale"] = kvp.Value.scale;
+                }
+                // Persist the Phase B decomposition so a newer mod recomputes the
+                // effective scale from the live design-scale + the deliberate percent.
+                if (kvp.Value.scale_auto)
+                    fontObj["scale_auto"] = true;
+                if (Math.Abs(kvp.Value.size_percent - 1.0f) > 0.001f)
+                    fontObj["size_percent"] = kvp.Value.size_percent;
+                fontsObj[kvp.Key] = fontObj;
+            }
+
+            return fontsObj;
+        }
+
+        private static JArray BuildFontOverridesSection()
+        {
+            if (fontOverrides.Count == 0) return null;
+
+            var overridesArray = new JArray();
+            foreach (var rule in fontOverrides)
+            {
+                var ruleObj = new JObject { ["match"] = rule.match };
+                if (!string.IsNullOrEmpty(rule.replacement))
+                    ruleObj["replacement"] = rule.replacement;
+                if (Math.Abs(rule.size_multiplier) > 0.001f)
+                    ruleObj["size_multiplier"] = rule.size_multiplier;
+                if (!rule.enabled)
+                    ruleObj["enabled"] = false;
+                if (!string.IsNullOrEmpty(rule.comment))
+                    ruleObj["comment"] = rule.comment;
+                overridesArray.Add(ruleObj);
+            }
+
+            return overridesArray;
+        }
+
+        private static JArray BuildExclusionsSection()
+        {
+            if (userExclusions.Count == 0) return null;
+
+            var exclusionsArray = new JArray();
+            foreach (var pattern in userExclusions)
+            {
+                exclusionsArray.Add(pattern);
+            }
+
+            return exclusionsArray;
+        }
+
+        private static JObject BuildGameSettingsSection()
+        {
+            // Written only when a value leaves its default: the absence of the
+            // section is itself the information "nothing was changed here"
+            var settingsObj = new JObject();
+            if (DisableEventSystemOverride)
+                settingsObj["disable_eventsystem_override"] = true;
+            if (!TypewritingDetection)
+                settingsObj["typewriting_detection"] = false;
+            if (!ConcatDetection)
+                settingsObj["concat_detection"] = false;
+            if (!string.IsNullOrEmpty(TranslationUIFont))
+                settingsObj["ui_font"] = TranslationUIFont;
+
+            return settingsObj.Count > 0 ? settingsObj : null;
+        }
+
+        /// <summary>
+        /// Parse the _fonts section. Shared by loading a file and by replacing
+        /// the section on the player's request, so both read it identically.
+        /// </summary>
+        private static Dictionary<string, FontSettings> ParseFontsSection(JToken token)
+        {
+            var result = new Dictionary<string, FontSettings>();
+            var obj = token as JObject;
+            if (obj == null) return result;
+
+            foreach (var fontProp in obj.Properties())
+            {
+                var settings = new FontSettings();
+                var fontObj = fontProp.Value as JObject;
+                if (fontObj != null)
+                {
+                    settings.enabled = fontObj["enabled"]?.Value<bool>() ?? true;
+                    settings.fallback = fontObj["fallback"]?.Value<string>();
+                    settings.type = fontObj["type"]?.Value<string>();
+                    settings.scale = fontObj["scale"]?.Value<float>() ?? 1.0f;
+                    settings.scale_auto = fontObj["scale_auto"]?.Value<bool>() ?? false;
+                    // Migration: pre-B translations have no size_percent and stored the
+                    // deliberate % directly in `scale` (auto was always off) → carry it
+                    // over so the effective size is preserved exactly (frozen).
+                    var sizePercentToken = fontObj["size_percent"];
+                    settings.size_percent = sizePercentToken != null
+                        ? sizePercentToken.Value<float>()
+                        : (settings.scale_auto ? 1.0f : settings.scale);
+                }
+                result[fontProp.Name] = settings;
+            }
+
+            return result;
+        }
+
+        private static List<FontOverrideRule> ParseFontOverridesSection(JToken token)
+        {
+            var result = new List<FontOverrideRule>();
+            var array = token as JArray;
+            if (array == null) return result;
+
+            foreach (var item in array)
+            {
+                var ruleObj = item as JObject;
+                if (ruleObj == null) continue;
+                var rule = new FontOverrideRule
+                {
+                    match = ruleObj["match"]?.Value<string>(),
+                    replacement = ruleObj["replacement"]?.Value<string>(),
+                    size_multiplier = ruleObj["size_multiplier"]?.Value<float>() ?? 0f,
+                    enabled = ruleObj["enabled"]?.Value<bool>() ?? true,
+                    comment = ruleObj["comment"]?.Value<string>()
+                };
+                if (!string.IsNullOrEmpty(rule.match))
+                {
+                    result.Add(rule);
+                }
+            }
+
+            return result;
+        }
+
+        private static List<string> ParseExclusionsSection(JToken token)
+        {
+            var result = new List<string>();
+            var array = token as JArray;
+            if (array == null) return result;
+
+            foreach (var item in array)
+            {
+                var pattern = item.ToString();
+                if (!string.IsNullOrEmpty(pattern))
+                {
+                    result.Add(pattern);
+                }
+            }
+
+            return result;
+        }
+
+        private static void ApplyGameSettingsSection(JToken token)
+        {
+            var settingsObj = token as JObject;
+
+            // A missing key means the default, never "keep what I had": these
+            // values are only written when they leave their default, so reading
+            // a file that omits them must restore the defaults
+            DisableEventSystemOverride = settingsObj?["disable_eventsystem_override"]?.Value<bool>() ?? false;
+            TypewritingDetection = settingsObj?["typewriting_detection"]?.Value<bool>() ?? true;
+            ConcatDetection = settingsObj?["concat_detection"]?.Value<bool>() ?? true;
+            TranslationUIFont = settingsObj?["ui_font"]?.Value<string>();
+            InvalidateInterfaceFontAvailability();
+        }
+
+        /// <summary>
+        /// Replace one section with the given content (null = the other side has
+        /// nothing here). Used when the player chooses, section by section, what
+        /// to take from a downloaded translation.
+        ///
+        /// The caller saves and calls AfterSettingsSectionsChanged once.
+        /// </summary>
+        internal static void ApplySettingsSection(string section, JToken token)
+        {
+            switch (section)
+            {
+                case SettingsSection.Fonts:
+                    ApplyFontsSectionPreservingInventory(token);
+                    break;
+
+                case SettingsSection.FontRules:
+                    fontOverrides.Clear();
+                    fontOverrides.AddRange(ParseFontOverridesSection(token));
+                    break;
+
+                case SettingsSection.Images:
+                    ImageReplacer.LoadFromJson(token);
+                    break;
+
+                case SettingsSection.Exclusions:
+                    userExclusions.Clear();
+                    userExclusions.AddRange(ParseExclusionsSection(token));
+                    break;
+
+                case SettingsSection.Variables:
+                    VariableManager.LoadFromJson(token);
+                    break;
+
+                case SettingsSection.GameSettings:
+                    ApplyGameSettingsSection(token);
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// Replace the font SETTINGS while keeping the discovery inventory.
+        ///
+        /// FontSettingsMap holds two different things: what the translator
+        /// deliberately configured, and every font the mod happened to meet
+        /// in-game (FontManager adds them on sight, with defaults). Clearing the
+        /// map to take someone else's fonts would throw away the inventory of a
+        /// game this player has explored and the other has not — and the mod
+        /// needs it to know what it can act on.
+        ///
+        /// So: entries present in the incoming section are overwritten, entries
+        /// absent from it are reset to defaults but KEPT (with their detected
+        /// type), and incoming fonts we have never seen are added.
+        /// </summary>
+        private static void ApplyFontsSectionPreservingInventory(JToken token)
+        {
+            var incoming = ParseFontsSection(token);
+
+            foreach (var name in FontSettingsMap.Keys.ToList())
+            {
+                if (incoming.ContainsKey(name)) continue;
+
+                // Known locally, unset remotely: drop OUR settings, keep the entry
+                var current = FontSettingsMap[name];
+                FontSettingsMap[name] = new FontSettings
+                {
+                    enabled = true,
+                    fallback = null,
+                    type = current.type,
+                    scale = 1.0f,
+                    scale_auto = false,
+                    size_percent = 1.0f
+                };
+            }
+
+            foreach (var kvp in incoming)
+            {
+                // Keep a locally detected type when the incoming file has none:
+                // the other player may never have met this font
+                if (string.IsNullOrEmpty(kvp.Value.type)
+                    && FontSettingsMap.TryGetValue(kvp.Key, out var known)
+                    && !string.IsNullOrEmpty(known.type))
+                {
+                    kvp.Value.type = known.type;
+                }
+                FontSettingsMap[kvp.Key] = kvp.Value;
+            }
+        }
+
+        /// <summary>
+        /// Invalidate what the changed sections affect, once for the whole batch.
+        /// Splitting this out keeps ApplySettingsSection free of side effects, so
+        /// applying six sections does not clear the same caches six times.
+        /// </summary>
+        internal static void AfterSettingsSectionsChanged(IEnumerable<string> sections)
+        {
+            var changed = new HashSet<string>(sections ?? Enumerable.Empty<string>());
+            if (changed.Count == 0) return;
+
+            if (changed.Contains(SettingsSection.Fonts) || changed.Contains(SettingsSection.FontRules))
+            {
+                fontOverrideCache.Clear();
+                FontManager.ClearComponentScaleOverrides();
+                // Font sizes are read from true originals again
+                TranslatorPatches.ClearFontSizeCache();
+                // Without this, the "already translated" check returns early and
+                // never reaches the font scale
+                TranslatorPatches.ClearLastTranslatedCache();
+            }
+
+            if (changed.Contains(SettingsSection.Exclusions))
+            {
+                userExclusionCache.Clear();
+            }
+
+            if (changed.Contains(SettingsSection.Images))
+            {
+                ImageReplacer.LoadAllReplacements();
+            }
+
+            SetMetadataDirty();
+            ClearProcessingCaches();
+
+            LogInfo($"[Settings] Replaced sections: {string.Join(", ", changed.ToArray())}");
+        }
+
+        #endregion
 
         /// <summary>
         /// Clear the font override cache (call on scene change).
@@ -1798,8 +2146,13 @@ namespace UnityGameTranslator.Core
 
             // Re-derived from the file being loaded (a reload may drop what a previous file carried)
             TranslationHasUILines = false;
-            TranslationUIFont = null;
-            InvalidateInterfaceFontAvailability();
+            // Game settings are written only when they leave their default, so a
+            // file WITHOUT the section means "everything default" — not "keep
+            // whatever the previous file set". Only ui_font was being reset here,
+            // so after loading a translation that disabled nothing, typewriting
+            // and concat detection stayed off from the previous one. Same
+            // reasoning as MetadataDirty/LocalChangesCount just below.
+            ApplyGameSettingsSection(null);
             // Both are written only when non-default, so their ABSENCE from the file means "clean".
             // Without resetting them here the parse below simply never assigns, and the in-memory
             // value survives the reload: after downloading the server's copy — which carries
@@ -1868,16 +2221,8 @@ namespace UnityGameTranslator.Core
                     }
                     else if (prop.Name == "_exclusions" && prop.Value.Type == JTokenType.Array)
                     {
-                        // Load user exclusion patterns
                         userExclusions.Clear();
-                        foreach (var item in prop.Value)
-                        {
-                            var pattern = item.ToString();
-                            if (!string.IsNullOrEmpty(pattern))
-                            {
-                                userExclusions.Add(pattern);
-                            }
-                        }
+                        userExclusions.AddRange(ParseExclusionsSection(prop.Value));
                         LogDebug($"[LoadCache] Loaded {userExclusions.Count} user exclusions");
                     }
                     else if (prop.Name == "_image_replacements")
@@ -1890,68 +2235,29 @@ namespace UnityGameTranslator.Core
                     }
                     else if (prop.Name == "_fonts" && prop.Value.Type == JTokenType.Object)
                     {
-                        // Load per-font settings
+                        // Loading a FILE replaces the map wholesale, inventory
+                        // included: the file is the whole truth at startup, and
+                        // the inventory rebuilds itself as the player plays.
+                        // (Replacing this section on the player's request is a
+                        // different move — see ApplyFontsSectionPreservingInventory.)
                         FontSettingsMap.Clear();
-                        foreach (var fontProp in (prop.Value as JObject).Properties())
+                        foreach (var kvp in ParseFontsSection(prop.Value))
                         {
-                            var settings = new FontSettings();
-                            var fontObj = fontProp.Value as JObject;
-                            if (fontObj != null)
-                            {
-                                settings.enabled = fontObj["enabled"]?.Value<bool>() ?? true;
-                                settings.fallback = fontObj["fallback"]?.Value<string>();
-                                settings.type = fontObj["type"]?.Value<string>();
-                                settings.scale = fontObj["scale"]?.Value<float>() ?? 1.0f;
-                                settings.scale_auto = fontObj["scale_auto"]?.Value<bool>() ?? false;
-                                // Migration: pre-B translations have no size_percent and stored the
-                                // deliberate % directly in `scale` (auto was always off) → carry it
-                                // over so the effective size is preserved exactly (frozen).
-                                var sizePercentToken = fontObj["size_percent"];
-                                settings.size_percent = sizePercentToken != null
-                                    ? sizePercentToken.Value<float>()
-                                    : (settings.scale_auto ? 1.0f : settings.scale);
-                            }
-                            FontSettingsMap[fontProp.Name] = settings;
+                            FontSettingsMap[kvp.Key] = kvp.Value;
                         }
                         LogDebug($"[LoadCache] Loaded {FontSettingsMap.Count} font settings");
                     }
                     else if (prop.Name == "_font_overrides" && prop.Value.Type == JTokenType.Array)
                     {
-                        // Load font override rules
                         fontOverrides.Clear();
                         fontOverrideCache.Clear();
-                        foreach (var item in prop.Value)
-                        {
-                            var ruleObj = item as JObject;
-                            if (ruleObj == null) continue;
-                            var rule = new FontOverrideRule
-                            {
-                                match = ruleObj["match"]?.Value<string>(),
-                                replacement = ruleObj["replacement"]?.Value<string>(),
-                                size_multiplier = ruleObj["size_multiplier"]?.Value<float>() ?? 0f,
-                                enabled = ruleObj["enabled"]?.Value<bool>() ?? true,
-                                comment = ruleObj["comment"]?.Value<string>()
-                            };
-                            if (!string.IsNullOrEmpty(rule.match))
-                            {
-                                fontOverrides.Add(rule);
-                            }
-                        }
+                        fontOverrides.AddRange(ParseFontOverridesSection(prop.Value));
                         LogDebug($"[LoadCache] Loaded {fontOverrides.Count} font override rules");
                     }
                     else if (prop.Name == "_settings" && prop.Value.Type == JTokenType.Object)
                     {
-                        // Load game-specific settings
-                        var settingsObj = prop.Value as JObject;
-                        if (settingsObj != null)
-                        {
-                            DisableEventSystemOverride = settingsObj["disable_eventsystem_override"]?.Value<bool>() ?? false;
-                            TypewritingDetection = settingsObj["typewriting_detection"]?.Value<bool>() ?? true;
-                            ConcatDetection = settingsObj["concat_detection"]?.Value<bool>() ?? true;
-                            TranslationUIFont = settingsObj["ui_font"]?.Value<string>();
-                            InvalidateInterfaceFontAvailability();
-                            LogDebug($"[LoadCache] Loaded settings: DisableEventSystemOverride={DisableEventSystemOverride}, TW={TypewritingDetection}, Concat={ConcatDetection}");
-                        }
+                        ApplyGameSettingsSection(prop.Value);
+                        LogDebug($"[LoadCache] Loaded settings: DisableEventSystemOverride={DisableEventSystemOverride}, TW={TypewritingDetection}, Concat={ConcatDetection}");
                     }
                     else if (!prop.Name.StartsWith("_"))
                     {
@@ -2144,6 +2450,7 @@ namespace UnityGameTranslator.Core
             if (!File.Exists(ancestorPath))
             {
                 AncestorCache = new Dictionary<string, TranslationEntry>();
+                AncestorSettings = null;
                 return;
             }
 
@@ -2154,6 +2461,10 @@ namespace UnityGameTranslator.Core
                 ancestorJson = ancestorJson.Replace("\r\n", "\n");
                 var ancestorParsed = JObject.Parse(ancestorJson);
                 AncestorCache = new Dictionary<string, TranslationEntry>();
+                // An ancestor written before settings travelled with it carries
+                // none: that is "unknown", not "empty", so it stays null
+                var ancestorSettings = TranslationSettings.FromFile(ancestorParsed);
+                AncestorSettings = ancestorSettings.HasAny() ? ancestorSettings : null;
 
                 foreach (var prop in ancestorParsed.Properties())
                 {
@@ -2190,6 +2501,7 @@ namespace UnityGameTranslator.Core
             {
                 Adapter.LogWarning($"Failed to load ancestor cache: {ae.Message}");
                 AncestorCache = new Dictionary<string, TranslationEntry>();
+                AncestorSettings = null;
             }
         }
 
@@ -2281,10 +2593,33 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// The Main's SETTINGS at the last merge from it, or null when unknown.
+        /// Same rule as AncestorSettings: null means "no common baseline", which
+        /// makes the mod ask rather than decide.
+        /// </summary>
+        public static TranslationSettings LoadMainAncestorSettings()
+        {
+            try
+            {
+                if (!File.Exists(MainAncestorPath)) return null;
+
+                string json = File.ReadAllText(MainAncestorPath).Replace("\r\n", "\n");
+                var settings = TranslationSettings.FromFile(JObject.Parse(json));
+                return settings.HasAny() ? settings : null;
+            }
+            catch (Exception e)
+            {
+                Adapter.LogWarning($"Failed to read upstream ancestor settings: {e.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>
         /// Remember the Main exactly as it was merged, so the NEXT merge can tell
         /// what upstream changed instead of asking about everything again.
         /// </summary>
-        public static void SaveMainAncestor(Dictionary<string, TranslationEntry> mainContent, string mainHash)
+        public static void SaveMainAncestor(Dictionary<string, TranslationEntry> mainContent, string mainHash,
+            TranslationSettings mainSettings = null)
         {
             try
             {
@@ -2297,6 +2632,13 @@ namespace UnityGameTranslator.Core
                         ["v"] = kvp.Value.Value,
                         ["t"] = kvp.Value.Tag ?? "A"
                     };
+                }
+
+                // Only record what we saw of the Main's settings (see
+                // SaveAncestorFromRemote): an invented baseline is worse than none
+                if (mainSettings != null)
+                {
+                    mainSettings.WriteInto(output);
                 }
 
                 File.WriteAllText(MainAncestorPath, output.ToString(Formatting.Indented));
@@ -2328,6 +2670,12 @@ namespace UnityGameTranslator.Core
                         ["t"] = kvp.Value.Tag ?? "A"
                     };
                 }
+
+                // Settings travel with the ancestor too: without them there is no
+                // way to tell "the other side changed this" from "I changed this",
+                // and every difference would have to be asked about
+                AncestorSettings = TranslationSettings.FromCurrentState();
+                AncestorSettings.WriteInto(output);
 
                 string json = output.ToString(Formatting.Indented);
                 File.WriteAllText(ancestorPath, json);
@@ -2400,7 +2748,8 @@ namespace UnityGameTranslator.Core
         /// <summary>
         /// Save remote translations as ancestor (new format with tags).
         /// </summary>
-        public static void SaveAncestorFromRemote(Dictionary<string, TranslationEntry> remoteTranslations)
+        public static void SaveAncestorFromRemote(Dictionary<string, TranslationEntry> remoteTranslations,
+            TranslationSettings remoteSettings = null)
         {
             try
             {
@@ -2415,6 +2764,15 @@ namespace UnityGameTranslator.Core
                         ["v"] = kvp.Value.Value,
                         ["t"] = kvp.Value.Tag ?? "A"
                     };
+                }
+
+                // Only record settings we actually saw. Guessing them (say, from
+                // our own state) would claim a common baseline that never
+                // existed, and the next comparison would trust it.
+                AncestorSettings = remoteSettings;
+                if (remoteSettings != null)
+                {
+                    remoteSettings.WriteInto(output);
                 }
 
                 string json = output.ToString(Formatting.Indented);
@@ -5732,90 +6090,16 @@ namespace UnityGameTranslator.Core
                         output["_metadata_dirty"] = true;
                     }
 
-                    // Save user exclusion patterns
-                    if (userExclusions.Count > 0)
+                    // Settings sections, built by the same code that reads and
+                    // replaces them (see the "Settings sections" region). An
+                    // empty section is omitted: its absence means "nothing set".
+                    foreach (var section in SettingsSection.All)
                     {
-                        var exclusionsArray = new JArray();
-                        foreach (var pattern in userExclusions)
+                        var token = BuildSettingsSection(section);
+                        if (token != null)
                         {
-                            exclusionsArray.Add(pattern);
+                            output[SettingsSection.JsonKey(section)] = token;
                         }
-                        output["_exclusions"] = exclusionsArray;
-                    }
-
-                    // Save image replacement definitions
-                    var imgReplacements = ImageReplacer.SaveToJson();
-                    if (imgReplacements != null)
-                        output["_image_replacements"] = imgReplacements;
-
-                    // Save variable definitions
-                    var variables = VariableManager.SaveToJson();
-                    if (variables != null)
-                        output["_variables"] = variables;
-
-                    // Save per-font settings
-                    if (FontSettingsMap.Count > 0)
-                    {
-                        var fontsObj = new JObject();
-                        foreach (var kvp in FontSettingsMap)
-                        {
-                            var fontObj = new JObject
-                            {
-                                ["enabled"] = kvp.Value.enabled,
-                                ["fallback"] = kvp.Value.fallback,
-                                ["type"] = kvp.Value.type
-                            };
-                            // Save the effective scale if not default (1.0). This is the value an
-                            // older mod reads (it knows neither scale_auto nor size_percent), so it
-                            // must carry the full materialized product for backward-compatible size.
-                            if (Math.Abs(kvp.Value.scale - 1.0f) > 0.001f)
-                            {
-                                fontObj["scale"] = kvp.Value.scale;
-                            }
-                            // Persist the Phase B decomposition so a newer mod recomputes the
-                            // effective scale from the live design-scale + the deliberate percent.
-                            if (kvp.Value.scale_auto)
-                                fontObj["scale_auto"] = true;
-                            if (Math.Abs(kvp.Value.size_percent - 1.0f) > 0.001f)
-                                fontObj["size_percent"] = kvp.Value.size_percent;
-                            fontsObj[kvp.Key] = fontObj;
-                        }
-                        output["_fonts"] = fontsObj;
-                    }
-
-                    // Save font override rules
-                    if (fontOverrides.Count > 0)
-                    {
-                        var overridesArray = new JArray();
-                        foreach (var rule in fontOverrides)
-                        {
-                            var ruleObj = new JObject { ["match"] = rule.match };
-                            if (!string.IsNullOrEmpty(rule.replacement))
-                                ruleObj["replacement"] = rule.replacement;
-                            if (Math.Abs(rule.size_multiplier) > 0.001f)
-                                ruleObj["size_multiplier"] = rule.size_multiplier;
-                            if (!rule.enabled)
-                                ruleObj["enabled"] = false;
-                            if (!string.IsNullOrEmpty(rule.comment))
-                                ruleObj["comment"] = rule.comment;
-                            overridesArray.Add(ruleObj);
-                        }
-                        output["_font_overrides"] = overridesArray;
-                    }
-
-                    // Save game-specific settings (only if non-default values)
-                    {
-                        var settingsObj = new JObject();
-                        if (DisableEventSystemOverride)
-                            settingsObj["disable_eventsystem_override"] = true;
-                        if (!TypewritingDetection)
-                            settingsObj["typewriting_detection"] = false;
-                        if (!ConcatDetection)
-                            settingsObj["concat_detection"] = false;
-                        if (!string.IsNullOrEmpty(TranslationUIFont))
-                            settingsObj["ui_font"] = TranslationUIFont;
-                        if (settingsObj.Count > 0)
-                            output["_settings"] = settingsObj;
                     }
 
                     // Sorted translations with new format {"v": "value", "t": "tag", "i": index}

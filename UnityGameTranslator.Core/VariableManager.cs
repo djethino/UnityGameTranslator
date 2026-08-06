@@ -434,11 +434,22 @@ namespace UnityGameTranslator.Core
             return null;
         }
 
+        /// <summary>
+        /// The mod's own assembly. Variables read values out of the GAME, so nothing here is ever
+        /// a legitimate target — while the mod does hold, in memory, things the game does not:
+        /// the API token, in the config object and in the HTTP client's Authorization header.
+        /// A translation is written by someone else, so the safe rule is that it may only reach
+        /// the game it translates.
+        /// </summary>
+        private static readonly System.Reflection.Assembly ModAssembly = typeof(TranslatorCore).Assembly;
+
         private static Type FindType(string className)
         {
             // Try direct lookup first (fast, no GetTypes iteration)
             foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
             {
+                if (asm == ModAssembly) continue;
+
                 try
                 {
                     var type = asm.GetType(className);
@@ -451,6 +462,8 @@ namespace UnityGameTranslator.Core
             string il2cppName = "Il2Cpp" + className;
             foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
             {
+                if (asm == ModAssembly) continue;
+
                 try
                 {
                     var type = asm.GetType(il2cppName);
@@ -462,6 +475,8 @@ namespace UnityGameTranslator.Core
             // Last resort: name-only search (slower but handles partial names)
             foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
             {
+                if (asm == ModAssembly) continue;
+
                 try
                 {
                     foreach (var type in asm.GetTypes())

@@ -2,6 +2,7 @@
 using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
@@ -79,6 +80,7 @@ namespace UnityGameTranslator.Core.UI
         public static Panels.LanguagePanel LanguagePanel { get; private set; }
         public static Panels.StatusOverlay StatusOverlay { get; private set; }
         public static Panels.ConfirmationPanel ConfirmationPanel { get; private set; }
+        public static Panels.SettingsChoicePanel SettingsChoicePanel { get; private set; }
         public static Panels.InspectorPanel InspectorPanel { get; private set; }
         public static Panels.TranslationParametersPanel TranslationParamsPanel { get; private set; }
 
@@ -363,6 +365,7 @@ namespace UnityGameTranslator.Core.UI
             LanguagePanel = new Panels.LanguagePanel(UiBase);
             StatusOverlay = new Panels.StatusOverlay(UiBase);
             ConfirmationPanel = new Panels.ConfirmationPanel(UiBase);
+            SettingsChoicePanel = new Panels.SettingsChoicePanel(UiBase);
             InspectorPanel = new Panels.InspectorPanel(UiBase);
             TranslationParamsPanel = new Panels.TranslationParametersPanel(UiBase);
 
@@ -377,6 +380,7 @@ namespace UnityGameTranslator.Core.UI
             _interactivePanels.Add(MergePanel);
             _interactivePanels.Add(LanguagePanel);
             _interactivePanels.Add(ConfirmationPanel);
+            _interactivePanels.Add(SettingsChoicePanel);
             _interactivePanels.Add(InspectorPanel);
             _interactivePanels.Add(TranslationParamsPanel);
 
@@ -1679,6 +1683,112 @@ namespace UnityGameTranslator.Core.UI
         /// is not valid JSON — a corrupted write would make LoadCache reset
         /// the cache and regenerate the file UUID, breaking the lineage.
         /// </summary>
+        #region Settings reconciliation
+
+        /// <summary>
+        /// Decide what happens to the settings sections when content arrives.
+        ///
+        /// Two very different starting points, hence the flag:
+        /// - a full download has ALREADY overwritten our settings (the file was
+        ///   written and reloaded), so keeping ours means putting them back;
+        /// - a merge has ignored the incoming settings entirely, so taking
+        ///   theirs means applying them.
+        ///
+        /// Either way the player is only asked about sections BOTH sides moved.
+        /// Before this, full downloads silently replaced everything and merges
+        /// silently dropped everything — see
+        /// analyse/metadata-visibility-and-sync.md §3.
+        /// </summary>
+        /// <param name="ours">Our settings BEFORE the incoming content was applied</param>
+        /// <param name="theirs">The settings carried by the incoming content</param>
+        /// <param name="ancestor">The last common state, null when unknown</param>
+        /// <param name="incomingAlreadyApplied">True on the full-download paths</param>
+        /// <param name="sourceLabel">Where it comes from, in the player's words</param>
+        public static void ReconcileSettings(
+            TranslationSettings ours,
+            TranslationSettings theirs,
+            TranslationSettings ancestor,
+            bool incomingAlreadyApplied,
+            string sourceLabel)
+        {
+            if (ours == null || theirs == null) return;
+
+            var plan = SettingsSyncPlan.Build(ours, theirs, ancestor);
+
+            // What needs no arbitration is settled here and now
+            var automatic = incomingAlreadyApplied
+                ? plan.Sections
+                    .Where(s => s.State == SettingsSectionState.OursChanged)
+                    .Select(s => s.Section)
+                    .ToList()
+                : plan.AutoAccepted;
+
+            if (automatic.Count > 0)
+            {
+                (incomingAlreadyApplied ? ours : theirs).ApplySections(automatic);
+                TranslatorCore.SaveCache();
+            }
+
+            if (!plan.NeedsPlayer)
+            {
+                if (automatic.Count > 0) MainPanel?.RefreshUI();
+                return;
+            }
+
+            if (SettingsChoicePanel == null)
+            {
+                // No UI to ask with: keep what the player already had rather
+                // than take a silent decision on their behalf
+                TranslatorCore.LogWarning("[Settings] No panel available - keeping local settings");
+                if (incomingAlreadyApplied)
+                {
+                    ours.ApplySections(plan.Decisions.Select(d => d.Section).ToList());
+                    TranslatorCore.SaveCache();
+                }
+                return;
+            }
+
+            // A dialog nobody can see is the same as no dialog at all
+            ShowUI = true;
+            SettingsChoicePanel.Show(
+                plan.Decisions,
+                sourceLabel,
+                chosen => ApplySettingsChoice(plan, ours, theirs, incomingAlreadyApplied, chosen),
+                // "Compare" opens a side-by-side view of the settings, which
+                // does not exist yet (lot 3): the button stays hidden rather
+                // than pointing at a screen that cannot show them.
+                null,
+                () => ApplySettingsChoice(plan, ours, theirs, incomingAlreadyApplied, new List<string>()));
+        }
+
+        private static void ApplySettingsChoice(
+            SettingsSyncPlan plan,
+            TranslationSettings ours,
+            TranslationSettings theirs,
+            bool incomingAlreadyApplied,
+            List<string> chosen)
+        {
+            var arbitrated = plan.Decisions.Select(d => d.Section).ToList();
+
+            if (incomingAlreadyApplied)
+            {
+                // Theirs is already in place: restore ours where declined
+                var declined = arbitrated.Where(s => !chosen.Contains(s)).ToList();
+                ours.ApplySections(declined);
+            }
+            else
+            {
+                // Ours is in place: apply theirs where accepted
+                theirs.ApplySections(chosen.Where(s => arbitrated.Contains(s)).ToList());
+            }
+
+            TranslatorCore.SaveCache();
+            MainPanel?.RefreshUI();
+            TranslatorCore.LogInfo($"[Settings] Player replaced {chosen.Count} of {arbitrated.Count} section(s)");
+        }
+
+        #endregion
+
         private static bool ApplyDownloadedTranslationFile(string content)
         {
             try
@@ -1697,10 +1807,19 @@ namespace UnityGameTranslator.Core.UI
                 System.IO.File.Copy(TranslatorCore.CachePath, backupPath, true);
             }
 
+            // Snapshot our settings BEFORE the file replaces them: the reload
+            // below applies the incoming ones wholesale, and this is the only
+            // moment ours still exist
+            var ourSettings = TranslationSettings.FromCurrentState();
+            var ancestorSettings = TranslatorCore.AncestorSettings;
+
             System.IO.File.WriteAllText(TranslatorCore.CachePath, content);
 
             // Reload cache to apply new content immediately
             TranslatorCore.ReloadCache();
+
+            ReconcileSettings(ourSettings, TranslationSettings.FromJsonText(content),
+                ancestorSettings, incomingAlreadyApplied: true, sourceLabel: "the version you just validated");
             return true;
         }
 
@@ -2679,6 +2798,10 @@ namespace UnityGameTranslator.Core.UI
                             System.IO.File.Copy(TranslatorCore.CachePath, backupPath, true);
                         }
 
+                        // Our settings, captured before the incoming file replaces them
+                        var ourSettings = TranslationSettings.FromCurrentState();
+                        var ancestorSettings = TranslatorCore.AncestorSettings;
+
                         // Write new content
                         System.IO.File.WriteAllText(TranslatorCore.CachePath, content);
 
@@ -2708,6 +2831,10 @@ namespace UnityGameTranslator.Core.UI
                         PendingUpdateDirection = UpdateDirection.None;
 
                         TranslatorCore.LogInfo($"[UpdateCheck] Translation updated successfully");
+
+                        ReconcileSettings(ourSettings, TranslationSettings.FromJsonText(content),
+                            ancestorSettings, incomingAlreadyApplied: true,
+                            sourceLabel: "the newer version online");
 
                         // Refresh MainPanel to show new translation count
                         MainPanel?.RefreshUI();
@@ -2779,8 +2906,17 @@ namespace UnityGameTranslator.Core.UI
                         else
                         {
                             // No real conflicts - auto-apply and notify
-                            ApplyMergeWithTags(mergeResult, fileHash, remoteTranslations);
+                            var ourSettings = TranslationSettings.FromCurrentState();
+                            var ancestorSettings = TranslatorCore.AncestorSettings;
+                            var remoteSettings = TranslationSettings.FromJsonText(content);
+
+                            ApplyMergeWithTags(mergeResult, fileHash, remoteTranslations, remoteSettings);
                             TranslatorCore.LogInfo($"[Merge] Auto-merged: {mergeResult.Statistics.GetSummary()}");
+
+                            // A merge keeps OUR settings and drops theirs, silently.
+                            // Now that the server's are known, they get a say.
+                            ReconcileSettings(ourSettings, remoteSettings, ancestorSettings,
+                                incomingAlreadyApplied: false, sourceLabel: "your version online");
                         }
                     }
                     else
@@ -2854,7 +2990,9 @@ namespace UnityGameTranslator.Core.UI
             TranslatorCore.LogInfo($"[MainMerge] Applied: {TranslatorCore.LocalChangesCount} line(s) now waiting to be uploaded");
         }
 
-        public static void ApplyMergeWithTags(MergeResultWithTags mergeResult, string serverHash, Dictionary<string, TranslationEntry> remoteTranslations = null)
+        public static void ApplyMergeWithTags(MergeResultWithTags mergeResult, string serverHash,
+            Dictionary<string, TranslationEntry> remoteTranslations = null,
+            TranslationSettings remoteSettings = null)
         {
             // Apply the merged translations with their tags preserved
             TranslatorCore.TranslationCache.Clear();
@@ -2878,10 +3016,12 @@ namespace UnityGameTranslator.Core.UI
             TranslatorCore.SaveCache();
 
             // Save REMOTE content as ancestor (not merged!)
-            // This way LocalChangesCount = our additions that need uploading
+            // This way LocalChangesCount = our additions that need uploading.
+            // The remote SETTINGS go with it when we know them: that baseline is
+            // what lets the next sync tell who changed a section.
             if (remoteTranslations != null)
             {
-                TranslatorCore.SaveAncestorFromRemote(remoteTranslations);
+                TranslatorCore.SaveAncestorFromRemote(remoteTranslations, remoteSettings);
             }
             else
             {
@@ -2944,6 +3084,10 @@ namespace UnityGameTranslator.Core.UI
                 {
                     if (success && !string.IsNullOrEmpty(content))
                     {
+                        // Our settings, captured before the incoming file replaces them
+                        var ourSettings = TranslationSettings.FromCurrentState();
+                        var ancestorSettings = TranslatorCore.AncestorSettings;
+
                         // Write content to file
                         System.IO.File.WriteAllText(TranslatorCore.CachePath, content);
                         TranslatorCore.ReloadCache();
@@ -2985,6 +3129,10 @@ namespace UnityGameTranslator.Core.UI
                         PendingUpdateDirection = UpdateDirection.None;
 
                         TranslatorCore.LogInfo($"[Download] Downloaded translation #{translationId} from @{translationUploader}");
+
+                        ReconcileSettings(ourSettings, TranslationSettings.FromJsonText(content),
+                            ancestorSettings, incomingAlreadyApplied: true,
+                            sourceLabel: $"the translation by @{translationUploader}");
 
                         MainPanel?.RefreshUI();
                         onComplete?.Invoke(true, "Downloaded successfully!");
@@ -3092,8 +3240,19 @@ namespace UnityGameTranslator.Core.UI
                         else
                         {
                             // No conflicts - apply merge directly
-                            ApplyMergeWithTags(mergeResult, fileHash, remoteTranslations);
+                            var ourSettings = TranslationSettings.FromCurrentState();
+                            var ancestorSettings = TranslatorCore.AncestorSettings;
+                            var remoteSettings = TranslationSettings.FromJsonText(content);
+
+                            ApplyMergeWithTags(mergeResult, fileHash, remoteTranslations, remoteSettings);
                             onComplete?.Invoke(true, "Merged successfully!");
+
+                            // First contact with a community translation: its
+                            // fonts and exclusions are usually the reason it
+                            // reads correctly, so they must not be dropped
+                            ReconcileSettings(ourSettings, remoteSettings, ancestorSettings,
+                                incomingAlreadyApplied: false,
+                                sourceLabel: $"the translation by @{translationUploader}");
                         }
                     }
                     else

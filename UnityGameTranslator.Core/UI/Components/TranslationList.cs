@@ -432,18 +432,20 @@ namespace UnityGameTranslator.Core.UI.Components
         }
 
         /// <summary>
-        /// How good the translated part is, in one word. The proportions are the bar's job.
+        /// How far the translation has been reviewed, in a few words. The proportions are the
+        /// bar's job; this says whether a human has been through it at all — the one thing that
+        /// decides between two translations of the same game.
         /// </summary>
         private static string FormatQualityStats(TranslationInfo translation)
         {
-            int total = translation.HumanCount + translation.ValidatedCount + translation.AiCount;
-            if (total == 0)
-            {
-                // Fallback to old Type field if no H/V/A data
-                return translation.Type ?? "unknown";
-            }
+            string stage = TranslationQuality.ReviewStage(
+                translation.HumanCount, translation.ValidatedCount, translation.AiCount);
 
-            return TranslationQuality.LabelFor(translation.QualityScore);
+            // Nothing translated: older servers send no H/V/A either, and the legacy Type field
+            // is the only thing left to say
+            if (stage == null) return translation.Type ?? "unknown";
+
+            return TranslatorCore.TranslateOwnUIDynamic(stage);
         }
 
         private void RefreshSelection()

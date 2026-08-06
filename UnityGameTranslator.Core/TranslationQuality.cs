@@ -31,16 +31,44 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// The word for a 0-3 score. Same thresholds and same words as the website documentation,
-        /// so a player reading "Good" in the browser reads "Good" in the game.
+        /// How much of a translation a human has actually read: (H+V) / translated lines.
+        /// Negative when nothing is translated yet — a captured file has no coverage, not a
+        /// coverage of zero, and the difference is what the reader needs.
         /// </summary>
-        public static string LabelFor(float score)
+        public static float ReviewCoverage(int human, int validated, int ai)
         {
-            if (score >= 2.5f) return "Excellent";
-            if (score >= 2.0f) return "Good";
-            if (score >= 1.5f) return "Fair";
-            if (score >= 1.0f) return "Basic";
-            return "Raw AI";
+            int translated = human + validated + ai;
+            if (translated == 0) return -1f;
+
+            return (float)(human + validated) / translated;
+        }
+
+        /// <summary>
+        /// Where a translation stands, as a STEP rather than a mark. Same four steps and same
+        /// thresholds as the website, so a player reads the same thing about a file in the
+        /// browser and in the game.
+        ///
+        /// Replaces the 0-3 score wherever someone has to CHOOSE. That score answers "where does
+        /// each line come from" when the question is "has anyone read this": unreviewed machine
+        /// output scores 1.0 out of 3, and a file reviewed line by line stops at 2.0 unless its
+        /// author retyped what the AI already had right. Everything crowded into the middle.
+        ///
+        /// Steps carry no verdict either. Every translation starts as raw machine output, since
+        /// that is how this mod works — naming that "Raw AI" on a scale ending at "Excellent"
+        /// tells a newcomer their starting point is worthless.
+        ///
+        /// Returns null when there is nothing translated to have reviewed.
+        /// </summary>
+        public static string ReviewStage(int human, int validated, int ai)
+        {
+            float coverage = ReviewCoverage(human, validated, ai);
+            if (coverage < 0f) return null;
+
+            if (coverage >= 1f) return "Fully reviewed";
+            if (coverage >= 0.4f) return "Review well under way";
+            if (coverage > 0f) return "Review started";
+
+            return "Machine translation";
         }
     }
 }

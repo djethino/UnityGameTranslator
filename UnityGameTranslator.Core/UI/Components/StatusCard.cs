@@ -44,10 +44,17 @@ namespace UnityGameTranslator.Core.UI.Components
         public int TotalLines { get; set; }
 
         // Scoring lives in TranslationQuality so the card, the community list and the website
-        // all rank a translation the same way.
+        // all read a translation the same way.
         public float QualityScore => TranslationQuality.ComputeScore(HumanCount, ValidatedCount, AiCount);
 
-        public string QualityLabel => TranslationQuality.LabelFor(QualityScore);
+        /// <summary>Where this translation stands, as a step. Null when nothing is translated.</summary>
+        public string ReviewStage => TranslationQuality.ReviewStage(HumanCount, ValidatedCount, AiCount);
+
+        /// <summary>How much of it a human has read, 0 to 1. Negative when nothing is translated.</summary>
+        public float ReviewCoverage => TranslationQuality.ReviewCoverage(HumanCount, ValidatedCount, AiCount);
+
+        /// <summary>Translated lines nobody has read yet — what is left to do, not a mark.</summary>
+        public int UnreviewedCount => AiCount;
     }
 
     /// <summary>
@@ -195,7 +202,8 @@ namespace UnityGameTranslator.Core.UI.Components
             _qualityLabel = UIFactory.CreateLabel(legendRow, "QualityLabel", "", TextAnchor.UpperRight);
             _qualityLabel.fontSize = UIStyles.FontSizeHint;
             _qualityLabel.color = UIStyles.TextMuted;
-            UIFactory.SetLayoutElement(_qualityLabel.gameObject, minWidth: 90, flexibleWidth: 0);
+            // Holds a step and a remaining count now, not "2.5/3"
+            UIFactory.SetLayoutElement(_qualityLabel.gameObject, minWidth: 220, flexibleWidth: 0);
             TranslatorCore.RegisterExcluded(_qualityLabel);
 
             _legendRow = legendRow;
@@ -418,11 +426,25 @@ namespace UnityGameTranslator.Core.UI.Components
 
             if (_qualityLabel != null)
             {
-                // A file with nothing translated has no quality to report. The formula would
-                // return 0.0/3 and read as "terrible translation" for a file that simply has
-                // no translation in it yet — a verdict on work that does not exist.
-                bool hasTranslations = stats.HumanCount + stats.ValidatedCount + stats.AiCount > 0;
-                _qualityLabel.text = hasTranslations ? $"{stats.QualityScore:F1}/3" : string.Empty;
+                // The step, plus what is left to read. No mark: a score answers "where does each
+                // line come from" when the question is "has anyone been through this", and its
+                // top demanded retyping by hand what the AI already had right. The remaining
+                // count is the part that moves as you work — that is what carries a translator
+                // forward, not a grade.
+                string stage = stats.ReviewStage;
+                if (stage == null)
+                {
+                    _qualityLabel.text = string.Empty;
+                }
+                else if (stats.UnreviewedCount > 0)
+                {
+                    _qualityLabel.text = TranslatorCore.TranslateOwnUIDynamic(stage)
+                        + $" · {stats.UnreviewedCount} " + TranslatorCore.TranslateOwnUIDynamic("left to review");
+                }
+                else
+                {
+                    _qualityLabel.text = TranslatorCore.TranslateOwnUIDynamic(stage);
+                }
             }
 
             _qualityRow.SetActive(true);

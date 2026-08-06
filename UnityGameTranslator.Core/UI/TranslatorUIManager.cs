@@ -1091,6 +1091,14 @@ namespace UnityGameTranslator.Core.UI
                 MergePanel?.SetActive(true);
                 MergePanel?.SetMergeDataWithTags(mergeResult, mainContent, fileHash ?? expectedHash);
                 MergePanel?.SetUpstreamMerge(mainContent, fileHash ?? expectedHash);
+                // The Main's baseline is its own (.mainancestor), never this
+                // branch's: mixing them is exactly what analyse/main-to-branch-sync.md
+                // §2 warns against
+                MergePanel?.SetSettingsContext(
+                    TranslationSettings.FromCurrentState(),
+                    TranslationSettings.FromJsonText(content),
+                    TranslatorCore.LoadMainAncestorSettings(),
+                    "the Main translation");
             });
         }
 
@@ -2902,6 +2910,11 @@ namespace UnityGameTranslator.Core.UI
                             // SetActive first to ensure UI is constructed before setting data
                             MergePanel?.SetActive(true);
                             MergePanel?.SetMergeDataWithTags(mergeResult, remoteTranslations, fileHash);
+                            MergePanel?.SetSettingsContext(
+                                TranslationSettings.FromCurrentState(),
+                                TranslationSettings.FromJsonText(content),
+                                TranslatorCore.AncestorSettings,
+                                "your version online");
                         }
                         else
                         {
@@ -2958,7 +2971,8 @@ namespace UnityGameTranslator.Core.UI
         public static void ApplyUpstreamMergeWithTags(
             MergeResultWithTags mergeResult,
             Dictionary<string, TranslationEntry> mainContent,
-            string mainHash)
+            string mainHash,
+            TranslationSettings mainSettings = null)
         {
             TranslatorCore.TranslationCache.Clear();
             foreach (var kvp in mergeResult.Merged)
@@ -2972,7 +2986,9 @@ namespace UnityGameTranslator.Core.UI
 
             if (mainContent != null)
             {
-                TranslatorCore.SaveMainAncestor(mainContent, mainHash);
+                // The Main's settings go into ITS ancestor, never into ours: the
+                // two baselines answer different questions and must not mix
+                TranslatorCore.SaveMainAncestor(mainContent, mainHash, mainSettings);
             }
 
             // Against OUR ancestor, untouched above: what we just imported counts
@@ -3235,6 +3251,11 @@ namespace UnityGameTranslator.Core.UI
                             // SetActive first to ensure UI is constructed before setting data
                             MergePanel?.SetActive(true);
                             MergePanel?.SetMergeDataWithTags(mergeResult, remoteTranslations, fileHash);
+                            MergePanel?.SetSettingsContext(
+                                TranslationSettings.FromCurrentState(),
+                                TranslationSettings.FromJsonText(content),
+                                TranslatorCore.AncestorSettings,
+                                $"the translation by @{translationUploader}");
                             // Don't call onComplete - MergePanel handles the rest
                         }
                         else

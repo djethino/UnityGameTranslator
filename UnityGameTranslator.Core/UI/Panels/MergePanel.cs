@@ -45,6 +45,13 @@ namespace UnityGameTranslator.Core.UI.Panels
         private bool _isUpstreamMerge;
         private Dictionary<string, TranslationEntry> _upstreamContent;
         private string _upstreamHash;
+        // Settings travelling with the incoming content, and ours as they stood
+        // before it arrived. Null when the caller does not know them, in which
+        // case the merge leaves settings alone — as it always did.
+        private TranslationSettings _incomingSettings;
+        private TranslationSettings _ourSettingsBefore;
+        private TranslationSettings _ancestorSettingsBefore;
+        private string _settingsSourceLabel;
         private Components.HelpZone _helpZone;
         private bool _userMadeChoice = false;
         // True while the review page round trip is in flight (see OpenReviewPage)
@@ -70,6 +77,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             _isUpstreamMerge = false;
             _upstreamContent = null;
             _upstreamHash = null;
+            // Same reasoning as the upstream bookkeeping above: settings context
+            // belongs to ONE merge, and SetSettingsContext refills it right after
+            _incomingSettings = null;
+            _ourSettingsBefore = null;
+            _ancestorSettingsBefore = null;
+            _settingsSourceLabel = null;
             SetApplyButtonEnabled(false);
             ResetBulkButtonStyles();
 
@@ -482,14 +495,44 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 // From the Main: separate ancestor, separate hash
                 TranslatorUIManager.ApplyUpstreamMergeWithTags(
-                    _pendingMergeWithTags, _upstreamContent, _upstreamHash);
+                    _pendingMergeWithTags, _upstreamContent, _upstreamHash, _incomingSettings);
             }
             else
             {
-                TranslatorUIManager.ApplyMergeWithTags(_pendingMergeWithTags, _serverHash, _remoteTranslationsWithTags);
+                TranslatorUIManager.ApplyMergeWithTags(_pendingMergeWithTags, _serverHash,
+                    _remoteTranslationsWithTags, _incomingSettings);
             }
 
             SetActive(false);
+
+            // A merge resolves LINES. The settings that came with them were
+            // dropped in silence until now — including on the Main → branch
+            // path, where they are often the whole point of the merge.
+            if (_incomingSettings != null)
+            {
+                TranslatorUIManager.ReconcileSettings(
+                    _ourSettingsBefore, _incomingSettings, _ancestorSettingsBefore,
+                    incomingAlreadyApplied: false, sourceLabel: _settingsSourceLabel);
+            }
+        }
+
+        /// <summary>
+        /// Hand the panel the settings travelling with the incoming content, so
+        /// that applying the merge can also settle them.
+        ///
+        /// Call it AFTER SetMergeDataWithTags, which clears this context: a
+        /// later merge must never inherit the previous one's settings.
+        /// </summary>
+        internal void SetSettingsContext(
+            TranslationSettings ours,
+            TranslationSettings incoming,
+            TranslationSettings ancestor,
+            string sourceLabel)
+        {
+            _ourSettingsBefore = ours;
+            _incomingSettings = incoming;
+            _ancestorSettingsBefore = ancestor;
+            _settingsSourceLabel = sourceLabel;
         }
 
         /// <summary>

@@ -603,6 +603,7 @@ namespace UnityGameTranslator.Core
                 ValidatedCount = t["validated_count"]?.Value<int>() ?? 0,
                 AiCount = t["ai_count"]?.Value<int>() ?? 0,
                 CaptureCount = t["capture_count"]?.Value<int>() ?? 0,
+                SkippedCount = t["skipped_count"]?.Value<int>() ?? 0,
                 FileHash = t["file_hash"]?.Value<string>(),
                 FileUuid = t["file_uuid"]?.Value<string>(),
                 UpdatedAt = t["updated_at"]?.Value<string>(),
@@ -1746,6 +1747,11 @@ namespace UnityGameTranslator.Core
         public int ValidatedCount { get; set; }
         public int AiCount { get; set; }
         public int CaptureCount { get; set; }
+        /// <summary>
+        /// Lines the author marked as not to translate (tag S). Outside the composition bar and
+        /// the score; shown on its own. Zero on servers that predate the field.
+        /// </summary>
+        public int SkippedCount { get; set; }
         public string FileHash { get; set; }
         public string FileUuid { get; set; }
         public string UpdatedAt { get; set; }
@@ -1778,18 +1784,10 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Quality score (0-3 scale): H=3pts, V=2pts, A=1pt
+        /// Quality score (0-3 scale): H=3pts, V=2pts, A=1pt. Shared formula — see
+        /// <see cref="TranslationQuality"/>.
         /// </summary>
-        public float QualityScore
-        {
-            get
-            {
-                int effectiveLines = HumanCount + ValidatedCount + AiCount;
-                if (effectiveLines == 0) return 0f;
-                float weightedSum = (HumanCount * 3) + (ValidatedCount * 2) + (AiCount * 1);
-                return weightedSum / effectiveLines;
-            }
-        }
+        public float QualityScore => TranslationQuality.ComputeScore(HumanCount, ValidatedCount, AiCount);
 
         /// <summary>
         /// Get website URL for this translation

@@ -122,6 +122,9 @@ namespace UnityGameTranslator.Core.UI
         public static readonly Color StatusWarning = new Color(0.95f, 0.73f, 0.29f);               // Amber
         public static readonly Color StatusError = new Color(0.95f, 0.41f, 0.41f);                 // Red
         public static readonly Color StatusInfo = new Color(0.38f, 0.73f, 0.98f);                  // Blue
+        // Captured but not translated yet: known work still to do. Matches the website's
+        // gray-500 so the same bar reads the same on both sides.
+        public static readonly Color StatusNeutral = new Color(0.42f, 0.45f, 0.50f);               // Grey
 
         // Item/List backgrounds (navy blue tones)
         public static readonly Color ItemBackground = new Color(0.17f, 0.20f, 0.27f, 1f);          // E3 row (above card)

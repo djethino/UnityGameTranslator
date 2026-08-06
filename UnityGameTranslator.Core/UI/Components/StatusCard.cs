@@ -39,31 +39,15 @@ namespace UnityGameTranslator.Core.UI.Components
         public int ValidatedCount { get; set; }
         public int AiCount { get; set; }
         public int CaptureCount { get; set; }
+        /// <summary>Entries the author marked as not to translate (tag S).</summary>
+        public int SkippedCount { get; set; }
         public int TotalLines { get; set; }
 
-        public float QualityScore
-        {
-            get
-            {
-                int effective = HumanCount + ValidatedCount + AiCount;
-                if (effective == 0) return 0f;
-                float weighted = (HumanCount * 3) + (ValidatedCount * 2) + (AiCount * 1);
-                return weighted / effective;
-            }
-        }
+        // Scoring lives in TranslationQuality so the card, the community list and the website
+        // all rank a translation the same way.
+        public float QualityScore => TranslationQuality.ComputeScore(HumanCount, ValidatedCount, AiCount);
 
-        public string QualityLabel
-        {
-            get
-            {
-                float score = QualityScore;
-                if (score >= 2.5f) return "Excellent";
-                if (score >= 2.0f) return "Good";
-                if (score >= 1.5f) return "Fair";
-                if (score >= 1.0f) return "Basic";
-                return "Raw AI";
-            }
-        }
+        public string QualityLabel => TranslationQuality.LabelFor(QualityScore);
     }
 
     /// <summary>
@@ -83,15 +67,19 @@ namespace UnityGameTranslator.Core.UI.Components
         private GameObject _qualityRow;
         private GameObject _legendRow;
         private Text _qualityLabel;
-        private GameObject _qualityBarContainer;
-        private Image _humanBar;
-        private Image _validatedBar;
-        private Image _aiBar;
+        private QualityBar _qualityBar;
         private Text _qualityLegend;
         private GameObject _modeRow;
         private Text _secondaryLabel;
         private UniverseLib.UI.Models.ButtonRef _modeActionBtn;
         private Action _modeAction;
+
+        // The details line is written by two independent callers (SetDetails for the volume,
+        // SetQualityStats for the skipped count). Keeping the parts lets either one arrive
+        // first without erasing the other's contribution.
+        private int _detailsEntryCount;
+        private string _detailsGameName;
+        private int _detailsSkippedCount;
 
         /// <summary>
         /// The root GameObject of the status card.
@@ -192,28 +180,9 @@ namespace UnityGameTranslator.Core.UI.Components
             var qrLayout = _qualityRow.GetComponent<HorizontalLayoutGroup>();
             if (qrLayout != null) qrLayout.childAlignment = TextAnchor.MiddleLeft;
 
-            // Quality bar container (stacked colored segments)
-            _qualityBarContainer = UIFactory.CreateHorizontalGroup(_qualityRow, "QualityBar", false, false, true, true, 0);
-            UIFactory.SetLayoutElement(_qualityBarContainer, minHeight: 10, preferredHeight: 10, flexibleWidth: 9999, flexibleHeight: 0);
-            UIStyles.SetBackground(_qualityBarContainer, UIStyles.ViewportBackground);
-
-            // H segment (green)
-            var humanObj = UIFactory.CreateUIObject("HumanBar", _qualityBarContainer);
-            _humanBar = humanObj.AddComponent<Image>();
-            _humanBar.color = UIStyles.StatusSuccess;
-            UIFactory.SetLayoutElement(humanObj, minHeight: 8, flexibleWidth: 0);
-
-            // V segment (blue)
-            var validatedObj = UIFactory.CreateUIObject("ValidatedBar", _qualityBarContainer);
-            _validatedBar = validatedObj.AddComponent<Image>();
-            _validatedBar.color = UIStyles.StatusInfo;
-            UIFactory.SetLayoutElement(validatedObj, minHeight: 8, flexibleWidth: 0);
-
-            // A segment (orange)
-            var aiObj = UIFactory.CreateUIObject("AiBar", _qualityBarContainer);
-            _aiBar = aiObj.AddComponent<Image>();
-            _aiBar.color = UIStyles.StatusWarning;
-            UIFactory.SetLayoutElement(aiObj, minHeight: 8, flexibleWidth: 0);
+            // Shared with the community list and matching the website's bar — see QualityBar.
+            _qualityBar = new QualityBar();
+            _qualityBar.CreateUI(_qualityRow, QualityBar.DefaultHeight);
 
             // Row 4 — legend carrying the PERCENTAGES (asked for: the bar shows proportions, the
             // legend says what they are worth), with the overall score at the right end.
@@ -387,14 +356,33 @@ namespace UnityGameTranslator.Core.UI.Components
         /// </summary>
         public void SetDetails(int entryCount, string targetLanguage, string gameName = null)
         {
+            _detailsEntryCount = entryCount;
+            _detailsGameName = gameName;
+            RefreshDetailsLine();
+        }
+
+        /// <summary>
+        /// "· 1 248 entries · 312 lines marked as not to translate · Hollow Knight".
+        /// The skipped count belongs here rather than in the bar's legend: it says what the file
+        /// contains, and putting it next to the colour key would send the reader looking for a
+        /// segment that does not exist.
+        /// </summary>
+        private void RefreshDetailsLine()
+        {
             if (_detailsLabel == null) return;
 
             // Sits right after the status on the same line, so it reads as one sentence:
             // "● SYNCED · 1 248 entries". The language moved up to the identity row, so it is not
             // repeated here. Counts and game names are data — concatenated, never translated.
-            string details = "· " + TranslatorCore.TranslateOwnUIDynamic($"{entryCount} entries");
-            if (!string.IsNullOrEmpty(gameName))
-                details += $" · {gameName}";
+            string details = "· " + TranslatorCore.TranslateOwnUIDynamic($"{_detailsEntryCount} entries");
+
+            string skipped = QualityBar.SkippedLabel(_detailsSkippedCount);
+            if (skipped != null)
+                details += $" · {skipped}";
+
+            if (!string.IsNullOrEmpty(_detailsGameName))
+                details += $" · {_detailsGameName}";
+
             _detailsLabel.text = details;
         }
 
@@ -416,40 +404,34 @@ namespace UnityGameTranslator.Core.UI.Components
 
             if (stats == null)
             {
+                _detailsSkippedCount = 0;
+                RefreshDetailsLine();
                 _qualityRow.SetActive(false);
                 _legendRow?.SetActive(false);
                 return;
             }
 
-            int total = stats.HumanCount + stats.ValidatedCount + stats.AiCount;
-            if (total == 0)
+            _detailsSkippedCount = stats.SkippedCount;
+            RefreshDetailsLine();
+
+            // Captures are part of the picture: a file made of 900 captured lines and 100
+            // translated ones has to look like it. Hiding the grey flattered the result.
+            bool hasData = _qualityBar != null &&
+                _qualityBar.SetCounts(stats.HumanCount, stats.ValidatedCount, stats.AiCount, stats.CaptureCount);
+
+            if (!hasData)
             {
                 _qualityRow.SetActive(false);
                 _legendRow?.SetActive(false);
                 return;
             }
-
-            // Update bar widths (flexible layout based on proportions)
-            var humanLayout = _humanBar?.gameObject?.GetComponent<LayoutElement>();
-            var validatedLayout = _validatedBar?.gameObject?.GetComponent<LayoutElement>();
-            var aiLayout = _aiBar?.gameObject?.GetComponent<LayoutElement>();
-
-            if (humanLayout != null) humanLayout.flexibleWidth = stats.HumanCount;
-            if (validatedLayout != null) validatedLayout.flexibleWidth = stats.ValidatedCount;
-            if (aiLayout != null) aiLayout.flexibleWidth = stats.AiCount;
 
             // Percentages in the legend: the bar shows the proportions, the legend says what they
             // are worth. Rounded to whole percents — a decimal here is noise, not information.
-            int humanPct = Mathf.RoundToInt(stats.HumanCount * 100f / total);
-            int validatedPct = Mathf.RoundToInt(stats.ValidatedCount * 100f / total);
-            int aiPct = 100 - humanPct - validatedPct; // absorbs the rounding so the three read 100
-
             if (_qualityLegend != null)
             {
-                _qualityLegend.text =
-                    $"<color=#{ColorUtility.ToHtmlStringRGB(UIStyles.StatusSuccess)}>■</color> {TranslatorCore.TranslateOwnUIDynamic("Human")} {humanPct}%   " +
-                    $"<color=#{ColorUtility.ToHtmlStringRGB(UIStyles.StatusInfo)}>■</color> {TranslatorCore.TranslateOwnUIDynamic("Validated")} {validatedPct}%   " +
-                    $"<color=#{ColorUtility.ToHtmlStringRGB(UIStyles.StatusWarning)}>■</color> {TranslatorCore.TranslateOwnUIDynamic("AI")} {aiPct}%";
+                _qualityLegend.text = QualityBar.BuildLegend(
+                    stats.HumanCount, stats.ValidatedCount, stats.AiCount, stats.CaptureCount);
             }
 
             if (_qualityLabel != null)
@@ -497,6 +479,13 @@ namespace UnityGameTranslator.Core.UI.Components
                     case "A":
                         stats.AiCount++;
                         break;
+                    case "S":
+                        // Counted, but never mixed with the translations — it is a decision
+                        // about a line, not a translation of it (see QualityBar.SkippedLabel).
+                        stats.SkippedCount++;
+                        break;
+                    // "M" (mod UI) is deliberately absent: technical noise, of no use to anyone
+                    // judging a translation.
                 }
             }
 

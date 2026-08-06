@@ -262,9 +262,15 @@ namespace UnityGameTranslator.Core.UI.Components
             string note = BuildNoteLine(translation);
             int extraRows = (facts != null ? 1 : 0) + (note != null ? 1 : 0);
 
+            // The bar is only drawn when the server gave us something to draw; an empty container
+            // under every row would read as "nothing translated" instead of "nothing known".
+            bool hasComposition = translation.HumanCount + translation.ValidatedCount +
+                translation.AiCount + translation.CaptureCount > 0;
+            int barHeight = hasComposition ? QualityBar.CompactHeight + 2 : 0;
+
             var itemRow = UIFactory.CreateHorizontalGroup(_listContent, $"Item_{translation.Id}", false, false, true, true, 10);
             UIFactory.SetLayoutElement(itemRow,
-                minHeight: UIStyles.CodeDisplayHeight + extraRows * UIStyles.RowHeightSmall,
+                minHeight: UIStyles.CodeDisplayHeight + extraRows * UIStyles.RowHeightSmall + barHeight,
                 flexibleWidth: 9999);
 
             // Use highlight background for lineage match
@@ -322,13 +328,23 @@ namespace UnityGameTranslator.Core.UI.Components
             if (isLineageMatch) titleLabel.color = UIStyles.StatusInfo;  // Highlight text color
             UIFactory.SetLayoutElement(titleLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
 
-            // Details row with quality stats (vote count is now in vote buttons)
-            string qualityText = FormatQualityStats(translation);
-            string detailsText = $"{translation.LineCount} lines | {qualityText}";
+            // Details row: the size of the file, then how good it is. The H/V/A breakdown that
+            // used to be spelled out here is now the bar below — three numbers to be mentally
+            // compared were harder to read than three coloured lengths.
+            string detailsText = $"{translation.LineCount} lines | {FormatQualityStats(translation)}";
             var detailsLabel = UIFactory.CreateLabel(infoCol, "Details", detailsText, TextAnchor.MiddleLeft);
             detailsLabel.fontSize = UIStyles.FontSizeHint;
             detailsLabel.color = UIStyles.TextMuted;
             UIFactory.SetLayoutElement(detailsLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+
+            // Same component, same colours and same denominator as the card and the website.
+            if (hasComposition)
+            {
+                var bar = new QualityBar();
+                bar.CreateUI(infoCol, QualityBar.CompactHeight);
+                bar.SetCounts(translation.HumanCount, translation.ValidatedCount,
+                    translation.AiCount, translation.CaptureCount);
+            }
 
             // Second details row: is it alive, is it finished, is it used, does
             // it need anything. All of it was already received and shown nowhere.
@@ -373,8 +389,8 @@ namespace UnityGameTranslator.Core.UI.Components
         }
 
         /// <summary>
-        /// "12 Mar 2026 · complete · 87 downloads · + Resources", or null when
-        /// the server told us none of it (older servers send no content date).
+        /// "12 Mar 2026 · complete · 87 downloads · Marked as not to translate: 312 · ◆ Resources",
+        /// or null when the server told us none of it (older servers send no content date).
         /// </summary>
         private static string BuildFactsLine(TranslationInfo translation)
         {
@@ -385,7 +401,16 @@ namespace UnityGameTranslator.Core.UI.Components
             if (string.Equals(translation.Status, "complete", StringComparison.OrdinalIgnoreCase))
                 facts.Add("complete");
             if (translation.DownloadCount > 0) facts.Add($"{translation.DownloadCount} downloads");
-            if (!string.IsNullOrEmpty(translation.ResourcesUrl)) facts.Add("+ Resources");
+
+            // Sits next to the bar without being part of it: an author who excluded what must
+            // stay untouched worked better than one who let the AI run over everything.
+            string skipped = QualityBar.SkippedLabel(translation.SkippedCount);
+            if (skipped != null) facts.Add(skipped);
+
+            // U+25C6, same Geometric Shapes block as the ▲▼ already rendering everywhere — an
+            // emoji would land as an empty square in games whose font has no colour glyphs.
+            // "Resources" and not "Assets": one word for one thing, as on the website.
+            if (!string.IsNullOrEmpty(translation.ResourcesUrl)) facts.Add("◆ Resources");
 
             return facts.Count > 0 ? string.Join("  ·  ", facts.ToArray()) : null;
         }
@@ -406,9 +431,9 @@ namespace UnityGameTranslator.Core.UI.Components
         }
 
         /// <summary>
-        /// Format quality stats for display (H/V/A counts + score)
+        /// How good the translated part is, in one word. The proportions are the bar's job.
         /// </summary>
-        private string FormatQualityStats(TranslationInfo translation)
+        private static string FormatQualityStats(TranslationInfo translation)
         {
             int total = translation.HumanCount + translation.ValidatedCount + translation.AiCount;
             if (total == 0)
@@ -417,16 +442,7 @@ namespace UnityGameTranslator.Core.UI.Components
                 return translation.Type ?? "unknown";
             }
 
-            // Show quality score with label
-            float score = translation.QualityScore;
-            string label;
-            if (score >= 2.5f) label = "Excellent";
-            else if (score >= 2.0f) label = "Good";
-            else if (score >= 1.5f) label = "Fair";
-            else if (score >= 1.0f) label = "Basic";
-            else label = "Raw AI";
-
-            return $"H:{translation.HumanCount} V:{translation.ValidatedCount} A:{translation.AiCount} ({label})";
+            return TranslationQuality.LabelFor(translation.QualityScore);
         }
 
         private void RefreshSelection()

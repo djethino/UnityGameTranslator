@@ -605,7 +605,10 @@ namespace UnityGameTranslator.Core
                 CaptureCount = t["capture_count"]?.Value<int>() ?? 0,
                 FileHash = t["file_hash"]?.Value<string>(),
                 FileUuid = t["file_uuid"]?.Value<string>(),
-                UpdatedAt = t["updated_at"]?.Value<string>()
+                UpdatedAt = t["updated_at"]?.Value<string>(),
+                // Null on servers older than this field: the list then shows no
+                // date rather than one that a vote could have moved
+                ContentUpdatedAt = t["content_updated_at"]?.Value<string>()
             };
         }
 
@@ -1746,6 +1749,33 @@ namespace UnityGameTranslator.Core
         public string FileHash { get; set; }
         public string FileUuid { get; set; }
         public string UpdatedAt { get; set; }
+
+        /// <summary>
+        /// When the translation itself last changed. Distinct from UpdatedAt,
+        /// which a vote or a download also moves. Null on older servers.
+        /// </summary>
+        public string ContentUpdatedAt { get; set; }
+
+        /// <summary>
+        /// The content date as a short local string, or null when the server
+        /// did not send one. Never falls back to UpdatedAt: showing a date that
+        /// a vote moved would be worse than showing none.
+        /// </summary>
+        public string ContentDateLabel
+        {
+            get
+            {
+                if (string.IsNullOrEmpty(ContentUpdatedAt)) return null;
+                DateTime parsed;
+                if (!DateTime.TryParse(ContentUpdatedAt, System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.AdjustToUniversal, out parsed))
+                {
+                    return null;
+                }
+
+                return parsed.ToLocalTime().ToString("d MMM yyyy");
+            }
+        }
 
         /// <summary>
         /// Quality score (0-3 scale): H=3pts, V=2pts, A=1pt

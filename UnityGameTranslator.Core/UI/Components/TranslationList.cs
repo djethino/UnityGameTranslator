@@ -13,6 +13,12 @@ namespace UnityGameTranslator.Core.UI.Components
     /// </summary>
     public class TranslationList
     {
+        /// <summary>
+        /// How many results the list renders. The rest is announced, never
+        /// dropped in silence (see Populate).
+        /// </summary>
+        private const int MaxDisplayed = 5;
+
         // UI elements
         private GameObject _root;
         private GameObject _listContent;
@@ -224,11 +230,23 @@ namespace UnityGameTranslator.Core.UI.Components
             bool isLoggedIn = !string.IsNullOrEmpty(TranslatorCore.Config.api_token);
             string currentUser = isLoggedIn ? _getCurrentUser?.Invoke() : null;
 
-            int displayCount = Math.Min(5, _translations.Count);
+            int displayCount = Math.Min(MaxDisplayed, _translations.Count);
             for (int i = 0; i < displayCount; i++)
             {
                 var t = _translations[i];
                 CreateListItem(t, isLoggedIn, currentUser);
+            }
+
+            // Never cut the list in silence: the status line says how many were
+            // found, so stopping at five without a word reads as "that's all".
+            if (_translations.Count > displayCount)
+            {
+                var moreLabel = UIFactory.CreateLabel(_listContent, "MoreResults",
+                    $"Showing the {displayCount} best of {_translations.Count} — refine the search to see others",
+                    TextAnchor.MiddleCenter);
+                moreLabel.fontSize = UIStyles.FontSizeHint;
+                moreLabel.color = UIStyles.TextMuted;
+                UIFactory.SetLayoutElement(moreLabel.gameObject, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999);
             }
         }
 
@@ -237,8 +255,17 @@ namespace UnityGameTranslator.Core.UI.Components
             // Check if this translation is from the same lineage (UUID match)
             bool isLineageMatch = TranslatorCore.IsUuidMatch(translation.FileUuid);
 
+            // What the info column will hold, decided BEFORE the row exists:
+            // its height was calibrated for two lines, and the extra ones would
+            // simply have been cut off.
+            var facts = BuildFactsLine(translation);
+            string note = BuildNoteLine(translation);
+            int extraRows = (facts != null ? 1 : 0) + (note != null ? 1 : 0);
+
             var itemRow = UIFactory.CreateHorizontalGroup(_listContent, $"Item_{translation.Id}", false, false, true, true, 10);
-            UIFactory.SetLayoutElement(itemRow, minHeight: UIStyles.CodeDisplayHeight, flexibleWidth: 9999);
+            UIFactory.SetLayoutElement(itemRow,
+                minHeight: UIStyles.CodeDisplayHeight + extraRows * UIStyles.RowHeightSmall,
+                flexibleWidth: 9999);
 
             // Use highlight background for lineage match
             UIStyles.SetBackground(itemRow, isLineageMatch ? UIStyles.ItemBackgroundLineage : UIStyles.ItemBackground);
@@ -276,8 +303,15 @@ namespace UnityGameTranslator.Core.UI.Components
                 infoLayout.childAlignment = TextAnchor.MiddleLeft;
             }
 
-            // Title row with badges
-            string label = $"{translation.TargetLanguage} by {translation.Uploader}";
+            // Title row with badges.
+            // The SOURCE language leads because it decides whether this
+            // translation can work at all: one made from Japanese is useless on
+            // a game whose text is English, and showing only the target made
+            // the two indistinguishable.
+            string languages = string.IsNullOrEmpty(translation.SourceLanguage)
+                ? translation.TargetLanguage
+                : $"{translation.SourceLanguage} → {translation.TargetLanguage}";
+            string label = $"{languages} by {translation.Uploader}";
             bool isOwnTranslation = isLoggedIn && !string.IsNullOrEmpty(currentUser) &&
                 translation.Uploader.Equals(currentUser, StringComparison.OrdinalIgnoreCase);
             if (isOwnTranslation) label += " (you)";
@@ -291,14 +325,29 @@ namespace UnityGameTranslator.Core.UI.Components
             // Details row with quality stats (vote count is now in vote buttons)
             string qualityText = FormatQualityStats(translation);
             string detailsText = $"{translation.LineCount} lines | {qualityText}";
-            if (!string.IsNullOrEmpty(translation.ResourcesUrl))
-            {
-                detailsText += " | + Resources";
-            }
             var detailsLabel = UIFactory.CreateLabel(infoCol, "Details", detailsText, TextAnchor.MiddleLeft);
             detailsLabel.fontSize = UIStyles.FontSizeHint;
             detailsLabel.color = UIStyles.TextMuted;
             UIFactory.SetLayoutElement(detailsLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+
+            // Second details row: is it alive, is it finished, is it used, does
+            // it need anything. All of it was already received and shown nowhere.
+            if (facts != null)
+            {
+                var factsLabel = UIFactory.CreateLabel(infoCol, "Facts", facts, TextAnchor.MiddleLeft);
+                factsLabel.fontSize = UIStyles.FontSizeHint;
+                factsLabel.color = UIStyles.TextMuted;
+                UIFactory.SetLayoutElement(factsLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+            }
+
+            if (note != null)
+            {
+                var notesLabel = UIFactory.CreateLabel(infoCol, "Notes", note, TextAnchor.MiddleLeft);
+                notesLabel.fontSize = UIStyles.FontSizeHint;
+                notesLabel.fontStyle = FontStyle.Italic;
+                notesLabel.color = UIStyles.TextSecondary;
+                UIFactory.SetLayoutElement(notesLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+            }
 
             // Vote buttons (right side)
             var voteButtons = new VoteButtons();
@@ -321,6 +370,39 @@ namespace UnityGameTranslator.Core.UI.Components
                     break;
                 }
             }
+        }
+
+        /// <summary>
+        /// "12 Mar 2026 · complete · 87 downloads · + Resources", or null when
+        /// the server told us none of it (older servers send no content date).
+        /// </summary>
+        private static string BuildFactsLine(TranslationInfo translation)
+        {
+            var facts = new List<string>();
+
+            string dateLabel = translation.ContentDateLabel;
+            if (!string.IsNullOrEmpty(dateLabel)) facts.Add(dateLabel);
+            if (string.Equals(translation.Status, "complete", StringComparison.OrdinalIgnoreCase))
+                facts.Add("complete");
+            if (translation.DownloadCount > 0) facts.Add($"{translation.DownloadCount} downloads");
+            if (!string.IsNullOrEmpty(translation.ResourcesUrl)) facts.Add("+ Resources");
+
+            return facts.Count > 0 ? string.Join("  ·  ", facts.ToArray()) : null;
+        }
+
+        /// <summary>
+        /// The author's own words, on one line. Shown on the website, invisible
+        /// here until now. Null when there are none.
+        /// </summary>
+        private static string BuildNoteLine(TranslationInfo translation)
+        {
+            if (string.IsNullOrEmpty(translation.Notes)) return null;
+
+            string note = translation.Notes.Replace("\r", " ").Replace("\n", " ").Trim();
+            if (note.Length == 0) return null;
+            if (note.Length > 90) note = note.Substring(0, 90) + "…";
+
+            return $"“{note}”";
         }
 
         /// <summary>

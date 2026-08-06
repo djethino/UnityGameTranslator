@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using UniverseLib.UI;
@@ -100,9 +101,17 @@ namespace UnityGameTranslator.Core.UI.Components
             if (_root != null) _root.SetActive(visible);
         }
 
+        /// <summary>How many entries share one line of the colour key.</summary>
+        private const int LegendEntriesPerLine = 2;
+
         /// <summary>
         /// The colour key with each share as a whole percent. Rounding is absorbed by the last
         /// entry so the percentages always read 100.
+        ///
+        /// Wrapped at a FIXED number of entries per line rather than left to the label's own
+        /// word wrap: Unity breaks wherever the width runs out, which lands between a colour
+        /// swatch and the word it belongs to — the square ends one line and its label starts the
+        /// next, so the key stops being a key.
         /// </summary>
         public static string BuildLegend(int human, int validated, int ai, int kept, int capture)
         {
@@ -115,26 +124,43 @@ namespace UnityGameTranslator.Core.UI.Components
             int keptPct = Mathf.RoundToInt(kept * 100f / total);
             int capturePct = 100 - humanPct - validatedPct - aiPct - keptPct;
 
-            string legend =
-                Swatch(UIStyles.StatusSuccess) + " " + TranslatorCore.TranslateOwnUIDynamic("Human") + $" {humanPct}%   " +
-                Swatch(UIStyles.StatusInfo) + " " + TranslatorCore.TranslateOwnUIDynamic("Validated") + $" {validatedPct}%   " +
-                Swatch(UIStyles.StatusWarning) + " " + TranslatorCore.TranslateOwnUIDynamic("AI") + $" {aiPct}%";
+            var entries = new List<string>
+            {
+                Entry(UIStyles.StatusSuccess, "Human", humanPct),
+                Entry(UIStyles.StatusInfo, "Validated", validatedPct),
+                Entry(UIStyles.StatusWarning, "AI", aiPct),
+            };
 
             // The last two are mentioned only when there are some: a permanent "Captured 0%" is
             // noise, and each absence is itself the information.
-            if (kept > 0)
+            if (kept > 0) entries.Add(Entry(UIStyles.StatusKept, "Kept as is", keptPct));
+            if (capture > 0) entries.Add(Entry(UIStyles.StatusNeutral, "Captured", capturePct));
+
+            var sb = new System.Text.StringBuilder();
+            for (int i = 0; i < entries.Count; i++)
             {
-                legend += "   " + Swatch(UIStyles.StatusKept) + " " +
-                          TranslatorCore.TranslateOwnUIDynamic("Kept as is") + $" {keptPct}%";
+                if (i > 0) sb.Append(i % LegendEntriesPerLine == 0 ? "\n" : "   ");
+                sb.Append(entries[i]);
             }
 
-            if (capture > 0)
-            {
-                legend += "   " + Swatch(UIStyles.StatusNeutral) + " " +
-                          TranslatorCore.TranslateOwnUIDynamic("Captured") + $" {capturePct}%";
-            }
+            return sb.ToString();
+        }
 
-            return legend;
+        /// <summary>One colour key entry: its swatch, its name, its share.</summary>
+        private static string Entry(Color color, string label, int percent)
+        {
+            return Swatch(color) + " " + TranslatorCore.TranslateOwnUIDynamic(label) + $" {percent}%";
+        }
+
+        /// <summary>
+        /// How many lines <see cref="BuildLegend"/> will produce for these counts. Callers size
+        /// their row with it — a row measured for one line simply clips the rest.
+        /// </summary>
+        public static int LegendLineCount(int kept, int capture)
+        {
+            int entries = 3 + (kept > 0 ? 1 : 0) + (capture > 0 ? 1 : 0);
+
+            return (entries + LegendEntriesPerLine - 1) / LegendEntriesPerLine;
         }
 
         private static string Swatch(Color color)

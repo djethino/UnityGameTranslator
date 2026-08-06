@@ -184,13 +184,15 @@ namespace UnityGameTranslator.Core.UI.Components
 
             UIStyles.ClearRowBackground(legendRow);
 
-            _qualityLegend = UIFactory.CreateLabel(legendRow, "QualityLegend", "", TextAnchor.MiddleLeft);
+            // Top-aligned: the key can run to two or three lines (see QualityBar.BuildLegend),
+            // and centring it would drift away from the score sitting next to it.
+            _qualityLegend = UIFactory.CreateLabel(legendRow, "QualityLegend", "", TextAnchor.UpperLeft);
             _qualityLegend.fontSize = UIStyles.FontSizeHint;
             _qualityLegend.color = UIStyles.TextMuted;
             UIFactory.SetLayoutElement(_qualityLegend.gameObject, flexibleWidth: 9999);
             TranslatorCore.RegisterExcluded(_qualityLegend);
 
-            _qualityLabel = UIFactory.CreateLabel(legendRow, "QualityLabel", "", TextAnchor.MiddleRight);
+            _qualityLabel = UIFactory.CreateLabel(legendRow, "QualityLabel", "", TextAnchor.UpperRight);
             _qualityLabel.fontSize = UIStyles.FontSizeHint;
             _qualityLabel.color = UIStyles.TextMuted;
             UIFactory.SetLayoutElement(_qualityLabel.gameObject, minWidth: 90, flexibleWidth: 0);
@@ -405,6 +407,13 @@ namespace UnityGameTranslator.Core.UI.Components
                 _qualityLegend.text = QualityBar.BuildLegend(
                     stats.HumanCount, stats.ValidatedCount, stats.AiCount,
                     stats.SkippedCount, stats.CaptureCount);
+
+                // The row is measured for the number of lines the key actually needs. Sized for
+                // one, it clipped the others — which is how a swatch ended up separated from
+                // the word it labels.
+                int lines = QualityBar.LegendLineCount(stats.SkippedCount, stats.CaptureCount);
+                UIFactory.SetLayoutElement(_legendRow,
+                    minHeight: UIStyles.RowHeightSmall * lines, flexibleHeight: 0);
             }
 
             if (_qualityLabel != null)

@@ -482,22 +482,53 @@ namespace UnityGameTranslator.Core
                 var settings = prop.Value as JObject;
                 if (settings == null) continue;
 
-                bool disabled = settings["enabled"] != null && settings["enabled"].Value<bool>() == false;
-                bool hasFallback = settings["fallback"] != null
-                                   && settings["fallback"].Type != JTokenType.Null
-                                   && !string.IsNullOrEmpty(settings["fallback"].Value<string>());
-                // Both are written only when they leave their default, so their
-                // mere presence is the deliberate act
-                bool resized = settings["scale"] != null || settings["size_percent"] != null
-                               || settings["scale_auto"] != null;
-
-                if (disabled || hasFallback || resized)
+                if (IsDeliberate(settings))
                 {
                     result[prop.Name] = prop.Value;
                 }
             }
 
             return result;
+        }
+
+        /// <summary>
+        /// Did a HUMAN configure this font? Mirrors Translation::isDeliberateFontSetting on the
+        /// website — the two must give the same answer for the same file, or the site and the mod
+        /// report different numbers for it.
+        ///
+        /// The subtlety is the size. "scale" is the MATERIALIZED product (automatic design-scale ×
+        /// deliberate percent) and "scale_auto" is switched on by the mod itself the first time it
+        /// meets a TMP font, so neither says anything about intent — reading them as deliberate
+        /// counted every font ever seen in game as configured, which is exactly what this filter
+        /// exists to avoid. Only "size_percent" records a choice.
+        /// </summary>
+        private static bool IsDeliberate(JObject settings)
+        {
+            bool disabled = settings["enabled"] != null && settings["enabled"].Type == JTokenType.Boolean
+                            && settings["enabled"].Value<bool>() == false;
+            bool hasFallback = settings["fallback"] != null
+                               && settings["fallback"].Type != JTokenType.Null
+                               && !string.IsNullOrEmpty(settings["fallback"].Value<string>());
+            if (disabled || hasFallback) return true;
+
+            var sizePercent = settings["size_percent"];
+            if (sizePercent != null && sizePercent.Type != JTokenType.Null)
+            {
+                return Math.Abs(sizePercent.Value<float>() - 1f) > 0.001f;
+            }
+
+            // Older files predate the split: "scale" then held the deliberate percent, but only
+            // when the automatic scaling was off — otherwise it is polluted by it.
+            var scaleAuto = settings["scale_auto"];
+            if (scaleAuto != null && scaleAuto.Type == JTokenType.Boolean && scaleAuto.Value<bool>())
+            {
+                return false;
+            }
+
+            var scale = settings["scale"];
+            if (scale == null || scale.Type == JTokenType.Null) return false;
+
+            return Math.Abs(scale.Value<float>() - 1f) > 0.001f;
         }
 
         private static bool IsEmptyToken(JToken token)

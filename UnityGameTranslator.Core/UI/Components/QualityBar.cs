@@ -6,19 +6,23 @@ using UnityGameTranslator.Core.UI;
 namespace UnityGameTranslator.Core.UI.Components
 {
     /// <summary>
-    /// What a translation is MADE OF — human, validated, AI, and captured-but-not-yet-translated.
+    /// What a translation is MADE OF — human, validated, AI, kept as is, and captured but not
+    /// dealt with yet.
     ///
     /// Deliberately not a progress bar: a game's total line count is unknowable (text is captured
     /// as it is met, and branching games are never fully walked), so there is no denominator to
-    /// measure progress against. The denominator here is what was captured, nothing more, and the
-    /// labels never say "progress".
+    /// measure progress against. The denominator is everything that WAS captured, and the labels
+    /// never say "progress".
     ///
-    /// M (mod UI) and S (marked as not-to-translate) are excluded from BOTH the segments and the
-    /// denominator. Leaving S in would make the author who carefully marked 300 untranslatable
-    /// lines look LESS complete than the one who ran the AI over everything — the opposite of the
-    /// signal we want. S is worth showing, but on its own, as a fact (see SkippedLabel).
+    /// S (kept as is) is part of that denominator and owns a segment. It was met, read, and
+    /// settled by a decision — leaving a fictional language untouched is an answer, not an
+    /// omission — so it belongs with the work done, never in the grey. What it must NOT do is
+    /// share the grey or fall outside the total: the first would count care as missing work, the
+    /// second would make the bar describe only part of the file while claiming to describe it all.
     ///
-    /// Same four segments, same colours and same denominator as the website's x-progress-bar, so
+    /// M (mod UI) is technical noise and appears nowhere.
+    ///
+    /// Same five segments, same colours and same denominator as the website's x-progress-bar, so
     /// a given translation looks identical in the game and in the browser.
     /// </summary>
     public class QualityBar
@@ -33,6 +37,7 @@ namespace UnityGameTranslator.Core.UI.Components
         private LayoutElement _humanLayout;
         private LayoutElement _validatedLayout;
         private LayoutElement _aiLayout;
+        private LayoutElement _keptLayout;
         private LayoutElement _captureLayout;
 
         /// <summary>The bar container. Null until CreateUI has run.</summary>
@@ -48,12 +53,15 @@ namespace UnityGameTranslator.Core.UI.Components
             UIFactory.SetLayoutElement(_root, minHeight: height, preferredHeight: height,
                 flexibleWidth: 9999, flexibleHeight: 0);
             // The empty bar is the viewport colour: a bar with no data must read as an empty
-            // container, not as a fifth (dark) category.
+            // container, not as one more (dark) category.
             UIStyles.SetBackground(_root, UIStyles.ViewportBackground);
 
+            // Order matters: everything settled first, what remains to do last. The grey always
+            // ends the bar, so its length reads as the work left without doing any arithmetic.
             _humanLayout = CreateSegment("HumanBar", UIStyles.StatusSuccess, height);
             _validatedLayout = CreateSegment("ValidatedBar", UIStyles.StatusInfo, height);
             _aiLayout = CreateSegment("AiBar", UIStyles.StatusWarning, height);
+            _keptLayout = CreateSegment("KeptBar", UIStyles.StatusKept, height);
             _captureLayout = CreateSegment("CaptureBar", UIStyles.StatusNeutral, height);
         }
 
@@ -67,12 +75,12 @@ namespace UnityGameTranslator.Core.UI.Components
         }
 
         /// <summary>
-        /// Set the four shares. Returns false when there is nothing to show (no captured line at
+        /// Set the five shares. Returns false when there is nothing to show (nothing captured at
         /// all) — callers use it to hide the row rather than display an empty bar.
         /// </summary>
-        public bool SetCounts(int human, int validated, int ai, int capture)
+        public bool SetCounts(int human, int validated, int ai, int kept, int capture)
         {
-            int total = human + validated + ai + capture;
+            int total = human + validated + ai + kept + capture;
             if (_root == null) return total > 0;
 
             // Proportions, not pixels: the layout divides the width by these weights, so the bar
@@ -80,6 +88,7 @@ namespace UnityGameTranslator.Core.UI.Components
             if (_humanLayout != null) _humanLayout.flexibleWidth = human;
             if (_validatedLayout != null) _validatedLayout.flexibleWidth = validated;
             if (_aiLayout != null) _aiLayout.flexibleWidth = ai;
+            if (_keptLayout != null) _keptLayout.flexibleWidth = kept;
             if (_captureLayout != null) _captureLayout.flexibleWidth = capture;
 
             return total > 0;
@@ -93,25 +102,32 @@ namespace UnityGameTranslator.Core.UI.Components
 
         /// <summary>
         /// The colour key with each share as a whole percent. Rounding is absorbed by the last
-        /// visible entry so the percentages always read 100.
+        /// entry so the percentages always read 100.
         /// </summary>
-        public static string BuildLegend(int human, int validated, int ai, int capture)
+        public static string BuildLegend(int human, int validated, int ai, int kept, int capture)
         {
-            int total = human + validated + ai + capture;
+            int total = human + validated + ai + kept + capture;
             if (total <= 0) return string.Empty;
 
             int humanPct = Mathf.RoundToInt(human * 100f / total);
             int validatedPct = Mathf.RoundToInt(validated * 100f / total);
             int aiPct = Mathf.RoundToInt(ai * 100f / total);
-            int capturePct = 100 - humanPct - validatedPct - aiPct;
+            int keptPct = Mathf.RoundToInt(kept * 100f / total);
+            int capturePct = 100 - humanPct - validatedPct - aiPct - keptPct;
 
             string legend =
                 Swatch(UIStyles.StatusSuccess) + " " + TranslatorCore.TranslateOwnUIDynamic("Human") + $" {humanPct}%   " +
                 Swatch(UIStyles.StatusInfo) + " " + TranslatorCore.TranslateOwnUIDynamic("Validated") + $" {validatedPct}%   " +
                 Swatch(UIStyles.StatusWarning) + " " + TranslatorCore.TranslateOwnUIDynamic("AI") + $" {aiPct}%";
 
-            // Only mentioned when there is some: a permanent "Captured 0%" is noise, and its
-            // absence is itself the information (everything captured has been translated).
+            // The last two are mentioned only when there are some: a permanent "Captured 0%" is
+            // noise, and each absence is itself the information.
+            if (kept > 0)
+            {
+                legend += "   " + Swatch(UIStyles.StatusKept) + " " +
+                          TranslatorCore.TranslateOwnUIDynamic("Kept as is") + $" {keptPct}%";
+            }
+
             if (capture > 0)
             {
                 legend += "   " + Swatch(UIStyles.StatusNeutral) + " " +
@@ -127,18 +143,18 @@ namespace UnityGameTranslator.Core.UI.Components
         }
 
         /// <summary>
-        /// "Marked as not to translate: 312", or null when there are none. Same wording as the
-        /// website's progress.skipped_marked, and count-last so no language needs a plural form.
+        /// "Kept as is: 312", or null when there are none. Same wording as the website's
+        /// progress.skipped, and count-last so no language needs a plural form.
         ///
-        /// Kept out of the bar on purpose: marking a line as untranslatable (a fictional language
-        /// that must stay untouched, a proper noun) is a human decision and a sign of care, but it
-        /// is not a translation. Wording stays factual — we cannot read the author's intent, and
-        /// "deliberately excluded" would claim something we do not know.
+        /// For the places that show the bar without a colour key (the download cards): the purple
+        /// segment alone says nothing. Wording stays factual — we cannot read the author's intent
+        /// (an S can also mean "I will deal with it later"), so it states what happened to the
+        /// line, never why.
         /// </summary>
-        public static string SkippedLabel(int skipped)
+        public static string KeptLabel(int kept)
         {
-            if (skipped <= 0) return null;
-            return TranslatorCore.TranslateOwnUIDynamic("Marked as not to translate") + $": {skipped}";
+            if (kept <= 0) return null;
+            return TranslatorCore.TranslateOwnUIDynamic("Kept as is") + $": {kept}";
         }
     }
 }

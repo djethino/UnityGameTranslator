@@ -19,7 +19,7 @@ namespace UnityGameTranslator.Core
         /// Captures (H with no value), S (marked as not to translate) and M (mod UI) are all
         /// outside the formula. S is a deliberate omission worth noting: a score that went up by
         /// marking lines as untranslatable would be trivial to inflate, so the care it represents
-        /// is reported on its own instead (QualityBar.SkippedLabel).
+        /// keeps its own segment in the bar instead (QualityBar), where it reads as work done.
         /// </summary>
         public static float ComputeScore(int human, int validated, int ai)
         {

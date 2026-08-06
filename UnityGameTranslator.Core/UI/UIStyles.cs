@@ -125,6 +125,9 @@ namespace UnityGameTranslator.Core.UI
         // Captured but not translated yet: known work still to do. Matches the website's
         // gray-500 so the same bar reads the same on both sides.
         public static readonly Color StatusNeutral = new Color(0.42f, 0.45f, 0.50f);               // Grey
+        // Kept as is on purpose (tag S): dealt with, not pending — hence its own colour rather
+        // than the grey. Matches the website's purple-500.
+        public static readonly Color StatusKept = new Color(0.66f, 0.33f, 0.97f);                  // Purple
 
         // Item/List backgrounds (navy blue tones)
         public static readonly Color ItemBackground = new Color(0.17f, 0.20f, 0.27f, 1f);          // E3 row (above card)

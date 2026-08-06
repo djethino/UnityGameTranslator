@@ -74,13 +74,6 @@ namespace UnityGameTranslator.Core.UI.Components
         private UniverseLib.UI.Models.ButtonRef _modeActionBtn;
         private Action _modeAction;
 
-        // The details line is written by two independent callers (SetDetails for the volume,
-        // SetQualityStats for the skipped count). Keeping the parts lets either one arrive
-        // first without erasing the other's contribution.
-        private int _detailsEntryCount;
-        private string _detailsGameName;
-        private int _detailsSkippedCount;
-
         /// <summary>
         /// The root GameObject of the status card.
         /// </summary>
@@ -356,33 +349,16 @@ namespace UnityGameTranslator.Core.UI.Components
         /// </summary>
         public void SetDetails(int entryCount, string targetLanguage, string gameName = null)
         {
-            _detailsEntryCount = entryCount;
-            _detailsGameName = gameName;
-            RefreshDetailsLine();
-        }
-
-        /// <summary>
-        /// "· 1 248 entries · 312 lines marked as not to translate · Hollow Knight".
-        /// The skipped count belongs here rather than in the bar's legend: it says what the file
-        /// contains, and putting it next to the colour key would send the reader looking for a
-        /// segment that does not exist.
-        /// </summary>
-        private void RefreshDetailsLine()
-        {
             if (_detailsLabel == null) return;
 
             // Sits right after the status on the same line, so it reads as one sentence:
             // "● SYNCED · 1 248 entries". The language moved up to the identity row, so it is not
             // repeated here. Counts and game names are data — concatenated, never translated.
-            string details = "· " + TranslatorCore.TranslateOwnUIDynamic($"{_detailsEntryCount} entries");
-
-            string skipped = QualityBar.SkippedLabel(_detailsSkippedCount);
-            if (skipped != null)
-                details += $" · {skipped}";
-
-            if (!string.IsNullOrEmpty(_detailsGameName))
-                details += $" · {_detailsGameName}";
-
+            // The kept-as-is count is NOT repeated here: the bar's legend already names it, with
+            // its colour and its share.
+            string details = "· " + TranslatorCore.TranslateOwnUIDynamic($"{entryCount} entries");
+            if (!string.IsNullOrEmpty(gameName))
+                details += $" · {gameName}";
             _detailsLabel.text = details;
         }
 
@@ -404,20 +380,16 @@ namespace UnityGameTranslator.Core.UI.Components
 
             if (stats == null)
             {
-                _detailsSkippedCount = 0;
-                RefreshDetailsLine();
                 _qualityRow.SetActive(false);
                 _legendRow?.SetActive(false);
                 return;
             }
 
-            _detailsSkippedCount = stats.SkippedCount;
-            RefreshDetailsLine();
-
             // Captures are part of the picture: a file made of 900 captured lines and 100
             // translated ones has to look like it. Hiding the grey flattered the result.
             bool hasData = _qualityBar != null &&
-                _qualityBar.SetCounts(stats.HumanCount, stats.ValidatedCount, stats.AiCount, stats.CaptureCount);
+                _qualityBar.SetCounts(stats.HumanCount, stats.ValidatedCount, stats.AiCount,
+                    stats.SkippedCount, stats.CaptureCount);
 
             if (!hasData)
             {
@@ -431,12 +403,17 @@ namespace UnityGameTranslator.Core.UI.Components
             if (_qualityLegend != null)
             {
                 _qualityLegend.text = QualityBar.BuildLegend(
-                    stats.HumanCount, stats.ValidatedCount, stats.AiCount, stats.CaptureCount);
+                    stats.HumanCount, stats.ValidatedCount, stats.AiCount,
+                    stats.SkippedCount, stats.CaptureCount);
             }
 
             if (_qualityLabel != null)
             {
-                _qualityLabel.text = $"{stats.QualityScore:F1}/3";
+                // A file with nothing translated has no quality to report. The formula would
+                // return 0.0/3 and read as "terrible translation" for a file that simply has
+                // no translation in it yet — a verdict on work that does not exist.
+                bool hasTranslations = stats.HumanCount + stats.ValidatedCount + stats.AiCount > 0;
+                _qualityLabel.text = hasTranslations ? $"{stats.QualityScore:F1}/3" : string.Empty;
             }
 
             _qualityRow.SetActive(true);
@@ -481,7 +458,7 @@ namespace UnityGameTranslator.Core.UI.Components
                         break;
                     case "S":
                         // Counted, but never mixed with the translations — it is a decision
-                        // about a line, not a translation of it (see QualityBar.SkippedLabel).
+                        // about a line, not a translation of it — its own segment, never the grey.
                         stats.SkippedCount++;
                         break;
                     // "M" (mod UI) is deliberately absent: technical noise, of no use to anyone

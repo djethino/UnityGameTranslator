@@ -265,7 +265,7 @@ namespace UnityGameTranslator.Core.UI.Components
             // The bar is only drawn when the server gave us something to draw; an empty container
             // under every row would read as "nothing translated" instead of "nothing known".
             bool hasComposition = translation.HumanCount + translation.ValidatedCount +
-                translation.AiCount + translation.CaptureCount > 0;
+                translation.AiCount + translation.SkippedCount + translation.CaptureCount > 0;
             int barHeight = hasComposition ? QualityBar.CompactHeight + 2 : 0;
 
             var itemRow = UIFactory.CreateHorizontalGroup(_listContent, $"Item_{translation.Id}", false, false, true, true, 10);
@@ -343,7 +343,7 @@ namespace UnityGameTranslator.Core.UI.Components
                 var bar = new QualityBar();
                 bar.CreateUI(infoCol, QualityBar.CompactHeight);
                 bar.SetCounts(translation.HumanCount, translation.ValidatedCount,
-                    translation.AiCount, translation.CaptureCount);
+                    translation.AiCount, translation.SkippedCount, translation.CaptureCount);
             }
 
             // Second details row: is it alive, is it finished, is it used, does
@@ -389,7 +389,7 @@ namespace UnityGameTranslator.Core.UI.Components
         }
 
         /// <summary>
-        /// "12 Mar 2026 · complete · 87 downloads · Marked as not to translate: 312 · ◆ Resources",
+        /// "12 Mar 2026 · complete · 87 downloads · Kept as is: 312 · ◆ Resources",
         /// or null when the server told us none of it (older servers send no content date).
         /// </summary>
         private static string BuildFactsLine(TranslationInfo translation)
@@ -402,10 +402,11 @@ namespace UnityGameTranslator.Core.UI.Components
                 facts.Add("complete");
             if (translation.DownloadCount > 0) facts.Add($"{translation.DownloadCount} downloads");
 
-            // Sits next to the bar without being part of it: an author who excluded what must
-            // stay untouched worked better than one who let the AI run over everything.
-            string skipped = QualityBar.SkippedLabel(translation.SkippedCount);
-            if (skipped != null) facts.Add(skipped);
+            // Names the purple segment, which has no colour key on these rows: an author who
+            // kept what must stay untouched worked better than one who let the AI run over
+            // everything, and a silent band of colour would not say so.
+            string kept = QualityBar.KeptLabel(translation.SkippedCount);
+            if (kept != null) facts.Add(kept);
 
             // U+25C6, same Geometric Shapes block as the ▲▼ already rendering everywhere — an
             // emoji would land as an empty square in games whose font has no colour glyphs.

@@ -1712,24 +1712,40 @@ namespace UnityGameTranslator.Core.UI
         /// <param name="ancestor">The last common state, null when unknown</param>
         /// <param name="incomingAlreadyApplied">True on the full-download paths</param>
         /// <param name="sourceLabel">Where it comes from, in the player's words</param>
+        /// <param name="explicitRequest">
+        /// True when the player picked THIS translation and asked for it. The
+        /// 3-way rule "only I moved, so keep mine" is right for a background
+        /// sync and wrong here: they just clicked Download on someone's version,
+        /// through a dialog announcing a replacement. Silently handing their own
+        /// settings back is the invisible behaviour this whole change removes.
+        /// So on an explicit request every difference is put to them, with the
+        /// downloaded side ticked.
+        /// </param>
         public static void ReconcileSettings(
             TranslationSettings ours,
             TranslationSettings theirs,
             TranslationSettings ancestor,
             bool incomingAlreadyApplied,
-            string sourceLabel)
+            string sourceLabel,
+            bool explicitRequest = false)
         {
             if (ours == null || theirs == null) return;
 
             var plan = SettingsSyncPlan.Build(ours, theirs, ancestor);
 
-            // What needs no arbitration is settled here and now
-            var automatic = incomingAlreadyApplied
-                ? plan.Sections
-                    .Where(s => s.State == SettingsSectionState.OursChanged)
-                    .Select(s => s.Section)
-                    .ToList()
-                : plan.AutoAccepted;
+            var arbitrated = explicitRequest
+                ? plan.Sections.Where(s => s.State != SettingsSectionState.Same).ToList()
+                : plan.Decisions;
+            var arbitratedNames = arbitrated.Select(s => s.Section).ToList();
+
+            // What nobody needs to arbitrate is settled here and now
+            var automatic = (incomingAlreadyApplied
+                    ? plan.Sections
+                        .Where(s => s.State == SettingsSectionState.OursChanged)
+                        .Select(s => s.Section)
+                    : plan.AutoAccepted.AsEnumerable())
+                .Where(s => !arbitratedNames.Contains(s))
+                .ToList();
 
             if (automatic.Count > 0)
             {
@@ -1737,7 +1753,7 @@ namespace UnityGameTranslator.Core.UI
                 TranslatorCore.SaveCache();
             }
 
-            if (!plan.NeedsPlayer)
+            if (arbitrated.Count == 0)
             {
                 if (automatic.Count > 0) MainPanel?.RefreshUI();
                 return;
@@ -1750,34 +1766,35 @@ namespace UnityGameTranslator.Core.UI
                 TranslatorCore.LogWarning("[Settings] No panel available - keeping local settings");
                 if (incomingAlreadyApplied)
                 {
-                    ours.ApplySections(plan.Decisions.Select(d => d.Section).ToList());
+                    ours.ApplySections(arbitratedNames);
                     TranslatorCore.SaveCache();
                 }
                 return;
             }
 
+            TranslatorCore.LogInfo($"[Settings] Asking about {arbitrated.Count} section(s): "
+                + string.Join(", ", arbitratedNames.ToArray()));
+
             // A dialog nobody can see is the same as no dialog at all
             ShowUI = true;
             SettingsChoicePanel.Show(
-                plan.Decisions,
+                arbitrated,
                 sourceLabel,
-                chosen => ApplySettingsChoice(plan, ours, theirs, incomingAlreadyApplied, chosen),
+                chosen => ApplySettingsChoice(arbitratedNames, ours, theirs, incomingAlreadyApplied, chosen),
                 // "Compare" opens a side-by-side view of the settings, which
                 // does not exist yet (lot 3): the button stays hidden rather
                 // than pointing at a screen that cannot show them.
                 null,
-                () => ApplySettingsChoice(plan, ours, theirs, incomingAlreadyApplied, new List<string>()));
+                () => ApplySettingsChoice(arbitratedNames, ours, theirs, incomingAlreadyApplied, new List<string>()));
         }
 
         private static void ApplySettingsChoice(
-            SettingsSyncPlan plan,
+            List<string> arbitrated,
             TranslationSettings ours,
             TranslationSettings theirs,
             bool incomingAlreadyApplied,
             List<string> chosen)
         {
-            var arbitrated = plan.Decisions.Select(d => d.Section).ToList();
-
             if (incomingAlreadyApplied)
             {
                 // Theirs is already in place: restore ours where declined
@@ -3146,9 +3163,14 @@ namespace UnityGameTranslator.Core.UI
 
                         TranslatorCore.LogInfo($"[Download] Downloaded translation #{translationId} from @{translationUploader}");
 
+                        // The player picked this translation and confirmed a
+                        // replacement: every difference goes to them, ticked on
+                        // the downloaded side. Deciding for them here would undo
+                        // the very gesture they just made.
                         ReconcileSettings(ourSettings, TranslationSettings.FromJsonText(content),
                             ancestorSettings, incomingAlreadyApplied: true,
-                            sourceLabel: $"the translation by @{translationUploader}");
+                            sourceLabel: $"the translation by @{translationUploader}",
+                            explicitRequest: true);
 
                         MainPanel?.RefreshUI();
                         onComplete?.Invoke(true, "Downloaded successfully!");
@@ -3255,7 +3277,8 @@ namespace UnityGameTranslator.Core.UI
                                 TranslationSettings.FromCurrentState(),
                                 TranslationSettings.FromJsonText(content),
                                 TranslatorCore.AncestorSettings,
-                                $"the translation by @{translationUploader}");
+                                $"the translation by @{translationUploader}",
+                                explicitRequest: true);
                             // Don't call onComplete - MergePanel handles the rest
                         }
                         else
@@ -3270,10 +3293,12 @@ namespace UnityGameTranslator.Core.UI
 
                             // First contact with a community translation: its
                             // fonts and exclusions are usually the reason it
-                            // reads correctly, so they must not be dropped
+                            // reads correctly, so they must not be dropped —
+                            // and the player asked for THIS one, so they arbitrate
                             ReconcileSettings(ourSettings, remoteSettings, ancestorSettings,
                                 incomingAlreadyApplied: false,
-                                sourceLabel: $"the translation by @{translationUploader}");
+                                sourceLabel: $"the translation by @{translationUploader}",
+                                explicitRequest: true);
                         }
                     }
                     else

@@ -52,6 +52,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private TranslationSettings _ourSettingsBefore;
         private TranslationSettings _ancestorSettingsBefore;
         private string _settingsSourceLabel;
+        private bool _settingsExplicitRequest;
         private Components.HelpZone _helpZone;
         private bool _userMadeChoice = false;
         // True while the review page round trip is in flight (see OpenReviewPage)
@@ -83,6 +84,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _ourSettingsBefore = null;
             _ancestorSettingsBefore = null;
             _settingsSourceLabel = null;
+            _settingsExplicitRequest = false;
             SetApplyButtonEnabled(false);
             ResetBulkButtonStyles();
 
@@ -512,7 +514,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 TranslatorUIManager.ReconcileSettings(
                     _ourSettingsBefore, _incomingSettings, _ancestorSettingsBefore,
-                    incomingAlreadyApplied: false, sourceLabel: _settingsSourceLabel);
+                    incomingAlreadyApplied: false, sourceLabel: _settingsSourceLabel,
+                    explicitRequest: _settingsExplicitRequest);
             }
         }
 
@@ -523,16 +526,22 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// Call it AFTER SetMergeDataWithTags, which clears this context: a
         /// later merge must never inherit the previous one's settings.
         /// </summary>
+        /// <param name="explicitRequest">
+        /// The player asked for THIS translation (community list) rather than
+        /// merging their own line — see TranslatorUIManager.ReconcileSettings.
+        /// </param>
         internal void SetSettingsContext(
             TranslationSettings ours,
             TranslationSettings incoming,
             TranslationSettings ancestor,
-            string sourceLabel)
+            string sourceLabel,
+            bool explicitRequest = false)
         {
             _ourSettingsBefore = ours;
             _incomingSettings = incoming;
             _ancestorSettingsBefore = ancestor;
             _settingsSourceLabel = sourceLabel;
+            _settingsExplicitRequest = explicitRequest;
         }
 
         /// <summary>

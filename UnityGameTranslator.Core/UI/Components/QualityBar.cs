@@ -102,29 +102,23 @@ namespace UnityGameTranslator.Core.UI.Components
         }
 
         /// <summary>
-        /// How many entries share one line of the colour key.
-        ///
-        /// Three fit across a card when there are only three — the whole key on one line, which
-        /// is what a file with nothing kept and nothing left captured deserves. Add a fourth
-        /// ("Kept as is", the longest of them all) and the line overflows, so they pair up.
-        /// </summary>
-        private static int EntriesPerLine(int entries)
-        {
-            return entries <= 3 ? 3 : 2;
-        }
-
-        /// <summary>
         /// The colour key with each share as a whole percent. Rounding is absorbed by the last
         /// entry so the percentages always read 100.
         ///
-        /// Two mechanisms, and BOTH are needed. Line breaks are placed explicitly, so the number
-        /// of lines is known in advance and the row can be measured for them. And every space
-        /// INSIDE an entry is non-breaking, so that if a line still runs past the available
-        /// width — a narrower panel, a longer translation of "Kept as is" — Unity can only break
-        /// between entries. Left to itself it breaks at whatever space runs out first, which is
-        /// how a swatch ended one line while the word it labels started the next, and how "Kept
-        /// as is" got cut after "as". A key whose squares have drifted from their words is not
-        /// a key any more.
+        /// NO line break is placed here, and that is the point. The panel is resizable, so any
+        /// rule of the form "N entries per line" is a guess about a width that changes underneath
+        /// it: it forces a break where there was room, and fails to prevent one where there was
+        /// not.
+        ///
+        /// Instead each entry is welded together with non-breaking spaces, and the ONLY ordinary
+        /// space in the whole string is the one between two entries. Unity then wraps wherever it
+        /// needs to — which can now only be between entries, so every line begins with a swatch
+        /// followed by the words that belong to it. Widen the panel and the key gathers onto one
+        /// line by itself; narrow it and it lays itself out again.
+        ///
+        /// Left to its own devices Unity breaks at whatever space runs out first, which is how a
+        /// swatch ended one line while its label started the next, and how "Kept as is" was cut
+        /// after "as". A key whose squares have drifted from their words is not a key any more.
         /// </summary>
         public static string BuildLegend(int human, int validated, int ai, int kept, int capture)
         {
@@ -149,18 +143,9 @@ namespace UnityGameTranslator.Core.UI.Components
             if (kept > 0) entries.Add(Entry(UIStyles.StatusKept, "Kept as is", keptPct));
             if (capture > 0) entries.Add(Entry(UIStyles.StatusNeutral, "Captured", capturePct));
 
-            int perLine = EntriesPerLine(entries.Count);
-
-            var sb = new System.Text.StringBuilder();
-            for (int i = 0; i < entries.Count; i++)
-            {
-                // The separator between entries is the ONLY ordinary space in the whole string,
-                // and therefore the only place Unity is able to break a line by itself.
-                if (i > 0) sb.Append(i % perLine == 0 ? "\n" : "   ");
-                sb.Append(entries[i]);
-            }
-
-            return sb.ToString();
+            // Three ordinary spaces: enough to separate two entries, and the only place in the
+            // string where a line is allowed to break.
+            return string.Join("   ", entries.ToArray());
         }
 
         /// <summary>
@@ -176,18 +161,6 @@ namespace UnityGameTranslator.Core.UI.Components
             // an editor, and the first well-meaning cleanup would quietly turn it back
             // into an ordinary one, taking the protection with it.
             return entry.Replace(' ', ' ');
-        }
-
-        /// <summary>
-        /// How many lines <see cref="BuildLegend"/> will produce for these counts. Callers size
-        /// their row with it — a row measured for one line simply clips the rest.
-        /// </summary>
-        public static int LegendLineCount(int kept, int capture)
-        {
-            int entries = 3 + (kept > 0 ? 1 : 0) + (capture > 0 ? 1 : 0);
-            int perLine = EntriesPerLine(entries);
-
-            return (entries + perLine - 1) / perLine;
         }
 
         private static string Swatch(Color color)

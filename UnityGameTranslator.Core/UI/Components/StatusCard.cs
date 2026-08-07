@@ -219,11 +219,15 @@ namespace UnityGameTranslator.Core.UI.Components
 
             UIStyles.ClearRowBackground(legendRow);
 
-            // Top-aligned: the key runs to two or three lines (see QualityBar.BuildLegend), and
-            // centring it would float them inside the row.
+            // Top-aligned: the key takes as many lines as the current width leaves it (see
+            // QualityBar.BuildLegend), and centring would float them inside the row.
             _qualityLegend = UIFactory.CreateLabel(legendRow, "QualityLegend", "", TextAnchor.UpperLeft);
             _qualityLegend.fontSize = UIStyles.FontSizeHint;
             _qualityLegend.color = UIStyles.TextMuted;
+            // Wrap, and no minHeight of its own: the label announces the height its wrapped text
+            // needs at the width it is given, the row inherits it, and a resize re-lays it out
+            // without anyone recomputing anything.
+            _qualityLegend.horizontalOverflow = HorizontalWrapMode.Wrap;
             UIFactory.SetLayoutElement(_qualityLegend.gameObject, flexibleWidth: 9999);
             TranslatorCore.RegisterExcluded(_qualityLegend);
 
@@ -540,12 +544,11 @@ namespace UnityGameTranslator.Core.UI.Components
                     stats.HumanCount, stats.ValidatedCount, stats.AiCount,
                     stats.SkippedCount, stats.CaptureCount);
 
-                // The row is measured for the number of lines the key actually needs. Sized for
-                // one, it clipped the others — which is how a swatch ended up separated from
-                // the word it labels.
-                int lines = QualityBar.LegendLineCount(stats.SkippedCount, stats.CaptureCount);
-                UIFactory.SetLayoutElement(_legendRow,
-                    minHeight: UIStyles.RowHeightSmall * lines, flexibleHeight: 0);
+                // No height set from here any more. The row used to be measured for a PREDICTED
+                // number of lines, which cannot survive a resizable panel: the same key needs one
+                // line wide and three narrow. The layout already knows — a Text reports the
+                // height its wrapped content needs at the width it has just been given, and the
+                // row takes it. The one row of minHeight fixed in CreateUI stays as a floor.
             }
 
             if (_qualityLabel != null)

@@ -2285,8 +2285,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 LoadCurrentState();
 
-                // Keeps the window from resizing when the visitor switches tabs
+                // Keeps the window from resizing when the visitor switches tabs — both rows of
+                // them, since the font settings carry their own
                 KeepPanelHeightAcrossTabs(_tabBar);
+                KeepPanelHeightAcrossTabs(_fontsSubTabBar);
             }
             else if (!active && wasActive)
             {

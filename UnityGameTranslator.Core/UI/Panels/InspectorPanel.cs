@@ -732,7 +732,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.SetLayoutElement(_textEditCountLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
 
             var textEditScroll = UIFactory.CreateScrollView(_textEditRow, "TextEditScroll", out _textEditListContent, out _);
-            UIFactory.SetLayoutElement(textEditScroll, minHeight: 260, flexibleHeight: 9999, flexibleWidth: 9999);
+            // See TranslatorPanelBase.ScrollingListHeightRule
+            UIFactory.SetLayoutElement(textEditScroll, minHeight: 260, preferredHeight: 260,
+                flexibleHeight: 9999, flexibleWidth: 9999);
             UIStyles.SetBackground(textEditScroll, UIStyles.InputBackground);
             UIFactory.SetLayoutGroup<VerticalLayoutGroup>(_textEditListContent, false, false, true, true, 5, 5, 5, 5, 5);
 

@@ -479,7 +479,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIStyles.CreateSpacer(card, 10);
 
             // Translation list (reusable component)
-            _translationList.CreateUI(card, 100, onSelectionChanged: (t) =>
+            // 200, like the main panel: a row of this list is about 130 pixels tall, so at 100
+            // the very screen where a newcomer meets the community showed them less than one
+            // card and asked them to scroll to see it. Same list, same size, same first
+            // impression wherever it appears.
+            _translationList.CreateUI(card, 200, onSelectionChanged: (t) =>
             {
                 UpdateActionButtons();
             });

@@ -134,7 +134,11 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Conflict list scroll view
             var scrollObj = UIFactory.CreateScrollView(card, "ConflictScroll", out _conflictListContent, out _);
-            UIFactory.SetLayoutElement(scrollObj, minHeight: 240, flexibleHeight: 9999, flexibleWidth: 9999);
+            // See TranslatorPanelBase.ScrollingListHeightRule: without a preferred height this
+            // list is weighed at its minimum when the panel adds up what it needs, so anything
+            // below it is never budgeted for.
+            UIFactory.SetLayoutElement(scrollObj, minHeight: 240, preferredHeight: 240,
+                flexibleHeight: 9999, flexibleWidth: 9999);
             UIFactory.SetLayoutGroup<VerticalLayoutGroup>(_conflictListContent, false, false, true, true, 5, 5, 5, 5, 5);
             UIStyles.SetBackground(scrollObj, UIStyles.InputBackground);
             UIStyles.ConfigureScrollViewNoScrollbar(scrollObj);

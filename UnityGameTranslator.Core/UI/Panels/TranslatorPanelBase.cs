@@ -420,7 +420,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         protected void KeepPanelHeightAcrossTabs(TabBar tabBar)
         {
-            if (_tabHeightMeasured || tabBar == null) return;
+            if (tabBar == null) return;
             UniverseLib.RuntimeHelper.StartCoroutine(MeasureTallestTab(tabBar));
         }
 
@@ -435,6 +435,11 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             float tallest = tabBar.MeasureMaxContentHeight();
             if (tallest <= 0) yield break;
+
+            // The LARGEST of everything measured so far, so a panel with nested tab bars — the
+            // font settings sit behind their own row of tabs — is held by whichever of them
+            // needs the most room. Switching any of them then leaves the window where it was.
+            if (tallest <= _tallestTabContentHeight) yield break;
 
             _tallestTabContentHeight = tallest;
             _tabHeightMeasured = true;

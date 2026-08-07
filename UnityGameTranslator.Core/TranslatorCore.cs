@@ -232,6 +232,13 @@ namespace UnityGameTranslator.Core
         private static Dictionary<int, string> lastSeenText = new Dictionary<int, string>();
         private static HashSet<string> pendingTranslations = new HashSet<string>();
         private static Queue<string> translationQueue = new Queue<string>();
+
+        /// <summary>
+        /// Texts already refused for being longer than any backend accepts, so the warning is
+        /// logged once instead of on every scan. In memory only: nothing about a refusal belongs
+        /// in the translation file.
+        /// </summary>
+        private static readonly HashSet<string> tooLongTexts = new HashSet<string>();
         // Texts queued explicitly as mod-UI (guarded by lockObj, like the queue itself).
         private static readonly HashSet<string> pendingOwnUITexts = new HashSet<string>();
         // Own-UI texts already submitted in this session, so a label rewritten every frame is
@@ -4294,12 +4301,13 @@ namespace UnityGameTranslator.Core
 
         private static string TranslateWithAI(string textWithPlaceholders, List<string> extractedNumbers, bool isOwnUI = false)
         {
-            // Security: Reject text that's too long (prevents DoS via large requests)
+            // Security: Reject text that's too long (prevents DoS via large requests).
+            // QueueForTranslation turns these back at the door, so this is belt and braces for a
+            // caller that reaches here another way. It stores NOTHING: caching the refusal wrote
+            // the whole text as its own key AND value, and tagged it "S" — a human decision.
             if (textWithPlaceholders.Length > MaxAITextLength)
             {
                 Adapter?.LogWarning($"[AI] Text too long ({textWithPlaceholders.Length} chars), skipping");
-                // Cache as skipped so it's not re-queued endlessly
-                AddToCache(textWithPlaceholders, textWithPlaceholders, "S");
                 return null;
             }
 
@@ -4843,10 +4851,10 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static string TranslateWithAPI(string textWithPlaceholders, List<string> extractedNumbers)
         {
+            // Same as the AI path: refused at the queue door, nothing stored if we get here anyway
             if (textWithPlaceholders.Length > MaxAITextLength)
             {
                 Adapter?.LogWarning($"[API] Text too long ({textWithPlaceholders.Length} chars), skipping");
-                AddToCache(textWithPlaceholders, textWithPlaceholders, "S");
                 return null;
             }
 
@@ -5385,6 +5393,31 @@ namespace UnityGameTranslator.Core
             if (Config.ActiveBackendRequiresOnline && !Config.online_mode) return;
             if (string.IsNullOrEmpty(text)) return;
             if (IsNumericOrSymbol(text)) return;
+
+            // Longer than any backend will accept. Refused HERE, at the single door, rather than
+            // deeper down where the refusal used to be recorded as a cache entry tagged "S".
+            //
+            // That entry was an aberration twice over. The cache key IS the source text, and the
+            // value was the same text again, so a credits or licence blob added some thirty
+            // kilobytes to translations.json — a file that is uploaded, hashed, merged and shown.
+            // And it recorded a technical give-up under the tag that means "a human decided to
+            // keep this as it is", which is the tag the quality score is about to rely on.
+            //
+            // Nothing is stored now: the line stays untranslated in the game, which is the honest
+            // signal, and the check being deterministic on the text itself, the scanner simply
+            // turns back here on every pass — nothing queued, nothing sent.
+            if (text.Length > MaxAITextLength)
+            {
+                lock (lockObj)
+                {
+                    // Once per text: this runs on every scan, and a warning repeated forever is
+                    // noise. Silence would be worse — a line that never gets translated has to
+                    // say why somewhere.
+                    if (tooLongTexts.Add(text))
+                        Adapter?.LogWarning($"[Queue] Text too long ({text.Length} chars, limit {MaxAITextLength}), left untranslated");
+                }
+                return;
+            }
             // Last line of defence, here rather than only at the call sites: this is the single door
             // into the queue, and guarding the two obvious callers still let target-language text
             // through by other routes (a stored entry whose translation was already indexed came back

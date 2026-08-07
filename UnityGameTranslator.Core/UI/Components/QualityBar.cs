@@ -53,11 +53,11 @@ namespace UnityGameTranslator.Core.UI.Components
             _root = UIFactory.CreateHorizontalGroup(parent, "QualityBar", false, false, true, true, 0);
             UIFactory.SetLayoutElement(_root, minHeight: height, preferredHeight: height,
                 flexibleWidth: 9999, flexibleHeight: 0);
-            // The unfilled part darkens what is behind it rather than replacing it, so the bar
-            // sits on a card, on a plain row or on a highlighted one without becoming a black
-            // slab. A bar with no data still reads as an empty container, never as one more
-            // (dark) category.
-            UIStyles.SetBackground(_root, UIStyles.TrackBackground);
+            // NO track behind the segments. This bar has no unfilled remainder by construction:
+            // the five shares always add up to everything that was captured, and what is not
+            // done yet is the grey segment, not an empty gutter. A track could therefore only
+            // ever show as a sliver peeking out from behind the colours — which is exactly how
+            // it looked, a dark slab a couple of pixels taller and wider than the bar it framed.
 
             // Order matters: everything settled first, what remains to do last. The grey always
             // ends the bar, so its length reads as the work left without doing any arithmetic.
@@ -73,8 +73,10 @@ namespace UnityGameTranslator.Core.UI.Components
             var obj = UIFactory.CreateUIObject(name, _root);
             var image = obj.AddComponent<Image>();
             image.color = color;
-            // Segments are sized only by their share (flexibleWidth), set in SetCounts.
-            return UIFactory.SetLayoutElement(obj, minHeight: height - 2, flexibleWidth: 0);
+            // Full height, not height - 2: the missing pixels used to sit at one edge, which is
+            // what made the bar look misaligned with what was behind it. Sized only by their
+            // share (flexibleWidth), set in SetCounts.
+            return UIFactory.SetLayoutElement(obj, minHeight: height, flexibleWidth: 0);
         }
 
         /// <summary>

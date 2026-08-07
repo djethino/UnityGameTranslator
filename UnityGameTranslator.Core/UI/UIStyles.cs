@@ -162,14 +162,6 @@ namespace UnityGameTranslator.Core.UI
         // Scroll view viewport background (replaces UniverseLib's gray default)
         public static readonly Color ViewportBackground = new Color(0.09f, 0.11f, 0.15f, 1f);     // E1 viewport
 
-        /// <summary>
-        /// The unfilled part of a meter. TRANSLUCENT on purpose: an opaque near-black track
-        /// punched a hole through whatever it was laid on — on a highlighted row it read as a
-        /// black slab with a thin coloured line, not as a bar with something left to fill.
-        /// Darkening what is underneath works on every background we have.
-        /// </summary>
-        public static readonly Color TrackBackground = new Color(0f, 0f, 0f, 0.32f);
-
         // Dropdown colors (for SearchableDropdown component)
         public static readonly Color DropdownBackground = new Color(0.23f, 0.27f, 0.35f, 1f);        // E4 control (= InputBackground)
         public static readonly Color DropdownItemNormal = new Color(0.17f, 0.20f, 0.27f, 1f);        // E3 row (item in the open list)

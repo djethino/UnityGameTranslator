@@ -185,7 +185,24 @@ namespace UnityGameTranslator.Core.UI.Panels
             var communityCard = CreateAdaptiveCard(communityTab, "CommunityCard", PanelWidth - 60, stretchVertically: true);
             CreateCommunitySection(communityCard);
 
-            // Bottom buttons - in fixed footer (outside scroll)
+            // Bottom buttons - in fixed footer (outside scroll).
+            // The Community tab's action comes first and only shows on that tab: it acts on the
+            // list right above it, while the three that follow are about the mod as a whole.
+            _downloadBtn = CreatePrimaryButton(buttonRow, "DownloadBtn", "Download Selected", 160);
+            UIStyles.SetBackground(_downloadBtn.Component.gameObject, UIStyles.ButtonSuccess);
+            _downloadBtn.OnClick += OnDownloadCommunityClicked;
+            _downloadBtn.Component.interactable = false;
+            _downloadBtn.Component.gameObject.SetActive(false);
+            RegisterUIText(_downloadBtn.ButtonText);
+            _helpZone?.Describe(_downloadBtn.Component.gameObject,
+                "Use the selected translation in your game — the mod asks before replacing anything you changed");
+
+            _tabBar.OnTabChanged += (index, name) =>
+            {
+                if (_downloadBtn != null)
+                    _downloadBtn.Component.gameObject.SetActive(name == TAB_COMMUNITY);
+            };
+
             var transParamsBtn = CreateSecondaryButton(buttonRow, "TransParamsBtn", "Translation Tools");
             transParamsBtn.OnClick += () => TranslatorUIManager.TranslationParamsPanel?.SetActive(true);
             RegisterUIText(transParamsBtn.ButtonText);
@@ -697,20 +714,11 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
             });
 
-            UIStyles.CreateSpacer(_communitySection, 5);
-
-            // Download button
-            var downloadRow = UIStyles.CreateFormRow(_communitySection, "DownloadRow", UIStyles.RowHeightLarge, 0);
-            var layoutGroup = downloadRow.GetComponent<HorizontalLayoutGroup>();
-            if (layoutGroup != null) layoutGroup.childAlignment = TextAnchor.MiddleCenter; // Center the button
-
-            _downloadBtn = CreatePrimaryButton(downloadRow, "DownloadBtn", "Download Selected", 160);
-            UIStyles.SetBackground(_downloadBtn.Component.gameObject, UIStyles.ButtonSuccess);
-            _downloadBtn.OnClick += OnDownloadCommunityClicked;
-            _downloadBtn.Component.interactable = false;
-            RegisterUIText(_downloadBtn.ButtonText);
-            _helpZone?.Describe(_downloadBtn.Component.gameObject,
-                "Use the selected translation in your game — the mod asks before replacing anything you changed");
+            // NOTHING after the list inside this card. The list is what stretches when the
+            // window is resized, and anything placed below it is pushed out of the scroll area
+            // and simply disappears — which is what happened to the Download button. It now
+            // lives in the panel's fixed footer, like every other panel's actions do (see
+            // MergePanel): CreateScrollablePanelLayout hands out that row precisely for this.
         }
 
         public override void SetActive(bool active)

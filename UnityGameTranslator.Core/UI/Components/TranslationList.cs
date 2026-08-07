@@ -82,6 +82,10 @@ namespace UnityGameTranslator.Core.UI.Components
             // Scroll view for list
             var scrollObj = UIFactory.CreateScrollView(parent, "TranslationScroll", out _listContent, out _);
             _root = scrollObj;
+            // Takes every spare pixel of its card, so the list is what grows when the window is
+            // resized. That only works because nothing follows it inside the card — anything
+            // placed below would be pushed out of the scroll area. Actions belong in the
+            // panel's fixed footer, which is the convention every other panel follows.
             UIFactory.SetLayoutElement(scrollObj, minHeight: listHeight, flexibleHeight: 9999);
             UIFactory.SetLayoutGroup<VerticalLayoutGroup>(_listContent, false, false, true, true, 5, 5, 5, 5, 5);
             UIStyles.SetBackground(scrollObj, UIStyles.InputBackground);

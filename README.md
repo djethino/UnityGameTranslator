@@ -82,17 +82,22 @@ A mod that players install into any Unity game to play it in their language — 
 | UUID exists, owned by someone else | Creates your **Branch** (the owner reviews and merges) |
 | "Create Independent" / Fork in the mod | New UUID → **new Main** owned by you |
 
-### Translation Quality System (H/V/A Tags)
+### Translation tags (H/V/A/S)
 
-| Tag | Name | Score | Description |
-|-----|------|-------|-------------|
-| **H** | Human | 3 pts | Written by a human |
-| **V** | Validated | 2 pts | AI translation approved by human |
-| **A** | AI | 1 pt | Translated by AI |
-| **S** | Skip | — | Intentionally not translated |
-| **M** | Mod | — | Mod UI translations (internal) |
+| Tag | Name | Description |
+|-----|------|-------------|
+| **H** | Human | Written by a human |
+| **V** | Validated | Machine wording a human read and accepted |
+| **A** | AI | Machine wording nobody has read yet |
+| **S** | Skip | A human ruled that this line stays as it is — a fictional language, a proper name, text that must not change. Counts as settled, never as work left to do |
+| **M** | Mod | Mod UI translations (internal, never counted) |
 
-**Quality Score** (0-3): `(H×3 + V×2 + A×1) / (H + V + A)`
+The mod shows a **review stage** rather than a mark — `(H + V + S) / (H + V + S + A)`, read as
+"machine translation / review started / well under way / fully reviewed". Every translation begins
+as machine output, which is a starting point and not a failing grade, so there is no scale ending
+at "excellent" to fall short of. A file with nothing translated has no stage at all.
+
+The full set of measures, and who sees each, is published at `/docs`.
 
 **Capture Keys Only mode** — play without translating, capture all text, then translate manually on the website for 100% human translations.
 
@@ -100,7 +105,7 @@ A mod that players install into any Unity game to play it in their language — 
 
 - **First-run wizard** — guided setup on first launch
 - **Settings hotkey** — F10 (configurable) opens the full settings panel
-- **Translation info** — H/V/A distribution, quality score, sync status
+- **Translation info** — H/V/A/S distribution, review stage, lines left to review, sync status
 - **Translation Tools** — tabs for Tools (editors), Exclusions, Fonts (Global + Overrides), Images, Variables
 - **Merge panel** — resolve conflicts with per-entry Keep Mine / Take Server choices
 - **Status overlay** — corner notifications for updates, sync, and AI queue

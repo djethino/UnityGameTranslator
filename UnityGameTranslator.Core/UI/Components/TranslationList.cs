@@ -236,6 +236,36 @@ namespace UnityGameTranslator.Core.UI.Components
                 moreLabel.fontSize = UIStyles.FontSizeHint;
                 moreLabel.color = UIStyles.TextMuted;
                 UIFactory.SetLayoutElement(moreLabel.gameObject, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999);
+
+                ShowOwnTranslationBelowTheCut(displayCount, isLoggedIn, currentUser);
+            }
+        }
+
+        /// <summary>
+        /// The player's own translation, shown after the cut when it did not make the visible
+        /// rows.
+        ///
+        /// The list is NOT reordered to float it to the top: doing so would lie about the order
+        /// and quietly suggest theirs is the best. Its real position is the answer to the very
+        /// question this screen exists for — is mine still the one to use. But an answer nobody
+        /// can see is no answer, and only five rows are drawn, so it comes back here with its
+        /// rank stated.
+        /// </summary>
+        private void ShowOwnTranslationBelowTheCut(int displayCount, bool isLoggedIn, string currentUser)
+        {
+            for (int i = displayCount; i < _translations.Count; i++)
+            {
+                if (!TranslatorCore.IsUuidMatch(_translations[i].FileUuid)) continue;
+
+                var rankLabel = UIFactory.CreateLabel(_listContent, "YourRank",
+                    TranslatorCore.TranslateOwnUIDynamic("Your current translation ranks") + $" #{i + 1}",
+                    TextAnchor.MiddleLeft);
+                rankLabel.fontSize = UIStyles.FontSizeHint;
+                rankLabel.color = UIStyles.TextMuted;
+                UIFactory.SetLayoutElement(rankLabel.gameObject, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999);
+
+                CreateListItem(_translations[i], isLoggedIn, currentUser);
+                return;
             }
         }
 

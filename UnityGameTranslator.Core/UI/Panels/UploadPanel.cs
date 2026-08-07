@@ -414,8 +414,14 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             SetDynamicText(_entriesLabel, $"Entries: {TranslatorCore.TranslationCache.Count}");
 
+            // Same label, same treatment as the main panel and the wizard: the word is
+            // translated, the game's name is data and stays as it is. Written raw here, this
+            // was the one screen of the three that showed "Game:" in English whatever the
+            // player had chosen.
             var gameInfo = TranslatorCore.CurrentGame;
-            _gameLabel.text = gameInfo != null ? $"Game: {gameInfo.name}" : "Game: Unknown";
+            _gameLabel.text = gameInfo != null
+                ? Tr("Game:") + $" {gameInfo.name}"
+                : Tr("Game: Unknown");
         }
 
         private async void DoUpload()

@@ -382,6 +382,25 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         protected virtual float ContentHeightFloor => _tallestTabContentHeight;
 
+        /// <summary>
+        /// THE RULE FOR EVERY SCROLLING LIST IN A PANEL, written here because getting it wrong
+        /// is invisible until someone opens the window on a small screen.
+        ///
+        /// A list declares three heights: a minimum (the smallest box worth showing), a
+        /// PREFERRED height equal to that minimum, and a flexible height so it grows into
+        /// whatever room is left.
+        ///
+        /// The preferred one is the trap. This panel sizes its scrolling area to
+        /// max(viewport, sum of the children's preferred heights), so a list that asks for twice
+        /// what it needs pushes that sum past the viewport before a single entry exists — a
+        /// scrollbar nobody can justify, and boxes standing half empty at the size they demanded.
+        /// Declaring no preferred height at all is the mirror mistake: the list is then weighed
+        /// at its minimum in that sum, so whatever sits below it is never budgeted for and gets
+        /// pushed out of view once the list expands for real.
+        /// </summary>
+        protected const string ScrollingListHeightRule =
+            "minHeight = preferredHeight = smallest useful box, flexibleHeight = 9999";
+
         private float _tallestTabContentHeight;
         private bool _tabHeightMeasured;
 

@@ -317,9 +317,12 @@ namespace UnityGameTranslator.Core.UI.Components
             });
             UIFactory.SetLayoutElement(toggleObj, minWidth: UIStyles.ToggleControlWidth);
 
-            // Info column
+            // Info column. Transparent: CreateVerticalGroup fits its own background image, which
+            // drew a dark rectangle inside the row's own colour — a box within a box, and it hid
+            // the highlight that marks the player's own translation on three of its four sides.
             var infoCol = UIFactory.CreateVerticalGroup(itemRow, "InfoCol", false, false, true, true, 2);
             UIFactory.SetLayoutElement(infoCol, flexibleWidth: 9999);
+            UIStyles.ClearRowBackground(infoCol);
 
             // Configure info column alignment
             var infoLayout = infoCol.GetComponent<VerticalLayoutGroup>();
@@ -350,7 +353,10 @@ namespace UnityGameTranslator.Core.UI.Components
             // Details row: the size of the file, then how good it is. The H/V/A breakdown that
             // used to be spelled out here is now the bar below — three numbers to be mentally
             // compared were harder to read than three coloured lengths.
-            string detailsText = $"{translation.LineCount} lines{FormatCoverage(translation)} | {FormatQualityStats(translation)}";
+            // Same binding as the facts line: "690" and "lines" must not end up on two lines
+            string detailsText = Unbreakable($"{translation.LineCount} lines")
+                + FormatCoverage(translation)
+                + "  |  " + Unbreakable(FormatQualityStats(translation));
             var detailsLabel = UIFactory.CreateLabel(infoCol, "Details", detailsText, TextAnchor.MiddleLeft);
             detailsLabel.fontSize = UIStyles.FontSizeHint;
             detailsLabel.color = UIStyles.TextMuted;
@@ -408,6 +414,7 @@ namespace UnityGameTranslator.Core.UI.Components
                 facts.Add("complete");
             if (translation.DownloadCount > 0) facts.Add($"{translation.DownloadCount} downloads");
 
+
             // Names the purple segment, which has no colour key on these rows: an author who
             // kept what must stay untouched worked better than one who let the AI run over
             // everything, and a silent band of colour would not say so.
@@ -419,7 +426,26 @@ namespace UnityGameTranslator.Core.UI.Components
             // "Resources" and not "Assets": one word for one thing, as on the website.
             if (!string.IsNullOrEmpty(translation.ResourcesUrl)) facts.Add("◆ Resources");
 
-            return facts.Count > 0 ? string.Join("  ·  ", facts.ToArray()) : null;
+            if (facts.Count == 0) return null;
+
+            // Each fact is welded together, and the separator is the only ordinary space in the
+            // line — so Unity can only break BETWEEN facts. Left alone it breaks wherever the
+            // width runs out, which put "103" at the end of one line and "downloads" at the start
+            // of the next: two halves of a number that mean nothing apart. Same fix as the colour
+            // key, and for the same reason.
+            for (int i = 0; i < facts.Count; i++) facts[i] = Unbreakable(facts[i]);
+
+            return string.Join("  ·  ", facts.ToArray());
+        }
+
+        /// <summary>
+        /// Ties the words of one item together so a line break cannot land inside it. Escaped
+        /// rather than a literal non-breaking space: that character is invisible in an editor and
+        /// the first tidy-up would turn it back into an ordinary one, taking the fix with it.
+        /// </summary>
+        private static string Unbreakable(string text)
+        {
+            return text == null ? null : text.Replace(' ', ' ');
         }
 
         /// <summary>
@@ -453,7 +479,7 @@ namespace UnityGameTranslator.Core.UI.Components
             int percent = Mathf.RoundToInt(translation.GameCoverage.Value * 100f);
             if (percent >= 100) return string.Empty;
 
-            return "  ·  " + percent + "% " + TranslatorCore.TranslateOwnUIDynamic("of the game");
+            return "  ·  " + Unbreakable(percent + "% " + TranslatorCore.TranslateOwnUIDynamic("of the game"));
         }
 
         /// <summary>

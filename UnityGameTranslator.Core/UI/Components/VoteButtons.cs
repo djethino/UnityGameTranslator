@@ -53,9 +53,12 @@ namespace UnityGameTranslator.Core.UI.Components
             _onVoteChanged = onVoteChanged;
             _interactive = interactive;
 
-            // Container
+            // Container. Transparent, so the count sits on whatever it is placed on: the group's
+            // default background drew a dark tile around a bare number, which read as a button
+            // that does nothing.
             _root = UIFactory.CreateHorizontalGroup(parent, "VoteButtons", false, false, true, true, 2);
             UIFactory.SetLayoutElement(_root, minWidth: 80, minHeight: 24);
+            UIStyles.ClearRowBackground(_root, clearPadding: false);
 
             var layout = _root.GetComponent<HorizontalLayoutGroup>();
             if (layout != null)

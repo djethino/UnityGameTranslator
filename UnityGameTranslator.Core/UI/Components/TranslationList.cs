@@ -82,14 +82,17 @@ namespace UnityGameTranslator.Core.UI.Components
             // Scroll view for list
             var scrollObj = UIFactory.CreateScrollView(parent, "TranslationScroll", out _listContent, out _);
             _root = scrollObj;
-            // minHeight AND preferredHeight AND flexibleHeight — the triple every other list in
-            // the mod uses (exclusions, fonts, overrides, images, variables). It is not
-            // decoration: the panel attaches FillViewportHeight, which sizes the scrolling area
-            // to max(viewport, sum of PREFERRED heights). A list that declares no preferred
-            // height is weighed at its minimum in that sum, so the row it shares its card with
-            // is budgeted for and then pushed out when the list actually expands.
-            UIFactory.SetLayoutElement(scrollObj, minHeight: listHeight, preferredHeight: listHeight * 2,
-                flexibleHeight: 9999);
+            // Bounded, and NOT flexible. The panel sizes its scrolling area to
+            // max(viewport, sum of preferred heights): as long as this list asks for less than
+            // the viewport, everything in the tab fits and nothing scrolls but the list itself
+            // — which is the point. Give it a flexible height instead and it swallows the
+            // viewport, then pushes the row below it out of sight.
+            //
+            // The cost is that it does not grow when the window does. Making it grow needs the
+            // tab contents out of the panel's own scroll area, which is a change to the panel
+            // skeleton rather than to this list.
+            UIFactory.SetLayoutElement(scrollObj, minHeight: listHeight, preferredHeight: listHeight,
+                flexibleHeight: 0);
             UIFactory.SetLayoutGroup<VerticalLayoutGroup>(_listContent, false, false, true, true, 5, 5, 5, 5, 5);
             UIStyles.SetBackground(scrollObj, UIStyles.InputBackground);
             UIStyles.ConfigureScrollViewNoScrollbar(scrollObj);

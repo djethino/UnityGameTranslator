@@ -732,47 +732,12 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // Reserve the height of the TALLEST tab, like the other tabbed panels do.
                 // Without it the panel was sized for whichever tab happened to be open, so
                 // switching to Community resized the whole window under the user.
-                if (!_tabHeightFixed && _tabBar != null)
-                {
-                    UniverseLib.RuntimeHelper.StartCoroutine(DelayedFixTabHeight());
-                }
+                KeepPanelHeightAcrossTabs(_tabBar);
 
                 // Auto-search community translations if conditions are met
                 TryAutoSearchCommunity();
             }
         }
-
-        private bool _tabHeightFixed;
-
-        private System.Collections.IEnumerator DelayedFixTabHeight()
-        {
-            // Let Unity settle the layouts before measuring them
-            yield return null;
-            yield return null;
-            yield return null;
-
-            if (_tabBar != null && _tabBar.ContentContainer != null)
-            {
-                float maxTabHeight = _tabBar.MeasureMaxContentHeight();
-                if (maxTabHeight > 0)
-                {
-                    // Remembered so the WINDOW keeps one size across tabs, which is what this
-                    // measurement was always for. It used to be written as a minHeight on the
-                    // tab container instead, and that is a different statement entirely: it
-                    // made the short tab as tall as the tall one, so its card stretched, its
-                    // content stopped being anchored to anything, and the panel scrolled for
-                    // emptiness that belonged to another tab.
-                    _tallestTabContentHeight = maxTabHeight;
-                    _tabHeightFixed = true;
-                    RecalculateSize();
-                }
-            }
-        }
-
-        private float _tallestTabContentHeight;
-
-        /// <inheritdoc />
-        protected override float ContentHeightFloor => _tallestTabContentHeight;
 
         /// <summary>
         /// Automatically search for community translations if:

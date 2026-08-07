@@ -5,6 +5,7 @@ using UnityEngine.UI;
 using UniverseLib.UI;
 using UniverseLib.UI.Models;
 using UniverseLib.UI.Panels;
+using UnityGameTranslator.Core.UI.Components;
 
 namespace UnityGameTranslator.Core.UI.Panels
 {
@@ -379,7 +380,47 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// across tabs. It sizes the PANEL — the containers inside stay free to be exactly as
         /// tall as what they hold.
         /// </summary>
-        protected virtual float ContentHeightFloor => 0f;
+        protected virtual float ContentHeightFloor => _tallestTabContentHeight;
+
+        private float _tallestTabContentHeight;
+        private bool _tabHeightMeasured;
+
+        /// <summary>
+        /// Keeps a tabbed panel from changing size when the visitor switches tabs, by measuring
+        /// the tallest tab once and holding the window to it.
+        ///
+        /// Call from SetActive when the panel becomes visible: layouts have no measurable size
+        /// until then, which is why this waits a few frames before reading anything.
+        ///
+        /// Lived in three panels as three copies of the same coroutine, and all three wrote the
+        /// measurement as a minHeight on the tab CONTAINER. That says something quite different
+        /// from what was meant: it makes every short tab as tall as the tallest one, so its
+        /// content stretches, nothing inside stays anchored, and the panel scrolls to show
+        /// emptiness that belongs to another tab. The measurement sizes the panel; the
+        /// containers are left alone.
+        /// </summary>
+        protected void KeepPanelHeightAcrossTabs(TabBar tabBar)
+        {
+            if (_tabHeightMeasured || tabBar == null) return;
+            UniverseLib.RuntimeHelper.StartCoroutine(MeasureTallestTab(tabBar));
+        }
+
+        private System.Collections.IEnumerator MeasureTallestTab(TabBar tabBar)
+        {
+            // Layouts are not calculated until the panel has been visible for a few frames
+            yield return null;
+            yield return null;
+            yield return null;
+
+            if (tabBar == null || tabBar.ContentContainer == null) yield break;
+
+            float tallest = tabBar.MeasureMaxContentHeight();
+            if (tallest <= 0) yield break;
+
+            _tallestTabContentHeight = tallest;
+            _tabHeightMeasured = true;
+            RecalculateSize();
+        }
 
         // Track if we've shown the backdrop for this panel
         private bool _backdropShown = false;

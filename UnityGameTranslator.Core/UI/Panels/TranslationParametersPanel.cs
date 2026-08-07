@@ -33,7 +33,6 @@ namespace UnityGameTranslator.Core.UI.Panels
         private Components.HelpZone _helpZone;
 
         // Tab sizing
-        private bool _tabHeightFixed = false;
 
         // Behavior section
         private Toggle _typewritingDetectionToggle;
@@ -2286,38 +2285,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 LoadCurrentState();
 
-                // Fix tab height on first display (layouts need to be calculated first)
-                if (!_tabHeightFixed && _tabBar != null)
-                {
-                    UniverseLib.RuntimeHelper.StartCoroutine(DelayedFixTabHeight());
-                }
+                // Keeps the window from resizing when the visitor switches tabs
+                KeepPanelHeightAcrossTabs(_tabBar);
             }
             else if (!active && wasActive)
             {
                 // Clear font highlight when closing the panel
                 TranslatorScanner.ClearHighlight();
                 ResetHighlightButton();
-            }
-        }
-
-        private System.Collections.IEnumerator DelayedFixTabHeight()
-        {
-            // Wait a few frames for Unity to calculate layouts
-            yield return null;
-            yield return null;
-            yield return null;
-
-            if (_tabBar != null && _tabBar.ContentContainer != null)
-            {
-                float maxTabHeight = _tabBar.MeasureMaxContentHeight();
-                if (maxTabHeight > 0)
-                {
-                    UIFactory.SetLayoutElement(_tabBar.ContentContainer, minHeight: Mathf.CeilToInt(maxTabHeight));
-                    _tabHeightFixed = true;
-
-                    // Recalculate panel size with the new fixed height
-                    RecalculateSize();
-                }
             }
         }
 

@@ -29,9 +29,6 @@ namespace UnityGameTranslator.Core.UI.Components
         private TranslationInfo _selectedTranslation;
         private bool _isSearching;
 
-        // Vote buttons storage (keyed by translation ID)
-        private Dictionary<int, VoteButtons> _voteButtons = new Dictionary<int, VoteButtons>();
-
         // Callbacks
         private Action<TranslationInfo> _onSelectionChanged;
         private Func<string> _getCurrentUser;
@@ -126,7 +123,6 @@ namespace UnityGameTranslator.Core.UI.Components
         {
             _translations.Clear();
             _selectedTranslation = null;
-            _voteButtons.Clear();
             ClearUI();
         }
 
@@ -137,7 +133,6 @@ namespace UnityGameTranslator.Core.UI.Components
         {
             if (_translations.Count > 0)
             {
-                _voteButtons.Clear();
                 Populate();
             }
         }
@@ -213,13 +208,7 @@ namespace UnityGameTranslator.Core.UI.Components
 
         private void ClearUI()
         {
-            if (_listContent == null) return;
-
-            // Manual iteration for IL2CPP compatibility (foreach on Transform doesn't work)
-            for (int i = _listContent.transform.childCount - 1; i >= 0; i--)
-            {
-                GameObject.Destroy(_listContent.transform.GetChild(i).gameObject);
-            }
+            UIHelpers.DestroyChildren(_listContent);
         }
 
         private void Populate()
@@ -365,27 +354,14 @@ namespace UnityGameTranslator.Core.UI.Components
                 UIFactory.SetLayoutElement(notesLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
             }
 
-            // Vote buttons (right side)
-            var voteButtons = new VoteButtons();
-            voteButtons.Create(itemRow, translation.Id, translation.VoteCount, OnVoteChanged, translation.UserVote);
-            voteButtons.SetLoggedIn(isLoggedIn);
-            _voteButtons[translation.Id] = voteButtons;
-        }
-
-        /// <summary>
-        /// Callback when a vote changes - update the translation info.
-        /// </summary>
-        private void OnVoteChanged(int translationId, int newVoteCount)
-        {
-            // Find the translation and update its vote count
-            for (int i = 0; i < _translations.Count; i++)
-            {
-                if (_translations[i].Id == translationId)
-                {
-                    _translations[i].VoteCount = newVoteCount;
-                    break;
-                }
-            }
+            // Vote COUNT (right side), and no arrows.
+            //
+            // This is a list of candidates: one is choosing between translations one has never
+            // run, and a vote cast here would rate a title card. Seeing how others rated it is
+            // exactly what helps you choose — casting your own belongs on the current
+            // translation, once you have played with it.
+            new VoteButtons().Create(itemRow, translation.Id, translation.VoteCount, null,
+                translation.UserVote, interactive: false);
         }
 
         /// <summary>

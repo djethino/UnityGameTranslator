@@ -768,6 +768,21 @@ namespace UnityGameTranslator.Core
                     BranchesCount = data["branches_count"]?.ToObject<int?>() ?? 0
                 };
 
+                // Votes on the published translation of this lineage. Absent on older servers,
+                // and null when nothing of this lineage is published — both mean "no vote to
+                // show here", never "zero votes".
+                var voteToken = data["vote"];
+                if (voteToken != null && voteToken.Type == JTokenType.Object)
+                {
+                    result.Vote = new VoteState
+                    {
+                        TargetId = voteToken["target_id"]?.Value<int>() ?? 0,
+                        Count = voteToken["count"]?.Value<int>() ?? 0,
+                        UserVote = voteToken["user_vote"]?.Value<int?>(),
+                        CanVote = voteToken["can_vote"]?.Value<bool>() ?? false,
+                    };
+                }
+
                 TranslatorCore.LogInfo($"[ApiClient] Parsed: exists={result.Exists}, isOwner={result.IsOwner}, role={result.Role}");
 
                 // Parse translation info if UPDATE
@@ -1942,6 +1957,28 @@ namespace UnityGameTranslator.Core
         public int BranchesCount { get; set; }
         public UuidCheckTranslationInfo ExistingTranslation { get; set; } // For UPDATE
         public UuidCheckTranslationInfo OriginalTranslation { get; set; } // For FORK
+
+        /// <summary>
+        /// Votes on the PUBLISHED translation of this lineage — the one being played, and the
+        /// one the ranking ranks. Null when nothing of it is published, and on any server too
+        /// old to report it: absence must read as "unknown", never as "no votes".
+        /// </summary>
+        public VoteState Vote { get; set; }
+    }
+
+    /// <summary>
+    /// What the mod needs to show a vote without deciding anything itself. Whether the player
+    /// MAY vote is a server rule (one owner, one translation, no self-votes) and stays there:
+    /// the mod asks, it does not re-implement.
+    /// </summary>
+    public class VoteState
+    {
+        /// <summary>The translation a vote from here would land on.</summary>
+        public int TargetId { get; set; }
+        public int Count { get; set; }
+        /// <summary>This player's own vote (+1 / -1), null when they have not voted.</summary>
+        public int? UserVote { get; set; }
+        public bool CanVote { get; set; }
     }
 
     public class UuidCheckTranslationInfo

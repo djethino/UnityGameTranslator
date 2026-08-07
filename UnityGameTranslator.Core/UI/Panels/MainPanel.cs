@@ -1096,6 +1096,15 @@ namespace UnityGameTranslator.Core.UI.Panels
                     break;
             }
 
+            // What the community made of this translation, and the player's own say. Whatever
+            // the mode: an author is entitled to see their count, a player to give one back.
+            // Hidden by the card itself when the server reported no vote at all.
+            _statusCard.SetVote(
+                serverState?.Vote,
+                _currentLayoutState == LayoutState.OwnerMain
+                    ? TranslationRoleType.Main
+                    : TranslationRoleType.None);
+
             // Show/hide external resources link
             if (_resourcesLinkSection != null)
             {

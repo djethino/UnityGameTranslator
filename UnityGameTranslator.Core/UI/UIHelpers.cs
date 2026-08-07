@@ -400,5 +400,25 @@ namespace UnityGameTranslator.Core.UI
             return transform.GetComponent(typeof(T)) as T;
         }
 
+        /// <summary>
+        /// Empty a container before rebuilding its contents.
+        ///
+        /// Backwards manual iteration because foreach over a Transform does not work under
+        /// IL2CPP. Deactivated BEFORE being destroyed: Destroy only takes effect at the end of
+        /// the frame, so a container refilled in the same breath would lay out the old children
+        /// alongside the new ones for one frame — an inactive object is out of the layout at
+        /// once.
+        /// </summary>
+        public static void DestroyChildren(GameObject parent)
+        {
+            if (parent == null) return;
+
+            for (int i = parent.transform.childCount - 1; i >= 0; i--)
+            {
+                var child = parent.transform.GetChild(i).gameObject;
+                child.SetActive(false);
+                GameObject.Destroy(child);
+            }
+        }
     }
 }

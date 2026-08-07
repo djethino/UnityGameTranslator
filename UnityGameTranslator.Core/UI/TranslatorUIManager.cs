@@ -959,6 +959,18 @@ namespace UnityGameTranslator.Core.UI
                     state.Role = TranslationRole.None;
                     state.SiteId = siteId;
                     if (!string.IsNullOrEmpty(fileHash)) state.Hash = fileHash;
+
+                    // With no account there is nothing to vote WITH, but the count is public and
+                    // worth seeing: it is what tells someone the translation they installed was
+                    // appreciated, and it is the only reason they would consider signing in.
+                    state.Vote = new VoteState
+                    {
+                        TargetId = siteId,
+                        Count = voteCount,
+                        UserVote = null,
+                        CanVote = false,
+                    };
+
                     TranslatorCore.ServerState = state;
 
                     if (hasUpdate)
@@ -1367,6 +1379,20 @@ namespace UnityGameTranslator.Core.UI
                     serverState.MainUsername = main["uploader"]?.Value<string>();
                     serverState.Hash = main["file_hash"]?.Value<string>();
                     serverState.ResourcesUrl = main["resources_url"]?.Value<string>();
+                }
+
+                // Votes on the published translation of this lineage. Left null on a server that
+                // does not report it: the card then shows no vote at all, rather than "0".
+                var voteToken = data["vote"];
+                if (voteToken != null && voteToken.Type == JTokenType.Object)
+                {
+                    serverState.Vote = new VoteState
+                    {
+                        TargetId = voteToken["target_id"]?.Value<int>() ?? 0,
+                        Count = voteToken["count"]?.Value<int>() ?? 0,
+                        UserVote = voteToken["user_vote"]?.Value<int?>(),
+                        CanVote = voteToken["can_vote"]?.Value<bool>() ?? false,
+                    };
                 }
 
                 TranslatorCore.ServerState = serverState;

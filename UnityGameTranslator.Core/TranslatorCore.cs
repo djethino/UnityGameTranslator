@@ -79,6 +79,38 @@ namespace UnityGameTranslator.Core
         public static int LocalChangesCount { get; private set; } = 0;
 
         /// <summary>
+        /// Translated lines this session has actually put on screen.
+        /// </summary>
+        private static int _translationsShownThisSession = 0;
+
+        /// <summary>
+        /// Enough of the translation seen for an opinion to be worth anything.
+        ///
+        /// A rating given seconds after installing measures nothing — Nexus Mods reached the
+        /// same conclusion and only allows an endorsement fifteen minutes after the download.
+        /// Lines shown beat elapsed time here: one can sit in a pause menu for a quarter of an
+        /// hour without reading a single translated word.
+        /// </summary>
+        private const int TranslationsShownBeforeRating = 50;
+
+        /// <summary>
+        /// Has this player seen enough of the translation to judge it? Read by the settings
+        /// panel to decide whether to offer the vote at all.
+        /// </summary>
+        public static bool HasUsedTranslationEnoughToRate
+            => _translationsShownThisSession >= TranslationsShownBeforeRating;
+
+        /// <summary>
+        /// One translated line reached the screen. Called from the scanner's apply path, which
+        /// runs on the main thread — Interlocked all the same, because IL2CPP has surprised us
+        /// on which thread a Unity callback ends up.
+        /// </summary>
+        public static void NoteTranslationShown()
+        {
+            System.Threading.Interlocked.Increment(ref _translationsShownThisSession);
+        }
+
+        /// <summary>
         /// True when metadata (fonts, images, exclusions) has been modified locally since last upload.
         /// Included in sync direction calculation so metadata changes trigger an upload prompt.
         /// </summary>
@@ -6701,6 +6733,14 @@ namespace UnityGameTranslator.Core
 
         /// <summary>If Main, the number of branches</summary>
         public int BranchesCount { get; set; }
+
+        /// <summary>
+        /// Votes on the PUBLISHED translation of this lineage — count, this player's own vote,
+        /// and whether they may vote at all. The server decides that last one: no self-votes,
+        /// public only. Null when nothing is published, and on any server too old to report it —
+        /// absence reads as "unknown", never as "no votes".
+        /// </summary>
+        public VoteState Vote { get; set; }
 
         /// <summary>
         /// If Main, how many branches have never been reviewed or changed since.

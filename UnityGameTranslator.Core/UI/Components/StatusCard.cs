@@ -77,6 +77,12 @@ namespace UnityGameTranslator.Core.UI.Components
         private QualityBar _qualityBar;
         private Text _qualityLegend;
         private GameObject _modeRow;
+        private GameObject _voteRow;
+        private GameObject _voteHost;
+        private Text _voteHint;
+        private VoteButtons _voteButtons;
+        private int _voteBuiltForId = -1;
+        private bool _voteBuiltInteractive;
         private Text _secondaryLabel;
         private UniverseLib.UI.Models.ButtonRef _modeActionBtn;
         private Action _modeAction;
@@ -231,6 +237,106 @@ namespace UnityGameTranslator.Core.UI.Components
             TranslatorCore.RegisterExcluded(_modeActionBtn.ButtonText);
 
             _modeRow.SetActive(false);
+
+            // Row 6 — giving something back. Last, because it is not status: it is the one thing
+            // the player can do FOR the translation rather than with it.
+            _voteRow = UIFactory.CreateHorizontalGroup(_root, "VoteRow", false, false, true, true, UIStyles.SmallSpacing);
+            UIFactory.SetLayoutElement(_voteRow, minHeight: UIStyles.RowHeightMedium, flexibleWidth: 9999, flexibleHeight: 0);
+            UIStyles.ClearRowBackground(_voteRow);
+            var voteLayout = _voteRow.GetComponent<HorizontalLayoutGroup>();
+            if (voteLayout != null) voteLayout.childAlignment = TextAnchor.MiddleLeft;
+
+            // The widget is rebuilt into this host whenever the mode changes (signed in, seen
+            // enough of it, someone else's work) — arrows exist or they don't, they are never
+            // shown greyed out.
+            _voteHost = UIFactory.CreateHorizontalGroup(_voteRow, "VoteHost", false, false, true, true, 0);
+            UIFactory.SetLayoutElement(_voteHost, minWidth: 90, flexibleWidth: 0);
+
+            _voteHint = UIFactory.CreateLabel(_voteRow, "VoteHint", "", TextAnchor.MiddleLeft);
+            _voteHint.fontSize = UIStyles.FontSizeHint;
+            _voteHint.color = UIStyles.TextMuted;
+            UIFactory.SetLayoutElement(_voteHint.gameObject, flexibleWidth: 9999);
+            TranslatorCore.RegisterExcluded(_voteHint);
+
+            _voteRow.SetActive(false);
+        }
+
+        /// <summary>
+        /// Show what the community made of this translation, and let the player have their say.
+        ///
+        /// This card is the ONE place in the mod where a vote is cast, and the reason is that it
+        /// is the only place where the player has actually run the translation. The community
+        /// list shows counts and no arrows: there one is picking between candidates never played,
+        /// and a vote cast on a title card measures nothing.
+        ///
+        /// Hidden entirely when the server said nothing about votes — an older site, or a
+        /// translation with nothing published. Absence is not "0 votes".
+        /// </summary>
+        public void SetVote(VoteState vote, TranslationRoleType role)
+        {
+            if (_voteRow == null) return;
+
+            if (vote == null)
+            {
+                _voteRow.SetActive(false);
+                return;
+            }
+
+            bool signedIn = !string.IsNullOrEmpty(TranslatorCore.Config?.api_token);
+            bool playedEnough = TranslatorCore.HasUsedTranslationEnoughToRate;
+
+            // The server decides who may vote (no self-votes, public only). The mod only adds
+            // the one condition the server cannot see: has this player actually used it.
+            bool interactive = vote.CanVote && playedEnough;
+
+            // Rebuilt rather than toggled: a greyed-out arrow is a dead end, and the reason it
+            // is dead belongs in words next to it.
+            if (_voteButtons == null || _voteBuiltForId != vote.TargetId || _voteBuiltInteractive != interactive)
+            {
+                UIHelpers.DestroyChildren(_voteHost);
+                _voteButtons = new VoteButtons();
+                _voteButtons.Create(_voteHost, vote.TargetId, vote.Count, OnVoteCast, vote.UserVote, interactive);
+                _voteBuiltForId = vote.TargetId;
+                _voteBuiltInteractive = interactive;
+            }
+            else
+            {
+                _voteButtons.UpdateVoteCount(vote.Count, vote.UserVote);
+            }
+
+            string hint;
+            if (interactive)
+                hint = "Rate this translation";
+            else if (!signedIn)
+                hint = "Sign in to rate this translation";
+            else if (role == TranslationRoleType.Main)
+                hint = "You cannot rate your own translation";
+            else if (!playedEnough)
+                hint = "Play with it a little, then rate it";
+            else
+                hint = null;
+
+            _voteHint.text = hint == null ? string.Empty : TranslatorCore.TranslateOwnUIDynamic(hint, _voteHint);
+            _voteHint.gameObject.SetActive(hint != null);
+
+            _voteRow.SetActive(true);
+        }
+
+        /// <summary>
+        /// A vote was just cast from this card: write it back into the state the card is
+        /// rebuilt from.
+        ///
+        /// Without this the next refresh — and the panel refreshes often — would hand the
+        /// widget the server's answer from BEFORE the vote and visually undo it, until the
+        /// next sync check happened to come round.
+        /// </summary>
+        private static void OnVoteCast(int translationId, int newCount, int? userVote)
+        {
+            var vote = TranslatorCore.ServerState?.Vote;
+            if (vote == null || vote.TargetId != translationId) return;
+
+            vote.Count = newCount;
+            vote.UserVote = userVote;
         }
 
         /// <summary>

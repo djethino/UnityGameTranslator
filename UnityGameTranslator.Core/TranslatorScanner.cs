@@ -2323,6 +2323,13 @@ namespace UnityGameTranslator.Core
                             TranslatorCore.UpdateSeenText(id, translation);
                             processedTextHashes[id] = translation.GetHashCode();
                         }
+
+                        // Counted here and nowhere else: this is the point where a translated
+                        // line actually reached the screen. It is what tells the settings panel
+                        // whether this player has USED the translation — asking someone to rate
+                        // a file they installed thirty seconds ago collects noise, not opinion.
+                        TranslatorCore.NoteTranslationShown();
+
                         TranslatorCore.LogDebug($"[Apply OK] comp={id} {expectedPreview}");
                     }
                     else

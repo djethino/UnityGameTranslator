@@ -23,9 +23,13 @@ namespace UnityGameTranslator.Core.UI.Components
         private int _currentVoteCount;
         private int? _userVote;
         private bool _isVoting;
+        private bool _interactive = true;
 
-        // Callback when vote changes (translationId, newVoteCount)
-        private Action<int, int> _onVoteChanged;
+        // Callback when the vote changes (translationId, newVoteCount, thisUsersVote).
+        // The user's own vote travels with the count on purpose: whoever holds the state this
+        // widget was built from has to be able to update BOTH, or the next refresh rebuilds
+        // the widget from a stale server answer and visually undoes the vote just cast.
+        private Action<int, int, int?> _onVoteChanged;
 
         /// <summary>
         /// Create the vote buttons UI.
@@ -33,12 +37,21 @@ namespace UnityGameTranslator.Core.UI.Components
         /// <param name="userVote">This user's existing vote, so the arrows show it straight away
         /// instead of only after voting again. Null when unknown (not signed in, never voted, or
         /// an older server that doesn't report it).</param>
-        public GameObject Create(GameObject parent, int translationId, int voteCount, Action<int, int> onVoteChanged = null, int? userVote = null)
+        /// <param name="interactive">False renders the COUNT ALONE, with no arrows.
+        ///
+        /// Which is what the community list needs: there one browses candidates one has never
+        /// run, and a vote cast on a title card measures nothing. Reading a count is what helps
+        /// you choose; producing one belongs where the translation was actually played — the
+        /// current-translation card. Also used for one's own translation, which the server
+        /// refuses to let its author vote on: an arrow that can only answer 403 is worse than
+        /// no arrow.</param>
+        public GameObject Create(GameObject parent, int translationId, int voteCount, Action<int, int, int?> onVoteChanged = null, int? userVote = null, bool interactive = true)
         {
             _translationId = translationId;
             _currentVoteCount = voteCount;
             _userVote = userVote;
             _onVoteChanged = onVoteChanged;
+            _interactive = interactive;
 
             // Container
             _root = UIFactory.CreateHorizontalGroup(parent, "VoteButtons", false, false, true, true, 2);
@@ -51,27 +64,34 @@ namespace UnityGameTranslator.Core.UI.Components
             }
 
             // Upvote button
-            var upRef = UIFactory.CreateButton(_root, "UpButton", "▲");
-            _upButton = upRef.Component;
-            _upText = upRef.GameObject.GetComponentInChildren<Text>();
-            if (_upText != null) _upText.fontSize = UIStyles.FontSizeSmall;
-            UIFactory.SetLayoutElement(upRef.GameObject, minWidth: 24, minHeight: 24);
-            UIHelpers.AddButtonListener(_upButton, OnUpvoteClick);
+            if (_interactive)
+            {
+                var upRef = UIFactory.CreateButton(_root, "UpButton", "▲");
+                _upButton = upRef.Component;
+                _upText = upRef.GameObject.GetComponentInChildren<Text>();
+                if (_upText != null) _upText.fontSize = UIStyles.FontSizeSmall;
+                UIFactory.SetLayoutElement(upRef.GameObject, minWidth: 24, minHeight: 24);
+                UIHelpers.AddButtonListener(_upButton, OnUpvoteClick);
+            }
 
             // Vote count
             _countText = UIFactory.CreateLabel(_root, "VoteCount", FormatVoteCount(voteCount), TextAnchor.MiddleCenter);
             _countText.fontSize = UIStyles.FontSizeSmall;
             _countText.fontStyle = FontStyle.Bold;
             UIFactory.SetLayoutElement(_countText.gameObject, minWidth: 30);
+            TranslatorCore.RegisterExcluded(_countText);
             UpdateCountColor();
 
             // Downvote button
-            var downRef = UIFactory.CreateButton(_root, "DownButton", "▼");
-            _downButton = downRef.Component;
-            _downText = downRef.GameObject.GetComponentInChildren<Text>();
-            if (_downText != null) _downText.fontSize = UIStyles.FontSizeSmall;
-            UIFactory.SetLayoutElement(downRef.GameObject, minWidth: 24, minHeight: 24);
-            UIHelpers.AddButtonListener(_downButton, OnDownvoteClick);
+            if (_interactive)
+            {
+                var downRef = UIFactory.CreateButton(_root, "DownButton", "▼");
+                _downButton = downRef.Component;
+                _downText = downRef.GameObject.GetComponentInChildren<Text>();
+                if (_downText != null) _downText.fontSize = UIStyles.FontSizeSmall;
+                UIFactory.SetLayoutElement(downRef.GameObject, minWidth: 24, minHeight: 24);
+                UIHelpers.AddButtonListener(_downButton, OnDownvoteClick);
+            }
 
             UpdateButtonStyles();
 
@@ -151,7 +171,7 @@ namespace UnityGameTranslator.Core.UI.Components
                         UpdateButtonStyles();
 
                         // Notify parent
-                        _onVoteChanged?.Invoke(_translationId, _currentVoteCount);
+                        _onVoteChanged?.Invoke(_translationId, _currentVoteCount, _userVote);
 
                         TranslatorCore.LogInfo($"[VoteButtons] Vote successful: {_translationId} -> {_currentVoteCount}");
                     }

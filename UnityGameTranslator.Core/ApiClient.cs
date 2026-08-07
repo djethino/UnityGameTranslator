@@ -609,7 +609,9 @@ namespace UnityGameTranslator.Core
                 UpdatedAt = t["updated_at"]?.Value<string>(),
                 // Null on servers older than this field: the list then shows no
                 // date rather than one that a vote could have moved
-                ContentUpdatedAt = t["content_updated_at"]?.Value<string>()
+                ContentUpdatedAt = t["content_updated_at"]?.Value<string>(),
+                // Same rule: absent means unknown, and the list says nothing rather than 0 %
+                GameCoverage = t["game_coverage"]?.Value<float?>()
             };
         }
 
@@ -1824,6 +1826,16 @@ namespace UnityGameTranslator.Core
         public string ContentUpdatedAt { get; set; }
 
         /// <summary>
+        /// How much of the game this translation reaches, 0 to 1, measured against the furthest
+        /// translation of the same game whatever its language.
+        ///
+        /// Comes from the server because it cannot be computed here: it needs every other
+        /// translation of the game. Null on servers that do not report it — and null must read
+        /// as "unknown", never as "covers nothing".
+        /// </summary>
+        public float? GameCoverage { get; set; }
+
+        /// <summary>
         /// The content date as a short local string, or null when the server
         /// did not send one. Never falls back to UpdatedAt: showing a date that
         /// a vote moved would be worse than showing none.
@@ -1848,7 +1860,6 @@ namespace UnityGameTranslator.Core
         /// Quality score (0-3 scale): H=3pts, V=2pts, A=1pt. Shared formula — see
         /// <see cref="TranslationQuality"/>.
         /// </summary>
-        public float QualityScore => TranslationQuality.ComputeScore(HumanCount, ValidatedCount, AiCount);
 
         /// <summary>
         /// Get website URL for this translation

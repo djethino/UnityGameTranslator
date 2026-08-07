@@ -320,7 +320,7 @@ namespace UnityGameTranslator.Core.UI.Components
             // Details row: the size of the file, then how good it is. The H/V/A breakdown that
             // used to be spelled out here is now the bar below — three numbers to be mentally
             // compared were harder to read than three coloured lengths.
-            string detailsText = $"{translation.LineCount} lines | {FormatQualityStats(translation)}";
+            string detailsText = $"{translation.LineCount} lines{FormatCoverage(translation)} | {FormatQualityStats(translation)}";
             var detailsLabel = UIFactory.CreateLabel(infoCol, "Details", detailsText, TextAnchor.MiddleLeft);
             detailsLabel.fontSize = UIStyles.FontSizeHint;
             detailsLabel.color = UIStyles.TextMuted;
@@ -405,6 +405,25 @@ namespace UnityGameTranslator.Core.UI.Components
             if (note.Length > 90) note = note.Substring(0, 90) + "…";
 
             return $"“{note}”";
+        }
+
+        /// <summary>
+        /// How much of the game the translation reaches, next to its line count — because a line
+        /// count alone says nothing: three thousand lines is a lot or a little depending on the
+        /// game, and only the game's other translations can tell.
+        ///
+        /// Empty when the server did not report it, and empty at 100% when this file IS the
+        /// yardstick: "covers 100% of the game" would promise more than it knows, since the
+        /// reference is the furthest anyone has got, not the game's real size.
+        /// </summary>
+        private static string FormatCoverage(TranslationInfo translation)
+        {
+            if (!translation.GameCoverage.HasValue) return string.Empty;
+
+            int percent = Mathf.RoundToInt(translation.GameCoverage.Value * 100f);
+            if (percent >= 100) return string.Empty;
+
+            return "  ·  " + percent + "% " + TranslatorCore.TranslateOwnUIDynamic("of the game");
         }
 
         /// <summary>

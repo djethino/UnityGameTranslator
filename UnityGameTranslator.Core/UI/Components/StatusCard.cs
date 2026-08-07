@@ -43,9 +43,8 @@ namespace UnityGameTranslator.Core.UI.Components
         public int SkippedCount { get; set; }
         public int TotalLines { get; set; }
 
-        // Scoring lives in TranslationQuality so the card, the community list and the website
-        // all read a translation the same way.
-        public float QualityScore => TranslationQuality.ComputeScore(HumanCount, ValidatedCount, AiCount);
+        // The measures live in TranslationQuality so the card, the community list and the
+        // website all read a translation the same way.
 
         /// <summary>Where this translation stands, as a step. Null when nothing is translated.</summary>
         public string ReviewStage => TranslationQuality.ReviewStage(HumanCount, ValidatedCount, AiCount);

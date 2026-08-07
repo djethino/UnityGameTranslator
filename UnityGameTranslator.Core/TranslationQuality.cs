@@ -1,35 +1,20 @@
 namespace UnityGameTranslator.Core
 {
     /// <summary>
-    /// How good a translation is, judged from its HVAS tags.
+    /// How far a translation has been read by a human, judged from its HVA tags.
     ///
     /// One definition for the whole mod: the local file (StatusCard), the community list
-    /// (TranslationList) and anything added later must rank a translation identically, and
-    /// identically to the website — which computes the same formula server-side. It lives
-    /// outside the UI namespace because a score is not a widget.
+    /// (TranslationList) and anything added later must describe a translation identically, and
+    /// identically to the website, which computes the same thing server-side. It lives outside
+    /// the UI namespace because a measure is not a widget.
+    ///
+    /// The 0-3 average this class used to compute is gone. It answered "where does each line
+    /// come from" when the question is "has anyone read this": untouched machine output scored a
+    /// third of the scale, a file reviewed line by line stopped at two thirds unless its author
+    /// retyped what the machine had right, and everything crowded into one band.
     /// </summary>
     public static class TranslationQuality
     {
-        /// <summary>Maximum score, reached when every translated line is human-written.</summary>
-        public const float MaxScore = 3f;
-
-        /// <summary>
-        /// Score on a 0-3 scale: H=3, V=2, A=1, divided by the number of TRANSLATED lines.
-        ///
-        /// Captures (H with no value), S (marked as not to translate) and M (mod UI) are all
-        /// outside the formula. S is a deliberate omission worth noting: a score that went up by
-        /// marking lines as untranslatable would be trivial to inflate, so the care it represents
-        /// keeps its own segment in the bar instead (QualityBar), where it reads as work done.
-        /// </summary>
-        public static float ComputeScore(int human, int validated, int ai)
-        {
-            int translated = human + validated + ai;
-            if (translated == 0) return 0f;
-
-            float weighted = (human * 3) + (validated * 2) + (ai * 1);
-            return weighted / translated;
-        }
-
         /// <summary>
         /// How much of a translation a human has actually read: (H+V) / translated lines.
         /// Negative when nothing is translated yet — a captured file has no coverage, not a

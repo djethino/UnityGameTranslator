@@ -88,17 +88,15 @@ namespace UnityGameTranslator.Core.UI.Components
             // Scroll view for list
             var scrollObj = UIFactory.CreateScrollView(parent, "TranslationScroll", out _listContent, out _);
             _root = scrollObj;
-            // Bounded, and NOT flexible. The panel sizes its scrolling area to
-            // max(viewport, sum of preferred heights): as long as this list asks for less than
-            // the viewport, everything in the tab fits and nothing scrolls but the list itself
-            // — which is the point. Give it a flexible height instead and it swallows the
-            // viewport, then pushes the row below it out of sight.
+            // Takes the space its card has left over, so the list is what grows when the window
+            // does and everything around it stays where it was put.
             //
-            // The cost is that it does not grow when the window does. Making it grow needs the
-            // tab contents out of the panel's own scroll area, which is a change to the panel
-            // skeleton rather than to this list.
+            // This only holds now that FillViewportHeight raises a floor instead of replacing
+            // what the content asks for. Before, the scrolling area was told it was exactly
+            // viewport-sized whatever it held, so a flexible child swallowed the viewport and
+            // pushed the row beneath it somewhere unreachable.
             UIFactory.SetLayoutElement(scrollObj, minHeight: listHeight, preferredHeight: listHeight,
-                flexibleHeight: 0);
+                flexibleHeight: 9999);
             UIFactory.SetLayoutGroup<VerticalLayoutGroup>(_listContent, false, false, true, true, 5, 5, 5, 5, 5);
             UIStyles.SetBackground(scrollObj, UIStyles.InputBackground);
             UIStyles.ConfigureScrollViewNoScrollbar(scrollObj);

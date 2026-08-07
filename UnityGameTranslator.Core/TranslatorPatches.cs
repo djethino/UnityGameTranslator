@@ -816,8 +816,26 @@ namespace UnityGameTranslator.Core
         /// <summary>
         /// Apply font scale for a generic text component using its detected fontSize property.
         /// </summary>
+        /// <summary>
+        /// The mod's own labels are never sized by a game font's settings.
+        ///
+        /// They can share a Unity font with the game — Arial is the usual one — and when the
+        /// mod's interface is being translated they are tracked by the same caches as game text.
+        /// Nothing else told the two apart on the SIZE path, so moving the slider for a game
+        /// font resized the mod's own windows with it. The font-replacement path has guarded
+        /// against exactly this from the start; this is the same guard, on the other path.
+        ///
+        /// The mod's interface has its own sizes (UIStyles) and its own scaling; a game's
+        /// settings have no say over them.
+        /// </summary>
+        private static bool IsOwnUIText(object instance)
+        {
+            return instance is Component c && TranslatorCore.IsOwnUI(c);
+        }
+
         private static void ApplyGenericFontScale(object instance, RegisteredTextType typeInfo, string fontName)
         {
+            if (IsOwnUIText(instance)) return;
             if (typeInfo.FontSizeProp == null || string.IsNullOrEmpty(fontName)) return;
 
             int instanceId = TypeHelper.GetInstanceID(instance);
@@ -2359,6 +2377,7 @@ namespace UnityGameTranslator.Core
 
         private static void ApplyFontScale(object instance, string fontName)
         {
+            if (IsOwnUIText(instance)) return;
             if (instance == null || string.IsNullOrEmpty(fontName)) return;
 
             int instanceId = TypeHelper.GetInstanceID(instance);
@@ -2455,6 +2474,7 @@ namespace UnityGameTranslator.Core
 
         private static void ApplyTMPAutoSizeScale(object instance, int instanceId, float scale)
         {
+            if (IsOwnUIText(instance)) return;
             try
             {
                 var type = instance.GetType();
@@ -3493,6 +3513,8 @@ namespace UnityGameTranslator.Core
 
                 if (string.IsNullOrEmpty(fontName)) return;
 
+                if (IsOwnUIText(__instance)) return;
+
                 string settingsFontName = FontManager.GetSettingsFontName(instanceId, fontName);
 
                 // Always record the game's fontSize as the TRUE original — even when no scale is
@@ -3781,7 +3803,7 @@ namespace UnityGameTranslator.Core
                 int instId = TypeHelper.GetInstanceID(instance);
 
                 // Apply font scale if configured (use cached PropertyInfo)
-                float scale = FontManager.GetFontScale(originalFontName, instId);
+                float scale = IsOwnUIText(instance) ? 1f : FontManager.GetFontScale(originalFontName, instId);
                 if (Math.Abs(scale - 1.0f) > 0.01f)
                 {
                     PropertyInfo fontSizeProp;

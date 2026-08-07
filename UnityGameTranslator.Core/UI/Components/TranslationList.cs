@@ -299,7 +299,10 @@ namespace UnityGameTranslator.Core.UI.Components
             if (layout != null)
             {
                 layout.padding = Compat.MakeRectOffset(0, 10, 8, 8); // Left, Right, Top, Bottom
-                layout.childAlignment = TextAnchor.MiddleLeft;
+                // Top, not middle: the tick box and the vote count belong to the row's subject,
+                // which is its first line. Centred vertically they drifted to the middle of a
+                // five-line block and looked unattached to anything.
+                layout.childAlignment = TextAnchor.UpperLeft;
             }
 
             // The player's own translation is marked by a stripe down the left edge rather than
@@ -328,7 +331,7 @@ namespace UnityGameTranslator.Core.UI.Components
             // Info column. Transparent: CreateVerticalGroup fits its own background image, which
             // drew a dark rectangle inside the row's own colour — a box within a box, and it hid
             // the highlight that marks the player's own translation on three of its four sides.
-            var infoCol = UIFactory.CreateVerticalGroup(itemRow, "InfoCol", false, false, true, true, 2);
+            var infoCol = UIFactory.CreateVerticalGroup(itemRow, "InfoCol", false, false, true, true, 3);
             UIFactory.SetLayoutElement(infoCol, flexibleWidth: 9999);
             UIStyles.ClearRowBackground(infoCol);
 

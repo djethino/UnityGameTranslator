@@ -279,7 +279,8 @@ namespace UnityGameTranslator.Core.UI.Components
             // simply have been cut off.
             var facts = BuildFactsLine(translation);
             string note = BuildNoteLine(translation);
-            int extraRows = (facts != null ? 1 : 0) + (note != null ? 1 : 0);
+            // +1 for the author line, which used to share the title's line and made it wrap
+            int extraRows = 1 + (facts != null ? 1 : 0) + (note != null ? 1 : 0);
 
             // The bar is only drawn when the server gave us something to draw; an empty container
             // under every row would read as "nothing translated" instead of "nothing known".
@@ -287,21 +288,28 @@ namespace UnityGameTranslator.Core.UI.Components
                 translation.AiCount + translation.SkippedCount + translation.CaptureCount > 0;
             int barHeight = hasComposition ? QualityBar.CompactHeight + 2 : 0;
 
-            var itemRow = UIFactory.CreateHorizontalGroup(_listContent, $"Item_{translation.Id}", false, false, true, true, 10);
-            UIFactory.SetLayoutElement(itemRow,
-                minHeight: UIStyles.CodeDisplayHeight + extraRows * UIStyles.RowHeightSmall + barHeight,
-                flexibleWidth: 9999);
+            int rowHeight = UIStyles.CodeDisplayHeight + extraRows * UIStyles.RowHeightSmall + barHeight;
 
-            // Use highlight background for lineage match
-            UIStyles.SetBackground(itemRow, isLineageMatch ? UIStyles.ItemBackgroundLineage : UIStyles.ItemBackground);
+            var itemRow = UIFactory.CreateHorizontalGroup(_listContent, $"Item_{translation.Id}", false, false, true, true, 8);
+            UIFactory.SetLayoutElement(itemRow, minHeight: rowHeight, flexibleWidth: 9999);
+            UIStyles.SetBackground(itemRow, UIStyles.ItemBackground);
 
-            // Configure layout with padding and alignment
+            // No left padding: the accent stripe below is flush with the edge
             var layout = itemRow.GetComponent<HorizontalLayoutGroup>();
             if (layout != null)
             {
-                layout.padding = Compat.MakeRectOffset(10, 10, 8, 8); // Left, Right, Top, Bottom
+                layout.padding = Compat.MakeRectOffset(0, 10, 8, 8); // Left, Right, Top, Bottom
                 layout.childAlignment = TextAnchor.MiddleLeft;
             }
+
+            // The player's own translation is marked by a stripe down the left edge rather than
+            // by flooding the row with colour. A full purple wash fought every text colour on
+            // top of it and made the bar's track read as a black slab; a stripe says the same
+            // thing at a glance and leaves the row legible.
+            var stripe = UIFactory.CreateUIObject("Accent", itemRow);
+            stripe.AddComponent<Image>().color = isLineageMatch ? UIStyles.ButtonPrimary : Color.clear;
+            UIFactory.SetLayoutElement(stripe, minWidth: 3, flexibleWidth: 0,
+                minHeight: rowHeight, flexibleHeight: 9999);
 
             // Selection toggle
             var toggleObj = UIFactory.CreateToggle(itemRow, "SelectToggle", out var toggle, out var _);
@@ -331,7 +339,6 @@ namespace UnityGameTranslator.Core.UI.Components
                 infoLayout.childAlignment = TextAnchor.MiddleLeft;
             }
 
-            // Title row with badges.
             // The SOURCE language leads because it decides whether this
             // translation can work at all: one made from Japanese is useless on
             // a game whose text is English, and showing only the target made
@@ -339,27 +346,35 @@ namespace UnityGameTranslator.Core.UI.Components
             string languages = string.IsNullOrEmpty(translation.SourceLanguage)
                 ? translation.TargetLanguage
                 : $"{translation.SourceLanguage} → {translation.TargetLanguage}";
-            string label = $"{languages} by {translation.Uploader}";
             bool isOwnTranslation = isLoggedIn && !string.IsNullOrEmpty(currentUser) &&
                 translation.Uploader.Equals(currentUser, StringComparison.OrdinalIgnoreCase);
-            if (isOwnTranslation) label += " (you)";
-            if (isLineageMatch && !isOwnTranslation) label += " [YOUR]";  // Badge for same lineage (not your upload)
-
-            var titleLabel = UIFactory.CreateLabel(infoCol, "Title", label, TextAnchor.MiddleLeft);
+            // Languages alone on the first line, author on the second. Together they ran past
+            // the width and wrapped, which cost a line and broke the hierarchy: the pair of
+            // languages is what a reader scans for, the author is context.
+            var titleLabel = UIFactory.CreateLabel(infoCol, "Title", languages, TextAnchor.MiddleLeft);
             titleLabel.fontStyle = FontStyle.Bold;
-            if (isLineageMatch) titleLabel.color = UIStyles.StatusInfo;  // Highlight text color
+            titleLabel.color = UIStyles.TextPrimary;
             UIFactory.SetLayoutElement(titleLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
 
-            // Details row: the size of the file, then how good it is. The H/V/A breakdown that
-            // used to be spelled out here is now the bar below — three numbers to be mentally
-            // compared were harder to read than three coloured lengths.
-            // Same binding as the facts line: "690" and "lines" must not end up on two lines
-            string detailsText = Unbreakable($"{translation.LineCount} lines")
-                + FormatCoverage(translation)
-                + "  |  " + Unbreakable(FormatQualityStats(translation));
+            string by = "by " + translation.Uploader;
+            if (isOwnTranslation) by += " (you)";
+            // Says in words what the stripe says in colour — a mark nobody can name is a mark
+            // nobody can act on.
+            if (isLineageMatch) by += "  ·  " + TranslatorCore.TranslateOwnUIDynamic("installed");
+
+            var byLabel = UIFactory.CreateLabel(infoCol, "Author", by, TextAnchor.MiddleLeft);
+            byLabel.fontSize = UIStyles.FontSizeHint;
+            byLabel.color = isLineageMatch ? UIStyles.ButtonPrimary : UIStyles.TextSecondary;
+            UIFactory.SetLayoutElement(byLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+
+            // The verdict leads, the size follows: "has anyone read this" decides between two
+            // translations, the line count only qualifies it.
+            string detailsText = Unbreakable(FormatQualityStats(translation))
+                + "  ·  " + Unbreakable($"{translation.LineCount} lines")
+                + FormatCoverage(translation);
             var detailsLabel = UIFactory.CreateLabel(infoCol, "Details", detailsText, TextAnchor.MiddleLeft);
             detailsLabel.fontSize = UIStyles.FontSizeHint;
-            detailsLabel.color = UIStyles.TextMuted;
+            detailsLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(detailsLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
 
             // Same component, same colours and same denominator as the card and the website.

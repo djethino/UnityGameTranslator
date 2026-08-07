@@ -53,9 +53,11 @@ namespace UnityGameTranslator.Core.UI.Components
             _root = UIFactory.CreateHorizontalGroup(parent, "QualityBar", false, false, true, true, 0);
             UIFactory.SetLayoutElement(_root, minHeight: height, preferredHeight: height,
                 flexibleWidth: 9999, flexibleHeight: 0);
-            // The empty bar is the viewport colour: a bar with no data must read as an empty
-            // container, not as one more (dark) category.
-            UIStyles.SetBackground(_root, UIStyles.ViewportBackground);
+            // The unfilled part darkens what is behind it rather than replacing it, so the bar
+            // sits on a card, on a plain row or on a highlighted one without becoming a black
+            // slab. A bar with no data still reads as an empty container, never as one more
+            // (dark) category.
+            UIStyles.SetBackground(_root, UIStyles.TrackBackground);
 
             // Order matters: everything settled first, what remains to do last. The grey always
             // ends the bar, so its length reads as the work left without doing any arithmetic.

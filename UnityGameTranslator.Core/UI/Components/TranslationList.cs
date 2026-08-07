@@ -19,6 +19,12 @@ namespace UnityGameTranslator.Core.UI.Components
         /// </summary>
         private const int MaxDisplayed = 5;
 
+        /// <summary>Gap between the stacked lines of a row. Enters the row's height — see CreateListItem.</summary>
+        private const int InfoColumnSpacing = 3;
+
+        /// <summary>Breathing room above and below a row's content, top and bottom each.</summary>
+        private const int RowVerticalPadding = 8;
+
         // UI elements
         private GameObject _root;
         private GameObject _listContent;
@@ -289,16 +295,27 @@ namespace UnityGameTranslator.Core.UI.Components
             // simply have been cut off.
             var facts = BuildFactsLine(translation);
             string note = BuildNoteLine(translation);
-            // +1 for the author line, which used to share the title's line and made it wrap
-            int extraRows = 1 + (facts != null ? 1 : 0) + (note != null ? 1 : 0);
 
             // The bar is only drawn when the server gave us something to draw; an empty container
             // under every row would read as "nothing translated" instead of "nothing known".
             bool hasComposition = translation.HumanCount + translation.ValidatedCount +
                 translation.AiCount + translation.SkippedCount + translation.CaptureCount > 0;
-            int barHeight = hasComposition ? QualityBar.CompactHeight + 2 : 0;
 
-            int rowHeight = UIStyles.CodeDisplayHeight + extraRows * UIStyles.RowHeightSmall + barHeight;
+            // Counted from what the row ACTUALLY holds, piece by piece.
+            //
+            // It used to start from CodeDisplayHeight — a constant that once covered two lines of
+            // text with enough slack to swallow the padding — and add a line per optional block.
+            // Every change to the row since has widened the gap: the author moved to its own
+            // line, the spacing was loosened, and the count silently fell fifteen pixels short of
+            // the content. A row that lies about its height makes the list lie about its own, and
+            // the panel lies about how much space it needs — which is how a whole tab ends up
+            // overflowing a window that had room for it.
+            int textRows = 3 + (facts != null ? 1 : 0) + (note != null ? 1 : 0); // languages, author, details, [facts], [note]
+            int blocks = textRows + (hasComposition ? 1 : 0);
+            int rowHeight = textRows * UIStyles.RowHeightSmall
+                + (hasComposition ? QualityBar.CompactHeight : 0)
+                + (blocks - 1) * InfoColumnSpacing
+                + RowVerticalPadding * 2;
 
             var itemRow = UIFactory.CreateHorizontalGroup(_listContent, $"Item_{translation.Id}", false, false, true, true, 8);
             UIFactory.SetLayoutElement(itemRow, minHeight: rowHeight, flexibleWidth: 9999);
@@ -308,7 +325,7 @@ namespace UnityGameTranslator.Core.UI.Components
             var layout = itemRow.GetComponent<HorizontalLayoutGroup>();
             if (layout != null)
             {
-                layout.padding = Compat.MakeRectOffset(0, 10, 8, 8); // Left, Right, Top, Bottom
+                layout.padding = Compat.MakeRectOffset(0, 10, RowVerticalPadding, RowVerticalPadding);
                 // Top, not middle: the tick box and the vote count belong to the row's subject,
                 // which is its first line. Centred vertically they drifted to the middle of a
                 // five-line block and looked unattached to anything.
@@ -341,7 +358,7 @@ namespace UnityGameTranslator.Core.UI.Components
             // Info column. Transparent: CreateVerticalGroup fits its own background image, which
             // drew a dark rectangle inside the row's own colour — a box within a box, and it hid
             // the highlight that marks the player's own translation on three of its four sides.
-            var infoCol = UIFactory.CreateVerticalGroup(itemRow, "InfoCol", false, false, true, true, 3);
+            var infoCol = UIFactory.CreateVerticalGroup(itemRow, "InfoCol", false, false, true, true, InfoColumnSpacing);
             UIFactory.SetLayoutElement(infoCol, flexibleWidth: 9999);
             UIStyles.ClearRowBackground(infoCol);
 

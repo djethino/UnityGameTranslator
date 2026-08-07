@@ -508,6 +508,24 @@ namespace UnityGameTranslator.Core.UI.Panels
             // size the user asked to drop.
             _userChoseSize = false;
 
+            // And throw away the size that came WITH it. "Back to default" means the default is
+            // computed again, not that an old measurement is replayed — and this button reaches
+            // every window at once, including those never opened in this session, whose layouts
+            // had no measurable size when they were last measured. Replaying that gave a window
+            // squashed to nothing the next time it was opened.
+            //
+            // A hidden panel is not measured here: it has no size to measure while hidden.
+            // Clearing the flags is enough — the show path measures it properly.
+            _contentMeasured = false;
+            if (UIRoot != null && UIRoot.activeInHierarchy)
+            {
+                CalculateAndApplyOptimalSize();
+            }
+            else
+            {
+                _hasDynamicSize = false;
+            }
+
             // SetDefaultSizeAndPosition restores anchors/pivot (user resizes
             // shift anchors), re-applies the default or dynamic size, centers
             // the panel and clamps it back on screen

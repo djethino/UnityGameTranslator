@@ -72,6 +72,7 @@ namespace UnityGameTranslator.Core.UI.Components
         private Text _roleLabel;
         private Text _detailsLabel;
         private GameObject _qualityRow;
+        private GameObject _stageRow;
         private GameObject _legendRow;
         private Text _qualityLabel;
         private QualityBar _qualityBar;
@@ -190,32 +191,47 @@ namespace UnityGameTranslator.Core.UI.Components
             _qualityBar = new QualityBar();
             _qualityBar.CreateUI(_qualityRow, QualityBar.DefaultHeight);
 
-            // Row 4 — legend carrying the PERCENTAGES (asked for: the bar shows proportions, the
-            // legend says what they are worth), with the overall score at the right end.
+            // Row 4 — where the review stands, on ITS OWN LINE and full width.
+            //
+            // It used to sit at the right end of the key, which worked while it read "2.5/3" and
+            // fitted in 90px. As a sentence it needs 220, and on a card barely 340 wide that left
+            // the key half a row: its two lines wrapped into four, breaking between a colour
+            // swatch and the word it labels. A line each is also shorter overall than a key
+            // spilling over — and the verdict reads before the detail that justifies it.
+            var stageRow = UIFactory.CreateHorizontalGroup(_root, "StageRow", false, false, true, true, 0);
+            UIFactory.SetLayoutElement(stageRow, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999, flexibleHeight: 0);
+            UIStyles.ClearRowBackground(stageRow);
+            var stageLayout = stageRow.GetComponent<HorizontalLayoutGroup>();
+            if (stageLayout != null) stageLayout.childAlignment = TextAnchor.MiddleLeft;
+
+            _qualityLabel = UIFactory.CreateLabel(stageRow, "QualityLabel", "", TextAnchor.MiddleLeft);
+            _qualityLabel.fontSize = UIStyles.FontSizeHint;
+            _qualityLabel.color = UIStyles.TextMuted;
+            UIFactory.SetLayoutElement(_qualityLabel.gameObject, flexibleWidth: 9999);
+            TranslatorCore.RegisterExcluded(_qualityLabel);
+
+            _stageRow = stageRow;
+
+            // Row 5 — the colour key with the PERCENTAGES (asked for: the bar shows proportions,
+            // the key says what they are worth). Full width, with nothing beside it.
             var legendRow = UIFactory.CreateHorizontalGroup(_root, "LegendRow", false, false, true, true, UIStyles.SmallSpacing);
             UIFactory.SetLayoutElement(legendRow, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999, flexibleHeight: 0);
 
             UIStyles.ClearRowBackground(legendRow);
 
-            // Top-aligned: the key can run to two or three lines (see QualityBar.BuildLegend),
-            // and centring it would drift away from the score sitting next to it.
+            // Top-aligned: the key runs to two or three lines (see QualityBar.BuildLegend), and
+            // centring it would float them inside the row.
             _qualityLegend = UIFactory.CreateLabel(legendRow, "QualityLegend", "", TextAnchor.UpperLeft);
             _qualityLegend.fontSize = UIStyles.FontSizeHint;
             _qualityLegend.color = UIStyles.TextMuted;
             UIFactory.SetLayoutElement(_qualityLegend.gameObject, flexibleWidth: 9999);
             TranslatorCore.RegisterExcluded(_qualityLegend);
 
-            _qualityLabel = UIFactory.CreateLabel(legendRow, "QualityLabel", "", TextAnchor.UpperRight);
-            _qualityLabel.fontSize = UIStyles.FontSizeHint;
-            _qualityLabel.color = UIStyles.TextMuted;
-            // Holds a step and a remaining count now, not "2.5/3"
-            UIFactory.SetLayoutElement(_qualityLabel.gameObject, minWidth: 220, flexibleWidth: 0);
-            TranslatorCore.RegisterExcluded(_qualityLabel);
-
             _legendRow = legendRow;
 
             // Hide quality row by default
             _qualityRow.SetActive(false);
+            _stageRow.SetActive(false);
             _legendRow.SetActive(false);
 
             // Row 5 — the ONE thing this mode wants to tell you, and the ONE action that answers
@@ -497,6 +513,7 @@ namespace UnityGameTranslator.Core.UI.Components
             if (stats == null)
             {
                 _qualityRow.SetActive(false);
+                _stageRow?.SetActive(false);
                 _legendRow?.SetActive(false);
                 return;
             }
@@ -510,6 +527,7 @@ namespace UnityGameTranslator.Core.UI.Components
             if (!hasData)
             {
                 _qualityRow.SetActive(false);
+                _stageRow?.SetActive(false);
                 _legendRow?.SetActive(false);
                 return;
             }
@@ -551,6 +569,10 @@ namespace UnityGameTranslator.Core.UI.Components
                 {
                     _qualityLabel.text = TranslatorCore.TranslateOwnUIDynamic(stage);
                 }
+
+                // A file with nothing translated has no stage: an empty row would be a blank
+                // gap between the bar and its key.
+                _stageRow?.SetActive(stage != null);
             }
 
             _qualityRow.SetActive(true);

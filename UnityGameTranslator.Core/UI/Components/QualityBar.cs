@@ -50,14 +50,20 @@ namespace UnityGameTranslator.Core.UI.Components
         /// </summary>
         public void CreateUI(GameObject parent, int height = DefaultHeight)
         {
-            _root = UIFactory.CreateHorizontalGroup(parent, "QualityBar", false, false, true, true, 0);
+            // NO track behind the segments, and this is why the colour is passed HERE rather than
+            // cleared afterwards. CreateHorizontalGroup always fits an Image, and when no colour
+            // is given it uses UniverseLib's default background AND its default padding — which
+            // is what drew a dark slab a little taller than the bar and held the segments away
+            // from its edges. UIStyles.Transparent rather than Color.clear on purpose: the
+            // factory treats a fully-zero colour as "no colour given" and puts the defaults back.
+            //
+            // The bar has no unfilled remainder to show anyway: the five shares always add up to
+            // everything that was captured, and what is left to do is the grey segment, not an
+            // empty gutter.
+            _root = UIFactory.CreateHorizontalGroup(parent, "QualityBar", false, false, true, true,
+                0, default, UIStyles.Transparent);
             UIFactory.SetLayoutElement(_root, minHeight: height, preferredHeight: height,
                 flexibleWidth: 9999, flexibleHeight: 0);
-            // NO track behind the segments. This bar has no unfilled remainder by construction:
-            // the five shares always add up to everything that was captured, and what is not
-            // done yet is the grey segment, not an empty gutter. A track could therefore only
-            // ever show as a sliver peeking out from behind the colours — which is exactly how
-            // it looked, a dark slab a couple of pixels taller and wider than the bar it framed.
 
             // Order matters: everything settled first, what remains to do last. The grey always
             // ends the bar, so its length reads as the work left without doing any arithmetic.

@@ -386,6 +386,11 @@ namespace UnityGameTranslator.Core.UI.Components
 
             string by = "by " + translation.Uploader;
             if (isOwnTranslation) by += " (you)";
+            // The two things about a translation that catch the eye and are written nowhere else
+            // on its row. Deliberately only two: a badge works by being rare, and the line count,
+            // the review stage and the download count are already there in plain words.
+            if (translation.IsNew) by += "  ·  " + TranslatorCore.TranslateOwnUIDynamic("new");
+            if (IsFurthest(translation)) by += "  ·  " + TranslatorCore.TranslateOwnUIDynamic("goes furthest");
             // Says in words what the stripe says in colour — a mark nobody can name is a mark
             // nobody can act on.
             if (isLineageMatch) by += "  ·  " + TranslatorCore.TranslateOwnUIDynamic("installed");
@@ -504,6 +509,31 @@ namespace UnityGameTranslator.Core.UI.Components
             if (note.Length > 90) note = note.Substring(0, 90) + "…";
 
             return $"“{note}”";
+        }
+
+        /// <summary>
+        /// Nobody has gone further with this game — worth saying precisely because the coverage
+        /// figure stays silent at 100%: the yardstick is the furthest translation, not the game's
+        /// real size, so it cannot claim the game is covered but it can say this.
+        ///
+        /// Silent when it has no rival in the list: being furthest alone is a race of one, and
+        /// saying so would dress a lack of competition up as an achievement.
+        /// </summary>
+        private bool IsFurthest(TranslationInfo translation)
+        {
+            if (!translation.GameCoverage.HasValue || translation.GameCoverage.Value < 0.999f)
+                return false;
+
+            // Compared by game NAME, because a search by name can return several games at once
+            // and being furthest is only meaningful among translations of the same one.
+            foreach (var other in _translations)
+            {
+                if (other.Id == translation.Id) continue;
+                if (string.Equals(other.GameName, translation.GameName, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+
+            return false;
         }
 
         /// <summary>

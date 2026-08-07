@@ -611,7 +611,8 @@ namespace UnityGameTranslator.Core
                 // date rather than one that a vote could have moved
                 ContentUpdatedAt = t["content_updated_at"]?.Value<string>(),
                 // Same rule: absent means unknown, and the list says nothing rather than 0 %
-                GameCoverage = t["game_coverage"]?.Value<float?>()
+                GameCoverage = t["game_coverage"]?.Value<float?>(),
+                CreatedAt = t["created_at"]?.Value<string>()
             };
         }
 
@@ -1834,6 +1835,26 @@ namespace UnityGameTranslator.Core
         /// as "unknown", never as "covers nothing".
         /// </summary>
         public float? GameCoverage { get; set; }
+
+        /// <summary>
+        /// When it was published. Null on servers that do not report it — and absence must read
+        /// as "unknown", never as "old".
+        /// </summary>
+        public string CreatedAt { get; set; }
+
+        /// <summary>Published within the last week, by the same reckoning as the website.</summary>
+        public bool IsNew
+        {
+            get
+            {
+                if (string.IsNullOrEmpty(CreatedAt)) return false;
+                DateTime published;
+                if (!DateTime.TryParse(CreatedAt, System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.RoundtripKind, out published))
+                    return false;
+                return (DateTime.UtcNow - published.ToUniversalTime()).TotalDays <= 7;
+            }
+        }
 
         /// <summary>
         /// The content date as a short local string, or null when the server

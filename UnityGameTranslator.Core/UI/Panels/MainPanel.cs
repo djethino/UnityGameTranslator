@@ -756,12 +756,23 @@ namespace UnityGameTranslator.Core.UI.Panels
                 float maxTabHeight = _tabBar.MeasureMaxContentHeight();
                 if (maxTabHeight > 0)
                 {
-                    UIFactory.SetLayoutElement(_tabBar.ContentContainer, minHeight: Mathf.CeilToInt(maxTabHeight));
+                    // Remembered so the WINDOW keeps one size across tabs, which is what this
+                    // measurement was always for. It used to be written as a minHeight on the
+                    // tab container instead, and that is a different statement entirely: it
+                    // made the short tab as tall as the tall one, so its card stretched, its
+                    // content stopped being anchored to anything, and the panel scrolled for
+                    // emptiness that belonged to another tab.
+                    _tallestTabContentHeight = maxTabHeight;
                     _tabHeightFixed = true;
                     RecalculateSize();
                 }
             }
         }
+
+        private float _tallestTabContentHeight;
+
+        /// <inheritdoc />
+        protected override float ContentHeightFloor => _tallestTabContentHeight;
 
         /// <summary>
         /// Automatically search for community translations if:

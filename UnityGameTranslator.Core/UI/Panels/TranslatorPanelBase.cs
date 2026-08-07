@@ -373,6 +373,14 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         protected virtual bool HasFlexibleContent => false;
 
+        /// <summary>
+        /// A height the panel should stay able to show even when the current content is
+        /// shorter. Tabbed panels report their tallest tab here so the window keeps one size
+        /// across tabs. It sizes the PANEL — the containers inside stay free to be exactly as
+        /// tall as what they hold.
+        /// </summary>
+        protected virtual float ContentHeightFloor => 0f;
+
         // Track if we've shown the backdrop for this panel
         private bool _backdropShown = false;
 
@@ -938,6 +946,14 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                     // Use the MAXIMUM of both methods - Unity's calculation is more accurate when available
                     contentHeight = Mathf.Max(unityPreferredHeight, childrenHeight);
+
+                    // A panel may want to stay big enough for something that is not on screen
+                    // right now — a tabbed panel keeps the size of its tallest tab so switching
+                    // tabs does not make the window jump. That floor belongs HERE, to the panel,
+                    // and never to the tab container: forcing the container to the tallest tab
+                    // makes every other tab inherit a height it does not need, which leaves dead
+                    // space under its content and a scrollbar for something nobody can see.
+                    contentHeight = Mathf.Max(contentHeight, ContentHeightFloor);
                 }
                 finally
                 {

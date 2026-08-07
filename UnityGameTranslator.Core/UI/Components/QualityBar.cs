@@ -101,17 +101,30 @@ namespace UnityGameTranslator.Core.UI.Components
             if (_root != null) _root.SetActive(visible);
         }
 
-        /// <summary>How many entries share one line of the colour key.</summary>
-        private const int LegendEntriesPerLine = 2;
+        /// <summary>
+        /// How many entries share one line of the colour key.
+        ///
+        /// Three fit across a card when there are only three — the whole key on one line, which
+        /// is what a file with nothing kept and nothing left captured deserves. Add a fourth
+        /// ("Kept as is", the longest of them all) and the line overflows, so they pair up.
+        /// </summary>
+        private static int EntriesPerLine(int entries)
+        {
+            return entries <= 3 ? 3 : 2;
+        }
 
         /// <summary>
         /// The colour key with each share as a whole percent. Rounding is absorbed by the last
         /// entry so the percentages always read 100.
         ///
-        /// Wrapped at a FIXED number of entries per line rather than left to the label's own
-        /// word wrap: Unity breaks wherever the width runs out, which lands between a colour
-        /// swatch and the word it belongs to — the square ends one line and its label starts the
-        /// next, so the key stops being a key.
+        /// Two mechanisms, and BOTH are needed. Line breaks are placed explicitly, so the number
+        /// of lines is known in advance and the row can be measured for them. And every space
+        /// INSIDE an entry is non-breaking, so that if a line still runs past the available
+        /// width — a narrower panel, a longer translation of "Kept as is" — Unity can only break
+        /// between entries. Left to itself it breaks at whatever space runs out first, which is
+        /// how a swatch ended one line while the word it labels started the next, and how "Kept
+        /// as is" got cut after "as". A key whose squares have drifted from their words is not
+        /// a key any more.
         /// </summary>
         public static string BuildLegend(int human, int validated, int ai, int kept, int capture)
         {
@@ -136,20 +149,33 @@ namespace UnityGameTranslator.Core.UI.Components
             if (kept > 0) entries.Add(Entry(UIStyles.StatusKept, "Kept as is", keptPct));
             if (capture > 0) entries.Add(Entry(UIStyles.StatusNeutral, "Captured", capturePct));
 
+            int perLine = EntriesPerLine(entries.Count);
+
             var sb = new System.Text.StringBuilder();
             for (int i = 0; i < entries.Count; i++)
             {
-                if (i > 0) sb.Append(i % LegendEntriesPerLine == 0 ? "\n" : "   ");
+                // The separator between entries is the ONLY ordinary space in the whole string,
+                // and therefore the only place Unity is able to break a line by itself.
+                if (i > 0) sb.Append(i % perLine == 0 ? "\n" : "   ");
                 sb.Append(entries[i]);
             }
 
             return sb.ToString();
         }
 
-        /// <summary>One colour key entry: its swatch, its name, its share.</summary>
+        /// <summary>
+        /// One colour key entry: its swatch, its name, its share — held together by non-breaking
+        /// spaces so the three can never end up on different lines. The name is translated first:
+        /// a language whose word for "Kept as is" is three words long must be protected too.
+        /// </summary>
         private static string Entry(Color color, string label, int percent)
         {
-            return Swatch(color) + " " + TranslatorCore.TranslateOwnUIDynamic(label) + $" {percent}%";
+            string entry = Swatch(color) + " " + TranslatorCore.TranslateOwnUIDynamic(label) + $" {percent}%";
+
+            // Escaped, never the literal character: a non-breaking space is invisible in
+            // an editor, and the first well-meaning cleanup would quietly turn it back
+            // into an ordinary one, taking the protection with it.
+            return entry.Replace(' ', ' ');
         }
 
         /// <summary>
@@ -159,8 +185,9 @@ namespace UnityGameTranslator.Core.UI.Components
         public static int LegendLineCount(int kept, int capture)
         {
             int entries = 3 + (kept > 0 ? 1 : 0) + (capture > 0 ? 1 : 0);
+            int perLine = EntriesPerLine(entries);
 
-            return (entries + LegendEntriesPerLine - 1) / LegendEntriesPerLine;
+            return (entries + perLine - 1) / perLine;
         }
 
         private static string Swatch(Color color)

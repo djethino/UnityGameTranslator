@@ -191,20 +191,20 @@ namespace UnityGameTranslator.Core.UI.Components
             _qualityBar = new QualityBar();
             _qualityBar.CreateUI(_qualityRow, QualityBar.DefaultHeight);
 
-            // Row 4 — where the review stands, on ITS OWN LINE and full width.
+            // Row 4 — where the review stands: its own line, and RANGED RIGHT.
             //
             // It used to sit at the right end of the key, which worked while it read "2.5/3" and
             // fitted in 90px. As a sentence it needs 220, and on a card barely 340 wide that left
-            // the key half a row: its two lines wrapped into four, breaking between a colour
-            // swatch and the word it labels. A line each is also shorter overall than a key
-            // spilling over — and the verdict reads before the detail that justifies it.
+            // the key half a row — its two lines wrapped into four. A line of its own removes the
+            // competition for width; kept to the right so the block does not stack up flush left,
+            // and so the verdict still reads as the summing-up of the bar above it.
             var stageRow = UIFactory.CreateHorizontalGroup(_root, "StageRow", false, false, true, true, 0);
             UIFactory.SetLayoutElement(stageRow, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999, flexibleHeight: 0);
             UIStyles.ClearRowBackground(stageRow);
             var stageLayout = stageRow.GetComponent<HorizontalLayoutGroup>();
-            if (stageLayout != null) stageLayout.childAlignment = TextAnchor.MiddleLeft;
+            if (stageLayout != null) stageLayout.childAlignment = TextAnchor.MiddleRight;
 
-            _qualityLabel = UIFactory.CreateLabel(stageRow, "QualityLabel", "", TextAnchor.MiddleLeft);
+            _qualityLabel = UIFactory.CreateLabel(stageRow, "QualityLabel", "", TextAnchor.MiddleRight);
             _qualityLabel.fontSize = UIStyles.FontSizeHint;
             _qualityLabel.color = UIStyles.TextMuted;
             UIFactory.SetLayoutElement(_qualityLabel.gameObject, flexibleWidth: 9999);

@@ -6834,6 +6834,16 @@ namespace UnityGameTranslator.Core
         /// <summary>If Branch, the username of the Main owner</summary>
         public string MainUsername { get; set; }
 
+        /// <summary>
+        /// Branch whose Main no longer exists — deleted, or its account closed.
+        ///
+        /// Nobody can ever merge this work: a branch needs a head to be merged into. The way
+        /// forward is to publish it as a translation of its own, which the Fork action does.
+        /// Null on servers too old to report it, and that absence must read as "unknown" rather
+        /// than "the Main is fine".
+        /// </summary>
+        public bool? MainMissing { get; set; }
+
         /// <summary>If Main, the number of branches</summary>
         public int BranchesCount { get; set; }
 

@@ -1348,6 +1348,9 @@ namespace UnityGameTranslator.Core.UI
                     IsOwner = role == TranslationRole.Main || role == TranslationRole.Branch,
                     Role = role,
                     BranchesCount = branchesCount,
+                    // Absent from an older site: stays null, which reads as "unknown" and never
+                    // as "the Main is fine".
+                    MainMissing = data["main_missing"]?.ToObject<bool?>(),
                 };
 
                 if (translation != null && translation.Type != JTokenType.Null)

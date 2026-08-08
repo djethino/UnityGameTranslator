@@ -782,6 +782,8 @@ namespace UnityGameTranslator.Core
                     Role = role,
                     // MainUsername is in main.uploader when role is none and main exists
                     MainUsername = data["main"]?["uploader"]?.Value<string>(),
+                    // Null on older servers: "unknown", never "the Main is fine"
+                    MainMissing = data["main_missing"]?.ToObject<bool?>(),
                     // Use ToObject<int?>() to handle explicit JSON null values
                     BranchesCount = data["branches_count"]?.ToObject<int?>() ?? 0
                 };
@@ -2008,6 +2010,9 @@ namespace UnityGameTranslator.Core
         public TranslationRole Role { get; set; } = TranslationRole.None;
         /// <summary>Username of the Main translation owner (if this is a Branch)</summary>
         public string MainUsername { get; set; }
+
+        /// <summary>Branch whose Main is gone. Null on servers that do not report it.</summary>
+        public bool? MainMissing { get; set; }
         /// <summary>Number of branches contributing to this UUID (if this is Main)</summary>
         public int BranchesCount { get; set; }
         public UuidCheckTranslationInfo ExistingTranslation { get; set; } // For UPDATE

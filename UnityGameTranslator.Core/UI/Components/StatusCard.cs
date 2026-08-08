@@ -651,10 +651,39 @@ namespace UnityGameTranslator.Core.UI.Components
 
             var state = TranslatorCore.ServerState;
             bool published = state != null && state.Exists && state.IsOwner;
+
+            if (!published)
+            {
+                _emptyRow.SetActive(false);
+                return;
+            }
+
+            // Orphaned first: it is the one nobody else can fix. A branch whose Main is gone can
+            // never be merged by anyone — the only way forward is to publish it as a translation
+            // of its own, which is what Fork does. Said here rather than left to be discovered,
+            // because from inside the game everything looks normal.
+            if (state.MainMissing == true)
+            {
+                if (_emptyLabel != null)
+                {
+                    _emptyLabel.color = UIStyles.StatusError;
+                    _emptyLabel.text = TranslatorCore.TranslateOwnUIDynamic(
+                        "The translation you contribute to is gone: nobody can merge this work any more.");
+                }
+
+                if (_emptyBtn?.ButtonText != null)
+                {
+                    _emptyBtn.ButtonText.text = TranslatorCore.TranslateOwnUIDynamic("Manage online");
+                }
+
+                _emptyRow.SetActive(true);
+                return;
+            }
+
             bool captureOnly = TranslationQuality.IsCaptureOnly(
                 stats.HumanCount, stats.ValidatedCount, stats.AiCount, stats.CaptureCount);
 
-            if (!published || !captureOnly)
+            if (!captureOnly)
             {
                 _emptyRow.SetActive(false);
                 return;
@@ -662,6 +691,7 @@ namespace UnityGameTranslator.Core.UI.Components
 
             if (_emptyLabel != null)
             {
+                _emptyLabel.color = UIStyles.StatusWarning;
                 _emptyLabel.text = TranslatorCore.TranslateOwnUIDynamic(
                     "Published with no translated line: players who download it see nothing change.");
             }

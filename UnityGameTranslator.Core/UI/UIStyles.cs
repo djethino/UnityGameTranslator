@@ -128,6 +128,10 @@ namespace UnityGameTranslator.Core.UI
         // Kept as is on purpose (tag S): dealt with, not pending — hence its own colour rather
         // than the grey. Matches the website's purple-500.
         public static readonly Color StatusKept = new Color(0.66f, 0.33f, 0.97f);                  // Purple
+        // The mod's own interface (tag M): a provenance, not a degree of translation, so it takes
+        // the one colour nothing else uses. Matches the website's teal-600. It has no band in the
+        // quality bar on either side — see QualityBar.CountTags.
+        public static readonly Color StatusModUi = new Color(0.05f, 0.58f, 0.53f);                 // Teal
 
         // Item/List backgrounds (navy blue tones)
         public static readonly Color ItemBackground = new Color(0.17f, 0.20f, 0.27f, 1f);          // E3 row (above card)

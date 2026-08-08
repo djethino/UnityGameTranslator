@@ -241,13 +241,24 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
         }
 
+        /// <summary>
+        /// The colour of a tag, and the same one everywhere it is drawn.
+        ///
+        /// These used to disagree with the quality bar three lines away: V was TextAccent, which
+        /// is PURPLE despite the comment claiming blue — and purple is what the bar gives to
+        /// "kept as is". S and M both fell through to grey, the colour the bar reserves for lines
+        /// nobody has translated yet. The website said the same as the bar, so this method was
+        /// alone against everything else.
+        /// </summary>
         private Color GetTagColor(string tag)
         {
             switch (tag)
             {
-                case "A": return UIStyles.StatusWarning;  // Yellow for AI
-                case "H": return UIStyles.StatusSuccess;  // Green for Human
-                case "V": return UIStyles.TextAccent;     // Blue for Validated
+                case "H": return UIStyles.StatusSuccess;  // Green — written by a human
+                case "V": return UIStyles.StatusInfo;     // Blue — machine wording a human accepted
+                case "A": return UIStyles.StatusWarning;  // Amber — machine wording nobody has read
+                case "S": return UIStyles.StatusKept;     // Purple — kept as is, a decision
+                case "M": return UIStyles.StatusModUi;    // Teal — the mod's own interface
                 default: return UIStyles.TextMuted;
             }
         }

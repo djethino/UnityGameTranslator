@@ -559,17 +559,33 @@ namespace UnityGameTranslator.Core.UI.Components
         /// How far the translation has been reviewed, in a few words. The proportions are the
         /// bar's job; this says whether a human has been through it at all — the one thing that
         /// decides between two translations of the same game.
+        ///
+        /// A file that still has most of what it met in game untranslated gets its completeness
+        /// instead: reading and translating are two different jobs, and "Fully reviewed" on two
+        /// lines out of thirteen told the player the opposite of the truth.
         /// </summary>
         private static string FormatQualityStats(TranslationInfo translation)
         {
             string stage = TranslationQuality.ReviewStage(
-                translation.HumanCount, translation.ValidatedCount, translation.AiCount);
+                translation.HumanCount, translation.ValidatedCount, translation.AiCount,
+                translation.CaptureCount);
+
+            if (stage != null) return TranslatorCore.TranslateOwnUIDynamic(stage);
+
+            float completeness = TranslationQuality.Completeness(
+                translation.HumanCount, translation.ValidatedCount, translation.AiCount,
+                translation.CaptureCount);
+
+            // Something IS translated, just not enough for a review stage to mean anything
+            if (completeness > 0f)
+            {
+                return Unbreakable(Mathf.RoundToInt(completeness * 100f) + "% "
+                    + TranslatorCore.TranslateOwnUIDynamic("translated"));
+            }
 
             // Nothing translated: older servers send no H/V/A either, and the legacy Type field
             // is the only thing left to say
-            if (stage == null) return translation.Type ?? "unknown";
-
-            return TranslatorCore.TranslateOwnUIDynamic(stage);
+            return translation.Type ?? "unknown";
         }
 
         private void RefreshSelection()

@@ -46,11 +46,23 @@ namespace UnityGameTranslator.Core.UI.Components
         // The measures live in TranslationQuality so the card, the community list and the
         // website all read a translation the same way.
 
-        /// <summary>Where this translation stands, as a step. Null when nothing is translated.</summary>
-        public string ReviewStage => TranslationQuality.ReviewStage(HumanCount, ValidatedCount, AiCount);
+        /// <summary>
+        /// Where this translation stands, as a step. Null when nothing is translated, and null
+        /// while most of what the mod has captured is still waiting to be translated — writing
+        /// comes before reading, and the completeness below is what the author needs then.
+        /// </summary>
+        public string ReviewStage => TranslationQuality.ReviewStage(
+            HumanCount, ValidatedCount, AiCount, CaptureCount);
 
         /// <summary>How much of it a human has read, 0 to 1. Negative when nothing is translated.</summary>
         public float ReviewCoverage => TranslationQuality.ReviewCoverage(HumanCount, ValidatedCount, AiCount);
+
+        /// <summary>
+        /// How much of what the mod has met in game is translated, 0 to 1. Negative when the file
+        /// is empty. Captured lines are the work already identified — the honest denominator.
+        /// </summary>
+        public float Completeness => TranslationQuality.Completeness(
+            HumanCount, ValidatedCount, AiCount, CaptureCount);
 
         /// <summary>Translated lines nobody has read yet — what is left to do, not a mark.</summary>
         public int UnreviewedCount => AiCount;
@@ -558,7 +570,15 @@ namespace UnityGameTranslator.Core.UI.Components
                 // count is the part that moves as you work — that is what carries a translator
                 // forward, not a grade.
                 string stage = stats.ReviewStage;
-                if (stage == null)
+                if (stage == null && stats.Completeness > 0f)
+                {
+                    // Still mostly untranslated: how much is done and how much is waiting says
+                    // more than a review step that has nothing to judge yet.
+                    _qualityLabel.text = Mathf.RoundToInt(stats.Completeness * 100f) + "% "
+                        + TranslatorCore.TranslateOwnUIDynamic("translated")
+                        + $" · {stats.CaptureCount} " + TranslatorCore.TranslateOwnUIDynamic("waiting");
+                }
+                else if (stage == null)
                 {
                     _qualityLabel.text = string.Empty;
                 }

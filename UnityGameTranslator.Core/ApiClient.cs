@@ -1251,7 +1251,15 @@ namespace UnityGameTranslator.Core
                     status = request.Status,
                     content = request.Content,
                     notes = request.Notes,
-                    resources_url = request.ResourcesUrl
+                    resources_url = request.ResourcesUrl,
+                    // Provenance of a fork, sent in the REQUEST rather than inside the file: an
+                    // older version rebuilds translations.json from the metadata it knows and
+                    // would drop an unknown block on its next save. Null on every upload that is
+                    // not a fork, and a server that ignores these fields behaves exactly as
+                    // before — nothing here is required.
+                    forked_from_id = TranslatorCore.ForkedFromSiteId,
+                    forked_from_hash = TranslatorCore.ForkedFromHash,
+                    forked_from_lines = TranslatorCore.ForkedFromResolvedLines
                 };
 
                 var jsonPayload = JsonConvert.SerializeObject(payload);

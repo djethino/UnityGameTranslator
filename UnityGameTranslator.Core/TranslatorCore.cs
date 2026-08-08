@@ -163,6 +163,24 @@ namespace UnityGameTranslator.Core
         public static int? SourceSiteId { get; set; } = null;
 
         /// <summary>
+        /// Where this file came from when it was forked, and how much of it was already written
+        /// at that moment. Set once by CreateFork(), never touched again.
+        ///
+        /// Kept APART from SourceSiteId on purpose. That one drives synchronisation, and a fork
+        /// must forget it — otherwise the mod keeps offering to merge from a lineage it has just
+        /// left. But detaching the sync is not the same as erasing where the work came from, and
+        /// one variable used to carry both: forking wiped the provenance as a side effect, so a
+        /// fork arrived on the site as a brand-new translation and whoever wrote the first three
+        /// thousand lines lost every trace of it.
+        ///
+        /// The line count is measured here rather than asked of the server later: the original
+        /// keeps growing, so the question only has an answer at the instant of the fork.
+        /// </summary>
+        public static int? ForkedFromSiteId { get; set; } = null;
+        public static string ForkedFromHash { get; set; } = null;
+        public static int? ForkedFromResolvedLines { get; set; } = null;
+
+        /// <summary>
         /// If true, UniverseLib won't override the game's EventSystem.
         /// Enable this if the game's UI animations or navigation don't work with the mod.
         /// Stored in translations.json as _settings.disable_eventsystem_override
@@ -2251,6 +2269,13 @@ namespace UnityGameTranslator.Core
                         LastSyncedHash = source?["hash"]?.Value<string>();
                         LastMergedMainHash = source?["main_hash"]?.Value<string>();
                         SourceSiteId = source?["site_id"]?.Value<int?>();
+                    }
+                    else if (prop.Name == "_forked_from" && prop.Value.Type == JTokenType.Object)
+                    {
+                        var origin = prop.Value as JObject;
+                        ForkedFromSiteId = origin?["site_id"]?.Value<int?>();
+                        ForkedFromHash = origin?["hash"]?.Value<string>();
+                        ForkedFromResolvedLines = origin?["resolved_lines"]?.Value<int?>();
                     }
                     else if (prop.Name == "_game" && prop.Value.Type == JTokenType.Object)
                     {
@@ -6184,6 +6209,26 @@ namespace UnityGameTranslator.Core
                         output["_source"] = source;
                     }
 
+                    // Provenance of a fork. Separate from _source, which an older version reads
+                    // and rewrites: this block is unknown to it, so it would be dropped on its
+                    // next save — a loss of credit, never a breakage. It stays out of the content
+                    // hash (which covers translations plus _uuid), so it can never make two
+                    // installs disagree about whether they hold the same file.
+                    if (ForkedFromSiteId.HasValue)
+                    {
+                        var origin = new JObject();
+                        origin["site_id"] = ForkedFromSiteId.Value;
+                        if (!string.IsNullOrEmpty(ForkedFromHash))
+                        {
+                            origin["hash"] = ForkedFromHash;
+                        }
+                        if (ForkedFromResolvedLines.HasValue)
+                        {
+                            origin["resolved_lines"] = ForkedFromResolvedLines.Value;
+                        }
+                        output["_forked_from"] = origin;
+                    }
+
                     if (LocalChangesCount > 0)
                     {
                         output["_local_changes"] = LocalChangesCount;
@@ -6266,6 +6311,14 @@ namespace UnityGameTranslator.Core
 
             LogDebug($"[Fork] Context saved: {PendingFork.SourceLanguage} -> {PendingFork.TargetLanguage}, game={PendingFork.Game?.name}");
 
+            // Written down BEFORE the reset below wipes the sync state. Detaching the sync is
+            // required; erasing where the work came from was a side effect of doing both with the
+            // same variables. The count is what we actually received — measured now, because the
+            // original goes on growing and the question has no answer afterwards.
+            ForkedFromSiteId = SourceSiteId;
+            ForkedFromHash = LastSyncedHash;
+            ForkedFromResolvedLines = CountResolvedEntries();
+
             // Generate new UUID for the fork
             FileUuid = Guid.NewGuid().ToString();
 
@@ -6287,6 +6340,23 @@ namespace UnityGameTranslator.Core
             SaveCache();
 
             Adapter?.LogInfo($"Created fork: old UUID {oldUuid} -> new UUID {FileUuid}");
+        }
+
+        /// <summary>
+        /// Entries that hold a settled translation, the same way the website counts them: an
+        /// empty capture is work identified, not work done, and mod-UI entries are never counted.
+        /// </summary>
+        private static int CountResolvedEntries()
+        {
+            int resolved = 0;
+            foreach (var kvp in TranslationCache)
+            {
+                var entry = kvp.Value;
+                if (entry == null || entry.Tag == "M") continue;
+                if (entry.IsHumanEmpty || string.IsNullOrEmpty(entry.Value)) continue;
+                resolved++;
+            }
+            return resolved;
         }
 
         /// <summary>

@@ -29,6 +29,32 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// How much of what a file has ALREADY MET in game is translated: translated / (translated
+        /// + captured). Captured lines are texts the mod ran into and nobody has translated yet —
+        /// known, counted, pending work, unlike the rest of the game whose size nobody knows.
+        ///
+        /// Negative when the file holds nothing at all: an absence of translation rather than a
+        /// translation at zero.
+        /// </summary>
+        public static float Completeness(int human, int validated, int ai, int captured)
+        {
+            int encountered = human + validated + ai + captured;
+            if (encountered == 0) return -1f;
+
+            return (float)(human + validated + ai) / encountered;
+        }
+
+        /// <summary>
+        /// Below this, a file is not translated enough for "how well was it read" to mean
+        /// anything, and no stage is shown. Same value as the website's TRANSLATION_FLOOR.
+        ///
+        /// Two lines translated out of thirteen met in game were labelled "Fully reviewed".
+        /// Reviewing and translating are two different jobs, and the second has to exist before
+        /// the first can be judged.
+        /// </summary>
+        public const float TranslationFloor = 0.9f;
+
+        /// <summary>
         /// Where a translation stands, as a STEP rather than a mark. Same four steps and same
         /// thresholds as the website, so a player reads the same thing about a file in the
         /// browser and in the game.
@@ -42,10 +68,20 @@ namespace UnityGameTranslator.Core
         /// that is how this mod works — naming that "Raw AI" on a scale ending at "Excellent"
         /// tells a newcomer their starting point is worthless.
         ///
-        /// Returns null when there is nothing translated to have reviewed.
+        /// Returns null when there is nothing translated to have reviewed, and when too much of
+        /// what the file met in game is still waiting — see TranslationFloor. Pass the captured
+        /// count whenever it is known; the overload without it assumes nothing is pending.
         /// </summary>
         public static string ReviewStage(int human, int validated, int ai)
         {
+            return ReviewStage(human, validated, ai, 0);
+        }
+
+        public static string ReviewStage(int human, int validated, int ai, int captured)
+        {
+            float completeness = Completeness(human, validated, ai, captured);
+            if (completeness >= 0f && completeness < TranslationFloor) return null;
+
             float coverage = ReviewCoverage(human, validated, ai);
             if (coverage < 0f) return null;
 

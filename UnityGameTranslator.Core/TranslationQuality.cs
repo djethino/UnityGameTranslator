@@ -45,6 +45,20 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// A file that has MET text in game and translated none of it.
+        ///
+        /// Not "a translation at zero": no translation has been attempted. The distinction is
+        /// what a player needs before downloading — one is work in progress, the other is the
+        /// game's own text handed back unchanged. Same rule as the website's
+        /// Translation::isCaptureOnly, and the reason it lives here rather than in a panel is
+        /// that both the community list and the file's own screens ask the question.
+        /// </summary>
+        public static bool IsCaptureOnly(int human, int validated, int ai, int captured)
+        {
+            return human + validated + ai == 0 && captured > 0;
+        }
+
+        /// <summary>
         /// Below this, a file is not translated enough for "how well was it read" to mean
         /// anything, and no stage is shown. Same value as the website's TRANSLATION_FLOOR.
         ///

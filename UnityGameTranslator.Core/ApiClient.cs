@@ -94,6 +94,21 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// The author's own translations, anchored on one of them.
+        ///
+        /// Where a file can be taken back off the server — the page carries the delete button and
+        /// its confirmation. Uploading is one click and unpublishing is a page nobody thinks to
+        /// look for, which is how "it's uploaded, not my problem any more" happens; the anchor
+        /// lands on the right row instead of a list of twenty.
+        /// </summary>
+        public static string GetMyTranslationsUrl(int? translationId = null)
+        {
+            string url = $"{WebsiteBaseUrl}/my-translations";
+
+            return translationId.HasValue ? $"{url}#translation-{translationId.Value}" : url;
+        }
+
+        /// <summary>
         /// Raised when the server refuses our token: it was revoked from the website, or the
         /// account was banned (banning deletes the account's API tokens). Carries the reason the
         /// server gave, when it gave one.

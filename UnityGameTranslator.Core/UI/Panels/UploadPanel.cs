@@ -4,6 +4,7 @@ using UnityEngine.UI;
 using UniverseLib;
 using UniverseLib.UI;
 using UniverseLib.UI.Models;
+using UnityGameTranslator.Core.UI.Components;
 
 namespace UnityGameTranslator.Core.UI.Panels
 {
@@ -143,7 +144,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 try
                 {
                     TranslatorCore.LogInfo("[UploadPanel] Upload button clicked!");
-                    DoUpload();
+                    ConfirmThenUpload();
                 }
                 catch (Exception e)
                 {
@@ -422,6 +423,52 @@ namespace UnityGameTranslator.Core.UI.Panels
             _gameLabel.text = gameInfo != null
                 ? Tr("Game:") + $" {gameInfo.name}"
                 : Tr("Game: Unknown");
+        }
+
+        /// <summary>
+        /// One question before publishing a file that translates nothing.
+        ///
+        /// Capture mode collects the game's own text and leaves it untranslated on purpose, as a
+        /// starting point for a human. Published as it stands, it looks like a translation from
+        /// the outside and hands the original words back to whoever downloads it — which has
+        /// happened, and the next person then built their own work on top of it. The author is
+        /// the only one who knows whether that is what they meant, so this asks rather than
+        /// refuses.
+        ///
+        /// Asked once, at the moment of publishing: a permanent warning in the panel would be
+        /// read as noise by the many authors who are simply not finished yet.
+        /// </summary>
+        private void ConfirmThenUpload()
+        {
+            var stats = StatusCard.CalculateLocalStats();
+            bool captureOnly = stats != null && TranslationQuality.IsCaptureOnly(
+                stats.HumanCount, stats.ValidatedCount, stats.AiCount, stats.CaptureCount);
+
+            if (!captureOnly)
+            {
+                DoUpload();
+                return;
+            }
+
+            string message = TranslatorCore.TranslateOwnUIDynamic(
+                "This file contains no translation: the " + stats.CaptureCount
+                + " lines it captured are the game's own text, waiting to be translated.\n\n"
+                + "Published as it is, anyone downloading it gets the original text back.\n\n"
+                + "Publish anyway?");
+
+            if (TranslatorUIManager.ConfirmationPanel == null)
+            {
+                // No dialog available: publishing is the author's own request, and swallowing it
+                // silently would be worse than asking nothing.
+                DoUpload();
+                return;
+            }
+
+            TranslatorUIManager.ConfirmationPanel.Show(
+                TranslatorCore.TranslateOwnUIDynamic("Nothing translated yet"),
+                message,
+                TranslatorCore.TranslateOwnUIDynamic("Publish"),
+                DoUpload);
         }
 
         private async void DoUpload()

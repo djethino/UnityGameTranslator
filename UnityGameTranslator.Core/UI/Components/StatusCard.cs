@@ -88,6 +88,9 @@ namespace UnityGameTranslator.Core.UI.Components
         private Text _qualityLabel;
         private QualityBar _qualityBar;
         private Text _qualityLegend;
+        private GameObject _emptyRow;
+        private Text _emptyLabel;
+        private UniverseLib.UI.Models.ButtonRef _emptyBtn;
         private GameObject _modeRow;
         private GameObject _voteRow;
         private GameObject _voteHost;
@@ -243,6 +246,36 @@ namespace UnityGameTranslator.Core.UI.Components
             TranslatorCore.RegisterExcluded(_qualityLegend);
 
             _legendRow = legendRow;
+
+            // Row 5b — published, and translating nothing.
+            //
+            // The website says this on "my translations", where an author goes once. Here it is
+            // in front of them while they play the very game concerned, which is the moment they
+            // can do something about it — and the button leads straight to the row that carries
+            // the delete, because uploading takes one click and unpublishing is a page nobody
+            // thinks to look for.
+            _emptyRow = UIFactory.CreateHorizontalGroup(_root, "EmptyRow", false, false, true, true, UIStyles.SmallSpacing);
+            UIFactory.SetLayoutElement(_emptyRow, minHeight: UIStyles.RowHeightMedium, flexibleWidth: 9999, flexibleHeight: 0);
+            UIStyles.ClearRowBackground(_emptyRow);
+            var emptyLayout = _emptyRow.GetComponent<HorizontalLayoutGroup>();
+            if (emptyLayout != null) emptyLayout.childAlignment = TextAnchor.MiddleLeft;
+
+            _emptyLabel = UIFactory.CreateLabel(_emptyRow, "EmptyLabel", "", TextAnchor.MiddleLeft);
+            _emptyLabel.fontSize = UIStyles.FontSizeSmall;
+            _emptyLabel.color = UIStyles.StatusWarning;
+            _emptyLabel.horizontalOverflow = HorizontalWrapMode.Wrap;
+            UIFactory.SetLayoutElement(_emptyLabel.gameObject, flexibleWidth: 9999);
+            TranslatorCore.RegisterExcluded(_emptyLabel);
+
+            _emptyBtn = UIStyles.CreateSecondaryButton(_emptyRow, "EmptyBtn", "", 120);
+            _emptyBtn.OnClick += () =>
+            {
+                var state = TranslatorCore.ServerState;
+                TranslatorCore.OpenUrlSafe(ApiClient.GetMyTranslationsUrl(state?.SiteId));
+            };
+            TranslatorCore.RegisterExcluded(_emptyBtn.ButtonText);
+
+            _emptyRow.SetActive(false);
 
             // Hide quality row by default
             _qualityRow.SetActive(false);
@@ -530,8 +563,11 @@ namespace UnityGameTranslator.Core.UI.Components
                 _qualityRow.SetActive(false);
                 _stageRow?.SetActive(false);
                 _legendRow?.SetActive(false);
+                _emptyRow?.SetActive(false);
                 return;
             }
+
+            RefreshEmptyWarning(stats);
 
             // Captures are part of the picture: a file made of 900 captured lines and 100
             // translated ones has to look like it. Hiding the grey flattered the result.
@@ -599,6 +635,43 @@ namespace UnityGameTranslator.Core.UI.Components
 
             _qualityRow.SetActive(true);
             _legendRow?.SetActive(true);
+        }
+
+        /// <summary>
+        /// The warning an author sees while playing the game their empty translation belongs to.
+        ///
+        /// Only once it is PUBLISHED and theirs: a file being built in capture mode is normal
+        /// work, and warning about it would be noise. The website says the same thing on "my
+        /// translations", but that is a page somebody visits on purpose — this is in front of
+        /// them at the moment the file is actually in their hands.
+        /// </summary>
+        private void RefreshEmptyWarning(LocalQualityStats stats)
+        {
+            if (_emptyRow == null) return;
+
+            var state = TranslatorCore.ServerState;
+            bool published = state != null && state.Exists && state.IsOwner;
+            bool captureOnly = TranslationQuality.IsCaptureOnly(
+                stats.HumanCount, stats.ValidatedCount, stats.AiCount, stats.CaptureCount);
+
+            if (!published || !captureOnly)
+            {
+                _emptyRow.SetActive(false);
+                return;
+            }
+
+            if (_emptyLabel != null)
+            {
+                _emptyLabel.text = TranslatorCore.TranslateOwnUIDynamic(
+                    "Published with no translated line: players who download it see nothing change.");
+            }
+
+            if (_emptyBtn?.ButtonText != null)
+            {
+                _emptyBtn.ButtonText.text = TranslatorCore.TranslateOwnUIDynamic("Manage online");
+            }
+
+            _emptyRow.SetActive(true);
         }
 
         /// <summary>

@@ -583,8 +583,18 @@ namespace UnityGameTranslator.Core.UI.Components
                     + TranslatorCore.TranslateOwnUIDynamic("translated"));
             }
 
-            // Nothing translated: older servers send no H/V/A either, and the legacy Type field
-            // is the only thing left to say
+            // Text met in game, none of it translated: the file hands the game's own words back.
+            // This row used to fall through to the legacy Type field and announce "human" — so a
+            // player downloaded what looked like a hand-made translation and got the original
+            // text, then built on top of it. Said before the download, not discovered after.
+            if (TranslationQuality.IsCaptureOnly(translation.HumanCount, translation.ValidatedCount,
+                    translation.AiCount, translation.CaptureCount))
+            {
+                return Unbreakable(TranslatorCore.TranslateOwnUIDynamic("captured only, nothing translated"));
+            }
+
+            // Nothing at all to go on: older servers send no H/V/A either, and the legacy Type
+            // field is the only thing left to say
             return translation.Type ?? "unknown";
         }
 

@@ -91,6 +91,7 @@ namespace UnityGameTranslator.Core.UI.Components
         private GameObject _emptyRow;
         private Text _emptyLabel;
         private UniverseLib.UI.Models.ButtonRef _emptyBtn;
+        private UniverseLib.UI.Models.ButtonRef _dismissBtn;
         private GameObject _modeRow;
         private GameObject _voteRow;
         private GameObject _voteHost;
@@ -274,6 +275,14 @@ namespace UnityGameTranslator.Core.UI.Components
                 TranslatorCore.OpenUrlSafe(ApiClient.GetMyTranslationsUrl(state?.SiteId));
             };
             TranslatorCore.RegisterExcluded(_emptyBtn.ButtonText);
+
+            // Only on the notice that is a judgement about somebody else: an empty file of one's
+            // own is a fact that comes back the moment a line is written, and hiding it would
+            // only hide it from the person who can fix it.
+            _dismissBtn = UIStyles.CreateSecondaryButton(_emptyRow, "DismissBtn", "", 90);
+            _dismissBtn.OnClick += DismissCurrentNotice;
+            _dismissBtn.Component.gameObject.SetActive(false);
+            TranslatorCore.RegisterExcluded(_dismissBtn.ButtonText);
 
             _emptyRow.SetActive(false);
 
@@ -637,6 +646,44 @@ namespace UnityGameTranslator.Core.UI.Components
             _legendRow?.SetActive(true);
         }
 
+        /// <summary>Notice key for "the Main is not taking the new work into account".</summary>
+        private const string MainIgnoringNotice = "main-ignoring";
+
+        /// <summary>
+        /// Has this install already been shown, and put away, this notice for this translation?
+        ///
+        /// Keyed by lineage rather than by game: two translations of the same game are two
+        /// different situations, and someone may contribute to one and own the other.
+        /// </summary>
+        private static bool IsNoticeDismissed(string notice)
+        {
+            string uuid = TranslatorCore.FileUuid;
+            if (string.IsNullOrEmpty(uuid)) return false;
+
+            var dismissed = TranslatorCore.Config?.sync?.dismissed_notices;
+
+            return dismissed != null && dismissed.Contains(notice + ":" + uuid);
+        }
+
+        /// <summary>
+        /// Put the notice away for good. Final for this translation: the line has to be removed
+        /// from config.json to see it again, which is a deliberate act rather than an accident.
+        /// </summary>
+        private void DismissCurrentNotice()
+        {
+            string uuid = TranslatorCore.FileUuid;
+            if (string.IsNullOrEmpty(uuid) || TranslatorCore.Config?.sync == null) return;
+
+            string key = MainIgnoringNotice + ":" + uuid;
+            if (!TranslatorCore.Config.sync.dismissed_notices.Contains(key))
+            {
+                TranslatorCore.Config.sync.dismissed_notices.Add(key);
+                TranslatorCore.SaveConfig();
+            }
+
+            _emptyRow?.SetActive(false);
+        }
+
         /// <summary>
         /// The warning an author sees while playing the game their empty translation belongs to.
         ///
@@ -679,6 +726,35 @@ namespace UnityGameTranslator.Core.UI.Components
                 _emptyRow.SetActive(true);
                 return;
             }
+
+            // Told, came back, took nothing in. Not silence — that is dormancy, and it is said
+            // elsewhere — but a judgement about somebody else, so it is said ONCE and carries a
+            // way to put it away for good.
+            if (state.MainIgnoring == true && !IsNoticeDismissed(MainIgnoringNotice))
+            {
+                if (_emptyLabel != null)
+                {
+                    _emptyLabel.color = UIStyles.StatusWarning;
+                    _emptyLabel.text = TranslatorCore.TranslateOwnUIDynamic(
+                        "The Main does not seem to be taking the new work into account. You can publish your own version whenever you like.");
+                }
+
+                if (_emptyBtn?.ButtonText != null)
+                {
+                    _emptyBtn.ButtonText.text = TranslatorCore.TranslateOwnUIDynamic("Manage online");
+                }
+
+                if (_dismissBtn?.ButtonText != null)
+                {
+                    _dismissBtn.ButtonText.text = TranslatorCore.TranslateOwnUIDynamic("Dismiss");
+                    _dismissBtn.Component.gameObject.SetActive(true);
+                }
+
+                _emptyRow.SetActive(true);
+                return;
+            }
+
+            _dismissBtn?.Component.gameObject.SetActive(false);
 
             bool captureOnly = TranslationQuality.IsCaptureOnly(
                 stats.HumanCount, stats.ValidatedCount, stats.AiCount, stats.CaptureCount);

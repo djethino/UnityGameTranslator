@@ -1351,6 +1351,8 @@ namespace UnityGameTranslator.Core.UI
                     // Absent from an older site: stays null, which reads as "unknown" and never
                     // as "the Main is fine".
                     MainMissing = data["main_missing"]?.ToObject<bool?>(),
+                    MainIgnoring = data["main_ignoring"]?.ToObject<bool?>(),
+                    MergedLinesTotal = data["merged_lines_total"]?.ToObject<int?>() ?? 0,
                 };
 
                 if (translation != null && translation.Type != JTokenType.Null)

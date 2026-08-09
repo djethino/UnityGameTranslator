@@ -6741,6 +6741,15 @@ namespace UnityGameTranslator.Core
         public List<string> ignored_uuids { get; set; } = new List<string>();
 
         /// <summary>
+        /// Notices this install has been shown once and dismissed, as "type:uuid" — for example
+        /// "main-ignoring:9cabf6da-...". Generic on purpose: the next notice that must be said
+        /// once will not need a third field, and the file stays readable to whoever opens it.
+        ///
+        /// Dismissing is final for that translation. Somebody who wants it back deletes the line.
+        /// </summary>
+        public List<string> dismissed_notices { get; set; } = new List<string>();
+
+        /// <summary>
         /// Check for mod updates on GitHub at startup.
         /// Only works when online_mode is enabled.
         /// </summary>
@@ -6843,6 +6852,16 @@ namespace UnityGameTranslator.Core
         /// than "the Main is fine".
         /// </summary>
         public bool? MainMissing { get; set; }
+
+        /// <summary>
+        /// The Main was told about this branch, has edited their own file since, and has taken
+        /// nothing in. Not the same as silence — that is dormancy — and said once only.
+        /// Null on servers too old to report it.
+        /// </summary>
+        public bool? MainIgnoring { get; set; }
+
+        /// <summary>Lines of this branch the Main has taken in, added up over every merge.</summary>
+        public int MergedLinesTotal { get; set; }
 
         /// <summary>If Main, the number of branches</summary>
         public int BranchesCount { get; set; }

@@ -87,11 +87,17 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.SetLayoutElement(_gameLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
             RegisterExcluded(_gameLabel);
 
-            _modeInfoLabel = UIFactory.CreateLabel(infoBox, "ModeInfoLabel", "", TextAnchor.MiddleLeft);
+            // Top-aligned and wrapping, with no fixed height: in Branch mode this says two things
+            // — who receives the work, and that players will not be able to download it — and a
+            // single-row minHeight would have cut the second line off. Same rule as the quality
+            // legend: the label reports the height its wrapped text needs at the width it is
+            // given, and the row takes it.
+            _modeInfoLabel = UIFactory.CreateLabel(infoBox, "ModeInfoLabel", "", TextAnchor.UpperLeft);
             _modeInfoLabel.fontStyle = FontStyle.Italic;
             _modeInfoLabel.fontSize = UIStyles.FontSizeSmall;
             _modeInfoLabel.color = UIStyles.TextMuted;
-            UIFactory.SetLayoutElement(_modeInfoLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+            _modeInfoLabel.horizontalOverflow = HorizontalWrapMode.Wrap;
+            UIFactory.SetLayoutElement(_modeInfoLabel.gameObject, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999);
             RegisterExcluded(_modeInfoLabel);
 
             UIStyles.CreateSpacer(card, 10);
@@ -331,9 +337,17 @@ namespace UnityGameTranslator.Core.UI.Panels
                         {
                             _uploadMode = UploadMode.Branch;
                             SetDynamicText(_titleLabel, "Contribute as Branch");
-                            _modeInfoLabel.text = Tr("Contributing to:") + $" @{uploader}";
+                            // What a branch IS, said before sending rather than discovered after.
+                            // The panel announced the role and never the visibility: players
+                            // cannot download a branch, and someone expecting their work to reach
+                            // players has picked the wrong action. "Only its Main can see it"
+                            // would be the easy phrasing and it is not true — the game page shows
+                            // that the contribution exists, under its author's name; it is the
+                            // CONTENT that stays private.
+                            _modeInfoLabel.text = Tr("Contributing to:") + " @" + uploader + "\n"
+                                + Tr("Only they can open and merge it. Players cannot download a branch.");
                             SetDynamicText(_uploadBtn.ButtonText, "Contribute");
-                            DescribeUploadButton($"Send your changes to @{uploader} for review — they can merge them into the main translation");
+                            DescribeUploadButton($"Send your changes to @{uploader} for review — they can merge them into the main translation. To publish a translation players can install, make yours independent instead");
                             // Note: Type is now auto-calculated by server from HVASM tags
                             _statusLabel.text = "";
                             _isChecking = false;

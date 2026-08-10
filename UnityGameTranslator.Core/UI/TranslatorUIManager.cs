@@ -1796,8 +1796,10 @@ namespace UnityGameTranslator.Core.UI
                             serverState.Hash = downloadHash ?? fileHash;
                         }
                         TranslatorCore.LastSyncedHash = downloadHash ?? fileHash;
-                        TranslatorCore.SaveCache();
+
+                        // Ancestor first: the file's change count is measured against it.
                         TranslatorCore.SaveAncestorCache();
+                        TranslatorCore.SaveCache();
 
                         // Clear pending update
                         HasPendingUpdate = false;
@@ -3040,9 +3042,9 @@ namespace UnityGameTranslator.Core.UI
                         // this id is the only way to ever hear about a new version
                         TranslatorCore.SourceSiteId = siteId;
 
-                        // Save cache and ancestor
-                        TranslatorCore.SaveCache();
+                        // Ancestor first: the file's change count is measured against it.
                         TranslatorCore.SaveAncestorCache();
+                        TranslatorCore.SaveCache();
 
                         // Clear all pending update state
                         HasPendingUpdate = false;
@@ -3239,9 +3241,11 @@ namespace UnityGameTranslator.Core.UI
             }
             TranslatorCore.LastSyncedHash = serverHash;
 
-            // Save cache
-            TranslatorCore.SaveCache();
-
+            // ⚠ The ancestor is settled BEFORE the file is written, here as everywhere else. The
+            // count the file carries is the difference against the ancestor, so writing first
+            // recorded the difference against the one this merge was about to replace — a number
+            // that was already false as it was written, and that nothing came back to correct.
+            //
             // Save REMOTE content as ancestor (not merged!)
             // This way LocalChangesCount = our additions that need uploading.
             // The remote SETTINGS go with it when we know them: that baseline is
@@ -3257,6 +3261,10 @@ namespace UnityGameTranslator.Core.UI
 
             // Recalculate local changes (merged vs remote ancestor)
             TranslatorCore.RecalculateLocalChanges();
+
+            // Now the file, which counts again as it writes and so records what is true after the
+            // merge: our own additions, waiting to be uploaded.
+            TranslatorCore.SaveCache();
 
             // Set pending update state based on local changes
             // After merge, if we have local additions/changes, we need to upload
@@ -3353,11 +3361,10 @@ namespace UnityGameTranslator.Core.UI
                         // Update sync state before saving (so SaveCache persists the hash)
                         TranslatorCore.LastSyncedHash = fileHash ?? translationFileHash;
 
-                        // Save cache (reformats JSON with Formatting.Indented)
-                        TranslatorCore.SaveCache();
-
-                        // Save as ancestor for sync tracking
+                        // Ancestor first, then the file: the change count written into the file
+                        // is measured against the ancestor, so the order decides whether it is true.
                         TranslatorCore.SaveAncestorCache();
+                        TranslatorCore.SaveCache();
                         HasPendingUpdate = false;
                         PendingUpdateDirection = UpdateDirection.None;
 

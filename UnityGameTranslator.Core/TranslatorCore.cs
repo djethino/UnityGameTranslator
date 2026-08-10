@@ -6280,6 +6280,23 @@ namespace UnityGameTranslator.Core
             {
                 try
                 {
+                    // Counted here rather than trusted, so what the file says is true of the file.
+                    //
+                    // ⚠ _local_changes was going stale on disk, and it took an outside reader to
+                    // notice: in-game everything looked right because every panel reads the counter
+                    // in memory, while the file still claimed changes that had been published. The
+                    // cause was ordering — a save ran, and only afterwards did the ancestor move and
+                    // the count drop to zero, with nothing writing the file again.
+                    //
+                    // Recounting at the moment of writing removes the whole class of mistake: no
+                    // caller can leave the number behind, because the number is not carried here. It
+                    // also corrects a second, quieter error — the running counter is incremented on
+                    // every edit, so editing one line ten times counted ten changes.
+                    //
+                    // Cost: two walks of the dictionaries, against serialising the whole file, at
+                    // most once every thirty seconds.
+                    RecalculateLocalChanges();
+
                     // Create output with metadata first, then sorted translations
                     var output = new JObject();
 

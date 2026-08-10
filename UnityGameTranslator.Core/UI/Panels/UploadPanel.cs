@@ -585,8 +585,14 @@ namespace UnityGameTranslator.Core.UI.Panels
                         TranslatorCore.LogInfo($"[UploadPanel] Source language recorded from upload: {srcLang}");
                     }
                     TranslatorCore.ResetMetadataDirty();
-                    TranslatorCore.SaveCache();
+
+                    // ⚠ The ancestor moves FIRST, then the file is written. SaveAncestorCache is
+                    // what makes "published" true — it makes the ancestor equal to what we just
+                    // sent — and SaveCache counts the difference against it. Saving first wrote a
+                    // file still claiming the changes that had just been published, and nothing
+                    // ever rewrote it: in-game it looked synced, on disk it did not.
                     TranslatorCore.SaveAncestorCache();
+                    TranslatorCore.SaveCache();
                     TranslatorUIManager.HasPendingUpdate = false;
                     TranslatorUIManager.PendingUpdateInfo = null;
                     TranslatorUIManager.PendingUpdateDirection = UpdateDirection.None;

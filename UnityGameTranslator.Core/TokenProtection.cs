@@ -1,227 +1,70 @@
 using System;
-using System.Security.Cryptography;
-using System.Text;
 using Newtonsoft.Json;
+using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core
 {
     /// <summary>
     /// At-rest obfuscation of secrets in config.json, binding them to the machine.
-    /// AES-256-CBC with a key derived from machine identity (MachineName, UserName,
-    /// OS, profile path) — values any process running as the same user can read.
     ///
-    /// Threat model — be honest about what this does and does not protect:
-    ///  - DOES protect: a config.json copied off the machine (shared for support,
-    ///    cloud-synced, accidentally committed) cannot be decrypted elsewhere.
-    ///  - Does NOT protect against a local attacker: any code running as the same
-    ///    user can rebuild the key from public identity values and decrypt. This is
-    ///    NOT a security boundary; the real defense is server-side token revocation.
+    /// ⚠ The scheme itself now lives in UnityGameTranslator.Common.Secrets, with its threat model
+    /// attached to it — read that before assuming anything is protected here. It was written twice,
+    /// and every constant in it is part of the derived key: two copies drifting apart means a
+    /// config file this mod can no longer read, reported to the player as being signed out.
     ///
-    /// Works on all platforms: Windows, Linux, macOS (Mono and IL2CPP).
+    /// What stays here is what belongs to the mod and not to a shared library: the shape of OUR
+    /// token ("ugt_"), which is how a token saved in the clear by an old version is recognised, and
+    /// the logging, which goes through the mod loader.
     /// </summary>
     public static class TokenProtection
     {
-        private const string TokenPrefix = "ENCRYPTED:";
-        private const string LegacyPrefix = "ugt_"; // Plain tokens from older versions
+        /// <summary>Plain tokens from versions that predate encryption.</summary>
+        private const string LegacyPrefix = "ugt_";
 
         /// <summary>
-        /// Encrypt a token for secure storage in config file.
+        /// Encrypt a token for storage in the config file. Null for nothing to store — callers
+        /// have always relied on that rather than on an empty string.
         /// </summary>
         public static string EncryptToken(string plainToken)
         {
             if (string.IsNullOrEmpty(plainToken))
                 return null;
 
-            return TokenPrefix + AesEncrypt(plainToken);
+            return Secrets.Protect(plainToken);
         }
 
         /// <summary>
-        /// Decrypt a token from config file.
-        /// Returns null if decryption fails (e.g., machine identity changed, corrupted token).
+        /// Read a token back from the config file.
+        ///
+        /// Null means it was ours and could not be decrypted, which happens legitimately when the
+        /// file came from another machine. The caller treats that as "no token" and asks the player
+        /// to sign in again — the one thing it must not do is present it as corruption.
         /// </summary>
         public static string DecryptToken(string storedToken)
         {
             if (string.IsNullOrEmpty(storedToken))
                 return null;
 
-            // Legacy plaintext token (from before encryption was added)
+            // A token written before encryption existed. Said out loud because the next save
+            // rewrites it, and a line in the log is what makes that traceable afterwards.
             if (storedToken.StartsWith(LegacyPrefix))
             {
                 TranslatorCore.LogInfo("[TokenProtection] Legacy plaintext token detected, will be encrypted on next save");
                 return storedToken;
             }
 
-            // Not encrypted (shouldn't happen but handle gracefully)
-            if (!storedToken.StartsWith(TokenPrefix))
-            {
-                return storedToken;
-            }
+            if (Secrets.TryUnprotect(storedToken, out string plain, out string failure))
+                return plain;
 
-            // Decrypt AES - catch decryption errors (e.g., padding invalid, key mismatch)
-            try
-            {
-                string encryptedPart = storedToken.Substring(TokenPrefix.Length);
-                return AesDecrypt(encryptedPart);
-            }
-            catch (CryptographicException ex)
-            {
-                // This happens when:
-                // - Machine identity changed (different computer/user)
-                // - Token was corrupted
-                // - Key derivation algorithm changed between versions
-                TranslatorCore.LogWarning($"[TokenProtection] Decryption failed: {ex.Message}");
-                return null;
-            }
-            catch (FormatException ex)
-            {
-                // Invalid Base64 string
-                TranslatorCore.LogWarning($"[TokenProtection] Invalid token format: {ex.Message}");
-                return null;
-            }
+            TranslatorCore.LogWarning($"[TokenProtection] Decryption failed: {failure}");
+            return null;
         }
 
         /// <summary>
-        /// Check if a stored token needs to be re-encrypted (e.g., legacy plaintext)
+        /// True when a stored value is a real secret sitting there unprotected — a legacy plaintext
+        /// token, or anything else that arrived without our marker. The next save rewrites it.
         /// </summary>
-        public static bool NeedsReEncryption(string storedToken)
-        {
-            if (string.IsNullOrEmpty(storedToken))
-                return false;
-
-            // Legacy plaintext tokens need to be encrypted
-            if (storedToken.StartsWith(LegacyPrefix))
-                return true;
-
-            // Not encrypted at all
-            if (!storedToken.StartsWith(TokenPrefix))
-                return true;
-
-            return false;
-        }
-
-        #region AES-256 Encryption
-
-        /// <summary>
-        /// AES-256-CBC encryption with machine-derived key.
-        /// </summary>
-        private static string AesEncrypt(string plainText)
-        {
-            byte[] salt = GetMachineSalt();
-            byte[] key = DeriveKey(GetMachineSecret(), salt);
-
-            using (var aes = Aes.Create())
-            {
-                aes.Key = key;
-                aes.GenerateIV();
-                aes.Mode = CipherMode.CBC;
-                aes.Padding = PaddingMode.PKCS7;
-
-                using (var encryptor = aes.CreateEncryptor())
-                {
-                    byte[] plainBytes = Encoding.UTF8.GetBytes(plainText);
-                    byte[] encryptedBytes = encryptor.TransformFinalBlock(plainBytes, 0, plainBytes.Length);
-
-                    // Combine IV + encrypted data
-                    byte[] result = new byte[aes.IV.Length + encryptedBytes.Length];
-                    Buffer.BlockCopy(aes.IV, 0, result, 0, aes.IV.Length);
-                    Buffer.BlockCopy(encryptedBytes, 0, result, aes.IV.Length, encryptedBytes.Length);
-
-                    return Convert.ToBase64String(result);
-                }
-            }
-        }
-
-        /// <summary>
-        /// AES-256-CBC decryption with machine-derived key.
-        /// </summary>
-        private static string AesDecrypt(string encryptedText)
-        {
-            byte[] salt = GetMachineSalt();
-            byte[] key = DeriveKey(GetMachineSecret(), salt);
-            byte[] combined = Convert.FromBase64String(encryptedText);
-
-            using (var aes = Aes.Create())
-            {
-                aes.Key = key;
-                aes.Mode = CipherMode.CBC;
-                aes.Padding = PaddingMode.PKCS7;
-
-                // Extract IV (first 16 bytes)
-                byte[] iv = new byte[16];
-                Buffer.BlockCopy(combined, 0, iv, 0, 16);
-                aes.IV = iv;
-
-                // Extract encrypted data
-                byte[] encryptedBytes = new byte[combined.Length - 16];
-                Buffer.BlockCopy(combined, 16, encryptedBytes, 0, encryptedBytes.Length);
-
-                using (var decryptor = aes.CreateDecryptor())
-                {
-                    byte[] plainBytes = decryptor.TransformFinalBlock(encryptedBytes, 0, encryptedBytes.Length);
-                    return Encoding.UTF8.GetString(plainBytes);
-                }
-            }
-        }
-
-        /// <summary>
-        /// Derive a 256-bit key using PBKDF2-SHA1 (compatible with .NET Standard 2.0).
-        /// 100,000 iterations provides strong protection against brute force.
-        /// NOTE: Uses SHA-1 as HMAC because .NET Standard 2.0 Rfc2898DeriveBytes
-        /// does not support HashAlgorithmName parameter. If target is upgraded to
-        /// .NET Standard 2.1+, use: new Rfc2898DeriveBytes(secret, salt, 100000, HashAlgorithmName.SHA256)
-        /// </summary>
-        private static byte[] DeriveKey(string secret, byte[] salt)
-        {
-            using (var pbkdf2 = new Rfc2898DeriveBytes(secret, salt, 100000))
-            {
-                return pbkdf2.GetBytes(32); // 256 bits
-            }
-        }
-
-        /// <summary>
-        /// Get machine-specific secret for key derivation.
-        /// Combines multiple sources for entropy.
-        /// NOTE: All values must be deterministic across process runs!
-        /// String.GetHashCode() is NOT stable across runs, so we use the actual values.
-        /// </summary>
-        private static string GetMachineSecret()
-        {
-            var sb = new StringBuilder();
-            sb.Append(Environment.MachineName);
-            sb.Append("_");
-            sb.Append(Environment.UserName);
-            sb.Append("_");
-            sb.Append(Environment.OSVersion.Platform);
-            sb.Append("_UGT_v3"); // Bumped version due to key derivation change
-
-            try
-            {
-                string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-                if (!string.IsNullOrEmpty(home))
-                {
-                    sb.Append("_");
-                    // Use actual path instead of GetHashCode() - GetHashCode is NOT stable across runs!
-                    sb.Append(home);
-                }
-            }
-            catch { }
-
-            return sb.ToString();
-        }
-
-        /// <summary>
-        /// Get a stable salt derived from machine identity.
-        /// </summary>
-        private static byte[] GetMachineSalt()
-        {
-            string saltSource = $"{Environment.MachineName}_{Environment.UserName}_UGT_SALT";
-            using (var sha256 = SHA256.Create())
-            {
-                return sha256.ComputeHash(Encoding.UTF8.GetBytes(saltSource));
-            }
-        }
-
-        #endregion
+        public static bool NeedsReEncryption(string storedToken) => Secrets.NeedsProtecting(storedToken);
     }
 
     /// <summary>
@@ -233,6 +76,10 @@ namespace UnityGameTranslator.Core
     /// for HTTP requests etc.). On disk (config.json) the value is always AES-encrypted
     /// with the machine-derived key. Returns null on decryption failure — the caller is
     /// expected to detect this (raw JSON had a value, in-memory is null) to log and clear.
+    ///
+    /// ⚠ Stays in the mod rather than moving to the shared library: it is built on Newtonsoft.Json,
+    /// and that library takes no packages at all. The rule it applies is shared; the plumbing that
+    /// applies it is not.
     /// </summary>
     public class EncryptedTokenConverter : JsonConverter
     {

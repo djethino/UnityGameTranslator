@@ -1,3 +1,6 @@
 [submodule "UniverseLib"]
 	path = UniverseLib
 	url = https://github.com/djethino/UniverseLib.git
+[submodule "common"]
+	path = common
+	url = https://github.com/djethino/unitygametranslator-common.git

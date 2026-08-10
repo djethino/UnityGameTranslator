@@ -137,6 +137,13 @@ namespace UnityGameTranslator {
       <_RepackInputs Include="$(TargetPath)" />
       <_RepackInputs Include="$(OutputPath)UnityGameTranslator.Core.dll"
                      Condition="Exists('$(OutputPath)UnityGameTranslator.Core.dll')" />
+
+      <!-- ⚠ The shared library, and this line is not optional. What ships is ONE merged DLL, and
+           this list is what goes into it: an assembly missing from here compiles perfectly, then
+           is not found inside a game at the first call, with nothing at build time having said a
+           word. See the common/ submodule, and add any future shared assembly here as well. -->
+      <_RepackInputs Include="$(OutputPath)UnityGameTranslator.Common.dll"
+                     Condition="Exists('$(OutputPath)UnityGameTranslator.Common.dll')" />
       <_RepackInputs Include="$(OutputPath)Newtonsoft.Json.dll"
                      Condition="Exists('$(OutputPath)Newtonsoft.Json.dll')" />
       <_RepackInputs Include="$(OutputPath)$(_UniverseLibFileName)"

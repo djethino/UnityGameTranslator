@@ -13,6 +13,14 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The rules this mod shares with the installer, held in one place rather than in two
+         copies that drift. ⚠ It must ALSO be listed in the ILRepack inputs
+         (Directory.Build.props): what ships is a single merged DLL, and an assembly absent
+         from that list is missing at runtime with nothing at build time saying so. -->
+    <ProjectReference Include="..\common\src\UnityGameTranslator.Common\UnityGameTranslator.Common.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- UniverseLib for uGUI-based UI -->
     <Reference Include="UniverseLib.Mono">
       <HintPath>..\extlibs\UniverseLib\UniverseLib.Mono.dll</HintPath>

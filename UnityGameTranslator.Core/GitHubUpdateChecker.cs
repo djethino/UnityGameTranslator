@@ -242,53 +242,16 @@ namespace UnityGameTranslator.Core
 
         /// <summary>
         /// Compare two semantic version strings.
-        /// Returns: -1 if v1 < v2, 0 if equal, 1 if v1 > v2
+        /// Returns: -1 if v1 &lt; v2, 0 if equal, 1 if v1 &gt; v2
+        ///
+        /// ⚠ The rules live in UnityGameTranslator.Common now, and this stays only as the name
+        /// callers here already use. They were written twice — once here, once in the installer,
+        /// the second copied from the first and marked as a mirror. Both programs read the same
+        /// tags from the same publisher and have to reach the same verdict: one of them deciding
+        /// that 0.9.66 comes before 0.9.9 while the other says the opposite shows up as "an update
+        /// it keeps offering and never applies", with nothing on screen to say which is wrong.
         /// </summary>
-        public static int CompareVersions(string v1, string v2)
-        {
-            if (string.IsNullOrEmpty(v1) && string.IsNullOrEmpty(v2)) return 0;
-            if (string.IsNullOrEmpty(v1)) return -1;
-            if (string.IsNullOrEmpty(v2)) return 1;
-
-            // Remove 'v' prefix if present
-            v1 = v1.TrimStart('v');
-            v2 = v2.TrimStart('v');
-
-            var parts1 = v1.Split('.');
-            var parts2 = v2.Split('.');
-
-            int maxLength = Math.Max(parts1.Length, parts2.Length);
-
-            for (int i = 0; i < maxLength; i++)
-            {
-                int num1 = 0;
-                int num2 = 0;
-
-                if (i < parts1.Length)
-                {
-                    // Handle pre-release suffixes (e.g., "3-beta")
-                    var part1 = parts1[i].Split('-')[0];
-                    int.TryParse(part1, out num1);
-                }
-
-                if (i < parts2.Length)
-                {
-                    var part2 = parts2[i].Split('-')[0];
-                    int.TryParse(part2, out num2);
-                }
-
-                if (num1 < num2) return -1;
-                if (num1 > num2) return 1;
-            }
-
-            // If numeric parts are equal, check for pre-release (version without suffix > version with suffix)
-            bool hasPrerelease1 = v1.Contains("-");
-            bool hasPrerelease2 = v2.Contains("-");
-
-            if (hasPrerelease1 && !hasPrerelease2) return -1;
-            if (!hasPrerelease1 && hasPrerelease2) return 1;
-
-            return 0;
-        }
+        public static int CompareVersions(string v1, string v2) =>
+            UnityGameTranslator.Common.Versions.Compare(v1, v2);
     }
 }

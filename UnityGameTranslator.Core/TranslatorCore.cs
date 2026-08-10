@@ -3802,6 +3802,115 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Ask the server to let go of a model we have stopped using.
+        ///
+        /// Changing model used to leave the previous one loaded. Ollama keeps a model in memory
+        /// for five minutes after its last request and only evicts one when the next needs the
+        /// room — so for those five minutes two models share the graphics card, with a game
+        /// already on it. If they do not both fit, the new one is split with the processor and
+        /// every line takes seconds instead of tenths of a second. That is worst exactly when it
+        /// is most likely: right after someone switched model because the first felt slow.
+        ///
+        /// ⚠ ONLY for a server on this machine or this network, and only because Ollama is the
+        /// only one where it means anything. vLLM and llama.cpp serve a single model per process,
+        /// so there is nothing to free; LM Studio manages its own lifetime and unloads through its
+        /// command line rather than its API. A cloud provider has no local memory to reclaim at
+        /// all — firing an unknown route at one would be traffic sent to a third party for
+        /// nothing, which is reason enough not to.
+        ///
+        /// ⚠ /api/generate is Ollama's own route, not part of the OpenAI-compatible surface the
+        /// rest of the mod speaks. It is used as a favour, never as a dependency: another local
+        /// server answers 404 and we are exactly where we were. Nothing waits for the result and
+        /// nothing reports it — a model left loaded is a slowdown, not a failure.
+        /// </summary>
+        public static void ReleaseModel(string baseUrl, string model)
+        {
+            if (string.IsNullOrEmpty(baseUrl) || string.IsNullOrEmpty(model)) return;
+            if (!IsLocalServer(baseUrl)) return;
+
+            // The native API sits at the root, so strip whatever OpenAI-compatible tail the user
+            // pasted: "http://host:11434/v1", ".../v1/chat/completions" and a bare host must all
+            // end up at "http://host:11434".
+            string root = baseUrl.TrimEnd('/');
+            const string chatSuffix = "/chat/completions";
+            if (root.EndsWith(chatSuffix))
+                root = root.Substring(0, root.Length - chatSuffix.Length);
+            if (root.EndsWith("/v1"))
+                root = root.Substring(0, root.Length - 3);
+            root = root.TrimEnd('/');
+
+            string url = root + "/api/generate";
+            string modelName = model;
+
+            System.Threading.Tasks.Task.Run(() =>
+            {
+                try
+                {
+                    var payload = new JObject
+                    {
+                        ["model"] = modelName,
+                        ["keep_alive"] = 0
+                    };
+
+                    var request = new HttpRequestMessage(HttpMethod.Post, url)
+                    {
+                        Content = new StringContent(payload.ToString(), Encoding.UTF8, "application/json")
+                    };
+                    AddAIAuthHeader(request);
+
+                    httpClient.SendAsync(request).Wait(3000);
+                    LogDebug($"[AI] Asked {url} to release {modelName}");
+                }
+                catch
+                {
+                    // A server that does not know this route manages its own memory. Silence is
+                    // the right answer: nothing the player did has failed.
+                }
+            });
+        }
+
+        /// <summary>
+        /// Whether this address is a server the player runs themselves — this machine, or a box on
+        /// their own network.
+        ///
+        /// Judged on the address alone, with no request sent: the question is asked precisely to
+        /// decide whether to send one. An unrecognised host is treated as remote, which is the
+        /// safe way round — the cost of skipping a release is a model that lingers a few minutes,
+        /// the cost of guessing wrong is a request to somebody else's service.
+        /// </summary>
+        private static bool IsLocalServer(string baseUrl)
+        {
+            try
+            {
+                var uri = new Uri(baseUrl.Contains("://") ? baseUrl : "http://" + baseUrl);
+                string host = uri.Host.Trim('[', ']').ToLowerInvariant();
+
+                if (host == "localhost" || host == "127.0.0.1" || host == "::1"
+                    || host.EndsWith(".local"))
+                {
+                    return true;
+                }
+
+                // The private ranges, for an Ollama running on another machine at home — a common
+                // setup, and one where releasing the model matters just as much.
+                if (host.StartsWith("10.") || host.StartsWith("192.168.")) return true;
+
+                if (host.StartsWith("172."))
+                {
+                    var parts = host.Split('.');
+                    if (parts.Length > 1 && int.TryParse(parts[1], out int second))
+                        return second >= 16 && second <= 31;
+                }
+
+                return false;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
         /// Resolve an OpenAI-compatible endpoint from the user's base URL.
         /// Handles various URL formats; the only requirement on the user side is
         /// to provide the full /chat/completions URL their provider documents

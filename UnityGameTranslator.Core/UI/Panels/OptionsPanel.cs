@@ -1818,10 +1818,25 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // Capture mode works WITHOUT a backend: the worker must run to
                 // store the H+empty entries (it never calls any backend then)
                 TranslatorCore.EnsureWorkerRunning();
+                // Kept before they are overwritten: the model being left behind lives on the
+                // address that was in use, which this very screen may also be changing.
+                string previousUrl = TranslatorCore.Config.ai_url;
+                string previousModel = TranslatorCore.Config.ai_model;
+
                 TranslatorCore.Config.ai_url = _aiUrlInput.Text;
                 string apiKeyValue = _aiApiKeyInput.Text;
                 TranslatorCore.Config.ai_api_key = !string.IsNullOrEmpty(apiKeyValue) ? apiKeyValue : null;
                 TranslatorCore.Config.ai_model = _modelDropdown.SelectedValue ?? "";
+
+                // A model nobody is going to use again should not go on holding the graphics card
+                // the game is playing on. Ollama keeps it for five minutes otherwise, and the
+                // replacement gets whatever room is left — which is how switching model to gain
+                // speed ends up losing it.
+                if (!string.IsNullOrEmpty(previousModel)
+                    && previousModel != TranslatorCore.Config.ai_model)
+                {
+                    TranslatorCore.ReleaseModel(previousUrl, previousModel);
+                }
                 TranslatorCore.Config.game_context = _gameContextInput.Text;
                 TranslatorCore.Config.strict_source_language = _strictSourceToggle.isOn;
                 string googleKey = _googleApiKeyInput?.Text;

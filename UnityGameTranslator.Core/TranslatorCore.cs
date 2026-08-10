@@ -2458,7 +2458,24 @@ namespace UnityGameTranslator.Core
                 }
 
                 // Recalculate LocalChangesCount based on actual differences (always, even if no ancestor)
+                int claimedByTheFile = LocalChangesCount;
                 RecalculateLocalChanges();
+
+                // ⚠ And when the file was wrong, mark it to be rewritten. Recounting at save time
+                // stops the number going stale from here on, but it repairs nothing already on
+                // disk: a file left claiming published changes would go on claiming them until
+                // something else happened to trigger a save, which for a finished translation could
+                // be never. Anything reading it from outside — the installer's list, for one — would
+                // keep showing work waiting to be shared that was shared long ago.
+                //
+                // Measured on a real game before this existed: 6334 lines, ancestor identical, no
+                // deletions, and the file said one change was unpublished.
+                if (claimedByTheFile != LocalChangesCount)
+                {
+                    cacheModified = true;
+                    LogDebug($"[LoadCache] The file claimed {claimedByTheFile} local change(s) and "
+                             + $"there are {LocalChangesCount}; it will be rewritten.");
+                }
 
                 // Build reverse cache: all translated values (NORMALIZED for comparison)
                 // Values must be normalized the same way as incoming text in TranslateTextWithTracking

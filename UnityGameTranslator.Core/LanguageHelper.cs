@@ -1,278 +1,55 @@
-using System.Collections.Generic;
 using System.Globalization;
+using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core
 {
     /// <summary>
-    /// Helper for language code conversion and validation.
-    /// Maps ISO 639-1 codes to full language names used by Qwen3.
+    /// Language names, codes, and what the machine this game runs on is set to.
+    ///
+    /// ⚠ The tables live in UnityGameTranslator.Common.Languages now — read the note there before
+    /// touching anything, in particular the fact that it holds TWO inventories of different sizes:
+    /// codes for talking to the outside world, and the wider set of languages a model can actually
+    /// translate into, five of which have no ISO 639-1 code at all.
+    ///
+    /// What stays here is what the shared library cannot hold: reading the system language, which
+    /// needs UnityEngine and the mod loader's log, and the defaults this mod applies when it is
+    /// handed nothing — a default is a decision about behaviour, not a fact about languages.
     /// </summary>
     public static class LanguageHelper
     {
         /// <summary>
-        /// ISO 639-1 code to full language name mapping.
-        /// Based on languages supported by Qwen3 for translation.
-        /// </summary>
-        private static readonly Dictionary<string, string> IsoToName = new Dictionary<string, string>
-        {
-            // Major languages (most common for game translations)
-            { "en", "English" },
-            { "fr", "French" },
-            { "de", "German" },
-            { "es", "Spanish" },
-            { "it", "Italian" },
-            { "pt", "Portuguese" },
-            { "ru", "Russian" },
-            { "pl", "Polish" },
-            { "ja", "Japanese" },
-            { "ko", "Korean" },
-            { "zh", "Simplified Chinese" },
-            { "zh-cn", "Simplified Chinese" },
-            { "zh-hans", "Simplified Chinese" },
-            { "zh-tw", "Traditional Chinese" },
-            { "zh-hant", "Traditional Chinese" },
-            { "ar", "Arabic" },
-            { "tr", "Turkish" },
-            { "nl", "Dutch" },
-            { "sv", "Swedish" },
-            { "da", "Danish" },
-            { "nb", "Norwegian Bokmål" },
-            { "nn", "Norwegian Nynorsk" },
-            { "no", "Norwegian Bokmål" },
-            { "fi", "Finnish" },
-            { "cs", "Czech" },
-            { "hu", "Hungarian" },
-            { "ro", "Romanian" },
-            { "el", "Greek" },
-            { "th", "Thai" },
-            { "vi", "Vietnamese" },
-            { "id", "Indonesian" },
-            { "ms", "Malay" },
-            { "uk", "Ukrainian" },
-            { "bg", "Bulgarian" },
-
-            // Other Indo-European
-            { "sk", "Slovak" },
-            { "hr", "Croatian" },
-            { "sr", "Serbian" },
-            { "sl", "Slovenian" },
-            { "lt", "Lithuanian" },
-            { "lv", "Latvian" },
-            { "et", "Estonian" },
-            { "is", "Icelandic" },
-            { "fo", "Faroese" },
-            { "ga", "Irish" },
-            { "cy", "Welsh" },
-            { "ca", "Catalan" },
-            { "gl", "Galician" },
-            { "eu", "Basque" },
-            { "lb", "Luxembourgish" },
-            { "af", "Afrikaans" },
-            { "mk", "Macedonian" },
-            { "bs", "Bosnian" },
-            { "sq", "Albanian" },
-            { "hy", "Armenian" },
-            { "be", "Belarusian" },
-            { "fa", "Persian" },
-            { "tg", "Tajik" },
-
-            // South Asian
-            { "hi", "Hindi" },
-            { "bn", "Bengali" },
-            { "ur", "Urdu" },
-            { "pa", "Punjabi" },
-            { "gu", "Gujarati" },
-            { "mr", "Marathi" },
-            { "ta", "Tamil" },
-            { "te", "Telugu" },
-            { "kn", "Kannada" },
-            { "ml", "Malayalam" },
-            { "or", "Oriya" },
-            { "si", "Sinhala" },
-            { "ne", "Nepali" },
-            { "as", "Assamese" },
-            { "sd", "Sindhi" },
-
-            // East/Southeast Asian
-            { "my", "Burmese" },
-            { "km", "Khmer" },
-            { "lo", "Lao" },
-            { "tl", "Tagalog" },
-            { "ceb", "Cebuano" },
-            { "jv", "Javanese" },
-            { "su", "Sundanese" },
-
-            // Turkic
-            { "az", "Azerbaijani" },
-            { "uz", "Uzbek" },
-            { "kk", "Kazakh" },
-            { "ba", "Bashkir" },
-            { "tt", "Tatar" },
-
-            // Semitic/Afro-Asiatic
-            { "he", "Hebrew" },
-            { "iw", "Hebrew" }, // Old code
-            { "mt", "Maltese" },
-
-            // Other
-            { "ka", "Georgian" },
-            { "sw", "Swahili" },
-            { "ht", "Haitian Creole" },
-        };
-
-        /// <summary>
-        /// Full language names (for validation)
-        /// </summary>
-        private static readonly HashSet<string> ValidLanguageNames = new HashSet<string>
-        {
-            "English", "French", "German", "Spanish", "Italian", "Portuguese",
-            "Russian", "Polish", "Japanese", "Korean", "Simplified Chinese",
-            "Traditional Chinese", "Arabic", "Turkish", "Dutch", "Swedish",
-            "Danish", "Norwegian Bokmål", "Norwegian Nynorsk", "Finnish",
-            "Czech", "Hungarian", "Romanian", "Greek", "Thai", "Vietnamese",
-            "Indonesian", "Malay", "Ukrainian", "Bulgarian", "Slovak",
-            "Croatian", "Serbian", "Slovenian", "Lithuanian", "Latvian",
-            "Estonian", "Icelandic", "Faroese", "Irish", "Welsh", "Catalan",
-            "Galician", "Basque", "Luxembourgish", "Afrikaans", "Macedonian",
-            "Bosnian", "Albanian", "Armenian", "Belarusian", "Persian", "Dari",
-            "Tajik", "Hindi", "Bengali", "Urdu", "Punjabi", "Gujarati",
-            "Marathi", "Tamil", "Telugu", "Kannada", "Malayalam", "Oriya",
-            "Sinhala", "Nepali", "Assamese", "Sindhi", "Cantonese", "Burmese",
-            "Khmer", "Lao", "Tagalog", "Cebuano", "Javanese", "Sundanese",
-            "Azerbaijani", "Uzbek", "Kazakh", "Bashkir", "Tatar", "Hebrew",
-            "Maltese", "Egyptian Arabic", "Levantine Arabic", "Moroccan Arabic",
-            "Georgian", "Swahili", "Haitian Creole"
-        };
-
-        /// <summary>
-        /// Reverse lookup: full language name to ISO 639-1 code.
-        /// Built lazily from IsoToName dictionary.
-        /// </summary>
-        private static Dictionary<string, string> _nameToIso;
-
-        private static Dictionary<string, string> NameToIso
-        {
-            get
-            {
-                if (_nameToIso == null)
-                {
-                    _nameToIso = new Dictionary<string, string>(System.StringComparer.OrdinalIgnoreCase);
-                    foreach (var kvp in IsoToName)
-                    {
-                        // Only keep the shortest code for each name (prefer "zh" over "zh-cn")
-                        if (!_nameToIso.ContainsKey(kvp.Value) || kvp.Key.Length < _nameToIso[kvp.Value].Length)
-                        {
-                            _nameToIso[kvp.Value] = kvp.Key;
-                        }
-                    }
-                }
-                return _nameToIso;
-            }
-        }
-
-        /// <summary>
         /// Get ISO 639-1 code from a full language name (e.g., "French" → "fr").
-        /// Returns null if not found.
+        /// Returns null if not found — including for the languages that have no code at all.
         /// </summary>
-        public static string NameToIsoCode(string languageName)
-        {
-            if (string.IsNullOrEmpty(languageName))
-                return null;
-
-            if (NameToIso.TryGetValue(languageName, out string code))
-                return code;
-
-            // If it's already a code, return as-is
-            string lower = languageName.ToLowerInvariant();
-            if (IsoToName.ContainsKey(lower))
-                return lower;
-
-            return null;
-        }
+        public static string NameToIsoCode(string languageName) => Languages.CodeOf(languageName);
 
         /// <summary>
         /// Get the Google Translate API language code from a language name.
-        /// Google uses lowercase ISO 639-1 codes (e.g., "fr", "zh" for Simplified Chinese, "zh-TW" for Traditional).
         /// </summary>
-        public static string GetGoogleLanguageCode(string languageName)
-        {
-            if (string.IsNullOrEmpty(languageName))
-                return null;
-
-            // Special cases for Google
-            switch (languageName)
-            {
-                case "Simplified Chinese": return "zh-CN";
-                case "Traditional Chinese": return "zh-TW";
-                case "Norwegian Bokmål": return "no";
-                case "Norwegian Nynorsk": return "no"; // Google doesn't distinguish
-            }
-
-            return NameToIsoCode(languageName);
-        }
+        public static string GetGoogleLanguageCode(string languageName) => Languages.GoogleCode(languageName);
 
         /// <summary>
-        /// Get the DeepL API language code from a language name.
-        /// DeepL uses uppercase codes with some special target variants (e.g., "EN-US", "PT-BR").
+        /// Get the DeepL API language code from a language name. Source and target differ for a
+        /// handful of languages, which is why the side has to be said.
         /// </summary>
-        public static string GetDeepLLanguageCode(string languageName, bool isTarget = true)
-        {
-            if (string.IsNullOrEmpty(languageName))
-                return null;
-
-            // DeepL special cases for target language
-            if (isTarget)
-            {
-                switch (languageName)
-                {
-                    case "English": return "EN-US";
-                    case "Portuguese": return "PT-BR";
-                    case "Simplified Chinese": return "ZH-HANS";
-                    case "Traditional Chinese": return "ZH-HANT";
-                    case "Norwegian Bokmål": return "NB";
-                    case "Norwegian Nynorsk": return "NB"; // DeepL only supports Bokmål
-                }
-            }
-            else
-            {
-                // Source language: DeepL uses simpler codes
-                switch (languageName)
-                {
-                    case "English": return "EN";
-                    case "Portuguese": return "PT";
-                    case "Simplified Chinese": return "ZH";
-                    case "Traditional Chinese": return "ZH";
-                    case "Norwegian Bokmål": return "NB";
-                    case "Norwegian Nynorsk": return "NB";
-                }
-            }
-
-            string code = NameToIsoCode(languageName);
-            return code?.ToUpperInvariant();
-        }
+        public static string GetDeepLLanguageCode(string languageName, bool isTarget = true) =>
+            Languages.DeepLCode(languageName, isTarget);
 
         /// <summary>
         /// Convert ISO 639-1 code to full language name.
         /// If already a full name or unknown, returns as-is.
+        ///
+        /// ⚠ Nothing at all gives "English", and that default belongs to the mod rather than to the
+        /// shared table: with no language set the mod still has to translate into something, while
+        /// a lookup asked about nothing should answer nothing. Callers have relied on this for a
+        /// long time; it is stated here rather than hidden one layer down.
         /// </summary>
         public static string IsoCodeToName(string langCode)
         {
             if (string.IsNullOrEmpty(langCode))
-                return "English"; // Default
+                return "English";
 
-            // Normalize to lowercase for lookup
-            string lower = langCode.ToLowerInvariant();
-
-            // Check if it's an ISO code
-            if (IsoToName.TryGetValue(lower, out string fullName))
-                return fullName;
-
-            // Check if it's already a valid full name
-            if (ValidLanguageNames.Contains(langCode))
-                return langCode;
-
-            // Unknown - return as-is (might be a less common language)
-            return langCode;
+            return Languages.NameOf(langCode);
         }
 
         /// <summary>
@@ -291,20 +68,24 @@ namespace UnityGameTranslator.Core
                 {
                     TranslatorCore.LogInfo($"[LanguageHelper] CurrentUICulture.Name='{culture.Name}' TwoLetter='{culture.TwoLetterISOLanguageName}'");
 
-                    // Try with full code first (e.g., "zh-CN", "fr-FR")
+                    // Try with full code first (e.g., "zh-CN", "fr-FR"). Knows() rather than a
+                    // lookup that hands the input back: "fr-FR" has to fall through to "fr" and
+                    // not be taken for a language of its own.
                     string fullCode = culture.Name.ToLowerInvariant();
-                    if (IsoToName.TryGetValue(fullCode, out string fullName))
+                    if (Languages.Knows(fullCode))
                     {
+                        string fullName = Languages.NameOf(fullCode);
                         TranslatorCore.LogInfo($"[LanguageHelper] Matched full code '{fullCode}' -> {fullName}");
                         return fullName;
                     }
 
                     // Try with two-letter code
                     string twoLetter = culture.TwoLetterISOLanguageName.ToLowerInvariant();
-                    if (IsoToName.TryGetValue(twoLetter, out fullName))
+                    if (Languages.Knows(twoLetter))
                     {
-                        TranslatorCore.LogInfo($"[LanguageHelper] Matched two-letter '{twoLetter}' -> {fullName}");
-                        return fullName;
+                        string twoLetterName = Languages.NameOf(twoLetter);
+                        TranslatorCore.LogInfo($"[LanguageHelper] Matched two-letter '{twoLetter}' -> {twoLetterName}");
+                        return twoLetterName;
                     }
                 }
                 else
@@ -323,8 +104,8 @@ namespace UnityGameTranslator.Core
                 var unityLang = UnityEngine.Application.systemLanguage;
                 TranslatorCore.LogInfo($"[LanguageHelper] Unity.systemLanguage = {unityLang}");
 
-                // Unity's SystemLanguage enum names match our ValidLanguageNames (e.g., "French", "German")
-                // Exception: Chinese needs special handling
+                // Unity's SystemLanguage enum names match the shared list (e.g., "French", "German").
+                // Chinese is the exception: Unity splits it three ways and spells it differently.
                 string langName = unityLang.ToString();
 
                 if (unityLang == UnityEngine.SystemLanguage.ChineseSimplified || unityLang == UnityEngine.SystemLanguage.Chinese)
@@ -332,7 +113,7 @@ namespace UnityGameTranslator.Core
                 else if (unityLang == UnityEngine.SystemLanguage.ChineseTraditional)
                     langName = "Traditional Chinese";
 
-                if (ValidLanguageNames.Contains(langName))
+                if (Languages.IsTranslatable(langName))
                 {
                     TranslatorCore.LogInfo($"[LanguageHelper] Matched Unity language -> {langName}");
                     return langName;
@@ -351,28 +132,11 @@ namespace UnityGameTranslator.Core
         /// <summary>
         /// Check if a language name is valid/supported.
         /// </summary>
-        public static bool IsValidLanguage(string language)
-        {
-            if (string.IsNullOrEmpty(language))
-                return false;
-
-            // Check if it's a known full name
-            if (ValidLanguageNames.Contains(language))
-                return true;
-
-            // Check if it's a known ISO code
-            string lower = language.ToLowerInvariant();
-            return IsoToName.ContainsKey(lower);
-        }
+        public static bool IsValidLanguage(string language) => Languages.IsTranslatable(language);
 
         /// <summary>
         /// Get all valid language names as a sorted array.
         /// </summary>
-        public static string[] GetLanguageNames()
-        {
-            var list = new List<string>(ValidLanguageNames);
-            list.Sort();
-            return list.ToArray();
-        }
+        public static string[] GetLanguageNames() => Languages.Names();
     }
 }

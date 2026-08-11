@@ -194,38 +194,15 @@ namespace UnityGameTranslator.Core
         /// <summary>Detect procedural text building (tooltips, item descriptions). Stored in translations.json.</summary>
         public static bool ConcatDetection { get; set; } = true;
 
-        /// <summary>
-        /// Reasoning budgets to try, best first. Reasoning wastes the output budget on a task as
-        /// small as translating a menu line — left on, a reasoning model can spend it all thinking
-        /// and return an EMPTY translation.
-        ///
-        /// The ladder exists because accepted values differ per provider: "none" works on Ollama,
-        /// vLLM (it injects enable_thinking=false), LM Studio and recent Grok, but OpenAI only
-        /// accepts it from gpt-5.1 on, and some models cannot disable reasoning at all. "low" is
-        /// the common denominator — it does not remove reasoning but keeps it minimal. null =
-        /// send nothing, for models that reject the parameter outright.
-        /// </summary>
-        private static readonly string[] ReasoningEffortLadder = { "none", "low", null };
 
-        // What this provider+model turned out to need. All negotiated from rejections (see
-        // SendChatRequest) rather than guessed from the URL or the model name: users point the mod
-        // at local servers, proxies and gateways whose name says nothing about what they accept.
-        private static int _reasoningEffortStep;      // rung in ReasoningEffortLadder
-        private static bool _useMaxCompletionTokens;  // OpenAI reasoning models reject max_tokens
-        private static bool _omitTemperature;         // ...and reject any temperature but their own
-        private static string _providerQuirksKey;
+        // What this provider+model turned out to need, negotiated from refusals rather than guessed
+        // from a URL or a model name — see UnityGameTranslator.Common.Negotiation, shared with the
+        // bench so it stops scoring models on a request shape their server would not take.
+        private static readonly Negotiation _negotiation = new Negotiation();
 
         /// <summary>Forget what we learned when the provider or the model changes.</summary>
-        private static void EnsureProviderQuirks()
-        {
-            string key = $"{Config?.ai_url}|{Config?.ai_model}";
-            if (_providerQuirksKey == key) return;
-
-            _providerQuirksKey = key;
-            _reasoningEffortStep = 0;
-            _useMaxCompletionTokens = false;
-            _omitTemperature = false;
-        }
+        private static void EnsureProviderQuirks() =>
+            _negotiation.ForgetIfChanged($"{Config?.ai_url}|{Config?.ai_model}");
 
         /// <summary>
         /// Returns true if source/target languages are locked (translation exists on server).
@@ -4391,20 +4368,19 @@ namespace UnityGameTranslator.Core
             };
 
             // One attempt per thing we can still give up on, plus the successful one
-            const int maxAttempts = 5;
-            for (int attempt = 0; attempt < maxAttempts; attempt++)
+            for (int attempt = 0; attempt < Negotiation.MaxAttempts; attempt++)
             {
                 // max_tokens is the field every OpenAI-compatible server understands; OpenAI's
                 // reasoning models are the exception and demand max_completion_tokens. Sending the
                 // newer name by default would be worse than useless: Ollama accepts it and IGNORES
                 // it (measured), silently removing the cap. Never send both — OpenAI rejects that.
-                requestObj.Remove(_useMaxCompletionTokens ? "max_tokens" : "max_completion_tokens");
-                requestObj[_useMaxCompletionTokens ? "max_completion_tokens" : "max_tokens"] = maxTokens;
+                requestObj.Remove(_negotiation.UnusedTokenField);
+                requestObj[_negotiation.TokenField] = maxTokens;
 
-                if (_omitTemperature) requestObj.Remove("temperature");
-                else requestObj["temperature"] = temperature;
+                if (_negotiation.SendTemperature) requestObj["temperature"] = temperature;
+                else requestObj.Remove("temperature");
 
-                string effort = ReasoningEffortLadder[_reasoningEffortStep];
+                string effort = _negotiation.ReasoningEffort;
                 if (effort != null) requestObj["reasoning_effort"] = effort;
                 else requestObj.Remove("reasoning_effort");
 
@@ -4430,7 +4406,7 @@ namespace UnityGameTranslator.Core
 
                 // Only these mean "this body is not acceptable". 401/404/429/5xx say nothing about
                 // our parameters and must not make us give any of them up.
-                if (statusCode != 400 && statusCode != 422)
+                if (!Negotiation.IsAboutOurRequest(statusCode))
                 {
                     if (statusCode == 429) _apiRateLimited = true;
                     Adapter?.LogWarning($"[AI] HTTP {statusCode} {response.StatusCode}: {errorBody}");
@@ -4439,47 +4415,17 @@ namespace UnityGameTranslator.Core
 
                 // Adapt the parameter the server actually named, before blaming the reasoning
                 // ladder — several of these can be wrong at once on the same model.
-                if (AdaptToRejection(errorBody))
+                if (_negotiation.Concede(errorBody, out string conceded))
+                {
+                    Adapter?.LogInfo($"[AI] {conceded}");
                     continue;
+                }
 
                 Adapter?.LogWarning($"[AI] HTTP {statusCode} {response.StatusCode}: {errorBody}");
                 return null;
             }
 
             return null;
-        }
-
-        /// <summary>
-        /// Give up on whatever the rejection points at, one thing per call. Returns false when
-        /// there is nothing left to concede, meaning the failure is not about our parameters.
-        /// </summary>
-        private static bool AdaptToRejection(string errorBody)
-        {
-            string body = errorBody ?? "";
-
-            if (!_useMaxCompletionTokens && body.IndexOf("max_completion_tokens", StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                _useMaxCompletionTokens = true;
-                Adapter?.LogInfo("[AI] Provider wants max_completion_tokens instead of max_tokens");
-                return true;
-            }
-
-            if (!_omitTemperature && body.IndexOf("temperature", StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                _omitTemperature = true;
-                Adapter?.LogInfo("[AI] Provider rejects our temperature — dropping it, model default applies");
-                return true;
-            }
-
-            if (_reasoningEffortStep + 1 < ReasoningEffortLadder.Length)
-            {
-                _reasoningEffortStep++;
-                string next = ReasoningEffortLadder[_reasoningEffortStep];
-                Adapter?.LogInfo($"[AI] reasoning_effort rejected, falling back to {next ?? "no reasoning parameter"}");
-                return true;
-            }
-
-            return false;
         }
 
         /// <summary>

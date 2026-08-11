@@ -1433,7 +1433,7 @@ namespace UnityGameTranslator.Core
         private const int MaxAITextLength = 15000;
 
         // Marker for skipped translations (text not in expected source language)
-        private const string SkipTranslationMarker = "AxNoTranslateXa";
+        private const string SkipTranslationMarker = Prompts.SkipMarker;
 
         // Placeholder format for extracted numbers: [!v*0], [!v*1], etc.
         // Exotic format to avoid collision with game text (e.g. [v0] used by some games).
@@ -4228,40 +4228,6 @@ namespace UnityGameTranslator.Core
         /// <summary>
         /// Detects the type of text for prompt optimization.
         /// </summary>
-        private static TextType DetectTextType(string text)
-        {
-            if (string.IsNullOrEmpty(text))
-                return TextType.SingleWord;
-
-            // Paragraph: has newlines
-            if (text.Contains('\n'))
-                return TextType.Paragraph;
-
-            // Check if text uses a scriptio continua writing system (no spaces between words)
-            bool isScriptioContinua = text.Any(c =>
-                (c >= 0x4E00 && c <= 0x9FFF) ||   // Chinese (CJK Unified Ideographs)
-                (c >= 0x3040 && c <= 0x30FF) ||   // Japanese Hiragana/Katakana
-                (c >= 0xAC00 && c <= 0xD7AF) ||   // Korean Hangul
-                (c >= 0x0E00 && c <= 0x0E7F) ||   // Thai
-                (c >= 0x0E80 && c <= 0x0EFF) ||   // Lao
-                (c >= 0x1780 && c <= 0x17FF) ||   // Khmer (Cambodian)
-                (c >= 0x1000 && c <= 0x109F) ||   // Myanmar (Burmese)
-                (c >= 0x0F00 && c <= 0x0FFF));    // Tibetan
-
-            if (isScriptioContinua)
-            {
-                // No-space scripts: use character count as proxy
-                if (text.Length <= 4) return TextType.SingleWord;
-                return TextType.Phrase;
-            }
-            else
-            {
-                // Space-based scripts (Latin, Arabic, Hebrew, Devanagari, etc.)
-                if (!text.Contains(' ')) return TextType.SingleWord;
-                return TextType.Phrase;
-            }
-        }
-
         // A name-based "is this a thinking model" list used to live here. It was removed with the
         // /no_think hack: reasoning_effort applies to every model, and the list was wrong anyway —
         // it missed models that do reason (Gemma 4), leaving them slow and occasionally answering
@@ -4282,7 +4248,7 @@ namespace UnityGameTranslator.Core
             try
             {
                 string textToTranslate = textWithPlaceholders;
-                TextType textType = DetectTextType(textToTranslate);
+                TextType textType = Prompts.Classify(textToTranslate);
 
                 // === PRE-PROCESS text before prompt building ===
                 // Replace structural elements with placeholders so the AI only sees translatable text.
@@ -4320,83 +4286,25 @@ namespace UnityGameTranslator.Core
                 bool hasVarPlaceholders = textForAI.Contains(VariableManager.Prefix);
 
                 // === BUILD PROMPT based on processed text ===
-                var promptBuilder = new StringBuilder();
+                // The wording lives in UnityGameTranslator.Common.Prompts, shared with the bench
+                // that scores models against these very instructions. Nothing there reads a
+                // configuration: what the prompt depends on is handed over, so the same question
+                // can be asked outside a running game.
+                var markers = new Prompts.Markers
+                {
+                    LineBreaks = hasNlPlaceholders,
+                    Tags = hasTagPlaceholders,
+                    Numbers = hasNumberPlaceholders,
+                    Variables = hasVarPlaceholders,
+                };
+
                 string targetLang = Config.GetTargetLanguage();
                 string sourceLang = Config.GetSourceLanguage();
 
-                if (isOwnUI)
-                {
-                    promptBuilder.AppendLine("=== CONTEXT ===");
-                    promptBuilder.AppendLine($"Translating a game translation tool interface from English to {targetLang}.");
-                    promptBuilder.AppendLine("Technical UI with terms: AI, cache, merge, sync, upload, download, API, hotkey, config, JSON.");
-                    promptBuilder.AppendLine();
-                    promptBuilder.AppendLine("=== TRANSLATION RULES ===");
-                    promptBuilder.AppendLine("- Output the translation only, no explanation");
-                    promptBuilder.AppendLine("- Translation must be understandable and correct in target language");
-                    promptBuilder.AppendLine("- Keep it concise for UI");
-                    promptBuilder.AppendLine("- Do not add punctuation if not in the source to translate");
-                    promptBuilder.AppendLine("- Keep technical terms unchanged: API, URL, UUID, JSON, AI");
-                    promptBuilder.AppendLine("- Keep keyboard shortcuts as-is: Ctrl, Alt, Shift, F1-F12, Tab, Esc");
-                    if (hasNlPlaceholders)
-                        promptBuilder.AppendLine("- IMPORTANT: Keep [!nl] placeholders exactly where they are, do not remove or move them");
-                    if (hasTagPlaceholders)
-                        promptBuilder.AppendLine("- IMPORTANT: Keep [!t*0], [!t*1], etc. tag placeholders exactly as-is, do not modify or remove them");
-                    if (hasNumberPlaceholders)
-                        promptBuilder.AppendLine("- IMPORTANT: Keep [!v*0], [!v*1], etc. placeholders exactly as-is, do not modify them");
-                    if (hasVarPlaceholders)
-                        promptBuilder.AppendLine("- IMPORTANT: Keep [!STR*0], [!STR*1], etc. string variable placeholders exactly as-is, do not translate or modify them");
-
-                    if (textType == TextType.SingleWord)
-                    {
-                        promptBuilder.AppendLine();
-                        promptBuilder.Append("Now, translate this word:");
-                    }
-                }
-                else
-                {
-                    string gameCtx = !string.IsNullOrEmpty(Config.game_context)
-                        ? Config.game_context
-                        : "video game UI, menus and dialogues";
-
-                    if (Config.strict_source_language && sourceLang != null)
-                    {
-                        promptBuilder.AppendLine("=== CRITICAL RULE ===");
-                        promptBuilder.AppendLine($"Source language: {sourceLang}");
-                        promptBuilder.AppendLine($"- If text is NOT in {sourceLang}: reply ONLY with exactly: {SkipTranslationMarker}");
-                        promptBuilder.AppendLine($"- If text IS in {sourceLang}: translate to {targetLang}");
-                        promptBuilder.AppendLine();
-                    }
-
-                    promptBuilder.AppendLine("=== CONTEXT ===");
-                    if (sourceLang != null)
-                        promptBuilder.AppendLine($"Translating video game ({gameCtx}) from {sourceLang} to {targetLang}.");
-                    else
-                        promptBuilder.AppendLine($"Translating video game ({gameCtx}) to {targetLang}.");
-                    promptBuilder.AppendLine();
-
-                    promptBuilder.AppendLine("=== TRANSLATION RULES ===");
-                    promptBuilder.AppendLine("- Output the translation only, no explanation");
-                    promptBuilder.AppendLine("- Translation must be correct in target language");
-                    promptBuilder.AppendLine("- Keep it concise for UI");
-                    promptBuilder.AppendLine("- Do not add punctuation if not in the source to translate");
-                    promptBuilder.AppendLine("- Keep unchanged: keyboard keys (Tab, Esc, Space...), technical settings (VSync, Auto)");
-                    if (hasNlPlaceholders)
-                        promptBuilder.AppendLine("- IMPORTANT: Keep [!nl] placeholders exactly where they are, do not remove or move them");
-                    if (hasTagPlaceholders)
-                        promptBuilder.AppendLine("- IMPORTANT: Keep [!t*0], [!t*1], etc. tag placeholders exactly as-is, do not modify or remove them");
-                    if (hasNumberPlaceholders)
-                        promptBuilder.AppendLine("- IMPORTANT: Keep [!v*0], [!v*1], etc. placeholders exactly as-is, do not modify them");
-                    if (hasVarPlaceholders)
-                        promptBuilder.AppendLine("- IMPORTANT: Keep [!STR*0], [!STR*1], etc. string variable placeholders exactly as-is, do not translate or modify them");
-
-                    if (textType == TextType.SingleWord)
-                    {
-                        promptBuilder.AppendLine();
-                        promptBuilder.Append("Now, translate this word:");
-                    }
-                }
-
-                string systemPrompt = promptBuilder.ToString();
+                string systemPrompt = isOwnUI
+                    ? Prompts.ForOwnInterface(targetLang, textType, markers)
+                    : Prompts.ForGameText(targetLang, sourceLang, Config.game_context,
+                                          Config.strict_source_language, textType, markers);
 
                 if (Config.debug_ai)
                 {
@@ -6886,15 +6794,7 @@ namespace UnityGameTranslator.Core
     /// <summary>
     /// Type of text being translated, used to optimize prompts.
     /// </summary>
-    public enum TextType
-    {
-        /// <summary>Single word (no spaces for Latin, ≤4 chars for CJK)</summary>
-        SingleWord,
-        /// <summary>Short phrase or sentence</summary>
-        Phrase,
-        /// <summary>Multiple lines or long text</summary>
-        Paragraph
-    }
+
 
     /// <summary>
     /// A translation entry with value and tag.

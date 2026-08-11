@@ -3456,7 +3456,7 @@ namespace UnityGameTranslator.Core
                 string jsonRequest = JsonConvert.SerializeObject(requestBody);
                 var content = new StringContent(jsonRequest, Encoding.UTF8, "application/json");
 
-                var request = new HttpRequestMessage(HttpMethod.Post, ResolveAIEndpoint(Config.ai_url, "chat/completions"));
+                var request = new HttpRequestMessage(HttpMethod.Post, Endpoints.Resolve(Config.ai_url, "chat/completions"));
                 request.Content = content;
                 AddAIAuthHeader(request);
 
@@ -3660,20 +3660,11 @@ namespace UnityGameTranslator.Core
         public static void ReleaseModel(string baseUrl, string model)
         {
             if (string.IsNullOrEmpty(baseUrl) || string.IsNullOrEmpty(model)) return;
-            if (!IsLocalServer(baseUrl)) return;
+            if (!Endpoints.IsOnYourOwnNetwork(baseUrl)) return;
 
-            // The native API sits at the root, so strip whatever OpenAI-compatible tail the user
-            // pasted: "http://host:11434/v1", ".../v1/chat/completions" and a bare host must all
-            // end up at "http://host:11434".
-            string root = baseUrl.TrimEnd('/');
-            const string chatSuffix = "/chat/completions";
-            if (root.EndsWith(chatSuffix))
-                root = root.Substring(0, root.Length - chatSuffix.Length);
-            if (root.EndsWith("/v1"))
-                root = root.Substring(0, root.Length - 3);
-            root = root.TrimEnd('/');
-
-            string url = root + "/api/generate";
+            // The native API sits at the root, not under the OpenAI-compatible surface — see
+            // Endpoints.RootOf, which knows the shapes people paste.
+            string url = Endpoints.RootOf(baseUrl) + "/api/generate";
             string modelName = model;
 
             System.Threading.Tasks.Task.Run(() =>
@@ -3704,94 +3695,6 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Whether this address is a server the player runs themselves — this machine, or a box on
-        /// their own network.
-        ///
-        /// Judged on the address alone, with no request sent: the question is asked precisely to
-        /// decide whether to send one. An unrecognised host is treated as remote, which is the
-        /// safe way round — the cost of skipping a release is a model that lingers a few minutes,
-        /// the cost of guessing wrong is a request to somebody else's service.
-        /// </summary>
-        private static bool IsLocalServer(string baseUrl)
-        {
-            try
-            {
-                var uri = new Uri(baseUrl.Contains("://") ? baseUrl : "http://" + baseUrl);
-                string host = uri.Host.Trim('[', ']').ToLowerInvariant();
-
-                if (host == "localhost" || host == "127.0.0.1" || host == "::1"
-                    || host.EndsWith(".local"))
-                {
-                    return true;
-                }
-
-                // The private ranges, for an Ollama running on another machine at home — a common
-                // setup, and one where releasing the model matters just as much.
-                if (host.StartsWith("10.") || host.StartsWith("192.168.")) return true;
-
-                if (host.StartsWith("172."))
-                {
-                    var parts = host.Split('.');
-                    if (parts.Length > 1 && int.TryParse(parts[1], out int second))
-                        return second >= 16 && second <= 31;
-                }
-
-                return false;
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
-        /// <summary>
-        /// Resolve an OpenAI-compatible endpoint from the user's base URL.
-        /// Handles various URL formats; the only requirement on the user side is
-        /// to provide the full /chat/completions URL their provider documents
-        /// (the connection-test endpoint is derived from it automatically).
-        ///
-        ///   "http://localhost:11434"                                              → .../v1/chat/completions
-        ///   "https://api.openai.com/v1/chat/completions"                          → unchanged (chat path) / .../v1/models (test)
-        ///   "https://api.deepseek.com/chat/completions"                           → unchanged (chat path) / .../models (test, no /v1)
-        ///   "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-        ///                                                                          → unchanged (chat path) / .../v1beta/openai/models (test)
-        ///   "https://api.groq.com/openai/v1"                                     → .../openai/v1/chat/completions
-        /// </summary>
-        private static string ResolveAIEndpoint(string baseUrl, string path)
-        {
-            string url = baseUrl.TrimEnd('/');
-            string trimmedPath = path.TrimStart('/');
-
-            // 1. URL already terminates with the requested path → use as-is
-            if (url.EndsWith("/" + trimmedPath) || url.EndsWith(trimmedPath))
-                return url;
-
-            // 2. User pasted the chat URL but we want a different endpoint
-            //    (typically /models for the connection test). Replace
-            //    /chat/completions with the new path. Lets providers without a
-            //    /v1 prefix (Deepseek) and providers with non-standard prefixes
-            //    (Gemini's /v1beta/openai/) work transparently — the only
-            //    requirement is that the user pasted the chat URL their docs
-            //    show, which is the canonical way to configure the mod.
-            const string chatSuffix = "/chat/completions";
-            if (url.EndsWith(chatSuffix))
-                return url.Substring(0, url.Length - chatSuffix.Length) + "/" + trimmedPath;
-
-            // 3. URL contains /v1/ somewhere (e.g., .../openai/v1/something) — strip back to /v1 and append path
-            int v1Index = url.LastIndexOf("/v1/");
-            if (v1Index >= 0)
-                return url.Substring(0, v1Index + 3) + "/" + trimmedPath;
-
-            // 4. URL ends with /v1 — just append the path (e.g., /chat/completions)
-            if (url.EndsWith("/v1"))
-                return url + "/" + trimmedPath;
-
-            // 5. Default — add /v1/ prefix to path (backwards compatible: Ollama, OpenAI default, Groq).
-            //    Providers without /v1 (e.g. Deepseek) should configure the full /chat/completions URL.
-            return url + "/v1/" + trimmedPath;
-        }
-
-        /// <summary>
         /// Test connection to AI server via OpenAI-compatible /v1/models endpoint.
         /// </summary>
         /// <param name="url">The server URL to test</param>
@@ -3799,7 +3702,7 @@ namespace UnityGameTranslator.Core
         /// <returns>True if connection successful</returns>
         public static async System.Threading.Tasks.Task<bool> TestAIConnection(string url, string apiKey = null)
         {
-            string endpoint = ResolveAIEndpoint(url, "models");
+            string endpoint = Endpoints.Resolve(url, "models");
             LogDebug($"[AI] Testing connection: GET {endpoint} (proxy_mode={Config?.proxy_mode ?? "default"})");
             try
             {
@@ -3892,7 +3795,7 @@ namespace UnityGameTranslator.Core
         /// <returns>Sorted array of model names, or empty array on failure</returns>
         public static async System.Threading.Tasks.Task<string[]> FetchModels(string url, string apiKey = null)
         {
-            string endpoint = ResolveAIEndpoint(url, "models");
+            string endpoint = Endpoints.Resolve(url, "models");
             LogDebug($"[AI] Fetching models: GET {endpoint} (proxy_mode={Config?.proxy_mode ?? "default"})");
             try
             {
@@ -4474,7 +4377,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static string SendChatRequest(JArray messagesArray, double temperature, int maxTokens)
         {
-            string aiEndpoint = ResolveAIEndpoint(Config.ai_url, "chat/completions");
+            string aiEndpoint = Endpoints.Resolve(Config.ai_url, "chat/completions");
             EnsureProviderQuirks();
 
             // Built once, then only the negotiated fields are swapped between attempts:

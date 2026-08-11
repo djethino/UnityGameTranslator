@@ -184,6 +184,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             public bool capture_keys_only;
             public bool debug;
             public bool debug_ai;
+            public bool enable_ai;
             public string translation_backend;
             public string ai_url;
             public string ai_api_key;
@@ -234,6 +235,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     capture_keys_only = TranslatorCore.Config.capture_keys_only,
                     debug = TranslatorCore.Config.debug,
                     debug_ai = TranslatorCore.Config.debug_ai,
+                    enable_ai = TranslatorCore.Config.enable_ai,
                     translation_backend = TranslatorCore.Config.translation_backend ?? "none",
                     ai_url = TranslatorCore.Config.ai_url ?? "http://localhost:11434",
                     ai_api_key = TranslatorCore.Config.ai_api_key ?? "",
@@ -704,9 +706,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIHelpers.AddToggleListener(_enableTranslationBackendToggle, OnEnableTranslationBackendChanged);
             UIFactory.SetLayoutElement(enableObj, minHeight: UIStyles.RowHeightMedium);
             RegisterUIText(enableLabel);
-            _helpZone?.Describe(enableObj, "Automatically translate untranslated texts using the backend below (your AI, Google or DeepL).");
+            _helpZone?.Describe(enableObj, "Automatically translate untranslated texts using the backend below (your AI, Google or DeepL). Turning this off pauses translation and keeps everything below as it is, so you can set it up first and start when you are ready.");
 
-            // Backend type section (shown when enabled)
+            // Backend type section (stays visible when auto-translation is off — see
+            // UpdateBackendSections: configuring is what one does before starting)
             _backendTypeSection = UIFactory.CreateVerticalGroup(card, "BackendTypeSection", false, false, true, true, 5);
             UIFactory.SetLayoutElement(_backendTypeSection, flexibleWidth: 9999);
 
@@ -1344,7 +1347,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             string backend = TranslatorCore.Config.translation_backend ?? "none";
             _backendTypeDropdown.SelectedValue = (backend == "google" || backend == "deepl") ? UIStyles.BackendTypeApi : UIStyles.BackendTypeLLM;
             _providerDropdown.SelectedValue = backend == "deepl" ? "DeepL" : "Google Translate";
-            _enableTranslationBackendToggle.isOn = (backend != "none");
+
+            // Reads enable_ai, not the backend: a paused setup keeps its backend, so asking the
+            // backend would show the switch as on while nothing translates. "none" is still
+            // honoured — it is what a community-translations-only setup carries, and there is
+            // nothing there to switch on.
+            _enableTranslationBackendToggle.isOn =
+                TranslatorCore.Config.enable_ai && backend != "none";
 
             // Done loading — enable listeners and apply section visibility once
             _isLoadingSettings = false;
@@ -1488,11 +1497,18 @@ namespace UnityGameTranslator.Core.UI.Panels
             UpdateApplyButtonText();
         }
 
+        /// <summary>
+        /// WHICH service the dropdowns are pointing at — never whether it runs.
+        ///
+        /// ⚠ This used to return "none" when the toggle was off, which meant switching
+        /// translation off ERASED the choice of backend from config.json: reopening the screen
+        /// showed LLM whatever had been configured, and any credential entered for the other one
+        /// was left dangling with nothing pointing at it. Switching something off must not
+        /// unconfigure it. The toggle now writes enable_ai, so a paused setup is a complete
+        /// setup that simply is not running.
+        /// </summary>
         private string GetSelectedBackendConfig()
         {
-            if (_enableTranslationBackendToggle == null || !_enableTranslationBackendToggle.isOn)
-                return "none";
-
             string type = _backendTypeDropdown?.SelectedValue ?? UIStyles.BackendTypeLLM;
             if (type == UIStyles.BackendTypeLLM) return "llm";
 
@@ -1504,12 +1520,19 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void UpdateBackendSections()
         {
             bool captureOnly = _captureKeysOnlyToggle.isOn;
-            bool enabled = _enableTranslationBackendToggle != null && _enableTranslationBackendToggle.isOn;
 
             _enableTranslationBackendToggle.interactable = !captureOnly;
-            _backendTypeSection?.SetActive(!captureOnly && enabled);
 
-            if (!enabled || captureOnly)
+            // ⚠ The backend settings stay VISIBLE and editable while translation is switched off,
+            // and that is the point of the switch. Setting up a server, a model or an API key is
+            // exactly what one does before starting — hiding the fields until translation is
+            // running meant it had to be started, in a game, before it could be configured.
+            //
+            // Capture-only is different: there is no backend at all in that mode, so there is
+            // nothing to configure and the sections go.
+            _backendTypeSection?.SetActive(!captureOnly);
+
+            if (captureOnly)
             {
                 _llmSection?.SetActive(false);
                 _translationApiSection?.SetActive(false);
@@ -1814,7 +1837,12 @@ namespace UnityGameTranslator.Core.UI.Panels
                 if (_debugAiToggle != null) TranslatorCore.Config.debug_ai = _debugAiToggle.isOn;
                 string newBackend = GetSelectedBackendConfig();
                 TranslatorCore.Config.translation_backend = newBackend;
-                TranslatorCore.Config.enable_ai = (newBackend == "llm"); // Keep enable_ai in sync
+                // The toggle says whether translation runs; the dropdowns say what runs it. Two
+                // questions, two keys — so turning it off here and turning it off with the pause
+                // hotkey now leave the file in exactly the same state, and neither loses a
+                // setting on the way.
+                TranslatorCore.Config.enable_ai =
+                    _enableTranslationBackendToggle != null && _enableTranslationBackendToggle.isOn;
                 // Capture mode works WITHOUT a backend: the worker must run to
                 // store the H+empty entries (it never calls any backend then)
                 TranslatorCore.EnsureWorkerRunning();
@@ -2088,6 +2116,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_debugLoggingToggle != null && _debugLoggingToggle.isOn != _initialSnapshot.debug) count++;
             if (_debugAiToggle != null && _debugAiToggle.isOn != _initialSnapshot.debug_ai) count++;
             if (GetSelectedBackendConfig() != _initialSnapshot.translation_backend) count++;
+
+            // Counted on its own, because the toggle no longer moves the backend: without this
+            // line, switching translation off and pressing nothing would leave Apply reading
+            // "Close" and the change would be silently dropped on the way out.
+            var runsNow = _enableTranslationBackendToggle != null && _enableTranslationBackendToggle.isOn;
+            if (runsNow != _initialSnapshot.enable_ai) count++;
             if (_aiUrlInput.Text != _initialSnapshot.ai_url) count++;
             if ((_aiApiKeyInput.Text ?? "") != _initialSnapshot.ai_api_key) count++;
             if ((_modelDropdown.SelectedValue ?? "") != _initialSnapshot.ai_model) count++;

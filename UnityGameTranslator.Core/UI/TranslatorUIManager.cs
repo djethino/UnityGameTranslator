@@ -3886,34 +3886,42 @@ namespace UnityGameTranslator.Core.UI
             ShowHotkeyFeedback(config.enable_translations ? "Translations: ON" : "Translations: OFF", config.enable_translations);
         }
 
-        // Remembers the last non-"none" backend so Toggle AI can restore it when re-enabling.
-        private static string _lastActiveBackend = "llm";
-
         /// <summary>
-        /// Toggles the translation backend on/off (pause/resume all live translation calls).
-        /// Does not touch the translation cache — already-translated entries stay.
-        /// When turning on, restores the last active backend (defaults to "llm").
+        /// Pauses and resumes live translation. Already-translated entries stay on screen — this
+        /// stops new calls being made, it does not undo anything.
+        ///
+        /// ⚠ The backend is NOT touched, and that is the fix rather than a detail. This used to
+        /// pause by writing translation_backend = "none" and remembering the real value in a
+        /// static field: the config on disk no longer said which service had been chosen, so
+        /// quitting while paused lost it, and anything reading the file from outside the game —
+        /// the manager, for one — saw a setup that had never been configured.
+        ///
+        /// A pause you cannot resume from where you left off is not a pause.
         /// </summary>
         private static void ToggleAIHotkey()
         {
             var config = TranslatorCore.Config;
 
-            if (config.translation_backend != "none")
+            // Nothing to pause, and nothing to resume onto: there is no backend to run. Said out
+            // loud rather than silently flipping a flag that would change nothing — a hotkey that
+            // appears to do nothing is read as a broken hotkey.
+            if (config.translation_backend == "none")
             {
-                // Remember current backend so we can restore it later.
-                _lastActiveBackend = config.translation_backend;
-                config.translation_backend = "none";
-                config.enable_ai = false;
-                TranslatorCore.ClearQueue();
-                ShowHotkeyFeedback("Translation Backend: OFF", false);
+                ShowHotkeyFeedback("No translation backend selected", false);
+                return;
+            }
+
+            config.enable_ai = !config.enable_ai;
+
+            if (config.enable_ai)
+            {
+                TranslatorCore.EnsureWorkerRunning();
+                ShowHotkeyFeedback($"Translation: ON ({config.translation_backend})", true);
             }
             else
             {
-                string backend = string.IsNullOrEmpty(_lastActiveBackend) ? "llm" : _lastActiveBackend;
-                config.translation_backend = backend;
-                config.enable_ai = (backend == "llm");
-                TranslatorCore.EnsureWorkerRunning();
-                ShowHotkeyFeedback($"Translation Backend: ON ({backend})", true);
+                TranslatorCore.ClearQueue();
+                ShowHotkeyFeedback("Translation: OFF", false);
             }
 
             TranslatorCore.SaveConfig();

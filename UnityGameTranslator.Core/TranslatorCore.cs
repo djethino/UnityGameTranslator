@@ -6077,7 +6077,11 @@ namespace UnityGameTranslator.Core
 
     public class ModConfig
     {
-        // Translation backend: "llm", "google", "deepl" (or "none" / enable_ai=false for disabled)
+        // Which service does the translating: "llm", "google", "deepl", or "none" for a setup
+        // that only ever uses translations written by somebody else.
+        //
+        // WHICH service, never WHETHER: that second question is enable_ai, and keeping the two
+        // apart is what lets a configured backend sit idle without being forgotten.
         public string translation_backend { get; set; } = "none";
 
         // LLM Translation settings (universal OpenAI-compatible)
@@ -6088,6 +6092,21 @@ namespace UnityGameTranslator.Core
         public bool strict_source_language { get; set; } = false;
         public string game_context { get; set; } = "";
         public int timeout_ms { get; set; } = 30000;
+
+        /// <summary>
+        /// Whether live translation runs at all, whichever backend is selected.
+        ///
+        /// ⚠ It used to be a synonym of translation_backend == "llm", and that cost us two
+        /// defects: pausing translation had to blank the backend (losing which one had been
+        /// chosen, since the previous value was only remembered in a static field for the
+        /// lifetime of the process), and everything that asked "can this machine translate a
+        /// line" — the live edit session's per-line retranslate button, for one — answered no to
+        /// every Google and DeepL user, because their config legitimately carried false.
+        ///
+        /// So: translation_backend says WHICH service, this says WHETHER to use it. A paused
+        /// setup keeps every credential and every choice it had, which is what makes pausing
+        /// something one can undo.
+        /// </summary>
         public bool enable_ai { get; set; } = false;
         public bool cache_new_translations { get; set; } = true;
         public bool normalize_numbers { get; set; } = true;
@@ -6127,12 +6146,19 @@ namespace UnityGameTranslator.Core
         public float max_text_detection_latency_seconds { get; set; } = 1f;
 
         /// <summary>
-        /// Returns true if any translation backend is enabled (LLM, Google, or DeepL).
-        /// This replaces the old enable_ai check for general "is translation active" guards.
+        /// True when live translation should run: a backend is selected AND it is switched on.
+        ///
+        /// ⚠ Both halves are required, and the second one used to be missing for the paid
+        /// backends — this read `enable_ai || backend == "google" || backend == "deepl"`, so a
+        /// Google or DeepL setup could not be switched off at all except by forgetting which
+        /// backend it was. Turning something off must never mean erasing how it was configured.
+        ///
+        /// This is the single gate for the whole translation path: the worker, the scanner and
+        /// every Harmony patch ask here, and the backend dispatch below them is only reached
+        /// through it. One place to say no.
         /// </summary>
         [JsonIgnore]
-        public bool IsTranslationEnabled =>
-            enable_ai || translation_backend == "google" || translation_backend == "deepl";
+        public bool IsTranslationEnabled => enable_ai && translation_backend != "none";
 
         /// <summary>
         /// Returns true if the active backend requires online mode.
@@ -6201,13 +6227,31 @@ namespace UnityGameTranslator.Core
                 if (config_version < 1 && translate_mod_ui == false)
                     translate_mod_ui = null;
 
+                // v2 — enable_ai stopped meaning "the backend is llm" and started meaning "run
+                // the translation". Every config written before this carries false whenever the
+                // backend is Google or DeepL, because that is what the wizard and the options
+                // screen both wrote: the flag was kept in sync with the backend rather than
+                // asked about. Reading those as "switched off" would stop translating for every
+                // Google and DeepL user the moment they update, with nothing on screen to
+                // explain it — so they are read for what they meant, which is "on".
+                //
+                // Deliberately NOT applied to the llm backend: there, false already meant off
+                // under both readings, and turning it on would resume a translation somebody had
+                // stopped on purpose.
+                if (config_version < 2
+                    && !enable_ai
+                    && (translation_backend == "google" || translation_backend == "deepl"))
+                {
+                    enable_ai = true;
+                }
+
                 config_version = CurrentConfigVersion;
                 _configMigrated = true;
             }
         }
 
         /// <summary>Config schema version, bumped when a one-shot migration is added above.</summary>
-        private const int CurrentConfigVersion = 1;
+        private const int CurrentConfigVersion = 2;
 
         // 0 = written before migrations were versioned. Persisted so each migration runs once.
         public int config_version { get; set; } = 0;

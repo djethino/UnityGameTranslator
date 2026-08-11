@@ -1412,7 +1412,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             TranslatorCore.Config.settings_hotkey = _hotkeyCapture.HotkeyString;
             TranslatorCore.Config.target_language = _targetLanguage;
             TranslatorCore.Config.translation_backend = _translationBackend;
-            TranslatorCore.Config.enable_ai = (_translationBackend == "llm");
+            // Picking a backend here IS asking for it to run — the wizard's own step is titled
+            // "Auto-Translation" and choosing "none" is how one declines. Deliberately not
+            // "== llm": that older line left Google and DeepL users with the switch off while
+            // they translated anyway, which is the confusion this flag now exists to end.
+            TranslatorCore.Config.enable_ai = (_translationBackend != "none");
             TranslatorCore.Config.ai_url = _aiUrl;
             TranslatorCore.Config.ai_api_key = !string.IsNullOrEmpty(_aiApiKey) ? _aiApiKey : null;
             TranslatorCore.Config.ai_model = _aiModel;

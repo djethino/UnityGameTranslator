@@ -68,24 +68,17 @@ namespace UnityGameTranslator.Core
                 {
                     TranslatorCore.LogInfo($"[LanguageHelper] CurrentUICulture.Name='{culture.Name}' TwoLetter='{culture.TwoLetterISOLanguageName}'");
 
-                    // Try with full code first (e.g., "zh-CN", "fr-FR"). Knows() rather than a
-                    // lookup that hands the input back: "fr-FR" has to fall through to "fr" and
-                    // not be taken for a language of its own.
-                    string fullCode = culture.Name.ToLowerInvariant();
-                    if (Languages.Knows(fullCode))
+                    // ⚠ The whole locale, shortened one segment at a time — see
+                    // Languages.FromLocale. Trying the full name and then jumping straight to
+                    // TwoLetterISOLanguageName skipped the middle: "zh-Hant-TW" fell through to
+                    // "zh", which is SIMPLIFIED Chinese, so a system set to Traditional was
+                    // offered Simplified. The table held "zh-hant" the whole time.
+                    string code = Languages.FromLocale(culture.Name);
+                    if (code != null)
                     {
-                        string fullName = Languages.NameOf(fullCode);
-                        TranslatorCore.LogInfo($"[LanguageHelper] Matched full code '{fullCode}' -> {fullName}");
-                        return fullName;
-                    }
-
-                    // Try with two-letter code
-                    string twoLetter = culture.TwoLetterISOLanguageName.ToLowerInvariant();
-                    if (Languages.Knows(twoLetter))
-                    {
-                        string twoLetterName = Languages.NameOf(twoLetter);
-                        TranslatorCore.LogInfo($"[LanguageHelper] Matched two-letter '{twoLetter}' -> {twoLetterName}");
-                        return twoLetterName;
+                        string name = Languages.NameOf(code);
+                        TranslatorCore.LogInfo($"[LanguageHelper] Matched locale '{culture.Name}' -> {code} -> {name}");
+                        return name;
                     }
                 }
                 else

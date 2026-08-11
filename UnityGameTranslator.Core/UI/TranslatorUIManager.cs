@@ -11,6 +11,7 @@ using UniverseLib.Config;
 using UniverseLib.Input;
 using UniverseLib.Runtime;
 using UniverseLib.UI;
+using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core.UI
 {
@@ -3764,19 +3765,16 @@ namespace UnityGameTranslator.Core.UI
         /// </summary>
         private static bool IsHotkeyPressed(string hotkey)
         {
-            if (string.IsNullOrEmpty(hotkey))
+            // Spelling is settled in UnityGameTranslator.Common.Hotkeys, shared with the capture
+            // widget that writes this string and with the manager that can write it too. It used
+            // to be taken apart here with a case-sensitive Contains/Replace while the manager
+            // stripped case-insensitively, so "ctrl+F10" passed as valid over there and never
+            // fired here — and nothing says so, the panel simply never opens.
+            if (!Hotkeys.TryParse(hotkey, out string baseKey, out bool requireCtrl, out bool requireAlt, out bool requireShift))
                 return false;
 
-            // Parse hotkey
-            bool requireCtrl = hotkey.Contains("Ctrl+");
-            bool requireAlt = hotkey.Contains("Alt+");
-            bool requireShift = hotkey.Contains("Shift+");
-
-            string baseKey = hotkey
-                .Replace("Ctrl+", "")
-                .Replace("Alt+", "")
-                .Replace("Shift+", "");
-
+            // KeyCode stays the authority on which keys exist: it is Unity's enum, wider than any
+            // list we could keep, and second-guessing it would refuse keys that work today.
             if (!Enum.TryParse<KeyCode>(baseKey, true, out KeyCode keyCode))
                 return false;
 

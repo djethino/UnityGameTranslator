@@ -4,6 +4,7 @@ using UnityEngine.UI;
 using UniverseLib.UI;
 using UniverseLib.UI.Models;
 using UnityGameTranslator.Core.UI;
+using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core.UI.Components
 {
@@ -64,12 +65,7 @@ namespace UnityGameTranslator.Core.UI.Components
                 if (string.IsNullOrEmpty(_key) || _key == EmptyKeyLabel)
                     return "";
 
-                string result = "";
-                if (_ctrl) result += "Ctrl+";
-                if (_alt) result += "Alt+";
-                if (_shift) result += "Shift+";
-                result += _key;
-                return result;
+                return Hotkeys.Compose(_key, _ctrl, _alt, _shift);
             }
         }
 
@@ -243,13 +239,10 @@ namespace UnityGameTranslator.Core.UI.Components
                 return;
             }
 
-            _ctrl = hotkeyString.Contains("Ctrl+");
-            _alt = hotkeyString.Contains("Alt+");
-            _shift = hotkeyString.Contains("Shift+");
-            _key = hotkeyString
-                .Replace("Ctrl+", "")
-                .Replace("Alt+", "")
-                .Replace("Shift+", "");
+            // Spelling lives in UnityGameTranslator.Common.Hotkeys, shared with the input loop that
+            // reads this string back and with the manager, which can write it too. Taking it apart
+            // here in its own way is how the three drifted on case in the first place.
+            Hotkeys.TryParse(hotkeyString, out _key, out _ctrl, out _alt, out _shift);
         }
 
         private void UpdateUI()

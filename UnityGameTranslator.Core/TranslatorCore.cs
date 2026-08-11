@@ -4161,7 +4161,7 @@ namespace UnityGameTranslator.Core
                             {
                                 // Check if AI returned the skip marker (text not in expected source language)
                                 // Note: Google/DeepL don't return skip markers, so this only applies to LLM
-                                bool isSkipped = translation.Contains(SkipTranslationMarker);
+                                bool isSkipped = Prompts.ReadAnswer(translation) == Prompts.AnswerKind.Skip;
 
                                 // Cache with appropriate tag: S=Skipped, M=Mod UI, A=AI-translated
                                 string tag = isSkipped ? "S" : (isOwnUI ? "M" : "A");
@@ -4390,9 +4390,21 @@ namespace UnityGameTranslator.Core
                         Adapter?.LogInfo($"[AI Raw] {translation.Substring(0, Math.Min(80, translation.Length))}");
                     }
 
-                    // Skip marker: not a translation, nothing to validate
-                    if (translation.Contains(SkipTranslationMarker))
+                    // Refusal, translation, or neither — see Prompts.ReadAnswer. A refusal is the
+                    // marker ALONE: the caller keeps the original and tags it "S", which it can
+                    // only decide if the answer says nothing else. An answer that translates AND
+                    // carries the marker is thrown away rather than guessed at: read as a refusal
+                    // it drops a line that was fine, read as a translation it writes the marker
+                    // into the game, and neither shows up until someone reads their own text.
+                    var kind = Prompts.ReadAnswer(translation);
+                    if (kind == Prompts.AnswerKind.Skip)
                         return translation;
+
+                    if (kind == Prompts.AnswerKind.Unusable)
+                    {
+                        Adapter?.LogWarning($"[AI] Answer carries the skip marker without being it, discarded: {textToTranslate.Substring(0, Math.Min(60, textToTranslate.Length))}...");
+                        return null;
+                    }
 
                     if (!needsValidation)
                         break;

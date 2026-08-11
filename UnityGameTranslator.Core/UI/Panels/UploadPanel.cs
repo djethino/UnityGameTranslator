@@ -456,7 +456,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             var stats = StatusCard.CalculateLocalStats();
             bool captureOnly = stats != null && TranslationQuality.IsCaptureOnly(
-                stats.HumanCount, stats.ValidatedCount, stats.AiCount, stats.CaptureCount);
+                stats.HumanCount, stats.ValidatedCount, stats.SkippedCount, stats.AiCount, stats.CaptureCount);
 
             if (!captureOnly)
             {

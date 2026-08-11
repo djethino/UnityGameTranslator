@@ -567,14 +567,14 @@ namespace UnityGameTranslator.Core.UI.Components
         private static string FormatQualityStats(TranslationInfo translation)
         {
             string stage = TranslationQuality.ReviewStage(
-                translation.HumanCount, translation.ValidatedCount, translation.AiCount,
-                translation.CaptureCount);
+                translation.HumanCount, translation.ValidatedCount, translation.SkippedCount,
+                translation.AiCount, translation.CaptureCount);
 
             if (stage != null) return TranslatorCore.TranslateOwnUIDynamic(stage);
 
             float completeness = TranslationQuality.Completeness(
-                translation.HumanCount, translation.ValidatedCount, translation.AiCount,
-                translation.CaptureCount);
+                translation.HumanCount, translation.ValidatedCount, translation.SkippedCount,
+                translation.AiCount, translation.CaptureCount);
 
             // Something IS translated, just not enough for a review stage to mean anything
             if (completeness > 0f)
@@ -588,7 +588,7 @@ namespace UnityGameTranslator.Core.UI.Components
             // player downloaded what looked like a hand-made translation and got the original
             // text, then built on top of it. Said before the download, not discovered after.
             if (TranslationQuality.IsCaptureOnly(translation.HumanCount, translation.ValidatedCount,
-                    translation.AiCount, translation.CaptureCount))
+                    translation.SkippedCount, translation.AiCount, translation.CaptureCount))
             {
                 return Unbreakable(TranslatorCore.TranslateOwnUIDynamic("captured only, nothing translated"));
             }

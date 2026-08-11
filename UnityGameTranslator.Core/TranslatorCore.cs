@@ -1433,7 +1433,7 @@ namespace UnityGameTranslator.Core
         private const int MaxAITextLength = 15000;
 
         // Marker for skipped translations (text not in expected source language)
-        private const string SkipTranslationMarker = Prompts.SkipMarker;
+        private const string SkipTranslationMarker = Answers.SkipMarker;
 
         // Placeholder format for extracted numbers: [!v*0], [!v*1], etc.
         // Exotic format to avoid collision with game text (e.g. [v0] used by some games).
@@ -4161,7 +4161,7 @@ namespace UnityGameTranslator.Core
                             {
                                 // Check if AI returned the skip marker (text not in expected source language)
                                 // Note: Google/DeepL don't return skip markers, so this only applies to LLM
-                                bool isSkipped = Prompts.ReadAnswer(translation) == Prompts.AnswerKind.Skip;
+                                bool isSkipped = Answers.Read(translation) == AnswerKind.Skip;
 
                                 // Cache with appropriate tag: S=Skipped, M=Mod UI, A=AI-translated
                                 string tag = isSkipped ? "S" : (isOwnUI ? "M" : "A");
@@ -4396,11 +4396,11 @@ namespace UnityGameTranslator.Core
                     // carries the marker is thrown away rather than guessed at: read as a refusal
                     // it drops a line that was fine, read as a translation it writes the marker
                     // into the game, and neither shows up until someone reads their own text.
-                    var kind = Prompts.ReadAnswer(translation);
-                    if (kind == Prompts.AnswerKind.Skip)
+                    var kind = Answers.Read(translation);
+                    if (kind == AnswerKind.Skip)
                         return translation;
 
-                    if (kind == Prompts.AnswerKind.Unusable)
+                    if (kind == AnswerKind.Unusable)
                     {
                         Adapter?.LogWarning($"[AI] Answer carries the skip marker without being it, discarded: {textToTranslate.Substring(0, Math.Min(60, textToTranslate.Length))}...");
                         return null;
@@ -4447,7 +4447,7 @@ namespace UnityGameTranslator.Core
                     // 2. Line breaks [!nl] → \n
                     translation = translation.Replace("[!nl]", "\n");
                     // 3. Clean AI artifacts (removes quotes, thinking blocks, etc.)
-                    translation = CleanTranslation(translation);
+                    translation = Answers.Clean(translation);
                     // 4. Restore leading/trailing whitespace AFTER clean (clean does Trim)
                     if (leadingWS.Length > 0 || trailingWS.Length > 0)
                         translation = leadingWS + translation + trailingWS;
@@ -4832,40 +4832,6 @@ namespace UnityGameTranslator.Core
                 Adapter?.LogWarning($"[API] Translation error: {e.Message}");
                 return null;
             }
-        }
-
-        public static string CleanTranslation(string text)
-        {
-            if (string.IsNullOrEmpty(text)) return text;
-
-            // Remove <think> blocks from thinking models (qwen3, etc.)
-            text = Regex.Replace(text, @"<think>[\s\S]*?</think>\s*", "", RegexOptions.IgnoreCase);
-
-            // Strip /no_think and /think if they ever come back verbatim. The mod no longer sends
-            // them (reasoning is turned off through reasoning_effort), but a model or a server-side
-            // template may still emit one. Only the literal form is handled: once TRANSLATED by the
-            // model it becomes unrecognisable, which is exactly why the marker was dropped.
-            text = text.Replace(" /no_think", "").Replace("/no_think", "");
-            text = text.Replace(" /think", "").Replace("/think", "");
-
-            // Remove markdown bold **text**
-            text = Regex.Replace(text, @"\*\*([^*]+)\*\*", "$1");
-
-            // Remove common prefixes (only at start)
-            text = Regex.Replace(text, @"^(Translation|Traduction|Here'?s?|The translation is)\s*[:\-]?\s*", "", RegexOptions.IgnoreCase);
-
-            // Remove explanation blocks - only if they start with typical LLM explanation patterns
-            // Don't cut legitimate double newlines in the source text
-            var explanationMatch = Regex.Match(text, @"\n\n(Note:|I |This |Here |The above|Explanation:|Translation note:)", RegexOptions.IgnoreCase);
-            if (explanationMatch.Success)
-                text = text.Substring(0, explanationMatch.Index);
-
-            // Remove quotes only if they wrap the entire text
-            text = text.Trim();
-            if ((text.StartsWith("\"") && text.EndsWith("\"")) || (text.StartsWith("'") && text.EndsWith("'")))
-                text = text.Substring(1, text.Length - 2);
-
-            return text.Trim();
         }
 
         /// <summary>

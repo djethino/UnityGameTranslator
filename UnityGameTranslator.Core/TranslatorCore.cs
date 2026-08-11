@@ -12,6 +12,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
 using UnityGameTranslator.Core.UI;
+using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core
 {
@@ -1512,185 +1513,11 @@ namespace UnityGameTranslator.Core
             return result;
         }
 
-        // Matches every frozen token sent to the AI: [!v*N], [!t*N], [!STR*N], [!nl]
-        private static readonly Regex PlaceholderTokenPattern = new Regex(
-            @"\[!(?:v\*\d+|t\*\d+|STR\*\d+|nl)\]",
-            RegexOptions.Compiled);
-
-        /// <summary>
-        /// Build the "frozen sequences" of the text sent to the AI: each placeholder
-        /// token expanded with the game's own delimiters directly around it
-        /// (opening on the left, closing on the right), e.g. "({[!v*0]})".
-        /// Expanding left over opening chars only ('{', '(', '[') and right over
-        /// closing chars only ('}', ')', ']') can never swallow a neighbouring token
-        /// (tokens start with '[' and end with ']').
-        /// These sequences must appear verbatim in the translation.
-        /// </summary>
-        private static List<string> BuildFrozenSequences(string source)
-        {
-            var sequences = new List<string>();
-            if (string.IsNullOrEmpty(source)) return sequences;
-
-            foreach (Match match in PlaceholderTokenPattern.Matches(source))
-            {
-                int start = match.Index;
-                int end = match.Index + match.Length; // exclusive
-
-                while (start > 0 && (source[start - 1] == '{' || source[start - 1] == '(' || source[start - 1] == '['))
-                    start--;
-                while (end < source.Length && (source[end] == '}' || source[end] == ')' || source[end] == ']'))
-                    end++;
-
-                string seq = source.Substring(start, end - start);
-                if (!sequences.Contains(seq))
-                    sequences.Add(seq);
-            }
-
-            return sequences;
-        }
-
-        private static int CountOccurrences(string text, string token)
-        {
-            int count = 0, index = 0;
-            while ((index = text.IndexOf(token, index, StringComparison.Ordinal)) >= 0)
-            {
-                count++;
-                index += token.Length;
-            }
-            return count;
-        }
-
-        /// <summary>
-        /// Structural validation of a translation against the source sent to the AI.
-        /// A simple Contains is not enough: "[{[!v*0]}]" still contains "[!v*0]".
-        /// Checks (in order): frozen sequences verbatim, same token multiset
-        /// (nothing missing, duplicated or invented), same '{' '}' '[' ']' counts
-        /// (catches brackets added around placeholders).
-        /// Fills compact error lines usable as targeted retry feedback.
-        /// </summary>
-        /// <summary>
-        /// Deterministic repair for the most common systematic model failure: dropping
-        /// [!nl] tokens at the very END of the text (models love trimming trailing
-        /// newlines — field case: a credits roll with 51 tokens got 50 back on every
-        /// attempt, burning 3 AI calls per launch forever). Only ever APPENDS: applies
-        /// when the source ends with more consecutive [!nl] than the translation and
-        /// that exact trailing deficit explains the whole count difference. Returns
-        /// null otherwise — every other mismatch keeps the strict reject.
-        /// </summary>
-        private static string TryRepairTrailingNewlinePlaceholders(string source, string translation)
-        {
-            const string token = "[!nl]";
-            if (string.IsNullOrEmpty(source) || string.IsNullOrEmpty(translation)) return null;
-
-            int CountTotal(string s)
-            {
-                int n = 0, i = 0;
-                while ((i = s.IndexOf(token, i, StringComparison.Ordinal)) >= 0) { n++; i += token.Length; }
-                return n;
-            }
-
-            int CountTrailing(string s)
-            {
-                int n = 0;
-                string t = s.TrimEnd();
-                while (t.EndsWith(token, StringComparison.Ordinal))
-                {
-                    n++;
-                    t = t.Substring(0, t.Length - token.Length).TrimEnd();
-                }
-                return n;
-            }
-
-            int deficit = CountTotal(source) - CountTotal(translation);
-            if (deficit <= 0) return null;
-
-            int missingTrailing = CountTrailing(source) - CountTrailing(translation);
-            if (missingTrailing != deficit) return null;
-
-            var repaired = new System.Text.StringBuilder(translation.TrimEnd());
-            for (int i = 0; i < deficit; i++) repaired.Append(token);
-            return repaired.ToString();
-        }
-
-        private static bool ValidatePlaceholders(string source, string translation, List<string> frozenSequences, out List<string> errors)
-        {
-            errors = new List<string>();
-
-            foreach (var seq in frozenSequences)
-            {
-                int expected = CountOccurrences(source, seq);
-                int found = CountOccurrences(translation, seq);
-                if (found < expected)
-                    errors.Add($"the exact sequence \"{seq}\" is missing or altered");
-            }
-
-            var sourceTokens = new Dictionary<string, int>();
-            foreach (Match m in PlaceholderTokenPattern.Matches(source))
-            {
-                sourceTokens.TryGetValue(m.Value, out int sc);
-                sourceTokens[m.Value] = sc + 1;
-            }
-            var translationTokens = new Dictionary<string, int>();
-            foreach (Match m in PlaceholderTokenPattern.Matches(translation))
-            {
-                translationTokens.TryGetValue(m.Value, out int tc);
-                translationTokens[m.Value] = tc + 1;
-            }
-            foreach (var kv in sourceTokens)
-            {
-                translationTokens.TryGetValue(kv.Key, out int found);
-                if (found != kv.Value)
-                    errors.Add($"token {kv.Key} appears {found} time(s) instead of {kv.Value}");
-            }
-            foreach (var kv in translationTokens)
-            {
-                if (!sourceTokens.ContainsKey(kv.Key))
-                    errors.Add($"token {kv.Key} does not exist in the source");
-            }
-
-            foreach (char c in new[] { '{', '}', '[', ']' })
-            {
-                int expected = 0, found = 0;
-                foreach (char sc in source) if (sc == c) expected++;
-                foreach (char tc in translation) if (tc == c) found++;
-                if (expected != found)
-                    errors.Add($"character '{c}' appears {found} time(s) instead of {expected}");
-            }
-
-            return errors.Count == 0;
-        }
-
-        /// <summary>
-        /// Compact correction message for the corrective-dialogue retry.
-        /// Targeted feedback corrects far better than a generic "try again".
-        /// </summary>
-        private static string BuildCorrectionMessage(List<string> errors, List<string> frozenSequences)
-        {
-            var sb = new StringBuilder();
-            sb.AppendLine("Your translation is INVALID:");
-            foreach (var err in errors)
-                sb.AppendLine($"- {err}");
-            if (frozenSequences.Count > 0)
-            {
-                sb.AppendLine("These exact character sequences from the source must appear unchanged in your translation:");
-                sb.AppendLine(string.Join(", ", frozenSequences.Select(s => $"\"{s}\"")));
-            }
-            sb.Append("Reply with ONLY the corrected translation, nothing else.");
-            return sb.ToString();
-        }
-
-        /// <summary>
-        /// Extra system prompt section for the last attempt (fresh start, reinforced).
-        /// </summary>
-        private static string BuildMandatorySequencesSection(List<string> frozenSequences)
-        {
-            var sb = new StringBuilder();
-            sb.AppendLine("=== MANDATORY EXACT SEQUENCES ===");
-            sb.AppendLine("The text contains technical placeholders. Your output MUST contain these exact character sequences, copied character-for-character, unmodified:");
-            foreach (var seq in frozenSequences)
-                sb.AppendLine($"\"{seq}\"");
-            return sb.ToString();
-        }
+        // The placeholder rules moved to UnityGameTranslator.Common.Placeholders: what a game
+        // accepts back from a model, and what to say to one that broke it. They were reproduced in
+        // the manager to score models, and a reproduction is precisely what must not exist — what
+        // the tests measure has to be what a game enforces, down to the sentence sent back on the
+        // second attempt.
 
         public class PatternEntry
         {
@@ -3284,18 +3111,8 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static string ValidateEditedPlaceholders(string key, string newValue)
         {
-            var keyTokens = new Dictionary<string, int>();
-            foreach (Match m in PlaceholderTokenPattern.Matches(key ?? ""))
-            {
-                keyTokens.TryGetValue(m.Value, out int c);
-                keyTokens[m.Value] = c + 1;
-            }
-            var valueTokens = new Dictionary<string, int>();
-            foreach (Match m in PlaceholderTokenPattern.Matches(newValue ?? ""))
-            {
-                valueTokens.TryGetValue(m.Value, out int c);
-                valueTokens[m.Value] = c + 1;
-            }
+            var keyTokens = Placeholders.Tally(key ?? "");
+            var valueTokens = Placeholders.Tally(newValue ?? "");
 
             var problems = new List<string>();
             foreach (var kv in keyTokens)
@@ -3327,11 +3144,11 @@ namespace UnityGameTranslator.Core
                 return null;
 
             List<string> invented = null;
-            foreach (Match m in PlaceholderTokenPattern.Matches(answer))
+            foreach (string token in Placeholders.Tokens(answer))
             {
-                if (source != null && source.Contains(m.Value)) continue;
+                if (source != null && source.Contains(token)) continue;
                 if (invented == null) invented = new List<string>();
-                if (!invented.Contains(m.Value)) invented.Add(m.Value);
+                if (!invented.Contains(token)) invented.Add(token);
             }
             return invented == null ? null : string.Join(", ", invented);
         }
@@ -4597,7 +4414,7 @@ namespace UnityGameTranslator.Core
 
                 // Frozen sequences: placeholders + the game's own delimiters around them.
                 // Empty when the text has no placeholder → single attempt, no validation.
-                var frozenSequences = BuildFrozenSequences(textForAI);
+                var frozenSequences = Placeholders.FrozenSequences(textForAI);
                 bool needsValidation = frozenSequences.Count > 0;
 
                 // === ATTEMPTS: initial call + up to 2 validation retries ===
@@ -4614,7 +4431,7 @@ namespace UnityGameTranslator.Core
                 string failedResponse = null;
                 bool isValid = false;
 
-                for (int attempt = 0; attempt < 3 && !isValid; attempt++)
+                for (int attempt = 0; attempt < Placeholders.MaxAttempts && !isValid; attempt++)
                 {
                     JArray messagesArray;
                     double temperature = 0.0;
@@ -4629,7 +4446,7 @@ namespace UnityGameTranslator.Core
                     }
                     else if (attempt == 1)
                     {
-                        string correction = BuildCorrectionMessage(validationErrors, frozenSequences);
+                        string correction = Placeholders.Correction(validationErrors, frozenSequences);
                         messagesArray = new JArray
                         {
                             new JObject { ["role"] = "system", ["content"] = systemPrompt },
@@ -4643,7 +4460,7 @@ namespace UnityGameTranslator.Core
                     else
                     {
                         temperature = 0.3;
-                        string reinforcedPrompt = systemPrompt + "\n" + BuildMandatorySequencesSection(frozenSequences);
+                        string reinforcedPrompt = systemPrompt + "\n" + Placeholders.MandatorySequences(frozenSequences);
                         messagesArray = new JArray
                         {
                             new JObject { ["role"] = "system", ["content"] = reinforcedPrompt },
@@ -4672,14 +4489,14 @@ namespace UnityGameTranslator.Core
                     if (!needsValidation)
                         break;
 
-                    isValid = ValidatePlaceholders(textForAI, translation, frozenSequences, out validationErrors);
+                    isValid = Placeholders.Accepts(textForAI, translation, frozenSequences, out validationErrors);
                     if (!isValid)
                     {
                         // Deterministic trailing-[!nl] repair before rejecting — the
                         // repaired candidate must pass the FULL validation itself.
-                        string repairedCandidate = TryRepairTrailingNewlinePlaceholders(textForAI, translation);
+                        string repairedCandidate = Placeholders.RepairTrailingBreaks(textForAI, translation);
                         if (repairedCandidate != null &&
-                            ValidatePlaceholders(textForAI, repairedCandidate, frozenSequences, out _))
+                            Placeholders.Accepts(textForAI, repairedCandidate, frozenSequences, out _))
                         {
                             translation = repairedCandidate;
                             isValid = true;
@@ -4689,7 +4506,7 @@ namespace UnityGameTranslator.Core
                     if (!isValid)
                     {
                         failedResponse = translation;
-                        Adapter?.LogWarning($"[AI] Attempt {attempt + 1}/3: invalid placeholders ({string.Join("; ", validationErrors)}) for: {textToTranslate.Substring(0, Math.Min(60, textToTranslate.Length))}...");
+                        Adapter?.LogWarning($"[AI] Attempt {attempt + 1}/{Placeholders.MaxAttempts}: invalid placeholders ({string.Join("; ", validationErrors)}) for: {textToTranslate.Substring(0, Math.Min(60, textToTranslate.Length))}...");
                     }
                 }
 
@@ -4698,7 +4515,7 @@ namespace UnityGameTranslator.Core
                     // Never cache the corruption. In-memory marker only:
                     // left untranslated this session, retried on next launch.
                     validationFailedTexts.TryAdd(textWithPlaceholders, 0);
-                    Adapter?.LogWarning($"[AI] Placeholder validation failed after 3 attempts, left untranslated: {textToTranslate.Substring(0, Math.Min(60, textToTranslate.Length))}...");
+                    Adapter?.LogWarning($"[AI] Placeholder validation failed after {Placeholders.MaxAttempts} attempts, left untranslated: {textToTranslate.Substring(0, Math.Min(60, textToTranslate.Length))}...");
                     return null;
                 }
 
@@ -5058,13 +4875,13 @@ namespace UnityGameTranslator.Core
                 // no prompt, so there is nothing to correct — but a broken result
                 // must never reach the cache (it would be permanent). The deterministic
                 // trailing-[!nl] repair applies before rejecting, same as the AI path.
-                var frozenSequences = BuildFrozenSequences(textForAPI);
+                var frozenSequences = Placeholders.FrozenSequences(textForAPI);
                 if (frozenSequences.Count > 0
-                    && !ValidatePlaceholders(textForAPI, translation, frozenSequences, out var apiErrors))
+                    && !Placeholders.Accepts(textForAPI, translation, frozenSequences, out var apiErrors))
                 {
-                    string repairedCandidate = TryRepairTrailingNewlinePlaceholders(textForAPI, translation);
+                    string repairedCandidate = Placeholders.RepairTrailingBreaks(textForAPI, translation);
                     if (repairedCandidate != null &&
-                        ValidatePlaceholders(textForAPI, repairedCandidate, frozenSequences, out _))
+                        Placeholders.Accepts(textForAPI, repairedCandidate, frozenSequences, out _))
                     {
                         translation = repairedCandidate;
                         Adapter?.LogInfo($"[API] Repaired missing trailing [!nl] token(s), validation OK for: {textToTranslate.Substring(0, Math.Min(60, textToTranslate.Length))}...");

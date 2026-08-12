@@ -241,6 +241,31 @@ namespace UnityGameTranslator.Core
             set { if (Config != null) Config.pause_game = value; }
         }
 
+        /// <summary>Opacity of a mod window, focused and unfocused. Floored so it stays readable.</summary>
+        public static float PanelOpacityFocused
+        {
+            get { return Config == null ? 1f : Clamp01Floor(Config.panel_opacity_focused); }
+            set { if (Config != null) Config.panel_opacity_focused = Clamp01Floor(value); }
+        }
+        /// <inheritdoc cref="PanelOpacityFocused"/>
+        public static float PanelOpacityUnfocused
+        {
+            get { return Config == null ? 0.95f : Clamp01Floor(Config.panel_opacity_unfocused); }
+            set { if (Config != null) Config.panel_opacity_unfocused = Clamp01Floor(value); }
+        }
+
+        /// <summary>
+        /// ⚠ Floor at 0.4: uGUI applies the alpha to the whole subtree, text included, so below
+        /// that a window is not translucent — it is unreadable, and somebody would conclude the
+        /// mod is broken rather than that they moved a slider too far.
+        /// </summary>
+        private static float Clamp01Floor(float value)
+        {
+            if (value < 0.4f) return 0.4f;
+            if (value > 1f) return 1f;
+            return value;
+        }
+
         /// <summary>Detect typewriting effects (text appearing letter by letter). Stored in translations.json.</summary>
         public static bool TypewritingDetection { get; set; } = true;
         /// <summary>Detect procedural text building (tooltips, item descriptions). Stored in translations.json.</summary>
@@ -6388,6 +6413,13 @@ namespace UnityGameTranslator.Core
         // Off by default: what it does depends entirely on the game, and it must never be used in
         // a multiplayer one. See analyse/pause-the-game-feasibility.md.
         public bool pause_game { get; set; } = false;
+
+        // How solid a mod window is, focused and not. Deliberately a hair apart by default: enough
+        // to tell at a glance which window has the keyboard, never enough to hinder reading. The
+        // unfocused one is also what lets a translator keep a second window open — the options,
+        // say — and still read the game underneath it.
+        public float panel_opacity_focused { get; set; } = 1f;
+        public float panel_opacity_unfocused { get; set; } = 0.95f;
 
         // Max SDF atlas dimension the auto-quality picker may use when rasterizing a
         // replacement font. 0 = automatic default (4096). Raising it (e.g. 8192) renders

@@ -569,28 +569,127 @@ namespace UnityGameTranslator.Core.UI
             return false;
         }
 
+        // Which side the last click gave the keyboard to. Follows the click, like any window.
+        private static bool _interfaceHasFocus;
+
+        // Which panel it landed in — the one that shows as focused and takes the keyboard.
+        private static Panels.TranslatorPanelBase _focusedPanel;
+
         /// <summary>
         /// Does our interface currently hold the keyboard focus?
         /// </summary>
         /// <remarks>
-        /// The selected object is the right measure: it covers a text field being typed into AND
-        /// the Tab/arrow navigation of our own panels, while leaving the keyboard to the game the
-        /// rest of the time — even with a panel open. "A panel is visible" would capture always,
-        /// which is what the parent option already means; "a text field is active" would send Tab
-        /// and the arrows to the game and break our own keyboard navigation.
+        /// ⚠ Focus FOLLOWS THE CLICK: inside one of our panels it is ours, anywhere else it is the
+        /// game's. That is what people expect of a window, and it is the only rule that behaves
+        /// the same everywhere.
         ///
-        /// ⚠ Nothing selected means NOT ours: opening a window with the hotkey and touching
-        /// nothing leaves the game entirely alone, which is the point.
+        /// The obvious-looking measure — EventSystem.currentSelectedGameObject — fails in both
+        /// directions, as reported: clicking a panel's background selects nothing, so the focus
+        /// never came to us; and clicking a checkbox leaves it selected for good, so the keyboard
+        /// stayed captured even after clicking back into the game. Selection is about what the
+        /// keyboard would act ON, not about who owns it.
+        ///
+        /// Same geometric test UniverseLib uses for its own panel focus (PanelManager.UpdateFocus).
         /// </remarks>
         private static bool InterfaceHoldsKeyboardFocus()
         {
-            var es = UnityEngine.EventSystems.EventSystem.current;
-            var selected = es == null ? null : es.currentSelectedGameObject;
-            if (selected == null)
-                return false;
+            return _interfaceHasFocus;
+        }
 
-            var component = selected.transform;
-            return component != null && TranslatorCore.IsOwnUIByHierarchy(component);
+        /// <summary>Hand the keyboard to whichever side the click landed on.</summary>
+        private static void UpdateInterfaceFocus(bool panelsVisible)
+        {
+            if (!panelsVisible)
+            {
+                _interfaceHasFocus = false;
+                _focusedPanel = null;
+                return;
+            }
+
+            if (!NewPressStarted())
+                return;
+
+            _focusedPanel = PanelUnderPointer();
+            _interfaceHasFocus = _focusedPanel != null;
+        }
+
+        /// <summary>
+        /// Show which window has the keyboard: full-strength title bar, and a touch more solid.
+        /// </summary>
+        /// <remarks>
+        /// The title bar carries the signal, as it does on every desktop — it reads at a glance,
+        /// it does not depend on what the game is showing behind (a shadow vanishes on a dark
+        /// game), and it leaves the text alone.
+        ///
+        /// The opacity is the second half of the same idea, and it earns its keep separately: an
+        /// unfocused window fading slightly is what lets someone keep a second one open — the
+        /// options, say — and still read the game beneath it. Which is why both ends are settable
+        /// rather than just the unfocused one: whoever wants to see through the window they are
+        /// working in should be able to.
+        /// </remarks>
+        private static void ApplyFocusAppearance()
+        {
+            float focused = TranslatorCore.PanelOpacityFocused;
+            float unfocused = TranslatorCore.PanelOpacityUnfocused;
+
+            for (int i = 0; i < _interactivePanels.Count; i++)
+            {
+                var panel = _interactivePanels[i];
+                if (panel == null || !panel.Enabled) continue;
+
+                bool hasFocus = ReferenceEquals(panel, _focusedPanel);
+                SetPanelOpacity(panel, hasFocus ? focused : unfocused);
+                SetTitleBarFocused(panel, hasFocus);
+            }
+        }
+
+        private static void SetPanelOpacity(Panels.TranslatorPanelBase panel, float alpha)
+        {
+            var root = panel.UIRoot;
+            if (root == null) return;
+
+            var group = UIHelpers.GetComponentSafe<CanvasGroup>(root);
+            if (group == null)
+                group = root.AddComponent<CanvasGroup>();
+
+            // Only when it actually changes: assigning alpha dirties the whole subtree.
+            if (!Mathf.Approximately(group.alpha, alpha))
+                group.alpha = alpha;
+        }
+
+        private static void SetTitleBarFocused(Panels.TranslatorPanelBase panel, bool hasFocus)
+        {
+            var bar = panel.TitleBar;
+            if (bar == null) return;
+
+            var image = UIHelpers.GetComponentSafe<UnityEngine.UI.Image>(bar);
+            if (image == null) return;
+
+            Color target = hasFocus ? UIStyles.TabBarBackground : UIStyles.PanelBackground;
+            if (image.color != target)
+                image.color = target;
+        }
+
+        /// <summary>The panel the pointer is inside, or null.</summary>
+        private static Panels.TranslatorPanelBase PanelUnderPointer()
+        {
+            Vector3 mouse = InputManager.MousePosition;
+
+            // Backwards: the last one drawn is the one on top, so it wins an overlap.
+            for (int i = _interactivePanels.Count - 1; i >= 0; i--)
+            {
+                var panel = _interactivePanels[i];
+                if (panel == null || !panel.Enabled) continue;
+
+                var rect = panel.Rect;
+                if (rect == null) continue;
+
+                Vector3 local = rect.InverseTransformPoint(mouse);
+                if (rect.rect.Contains(local))
+                    return panel;
+            }
+
+            return null;
         }
 
         private static bool MouseAtRest()
@@ -724,6 +823,10 @@ namespace UnityGameTranslator.Core.UI
             // What makes it work is not when it goes up but that it comes down AFTER the capture
             // is lifted: while input is captured the module cannot even see the release, so the
             // held click has nowhere to land until then.
+            UpdateInterfaceFocus(panelsVisible);
+            if (panelsVisible)
+                ApplyFocusAppearance();
+
             if (!panelsVisible && _lastPanelVisibleState)
             {
                 SetClickAbsorber(true);

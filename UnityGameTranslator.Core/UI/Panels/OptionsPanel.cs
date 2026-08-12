@@ -52,6 +52,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         private Toggle _captureMouseButtonsToggle;
         private Toggle _captureMouseAxesToggle;
         private Toggle _pauseGameToggle;
+        private UnityEngine.UI.Slider _opacityFocusedSlider;
+        private UnityEngine.UI.Slider _opacityUnfocusedSlider;
+        private Text _opacityFocusedValue;
+        private Text _opacityUnfocusedValue;
 
         // Tab sizing
 
@@ -221,6 +225,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             public bool capture_mouse_buttons;
             public bool capture_mouse_axes;
             public bool pause_game;
+            public float panel_opacity_focused;
+            public float panel_opacity_unfocused;
             public string proxy_mode;
             public string proxy_url;
             public string proxy_username;
@@ -277,6 +283,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                     capture_mouse_buttons = TranslatorCore.CaptureMouseButtons,
                     capture_mouse_axes = TranslatorCore.CaptureMouseAxes,
                     pause_game = TranslatorCore.PauseGame,
+                    panel_opacity_focused = TranslatorCore.PanelOpacityFocused,
+                    panel_opacity_unfocused = TranslatorCore.PanelOpacityUnfocused,
                     proxy_mode = TranslatorCore.Config.proxy_mode ?? "default",
                     proxy_url = TranslatorCore.Config.proxy_url ?? "",
                     proxy_username = TranslatorCore.Config.proxy_username ?? "",
@@ -634,7 +642,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIStyles.CreateSpacer(card, 5);
 
             CreateCaptureToggle(card, "CaptureKeyboard", " Take the keyboard",
-                "Keys go to this window only. Without it, typing a translation also walks, shoots or opens the game's menus.",
+                "Keys go to this window only. Without it, typing a translation also walks, shoots or opens the game's menus. "
+                + "Turn it off if the game stops answering the keyboard the way it should.",
                 UniverseLib.Input.InputCapture.CaptureKind.Keyboard, out _captureKeyboardToggle);
 
             // Sub-option, indented under the keyboard one — and the reason its parent can be on by
@@ -648,10 +657,15 @@ namespace UnityGameTranslator.Core.UI.Panels
             RegisterUIText(focusLabel);
             UIHelpers.AddToggleListener(_captureKeyboardFocusOnlyToggle, _ => { if (!_isLoadingSettings) UpdateApplyButtonText(); });
             _helpZone?.Describe(focusObj,
-                "The game keeps its keyboard until you type in a field or move through this interface with the keyboard. Turn off to take the keyboard the whole time a window is open.");
+                "The game keeps its keyboard until you type in a field or move through this interface with the keyboard. "
+                + "Turn it off if what you type does not reach the mod in this game — the keyboard is then taken the whole time a window is open.");
 
+            // ⚠ The two boxes are fixed by opposite moves, and saying so is the point: a plain
+            // "turn off if it misbehaves" would leave someone in front of two boxes with no way to
+            // tell which one. Parent off = the game gets its keyboard back. Child off = the mod
+            // takes it more, not less.
             var focusHint = UIStyles.CreateHint(card, "KeyboardFocusHint",
-                "The game keeps its keys until you type or navigate here.");
+                "The game keeps its keys until you type or navigate here. If what you type never reaches the mod, turn this one off.");
             RegisterUIText(focusHint);
 
             UIStyles.CreateSpacer(card, 5);
@@ -663,6 +677,23 @@ namespace UnityGameTranslator.Core.UI.Panels
             CreateCaptureToggle(card, "CaptureMouseAxes", " Take mouse movement",
                 "Stops the camera turning while you use the window. Mostly matters in first-person games.",
                 UniverseLib.Input.InputCapture.CaptureKind.MouseAxes, out _captureMouseAxesToggle);
+
+            UIStyles.CreateSpacer(card, 15);
+
+            // ── Window opacity ───────────────────────────────────────────────────────────────
+            // The title bar already says which window has the keyboard; this is the same signal
+            // felt rather than read, and it earns its keep on its own: a faded window is one you
+            // can keep open and still read the game through.
+            var opacityTitle = UIStyles.CreateSectionTitle(card, "OpacityLabel", "Window opacity");
+            RegisterUIText(opacityTitle);
+
+            CreateOpacitySlider(card, "OpacityFocused", "Focused:",
+                "How solid the window you are working in is. Lower it to see the game through the one you are using.",
+                TranslatorCore.PanelOpacityFocused, out _opacityFocusedSlider, out _opacityFocusedValue);
+
+            CreateOpacitySlider(card, "OpacityUnfocused", "Others:",
+                "How solid the other windows are. Slightly faded by default, so a second window can stay open without hiding the game.",
+                TranslatorCore.PanelOpacityUnfocused, out _opacityUnfocusedSlider, out _opacityUnfocusedValue);
 
             UIStyles.CreateSpacer(card, 15);
 
@@ -726,6 +757,44 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             var eventSystemHint = UIStyles.CreateHint(card, "EventSystemHint", "Turn on if the game's menus or animations stop working. Requires a game restart.");
             RegisterUIText(eventSystemHint);
+        }
+
+        /// <summary>
+        /// One opacity slider, with its live percentage.
+        /// </summary>
+        /// <remarks>
+        /// Floors at 40%: uGUI applies the alpha to the whole subtree, text included, so lower is
+        /// not translucent but unreadable — and somebody would blame the mod, not the slider.
+        /// </remarks>
+        private void CreateOpacitySlider(GameObject card, string name, string label, string help,
+            float initial, out UnityEngine.UI.Slider slider, out Text valueLabel)
+        {
+            var row = UIStyles.CreateFormRow(card, name + "Row", UIStyles.RowHeightMedium, 5);
+
+            var caption = UIFactory.CreateLabel(row, name + "Label", label, TextAnchor.MiddleLeft);
+            caption.color = UIStyles.TextSecondary;
+            UIFactory.SetLayoutElement(caption.gameObject, minWidth: 70);
+            RegisterUIText(caption);
+
+            var sliderObj = UIFactory.CreateSlider(row, name + "Slider", out slider);
+            UIFactory.SetLayoutElement(sliderObj, minWidth: 150, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
+            slider.minValue = 0.4f;
+            slider.maxValue = 1f;
+            slider.value = initial;
+            _helpZone?.Describe(sliderObj, help);
+
+            var shown = UIFactory.CreateLabel(row, name + "Value", $"{initial * 100f:0}%", TextAnchor.MiddleRight);
+            shown.color = UIStyles.TextPrimary;
+            UIFactory.SetLayoutElement(shown.gameObject, minWidth: 45);
+            RegisterExcluded(shown);   // a percentage is not chrome to translate
+            valueLabel = shown;
+
+            var capturedLabel = shown;
+            UIHelpers.AddSliderListener(slider, val =>
+            {
+                capturedLabel.text = $"{val * 100f:0}%";
+                if (!_isLoadingSettings) UpdateApplyButtonText();
+            });
         }
 
         /// <summary>
@@ -1553,6 +1622,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             _captureMouseButtonsToggle.isOn = TranslatorCore.CaptureMouseButtons;
             _captureMouseAxesToggle.isOn = TranslatorCore.CaptureMouseAxes;
             _pauseGameToggle.isOn = TranslatorCore.PauseGame;
+            _opacityFocusedSlider.value = TranslatorCore.PanelOpacityFocused;
+            _opacityUnfocusedSlider.value = TranslatorCore.PanelOpacityUnfocused;
 
             // Update strict toggle based on source language
             OnSourceLanguageChanged(_sourceLanguageDropdown.SelectedValue);
@@ -2129,6 +2200,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TranslatorCore.CaptureMouseButtons = _captureMouseButtonsToggle.isOn;
                 TranslatorCore.CaptureMouseAxes = _captureMouseAxesToggle.isOn;
                 TranslatorCore.PauseGame = _pauseGameToggle.isOn;
+                TranslatorCore.PanelOpacityFocused = _opacityFocusedSlider.value;
+                TranslatorCore.PanelOpacityUnfocused = _opacityUnfocusedSlider.value;
 
                 // Proxy / Network -- capture old values BEFORE overwriting to detect a change,
                 // then rebuild the shared HttpClient AFTER SaveConfig so the next request
@@ -2378,6 +2451,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_captureMouseButtonsToggle.isOn != _initialSnapshot.capture_mouse_buttons) count++;
             if (_captureMouseAxesToggle.isOn != _initialSnapshot.capture_mouse_axes) count++;
             if (_pauseGameToggle.isOn != _initialSnapshot.pause_game) count++;
+            if (!Mathf.Approximately(_opacityFocusedSlider.value, _initialSnapshot.panel_opacity_focused)) count++;
+            if (!Mathf.Approximately(_opacityUnfocusedSlider.value, _initialSnapshot.panel_opacity_unfocused)) count++;
 
             // Proxy / Network
             if (ProxyModeDisplayToConfig(_proxyModeDropdown.SelectedValue) != _initialSnapshot.proxy_mode) count++;

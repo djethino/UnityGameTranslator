@@ -1183,8 +1183,16 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _sourceLabel.text = Tr("Source:")
                     + $" {serverState.Uploader ?? "Website"} (#{serverState.SiteId})";
 
-                // Role indicator
-                switch (serverState.Role)
+                // Role indicator.
+                //
+                // ⚠ Read through IsOwner, exactly as DetectCurrentState() does a few lines above —
+                // a role only means something about a translation we actually hold on the server.
+                // Reading Role on its own is what let this line announce "[BRANCH] Your changes are
+                // reviewed by @X" to a player who had merely downloaded @X's file, while the status
+                // card, which does consult IsOwner, correctly offered them the Branch/Fork choice.
+                // Two blocks of the same panel contradicting each other on the same state.
+                // See analyse/false-branch-role-after-download.md.
+                switch (serverState.IsOwner ? serverState.Role : TranslationRole.None)
                 {
                     case TranslationRole.Main:
                         if (serverState.BranchesCount > 0)

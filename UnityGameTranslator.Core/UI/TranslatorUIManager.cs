@@ -3716,21 +3716,27 @@ namespace UnityGameTranslator.Core.UI
                         System.IO.File.WriteAllText(TranslatorCore.CachePath, content);
                         TranslatorCore.ReloadCache();
 
-                        // Check if current user owns this translation
-                        string currentUser = TranslatorCore.Config.api_user;
-                        bool isOwner = !string.IsNullOrEmpty(currentUser) &&
-                            translationUploader.Equals(currentUser, StringComparison.OrdinalIgnoreCase);
-
                         // Update server state
                         TranslatorCore.SourceSiteId = translationId;
 
+                        // What a download knows, and nothing beyond it.
+                        //
+                        // ⚠ Checked, Role, IsOwner and MainUsername are DELIBERATELY absent.
+                        // Download is a PUBLIC endpoint: it says who published this file, never
+                        // who we are to it. A role deduced here from a username comparison is
+                        // what made a plain download announce "[BRANCH]" to someone who had never
+                        // uploaded anything — and, logged out, api_user is empty so EVERY download
+                        // deduced "branch", including of one's own translation.
+                        //
+                        // Being a branch means having uploaded into a lineage whose main belongs
+                        // to someone else. That is the server's answer to give (check-uuid, or the
+                        // sync stream), and until one of them answers it is UNKNOWN — which is
+                        // exactly what leaving Checked false says. Same convention as the public
+                        // watch in CheckPublicUpdateNow. See
+                        // analyse/false-branch-role-after-download.md.
                         TranslatorCore.ServerState = new ServerTranslationState
                         {
-                            Checked = true,
                             Exists = true,
-                            IsOwner = isOwner,
-                            Role = isOwner ? TranslationRole.Main : TranslationRole.Branch,
-                            MainUsername = isOwner ? null : translationUploader,
                             SiteId = translationId,
                             Uploader = translationUploader,
                             Hash = fileHash ?? translationFileHash,
@@ -3837,18 +3843,14 @@ namespace UnityGameTranslator.Core.UI
 
                         TranslatorCore.LogInfo($"[Merge] Result: {mergeResult.Statistics.GetSummary()}");
 
-                        // Update server state to track this translation
-                        string currentUser = TranslatorCore.Config.api_user;
-                        bool isOwner = !string.IsNullOrEmpty(currentUser) &&
-                            translationUploader.Equals(currentUser, StringComparison.OrdinalIgnoreCase);
-
+                        // Update server state to track this translation.
+                        //
+                        // ⚠ No Checked, Role, IsOwner or MainUsername here either — same reason as
+                        // in DownloadTranslation above: merging someone's file in tells us nothing
+                        // about who we are to it. The role is the server's to give.
                         TranslatorCore.ServerState = new ServerTranslationState
                         {
-                            Checked = true,
                             Exists = true,
-                            IsOwner = isOwner,
-                            Role = isOwner ? TranslationRole.Main : TranslationRole.Branch,
-                            MainUsername = isOwner ? null : translationUploader,
                             SiteId = translationId,
                             Uploader = translationUploader,
                             Hash = fileHash ?? translationFileHash,

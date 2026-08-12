@@ -399,6 +399,32 @@ namespace UnityGameTranslator.Core.UI
         /// This is a trigger, not a delay: the handover happens on the first frame the mouse is
         /// idle, which is usually the very next one. Nothing is timed and nothing is guessed.
         /// </remarks>
+        /// <summary>
+        /// Who is listening to the pointer right now — every EventSystem in the scene and whether
+        /// it is enabled, plus its current input module.
+        /// </summary>
+        private static void LogEventSystemState()
+        {
+            try
+            {
+                var all = UnityEngine.Object.FindObjectsOfType(typeof(UnityEngine.EventSystems.EventSystem));
+                var parts = new List<string>();
+                for (int i = 0; i < all.Length; i++)
+                {
+                    var es = all[i] as UnityEngine.EventSystems.EventSystem;
+                    if (es == null) continue;
+                    var mod = es.currentInputModule;
+                    parts.Add($"{es.name}[enabled={es.enabled}, module={(mod == null ? "none" : mod.GetType().Name)}"
+                        + $"{(es == UnityEngine.EventSystems.EventSystem.current ? ", CURRENT" : "")}]");
+                }
+                TranslatorCore.LogInfo($"[Handover] at release — EventSystems: {string.Join(" | ", parts.ToArray())}");
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogWarning($"[Handover] could not inspect EventSystems: {e.Message}");
+            }
+        }
+
         private static bool MouseAtRest()
         {
             for (int btn = 0; btn <= 2; btn++)
@@ -445,7 +471,7 @@ namespace UnityGameTranslator.Core.UI
 
             // Info, not Debug: it has to show up on a machine nobody thought to put in debug mode,
             // and it is one line per handover.
-            if (_framesSinceClose == 1)
+            if (_framesSinceClose == 1 && TranslatorCore.DebugMode)
             {
                 TranslatorCore.LogInfo($"[Handover] panel closed — "
                     + $"btn0={InputManager.GetMouseButton(0)} up0={InputManager.GetMouseButtonUp(0)} "
@@ -3865,6 +3891,17 @@ namespace UnityGameTranslator.Core.UI
                     // exactly alike from a chair in front of the game.
                     TranslatorCore.LogInfo($"[InputCapture] {UniverseLib.Input.InputCapture.DescribeActivity()}");
                 }
+            }
+
+            // Under debug only: narrate a whole click's raycasts, and say who is listening at the
+            // release. Kept because it is what finally showed the capture had stopped working —
+            // no reasoning had caught that, and none would have.
+            if (TranslatorCore.DebugMode && panelsVisible)
+            {
+                if (InputManager.GetMouseButtonDown(0) || InputManager.GetMouseButtonDown(1))
+                    UniverseLib.Input.InputCapture.DiagnoseNext(8);
+                if (InputManager.GetMouseButtonUp(0))
+                    LogEventSystemState();
             }
 
             // Contextual help bar: resolve the hovered control by geometric poll.

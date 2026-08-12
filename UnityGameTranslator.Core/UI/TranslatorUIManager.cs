@@ -378,6 +378,33 @@ namespace UnityGameTranslator.Core.UI
             }
         }
 
+        /// <summary>
+        /// Is the mouse doing nothing at all this frame — no button held, none released?
+        /// </summary>
+        /// <remarks>
+        /// Gates handing the EventSystem back to the game. Closing a panel used to give it back
+        /// the instant the panel went away, which is mid-click: the click that pressed our close
+        /// button was still being resolved, and ReleaseEventSystem re-activates the game's input
+        /// module (UniverseLib's EventSystemHelper), which then finished the click on whatever sat
+        /// behind — a game menu opening the moment our window closed.
+        ///
+        /// Reported precisely: buttons that do NOT close a panel never leaked, only the close
+        /// button did, and the game saw it AFTER the window was gone. That is a handover problem,
+        /// not a click-through one, which is why nothing here touches raycasts.
+        ///
+        /// This is a trigger, not a delay: the handover happens on the first frame the mouse is
+        /// idle, which is usually the very next one. Nothing is timed and nothing is guessed.
+        /// </remarks>
+        private static bool MouseAtRest()
+        {
+            for (int btn = 0; btn <= 2; btn++)
+            {
+                if (InputManager.GetMouseButton(btn) || InputManager.GetMouseButtonUp(btn))
+                    return false;
+            }
+            return true;
+        }
+
         private static IEnumerator MainTickLoop()
         {
             while (true)
@@ -3747,16 +3774,20 @@ namespace UnityGameTranslator.Core.UI
             bool panelsVisible = AnyPanelVisible();
             if (panelsVisible != _lastPanelVisibleState)
             {
-                _lastPanelVisibleState = panelsVisible;
                 if (panelsVisible)
                 {
+                    _lastPanelVisibleState = true;
                     // Enable cursor unlock - UniverseLib will handle the rest
                     ConfigManager.Force_Unlock_Mouse = true;
                     EventSystemHelper.EnableEventSystem();
                     UniverseLib.Input.InputCapture.ResetActivity();
                 }
-                else
+                // ⚠ Only mark it handled once we actually hand back, or a deferred release becomes
+                // a release that never happens — the panel would close and the game would never
+                // get its EventSystem back for the rest of the session.
+                else if (MouseAtRest())
                 {
+                    _lastPanelVisibleState = false;
                     // Disable cursor unlock - UniverseLib will restore game's cursor state
                     ConfigManager.Force_Unlock_Mouse = false;
                     EventSystemHelper.ReleaseEventSystem();

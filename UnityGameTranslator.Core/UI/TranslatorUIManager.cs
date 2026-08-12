@@ -410,28 +410,49 @@ namespace UnityGameTranslator.Core.UI
         }
 
         /// <summary>
-        /// How many idle frames before the game gets its input back.
+        /// Frames to keep the input after the last panel closes, before the game gets it back.
         /// </summary>
         /// <remarks>
-        /// ⚠ A grudging constant, and the only one in this file. One idle frame was not enough:
-        /// the close button still pressed whatever sat behind it. A click is not resolved within a
-        /// single frame — the module raycasts, then decides, and the consumer's Update may run on
-        /// either side of that — and none of it is observable from here, so there is nothing to
-        /// trigger on. Two is what stops it; raise it only against a game that proves it needs
-        /// more, never "to be safe".
+        /// ⚠ A timer, and it is the last resort it looks like — but the alternative was measured
+        /// and found blind, not merely suspected. Logged at the instant a panel closed:
+        ///
+        ///     [Handover] panel closed — btn0=False up0=False backend=InputSystem
+        ///
+        /// The mouse reads as idle WHILE the click that pressed the close button is still being
+        /// resolved, because that game's backend reports neither the press nor the release to us.
+        /// Waiting "until the mouse is idle" therefore expired instantly and guarded nothing. There
+        /// is nothing observable here to trigger on; counting frames is what is left.
+        ///
+        /// ⚠ Ten frames were tried against the click that survives a panel closing, and changed
+        /// nothing — so this is NOT what that bug is about, and the number is not tuned against it.
+        /// Two frames is kept for what it does justify on its own: not handing input back in the
+        /// middle of the frame a panel disappeared in. Raising it would be cargo cult.
+        /// <see cref="MouseAtRest"/> is still required on top: on a backend that DOES answer, the
+        /// wait ends on the event and this ceiling never bites.
         /// </remarks>
-        private const int IdleFramesBeforeHandover = 2;
+        private const int FramesBeforeHandover = 2;
 
-        private static int _idleFrames;
+        private static int _framesSinceClose;
 
-        /// <summary>Consecutive frames the mouse has done nothing. Resets the moment it does.</summary>
-        private static int CountIdleFrames()
+        /// <summary>
+        /// Frames since the panel closed. Deliberately NOT reset by mouse activity: on a backend
+        /// that never reports any, resetting on "not idle" is what made the previous guard expire
+        /// on its first frame, every time.
+        /// </summary>
+        private static int CountFramesSinceClose()
         {
-            if (MouseAtRest())
-                _idleFrames++;
-            else
-                _idleFrames = 0;
-            return _idleFrames;
+            _framesSinceClose++;
+
+            // Info, not Debug: it has to show up on a machine nobody thought to put in debug mode,
+            // and it is one line per handover.
+            if (_framesSinceClose == 1)
+            {
+                TranslatorCore.LogInfo($"[Handover] panel closed — "
+                    + $"btn0={InputManager.GetMouseButton(0)} up0={InputManager.GetMouseButtonUp(0)} "
+                    + $"backend={InputManager.CurrentType}");
+            }
+
+            return _framesSinceClose;
         }
 
         private static IEnumerator MainTickLoop()
@@ -3814,21 +3835,29 @@ namespace UnityGameTranslator.Core.UI
                 {
                     _lastPanelVisibleState = true;
                     _uiHoldsInput = true;
-                    _idleFrames = 0;
+                    _framesSinceClose = 0;
                     // Enable cursor unlock - UniverseLib will handle the rest
                     ConfigManager.Force_Unlock_Mouse = true;
+                    // While OUR panels hold the input, the game must not be selectable either.
+                    // Left on permanently — as it was — the EventSystem may pick a game object as
+                    // the selected one the instant our panel stops being it, which is one way a
+                    // button behind a closing window gets activated without any raycast reaching it.
+                    // It goes back on below, because the corner overlay alone must never take the
+                    // game's menu navigation away.
+                    ConfigManager.Allow_UI_Selection_Outside_UIBase = false;
                     EventSystemHelper.EnableEventSystem();
                     UniverseLib.Input.InputCapture.ResetActivity();
                 }
                 // ⚠ Only mark it handled once we actually hand back, or a deferred release becomes
                 // a release that never happens — the panel would close and the game would never
                 // get its EventSystem back for the rest of the session.
-                else if (CountIdleFrames() >= IdleFramesBeforeHandover)
+                else if (CountFramesSinceClose() >= FramesBeforeHandover && MouseAtRest())
                 {
                     _lastPanelVisibleState = false;
                     _uiHoldsInput = false;
                     // Disable cursor unlock - UniverseLib will restore game's cursor state
                     ConfigManager.Force_Unlock_Mouse = false;
+                    ConfigManager.Allow_UI_Selection_Outside_UIBase = true;
                     EventSystemHelper.ReleaseEventSystem();
 
                     // What the capture actually managed while the panel was open. Without this,

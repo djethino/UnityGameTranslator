@@ -345,7 +345,8 @@ namespace UnityGameTranslator.Core
         /// endpoint refuses branches to anyone but their Main, so nothing
         /// private can be reached this way.
         /// </summary>
-        public static async Task<TranslationCheckResult> CheckPublicUpdate(int siteId, string localHash)
+        public static async Task<TranslationCheckResult> CheckPublicUpdate(
+            int siteId, string localHash, string knownETag = null)
         {
             try
             {
@@ -355,12 +356,30 @@ namespace UnityGameTranslator.Core
                     url += $"?hash={Uri.EscapeDataString(localHash)}";
                 }
 
-                var response = await client.GetAsync(url);
+                var request = new HttpRequestMessage(HttpMethod.Get, url);
 
-                // Nothing changed since our hash — the server saved itself the body
+                // ⚠ The 304 this method has always handled could never happen: the endpoint keys
+                // it on If-None-Match and nothing here ever sent one, so every timed check pulled
+                // the whole answer back. Sent as received, never rebuilt from the hash — the
+                // validator covers the vote count and the uploader too now.
+                if (!string.IsNullOrEmpty(knownETag))
+                {
+                    request.Headers.TryAddWithoutValidation("If-None-Match", knownETag);
+                }
+
+                var response = await client.SendAsync(request);
+
+                // Nothing changed — the server saved itself the body, so this result carries NO
+                // values. Flagged rather than filled with zeroes: the caller must keep what it has.
                 if (response.StatusCode == System.Net.HttpStatusCode.NotModified)
                 {
-                    return new TranslationCheckResult { Success = true, HasUpdate = false };
+                    return new TranslationCheckResult
+                    {
+                        Success = true,
+                        NotModified = true,
+                        HasUpdate = false,
+                        ETag = knownETag,
+                    };
                 }
 
                 string json = await response.Content.ReadAsStringAsync();
@@ -380,6 +399,10 @@ namespace UnityGameTranslator.Core
                     FileHash = serverHash,
                     LineCount = data["line_count"]?.Value<int>() ?? 0,
                     VoteCount = data["vote_count"]?.Value<int>() ?? 0,
+                    // Absent on an older server: left null, which the caller reads as "unknown"
+                    // and never as "published by nobody"
+                    Uploader = data["uploader"]?.Value<string>(),
+                    ETag = response.Headers.ETag?.ToString(),
                     // Trust our own comparison rather than the optional flag:
                     // the caller always knows the hash it is holding
                     HasUpdate = !string.IsNullOrEmpty(serverHash)
@@ -1925,6 +1948,25 @@ namespace UnityGameTranslator.Core
         public int LineCount { get; set; }
         public int VoteCount { get; set; }
         public string UpdatedAt { get; set; }
+
+        /// <summary>
+        /// Who published it. The only way someone with no account can learn whose work they
+        /// installed — every other source of that name is behind authentication.
+        /// Null on a server too old to send it, which reads as "unknown", never as "nobody".
+        /// </summary>
+        public string Uploader { get; set; }
+
+        /// <summary>
+        /// The server answered "nothing changed". ⚠ Every other field is then EMPTY, not zero:
+        /// a caller that writes them anyway blanks the very values it was trying to spare.
+        /// </summary>
+        public bool NotModified { get; set; }
+
+        /// <summary>
+        /// The validator to hand back on the next call. Opaque on purpose — it stopped being
+        /// the file hash the day the answer started carrying the vote count and the uploader.
+        /// </summary>
+        public string ETag { get; set; }
     }
 
     public class TranslationDownloadResult

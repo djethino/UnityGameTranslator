@@ -1117,11 +1117,26 @@ namespace UnityGameTranslator.Core.UI
                     ResumePersistedEditSession();
                 }
 
-                // Start SSE sync stream (replaces FetchServerState + CheckForUpdates)
-                // The SSE 'state' event combines check-uuid + check in one real-time payload
-                if (TranslatorCore.Config.online_mode && !string.IsNullOrEmpty(TranslatorCore.Config.api_token))
+                // Watch the translation the way the player asked to. For someone signed in this
+                // is the SSE state event (check-uuid + check in one payload); for someone with no
+                // account, StartSyncWatch falls through to the public check.
+                //
+                // ⚠ NOT gated on api_token. It was, and that token test duplicated a decision
+                // StartSyncWatch already makes — badly: the whole point of its CanWatchSync branch
+                // is to serve the person who has NO account, and the guard shut that branch out
+                // before it could run. Someone who installed a community translation without
+                // signing in was therefore never told it had been updated, for the entire life of
+                // the install; the public watch only ever started if they happened to toggle
+                // online mode in the options mid-session. See
+                // analyse/false-branch-role-after-download.md.
+                if (TranslatorCore.Config.online_mode)
                 {
                     StartSyncWatch();
+                }
+
+                // This one IS an account's business — it re-checks the token in its own loop.
+                if (TranslatorCore.Config.online_mode && !string.IsNullOrEmpty(TranslatorCore.Config.api_token))
+                {
                     StartNotificationsPolling();
                 }
             }
@@ -1207,6 +1222,11 @@ namespace UnityGameTranslator.Core.UI
         // The periodic tick serves two different calls: the authenticated sync
         // state, or the public check for someone with no account
         private static bool _publicWatchActive;
+
+        // The validator the public check handed back, and the translation it describes. Kept as
+        // a pair: an ETag is only an answer about the file it came from.
+        private static string _publicCheckETag;
+        private static int? _publicCheckETagSiteId;
 
         /// <summary>
         /// Ask the site about the translation, the way the player chose to.
@@ -1317,18 +1337,29 @@ namespace UnityGameTranslator.Core.UI
             try
             {
                 string localHash = TranslatorCore.ComputeContentHash();
-                var result = await ApiClient.CheckPublicUpdate(siteId, localHash);
+
+                // Paired with the translation it came from: a validator kept across a fork or a
+                // fresh download would have the server answer "unchanged" about another file.
+                string knownETag = _publicCheckETagSiteId == siteId ? _publicCheckETag : null;
+
+                var result = await ApiClient.CheckPublicUpdate(siteId, localHash, knownETag);
 
                 var success = result.Success;
+                var notModified = result.NotModified;
                 var hasUpdate = result.HasUpdate;
                 var fileHash = result.FileHash;
                 var lineCount = result.LineCount;
                 var voteCount = result.VoteCount;
+                var uploader = result.Uploader;
+                var etag = result.ETag;
 
                 RunOnMainThread(() =>
                 {
                     _syncCheckInFlight = false;
                     if (!success) return;
+
+                    _publicCheckETag = etag;
+                    _publicCheckETagSiteId = siteId;
 
                     var state = TranslatorCore.ServerState ?? new ServerTranslationState();
                     state.Checked = true;
@@ -1336,7 +1367,23 @@ namespace UnityGameTranslator.Core.UI
                     state.IsOwner = false;
                     state.Role = TranslationRole.None;
                     state.SiteId = siteId;
+
+                    // Nothing came back but the confirmation that nothing moved. Writing the
+                    // empty fields through would blank the hash, the vote count and the name we
+                    // already hold — the exact opposite of what asking cheaply was for. No
+                    // refresh either: a 304 can only follow a 200, so the screen is already right.
+                    if (notModified)
+                    {
+                        TranslatorCore.ServerState = state;
+                        return;
+                    }
+
                     if (!string.IsNullOrEmpty(fileHash)) state.Hash = fileHash;
+
+                    // Whose work this is. Without an account this endpoint is the ONLY place that
+                    // name can come from — a download leaves behind the site id and nothing else —
+                    // and the panel falls back to "Website" when it is missing.
+                    if (!string.IsNullOrEmpty(uploader)) state.Uploader = uploader;
 
                     // With no account there is nothing to vote WITH, but the count is public and
                     // worth seeing: it is what tells someone the translation they installed was

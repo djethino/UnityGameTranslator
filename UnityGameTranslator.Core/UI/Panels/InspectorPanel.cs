@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Runtime.CompilerServices;
@@ -352,7 +352,12 @@ namespace UnityGameTranslator.Core.UI.Panels
                         if (resultsList == null) continue;
 
                         // Call Raycast(pointer, results)
-                        _raycasterRaycastMethod.Invoke(raycaster, new[] { pointer, resultsList });
+                        // Step aside from the input capture: it silences the game's raycasters so
+                        // nothing behind our window reacts to a click, and this raycast IS into
+                        // the game — inspecting it is the one time we want them to answer.
+                        UniverseLib.Input.InputCapture.ConsumerReading = true;
+                        try { _raycasterRaycastMethod.Invoke(raycaster, new[] { pointer, resultsList }); }
+                        finally { UniverseLib.Input.InputCapture.ConsumerReading = false; }
 
                         // Check count
                         int count = (int)_listCountProp.Invoke(resultsList, null);
@@ -446,7 +451,12 @@ namespace UnityGameTranslator.Core.UI.Panels
                         var resultsList = Activator.CreateInstance(_listType);
                         if (resultsList == null) continue;
 
-                        _raycasterRaycastMethod.Invoke(raycaster, new[] { pointer, resultsList });
+                        // Step aside from the input capture: it silences the game's raycasters so
+                        // nothing behind our window reacts to a click, and this raycast IS into
+                        // the game — inspecting it is the one time we want them to answer.
+                        UniverseLib.Input.InputCapture.ConsumerReading = true;
+                        try { _raycasterRaycastMethod.Invoke(raycaster, new[] { pointer, resultsList }); }
+                        finally { UniverseLib.Input.InputCapture.ConsumerReading = false; }
 
                         int count = (int)_listCountProp.Invoke(resultsList, null);
                         for (int i = 0; i < count; i++)

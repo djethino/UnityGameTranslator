@@ -1328,7 +1328,7 @@ namespace UnityGameTranslator.Core
             // Try TMP_Text
             if (TypeHelper.TMP_TextType != null)
             {
-                var tmpComp = go.GetComponent(TypeHelper.TMP_TextType);
+                var tmpComp = TypeHelper.GetComponentByType(go, TypeHelper.TMP_TextType);
                 if (tmpComp != null)
                 {
                     return CreateReflectionTextComponentInfo(tmpComp, "TMP");
@@ -1338,7 +1338,7 @@ namespace UnityGameTranslator.Core
             // Try UI.Text
             if (TypeHelper.UI_TextType != null)
             {
-                var uiComp = go.GetComponent(TypeHelper.UI_TextType);
+                var uiComp = TypeHelper.GetComponentByType(go, TypeHelper.UI_TextType);
                 if (uiComp != null)
                 {
                     return CreateReflectionTextComponentInfo(uiComp, "Unity");

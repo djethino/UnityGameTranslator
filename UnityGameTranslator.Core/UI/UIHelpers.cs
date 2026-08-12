@@ -383,21 +383,31 @@ namespace UnityGameTranslator.Core.UI
         }
 
         /// <summary>
-        /// Gets a component using the non-generic method (IL2CPP compatible).
+        /// Gets a component when the type is known at compile time.
         /// </summary>
+        /// <remarks>
+        /// ⚠ Uses the GENERIC overload. These two used the non-generic GetComponent(Type) and said
+        /// in their own summary that it was "IL2CPP compatible" — it is the opposite:
+        /// GameObject.GetComponent(System.Type) does not exist there, and the call threw
+        /// MissingMethodException on every frame. The generic form is what the rest of the Core
+        /// uses, in panels that have been running on IL2CPP all along.
+        ///
+        /// Non-generic GetComponent(Type) is only justified when the type is a runtime value —
+        /// ImageReplacer is the one such caller, and it carries its own reflection fallback.
+        /// Same family as the AddListener trap: compiles anywhere, dies on IL2CPP only.
+        /// See CLAUDE.md.
+        /// </remarks>
         public static T GetComponentSafe<T>(GameObject obj) where T : Component
         {
             if (obj == null) return null;
-            return obj.GetComponent(typeof(T)) as T;
+            return obj.GetComponent<T>();
         }
 
-        /// <summary>
-        /// Gets a component using the non-generic method (IL2CPP compatible).
-        /// </summary>
+        /// <summary>Gets a component when the type is known at compile time.</summary>
         public static T GetComponentSafe<T>(Transform transform) where T : Component
         {
             if (transform == null) return null;
-            return transform.GetComponent(typeof(T)) as T;
+            return transform.GetComponent<T>();
         }
 
         /// <summary>

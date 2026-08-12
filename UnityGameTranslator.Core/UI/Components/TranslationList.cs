@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
@@ -606,8 +606,7 @@ namespace UnityGameTranslator.Core.UI.Components
             for (int i = 0; i < _listContent.transform.childCount; i++)
             {
                 Transform child = _listContent.transform.GetChild(i);
-                // Use non-generic GetComponentInChildren for IL2CPP compatibility
-                var toggle = child.GetComponentInChildren(typeof(Toggle)) as Toggle;
+                var toggle = child.GetComponentInChildren<Toggle>();
                 if (toggle != null)
                 {
                     string itemName = child.name;

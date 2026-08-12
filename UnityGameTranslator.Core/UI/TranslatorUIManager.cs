@@ -689,6 +689,8 @@ namespace UnityGameTranslator.Core.UI
             }
         }
 
+        private static bool _saidNoCanvasGroup;
+
         private static void SetPanelOpacity(Panels.TranslatorPanelBase panel, float alpha)
         {
             var root = panel.UIRoot;
@@ -697,6 +699,19 @@ namespace UnityGameTranslator.Core.UI
             var group = UIHelpers.GetComponentSafe<CanvasGroup>(root);
             if (group == null)
                 group = root.AddComponent<CanvasGroup>();
+
+            // ⚠ AddComponent<T> is documented in FontManager as returning null on IL2CPP for some
+            // types. Said once rather than dereferenced every frame: this is cosmetic, so it may
+            // be skipped, but a window that never dims must not look like a bug with no cause.
+            if (group == null)
+            {
+                if (!_saidNoCanvasGroup)
+                {
+                    _saidNoCanvasGroup = true;
+                    TranslatorCore.LogWarning("[UIManager] No CanvasGroup available on this runtime — panel focus opacity is off.");
+                }
+                return;
+            }
 
             // Only when it actually changes: assigning alpha dirties the whole subtree.
             if (!Mathf.Approximately(group.alpha, alpha))
@@ -893,8 +908,6 @@ namespace UnityGameTranslator.Core.UI
             // held click has nowhere to land until then.
             ReconcileEventSystem();
             UpdateInterfaceFocus(panelsVisible);
-            if (panelsVisible)
-                ApplyFocusAppearance();
 
             if (!panelsVisible && _lastPanelVisibleState)
             {
@@ -986,6 +999,17 @@ namespace UnityGameTranslator.Core.UI
                 GamePause.Release();
 
             TickAbsorber();
+
+            // ⚠ APPEARANCE LAST, and this order is load-bearing. Everything above decides who owns
+            // the game's input; everything below only decides how our windows look. Run the wrong
+            // way round, a cosmetic failure costs the player their cursor: SetPanelOpacity threw on
+            // IL2CPP, the tick aborted before Force_Unlock_Mouse was set, and since the "panels are
+            // visible" flag had already been written the transition was never replayed — the mouse
+            // simply never came back, for a tint.
+            //
+            // The rule, not the fix: nothing the game depends on may sit downstream of decoration.
+            if (panelsVisible)
+                ApplyFocusAppearance();
 
             // Contextual help bar: resolve the hovered control by geometric poll.
             // Only while a panel is open (nothing to hover otherwise). Event-based hover

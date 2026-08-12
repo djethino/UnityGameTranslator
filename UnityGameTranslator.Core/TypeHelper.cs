@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Runtime.CompilerServices;
@@ -1637,6 +1637,98 @@ namespace UnityGameTranslator.Core
             catch { }
 
             TranslatorCore.LogWarning($"[TypeHelper] Cannot create ScriptableObject of type {type.Name}");
+            return null;
+        }
+
+        #endregion
+
+        #region Component access by runtime Type
+
+        // ⚠ Deliberately NOT shared with GetHierarchyCanvasGroupAlpha's own resolution above,
+        // which looks the same and is not: that one avoids the 'as Component' cast on purpose,
+        // because it fails on IL2CPP, and goes through Il2CppCast instead. Merging the two
+        // would break that diagnostic on the very runtime it was written for.
+        private static MethodInfo _componentByTypeMethod;
+        private static bool _componentByTypeSearched;
+        private static bool _componentByTypeDirect = true;
+        private static bool _saidItCannotResolve;
+
+        /// <summary>
+        /// Get a component whose type is only known at runtime.
+        /// </summary>
+        /// <remarks>
+        /// ⚠ The ONLY place allowed to call the non-generic GetComponent(Type) — the build check
+        /// (check-il2cpp-safety.ps1) fails on it anywhere else. Under IL2CPP that overload does not
+        /// exist and the call throws MissingMethodException; when the type IS known at compile
+        /// time the answer is simply GetComponent&lt;T&gt;(), which is why this helper is reserved
+        /// for the handful of callers holding a Type resolved through reflection (TMP_Text, UI.Text,
+        /// the image types) that cannot be named in a generic argument at all.
+        ///
+        /// Gathered here from ImageReplacer, which had it privately, so TranslatorPatches stops
+        /// calling the raw overload with no protection whatsoever.
+        ///
+        /// ⚠ Says so once when it cannot resolve. Returning null in silence — as the original did —
+        /// makes "this game has no such component" and "we cannot look components up on this
+        /// runtime" indistinguishable, which is the difference between nothing to translate and
+        /// the translation quietly not happening.
+        /// </remarks>
+        public static Component GetComponentByType(GameObject go, Type type)
+        {
+            if (go == null || type == null) return null;
+
+            if (_componentByTypeDirect)
+            {
+                try
+                {
+                    return go.GetComponent(type);
+                }
+                catch (MissingMethodException)
+                {
+                    _componentByTypeDirect = false;
+                    TranslatorCore.LogDebug("[TypeHelper] GetComponent(Type) absent on this runtime, switching to reflection");
+                }
+                catch
+                {
+                    return null;
+                }
+            }
+
+            if (!_componentByTypeSearched)
+            {
+                _componentByTypeSearched = true;
+                try
+                {
+                    foreach (var method in go.GetType().GetMethods(BindingFlags.Public | BindingFlags.Instance))
+                    {
+                        if (method.Name != "GetComponent") continue;
+                        var parms = method.GetParameters();
+                        if (parms.Length == 1 && parms[0].ParameterType == typeof(Type))
+                        {
+                            _componentByTypeMethod = method;
+                            break;
+                        }
+                    }
+                }
+                catch { }
+
+                if (_componentByTypeMethod == null && !_saidItCannotResolve)
+                {
+                    _saidItCannotResolve = true;
+                    TranslatorCore.LogWarning(
+                        "[TypeHelper] This runtime exposes no GetComponent(Type); components whose type is "
+                        + "only known at runtime cannot be reached. Anything relying on them is inactive.");
+                }
+            }
+
+            if (_componentByTypeMethod != null)
+            {
+                try
+                {
+                    return _componentByTypeMethod.Invoke(go, new object[] { type }) as Component;
+                }
+                catch { }
+            }
+
             return null;
         }
 

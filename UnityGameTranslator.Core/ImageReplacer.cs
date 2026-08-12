@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
@@ -162,11 +162,6 @@ namespace UnityGameTranslator.Core
         private static float _lastImageCacheTime;
         private const float IMAGE_CACHE_DURATION = 2f;
 
-        // Resolved GetComponent method via reflection (fallback for IL2CPP)
-        private static MethodInfo _getComponentMethod;
-        private static bool _getComponentMethodSearched;
-        private static bool _useGetComponentDirect = true; // try direct first, fallback to reflection
-
         /// <summary>
         /// Check if a GameObject has an Image, RawImage, or SpriteRenderer component.
         /// IL2CPP-safe: uses a cached set of known image GO instanceIDs, rebuilt periodically
@@ -235,63 +230,16 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Get a component by type from a GameObject.
-        /// IL2CPP-safe: tries direct call first, falls back to reflection.
+        /// Get a component by type from a GameObject, the type being a runtime value.
         /// </summary>
+        /// <remarks>
+        /// The mechanism itself now lives in TypeHelper.GetComponentByType — it was private here
+        /// while TranslatorPatches made the same call with no protection at all. One copy, one
+        /// place the build check has to allow.
+        /// </remarks>
         private static Component GetComponentSafe(GameObject go, Type type)
         {
-            if (go == null || type == null) return null;
-
-            // Try direct call first (works on Mono, may be stripped on IL2CPP)
-            if (_useGetComponentDirect)
-            {
-                try
-                {
-                    return go.GetComponent(type);
-                }
-                catch (MissingMethodException)
-                {
-                    _useGetComponentDirect = false;
-                    TranslatorCore.LogDebug("[ImageReplacer] GetComponent(Type) stripped, switching to reflection");
-                }
-                catch
-                {
-                    return null;
-                }
-            }
-
-            // Reflection fallback: find and invoke GetComponent via MethodInfo
-            if (!_getComponentMethodSearched)
-            {
-                _getComponentMethodSearched = true;
-                try
-                {
-                    var goType = go.GetType();
-                    foreach (var method in goType.GetMethods(BindingFlags.Public | BindingFlags.Instance))
-                    {
-                        if (method.Name != "GetComponent") continue;
-                        var parms = method.GetParameters();
-                        if (parms.Length == 1 && parms[0].ParameterType == typeof(Type))
-                        {
-                            _getComponentMethod = method;
-                            break;
-                        }
-                    }
-                }
-                catch { }
-            }
-
-            if (_getComponentMethod != null)
-            {
-                try
-                {
-                    var result = _getComponentMethod.Invoke(go, new object[] { type });
-                    return result as Component;
-                }
-                catch { }
-            }
-
-            return null;
+            return TypeHelper.GetComponentByType(go, type);
         }
 
         /// <summary>

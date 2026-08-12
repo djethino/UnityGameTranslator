@@ -2863,40 +2863,25 @@ namespace UnityGameTranslator.Core
         {
             try
             {
-                // Build content with sorted keys for deterministic hash
-                // Include only translations (non-underscore keys) + _uuid
-                // This must match PHP computeHash() which filters the same way
-                // Use Ordinal comparer to match PHP ksort() byte-by-byte sorting
-                var sortedDict = new SortedDictionary<string, object>(StringComparer.Ordinal);
+                // ⚠ The rule lives in the shared library now, and it was NOT simply moved: running
+                // the two side by side, on synthetic cases and on five real game files, showed the
+                // copy that used to be here disagreeing with the website on one point. It hashed
+                // lines whose key starts with an underscore; the website excludes them — and so
+                // does LoadCache below, which drops every unknown underscore key. So such a line
+                // could never survive a reload anyway, while the hash computed before that reload
+                // said the file differed from the server. The library follows the website, which
+                // is what issues file_hash and therefore what decides.
+                var lines = new List<KeyValuePair<string, TranslationLine>>(TranslationCache.Count);
                 foreach (var kvp in TranslationCache)
                 {
-                    // TranslationCache now contains TranslationEntry objects
-                    // Serialize with new format: {"v": "value", "t": "tag"}
-                    sortedDict[kvp.Key] = new Dictionary<string, string>
-                    {
-                        ["v"] = kvp.Value.Value,
-                        ["t"] = kvp.Value.Tag ?? "A"
-                    };
-                }
-                sortedDict["_uuid"] = FileUuid;
-
-                // Serialize with same settings as PHP json_encode(JSON_UNESCAPED_UNICODE)
-                // Newtonsoft.Json by default doesn't escape unicode, same as PHP
-                string content = JsonConvert.SerializeObject(sortedDict, Formatting.None);
-
-                if (DebugMode)
-                {
-                    string preview = content.Length > 100 ? content.Substring(0, 100) + "..." : content;
-                    LogDebug($"[HashDebug] Local JSON preview: {preview}");
-                    LogDebug($"[HashDebug] Local entry count: {sortedDict.Count}, length: {content.Length}");
+                    // The cache always carries a tag; an entry without one is machine output, which
+                    // is what it was before tags existed. The VALUE is passed as it stands — null
+                    // included — because the website keeps a null there rather than emptying it.
+                    lines.Add(new KeyValuePair<string, TranslationLine>(
+                        kvp.Key, new TranslationLine(kvp.Value.Value, kvp.Value.Tag ?? "A")));
                 }
 
-                using (var sha256 = SHA256.Create())
-                {
-                    byte[] bytes = Encoding.UTF8.GetBytes(content);
-                    byte[] hash = sha256.ComputeHash(bytes);
-                    return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
-                }
+                return ContentHash.Of(lines, FileUuid);
             }
             catch (Exception e)
             {

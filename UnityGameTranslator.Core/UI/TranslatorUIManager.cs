@@ -1500,35 +1500,40 @@ namespace UnityGameTranslator.Core.UI
         /// </summary>
         private static void DetermineAndApplyUpdateDirection(string serverHash, int lineCount, int voteCount)
         {
+            // ⚠ MetadataDirty counts as a local change and must stay in: the languages or the notes
+            // of a translation can move without a single line of text changing, and a file in that
+            // state has something to publish.
             bool hasLocalChanges = TranslatorCore.LocalChangesCount > 0 || TranslatorCore.MetadataDirty;
 
-            // Check if server changed since our last sync
-            string lastSyncedHash = TranslatorCore.LastSyncedHash;
-            bool serverChanged = !string.IsNullOrEmpty(lastSyncedHash) &&
-                                 serverHash != lastSyncedHash;
+            // The rule is shared with the manager, which reaches the same verdict from the file on
+            // disk — so a game and the window outside it cannot disagree about what is waiting.
+            // Reached here only once the caller has established that the content differs, hence
+            // passing the two hashes as unequal is exactly what it means.
+            switch (Sync.Decide(TranslatorCore.ComputeContentHash(), serverHash,
+                                TranslatorCore.LastSyncedHash, hasLocalChanges))
+            {
+                case SyncDirection.Merge:
+                    PendingUpdateDirection = UpdateDirection.Merge;
+                    TranslatorCore.LogInfo($"[SyncSSE] CONFLICT: Both local ({TranslatorCore.LocalChangesCount} changes) and server changed - merge needed");
+                    break;
 
-            // If no LastSyncedHash, we can't tell definitively what changed
-            // If we have local changes AND server hash differs, assume potential conflict to be safe
-            if (string.IsNullOrEmpty(lastSyncedHash))
-            {
-                serverChanged = hasLocalChanges;
-            }
+                case SyncDirection.Upload:
+                    PendingUpdateDirection = UpdateDirection.Upload;
+                    TranslatorCore.LogInfo($"[SyncSSE] Local has {TranslatorCore.LocalChangesCount} changes to upload");
+                    break;
 
-            // Determine direction based on what changed
-            if (hasLocalChanges && serverChanged)
-            {
-                PendingUpdateDirection = UpdateDirection.Merge;
-                TranslatorCore.LogInfo($"[SyncSSE] CONFLICT: Both local ({TranslatorCore.LocalChangesCount} changes) and server changed - merge needed");
-            }
-            else if (hasLocalChanges)
-            {
-                PendingUpdateDirection = UpdateDirection.Upload;
-                TranslatorCore.LogInfo($"[SyncSSE] Local has {TranslatorCore.LocalChangesCount} changes to upload");
-            }
-            else
-            {
-                PendingUpdateDirection = UpdateDirection.Download;
-                TranslatorCore.LogInfo($"[SyncSSE] Server has update: {lineCount} lines");
+                case SyncDirection.Download:
+                    PendingUpdateDirection = UpdateDirection.Download;
+                    TranslatorCore.LogInfo($"[SyncSSE] Server has update: {lineCount} lines");
+                    break;
+
+                default:
+                    // The content turned out to match after all — the caller compared hashes a
+                    // moment ago, and a save can land in between. Nothing to offer.
+                    HasPendingUpdate = false;
+                    PendingUpdateInfo = null;
+                    PendingUpdateDirection = UpdateDirection.None;
+                    return;
             }
 
             HasPendingUpdate = true;

@@ -191,34 +191,40 @@ namespace UnityGameTranslator.Core
 
         /// <summary>
         /// While a mod panel is open, stop the game from reading input under it.
-        /// Stored in translations.json as _settings.capture_keyboard / _mouse_buttons / _mouse_axes.
         /// </summary>
         /// <remarks>
-        /// On by default: a menu that lets the game keep walking, shooting and turning under it is
-        /// not a menu, and someone typing a translation into a text field expects those letters to
-        /// go into the field and nowhere else.
+        /// ⚠ In config.json, NOT in translations.json — these say how the person working wants the
+        /// interface to behave around them, which is a preference and not a property of the game.
+        /// translations.json is uploaded when a translation is shared: putting them there would
+        /// publish somebody's habits with their work, and impose them on everyone who downloads it.
         ///
-        /// ⚠ Each is only honoured where the game's input can actually be intercepted — see
-        /// UniverseLib's InputCapture, which reports what it managed to patch on THIS game. The
-        /// options screen greys out what is out of reach rather than pretending it works.
+        /// The one that DOES belong in the translation is "let the game handle its own interface
+        /// input": it answers a defect of a particular game, so it is worth carrying to whoever
+        /// installs that translation next.
         /// </remarks>
-        public static bool CaptureKeyboard { get; set; } = true;
+        public static bool CaptureKeyboard
+        {
+            get { return Config == null || Config.capture_keyboard; }
+            set { if (Config != null) Config.capture_keyboard = value; }
+        }
         /// <inheritdoc cref="CaptureKeyboard"/>
-        public static bool CaptureMouseButtons { get; set; } = true;
+        public static bool CaptureMouseButtons
+        {
+            get { return Config == null || Config.capture_mouse_buttons; }
+            set { if (Config != null) Config.capture_mouse_buttons = value; }
+        }
         /// <inheritdoc cref="CaptureKeyboard"/>
-        public static bool CaptureMouseAxes { get; set; } = true;
-
-        /// <summary>
-        /// Freeze the game while a mod panel is open. Stored as _settings.pause_game.
-        /// </summary>
-        /// <remarks>
-        /// ⚠ OFF by default, unlike the captures, and for a reason that is not timidity: the
-        /// effect depends entirely on the game. Some overwrite their own time scale and ignore it
-        /// completely; some cope badly with being frozen. And it must never be used in a
-        /// multiplayer game — the game's server does not stop.
-        /// See analyse/pause-the-game-feasibility.md.
-        /// </remarks>
-        public static bool PauseGame { get; set; } = false;
+        public static bool CaptureMouseAxes
+        {
+            get { return Config == null || Config.capture_mouse_axes; }
+            set { if (Config != null) Config.capture_mouse_axes = value; }
+        }
+        /// <inheritdoc cref="CaptureKeyboard"/>
+        public static bool PauseGame
+        {
+            get { return Config != null && Config.pause_game; }
+            set { if (Config != null) Config.pause_game = value; }
+        }
 
         /// <summary>Detect typewriting effects (text appearing letter by letter). Stored in translations.json.</summary>
         public static bool TypewritingDetection { get; set; } = true;
@@ -699,14 +705,6 @@ namespace UnityGameTranslator.Core
             var settingsObj = new JObject();
             if (DisableEventSystemOverride)
                 settingsObj["disable_eventsystem_override"] = true;
-            if (!CaptureKeyboard)
-                settingsObj["capture_keyboard"] = false;
-            if (!CaptureMouseButtons)
-                settingsObj["capture_mouse_buttons"] = false;
-            if (!CaptureMouseAxes)
-                settingsObj["capture_mouse_axes"] = false;
-            if (PauseGame)
-                settingsObj["pause_game"] = true;
             if (!TypewritingDetection)
                 settingsObj["typewriting_detection"] = false;
             if (!ConcatDetection)
@@ -805,10 +803,6 @@ namespace UnityGameTranslator.Core
             // values are only written when they leave their default, so reading
             // a file that omits them must restore the defaults
             DisableEventSystemOverride = settingsObj?["disable_eventsystem_override"]?.Value<bool>() ?? false;
-            CaptureKeyboard = settingsObj?["capture_keyboard"]?.Value<bool>() ?? true;
-            CaptureMouseButtons = settingsObj?["capture_mouse_buttons"]?.Value<bool>() ?? true;
-            CaptureMouseAxes = settingsObj?["capture_mouse_axes"]?.Value<bool>() ?? true;
-            PauseGame = settingsObj?["pause_game"]?.Value<bool>() ?? false;
             TypewritingDetection = settingsObj?["typewriting_detection"]?.Value<bool>() ?? true;
             ConcatDetection = settingsObj?["concat_detection"]?.Value<bool>() ?? true;
             TranslationUIFont = settingsObj?["ui_font"]?.Value<string>();
@@ -6362,6 +6356,15 @@ namespace UnityGameTranslator.Core
         // can keep them off between sessions. End users should leave these at true.
         public bool enable_image_replacement { get; set; } = true;
         public bool enable_font_replacement { get; set; } = true;
+
+        // What the mod takes from the game while one of its windows is open. A preference of
+        // whoever is working, hence here and not in the shared translation file.
+        public bool capture_keyboard { get; set; } = true;
+        public bool capture_mouse_buttons { get; set; } = true;
+        public bool capture_mouse_axes { get; set; } = true;
+        // Off by default: what it does depends entirely on the game, and it must never be used in
+        // a multiplayer one. See analyse/pause-the-game-feasibility.md.
+        public bool pause_game { get; set; } = false;
 
         // Max SDF atlas dimension the auto-quality picker may use when rasterizing a
         // replacement font. 0 = automatic default (4096). Raising it (e.g. 8192) renders

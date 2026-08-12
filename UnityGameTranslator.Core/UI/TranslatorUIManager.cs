@@ -421,32 +421,6 @@ namespace UnityGameTranslator.Core.UI
         /// idle, which is usually the very next one. Nothing is timed and nothing is guessed.
         /// </remarks>
         /// <summary>
-        /// Who is listening to the pointer right now — every EventSystem in the scene and whether
-        /// it is enabled, plus its current input module.
-        /// </summary>
-        private static void LogEventSystemState()
-        {
-            try
-            {
-                var all = UnityEngine.Object.FindObjectsOfType(typeof(UnityEngine.EventSystems.EventSystem));
-                var parts = new List<string>();
-                for (int i = 0; i < all.Length; i++)
-                {
-                    var es = all[i] as UnityEngine.EventSystems.EventSystem;
-                    if (es == null) continue;
-                    var mod = es.currentInputModule;
-                    parts.Add($"{es.name}[enabled={es.enabled}, module={(mod == null ? "none" : mod.GetType().Name)}"
-                        + $"{(es == UnityEngine.EventSystems.EventSystem.current ? ", CURRENT" : "")}]");
-                }
-                TranslatorCore.LogInfo($"[Handover] at release — EventSystems: {string.Join(" | ", parts.ToArray())}");
-            }
-            catch (Exception e)
-            {
-                TranslatorCore.LogWarning($"[Handover] could not inspect EventSystems: {e.Message}");
-            }
-        }
-
-        /// <summary>
         /// Colour of the click absorber: none. It has to be a raycast target, not a visible thing.
         /// </summary>
         /// <remarks>
@@ -534,25 +508,19 @@ namespace UnityGameTranslator.Core.UI
         {
             try
             {
-                // EVERY EventSystem, not EventSystem.current: on this game "current" is the
-                // game's, disabled and holding nothing, so clearing only that one did nothing at
-                // all. The selection that matters belongs to whichever system the module serves.
-                var all = UnityEngine.Object.FindObjectsOfType(typeof(UnityEngine.EventSystems.EventSystem));
+                // ⚠ EventSystem.current only. Sweeping the scene needed
+                // Object.FindObjectsOfType(Type), which does not exist on every runtime — it threw
+                // MissingMethodException here every frame, and since that is raised when the
+                // METHOD IS COMPILED the local try/catch never saw it. The whole tick died with
+                // it, so the input was never handed back and the game froze for good.
+                // Same trap as AddListener, see CLAUDE.md.
+                var es = UnityEngine.EventSystems.EventSystem.current;
+                if (es == null || es.currentSelectedGameObject == null)
+                    return;
+
                 bool previous = ConfigManager.Allow_UI_Selection_Outside_UIBase;
                 ConfigManager.Allow_UI_Selection_Outside_UIBase = true;
-                try
-                {
-                    for (int i = 0; i < all.Length; i++)
-                    {
-                        var es = all[i] as UnityEngine.EventSystems.EventSystem;
-                        if (es == null) continue;
-
-                        var selected = es.currentSelectedGameObject;
-                        if (selected == null) continue;
-
-                        es.SetSelectedGameObject(null);
-                    }
-                }
+                try { es.SetSelectedGameObject(null); }
                 finally { ConfigManager.Allow_UI_Selection_Outside_UIBase = previous; }
             }
             catch (Exception e)
@@ -664,6 +632,16 @@ namespace UnityGameTranslator.Core.UI
 
         private static float _closedAt;
 
+        /// <summary>
+        /// Hard limit on holding the game's input, whatever else is true.
+        /// </summary>
+        /// <remarks>
+        /// A safety net, not a tuning knob: past this the input goes back even if the mouse still
+        /// reads as busy. One second is far beyond any click, and far below the point where a
+        /// player would give up on the game.
+        /// </remarks>
+        private const float SecondsBeforeHandoverDeadline = 1f;
+
 
 
         /// <summary>
@@ -691,6 +669,127 @@ namespace UnityGameTranslator.Core.UI
             return elapsed;
         }
 
+        /// <summary>
+        /// Who owns the game's input right now — cursor, EventSystem, capture, pause, absorber.
+        /// </summary>
+        /// <remarks>
+        /// ⚠ Driven by the main tick coroutine, never by the UI update. UniverseLib's
+        /// UniversalUI.Update bails out on !AnyUIShowing, so anything living there stops running
+        /// the instant the last panel closes — which is precisely when the game has to be given
+        /// its input back. Left there, closing the mod froze a game's menus for good: the handover
+        /// never ran, so the "was visible" flag stayed set, so reopening saw no transition either
+        /// and never undid anything.
+        /// </remarks>
+        private static void TickInputOwnership()
+        {
+            bool panelsVisible = AnyPanelVisible();
+            // ONE state for "the interface holds the input", used by the EventSystem handover AND
+            // by the capture. Two separate notions would drift, and the drift would show up as the
+            // half-captured frame that let a click through.
+            //
+            // It outlives the panel by design: a panel closes on the click that pressed its close
+            // button, and that click is not finished being resolved. Handing everything back right
+            // then is what delivered it to whatever sat behind. So we hold until the mouse is idle.
+            // Raised when the panels GO, not on every press. It is a full-screen raycast target:
+            // leaving it up for the whole session swallowed the game's hover too, whatever the
+            // capture options said — reported as "the options do nothing" and "the hover only
+            // breaks once I click in the panel", which is this surface appearing.
+            //
+            // What makes it work is not when it goes up but that it comes down AFTER the capture
+            // is lifted: while input is captured the module cannot even see the release, so the
+            // held click has nowhere to land until then.
+            if (!panelsVisible && _lastPanelVisibleState)
+            {
+                SetClickAbsorber(true);
+                DeselectGameObject();
+            }
+
+            if (panelsVisible != _lastPanelVisibleState)
+            {
+                if (panelsVisible)
+                {
+                    _lastPanelVisibleState = true;
+                    _uiHoldsInput = true;
+                    _closedAt = 0f;
+                    _absorberUntil = 0f;
+                    SetClickAbsorber(false);
+                    // Enable cursor unlock - UniverseLib will handle the rest
+                    ConfigManager.Force_Unlock_Mouse = true;
+                    // While OUR panels hold the input, the game must not be selectable either.
+                    // Left on permanently — as it was — the EventSystem may pick a game object as
+                    // the selected one the instant our panel stops being it, which is one way a
+                    // button behind a closing window gets activated without any raycast reaching it.
+                    // It goes back on below, because the corner overlay alone must never take the
+                    // game's menu navigation away.
+                    ConfigManager.Allow_UI_Selection_Outside_UIBase = false;
+                    EventSystemHelper.EnableEventSystem();
+                    UniverseLib.Input.InputCapture.ResetActivity();
+                }
+                // ⚠ Only mark it handled once we actually hand back, or a deferred release becomes
+                // a release that never happens — the panel would close and the game would never
+                // get its EventSystem back for the rest of the session.
+                // ⚠ MouseAtRest is a nicety; the deadline is not. If a game's input backend never
+                // reports the mouse as idle, the condition above never comes true and the handover
+                // never happens — leaving the game's EventSystem disabled and its menus dead for
+                // the rest of the session, with no setting able to undo it. Reported exactly that
+                // way: unchecking every option changed nothing, because no option governs this.
+                //
+                // So: never let a condition of ours hold the game hostage.
+                else if (SecondsSinceClose() >= SecondsBeforeHandover
+                         && (MouseAtRest() || SecondsSinceClose() >= SecondsBeforeHandoverDeadline))
+                {
+                    // ⚠ The absorber stays. Lifting the capture and removing it in the same frame
+                    // is what defeated it: while input is captured the module cannot even see the
+                    // release, so the held click was never offered to the absorber — and the frame
+                    // it finally was, the absorber had just gone, leaving the game's button as the
+                    // only thing under the cursor.
+                    //
+                    // So: hand the input back FIRST, with the absorber still covering everything.
+                    // The module processes the release, raycasts, finds our surface, and the click
+                    // dies there. The absorber is taken down a moment later, by TickAbsorber.
+                    TranslatorCore.LogDebug($"[Handover] input returned after {SecondsSinceClose():0.00}s "
+                        + $"(mouse idle: {MouseAtRest()})");
+                    _lastPanelVisibleState = false;
+                    _uiHoldsInput = false;
+                    _absorberUntil = Time.realtimeSinceStartup + SecondsAbsorberOutlivesCapture;
+                    // Disable cursor unlock - UniverseLib will restore game's cursor state
+                    ConfigManager.Force_Unlock_Mouse = false;
+                    ConfigManager.Allow_UI_Selection_Outside_UIBase = true;
+                    EventSystemHelper.ReleaseEventSystem();
+
+                    // What the capture actually managed while the panel was open. Without this,
+                    // "the game reads through another API" and "the capture never armed" look
+                    // exactly alike from a chair in front of the game.
+                    TranslatorCore.LogInfo($"[InputCapture] {UniverseLib.Input.InputCapture.DescribeActivity()}");
+                }
+            }
+
+            // Under debug only: narrate a whole click's raycasts, and say who is listening at the
+            // release. Kept because it is what finally showed the capture had stopped working —
+            // no reasoning had caught that, and none would have.
+            if (TranslatorCore.DebugMode && panelsVisible)
+            {
+                if (InputManager.GetMouseButtonDown(0) || InputManager.GetMouseButtonDown(1))
+                    UniverseLib.Input.InputCapture.DiagnoseNext(8);
+            }
+
+            // Freeze the game while our panels hold it — same state as everything else, so the
+            // pause follows the interface instead of keeping a notion of its own.
+            if (_uiHoldsInput && TranslatorCore.PauseGame && string.IsNullOrEmpty(GamePause.AntiCheat))
+                GamePause.Engage();
+            else if (GamePause.Active)
+                GamePause.Release();
+
+            TickAbsorber();
+
+            // Contextual help bar: resolve the hovered control by geometric poll.
+            // Only while a panel is open (nothing to hover otherwise). Event-based hover
+            // (injected IPointerEnterHandler) is silent on IL2CPP, so we poll instead.
+            if (panelsVisible)
+                Components.HelpZone.PollHover();
+
+        }
+
         private static IEnumerator MainTickLoop()
         {
             while (true)
@@ -706,6 +805,10 @@ namespace UnityGameTranslator.Core.UI
                     // test and model list are RunOnMainThread callbacks). Freezing it would
                     // freeze the very screen that grants permission.
                     DrainMainThreadQueue();
+
+                    // Always, and outside the setup latch: this is what returns the game's input.
+                    // A game must never stay held because the mod was not configured yet.
+                    TickInputOwnership();
 
                     // Everything below TOUCHES THE GAME — reads its scene, rewrites its text,
                     // writes the cache to disk. None of it may happen before someone said yes.
@@ -4117,105 +4220,11 @@ namespace UnityGameTranslator.Core.UI
             // Manage EventSystem and Cursor for InputField support
             // Enable when panels open, release when all panels close
             // Uses UniverseLib's Force_Unlock_Mouse to properly handle cursor locking
-            bool panelsVisible = AnyPanelVisible();
-            // ONE state for "the interface holds the input", used by the EventSystem handover AND
-            // by the capture. Two separate notions would drift, and the drift would show up as the
-            // half-captured frame that let a click through.
-            //
-            // It outlives the panel by design: a panel closes on the click that pressed its close
-            // button, and that click is not finished being resolved. Handing everything back right
-            // then is what delivered it to whatever sat behind. So we hold until the mouse is idle.
-            // Put the absorber in place ON THE PRESS, while the panel is still there — not when it
-            // vanishes. The held click is delivered to whatever the raycast finds once a target is
-            // available again, and by the frame the panel is gone that raycast has already been
-            // taken. Standing behind the panel from the start means the click lands on us whenever
-            // it is finally released, and never on the game.
-            if (panelsVisible && (InputManager.GetMouseButtonDown(0) || InputManager.GetMouseButtonDown(1)))
-            {
-                SetClickAbsorber(true);
-                // Narrate the raycasts of this whole click, absorber included: twelve attempts have
-                // assumed where the click lands and none has checked. If UGT_ClickAbsorber never
-                // shows up in these lines, it is not in the raycast at all and every version of
-                // this idea was dead on arrival.
-                DeselectGameObject();
-            }
-
-            if (panelsVisible != _lastPanelVisibleState)
-            {
-                if (panelsVisible)
-                {
-                    _lastPanelVisibleState = true;
-                    _uiHoldsInput = true;
-                    _closedAt = 0f;
-                    _absorberUntil = 0f;
-                    SetClickAbsorber(false);
-                    // Enable cursor unlock - UniverseLib will handle the rest
-                    ConfigManager.Force_Unlock_Mouse = true;
-                    // While OUR panels hold the input, the game must not be selectable either.
-                    // Left on permanently — as it was — the EventSystem may pick a game object as
-                    // the selected one the instant our panel stops being it, which is one way a
-                    // button behind a closing window gets activated without any raycast reaching it.
-                    // It goes back on below, because the corner overlay alone must never take the
-                    // game's menu navigation away.
-                    ConfigManager.Allow_UI_Selection_Outside_UIBase = false;
-                    EventSystemHelper.EnableEventSystem();
-                    UniverseLib.Input.InputCapture.ResetActivity();
-                }
-                // ⚠ Only mark it handled once we actually hand back, or a deferred release becomes
-                // a release that never happens — the panel would close and the game would never
-                // get its EventSystem back for the rest of the session.
-                else if (SecondsSinceClose() >= SecondsBeforeHandover && MouseAtRest())
-                {
-                    // ⚠ The absorber stays. Lifting the capture and removing it in the same frame
-                    // is what defeated it: while input is captured the module cannot even see the
-                    // release, so the held click was never offered to the absorber — and the frame
-                    // it finally was, the absorber had just gone, leaving the game's button as the
-                    // only thing under the cursor.
-                    //
-                    // So: hand the input back FIRST, with the absorber still covering everything.
-                    // The module processes the release, raycasts, finds our surface, and the click
-                    // dies there. The absorber is taken down a moment later, by TickAbsorber.
-                    _lastPanelVisibleState = false;
-                    _uiHoldsInput = false;
-                    _absorberUntil = Time.realtimeSinceStartup + SecondsAbsorberOutlivesCapture;
-                    // Disable cursor unlock - UniverseLib will restore game's cursor state
-                    ConfigManager.Force_Unlock_Mouse = false;
-                    ConfigManager.Allow_UI_Selection_Outside_UIBase = true;
-                    EventSystemHelper.ReleaseEventSystem();
-
-                    // What the capture actually managed while the panel was open. Without this,
-                    // "the game reads through another API" and "the capture never armed" look
-                    // exactly alike from a chair in front of the game.
-                    TranslatorCore.LogInfo($"[InputCapture] {UniverseLib.Input.InputCapture.DescribeActivity()}");
-                }
-            }
-
-            // Under debug only: narrate a whole click's raycasts, and say who is listening at the
-            // release. Kept because it is what finally showed the capture had stopped working —
-            // no reasoning had caught that, and none would have.
-            if (TranslatorCore.DebugMode && panelsVisible)
-            {
-                if (InputManager.GetMouseButtonDown(0) || InputManager.GetMouseButtonDown(1))
-                    UniverseLib.Input.InputCapture.DiagnoseNext(8);
-                if (InputManager.GetMouseButtonUp(0))
-                    LogEventSystemState();
-            }
-
-            // Freeze the game while our panels hold it — same state as everything else, so the
-            // pause follows the interface instead of keeping a notion of its own.
-            if (_uiHoldsInput && TranslatorCore.PauseGame && string.IsNullOrEmpty(GamePause.AntiCheat))
-                GamePause.Engage();
-            else if (GamePause.Active)
-                GamePause.Release();
-
-            TickAbsorber();
-
-            // Contextual help bar: resolve the hovered control by geometric poll.
-            // Only while a panel is open (nothing to hover otherwise). Event-based hover
-            // (injected IPointerEnterHandler) is silent on IL2CPP, so we poll instead.
-            if (panelsVisible)
-                Components.HelpZone.PollHover();
-
+            // Input ownership is NOT handled here any more — see TickInputOwnership, driven by
+            // the main tick loop. UniversalUI.Update returns early on !AnyUIShowing, so this
+            // method stops being called the moment the last panel closes: the code that hands the
+            // game its input back lived in the one place that goes quiet exactly when it is
+            // needed. Reported as a game whose menus never recovered, not even on reopening.
             // Deferred interface-font re-dirty (atlas warms async after a reback).
             TickFontRerender();
 

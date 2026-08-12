@@ -2092,6 +2092,12 @@ namespace UnityGameTranslator.Core.UI.Panels
                 bool eventSystemChanged = TranslatorCore.DisableEventSystemOverride != _disableEventSystemOverrideToggle.isOn;
                 TranslatorCore.DisableEventSystemOverride = _disableEventSystemOverrideToggle.isOn;
 
+                // Only the EventSystem override lives in the translation: it answers a defect of
+                // a particular game and is worth carrying to whoever installs that translation.
+                // The capture options and the freeze are preferences and go to config.json, which
+                // SaveConfig writes below — they must not ride along when a translation is shared.
+                bool perGameChanged = eventSystemChanged;
+
                 // Input capture (per-game too). No restart needed: the capture asks these on every
                 // read, so unticking one hands that input back to the game on the next frame —
                 // which is what someone turning it off because the game misbehaves needs.
@@ -2136,8 +2142,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                     TranslatorCore.RebuildHttpClient();
                 }
 
-                // Save per-game settings (translations.json) if EventSystem override changed
-                if (eventSystemChanged)
+                // Save per-game settings (translations.json)
+                if (perGameChanged)
                 {
                     TranslatorCore.SaveCache();
                     TranslatorCore.LogInfo("[Options] EventSystem override setting changed - game restart required for effect");

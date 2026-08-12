@@ -3753,12 +3753,18 @@ namespace UnityGameTranslator.Core.UI
                     // Enable cursor unlock - UniverseLib will handle the rest
                     ConfigManager.Force_Unlock_Mouse = true;
                     EventSystemHelper.EnableEventSystem();
+                    UniverseLib.Input.InputCapture.ResetActivity();
                 }
                 else
                 {
                     // Disable cursor unlock - UniverseLib will restore game's cursor state
                     ConfigManager.Force_Unlock_Mouse = false;
                     EventSystemHelper.ReleaseEventSystem();
+
+                    // What the capture actually managed while the panel was open. Without this,
+                    // "the game reads through another API" and "the capture never armed" look
+                    // exactly alike from a chair in front of the game.
+                    TranslatorCore.LogInfo($"[InputCapture] {UniverseLib.Input.InputCapture.DescribeActivity()}");
                 }
             }
 

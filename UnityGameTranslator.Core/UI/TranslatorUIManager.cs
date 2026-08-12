@@ -55,6 +55,10 @@ namespace UnityGameTranslator.Core.UI
         private static bool _showUI;
         private static bool _lastPanelVisibleState; // Track panel state for EventSystem and cursor management
 
+        // True while the mod's interface owns the game's input. Follows the panels, but lags them
+        // on the way down until the mouse is idle — see the handover in UpdateUI.
+        private static bool _uiHoldsInput;
+
         // Update notification state
         public static bool HasPendingUpdate { get; set; } = false;
         public static TranslationCheckResult PendingUpdateInfo { get; set; } = null;
@@ -362,7 +366,7 @@ namespace UnityGameTranslator.Core.UI
         /// </summary>
         private static bool ShouldCaptureInput(UniverseLib.Input.InputCapture.CaptureKind kind)
         {
-            if (!AnyPanelVisible())
+            if (!_uiHoldsInput)
                 return false;
 
             switch (kind)
@@ -3772,11 +3776,19 @@ namespace UnityGameTranslator.Core.UI
             // Enable when panels open, release when all panels close
             // Uses UniverseLib's Force_Unlock_Mouse to properly handle cursor locking
             bool panelsVisible = AnyPanelVisible();
+            // ONE state for "the interface holds the input", used by the EventSystem handover AND
+            // by the capture. Two separate notions would drift, and the drift would show up as the
+            // half-captured frame that let a click through.
+            //
+            // It outlives the panel by design: a panel closes on the click that pressed its close
+            // button, and that click is not finished being resolved. Handing everything back right
+            // then is what delivered it to whatever sat behind. So we hold until the mouse is idle.
             if (panelsVisible != _lastPanelVisibleState)
             {
                 if (panelsVisible)
                 {
                     _lastPanelVisibleState = true;
+                    _uiHoldsInput = true;
                     // Enable cursor unlock - UniverseLib will handle the rest
                     ConfigManager.Force_Unlock_Mouse = true;
                     EventSystemHelper.EnableEventSystem();
@@ -3788,6 +3800,7 @@ namespace UnityGameTranslator.Core.UI
                 else if (MouseAtRest())
                 {
                     _lastPanelVisibleState = false;
+                    _uiHoldsInput = false;
                     // Disable cursor unlock - UniverseLib will restore game's cursor state
                     ConfigManager.Force_Unlock_Mouse = false;
                     EventSystemHelper.ReleaseEventSystem();

@@ -316,7 +316,12 @@ namespace UnityGameTranslator.Core.UI
             UniverseLib.Input.InputCapture.ShouldCapture = ShouldCaptureInput;
             // Independent of the capture switches: a game asking "is the pointer over UI?" must
             // hear yes while our window owns it, so it dismisses the click instead of keeping it.
-            UniverseLib.Input.InputCapture.UiOwnsPointer = () => _uiHoldsInput;
+            // ⚠ Gated on the click option, like everything else that touches the game's pointer.
+            // Ungated, it answered "the pointer is on UI" to a game asking whether it should
+            // handle its own hover — so the game's hover died with every option switched off, and
+            // nothing in the interface could account for it.
+            UniverseLib.Input.InputCapture.UiOwnsPointer =
+                () => _uiHoldsInput && TranslatorCore.CaptureMouseButtons;
 
             // Our canvases that live outside UniverseLib's root: the click absorber, and the
             // inspector's highlight overlay. Both must answer the pointer, not be silenced with
@@ -596,6 +601,34 @@ namespace UnityGameTranslator.Core.UI
             return _interfaceHasFocus;
         }
 
+        // Whether WE are currently holding the game's EventSystem.
+        private static bool _eventSystemTaken;
+
+        /// <summary>
+        /// Take or return the game's EventSystem to match what is wanted right now.
+        /// </summary>
+        /// <remarks>
+        /// ⚠ Driven by comparing state, not by reacting to a transition. The take and the return
+        /// used to sit in the "a panel opened" / "input handed back" branches, so toggling the
+        /// per-game override while a window was already open did nothing at all until the next
+        /// open — switching it ON appeared to work, switching it back OFF did not.
+        ///
+        /// Keyed on _uiHoldsInput rather than on panels being visible, so the return still happens
+        /// at the right moment after a close rather than the instant the window disappears.
+        /// </remarks>
+        private static void ReconcileEventSystem()
+        {
+            bool wanted = _uiHoldsInput && !TranslatorCore.DisableEventSystemOverride;
+            if (wanted == _eventSystemTaken)
+                return;
+
+            _eventSystemTaken = wanted;
+            if (wanted)
+                EventSystemHelper.EnableEventSystem();
+            else
+                EventSystemHelper.ReleaseEventSystem();
+        }
+
         /// <summary>Hand the keyboard to whichever side the click landed on.</summary>
         private static void UpdateInterfaceFocus(bool panelsVisible)
         {
@@ -657,6 +690,9 @@ namespace UnityGameTranslator.Core.UI
                 group.alpha = alpha;
         }
 
+        /// <summary>Title bar of the window holding the keyboard: lighter, still clearly a bar.</summary>
+        private static readonly Color TitleBarFocused = new Color(0.115f, 0.14f, 0.19f, 1f);
+
         private static void SetTitleBarFocused(Panels.TranslatorPanelBase panel, bool hasFocus)
         {
             var bar = panel.TitleBar;
@@ -669,7 +705,10 @@ namespace UnityGameTranslator.Core.UI
             // attempt used TabBarBackground against PanelBackground — 0.08 against 0.062, two
             // shades nobody could tell apart, so the signal was invisible. A title bar that
             // LIGHTENS when active is the desktop convention, and it survives any game behind it.
-            Color target = hasFocus ? UIStyles.CardBackground : UIStyles.TabBarBackground;
+            // ⚠ Between the bar's own tone (0.08) and the window body (0.14). Going all the way
+            // to the body colour made the bar vanish INTO the window — a title bar has to stay a
+            // title bar in both states, it only has to be lighter when the window is active.
+            Color target = hasFocus ? TitleBarFocused : UIStyles.TabBarBackground;
             if (image.color != target)
                 image.color = target;
         }
@@ -827,6 +866,7 @@ namespace UnityGameTranslator.Core.UI
             // What makes it work is not when it goes up but that it comes down AFTER the capture
             // is lifted: while input is captured the module cannot even see the release, so the
             // held click has nowhere to land until then.
+            ReconcileEventSystem();
             UpdateInterfaceFocus(panelsVisible);
             if (panelsVisible)
                 ApplyFocusAppearance();
@@ -859,7 +899,6 @@ namespace UnityGameTranslator.Core.UI
                     // kills their hover entirely. Doing it unconditionally meant the game lost its
                     // hover with every capture option switched off, which no setting could explain.
                     ConfigManager.Allow_UI_Selection_Outside_UIBase = !TranslatorCore.CaptureMouseButtons;
-                    EventSystemHelper.EnableEventSystem();
                     UniverseLib.Input.InputCapture.ResetActivity();
                 }
                 // ⚠ Only mark it handled once we actually hand back, or a deferred release becomes
@@ -892,7 +931,6 @@ namespace UnityGameTranslator.Core.UI
                     // Disable cursor unlock - UniverseLib will restore game's cursor state
                     ConfigManager.Force_Unlock_Mouse = false;
                     ConfigManager.Allow_UI_Selection_Outside_UIBase = true;
-                    EventSystemHelper.ReleaseEventSystem();
 
                     // What the capture actually managed while the panel was open. Without this,
                     // "the game reads through another API" and "the capture never armed" look

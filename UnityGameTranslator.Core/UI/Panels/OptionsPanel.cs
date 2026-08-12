@@ -753,9 +753,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             eventSystemLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(eventSystemObj, minHeight: UIStyles.RowHeightNormal);
             RegisterUIText(eventSystemLabel);
-            _helpZone?.Describe(eventSystemObj, "Stop the mod from intercepting interface input. Turn on if the game's menus or animations stop working while the mod is loaded. Needs a game restart.");
+            _helpZone?.Describe(eventSystemObj, "Stop the mod from taking the game's EventSystem. Turn on if the game's own menus stop reacting — losing their hover or their selection cursor — while a mod window is open.");
 
-            var eventSystemHint = UIStyles.CreateHint(card, "EventSystemHint", "Turn on if the game's menus or animations stop working. Requires a game restart.");
+            var eventSystemHint = UIStyles.CreateHint(card, "EventSystemHint", "Turn on if the game's menus stop reacting while a mod window is open.");
             RegisterUIText(eventSystemHint);
         }
 
@@ -2185,6 +2185,10 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // Advanced settings (per-game, stored in translations.json, requires restart)
                 bool eventSystemChanged = TranslatorCore.DisableEventSystemOverride != _disableEventSystemOverrideToggle.isOn;
                 TranslatorCore.DisableEventSystemOverride = _disableEventSystemOverrideToggle.isOn;
+                // Keep UniverseLib's own copy in step: it consults the flag live (its EventSystem
+                // patches read it every time), so with this in place the setting takes effect at
+                // once instead of only at the next launch.
+                UniverseLib.Config.ConfigManager.Disable_EventSystem_Override = TranslatorCore.DisableEventSystemOverride;
 
                 // Only the EventSystem override lives in the translation: it answers a defect of
                 // a particular game and is worth carrying to whoever installs that translation.

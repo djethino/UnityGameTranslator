@@ -316,12 +316,13 @@ namespace UnityGameTranslator.Core.UI
             UniverseLib.Input.InputCapture.ShouldCapture = ShouldCaptureInput;
             // Independent of the capture switches: a game asking "is the pointer over UI?" must
             // hear yes while our window owns it, so it dismisses the click instead of keeping it.
-            // ⚠ Gated on the click option, like everything else that touches the game's pointer.
+            // ⚠ Gated on the MENUS option specifically: what this governs is whether the game's
+            // own interface still answers the pointer, not whether the game may read a click.
             // Ungated, it answered "the pointer is on UI" to a game asking whether it should
             // handle its own hover — so the game's hover died with every option switched off, and
             // nothing in the interface could account for it.
             UniverseLib.Input.InputCapture.UiOwnsPointer =
-                () => _uiHoldsInput && TranslatorCore.CaptureMouseButtons;
+                () => _uiHoldsInput && TranslatorCore.CaptureGameMenus;
 
             // Our canvases that live outside UniverseLib's root: the click absorber, and the
             // inspector's highlight overlay. Both must answer the pointer, not be silenced with
@@ -401,8 +402,10 @@ namespace UnityGameTranslator.Core.UI
                     if (!TranslatorCore.CaptureKeyboard)
                         return false;
                     return !TranslatorCore.CaptureKeyboardFocusOnly || InterfaceHoldsKeyboardFocus();
-                case UniverseLib.Input.InputCapture.CaptureKind.MouseButtons:
-                    return TranslatorCore.CaptureMouseButtons;
+                case UniverseLib.Input.InputCapture.CaptureKind.GameMenus:
+                    return TranslatorCore.CaptureGameMenus;
+                case UniverseLib.Input.InputCapture.CaptureKind.GameClicks:
+                    return TranslatorCore.CaptureGameClicks;
                 case UniverseLib.Input.InputCapture.CaptureKind.MouseAxes:
                     return TranslatorCore.CaptureMouseAxes;
                 default:
@@ -941,7 +944,7 @@ namespace UnityGameTranslator.Core.UI
                     // cursor to show it as hovered — Silksong's menus do — so blocking selection
                     // kills their hover entirely. Doing it unconditionally meant the game lost its
                     // hover with every capture option switched off, which no setting could explain.
-                    ConfigManager.Allow_UI_Selection_Outside_UIBase = !TranslatorCore.CaptureMouseButtons;
+                    ConfigManager.Allow_UI_Selection_Outside_UIBase = !TranslatorCore.CaptureGameMenus;
                     UniverseLib.Input.InputCapture.ResetActivity();
                 }
                 // ⚠ Only mark it handled once we actually hand back, or a deferred release becomes

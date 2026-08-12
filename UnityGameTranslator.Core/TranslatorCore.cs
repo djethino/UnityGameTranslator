@@ -223,10 +223,23 @@ namespace UnityGameTranslator.Core
             set { if (Config != null) Config.capture_keyboard_focus_only = value; }
         }
 
-        public static bool CaptureMouseButtons
+        /// <summary>Stop the game's own menus and buttons from answering the pointer.</summary>
+        public static bool CaptureGameMenus
         {
-            get { return Config != null && Config.capture_mouse_buttons; }
-            set { if (Config != null) Config.capture_mouse_buttons = value; }
+            get { return Config != null && Config.capture_game_menus; }
+            set { if (Config != null) Config.capture_game_menus = value; }
+        }
+
+        /// <summary>Stop the game from reading clicks for itself — shooting, interacting.</summary>
+        /// <remarks>
+        /// Separate from <see cref="CaptureGameMenus"/> because they are separate paths: a menu is
+        /// reached by a raycast, a gameplay click is a read. One switch for both meant that giving
+        /// the game's menus back also gave it every click.
+        /// </remarks>
+        public static bool CaptureGameClicks
+        {
+            get { return Config != null && Config.capture_game_clicks; }
+            set { if (Config != null) Config.capture_game_clicks = value; }
         }
         /// <inheritdoc cref="CaptureKeyboard"/>
         public static bool CaptureMouseAxes
@@ -6408,7 +6421,8 @@ namespace UnityGameTranslator.Core
         // hits everyone, including someone who only opened the language search. These two are
         // comfort, they touch the EventSystem and the pointer, and that is where every mishap of
         // this feature came from.
-        public bool capture_mouse_buttons { get; set; } = false;
+        public bool capture_game_menus { get; set; } = false;
+        public bool capture_game_clicks { get; set; } = false;
         public bool capture_mouse_axes { get; set; } = false;
         // Off by default: what it does depends entirely on the game, and it must never be used in
         // a multiplayer one. See analyse/pause-the-game-feasibility.md.

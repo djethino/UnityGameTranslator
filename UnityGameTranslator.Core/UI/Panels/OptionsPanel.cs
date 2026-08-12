@@ -49,7 +49,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         private Toggle _disableEventSystemOverrideToggle;
         private Toggle _captureKeyboardToggle;
         private Toggle _captureKeyboardFocusOnlyToggle;
-        private Toggle _captureMouseButtonsToggle;
+        private Toggle _captureGameMenusToggle;
+        private Toggle _captureGameClicksToggle;
         private Toggle _captureMouseAxesToggle;
         private Toggle _pauseGameToggle;
         private UnityEngine.UI.Slider _opacityFocusedSlider;
@@ -222,7 +223,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             public bool disable_eventsystem_override;
             public bool capture_keyboard;
             public bool capture_keyboard_focus_only;
-            public bool capture_mouse_buttons;
+            public bool capture_game_menus;
+            public bool capture_game_clicks;
             public bool capture_mouse_axes;
             public bool pause_game;
             public float panel_opacity_focused;
@@ -280,7 +282,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                     disable_eventsystem_override = TranslatorCore.DisableEventSystemOverride,
                     capture_keyboard = TranslatorCore.CaptureKeyboard,
                     capture_keyboard_focus_only = TranslatorCore.CaptureKeyboardFocusOnly,
-                    capture_mouse_buttons = TranslatorCore.CaptureMouseButtons,
+                    capture_game_menus = TranslatorCore.CaptureGameMenus,
+                    capture_game_clicks = TranslatorCore.CaptureGameClicks,
                     capture_mouse_axes = TranslatorCore.CaptureMouseAxes,
                     pause_game = TranslatorCore.PauseGame,
                     panel_opacity_focused = TranslatorCore.PanelOpacityFocused,
@@ -670,13 +673,29 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             UIStyles.CreateSpacer(card, 5);
 
-            CreateCaptureToggle(card, "CaptureMouseButtons", " Take mouse clicks",
-                "Clicks go to this window only, so nothing behind it reacts to them.",
-                UniverseLib.Input.InputCapture.CaptureKind.MouseButtons, out _captureMouseButtonsToggle);
+            // ⚠ These two were ONE box, "Take mouse clicks", and it took away two unrelated
+            // things at once: the game's menus answer a RAYCAST, its own clicks are a READ. Giving
+            // the menus back therefore also gave the game every click, so clicking beside this
+            // window fired a weapon. Separate boxes, separate reasons for greying out.
+            CreateCaptureToggle(card, "CaptureGameMenus", " Take clicks from the game's menus",
+                "The game's own buttons and menus stop answering the pointer. Clicks inside this window never reach them "
+                + "either way — this is about the rest of the screen.",
+                UniverseLib.Input.InputCapture.CaptureKind.GameMenus, out _captureGameMenusToggle);
+
+            CreateCaptureToggle(card, "CaptureGameClicks", " Take clicks from the game itself",
+                "The game stops reading clicks for what it does on its own — shooting, interacting, dragging. "
+                + "Without it, clicking beside this window still acts in the game.",
+                UniverseLib.Input.InputCapture.CaptureKind.GameClicks, out _captureGameClicksToggle);
 
             CreateCaptureToggle(card, "CaptureMouseAxes", " Take mouse movement",
                 "Stops the camera turning while you use the window. Mostly matters in first-person games.",
                 UniverseLib.Input.InputCapture.CaptureKind.MouseAxes, out _captureMouseAxesToggle);
+
+            // Says what the split is FOR. Three boxes with three descriptions still leave the
+            // useful combination to be guessed, and it is the one people actually want.
+            var mouseHint = UIStyles.CreateHint(card, "MouseCaptureHint",
+                "To hold the view still while the game's own menus keep working: take mouse movement, and leave the two above off.");
+            RegisterUIText(mouseHint);
 
             UIStyles.CreateSpacer(card, 15);
 
@@ -1619,7 +1638,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             _disableEventSystemOverrideToggle.isOn = TranslatorCore.DisableEventSystemOverride;
             _captureKeyboardToggle.isOn = TranslatorCore.CaptureKeyboard;
             _captureKeyboardFocusOnlyToggle.isOn = TranslatorCore.CaptureKeyboardFocusOnly;
-            _captureMouseButtonsToggle.isOn = TranslatorCore.CaptureMouseButtons;
+            _captureGameMenusToggle.isOn = TranslatorCore.CaptureGameMenus;
+            _captureGameClicksToggle.isOn = TranslatorCore.CaptureGameClicks;
             _captureMouseAxesToggle.isOn = TranslatorCore.CaptureMouseAxes;
             _pauseGameToggle.isOn = TranslatorCore.PauseGame;
             _opacityFocusedSlider.value = TranslatorCore.PanelOpacityFocused;
@@ -2201,7 +2221,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // which is what someone turning it off because the game misbehaves needs.
                 TranslatorCore.CaptureKeyboard = _captureKeyboardToggle.isOn;
                 TranslatorCore.CaptureKeyboardFocusOnly = _captureKeyboardFocusOnlyToggle.isOn;
-                TranslatorCore.CaptureMouseButtons = _captureMouseButtonsToggle.isOn;
+                TranslatorCore.CaptureGameMenus = _captureGameMenusToggle.isOn;
+                TranslatorCore.CaptureGameClicks = _captureGameClicksToggle.isOn;
                 TranslatorCore.CaptureMouseAxes = _captureMouseAxesToggle.isOn;
                 TranslatorCore.PauseGame = _pauseGameToggle.isOn;
                 TranslatorCore.PanelOpacityFocused = _opacityFocusedSlider.value;
@@ -2452,7 +2473,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_disableEventSystemOverrideToggle.isOn != _initialSnapshot.disable_eventsystem_override) count++;
             if (_captureKeyboardToggle.isOn != _initialSnapshot.capture_keyboard) count++;
             if (_captureKeyboardFocusOnlyToggle.isOn != _initialSnapshot.capture_keyboard_focus_only) count++;
-            if (_captureMouseButtonsToggle.isOn != _initialSnapshot.capture_mouse_buttons) count++;
+            if (_captureGameMenusToggle.isOn != _initialSnapshot.capture_game_menus) count++;
+            if (_captureGameClicksToggle.isOn != _initialSnapshot.capture_game_clicks) count++;
             if (_captureMouseAxesToggle.isOn != _initialSnapshot.capture_mouse_axes) count++;
             if (_pauseGameToggle.isOn != _initialSnapshot.pause_game) count++;
             if (!Mathf.Approximately(_opacityFocusedSlider.value, _initialSnapshot.panel_opacity_focused)) count++;

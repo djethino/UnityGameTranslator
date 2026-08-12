@@ -409,6 +409,31 @@ namespace UnityGameTranslator.Core.UI
             return true;
         }
 
+        /// <summary>
+        /// How many idle frames before the game gets its input back.
+        /// </summary>
+        /// <remarks>
+        /// ⚠ A grudging constant, and the only one in this file. One idle frame was not enough:
+        /// the close button still pressed whatever sat behind it. A click is not resolved within a
+        /// single frame — the module raycasts, then decides, and the consumer's Update may run on
+        /// either side of that — and none of it is observable from here, so there is nothing to
+        /// trigger on. Two is what stops it; raise it only against a game that proves it needs
+        /// more, never "to be safe".
+        /// </remarks>
+        private const int IdleFramesBeforeHandover = 2;
+
+        private static int _idleFrames;
+
+        /// <summary>Consecutive frames the mouse has done nothing. Resets the moment it does.</summary>
+        private static int CountIdleFrames()
+        {
+            if (MouseAtRest())
+                _idleFrames++;
+            else
+                _idleFrames = 0;
+            return _idleFrames;
+        }
+
         private static IEnumerator MainTickLoop()
         {
             while (true)
@@ -3789,6 +3814,7 @@ namespace UnityGameTranslator.Core.UI
                 {
                     _lastPanelVisibleState = true;
                     _uiHoldsInput = true;
+                    _idleFrames = 0;
                     // Enable cursor unlock - UniverseLib will handle the rest
                     ConfigManager.Force_Unlock_Mouse = true;
                     EventSystemHelper.EnableEventSystem();
@@ -3797,7 +3823,7 @@ namespace UnityGameTranslator.Core.UI
                 // ⚠ Only mark it handled once we actually hand back, or a deferred release becomes
                 // a release that never happens — the panel would close and the game would never
                 // get its EventSystem back for the rest of the session.
-                else if (MouseAtRest())
+                else if (CountIdleFrames() >= IdleFramesBeforeHandover)
                 {
                     _lastPanelVisibleState = false;
                     _uiHoldsInput = false;

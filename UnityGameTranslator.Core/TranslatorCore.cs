@@ -189,6 +189,25 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static bool DisableEventSystemOverride { get; set; } = false;
 
+        /// <summary>
+        /// While a mod panel is open, stop the game from reading input under it.
+        /// Stored in translations.json as _settings.capture_keyboard / _mouse_buttons / _mouse_axes.
+        /// </summary>
+        /// <remarks>
+        /// On by default: a menu that lets the game keep walking, shooting and turning under it is
+        /// not a menu, and someone typing a translation into a text field expects those letters to
+        /// go into the field and nowhere else.
+        ///
+        /// ⚠ Each is only honoured where the game's input can actually be intercepted — see
+        /// UniverseLib's InputCapture, which reports what it managed to patch on THIS game. The
+        /// options screen greys out what is out of reach rather than pretending it works.
+        /// </remarks>
+        public static bool CaptureKeyboard { get; set; } = true;
+        /// <inheritdoc cref="CaptureKeyboard"/>
+        public static bool CaptureMouseButtons { get; set; } = true;
+        /// <inheritdoc cref="CaptureKeyboard"/>
+        public static bool CaptureMouseAxes { get; set; } = true;
+
         /// <summary>Detect typewriting effects (text appearing letter by letter). Stored in translations.json.</summary>
         public static bool TypewritingDetection { get; set; } = true;
         /// <summary>Detect procedural text building (tooltips, item descriptions). Stored in translations.json.</summary>
@@ -668,6 +687,12 @@ namespace UnityGameTranslator.Core
             var settingsObj = new JObject();
             if (DisableEventSystemOverride)
                 settingsObj["disable_eventsystem_override"] = true;
+            if (!CaptureKeyboard)
+                settingsObj["capture_keyboard"] = false;
+            if (!CaptureMouseButtons)
+                settingsObj["capture_mouse_buttons"] = false;
+            if (!CaptureMouseAxes)
+                settingsObj["capture_mouse_axes"] = false;
             if (!TypewritingDetection)
                 settingsObj["typewriting_detection"] = false;
             if (!ConcatDetection)
@@ -766,6 +791,9 @@ namespace UnityGameTranslator.Core
             // values are only written when they leave their default, so reading
             // a file that omits them must restore the defaults
             DisableEventSystemOverride = settingsObj?["disable_eventsystem_override"]?.Value<bool>() ?? false;
+            CaptureKeyboard = settingsObj?["capture_keyboard"]?.Value<bool>() ?? true;
+            CaptureMouseButtons = settingsObj?["capture_mouse_buttons"]?.Value<bool>() ?? true;
+            CaptureMouseAxes = settingsObj?["capture_mouse_axes"]?.Value<bool>() ?? true;
             TypewritingDetection = settingsObj?["typewriting_detection"]?.Value<bool>() ?? true;
             ConcatDetection = settingsObj?["concat_detection"]?.Value<bool>() ?? true;
             TranslationUIFont = settingsObj?["ui_font"]?.Value<string>();

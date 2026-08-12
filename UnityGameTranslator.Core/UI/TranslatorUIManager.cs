@@ -303,6 +303,11 @@ namespace UnityGameTranslator.Core.UI
             if (_originalUIFont == null)
                 _originalUIFont = UniversalUI.DefaultFont;
 
+            // Answer, per frame and per kind, whether the game's input belongs to us right now.
+            // Asked by UniverseLib at each read, so it follows the panels with no state of ours to
+            // keep in sync — the bug that a cached "are we open?" flag always ends up producing.
+            UniverseLib.Input.InputCapture.ShouldCapture = ShouldCaptureInput;
+
             // Single source of truth for the per-frame tick: run OnUpdate (feeds the scanner's
             // adaptive frame-time budget, persists cache) and Scan (applies pending translations
             // + scans the scene) inside a permanent coroutine, plus the main-thread queue drain
@@ -336,6 +341,41 @@ namespace UnityGameTranslator.Core.UI
 
             // Initialize UI state based on config
             InitializeUIState();
+        }
+
+        /// <summary>
+        /// Does the game's input belong to us at this instant?
+        ///
+        /// Deliberately NOT "is any of our UI showing". Three states, not two:
+        ///
+        /// - <b>Nothing open</b> — the game owns everything. Obviously.
+        /// - <b>Only the corner overlay</b> — still the game's. A notification is something you
+        ///   glance at while playing; taking the controls away to show one would be an ambush, and
+        ///   the overlay is not even clickable. This is why the test is AnyPanelVisible() and not
+        ///   UniversalUI.AnyUIShowing, which counts the overlay.
+        /// - <b>A panel open</b> — ours. Someone reading a settings window is not also driving; the
+        ///   keys they press are meant for the field they are typing in, and the mouse they move is
+        ///   aiming at a button, not at a target in the game.
+        ///
+        /// Each kind stays subject to its own per-game setting, so a game whose menus break under
+        /// capture can have it turned off one kind at a time rather than all or nothing.
+        /// </summary>
+        private static bool ShouldCaptureInput(UniverseLib.Input.InputCapture.CaptureKind kind)
+        {
+            if (!AnyPanelVisible())
+                return false;
+
+            switch (kind)
+            {
+                case UniverseLib.Input.InputCapture.CaptureKind.Keyboard:
+                    return TranslatorCore.CaptureKeyboard;
+                case UniverseLib.Input.InputCapture.CaptureKind.MouseButtons:
+                    return TranslatorCore.CaptureMouseButtons;
+                case UniverseLib.Input.InputCapture.CaptureKind.MouseAxes:
+                    return TranslatorCore.CaptureMouseAxes;
+                default:
+                    return false;
+            }
         }
 
         private static IEnumerator MainTickLoop()

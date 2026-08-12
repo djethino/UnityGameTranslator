@@ -48,6 +48,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private Text _resetWindowsStatusLabel;
         private Toggle _disableEventSystemOverrideToggle;
         private Toggle _captureKeyboardToggle;
+        private Toggle _captureKeyboardFocusOnlyToggle;
         private Toggle _captureMouseButtonsToggle;
         private Toggle _captureMouseAxesToggle;
         private Toggle _pauseGameToggle;
@@ -216,6 +217,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             public bool notify_prereleases;
             public bool disable_eventsystem_override;
             public bool capture_keyboard;
+            public bool capture_keyboard_focus_only;
             public bool capture_mouse_buttons;
             public bool capture_mouse_axes;
             public bool pause_game;
@@ -271,6 +273,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     notify_prereleases = TranslatorCore.Config.sync.notify_prereleases,
                     disable_eventsystem_override = TranslatorCore.DisableEventSystemOverride,
                     capture_keyboard = TranslatorCore.CaptureKeyboard,
+                    capture_keyboard_focus_only = TranslatorCore.CaptureKeyboardFocusOnly,
                     capture_mouse_buttons = TranslatorCore.CaptureMouseButtons,
                     capture_mouse_axes = TranslatorCore.CaptureMouseAxes,
                     pause_game = TranslatorCore.PauseGame,
@@ -633,6 +636,25 @@ namespace UnityGameTranslator.Core.UI.Panels
             CreateCaptureToggle(card, "CaptureKeyboard", " Take the keyboard",
                 "Keys go to this window only. Without it, typing a translation also walks, shoots or opens the game's menus.",
                 UniverseLib.Input.InputCapture.CaptureKind.Keyboard, out _captureKeyboardToggle);
+
+            // Sub-option, indented under the keyboard one — and the reason its parent can be on by
+            // default: the game keeps its keys until somebody actually types or navigates here.
+            var focusRow = UIStyles.CreateFormRow(card, "KeyboardFocusRow", UIStyles.RowHeightNormal, 5);
+            UIStyles.CreateSpacer(focusRow, 20);   // indent, so it reads as belonging to the box above
+            var focusObj = UIFactory.CreateToggle(focusRow, "CaptureKeyboardFocusOnly",
+                out _captureKeyboardFocusOnlyToggle, out var focusLabel);
+            focusLabel.text = " Only while the mod's interface has focus";
+            focusLabel.color = UIStyles.TextSecondary;
+            RegisterUIText(focusLabel);
+            UIHelpers.AddToggleListener(_captureKeyboardFocusOnlyToggle, _ => { if (!_isLoadingSettings) UpdateApplyButtonText(); });
+            _helpZone?.Describe(focusObj,
+                "The game keeps its keyboard until you type in a field or move through this interface with the keyboard. Turn off to take the keyboard the whole time a window is open.");
+
+            var focusHint = UIStyles.CreateHint(card, "KeyboardFocusHint",
+                "The game keeps its keys until you type or navigate here.");
+            RegisterUIText(focusHint);
+
+            UIStyles.CreateSpacer(card, 5);
 
             CreateCaptureToggle(card, "CaptureMouseButtons", " Take mouse clicks",
                 "Clicks go to this window only, so nothing behind it reacts to them.",
@@ -1527,6 +1549,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Advanced settings (per-game, stored in translations.json)
             _disableEventSystemOverrideToggle.isOn = TranslatorCore.DisableEventSystemOverride;
             _captureKeyboardToggle.isOn = TranslatorCore.CaptureKeyboard;
+            _captureKeyboardFocusOnlyToggle.isOn = TranslatorCore.CaptureKeyboardFocusOnly;
             _captureMouseButtonsToggle.isOn = TranslatorCore.CaptureMouseButtons;
             _captureMouseAxesToggle.isOn = TranslatorCore.CaptureMouseAxes;
             _pauseGameToggle.isOn = TranslatorCore.PauseGame;
@@ -2102,6 +2125,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // read, so unticking one hands that input back to the game on the next frame —
                 // which is what someone turning it off because the game misbehaves needs.
                 TranslatorCore.CaptureKeyboard = _captureKeyboardToggle.isOn;
+                TranslatorCore.CaptureKeyboardFocusOnly = _captureKeyboardFocusOnlyToggle.isOn;
                 TranslatorCore.CaptureMouseButtons = _captureMouseButtonsToggle.isOn;
                 TranslatorCore.CaptureMouseAxes = _captureMouseAxesToggle.isOn;
                 TranslatorCore.PauseGame = _pauseGameToggle.isOn;
@@ -2350,6 +2374,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Advanced (per-game settings)
             if (_disableEventSystemOverrideToggle.isOn != _initialSnapshot.disable_eventsystem_override) count++;
             if (_captureKeyboardToggle.isOn != _initialSnapshot.capture_keyboard) count++;
+            if (_captureKeyboardFocusOnlyToggle.isOn != _initialSnapshot.capture_keyboard_focus_only) count++;
             if (_captureMouseButtonsToggle.isOn != _initialSnapshot.capture_mouse_buttons) count++;
             if (_captureMouseAxesToggle.isOn != _initialSnapshot.capture_mouse_axes) count++;
             if (_pauseGameToggle.isOn != _initialSnapshot.pause_game) count++;

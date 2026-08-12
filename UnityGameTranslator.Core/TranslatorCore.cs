@@ -208,15 +208,30 @@ namespace UnityGameTranslator.Core
             set { if (Config != null) Config.capture_keyboard = value; }
         }
         /// <inheritdoc cref="CaptureKeyboard"/>
+        /// <summary>
+        /// Take the keyboard only while our interface holds the keyboard focus.
+        /// </summary>
+        /// <remarks>
+        /// Measured on the selection, not on a panel being open: "a panel is open" would mean
+        /// capturing all the time, which is the parent option. And not on "a text field is active"
+        /// either — that would send Tab and the arrow keys to the game and break our own keyboard
+        /// navigation.
+        /// </remarks>
+        public static bool CaptureKeyboardFocusOnly
+        {
+            get { return Config == null || Config.capture_keyboard_focus_only; }
+            set { if (Config != null) Config.capture_keyboard_focus_only = value; }
+        }
+
         public static bool CaptureMouseButtons
         {
-            get { return Config == null || Config.capture_mouse_buttons; }
+            get { return Config != null && Config.capture_mouse_buttons; }
             set { if (Config != null) Config.capture_mouse_buttons = value; }
         }
         /// <inheritdoc cref="CaptureKeyboard"/>
         public static bool CaptureMouseAxes
         {
-            get { return Config == null || Config.capture_mouse_axes; }
+            get { return Config != null && Config.capture_mouse_axes; }
             set { if (Config != null) Config.capture_mouse_axes = value; }
         }
         /// <inheritdoc cref="CaptureKeyboard"/>
@@ -6360,8 +6375,16 @@ namespace UnityGameTranslator.Core
         // What the mod takes from the game while one of its windows is open. A preference of
         // whoever is working, hence here and not in the shared translation file.
         public bool capture_keyboard { get; set; } = true;
-        public bool capture_mouse_buttons { get; set; } = true;
-        public bool capture_mouse_axes { get; set; } = true;
+        // ⚠ Only while our interface actually holds the keyboard focus. Default ON, and it is what
+        // makes "capture the keyboard" safe to have on by default: the game keeps its keys until
+        // somebody types or navigates in a mod window.
+        public bool capture_keyboard_focus_only { get; set; } = true;
+        // OFF by default, unlike the keyboard: typing into a field must never drive the game — that
+        // hits everyone, including someone who only opened the language search. These two are
+        // comfort, they touch the EventSystem and the pointer, and that is where every mishap of
+        // this feature came from.
+        public bool capture_mouse_buttons { get; set; } = false;
+        public bool capture_mouse_axes { get; set; } = false;
         // Off by default: what it does depends entirely on the game, and it must never be used in
         // a multiplayer one. See analyse/pause-the-game-feasibility.md.
         public bool pause_game { get; set; } = false;

@@ -393,7 +393,9 @@ namespace UnityGameTranslator.Core.UI
             switch (kind)
             {
                 case UniverseLib.Input.InputCapture.CaptureKind.Keyboard:
-                    return TranslatorCore.CaptureKeyboard;
+                    if (!TranslatorCore.CaptureKeyboard)
+                        return false;
+                    return !TranslatorCore.CaptureKeyboardFocusOnly || InterfaceHoldsKeyboardFocus();
                 case UniverseLib.Input.InputCapture.CaptureKind.MouseButtons:
                     return TranslatorCore.CaptureMouseButtons;
                 case UniverseLib.Input.InputCapture.CaptureKind.MouseAxes:
@@ -565,6 +567,30 @@ namespace UnityGameTranslator.Core.UI
                     return true;
             }
             return false;
+        }
+
+        /// <summary>
+        /// Does our interface currently hold the keyboard focus?
+        /// </summary>
+        /// <remarks>
+        /// The selected object is the right measure: it covers a text field being typed into AND
+        /// the Tab/arrow navigation of our own panels, while leaving the keyboard to the game the
+        /// rest of the time — even with a panel open. "A panel is visible" would capture always,
+        /// which is what the parent option already means; "a text field is active" would send Tab
+        /// and the arrows to the game and break our own keyboard navigation.
+        ///
+        /// ⚠ Nothing selected means NOT ours: opening a window with the hotkey and touching
+        /// nothing leaves the game entirely alone, which is the point.
+        /// </remarks>
+        private static bool InterfaceHoldsKeyboardFocus()
+        {
+            var es = UnityEngine.EventSystems.EventSystem.current;
+            var selected = es == null ? null : es.currentSelectedGameObject;
+            if (selected == null)
+                return false;
+
+            var component = selected.transform;
+            return component != null && TranslatorCore.IsOwnUIByHierarchy(component);
         }
 
         private static bool MouseAtRest()

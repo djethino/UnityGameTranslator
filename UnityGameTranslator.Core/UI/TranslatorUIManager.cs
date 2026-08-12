@@ -665,7 +665,11 @@ namespace UnityGameTranslator.Core.UI
             var image = UIHelpers.GetComponentSafe<UnityEngine.UI.Image>(bar);
             if (image == null) return;
 
-            Color target = hasFocus ? UIStyles.TabBarBackground : UIStyles.PanelBackground;
+            // ⚠ CardBackground vs TabBarBackground, i.e. 0.14 against 0.08 in value. The first
+            // attempt used TabBarBackground against PanelBackground — 0.08 against 0.062, two
+            // shades nobody could tell apart, so the signal was invisible. A title bar that
+            // LIGHTENS when active is the desktop convention, and it survives any game behind it.
+            Color target = hasFocus ? UIStyles.CardBackground : UIStyles.TabBarBackground;
             if (image.color != target)
                 image.color = target;
         }
@@ -850,7 +854,11 @@ namespace UnityGameTranslator.Core.UI
                     // button behind a closing window gets activated without any raycast reaching it.
                     // It goes back on below, because the corner overlay alone must never take the
                     // game's menu navigation away.
-                    ConfigManager.Allow_UI_Selection_Outside_UIBase = false;
+                    // ⚠ Only when the clicks are ours. Some games SELECT the item under the
+                    // cursor to show it as hovered — Silksong's menus do — so blocking selection
+                    // kills their hover entirely. Doing it unconditionally meant the game lost its
+                    // hover with every capture option switched off, which no setting could explain.
+                    ConfigManager.Allow_UI_Selection_Outside_UIBase = !TranslatorCore.CaptureMouseButtons;
                     EventSystemHelper.EnableEventSystem();
                     UniverseLib.Input.InputCapture.ResetActivity();
                 }

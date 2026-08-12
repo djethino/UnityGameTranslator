@@ -250,7 +250,7 @@ namespace UnityGameTranslator.Core
         /// <inheritdoc cref="PanelOpacityFocused"/>
         public static float PanelOpacityUnfocused
         {
-            get { return Config == null ? 0.95f : Clamp01Floor(Config.panel_opacity_unfocused); }
+            get { return Config == null ? 0.75f : Clamp01Floor(Config.panel_opacity_unfocused); }
             set { if (Config != null) Config.panel_opacity_unfocused = Clamp01Floor(value); }
         }
 
@@ -6419,7 +6419,7 @@ namespace UnityGameTranslator.Core
         // unfocused one is also what lets a translator keep a second window open — the options,
         // say — and still read the game underneath it.
         public float panel_opacity_focused { get; set; } = 1f;
-        public float panel_opacity_unfocused { get; set; } = 0.95f;
+        public float panel_opacity_unfocused { get; set; } = 0.75f;
 
         // Max SDF atlas dimension the auto-quality picker may use when rasterizing a
         // replacement font. 0 = automatic default (4096). Raising it (e.g. 8192) renders

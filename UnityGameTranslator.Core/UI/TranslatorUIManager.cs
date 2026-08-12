@@ -601,8 +601,9 @@ namespace UnityGameTranslator.Core.UI
             return _interfaceHasFocus;
         }
 
-        // Whether WE are currently holding the game's EventSystem.
+        // Whether WE are currently holding the game's EventSystem, and in which scene.
         private static bool _eventSystemTaken;
+        private static string _sceneWhenTaken;
 
         /// <summary>
         /// Take or return the game's EventSystem to match what is wanted right now.
@@ -618,6 +619,18 @@ namespace UnityGameTranslator.Core.UI
         /// </remarks>
         private static void ReconcileEventSystem()
         {
+            // ⚠ A scene load destroys the game's EventSystem, and with it the reference the helper
+            // kept to give it back. Our flag still said "taken", so nothing was re-taken and
+            // nobody delivered clicks any more — the game's menus AND our own buttons went dead
+            // while hovering still worked, hovering needing only the raycast. Forget the state on
+            // a scene change and let the reconciliation below take it again.
+            string scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
+            if (scene != _sceneWhenTaken)
+            {
+                _sceneWhenTaken = scene;
+                _eventSystemTaken = false;
+            }
+
             bool wanted = _uiHoldsInput && !TranslatorCore.DisableEventSystemOverride;
             if (wanted == _eventSystemTaken)
                 return;
@@ -711,6 +724,18 @@ namespace UnityGameTranslator.Core.UI
             Color target = hasFocus ? TitleBarFocused : UIStyles.TabBarBackground;
             if (image.color != target)
                 image.color = target;
+        }
+
+        /// <summary>The frontmost visible panel — the one an opening gives the focus to.</summary>
+        private static Panels.TranslatorPanelBase TopmostVisiblePanel()
+        {
+            for (int i = _interactivePanels.Count - 1; i >= 0; i--)
+            {
+                var panel = _interactivePanels[i];
+                if (panel != null && panel.Enabled)
+                    return panel;
+            }
+            return null;
         }
 
         /// <summary>The panel the pointer is inside, or null.</summary>
@@ -883,6 +908,11 @@ namespace UnityGameTranslator.Core.UI
                 {
                     _lastPanelVisibleState = true;
                     _uiHoldsInput = true;
+                    // Opening a window means wanting to use it, whether it was opened by clicking
+                    // or by the hotkey — so it starts with the focus rather than waiting for a
+                    // click that someone opening it with the keyboard is not going to make.
+                    _focusedPanel = TopmostVisiblePanel();
+                    _interfaceHasFocus = _focusedPanel != null;
                     _closedAt = 0f;
                     _absorberUntil = 0f;
                     SetClickAbsorber(false);

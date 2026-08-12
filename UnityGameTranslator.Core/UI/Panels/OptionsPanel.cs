@@ -2247,7 +2247,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 if (perGameChanged)
                 {
                     TranslatorCore.SaveCache();
-                    TranslatorCore.LogInfo("[Options] EventSystem override setting changed - game restart required for effect");
+                    TranslatorCore.LogInfo("[Options] EventSystem override setting changed — applied on the next tick, no restart needed");
                 }
 
                 TranslatorCore.LogInfo("[Options] Settings saved successfully");

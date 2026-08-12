@@ -311,6 +311,15 @@ namespace UnityGameTranslator.Core.UI
             // Asked by UniverseLib at each read, so it follows the panels with no state of ours to
             // keep in sync — the bug that a cached "are we open?" flag always ends up producing.
             UniverseLib.Input.InputCapture.ShouldCapture = ShouldCaptureInput;
+            // Independent of the capture switches: a game asking "is the pointer over UI?" must
+            // hear yes while our window owns it, so it dismisses the click instead of keeping it.
+            UniverseLib.Input.InputCapture.UiOwnsPointer = () => _uiHoldsInput;
+
+            // Our canvases that live outside UniverseLib's root: the click absorber, and the
+            // inspector's highlight overlay. Both must answer the pointer, not be silenced with
+            // the game's.
+            UniverseLib.Input.InputCapture.OwnsRaycaster = caster =>
+                caster != null && TranslatorCore.IsOwnUIByHierarchy(caster);
 
             // A click that closes a panel must not also reach the game behind it. Two frames for
             // the panel to go away, six before the game gets its input back — about 30 ms and
@@ -376,6 +385,8 @@ namespace UnityGameTranslator.Core.UI
             if (!_uiHoldsInput)
                 return false;
 
+
+
             switch (kind)
             {
                 case UniverseLib.Input.InputCapture.CaptureKind.Keyboard:
@@ -432,6 +443,122 @@ namespace UnityGameTranslator.Core.UI
             }
         }
 
+        // A full-screen, fully transparent surface that swallows what is left of a click.
+        private static GameObject _clickAbsorber;
+        private static UnityEngine.UI.Image _clickAbsorberImage;
+
+        /// <summary>
+        /// Catch the click a closing panel leaves behind, before the game does.
+        /// </summary>
+        /// <remarks>
+        /// The click that presses a close button is HELD by the input module and delivered to
+        /// whatever the raycast finds once a target is available again — measured: ten seconds
+        /// later with the mouse still, and it still landed on the game's button. It is never
+        /// cancelled, only redirected, so the answer is to be what it finds.
+        ///
+        /// ⚠ On its OWN canvas, like the inspector's highlight overlay, and for the same stated
+        /// reason — "so they can block clicks from reaching game elements below". A child of
+        /// UniverseLib's canvas is no good: when the last panel closes the module lets go, that
+        /// canvas stops being consulted, and the absorber vanishes at the exact moment it is
+        /// needed. DontDestroyOnLoad for the same reason as the inspector's: a scene change must
+        /// not take it away mid-click.
+        ///
+        /// Sorting order sits below the inspector's highlights (29000) and below UniverseLib's own
+        /// UI (30000), so it never covers anything of ours — only the game.
+        /// </remarks>
+        private static void SetClickAbsorber(bool on)
+        {
+            if (_clickAbsorber == null)
+            {
+                if (!on) return;
+
+                _clickAbsorber = new GameObject("UGT_ClickAbsorber");
+                UnityEngine.Object.DontDestroyOnLoad(_clickAbsorber);
+
+                var canvas = _clickAbsorber.AddComponent<Canvas>();
+                canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+                canvas.sortingOrder = 28000;
+                _clickAbsorber.AddComponent<UnityEngine.UI.GraphicRaycaster>();
+
+                var surface = new GameObject("Surface");
+                surface.transform.SetParent(_clickAbsorber.transform, false);
+                var rect = surface.AddComponent<RectTransform>();
+                rect.anchorMin = Vector2.zero;
+                rect.anchorMax = Vector2.one;
+                rect.offsetMin = Vector2.zero;
+                rect.offsetMax = Vector2.zero;
+
+                _clickAbsorberImage = surface.AddComponent<UnityEngine.UI.Image>();
+                _clickAbsorberImage.color = new Color(0f, 0f, 0f, 0f);  // invisible, still a target
+                _clickAbsorberImage.raycastTarget = true;
+
+                TranslatorCore.RegisterPanelRoot(_clickAbsorber);
+            }
+
+            if (_clickAbsorber.activeSelf != on)
+                _clickAbsorber.SetActive(on);
+        }
+
+        /// <summary>
+        /// Drop whatever the game had selected, so nothing can be submitted to it behind our back.
+        /// </summary>
+        /// <remarks>
+        /// ⚠ The last chink. Measured with everything else finally correct: the game's button
+        /// reported "blocked" on every raycast, our absorber reported "ours", and it was pressed
+        /// anyway. A blocked raycast cannot deliver a pointer click — so it was never a pointer
+        /// click. uGUI has exactly one other route: Submit, sent by the module to the SELECTED
+        /// object with no raycast at all, and on this input module Submit is bound to the same
+        /// button as clicking.
+        ///
+        /// Allow_UI_Selection_Outside_UIBase stops the game being selected ANEW, but whatever was
+        /// already selected when our window opened stays selected. Hence clearing it outright.
+        ///
+        /// The library's own guard rejects a null selection while a UI is showing, so the flag is
+        /// lifted for the duration of the call — deliberately, and put straight back.
+        /// </remarks>
+        private static void DeselectGameObject()
+        {
+            try
+            {
+                // EVERY EventSystem, not EventSystem.current: on this game "current" is the
+                // game's, disabled and holding nothing, so clearing only that one did nothing at
+                // all. The selection that matters belongs to whichever system the module serves.
+                var all = UnityEngine.Object.FindObjectsOfType(typeof(UnityEngine.EventSystems.EventSystem));
+                bool previous = ConfigManager.Allow_UI_Selection_Outside_UIBase;
+                ConfigManager.Allow_UI_Selection_Outside_UIBase = true;
+                try
+                {
+                    for (int i = 0; i < all.Length; i++)
+                    {
+                        var es = all[i] as UnityEngine.EventSystems.EventSystem;
+                        if (es == null) continue;
+
+                        var selected = es.currentSelectedGameObject;
+                        if (selected == null) continue;
+
+                        TranslatorCore.LogInfo($"[Absorber] clearing selection '{selected.name}' on '{es.name}'");
+                        es.SetSelectedGameObject(null);
+                    }
+                }
+                finally { ConfigManager.Allow_UI_Selection_Outside_UIBase = previous; }
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogWarning($"[UIManager] Could not clear the game's selection: {e.Message}");
+            }
+        }
+
+        /// <summary>Has a mouse button gone down this frame?</summary>
+        private static bool NewPressStarted()
+        {
+            for (int btn = 0; btn <= 2; btn++)
+            {
+                if (InputManager.GetMouseButtonDown(btn))
+                    return true;
+            }
+            return false;
+        }
+
         private static bool MouseAtRest()
         {
             for (int btn = 0; btn <= 2; btn++)
@@ -463,29 +590,65 @@ namespace UnityGameTranslator.Core.UI
         /// <see cref="MouseAtRest"/> is still required on top: on a backend that DOES answer, the
         /// wait ends on the event and this ceiling never bites.
         /// </remarks>
-        private const int FramesBeforeHandover = 6;
+        /// <summary>
+        /// How long the game waits for its input back after the last panel closes.
+        /// </summary>
+        /// <remarks>
+        /// In SECONDS, not frames: the thing being waited out is a timeout inside the game's input
+        /// handling, so counting frames would make it a third of this at 20 fps and twice at 120.
+        ///
+        /// Measured by isolation. With the close kept short, a 10 s handover stopped the leak and
+        /// 0.1 s did not — so it is the handover, not the closing, that matters. That points at
+        /// the Input System holding an interaction for a while before dropping it: its
+        /// defaultTapTime is 0.2 s, which sits exactly between the two results. 0.3 s clears it
+        /// with margin and is still nothing: nobody clicks into the game within a third of a
+        /// second of closing a window.
+        /// </remarks>
+        /// <remarks>
+        /// ⚠ Long on purpose, and it costs nothing: a fresh press hands the input back at once
+        /// (see <see cref="ShouldCaptureInput"/>), so this only ever elapses while nobody is
+        /// touching the mouse. It is a ceiling for the case where the player closes a window and
+        /// walks away, not a pause anyone waits through.
+        ///
+        /// Measured on the game that leaks: 0.1 s and 0.3 s both let the click through, 10 s did
+        /// not. The Input System keeps an interaction alive for its configured tap window —
+        /// 0.2 s by default, 0.75 s for a multi-tap — so a game tuning that upwards explains the
+        /// two failures. 0.9 s clears the longest of those defaults.
+        /// </remarks>
+        /// <summary>
+        /// How long the absorber stays after the last panel closes, before the game gets its
+        /// input back. Long enough for the held click to be released onto it, short enough that
+        /// nobody notices the game was not listening.
+        /// </summary>
+        private const float SecondsBeforeHandover = 0.25f;
 
-        private static int _framesSinceClose;
+        private static float _closedAt;
+
+
 
         /// <summary>
         /// Frames since the panel closed. Deliberately NOT reset by mouse activity: on a backend
         /// that never reports any, resetting on "not idle" is what made the previous guard expire
         /// on its first frame, every time.
         /// </summary>
-        private static int CountFramesSinceClose()
+        /// <summary>Seconds since the panel closed. Started on the first call after a close.</summary>
+        private static float SecondsSinceClose()
         {
-            _framesSinceClose++;
+            if (_closedAt <= 0f)
+                _closedAt = Time.realtimeSinceStartup;
+
+            float elapsed = Time.realtimeSinceStartup - _closedAt;
 
             // Info, not Debug: it has to show up on a machine nobody thought to put in debug mode,
             // and it is one line per handover.
-            if (_framesSinceClose == 1 && TranslatorCore.DebugMode)
+            if (elapsed <= 0f && TranslatorCore.DebugMode)
             {
                 TranslatorCore.LogInfo($"[Handover] panel closed — "
                     + $"btn0={InputManager.GetMouseButton(0)} up0={InputManager.GetMouseButtonUp(0)} "
                     + $"backend={InputManager.CurrentType}");
             }
 
-            return _framesSinceClose;
+            return elapsed;
         }
 
         private static IEnumerator MainTickLoop()
@@ -3862,13 +4025,30 @@ namespace UnityGameTranslator.Core.UI
             // It outlives the panel by design: a panel closes on the click that pressed its close
             // button, and that click is not finished being resolved. Handing everything back right
             // then is what delivered it to whatever sat behind. So we hold until the mouse is idle.
+            // Put the absorber in place ON THE PRESS, while the panel is still there — not when it
+            // vanishes. The held click is delivered to whatever the raycast finds once a target is
+            // available again, and by the frame the panel is gone that raycast has already been
+            // taken. Standing behind the panel from the start means the click lands on us whenever
+            // it is finally released, and never on the game.
+            if (panelsVisible && (InputManager.GetMouseButtonDown(0) || InputManager.GetMouseButtonDown(1)))
+            {
+                SetClickAbsorber(true);
+                // Narrate the raycasts of this whole click, absorber included: twelve attempts have
+                // assumed where the click lands and none has checked. If UGT_ClickAbsorber never
+                // shows up in these lines, it is not in the raycast at all and every version of
+                // this idea was dead on arrival.
+                UniverseLib.Input.InputCapture.DiagnoseNext(30);
+                DeselectGameObject();
+            }
+
             if (panelsVisible != _lastPanelVisibleState)
             {
                 if (panelsVisible)
                 {
                     _lastPanelVisibleState = true;
                     _uiHoldsInput = true;
-                    _framesSinceClose = 0;
+                    _closedAt = 0f;
+                    SetClickAbsorber(false);
                     // Enable cursor unlock - UniverseLib will handle the rest
                     ConfigManager.Force_Unlock_Mouse = true;
                     // While OUR panels hold the input, the game must not be selectable either.
@@ -3884,8 +4064,9 @@ namespace UnityGameTranslator.Core.UI
                 // ⚠ Only mark it handled once we actually hand back, or a deferred release becomes
                 // a release that never happens — the panel would close and the game would never
                 // get its EventSystem back for the rest of the session.
-                else if (CountFramesSinceClose() >= FramesBeforeHandover && MouseAtRest())
+                else if (SecondsSinceClose() >= SecondsBeforeHandover && MouseAtRest())
                 {
+                    SetClickAbsorber(false);
                     _lastPanelVisibleState = false;
                     _uiHoldsInput = false;
                     // Disable cursor unlock - UniverseLib will restore game's cursor state

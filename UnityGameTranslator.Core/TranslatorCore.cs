@@ -6085,7 +6085,7 @@ namespace UnityGameTranslator.Core
         public string translation_backend { get; set; } = "none";
 
         // LLM Translation settings (universal OpenAI-compatible)
-        public string ai_url { get; set; } = "http://localhost:11434";
+        public string ai_url { get; set; } = Endpoints.OllamaDefault;
         public string ai_model { get; set; } = "";
         public string target_language { get; set; } = "auto";
         public string source_language { get; set; } = "auto";

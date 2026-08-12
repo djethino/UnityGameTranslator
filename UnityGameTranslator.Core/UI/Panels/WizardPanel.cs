@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.UI;
@@ -6,6 +6,7 @@ using UniverseLib.UI;
 using UniverseLib.UI.Models;
 using UnityGameTranslator.Core.UI;
 using UnityGameTranslator.Core.UI.Components;
+using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core.UI.Panels
 {
@@ -147,7 +148,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _onlineMode = TranslatorCore.Config.online_mode;
             _enableAI = TranslatorCore.Config.enable_ai;
             _translationBackend = TranslatorCore.Config.translation_backend ?? "none";
-            _aiUrl = TranslatorCore.Config.ai_url ?? "http://localhost:11434";
+            _aiUrl = TranslatorCore.Config.ai_url ?? Endpoints.OllamaDefault;
             _aiApiKey = TranslatorCore.Config.ai_api_key ?? "";
             _aiModel = TranslatorCore.Config.ai_model ?? "";
             _gameContext = TranslatorCore.Config.game_context ?? "";
@@ -932,7 +933,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             RegisterExcluded(urlLabel);
 
             var urlRow = UIStyles.CreateFormRow(urlSection, "UrlRow", UIStyles.RowHeightLarge, 5);
-            _aiUrlInput = UIFactory.CreateInputField(urlRow, "AIUrl", "http://localhost:11434");
+            _aiUrlInput = UIFactory.CreateInputField(urlRow, "AIUrl", Endpoints.OllamaDefault);
             _aiUrlInput.Text = _aiUrl;
             _aiUrlInput.OnValueChanged += (val) => _aiUrl = val;
             UIFactory.SetLayoutElement(_aiUrlInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);

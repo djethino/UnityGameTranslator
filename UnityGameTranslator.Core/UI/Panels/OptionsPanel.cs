@@ -7,6 +7,7 @@ using UniverseLib;
 using UniverseLib.UI;
 using UniverseLib.UI.Models;
 using UnityGameTranslator.Core.UI.Components;
+using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core.UI.Panels
 {
@@ -81,6 +82,12 @@ namespace UnityGameTranslator.Core.UI.Panels
         private InputFieldRef _gameContextInput;
         private Toggle _strictSourceToggle;
         private Text _aiTestStatusLabel;
+
+        /// <summary>
+        /// What has to be said about the address in the URL field — empty for a server on this
+        /// machine, which is the case this mod is built around.
+        /// </summary>
+        private Text _aiLocalityLabel;
 
         // Translation API section (contains provider dropdown + Google/DeepL sub-sections)
         private GameObject _translationApiSection;
@@ -237,7 +244,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     debug_ai = TranslatorCore.Config.debug_ai,
                     enable_ai = TranslatorCore.Config.enable_ai,
                     translation_backend = TranslatorCore.Config.translation_backend ?? "none",
-                    ai_url = TranslatorCore.Config.ai_url ?? "http://localhost:11434",
+                    ai_url = TranslatorCore.Config.ai_url ?? Endpoints.OllamaDefault,
                     ai_api_key = TranslatorCore.Config.ai_api_key ?? "",
                     ai_model = TranslatorCore.Config.ai_model ?? "",
                     game_context = TranslatorCore.Config.game_context ?? "",
@@ -740,10 +747,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.SetLayoutElement(urlLabel.gameObject, minWidth: 45);
             RegisterExcluded(urlLabel);
 
-            _aiUrlInput = UIFactory.CreateInputField(urlRow, "AIUrl", "http://localhost:11434");
+            _aiUrlInput = UIFactory.CreateInputField(urlRow, "AIUrl", Endpoints.OllamaDefault);
             UIFactory.SetLayoutElement(_aiUrlInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
             UIStyles.SetBackground(_aiUrlInput.Component.gameObject, UIStyles.InputBackground);
-            _helpZone?.Describe(_aiUrlInput.Component.gameObject, "Address of your AI server, for example a local Ollama or LM Studio. Default is http://localhost:11434.");
+            _helpZone?.Describe(_aiUrlInput.Component.gameObject, "Address of your AI server, for example a local Ollama or LM Studio. Default is " + Endpoints.OllamaDefault + ".");
 
             var testBtn = CreateSecondaryButton(urlRow, "TestBtn", "Test", 60);
             testBtn.OnClick += TestAIConnection;
@@ -754,6 +761,24 @@ namespace UnityGameTranslator.Core.UI.Panels
             _aiTestStatusLabel.fontSize = UIStyles.FontSizeSmall;
             UIFactory.SetLayoutElement(_aiTestStatusLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
             RegisterExcluded(_aiTestStatusLabel);
+
+            // What sending this game's text to that address actually means. Nothing at all for a
+            // server on this machine, which is the ordinary case and the one this mod is built
+            // around; privacy for a box on the home network; privacy and a bill for anything else.
+            //
+            // ⚠ The wording comes from the shared library, not from here. It is a statement about
+            // somebody's money and somebody's data, the manager makes it too, and two copies would
+            // drift — with the under-warning copy landing in front of whoever needed it most.
+            _aiLocalityLabel = UIFactory.CreateLabel(_llmSection, "Locality", "", TextAnchor.UpperLeft);
+            _aiLocalityLabel.fontSize = UIStyles.FontSizeSmall;
+            _aiLocalityLabel.color = UIStyles.StatusWarning;
+            UIFactory.SetLayoutElement(_aiLocalityLabel.gameObject, minHeight: UIStyles.RowHeightSmall,
+                                       flexibleHeight: 9999);
+            RegisterExcluded(_aiLocalityLabel);
+
+            // Follows what is being typed, not what was last applied: somebody pasting a provider's
+            // address has to read this before they press Apply, not after.
+            _aiUrlInput.Component.onValueChanged.AddListener(_ => RefreshAiLocality());
 
             // API Key row
             var keyRow = UIStyles.CreateFormRow(_llmSection, "KeyRow", UIStyles.InputHeight, 5);
@@ -1328,7 +1353,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             _captureKeysOnlyToggle.isOn = TranslatorCore.Config.capture_keys_only;
             if (_debugLoggingToggle != null) _debugLoggingToggle.isOn = TranslatorCore.Config.debug;
             if (_debugAiToggle != null) _debugAiToggle.isOn = TranslatorCore.Config.debug_ai;
-            _aiUrlInput.Text = TranslatorCore.Config.ai_url ?? "http://localhost:11434";
+            _aiUrlInput.Text = TranslatorCore.Config.ai_url ?? Endpoints.OllamaDefault;
+            RefreshAiLocality();
             _aiApiKeyInput.Text = TranslatorCore.Config.ai_api_key ?? "";
             _googleApiKeyInput.Text = TranslatorCore.Config.google_api_key ?? "";
             _deeplApiKeyInput.Text = TranslatorCore.Config.deepl_api_key ?? "";
@@ -1507,6 +1533,26 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// unconfigure it. The toggle now writes enable_ai, so a paused setup is a complete
         /// setup that simply is not running.
         /// </summary>
+        /// <summary>
+        /// Puts the caution in step with the address being typed, or clears it.
+        ///
+        /// ⚠ An empty field says nothing. Somebody who has not typed an address has made no
+        /// decision to be cautioned about, and meeting them with a bill notice answers a question
+        /// they never asked.
+        /// </summary>
+        private void RefreshAiLocality()
+        {
+            if (_aiLocalityLabel == null) return;
+
+            string typed = _aiUrlInput?.Text;
+            string caution = string.IsNullOrEmpty(typed) || typed.Trim().Length == 0
+                ? null
+                : Endpoints.CautionFor(typed.Trim());
+
+            _aiLocalityLabel.text = caution ?? "";
+            _aiLocalityLabel.gameObject.SetActive(caution != null);
+        }
+
         private string GetSelectedBackendConfig()
         {
             string type = _backendTypeDropdown?.SelectedValue ?? UIStyles.BackendTypeLLM;

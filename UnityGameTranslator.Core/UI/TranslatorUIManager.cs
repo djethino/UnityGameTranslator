@@ -443,6 +443,17 @@ namespace UnityGameTranslator.Core.UI
             }
         }
 
+        /// <summary>
+        /// Colour of the click absorber: none. It has to be a raycast target, not a visible thing.
+        /// </summary>
+        /// <remarks>
+        /// Tint it (e.g. red at 0.2 alpha) to debug. Fifteen attempts at this bug ASSUMED the
+        /// absorber was in place at the moment a panel closed; one glance at a coloured wash
+        /// showed it was there and that the click still went past it, which is what finally
+        /// pointed at the real cause. A log line could not have shown that.
+        /// </remarks>
+        private static readonly Color AbsorberTint = new Color(0f, 0f, 0f, 0f);
+
         // A full-screen, fully transparent surface that swallows what is left of a click.
         private static GameObject _clickAbsorber;
         private static UnityEngine.UI.Image _clickAbsorberImage;
@@ -489,7 +500,7 @@ namespace UnityGameTranslator.Core.UI
                 rect.offsetMax = Vector2.zero;
 
                 _clickAbsorberImage = surface.AddComponent<UnityEngine.UI.Image>();
-                _clickAbsorberImage.color = new Color(0f, 0f, 0f, 0f);  // invisible, still a target
+                _clickAbsorberImage.color = AbsorberTint;
                 _clickAbsorberImage.raycastTarget = true;
 
                 TranslatorCore.RegisterPanelRoot(_clickAbsorber);
@@ -536,7 +547,6 @@ namespace UnityGameTranslator.Core.UI
                         var selected = es.currentSelectedGameObject;
                         if (selected == null) continue;
 
-                        TranslatorCore.LogInfo($"[Absorber] clearing selection '{selected.name}' on '{es.name}'");
                         es.SetSelectedGameObject(null);
                     }
                 }
@@ -546,6 +556,33 @@ namespace UnityGameTranslator.Core.UI
             {
                 TranslatorCore.LogWarning($"[UIManager] Could not clear the game's selection: {e.Message}");
             }
+        }
+
+        /// <summary>
+        /// How long the absorber outlives the capture. Must cover the frames the input module
+        /// takes to notice the release it could not see while input was held.
+        /// </summary>
+        private const float SecondsAbsorberOutlivesCapture = 0.1f;
+
+        private static float _absorberUntil;
+
+        /// <summary>Take the absorber down once the released click has had time to land on it.</summary>
+        /// <remarks>
+        /// A fresh press takes it down at once, whatever the countdown says. It is the only thing
+        /// this surface could cost: a click aimed at the game during the tenth of a second it
+        /// lingers would be swallowed by it. Removing it ON the press — before that press has been
+        /// read — means the click reaches the game and nothing is lost.
+        /// </remarks>
+        private static void TickAbsorber()
+        {
+            if (_absorberUntil <= 0f)
+                return;
+
+            if (Time.realtimeSinceStartup < _absorberUntil && !NewPressStarted())
+                return;
+
+            _absorberUntil = 0f;
+            SetClickAbsorber(false);
         }
 
         /// <summary>Has a mouse button gone down this frame?</summary>
@@ -620,7 +657,7 @@ namespace UnityGameTranslator.Core.UI
         /// input back. Long enough for the held click to be released onto it, short enough that
         /// nobody notices the game was not listening.
         /// </summary>
-        private const float SecondsBeforeHandover = 0.25f;
+        private const float SecondsBeforeHandover = 0.05f;
 
         private static float _closedAt;
 
@@ -4037,7 +4074,6 @@ namespace UnityGameTranslator.Core.UI
                 // assumed where the click lands and none has checked. If UGT_ClickAbsorber never
                 // shows up in these lines, it is not in the raycast at all and every version of
                 // this idea was dead on arrival.
-                UniverseLib.Input.InputCapture.DiagnoseNext(30);
                 DeselectGameObject();
             }
 
@@ -4048,6 +4084,7 @@ namespace UnityGameTranslator.Core.UI
                     _lastPanelVisibleState = true;
                     _uiHoldsInput = true;
                     _closedAt = 0f;
+                    _absorberUntil = 0f;
                     SetClickAbsorber(false);
                     // Enable cursor unlock - UniverseLib will handle the rest
                     ConfigManager.Force_Unlock_Mouse = true;
@@ -4066,9 +4103,18 @@ namespace UnityGameTranslator.Core.UI
                 // get its EventSystem back for the rest of the session.
                 else if (SecondsSinceClose() >= SecondsBeforeHandover && MouseAtRest())
                 {
-                    SetClickAbsorber(false);
+                    // ⚠ The absorber stays. Lifting the capture and removing it in the same frame
+                    // is what defeated it: while input is captured the module cannot even see the
+                    // release, so the held click was never offered to the absorber — and the frame
+                    // it finally was, the absorber had just gone, leaving the game's button as the
+                    // only thing under the cursor.
+                    //
+                    // So: hand the input back FIRST, with the absorber still covering everything.
+                    // The module processes the release, raycasts, finds our surface, and the click
+                    // dies there. The absorber is taken down a moment later, by TickAbsorber.
                     _lastPanelVisibleState = false;
                     _uiHoldsInput = false;
+                    _absorberUntil = Time.realtimeSinceStartup + SecondsAbsorberOutlivesCapture;
                     // Disable cursor unlock - UniverseLib will restore game's cursor state
                     ConfigManager.Force_Unlock_Mouse = false;
                     ConfigManager.Allow_UI_Selection_Outside_UIBase = true;
@@ -4091,6 +4137,8 @@ namespace UnityGameTranslator.Core.UI
                 if (InputManager.GetMouseButtonUp(0))
                     LogEventSystemState();
             }
+
+            TickAbsorber();
 
             // Contextual help bar: resolve the hovered control by geometric poll.
             // Only while a panel is open (nothing to hover otherwise). Event-based hover

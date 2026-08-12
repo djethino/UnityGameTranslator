@@ -47,6 +47,9 @@ namespace UnityGameTranslator.Core.UI.Panels
         // Interface section
         private Text _resetWindowsStatusLabel;
         private Toggle _disableEventSystemOverrideToggle;
+        private Toggle _captureKeyboardToggle;
+        private Toggle _captureMouseButtonsToggle;
+        private Toggle _captureMouseAxesToggle;
 
         // Tab sizing
 
@@ -211,6 +214,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             public bool check_mod_updates;
             public bool notify_prereleases;
             public bool disable_eventsystem_override;
+            public bool capture_keyboard;
+            public bool capture_mouse_buttons;
+            public bool capture_mouse_axes;
             public string proxy_mode;
             public string proxy_url;
             public string proxy_username;
@@ -262,6 +268,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                     check_mod_updates = TranslatorCore.Config.sync.check_mod_updates,
                     notify_prereleases = TranslatorCore.Config.sync.notify_prereleases,
                     disable_eventsystem_override = TranslatorCore.DisableEventSystemOverride,
+                    capture_keyboard = TranslatorCore.CaptureKeyboard,
+                    capture_mouse_buttons = TranslatorCore.CaptureMouseButtons,
+                    capture_mouse_axes = TranslatorCore.CaptureMouseAxes,
                     proxy_mode = TranslatorCore.Config.proxy_mode ?? "default",
                     proxy_url = TranslatorCore.Config.proxy_url ?? "",
                     proxy_username = TranslatorCore.Config.proxy_username ?? "",
@@ -329,6 +338,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Create tab contents
             var generalTab = _tabBar.AddTab("General");
             var hotkeysTab = _tabBar.AddTab("Hotkeys");
+            var inputTab = _tabBar.AddTab("Input");
             var translationTab = _tabBar.AddTab("Translation");
             var onlineTab = _tabBar.AddTab("Online");
 
@@ -343,6 +353,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 "Language, mod UI translation, and general behavior");
             _helpZone?.Describe(_tabBar.GetTabButton("Hotkeys"),
                 "Keyboard shortcuts for the mod's panels and tools");
+            _helpZone?.Describe(_tabBar.GetTabButton("Input"),
+                "What the mod takes from the game while one of its windows is open");
             _helpZone?.Describe(_tabBar.GetTabButton("Translation"),
                 "How untranslated texts get translated: your AI, Google or DeepL");
             _helpZone?.Describe(_tabBar.GetTabButton("Online"),
@@ -351,6 +363,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Build each tab's content
             CreateGeneralTabContent(generalTab);
             CreateHotkeysTabContent(hotkeysTab);
+            CreateInputTabContent(inputTab);
             CreateTranslationTabContent(translationTab);
             CreateOnlineTabContent(onlineTab);
 
@@ -465,17 +478,6 @@ namespace UnityGameTranslator.Core.UI.Panels
             // === ADVANCED SECTION ===
             var advancedSectionTitle = UIStyles.CreateSectionTitle(card, "AdvancedLabel", "Advanced");
             RegisterUIText(advancedSectionTitle);
-
-            // Disable EventSystem Override toggle (per-game setting stored in translations.json)
-            var eventSystemObj = UIFactory.CreateToggle(card, "DisableEventSystemToggle", out _disableEventSystemOverrideToggle, out var eventSystemLabel);
-            eventSystemLabel.text = " Disable UI input interception";
-            eventSystemLabel.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(eventSystemObj, minHeight: UIStyles.RowHeightNormal);
-            RegisterUIText(eventSystemLabel);
-            _helpZone?.Describe(eventSystemObj, "Stop the mod from intercepting UI input. Enable if the game's menus or animations stop working. Needs a game restart.");
-
-            var eventSystemHint = UIStyles.CreateHint(card, "EventSystemHint", "Enable if game's UI animations or menus don't work. Requires game restart.");
-            RegisterUIText(eventSystemHint);
 
             // Debug logging toggles — applied immediately (support: ask a user to tick these
             // to produce logs, no config.json editing needed). Config.debug drives the cached
@@ -599,6 +601,91 @@ namespace UnityGameTranslator.Core.UI.Panels
             RegisterUIText(docsBtn.ButtonText);
             _helpZone?.Describe(docsBtn.Component.gameObject,
                 "The full user guide on the website (in your language)");
+        }
+
+        /// <summary>
+        /// What the mod takes from the game while one of its windows is open.
+        /// </summary>
+        /// <remarks>
+        /// Each box is an INTENTION. Whether it can be honoured is a property of the game, not of
+        /// the wish, and only the runtime knows: one game is reached by patching its input calls,
+        /// another by taking the Input System's devices, a third by neither. So the screen asks
+        /// UniverseLib's InputCapture, per intention, and greys out what nobody can serve — with
+        /// the reason it gives, never a sentence written here. A hardcoded list of what works
+        /// would be wrong on some game and nobody would ever find out.
+        /// </remarks>
+        private void CreateInputTabContent(GameObject parent)
+        {
+            var card = CreateAdaptiveCard(parent, "InputCard", PanelWidth - 60, stretchVertically: true);
+
+            var sectionTitle = UIStyles.CreateSectionTitle(card, "CaptureLabel", "While a mod window is open");
+            RegisterUIText(sectionTitle);
+
+            var intro = UIStyles.CreateHint(card, "CaptureIntro",
+                "Stop the game from reacting behind the window. Turn one off if it interferes with this game.");
+            RegisterUIText(intro);
+
+            UIStyles.CreateSpacer(card, 5);
+
+            CreateCaptureToggle(card, "CaptureKeyboard", " Take the keyboard",
+                "Keys go to this window only. Without it, typing a translation also walks, shoots or opens the game's menus.",
+                UniverseLib.Input.InputCapture.CaptureKind.Keyboard, out _captureKeyboardToggle);
+
+            CreateCaptureToggle(card, "CaptureMouseButtons", " Take mouse clicks",
+                "Clicks go to this window only, so nothing behind it reacts to them.",
+                UniverseLib.Input.InputCapture.CaptureKind.MouseButtons, out _captureMouseButtonsToggle);
+
+            CreateCaptureToggle(card, "CaptureMouseAxes", " Take mouse movement",
+                "Stops the camera turning while you use the window. Mostly matters in first-person games.",
+                UniverseLib.Input.InputCapture.CaptureKind.MouseAxes, out _captureMouseAxesToggle);
+
+            UIStyles.CreateSpacer(card, 15);
+
+            // Moved here from General → Advanced: it belongs with the other three, being the same
+            // question asked the other way round — this one HANDS INPUT BACK to the game.
+            var advancedTitle = UIStyles.CreateSectionTitle(card, "InputAdvancedLabel", "Advanced");
+            RegisterUIText(advancedTitle);
+
+            var eventSystemObj = UIFactory.CreateToggle(card, "DisableEventSystemToggle", out _disableEventSystemOverrideToggle, out var eventSystemLabel);
+            eventSystemLabel.text = " Let the game handle its own interface input";
+            eventSystemLabel.color = UIStyles.TextSecondary;
+            UIFactory.SetLayoutElement(eventSystemObj, minHeight: UIStyles.RowHeightNormal);
+            RegisterUIText(eventSystemLabel);
+            _helpZone?.Describe(eventSystemObj, "Stop the mod from intercepting interface input. Turn on if the game's menus or animations stop working while the mod is loaded. Needs a game restart.");
+
+            var eventSystemHint = UIStyles.CreateHint(card, "EventSystemHint", "Turn on if the game's menus or animations stop working. Requires a game restart.");
+            RegisterUIText(eventSystemHint);
+        }
+
+        /// <summary>
+        /// One capture box, greyed out with the runtime's own explanation when nothing can serve it.
+        /// </summary>
+        private void CreateCaptureToggle(GameObject card, string name, string label, string help,
+            UniverseLib.Input.InputCapture.CaptureKind kind, out Toggle toggle)
+        {
+            var obj = UIFactory.CreateToggle(card, name, out toggle, out var text);
+            text.text = label;
+            UIFactory.SetLayoutElement(obj, minHeight: UIStyles.RowHeightNormal);
+            RegisterUIText(text);
+
+            bool possible = UniverseLib.Input.InputCapture.CanCapture(kind);
+            text.color = possible ? UIStyles.TextPrimary : UIStyles.TextMuted;
+            toggle.interactable = possible;
+            UIHelpers.AddToggleListener(toggle, _ => { if (!_isLoadingSettings) UpdateApplyButtonText(); });
+
+            if (possible)
+            {
+                _helpZone?.Describe(obj, help);
+                return;
+            }
+
+            // Say why, in place — a box that is simply grey reads as a bug, or as a setting the
+            // player broke themselves. The sentence comes from whichever strategy would have
+            // served this, so it names the actual obstacle on THIS game.
+            string why = UniverseLib.Input.InputCapture.WhyNot(kind);
+            var reason = UIStyles.CreateHint(card, name + "Why", why);
+            RegisterExcluded(reason);   // runtime diagnostic text, not UI chrome to translate
+            _helpZone?.Describe(obj, why);
         }
 
         private void CreateHotkeysTabContent(GameObject parent)
@@ -1390,6 +1477,9 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Advanced settings (per-game, stored in translations.json)
             _disableEventSystemOverrideToggle.isOn = TranslatorCore.DisableEventSystemOverride;
+            _captureKeyboardToggle.isOn = TranslatorCore.CaptureKeyboard;
+            _captureMouseButtonsToggle.isOn = TranslatorCore.CaptureMouseButtons;
+            _captureMouseAxesToggle.isOn = TranslatorCore.CaptureMouseAxes;
 
             // Update strict toggle based on source language
             OnSourceLanguageChanged(_sourceLanguageDropdown.SelectedValue);
@@ -1952,6 +2042,13 @@ namespace UnityGameTranslator.Core.UI.Panels
                 bool eventSystemChanged = TranslatorCore.DisableEventSystemOverride != _disableEventSystemOverrideToggle.isOn;
                 TranslatorCore.DisableEventSystemOverride = _disableEventSystemOverrideToggle.isOn;
 
+                // Input capture (per-game too). No restart needed: the capture asks these on every
+                // read, so unticking one hands that input back to the game on the next frame —
+                // which is what someone turning it off because the game misbehaves needs.
+                TranslatorCore.CaptureKeyboard = _captureKeyboardToggle.isOn;
+                TranslatorCore.CaptureMouseButtons = _captureMouseButtonsToggle.isOn;
+                TranslatorCore.CaptureMouseAxes = _captureMouseAxesToggle.isOn;
+
                 // Proxy / Network -- capture old values BEFORE overwriting to detect a change,
                 // then rebuild the shared HttpClient AFTER SaveConfig so the next request
                 // immediately uses the new proxy.
@@ -2195,6 +2292,9 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Advanced (per-game settings)
             if (_disableEventSystemOverrideToggle.isOn != _initialSnapshot.disable_eventsystem_override) count++;
+            if (_captureKeyboardToggle.isOn != _initialSnapshot.capture_keyboard) count++;
+            if (_captureMouseButtonsToggle.isOn != _initialSnapshot.capture_mouse_buttons) count++;
+            if (_captureMouseAxesToggle.isOn != _initialSnapshot.capture_mouse_axes) count++;
 
             // Proxy / Network
             if (ProxyModeDisplayToConfig(_proxyModeDropdown.SelectedValue) != _initialSnapshot.proxy_mode) count++;

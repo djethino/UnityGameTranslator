@@ -1689,12 +1689,25 @@ namespace UnityGameTranslator.Core
             Adapter?.LogInfo("[Shutdown] Cleanup complete");
         }
 
+        /// <summary>
+        /// Has anybody agreed to what this mod does to this game yet?
+        ///
+        /// Until they have, the mod may keep its own plumbing alive but must not act on the game:
+        /// no scanning, no translating, no writing the cache back. Two doors open this latch and
+        /// they write the same key, so the mod cannot tell them apart and does not need to:
+        /// the first-run wizard on Finish, and the Manager — but only once its settings answer
+        /// every question the wizard asks (GameConfigWriter, "not a preference, it is a latch").
+        ///
+        /// Deliberately NOT "is anything configured": the mod stayed quiet during the wizard only
+        /// because nothing had been set up yet, which is an accident, not a decision. Someone who
+        /// installs a community translation through the Manager arrives with fonts and images
+        /// already configured — and those would have been applied while the wizard was still
+        /// asking for permission.
+        /// </summary>
+        public static bool SetupCompleted => Config != null && Config.first_run_completed;
+
         public static void OnUpdate(float currentTime)
         {
-            // Drain queued main-thread callbacks first — async callers depend
-            // on this to deliver their results to the UI in a timely fashion.
-            UI.TranslatorUIManager.DrainMainThreadQueue();
-
             // Feed the scanner's adaptive frame-time budget on every frame.
             // The scanner uses recent frame-time variance to size its per-frame work budget.
             TranslatorScanner.RecordFrameTime();

@@ -10,6 +10,11 @@ $Version = ($props.Project.PropertyGroup | Where-Object { $_.Version }).Version
 
 Write-Host "=== UnityGameTranslator Release $Version ===" -ForegroundColor Cyan
 
+# Refuse to ship code that works on Mono and dies on IL2CPP. Cheap, and the only barrier that
+# catches it: the compiler cannot, and neither can a Mono-only test round.
+& "$PSScriptRoot/check-il2cpp-safety.ps1"
+if ($LASTEXITCODE -ne 0) { exit 1 }
+
 # Build UniverseLib first (our fork with custom changes)
 Write-Host "`nBuilding UniverseLib..." -ForegroundColor Yellow
 

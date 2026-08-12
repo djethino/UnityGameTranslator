@@ -303,25 +303,20 @@ namespace UnityGameTranslator.Core.UI
             if (_originalUIFont == null)
                 _originalUIFont = UniversalUI.DefaultFont;
 
-            CreatePanels();
-
-            _initialized = true;
-
-            // Notify listeners (e.g., TranslatorPatches to retry failed font replacements)
-            try { OnInitialized?.Invoke(); } catch { }
-
-            // Initialize UI state based on config
-            InitializeUIState();
-
-            // Single source of truth for the per-frame tick: run OnUpdate (drains the
-            // main-thread queue, feeds the scanner's adaptive frame-time budget, persists
-            // cache) and Scan (applies pending translations + scans the scene) inside a
-            // permanent coroutine. We intentionally do NOT also tick from each mod
-            // loader's Update() callback — that would double-call. The coroutine works
-            // even in games whose host suppresses our MonoBehaviour.Update (one was
-            // observed to do so) because Unity drives coroutines through a separate path
-            // hosted by UniverseLib's own runtime, which is proven to tick wherever our UI
-            // already works.
+            // Single source of truth for the per-frame tick: run OnUpdate (feeds the scanner's
+            // adaptive frame-time budget, persists cache) and Scan (applies pending translations
+            // + scans the scene) inside a permanent coroutine, plus the main-thread queue drain
+            // on every frame. We intentionally do NOT also tick from each mod loader's Update()
+            // callback — that would double-call. The coroutine works even in games whose host
+            // suppresses our MonoBehaviour.Update (one was observed to do so) because Unity
+            // drives coroutines through a separate path hosted by UniverseLib's own runtime,
+            // which is proven to tick wherever our UI already works.
+            //
+            // ⚠ STARTED BEFORE THE PANELS, and that ordering is load-bearing. Translating a game
+            // needs no window: when a panel constructor threw, CreatePanels() aborted and took
+            // the tick down with it, so a cosmetic bug became a mod that translated nothing.
+            // The tick asks TranslatorCore.SetupCompleted before touching the game, so starting
+            // it early grants nothing the player has not agreed to.
             try
             {
                 RuntimeHelper.StartCoroutine(MainTickLoop());
@@ -331,6 +326,16 @@ namespace UnityGameTranslator.Core.UI
             {
                 TranslatorCore.LogError($"[UIManager] Failed to start main tick coroutine: {e.GetType().Name}: {e.Message}");
             }
+
+            CreatePanels();
+
+            _initialized = true;
+
+            // Notify listeners (e.g., TranslatorPatches to retry failed font replacements)
+            try { OnInitialized?.Invoke(); } catch { }
+
+            // Initialize UI state based on config
+            InitializeUIState();
         }
 
         private static IEnumerator MainTickLoop()
@@ -339,11 +344,23 @@ namespace UnityGameTranslator.Core.UI
             {
                 // Catch around each iteration so a transient failure (e.g. a scene with
                 // unexpected components) does not silently terminate the loop — Unity
-                // stops a coroutine the first time an exception escapes.
+                // stops a coroutine the first time an exception escapes. It logs: this is a
+                // process boundary, not a way of not knowing.
                 try
                 {
-                    TranslatorCore.OnUpdate(Time.realtimeSinceStartup);
-                    TranslatorScanner.Scan();
+                    // ALWAYS, gate or no gate: this is the plumbing that carries async results
+                    // back to the main thread, and the wizard itself runs on it (its connection
+                    // test and model list are RunOnMainThread callbacks). Freezing it would
+                    // freeze the very screen that grants permission.
+                    DrainMainThreadQueue();
+
+                    // Everything below TOUCHES THE GAME — reads its scene, rewrites its text,
+                    // writes the cache to disk. None of it may happen before someone said yes.
+                    if (TranslatorCore.SetupCompleted)
+                    {
+                        TranslatorCore.OnUpdate(Time.realtimeSinceStartup);
+                        TranslatorScanner.Scan();
+                    }
                 }
                 catch (Exception e)
                 {
@@ -719,7 +736,17 @@ namespace UnityGameTranslator.Core.UI
             }
         }
 
-        private static async void TriggerStartupTasks()
+        /// <summary>
+        /// Everything the mod goes and does on the network once it is allowed to: mod update
+        /// check, edit session left open by a previous run, sync watch and notifications.
+        ///
+        /// Two callers, and they are the two sides of the same latch — InitializeUIState when the
+        /// setup was already done, and WizardPanel.FinishWizard the moment it has just been done.
+        /// Without the second one, somebody who turns online mode on in the wizard gets no sync
+        /// and no update notice until the next time they launch the game, for no reason they
+        /// could ever guess.
+        /// </summary>
+        internal static async void TriggerStartupTasks()
         {
             try
             {

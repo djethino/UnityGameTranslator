@@ -1425,6 +1425,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             TranslatorCore.Config.google_api_key = !string.IsNullOrEmpty(_googleApiKey) ? _googleApiKey : null;
             TranslatorCore.Config.deepl_api_key = !string.IsNullOrEmpty(_deeplApiKey) ? _deeplApiKey : null;
             TranslatorCore.Config.deepl_use_free = _deeplUseFree;
+            // Opens the latch the whole mod waits on (TranslatorCore.SetupCompleted): until this
+            // line the tick loop has been running but deliberately not touching the game — no
+            // scanning, no translating, no cache written. Saved BEFORE anything is started, so a
+            // crash in between cannot leave the mod acting on a game it was never allowed to.
             TranslatorCore.Config.first_run_completed = true;
             TranslatorCore.SaveConfig();
 
@@ -1433,6 +1437,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 TranslatorCore.EnsureWorkerRunning();
             }
+
+            // What the startup would have done had the setup already been complete. The wizard is
+            // the trigger, not a timer: the answers exist now, so the work happens now.
+            TranslatorUIManager.TriggerStartupTasks();
 
             SetActive(false);
             TranslatorUIManager.ShowMain();

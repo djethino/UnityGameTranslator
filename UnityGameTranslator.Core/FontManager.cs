@@ -1790,7 +1790,7 @@ namespace UnityGameTranslator.Core
         private static float GetDesignScaleBaseline(FontSettings settings, string fontName)
         {
             if (settings != null && settings.scale_auto && settings.enabled
-                && (TranslatorCore.Config == null || TranslatorCore.Config.enable_font_replacement)
+                && TranslatorCore.FontReplacementActive
                 && !string.IsNullOrEmpty(settings.fallback)
                 && _designScaleCache.TryGetValue(fontName, out float ds) && ds > 1.001f)
                 return ds;
@@ -2544,7 +2544,7 @@ namespace UnityGameTranslator.Core
             if (component == null || string.IsNullOrEmpty(originalFontName)) return;
 
             // Debug toggle: skip font replacement entirely (original fonts stay).
-            if (TranslatorCore.Config != null && !TranslatorCore.Config.enable_font_replacement)
+            if (!TranslatorCore.FontReplacementActive)
                 return;
 
             // Phase B: cache the ORIGINAL font's design-scale (= faceInfo.scale) — the value that
@@ -2860,7 +2860,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static bool HasActiveReplacements =>
             _fallbackAssets.Count > 0 &&
-            TranslatorCore.Config != null && TranslatorCore.Config.enable_font_replacement &&
+            TranslatorCore.FontReplacementActive &&
             !TypeHelper.UseAlternateTMP;
 
         /// <summary>
@@ -2998,7 +2998,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static void ApplyUnityClonesToScene()
         {
-            if (TranslatorCore.Config == null || !TranslatorCore.Config.enable_font_replacement) return;
+            if (!TranslatorCore.FontReplacementActive) return;
             if (_unityFallbackFonts.Count == 0) return;   // no clone built yet — nothing to spread
             if (TypeHelper.UI_TextType == null) return;
 
@@ -3350,7 +3350,7 @@ namespace UnityGameTranslator.Core
             // Without this check, TMProOld patches would modify the game font's
             // fallbackFontAssetTable regardless of the flag, making the Hollow Knight
             // startup case not respect enable_font_replacement.
-            if (TranslatorCore.Config != null && !TranslatorCore.Config.enable_font_replacement)
+            if (!TranslatorCore.FontReplacementActive)
                 return;
 
             // Fast path: already applied
@@ -3777,7 +3777,7 @@ namespace UnityGameTranslator.Core
                 return null;
 
             // Debug toggle: skip replacement (original font stays).
-            if (TranslatorCore.Config != null && !TranslatorCore.Config.enable_font_replacement)
+            if (!TranslatorCore.FontReplacementActive)
                 return null;
 
             // Check if fallback is configured for this font
@@ -3988,7 +3988,7 @@ namespace UnityGameTranslator.Core
                 return null;
 
             // Debug toggle: skip replacement (original font stays).
-            if (TranslatorCore.Config != null && !TranslatorCore.Config.enable_font_replacement)
+            if (!TranslatorCore.FontReplacementActive)
                 return null;
 
             // Check if fallback is configured for this font

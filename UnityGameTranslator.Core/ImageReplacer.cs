@@ -672,7 +672,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static Sprite GetReplacement(string spriteName)
         {
-            if (TranslatorCore.Config != null && !TranslatorCore.Config.enable_image_replacement) return null;
+            if (!TranslatorCore.ImageReplacementActive) return null;
             if (string.IsNullOrEmpty(spriteName)) return null;
             if (_loadedSprites.TryGetValue(spriteName, out var sprite))
                 return sprite;

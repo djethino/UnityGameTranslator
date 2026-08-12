@@ -619,7 +619,7 @@ namespace UnityGameTranslator.Core.UI
         public static void RefreshOwnUITranslation()
         {
             if (UiBase?.RootObject == null) return;
-            if (!TranslatorCore.ShouldTranslateOwnUI || !TranslatorCore.Config.enable_translations) return;
+            if (!TranslatorCore.ShouldTranslateOwnUI || !TranslatorCore.TranslationsActive) return;
 
             int count = 0;
             RetriggerOwnUIText(UiBase.RootObject.transform, ref count);

@@ -1706,6 +1706,30 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static bool SetupCompleted => Config != null && Config.first_run_completed;
 
+        /// <summary>
+        /// The three ways this mod alters a game, each behind its own switch AND behind the latch.
+        /// Read these — never <c>Config.enable_*</c> — anywhere the answer decides whether the game
+        /// is touched. The raw flags stay for the screens that show and set them.
+        ///
+        /// ⚠ The latch is not redundant with the switches: all three default to TRUE while
+        /// first_run_completed defaults to false. What kept the mod quiet during the wizard was
+        /// never a decision, only the fact that a fresh install has an empty cache and no backend —
+        /// and that stops being true the moment a translation is installed alongside the mod
+        /// (the Manager's ordinary job) or the config alone goes missing. Observed: a game whose
+        /// config.json was renamed still showed 62 translations from its cache and had its font
+        /// swapped, with the wizard on screen asking for permission.
+        /// </summary>
+        public static bool TranslationsActive
+            => SetupCompleted && Config.enable_translations;
+
+        /// <inheritdoc cref="TranslationsActive"/>
+        public static bool FontReplacementActive
+            => SetupCompleted && Config.enable_font_replacement;
+
+        /// <inheritdoc cref="TranslationsActive"/>
+        public static bool ImageReplacementActive
+            => SetupCompleted && Config.enable_image_replacement;
+
         public static void OnUpdate(float currentTime)
         {
             // Feed the scanner's adaptive frame-time budget on every frame.
@@ -5162,8 +5186,8 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static string TranslateText(string text)
         {
-            // Check if translations are disabled
-            if (!Config.enable_translations)
+            // Switched off, or nobody has agreed to any of this yet
+            if (!TranslationsActive)
                 return text;
 
             if (string.IsNullOrEmpty(text))
@@ -5385,14 +5409,18 @@ namespace UnityGameTranslator.Core
 
         public static string TranslateTextWithTracking(string text, object component, bool isOwnUI = false, bool skipTypewriting = false, bool skipQueueing = false)
         {
-            // Check if translations are disabled
-            if (!Config.enable_translations)
+            // Switched off, or nobody has agreed to any of this yet. This is THE bottleneck every
+            // translation path goes through — the Harmony patches included, which is what made a
+            // cache full of translations show up on screen while the wizard was still open.
+            if (!TranslationsActive)
             {
                 // Debug: log first time to confirm this check works
                 if (_enableTranslationsLogOnce)
                 {
                     _enableTranslationsLogOnce = false;
-                    LogInfo($"[TranslatorCore] enable_translations=false, skipping translation");
+                    LogInfo(SetupCompleted
+                        ? "[TranslatorCore] enable_translations=false, skipping translation"
+                        : "[TranslatorCore] setup not completed yet, skipping translation until the wizard is done");
                 }
                 return text;
             }

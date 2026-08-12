@@ -1464,7 +1464,7 @@ namespace UnityGameTranslator.Core
             int refreshed = 0;
             int restored = 0;
 
-            bool globalRestore = !TranslatorCore.Config.enable_translations;
+            bool globalRestore = !TranslatorCore.TranslationsActive;
 
             var processedIds = new HashSet<int>();
 
@@ -2029,7 +2029,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static bool ShouldSkipScanning()
         {
-            if (!TranslatorCore.Config.enable_translations)
+            if (!TranslatorCore.TranslationsActive)
                 return true;
 
             if (TranslatorCore.TranslationCache.Count > 0)

@@ -1438,6 +1438,13 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TranslatorCore.EnsureWorkerRunning();
             }
 
+            // Everything on screen right now was met while the latch was shut, so nothing was
+            // applied to it. Re-submit it all — the same pipeline the Enable Translations toggle
+            // and OptionsPanel.ApplySettings use, for the same reason: text the game will never
+            // re-write on its own would otherwise stay untranslated until it next changes.
+            TranslatorCore.ClearProcessingCaches();
+            TranslatorScanner.ForceRefreshAllText(reapplyAllScales: true);
+
             // What the startup would have done had the setup already been complete. The wizard is
             // the trigger, not a timer: the answers exist now, so the work happens now.
             TranslatorUIManager.TriggerStartupTasks();

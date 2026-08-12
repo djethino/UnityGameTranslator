@@ -700,7 +700,7 @@ namespace UnityGameTranslator.Core
         public static void GenericText_SetText_Prefix(object __instance, ref string value)
         {
             if (string.IsNullOrEmpty(value)) return;
-            if (!TranslatorCore.Config.enable_translations) return;
+            if (!TranslatorCore.TranslationsActive) return;
             if (SkipOffMainThread(__instance)) return;
             try
             {
@@ -761,7 +761,7 @@ namespace UnityGameTranslator.Core
         public static void GenericText_GetText_Postfix(object __instance, ref string __result)
         {
             if (string.IsNullOrEmpty(__result)) return;
-            if (!TranslatorCore.Config.enable_translations) return;
+            if (!TranslatorCore.TranslationsActive) return;
             if (SkipOffMainThread(__instance)) return;
             try
             {
@@ -2211,7 +2211,7 @@ namespace UnityGameTranslator.Core
                 return;
 
             // Check global translation state
-            if (!TranslatorCore.Config.enable_translations)
+            if (!TranslatorCore.TranslationsActive)
                 return;
 
             if (string.IsNullOrEmpty(__result))
@@ -2292,7 +2292,7 @@ namespace UnityGameTranslator.Core
             {
                 // Skip during shutdown or if not initialized
                 if (TranslatorCore.Adapter == null || TranslatorCore.Config == null) return;
-                if (!TranslatorCore.Config.enable_translations) return;
+                if (!TranslatorCore.TranslationsActive) return;
 
 
                 // Fast exit: only process types we know are text components
@@ -2940,7 +2940,7 @@ namespace UnityGameTranslator.Core
             if (BypassTextPrefix) return;
 
             // Early exit: translations globally disabled → zero overhead
-            if (!TranslatorCore.Config.enable_translations) return;
+            if (!TranslatorCore.TranslationsActive) return;
 
             bool profiling = TranslatorCore.DebugMode;
             long t0 = 0, t1 = 0, t2 = 0, t3 = 0, t4 = 0, t5 = 0;
@@ -3463,7 +3463,7 @@ namespace UnityGameTranslator.Core
 
             try
             {
-                if (TranslatorCore.Config == null || !TranslatorCore.Config.enable_font_replacement) return;
+                if (!TranslatorCore.FontReplacementActive) return;
                 if (TypeHelper.UseAlternateTMP) return; // TMProOld uses the fallback-list path
                 FontManager.OnGameAssignedFont(__instance);
             }
@@ -4191,7 +4191,7 @@ namespace UnityGameTranslator.Core
         public static void AlternateTMP_SetText_Prefix(object __instance, ref string __0)
         {
             if (string.IsNullOrEmpty(__0)) return;
-            if (!TranslatorCore.Config.enable_translations) return;
+            if (!TranslatorCore.TranslationsActive) return;
             try
             {
                 // Skip if this is a text re-set for glyph regeneration (avoid re-translation)
@@ -4321,7 +4321,7 @@ namespace UnityGameTranslator.Core
         public static void Tk2dTextMesh_SetText_Prefix(object __instance, ref string value)
         {
             if (string.IsNullOrEmpty(value)) return;
-            if (!TranslatorCore.Config.enable_translations) return;
+            if (!TranslatorCore.TranslationsActive) return;
             try
             {
                 // tk2dTextMesh inherits from MonoBehaviour, so cast to Component for hierarchy checks
@@ -4355,7 +4355,7 @@ namespace UnityGameTranslator.Core
         public static void Tk2dTextMesh_GetText_Postfix(object __instance, ref string __result)
         {
             if (string.IsNullOrEmpty(__result)) return;
-            if (!TranslatorCore.Config.enable_translations) return;
+            if (!TranslatorCore.TranslationsActive) return;
             try
             {
                 var component = __instance as Component;

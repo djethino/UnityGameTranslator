@@ -355,7 +355,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Create tab contents
             var generalTab = _tabBar.AddTab("General");
             var hotkeysTab = _tabBar.AddTab("Hotkeys");
-            var inputTab = _tabBar.AddTab("Input");
+            var adaptationTab = _tabBar.AddTab("Adaptation");
             var translationTab = _tabBar.AddTab("Translation");
             var onlineTab = _tabBar.AddTab("Online");
 
@@ -370,8 +370,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 "Language, mod UI translation, and general behavior");
             _helpZone?.Describe(_tabBar.GetTabButton("Hotkeys"),
                 "Keyboard shortcuts for the mod's panels and tools");
-            _helpZone?.Describe(_tabBar.GetTabButton("Input"),
-                "What the mod takes from the game while one of its windows is open");
+            _helpZone?.Describe(_tabBar.GetTabButton("Adaptation"),
+                "How the mod behaves alongside the game — set it for this game, and for whether you are playing or translating");
             _helpZone?.Describe(_tabBar.GetTabButton("Translation"),
                 "How untranslated texts get translated: your AI, Google or DeepL");
             _helpZone?.Describe(_tabBar.GetTabButton("Online"),
@@ -380,7 +380,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Build each tab's content
             CreateGeneralTabContent(generalTab);
             CreateHotkeysTabContent(hotkeysTab);
-            CreateInputTabContent(inputTab);
+            CreateAdaptationTabContent(adaptationTab);
             CreateTranslationTabContent(translationTab);
             CreateOnlineTabContent(onlineTab);
 
@@ -649,7 +649,22 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// the reason it gives, never a sentence written here. A hardcoded list of what works
         /// would be wrong on some game and nobody would ever find out.
         /// </remarks>
-        private void CreateInputTabContent(GameObject parent)
+        /// <summary>
+        /// How the mod conducts itself next to the game.
+        /// </summary>
+        /// <remarks>
+        /// Was called "Input", which had stopped describing it: freezing the game touches its
+        /// clock, not its input, and taking its EventSystem decides whether its interface answers
+        /// at all. It also sat next to "Hotkeys", so anyone after a keyboard setting had two
+        /// plausible tabs and no way to choose.
+        ///
+        /// ⚠ "Compatibility" was the near miss, and worth recording as one: it reads as REPAIRING
+        /// a game that misbehaves, while these are as often a deliberate choice — checking
+        /// something now and then while playing does not call for the same behaviour as a long
+        /// translating session, on a game where nothing is broken either way. Adaptation covers
+        /// both; compatibility only covers the half where something is wrong.
+        /// </remarks>
+        private void CreateAdaptationTabContent(GameObject parent)
         {
             var card = CreateAdaptiveCard(parent, "InputCard", PanelWidth - 60, stretchVertically: true);
 

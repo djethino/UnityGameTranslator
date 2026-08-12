@@ -582,6 +582,24 @@ namespace UnityGameTranslator.Core.UI.Panels
             var interfaceSectionTitle = UIStyles.CreateSectionTitle(card, "InterfaceLabel", "Interface");
             RegisterUIText(interfaceSectionTitle);
 
+            // ── Window opacity ───────────────────────────────────────────────────────────────
+            // Here, and not with the input options where it started: what it governs is the mod's
+            // own windows — same subject as the reset below — and this is the tab it gets looked
+            // for in. Its origin was that the title bar signals focus and this makes that signal
+            // felt rather than read, but that is where it came FROM, not what it is ABOUT.
+            var opacityTitle = UIStyles.CreateSectionTitle(card, "OpacityLabel", "Window opacity");
+            RegisterUIText(opacityTitle);
+
+            CreateOpacitySlider(card, "OpacityFocused", "Focused:",
+                "How solid the window you are working in is. Lower it to see the game through the one you are using.",
+                TranslatorCore.PanelOpacityFocused, out _opacityFocusedSlider, out _opacityFocusedValue);
+
+            CreateOpacitySlider(card, "OpacityUnfocused", "Others:",
+                "How solid the other windows are. Slightly faded by default, so a second window can stay open without hiding the game.",
+                TranslatorCore.PanelOpacityUnfocused, out _opacityUnfocusedSlider, out _opacityUnfocusedValue);
+
+            UIStyles.CreateSpacer(card, 10);
+
             var resetRow = UIStyles.CreateFormRow(card, "ResetRow", UIStyles.RowHeightNormal, 5);
 
             var resetBtn = CreateSecondaryButton(resetRow, "ResetWindowsBtn", "Reset Window Positions", 160);
@@ -696,23 +714,6 @@ namespace UnityGameTranslator.Core.UI.Panels
             var mouseHint = UIStyles.CreateHint(card, "MouseCaptureHint",
                 "To hold the view still while the game's own menus keep working: take mouse movement, and leave the two above off.");
             RegisterUIText(mouseHint);
-
-            UIStyles.CreateSpacer(card, 15);
-
-            // ── Window opacity ───────────────────────────────────────────────────────────────
-            // The title bar already says which window has the keyboard; this is the same signal
-            // felt rather than read, and it earns its keep on its own: a faded window is one you
-            // can keep open and still read the game through.
-            var opacityTitle = UIStyles.CreateSectionTitle(card, "OpacityLabel", "Window opacity");
-            RegisterUIText(opacityTitle);
-
-            CreateOpacitySlider(card, "OpacityFocused", "Focused:",
-                "How solid the window you are working in is. Lower it to see the game through the one you are using.",
-                TranslatorCore.PanelOpacityFocused, out _opacityFocusedSlider, out _opacityFocusedValue);
-
-            CreateOpacitySlider(card, "OpacityUnfocused", "Others:",
-                "How solid the other windows are. Slightly faded by default, so a second window can stay open without hiding the game.",
-                TranslatorCore.PanelOpacityUnfocused, out _opacityUnfocusedSlider, out _opacityUnfocusedValue);
 
             UIStyles.CreateSpacer(card, 15);
 

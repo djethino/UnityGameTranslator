@@ -1681,6 +1681,11 @@ namespace UnityGameTranslator.Core
             ShuttingDown = true;
             Adapter?.LogInfo("[Shutdown] Starting cleanup...");
 
+            // Hand back any Input System device we took. A game left with its keyboard disabled is
+            // unplayable, and nothing else would ever put that right — first, before anything that
+            // could fail and skip it.
+            try { UniverseLib.Input.InputCapture.ReleaseDevices(); } catch { }
+
             // Stop SSE streams (background tasks with HTTP connections)
             try { TranslatorUIManager.StopSyncWatch(); } catch { }
             try { TranslatorUIManager.StopMergeCompletionListener(); } catch { }

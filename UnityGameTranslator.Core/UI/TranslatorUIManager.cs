@@ -1223,10 +1223,16 @@ namespace UnityGameTranslator.Core.UI
         // state, or the public check for someone with no account
         private static bool _publicWatchActive;
 
-        // The validator the public check handed back, and the translation it describes. Kept as
-        // a pair: an ETag is only an answer about the file it came from.
+        // The validator the public check handed back, and what it is an answer ABOUT: a
+        // translation id ON a server. An ETag means nothing away from either.
+        //
+        // ⚠ The server half is not paranoia — ids are per-instance, so the same number exists on
+        // a self-hosted site and on ours. Kept on a switch, it would draw a 304 from the wrong
+        // server and freeze the hash, the vote count and the author's name on values belonging to
+        // someone else's translation, silently and for the whole session.
         private static string _publicCheckETag;
         private static int? _publicCheckETagSiteId;
+        private static string _publicCheckETagBase;
 
         /// <summary>
         /// Ask the site about the translation, the way the player chose to.
@@ -1338,9 +1344,13 @@ namespace UnityGameTranslator.Core.UI
             {
                 string localHash = TranslatorCore.ComputeContentHash();
 
-                // Paired with the translation it came from: a validator kept across a fork or a
-                // fresh download would have the server answer "unchanged" about another file.
-                string knownETag = _publicCheckETagSiteId == siteId ? _publicCheckETag : null;
+                // Paired with the translation AND the server it came from: a validator kept across
+                // a fork, a fresh download or a change of instance would have a server answer
+                // "unchanged" about a file that is not the one we hold.
+                string apiBase = TranslatorCore.Config?.api_base_url ?? "";
+                string knownETag = _publicCheckETagSiteId == siteId && _publicCheckETagBase == apiBase
+                    ? _publicCheckETag
+                    : null;
 
                 var result = await ApiClient.CheckPublicUpdate(siteId, localHash, knownETag);
 
@@ -1360,6 +1370,7 @@ namespace UnityGameTranslator.Core.UI
 
                     _publicCheckETag = etag;
                     _publicCheckETagSiteId = siteId;
+                    _publicCheckETagBase = apiBase;
 
                     var state = TranslatorCore.ServerState ?? new ServerTranslationState();
                     state.Checked = true;

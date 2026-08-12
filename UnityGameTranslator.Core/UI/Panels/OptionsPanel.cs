@@ -778,7 +778,10 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Follows what is being typed, not what was last applied: somebody pasting a provider's
             // address has to read this before they press Apply, not after.
-            _aiUrlInput.Component.onValueChanged.AddListener(_ => RefreshAiLocality());
+            // ⚠ Through InputFieldRef's C# event, NEVER Component.onValueChanged.AddListener: under
+            // IL2CPP that UnityEvent takes an Il2Cpp proxy delegate and throws MissingMethodException,
+            // which kills panel construction and with it the whole mod UI.
+            _aiUrlInput.OnValueChanged += _ => RefreshAiLocality();
 
             // API Key row
             var keyRow = UIStyles.CreateFormRow(_llmSection, "KeyRow", UIStyles.InputHeight, 5);

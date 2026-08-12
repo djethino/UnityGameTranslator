@@ -208,6 +208,18 @@ namespace UnityGameTranslator.Core
         /// <inheritdoc cref="CaptureKeyboard"/>
         public static bool CaptureMouseAxes { get; set; } = true;
 
+        /// <summary>
+        /// Freeze the game while a mod panel is open. Stored as _settings.pause_game.
+        /// </summary>
+        /// <remarks>
+        /// ⚠ OFF by default, unlike the captures, and for a reason that is not timidity: the
+        /// effect depends entirely on the game. Some overwrite their own time scale and ignore it
+        /// completely; some cope badly with being frozen. And it must never be used in a
+        /// multiplayer game — the game's server does not stop.
+        /// See analyse/pause-the-game-feasibility.md.
+        /// </remarks>
+        public static bool PauseGame { get; set; } = false;
+
         /// <summary>Detect typewriting effects (text appearing letter by letter). Stored in translations.json.</summary>
         public static bool TypewritingDetection { get; set; } = true;
         /// <summary>Detect procedural text building (tooltips, item descriptions). Stored in translations.json.</summary>
@@ -693,6 +705,8 @@ namespace UnityGameTranslator.Core
                 settingsObj["capture_mouse_buttons"] = false;
             if (!CaptureMouseAxes)
                 settingsObj["capture_mouse_axes"] = false;
+            if (PauseGame)
+                settingsObj["pause_game"] = true;
             if (!TypewritingDetection)
                 settingsObj["typewriting_detection"] = false;
             if (!ConcatDetection)
@@ -794,6 +808,7 @@ namespace UnityGameTranslator.Core
             CaptureKeyboard = settingsObj?["capture_keyboard"]?.Value<bool>() ?? true;
             CaptureMouseButtons = settingsObj?["capture_mouse_buttons"]?.Value<bool>() ?? true;
             CaptureMouseAxes = settingsObj?["capture_mouse_axes"]?.Value<bool>() ?? true;
+            PauseGame = settingsObj?["pause_game"]?.Value<bool>() ?? false;
             TypewritingDetection = settingsObj?["typewriting_detection"]?.Value<bool>() ?? true;
             ConcatDetection = settingsObj?["concat_detection"]?.Value<bool>() ?? true;
             TranslationUIFont = settingsObj?["ui_font"]?.Value<string>();
@@ -1685,6 +1700,8 @@ namespace UnityGameTranslator.Core
             // unplayable, and nothing else would ever put that right — first, before anything that
             // could fail and skip it.
             try { UniverseLib.Input.InputCapture.ReleaseAll(); } catch { }
+            // A game left frozen would be unplayable, and nothing else would put it right.
+            try { GamePause.Release(); } catch { }
 
             // Stop SSE streams (background tasks with HTTP connections)
             try { TranslatorUIManager.StopSyncWatch(); } catch { }

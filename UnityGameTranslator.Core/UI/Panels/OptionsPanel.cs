@@ -50,6 +50,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private Toggle _captureKeyboardToggle;
         private Toggle _captureMouseButtonsToggle;
         private Toggle _captureMouseAxesToggle;
+        private Toggle _pauseGameToggle;
 
         // Tab sizing
 
@@ -217,6 +218,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             public bool capture_keyboard;
             public bool capture_mouse_buttons;
             public bool capture_mouse_axes;
+            public bool pause_game;
             public string proxy_mode;
             public string proxy_url;
             public string proxy_username;
@@ -271,6 +273,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     capture_keyboard = TranslatorCore.CaptureKeyboard,
                     capture_mouse_buttons = TranslatorCore.CaptureMouseButtons,
                     capture_mouse_axes = TranslatorCore.CaptureMouseAxes,
+                    pause_game = TranslatorCore.PauseGame,
                     proxy_mode = TranslatorCore.Config.proxy_mode ?? "default",
                     proxy_url = TranslatorCore.Config.proxy_url ?? "",
                     proxy_username = TranslatorCore.Config.proxy_username ?? "",
@@ -638,6 +641,52 @@ namespace UnityGameTranslator.Core.UI.Panels
             CreateCaptureToggle(card, "CaptureMouseAxes", " Take mouse movement",
                 "Stops the camera turning while you use the window. Mostly matters in first-person games.",
                 UniverseLib.Input.InputCapture.CaptureKind.MouseAxes, out _captureMouseAxesToggle);
+
+            UIStyles.CreateSpacer(card, 15);
+
+            // ── Freezing the game ────────────────────────────────────────────────────────────
+            // Not a capture: the others stop the game RECEIVING, this stops it ADVANCING. Its own
+            // section, off by default, and three separate lines — what it does, why it is off, and
+            // what is dangerous. The last must not dissolve into the second: it is the only one
+            // that can cost somebody their account.
+            var pauseTitle = UIStyles.CreateSectionTitle(card, "PauseLabel", "Freezing the game");
+            RegisterUIText(pauseTitle);
+
+            var pauseObj = UIFactory.CreateToggle(card, "PauseGameToggle", out _pauseGameToggle, out var pauseLabel);
+            pauseLabel.text = " Freeze the game while this window is open";
+            UIFactory.SetLayoutElement(pauseObj, minHeight: UIStyles.RowHeightNormal);
+            RegisterUIText(pauseLabel);
+
+            string antiCheat = GamePause.AntiCheat;
+            bool pausePossible = string.IsNullOrEmpty(antiCheat);
+            pauseLabel.color = pausePossible ? UIStyles.TextPrimary : UIStyles.TextMuted;
+            _pauseGameToggle.interactable = pausePossible;
+            UIHelpers.AddToggleListener(_pauseGameToggle, _ => { if (!_isLoadingSettings) UpdateApplyButtonText(); });
+
+            if (pausePossible)
+            {
+                _helpZone?.Describe(pauseObj,
+                    "The game stops on the current frame; hovering and picking still work.");
+
+                var pauseWhy = UIStyles.CreateHint(card, "PauseWhy",
+                    "Off by default: what it does depends on the game. Some ignore it entirely, others cope badly with being frozen. Try it — nothing is changed permanently.");
+                RegisterUIText(pauseWhy);
+
+                // ⚠ Never "online" for the GAME: the mod has its own Online mode and a player
+                // would read this as a rule about that. "Multiplayer" and "the game's server"
+                // can only mean the game.
+                var pauseDanger = UIStyles.CreateHint(card, "PauseDanger",
+                    "Do not use this in a multiplayer game. The game's server does not stop: your character stays exposed and your session can desynchronise. Some anti-cheat systems also treat this as cheating.");
+                pauseDanger.color = UIStyles.StatusWarning;
+                RegisterUIText(pauseDanger);
+            }
+            else
+            {
+                string why = $"Unavailable: this game is protected by {antiCheat}, which can treat freezing it as cheating.";
+                var pauseBlocked = UIStyles.CreateHint(card, "PauseBlocked", why);
+                RegisterExcluded(pauseBlocked);   // runtime diagnostic, not UI chrome
+                _helpZone?.Describe(pauseObj, why);
+            }
 
             UIStyles.CreateSpacer(card, 15);
 
@@ -1480,6 +1529,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _captureKeyboardToggle.isOn = TranslatorCore.CaptureKeyboard;
             _captureMouseButtonsToggle.isOn = TranslatorCore.CaptureMouseButtons;
             _captureMouseAxesToggle.isOn = TranslatorCore.CaptureMouseAxes;
+            _pauseGameToggle.isOn = TranslatorCore.PauseGame;
 
             // Update strict toggle based on source language
             OnSourceLanguageChanged(_sourceLanguageDropdown.SelectedValue);
@@ -2048,6 +2098,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TranslatorCore.CaptureKeyboard = _captureKeyboardToggle.isOn;
                 TranslatorCore.CaptureMouseButtons = _captureMouseButtonsToggle.isOn;
                 TranslatorCore.CaptureMouseAxes = _captureMouseAxesToggle.isOn;
+                TranslatorCore.PauseGame = _pauseGameToggle.isOn;
 
                 // Proxy / Network -- capture old values BEFORE overwriting to detect a change,
                 // then rebuild the shared HttpClient AFTER SaveConfig so the next request
@@ -2295,6 +2346,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_captureKeyboardToggle.isOn != _initialSnapshot.capture_keyboard) count++;
             if (_captureMouseButtonsToggle.isOn != _initialSnapshot.capture_mouse_buttons) count++;
             if (_captureMouseAxesToggle.isOn != _initialSnapshot.capture_mouse_axes) count++;
+            if (_pauseGameToggle.isOn != _initialSnapshot.pause_game) count++;
 
             // Proxy / Network
             if (ProxyModeDisplayToConfig(_proxyModeDropdown.SelectedValue) != _initialSnapshot.proxy_mode) count++;

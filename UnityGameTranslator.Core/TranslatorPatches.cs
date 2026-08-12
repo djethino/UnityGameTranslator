@@ -2107,7 +2107,8 @@ namespace UnityGameTranslator.Core
 
         private static System.Collections.IEnumerator DelayedFontScanCoroutine(float delaySeconds)
         {
-            yield return new WaitForSeconds(delaySeconds);
+            // Realtime: a font scan must not be held hostage by a paused game.
+            yield return new WaitForSecondsRealtime(delaySeconds);
             ScanAndApplyFontReplacements();
         }
 

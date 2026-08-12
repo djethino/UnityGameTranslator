@@ -220,7 +220,10 @@ namespace UnityGameTranslator.Core.UI
 
         private static IEnumerator RunDelayedCoroutine(float seconds, Action action)
         {
-            yield return new WaitForSeconds(seconds);
+            // ⚠ Realtime, not scaled: WaitForSeconds stops dead at timeScale 0, so every deferred
+            // action of ours would freeze along with the game the moment the pause option is used.
+            // Nothing here is game time — these are UI delays.
+            yield return new WaitForSecondsRealtime(seconds);
             try
             {
                 action();
@@ -4197,6 +4200,13 @@ namespace UnityGameTranslator.Core.UI
                 if (InputManager.GetMouseButtonUp(0))
                     LogEventSystemState();
             }
+
+            // Freeze the game while our panels hold it — same state as everything else, so the
+            // pause follows the interface instead of keeping a notion of its own.
+            if (_uiHoldsInput && TranslatorCore.PauseGame && string.IsNullOrEmpty(GamePause.AntiCheat))
+                GamePause.Engage();
+            else if (GamePause.Active)
+                GamePause.Release();
 
             TickAbsorber();
 

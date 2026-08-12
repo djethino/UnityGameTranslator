@@ -793,7 +793,8 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private System.Collections.IEnumerator DelayedShowComplete()
         {
-            yield return new WaitForSeconds(1.5f);
+            // Realtime: this is a wizard step, not game time.
+            yield return new WaitForSecondsRealtime(1.5f);
             ShowStep(WizardStep.Complete);
         }
 

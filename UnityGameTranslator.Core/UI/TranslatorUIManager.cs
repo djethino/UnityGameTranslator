@@ -312,6 +312,13 @@ namespace UnityGameTranslator.Core.UI
             // keep in sync — the bug that a cached "are we open?" flag always ends up producing.
             UniverseLib.Input.InputCapture.ShouldCapture = ShouldCaptureInput;
 
+            // A click that closes a panel must not also reach the game behind it. Two frames for
+            // the panel to go away, six before the game gets its input back — about 30 ms and
+            // 100 ms, neither of which anybody can feel, and both well clear of the single frame
+            // that theory says is needed. Established by pulling them apart to 1 s and 10 s until
+            // the leak stopped, then closing the gap; see analyse/input-capture-and-priority.md.
+            UniverseLib.UI.Panels.PanelBase.CloseDelayFrames = 2;
+
             // Single source of truth for the per-frame tick: run OnUpdate (feeds the scanner's
             // adaptive frame-time budget, persists cache) and Scan (applies pending translations
             // + scans the scene) inside a permanent coroutine, plus the main-thread queue drain
@@ -456,7 +463,7 @@ namespace UnityGameTranslator.Core.UI
         /// <see cref="MouseAtRest"/> is still required on top: on a backend that DOES answer, the
         /// wait ends on the event and this ceiling never bites.
         /// </remarks>
-        private const int FramesBeforeHandover = 2;
+        private const int FramesBeforeHandover = 6;
 
         private static int _framesSinceClose;
 

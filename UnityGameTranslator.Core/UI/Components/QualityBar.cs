@@ -41,6 +41,18 @@ namespace UnityGameTranslator.Core.UI.Components
         private LayoutElement _keptLayout;
         private LayoutElement _captureLayout;
 
+        /// <summary>
+        /// The five segments in drawing order, kept so the ends can be rounded.
+        ///
+        /// The site and the Manager both draw this bar as a pill, and a pill made of five abutting
+        /// pieces has to round the OUTER edges of the first and last visible ones — not each piece,
+        /// which would notch the bar at every junction. Which pieces those are changes with the
+        /// counts, so it is settled in SetCounts rather than here.
+        /// </summary>
+        private readonly List<Image> _segments = new List<Image>();
+        private readonly List<LayoutElement> _segmentLayouts = new List<LayoutElement>();
+        private int _height = DefaultHeight;
+
         /// <summary>The bar container. Null until CreateUI has run.</summary>
         public GameObject Root => _root;
 
@@ -50,6 +62,8 @@ namespace UnityGameTranslator.Core.UI.Components
         /// </summary>
         public void CreateUI(GameObject parent, int height = DefaultHeight)
         {
+            _height = height;
+
             // NO track behind the segments, and this is why the colour is passed HERE rather than
             // cleared afterwards. CreateHorizontalGroup always fits an Image, and when no colour
             // is given it uses UniverseLib's default background AND its default padding — which
@@ -67,11 +81,16 @@ namespace UnityGameTranslator.Core.UI.Components
 
             // Order matters: everything settled first, what remains to do last. The grey always
             // ends the bar, so its length reads as the work left without doing any arithmetic.
-            _humanLayout = CreateSegment("HumanBar", UIStyles.StatusSuccess, height);
-            _validatedLayout = CreateSegment("ValidatedBar", UIStyles.StatusInfo, height);
-            _aiLayout = CreateSegment("AiBar", UIStyles.StatusWarning, height);
-            _keptLayout = CreateSegment("KeptBar", UIStyles.StatusKept, height);
-            _captureLayout = CreateSegment("CaptureBar", UIStyles.StatusNeutral, height);
+            //
+            // ⚠ The Quality* keys, NOT the Status* ones. This bar used to borrow "it went well" for
+            // the human share and "careful" for the AI share, which is how the same file came out
+            // amber here and orange on the website — a measure that reads differently depending on
+            // where you look at it is not a measure. See UIStyles for the full account.
+            _humanLayout = CreateSegment("HumanBar", UIStyles.QualityHuman, height);
+            _validatedLayout = CreateSegment("ValidatedBar", UIStyles.QualityValidated, height);
+            _aiLayout = CreateSegment("AiBar", UIStyles.QualityAi, height);
+            _keptLayout = CreateSegment("KeptBar", UIStyles.QualityKept, height);
+            _captureLayout = CreateSegment("CaptureBar", UIStyles.QualityCapture, height);
         }
 
         private LayoutElement CreateSegment(string name, Color color, int height)
@@ -79,10 +98,56 @@ namespace UnityGameTranslator.Core.UI.Components
             var obj = UIFactory.CreateUIObject(name, _root);
             var image = obj.AddComponent<Image>();
             image.color = color;
+            _segments.Add(image);
             // Full height, not height - 2: the missing pixels used to sit at one edge, which is
             // what made the bar look misaligned with what was behind it. Sized only by their
             // share (flexibleWidth), set in SetCounts.
-            return UIFactory.SetLayoutElement(obj, minHeight: height, flexibleWidth: 0);
+            var layout = UIFactory.SetLayoutElement(obj, minHeight: height, flexibleWidth: 0);
+            _segmentLayouts.Add(layout);
+            return layout;
+        }
+
+        /// <summary>
+        /// Round the two ends of the bar, and only those.
+        ///
+        /// `rounded-full` on the site, <c>CornerRadius = height / 2</c> in the Manager. Here the bar
+        /// is five abutting pieces, so the radius goes on the outer edge of the first visible piece
+        /// and of the last — the ones in between stay square or the bar would be notched at every
+        /// junction. A single visible share gets both ends, i.e. a full pill.
+        ///
+        /// Zero-width segments are skipped: a share of nothing still exists in the layout, and
+        /// rounding it would put the curve somewhere invisible while the real end stayed square.
+        /// </summary>
+        private void RoundEnds()
+        {
+            int first = -1, last = -1;
+            for (int i = 0; i < _segmentLayouts.Count; i++)
+            {
+                if (_segmentLayouts[i] == null || _segmentLayouts[i].flexibleWidth <= 0f) continue;
+                if (first < 0) first = i;
+                last = i;
+            }
+
+            int radius = Mathf.Max(1, _height / 2);
+
+            for (int i = 0; i < _segments.Count; i++)
+            {
+                if (_segments[i] == null) continue;
+
+                Corners corners = Corners.None;
+                if (i == first) corners |= Corners.Left;
+                if (i == last) corners |= Corners.Right;
+
+                // A middle piece is left exactly as it was: square, and sharing no texture change
+                // with its neighbours.
+                if (corners == Corners.None)
+                {
+                    _segments[i].sprite = null;
+                    continue;
+                }
+
+                UIFactory.SetShape(_segments[i], UIShapes.Rounded(radius, corners));
+            }
         }
 
         /// <summary>
@@ -101,6 +166,9 @@ namespace UnityGameTranslator.Core.UI.Components
             if (_aiLayout != null) _aiLayout.flexibleWidth = ai;
             if (_keptLayout != null) _keptLayout.flexibleWidth = kept;
             if (_captureLayout != null) _captureLayout.flexibleWidth = capture;
+
+            // Which segments show has just changed, so which ones carry the curve has too.
+            RoundEnds();
 
             return total > 0;
         }
@@ -141,17 +209,18 @@ namespace UnityGameTranslator.Core.UI.Components
             int keptPct = Mathf.RoundToInt(kept * 100f / total);
             int capturePct = 100 - humanPct - validatedPct - aiPct - keptPct;
 
+            // Same keys as the bar itself, or the key would name colours the bar does not show.
             var entries = new List<string>
             {
-                Entry(UIStyles.StatusSuccess, "Human", humanPct),
-                Entry(UIStyles.StatusInfo, "Validated", validatedPct),
-                Entry(UIStyles.StatusWarning, "AI", aiPct),
+                Entry(UIStyles.QualityHuman, "Human", humanPct),
+                Entry(UIStyles.QualityValidated, "Validated", validatedPct),
+                Entry(UIStyles.QualityAi, "AI", aiPct),
             };
 
             // The last two are mentioned only when there are some: a permanent "Captured 0%" is
             // noise, and each absence is itself the information.
-            if (kept > 0) entries.Add(Entry(UIStyles.StatusKept, "Kept as is", keptPct));
-            if (capture > 0) entries.Add(Entry(UIStyles.StatusNeutral, "Captured", capturePct));
+            if (kept > 0) entries.Add(Entry(UIStyles.QualityKept, "Kept as is", keptPct));
+            if (capture > 0) entries.Add(Entry(UIStyles.QualityCapture, "Captured", capturePct));
 
             // Three ordinary spaces: enough to separate two entries, and the only place in the
             // string where a line is allowed to break.

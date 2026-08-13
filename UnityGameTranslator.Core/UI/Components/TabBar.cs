@@ -117,6 +117,9 @@ namespace UnityGameTranslator.Core.UI.Components
             // Create tab button
             var btn = UIFactory.CreateButton(_tabRow, $"Tab_{name}", name, UIStyles.TabInactiveBackground);
             UIFactory.SetLayoutElement(btn.Component.gameObject, minWidth: 80, minHeight: 28, flexibleWidth: 1);
+            // A tab is round where it shows and square where it meets its content — a fully rounded
+            // one would float above the panel it is supposed to open.
+            UIFactory.SetShape(btn.Component.GetComponent<Image>(), UIFactory.Shapes.CardTop);
 
             // Style the button text
             btn.ButtonText.fontSize = UIStyles.FontSizeNormal;
@@ -127,6 +130,9 @@ namespace UnityGameTranslator.Core.UI.Components
             var content = UIFactory.CreateVerticalGroup(_contentContainer, $"TabContent_{name}",
                 true, true, true, true, 0, Vector4.zero, UIStyles.TabContentBackground, TextAnchor.UpperLeft);
             UIFactory.SetLayoutElement(content, flexibleWidth: 9999, flexibleHeight: 9999);
+            // Rounded at the bottom, square where the tabs sit on it: together the two halves read
+            // as one object.
+            UIFactory.SetShape(content.GetComponent<Image>(), UIFactory.Shapes.CardBottom);
             content.SetActive(false);
 
             // Store tab info

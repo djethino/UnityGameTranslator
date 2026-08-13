@@ -5,6 +5,7 @@ using UnityEngine.UI;
 using UnityEngine.EventSystems;
 using UniverseLib.UI;
 using UniverseLib.UI.Models;
+using UnityGameTranslator.Common;
 using UnityGameTranslator.Core.UI.Components;
 
 namespace UnityGameTranslator.Core.UI
@@ -90,87 +91,145 @@ namespace UnityGameTranslator.Core.UI
         // WITHOUT inheriting automatic padding from UniverseLib defaults
         public static readonly Color Transparent = new Color(0f, 0f, 0f, 0.001f);
 
-        // Background colors - from website CSS
-        // Body: rgb(15, 15, 26) = 0.059, 0.059, 0.102 - dark blue-night
-        // Card: rgb(30, 41, 57) = 0.118, 0.161, 0.224 - blue-gray
-        // Dark blue-slate elevation ramp (single hue, even luminance steps). Each tier ≈1.4-1.8× the
-        // luminance of the one below → clearly separated yet harmonious. Controls (0.23-0.26) sit ABOVE
-        // every background tier (body/viewport/card/row) so they read on any container.
-        public static readonly Color PanelBackground = new Color(0.062f, 0.075f, 0.105f, 0.98f);  // E0 body
-        public static readonly Color CardBackground = new Color(0.14f, 0.17f, 0.23f, 0.96f);       // E2 card
+        /// <summary>
+        /// A shared colour, as Unity wants it. The library carries no alpha (see Common.Theme), so
+        /// opacity is named here, where the reason for it lives.
+        /// </summary>
+        private static Color Of(Rgb c, float alpha = 1f)
+        {
+            return new Color(c.Rf, c.Gf, c.Bf, alpha);
+        }
+
+        /// <summary>
+        /// <paramref name="over"/> laid on <paramref name="under"/>, at the given strength.
+        ///
+        /// The arithmetic is <see cref="Rgb.Over"/>, in the shared library, so that the Manager
+        /// reaches the same shade rather than one that is nearly it — a tinted state is as much a
+        /// shared decision as the colour it is made from.
+        /// </summary>
+        private static Color Blend(Rgb over, Rgb under, float strength)
+        {
+            return Of(over.Over(under, strength));
+        }
+
+        // ── The product's palette, from the shared library ────────────────────────────────────
+        //
+        // ⚠ NOT written here. `Common.Theme` holds the colours for the mod AND the Manager, because
+        // the two are C# and a palette is exactly the kind of rule they must not contradict — the
+        // same reason Languages and Quality live there. Its values were read out of the running
+        // website's CSS custom properties, and its check project refuses a drift.
+        //
+        // What stays local is what is local: the alpha values. This interface floats over a running
+        // game, so a panel is nearly opaque where a web page needs nothing of the sort — that is a
+        // decision about THIS product, and the shared library carries no alpha at all.
+        //
+        // Naming stays as it was: these names are used in some five hundred places across the
+        // panels, and renaming them to match the library would be a rewrite that changes no pixel.
+        public static readonly Color PanelBackground = Of(Theme.SurfaceBase, 0.98f);
+        public static readonly Color CardBackground = Of(Theme.SurfaceCard, 0.96f);
         public static readonly Color SectionBackground = Transparent;                               // Transparent (no auto-padding)
-        public static readonly Color InputBackground = new Color(0.23f, 0.27f, 0.35f, 1f);         // E4 control fill
+        public static readonly Color InputBackground = Of(Theme.SurfaceRaised);
+
+        // Edges. The site draws a 1px line around every card (`border-gray-700`, 242 times) and
+        // every field (`border-gray-600`); the mod drew none at all, which is half of why the same
+        // card read as a different object here.
+        public static readonly Color BorderSubtle = Of(Theme.BorderSubtle);
+        public static readonly Color BorderStrong = Of(Theme.BorderStrong);
 
         // Text colors
-        public static readonly Color TextPrimary = new Color(0.93f, 0.95f, 0.98f);
-        public static readonly Color TextSecondary = new Color(0.73f, 0.77f, 0.85f);   // bumped for readability on dark cards
-        public static readonly Color TextMuted = new Color(0.57f, 0.61f, 0.69f);       // bumped: was 0.45 (borderline on dark cards)
-        public static readonly Color TextAccent = new Color(0.55f, 0.36f, 0.96f);                  // Purple accent
+        public static readonly Color TextPrimary = Of(Theme.TextPrimary);
+        public static readonly Color TextSecondary = Of(Theme.TextSecondary);
+        public static readonly Color TextMuted = Of(Theme.TextMuted);
+        public static readonly Color TextAccent = Of(Theme.AccentSoft);
 
-        // Button colors (purple accent + navy blue tones)
-        public static readonly Color ButtonPrimary = new Color(0.55f, 0.36f, 0.96f);               // Purple #8b5cf6
-        public static readonly Color ButtonSecondary = new Color(0.26f, 0.31f, 0.40f);             // E4+ slate control surface (renders at full value now — no ×0.25 crush)
-        public static readonly Color ButtonSuccess = new Color(0.55f, 0.36f, 0.96f);               // Purple (main CTA)
-        public static readonly Color ButtonWarning = new Color(0.95f, 0.73f, 0.29f);               // Amber
-        public static readonly Color ButtonDanger = new Color(0.88f, 0.40f, 0.42f);                // Red
-        public static readonly Color ButtonLink = new Color(0.62f, 0.47f, 0.98f);                  // Purple for links
-        public static readonly Color ButtonHover = new Color(0.66f, 0.50f, 1f);                    // Lighter purple
+        // Buttons. FOUR purples, as the site has: 600 fills, 500 edges and highlights, 400 writes,
+        // 700 presses. One purple for all four was most of what made the mod read as another
+        // product — the accent was flat where the site's has depth.
+        public static readonly Color ButtonPrimary = Of(Theme.Accent);
+        public static readonly Color ButtonSecondary = Of(Theme.SurfaceRaised);
+        public static readonly Color ButtonSuccess = Of(Theme.Accent);                             // the main CTA is an accent, not a green
+        public static readonly Color ButtonWarning = Of(Theme.StatusWarning);
+        public static readonly Color ButtonDanger = Of(Theme.StatusError);
+        public static readonly Color ButtonLink = Of(Theme.AccentSoft);
+        public static readonly Color ButtonHover = Of(Theme.AccentEdge);
         public static readonly Color ButtonDisabled = new Color(0.20f, 0.22f, 0.27f, 1f);          // Dim slate for disabled controls (visible, never black)
 
-        // Status colors
-        public static readonly Color StatusSuccess = new Color(0.34f, 0.80f, 0.48f);               // Green
-        public static readonly Color StatusWarning = new Color(0.95f, 0.73f, 0.29f);               // Amber
-        public static readonly Color StatusError = new Color(0.95f, 0.41f, 0.41f);                 // Red
-        public static readonly Color StatusInfo = new Color(0.38f, 0.73f, 0.98f);                  // Blue
-        // Captured but not translated yet: known work still to do. Matches the website's
-        // gray-500 so the same bar reads the same on both sides.
-        public static readonly Color StatusNeutral = new Color(0.42f, 0.45f, 0.50f);               // Grey
+        // Status colors — the shared 400 ramp, which is what the site uses on dark surfaces.
+        public static readonly Color StatusSuccess = Of(Theme.StatusSuccess);
+        public static readonly Color StatusWarning = Of(Theme.StatusWarning);
+        public static readonly Color StatusError = Of(Theme.StatusError);
+        public static readonly Color StatusInfo = Of(Theme.StatusInfo);
+        public static readonly Color StatusNeutral = Of(Theme.StatusNeutral);
         // Kept as is on purpose (tag S): dealt with, not pending — hence its own colour rather
-        // than the grey. Matches the website's purple-500.
-        public static readonly Color StatusKept = new Color(0.66f, 0.33f, 0.97f);                  // Purple
+        // than the grey.
+        public static readonly Color StatusKept = Of(Theme.QualityKept);
         // The mod's own interface (tag M): a provenance, not a degree of translation, so it takes
-        // the one colour nothing else uses. Matches the website's teal-600. It has no band in the
-        // quality bar on either side — see QualityBar.CountTags.
-        public static readonly Color StatusModUi = new Color(0.05f, 0.58f, 0.53f);                 // Teal
+        // the one colour nothing else uses. It has no band in the quality bar on any side —
+        // see QualityBar.CountTags.
+        public static readonly Color StatusModUi = Of(Theme.TagModUi);
 
-        // Item/List backgrounds (navy blue tones)
-        public static readonly Color ItemBackground = new Color(0.17f, 0.20f, 0.27f, 1f);          // E3 row (above card)
-        public static readonly Color ItemBackgroundHover = new Color(0.22f, 0.26f, 0.34f, 1f);     // row hover
-        public static readonly Color ItemBackgroundSelected = new Color(0.30f, 0.24f, 0.52f, 1f);  // Purple-navy
-        public static readonly Color ItemBackgroundLineage = new Color(0.23f, 0.21f, 0.42f, 1f);   // Deep purple-navy
+        // ── What a translation is MADE OF ─────────────────────────────────────────────────────
+        //
+        // ⚠ Its own five keys, and not the status colours above, which is the whole point.
+        //
+        // The bar reused StatusSuccess/StatusInfo/StatusWarning, so the AI share came out AMBER
+        // here and orange on the website and in the Manager — three implementations that quote
+        // each other in their comments, disagreeing on three bands out of five. The cause was
+        // structural: "it went well" and "this line came from an AI" are two different registers,
+        // and one colour cannot serve both without drifting the next time either is adjusted.
+        //
+        // Same order as the site and the Manager: settled first, still-to-do last.
+        public static readonly Color QualityHuman = Of(Theme.QualityHuman);
+        public static readonly Color QualityValidated = Of(Theme.QualityValidated);
+        public static readonly Color QualityAi = Of(Theme.QualityAi);
+        public static readonly Color QualityKept = Of(Theme.QualityKept);
+        public static readonly Color QualityCapture = Of(Theme.QualityCapture);
 
-        // Notification box colors (navy base)
-        public static readonly Color NotificationSuccess = new Color(0.08f, 0.18f, 0.14f, 0.95f);  // Navy-green
-        public static readonly Color NotificationWarning = new Color(0.22f, 0.18f, 0.10f, 0.95f);  // Navy-amber
-        public static readonly Color NotificationInfo = new Color(0.08f, 0.11f, 0.20f, 0.95f);     // Navy
+        // Item/List backgrounds
+        public static readonly Color ItemBackground = Of(Theme.SurfaceRaised);
+        public static readonly Color ItemBackgroundHover = Of(Theme.SurfaceHover);
+        // A selected row is the deep purple laid over the card rather than the accent itself: text
+        // has to stay readable on it, which purple-600 does not allow. Computed in the library, so
+        // the Manager's selected row is the same shade and not merely a similar one.
+        public static readonly Color ItemBackgroundSelected = Of(Theme.RowSelected);
+        public static readonly Color ItemBackgroundLineage = Of(Theme.RowRelated);
 
-        // Toast (corner) backgrounds — tinted accents, harmonized with the palette
-        public static readonly Color ToastSuccessBg = new Color(0.12f, 0.30f, 0.18f, 0.96f);       // Green-tinted
-        public static readonly Color ToastErrorBg = new Color(0.34f, 0.14f, 0.16f, 0.96f);         // Red-tinted
-        public static readonly Color ToastInfoBg = new Color(0.20f, 0.15f, 0.34f, 0.96f);          // Purple-tinted
+        // Callouts: the hue laid over the surface, never a flat saturated block. Straight from the
+        // library, so the same notice is the same colour in the window and in the game.
+        public static readonly Color NotificationSuccess = Of(Theme.CalloutSuccess, 0.95f);
+        public static readonly Color NotificationWarning = Of(Theme.CalloutWarning, 0.95f);
+        public static readonly Color NotificationInfo = Of(Theme.CalloutInfo, 0.95f);
 
-        // Elevated surface (a card that must sit clearly above another card, e.g. guidance box)
-        public static readonly Color CardElevated = new Color(0.19f, 0.22f, 0.29f, 0.96f);         // E3+ surface
+        // Toasts sit in a corner OVER THE GAME rather than inside a panel, so they are tinted
+        // harder than a callout — they have to be read at a glance against scenery nobody chose.
+        public static readonly Color ToastSuccessBg = Blend(Theme.StatusSuccess, Theme.SurfaceDeep, 0.30f);
+        public static readonly Color ToastErrorBg = Blend(Theme.StatusError, Theme.SurfaceDeep, 0.30f);
+        public static readonly Color ToastInfoBg = Blend(Theme.Accent, Theme.SurfaceDeep, 0.30f);
+
+        // Elevated surface (a card that must sit clearly above another card, e.g. guidance box).
+        // The site's answer to the same need is gray-700 on gray-800.
+        public static readonly Color CardElevated = Of(Theme.SurfaceRaised, 0.96f);
 
         // In-game element highlight overlays (Inspector) — semi-transparent info-blue
         public static readonly Color GameHighlightHover = new Color(0.24f, 0.55f, 0.85f, 0.28f);
         public static readonly Color GameHighlightSelected = new Color(0.20f, 0.50f, 0.78f, 0.40f);
 
-        // Tab bar colors (navy blue tones for cohesive look)
-        public static readonly Color TabBarBackground = new Color(0.08f, 0.10f, 0.14f, 1f);        // E1 bar
-        public static readonly Color TabActiveBackground = new Color(0.19f, 0.23f, 0.31f, 1f);     // E3+ active (clearly raised)
-        public static readonly Color TabInactiveBackground = new Color(0.13f, 0.15f, 0.21f, 1f);   // between bar & active → visible
-        public static readonly Color TabHoverBackground = new Color(0.16f, 0.19f, 0.26f, 1f);      // inactive hover
-        public static readonly Color TabContentBackground = new Color(0.08f, 0.10f, 0.14f, 1f);    // Navy border around card
+        // Tab bar. The active tab wears the colour of the content it opens — that is what makes the
+        // two read as one object rather than as a button sitting above a box.
+        public static readonly Color TabBarBackground = Of(Theme.SurfaceDeep);
+        public static readonly Color TabActiveBackground = Of(Theme.SurfaceCard);                  // = the card it opens
+        public static readonly Color TabInactiveBackground = Blend(Theme.SurfaceCard, Theme.SurfaceDeep, 0.45f);
+        public static readonly Color TabHoverBackground = Blend(Theme.SurfaceCard, Theme.SurfaceDeep, 0.75f);
+        public static readonly Color TabContentBackground = Of(Theme.SurfaceDeep);
 
         // Scroll view viewport background (replaces UniverseLib's gray default)
-        public static readonly Color ViewportBackground = new Color(0.09f, 0.11f, 0.15f, 1f);     // E1 viewport
+        public static readonly Color ViewportBackground = Of(Theme.SurfaceDeep);
 
         // Dropdown colors (for SearchableDropdown component)
-        public static readonly Color DropdownBackground = new Color(0.23f, 0.27f, 0.35f, 1f);        // E4 control (= InputBackground)
-        public static readonly Color DropdownItemNormal = new Color(0.17f, 0.20f, 0.27f, 1f);        // E3 row (item in the open list)
-        public static readonly Color DropdownItemHighlight = new Color(0.55f, 0.36f, 0.96f, 0.55f);  // Purple highlight
-        public static readonly Color InputFieldBackground = new Color(0.23f, 0.27f, 0.35f, 1f);      // E4 control (= InputBackground)
+        public static readonly Color DropdownBackground = Of(Theme.SurfaceRaised);                 // = InputBackground
+        public static readonly Color DropdownItemNormal = Of(Theme.SurfaceCard);
+        public static readonly Color DropdownItemHighlight = Of(Theme.Accent, 0.55f);
+        public static readonly Color InputFieldBackground = Of(Theme.SurfaceRaised);               // = InputBackground
 
         // Toggle/checkbox (wired into UniverseLib.Colors at init so the plugin controls them)
         public static readonly Color CheckboxUnchecked = new Color(0.42f, 0.47f, 0.58f, 1f);        // Light slate — a small box needs more contrast than a large button to read on dark bg
@@ -179,12 +238,12 @@ namespace UnityGameTranslator.Core.UI
 
         // UniverseLib theme extras (no dedicated UGT use yet — kept here so the whole UniverseLib
         // palette is driven from ONE place; see TranslatorUIManager.Initialize theme sync)
-        public static readonly Color SliderBackgroundColor = new Color(0.14f, 0.17f, 0.23f, 1f);
-        public static readonly Color SliderFillColor = new Color(0.55f, 0.36f, 0.96f, 0.85f);        // Purple
-        public static readonly Color SliderHandleColor = new Color(0.33f, 0.38f, 0.48f, 1f);         // E5
-        public static readonly Color InputBorderColor = new Color(0.33f, 0.38f, 0.48f, 1f);          // E5 border
-        public static readonly Color AccentPressed = new Color(0.45f, 0.28f, 0.85f, 1f);             // Darker purple
-        public static readonly Color ButtonPressed = new Color(0.10f, 0.13f, 0.18f, 1f);
+        public static readonly Color SliderBackgroundColor = Of(Theme.SurfaceCard);
+        public static readonly Color SliderFillColor = Of(Theme.Accent, 0.85f);
+        public static readonly Color SliderHandleColor = Of(Theme.SurfaceHover);
+        public static readonly Color InputBorderColor = BorderStrong;                                // = the site's field edge
+        public static readonly Color AccentPressed = Of(Theme.AccentDeep);
+        public static readonly Color ButtonPressed = Of(Theme.SurfaceDeep);
 
         #endregion
 
@@ -322,6 +381,27 @@ namespace UnityGameTranslator.Core.UI
             if (layout != null) layout.padding = Compat.MakeRectOffset(0, 0, 0, 0);
         }
 
+        /// <summary>
+        /// Paint a surface, and round it while we are here.
+        ///
+        /// The site rounds everything it fills — `rounded-lg` appears 367 times in its templates —
+        /// so a coloured surface being round is the rule, not the exception, and stating it once
+        /// here beats repeating it at ninety-odd call sites and forgetting it at the ninety-first.
+        ///
+        /// A transparent surface is left alone: there is nothing to round, and giving a sprite to
+        /// an invisible Image only makes uGUI change texture for nothing.
+        ///
+        /// Pass <paramref name="shape"/> to say otherwise — <c>UIFactory.Shapes.Small</c> for a
+        /// dense row, <c>CardTop</c> for something crowning a card, or a shape of your own.
+        /// </summary>
+        public static void SetBackground(GameObject obj, Color color, Sprite shape)
+        {
+            SetBackground(obj, color);
+
+            var image = obj != null ? obj.GetComponent<Image>() : null;
+            if (image != null) UIFactory.SetShape(image, shape);
+        }
+
         public static void SetBackground(GameObject obj, Color color)
         {
             // Interactive controls (Button/Toggle/Selectable) keep Image.color = white and tint via
@@ -332,7 +412,13 @@ namespace UnityGameTranslator.Core.UI
             var image = obj.GetComponent<Image>();
             if (selectable != null)
             {
-                if (image != null) image.color = Color.white;
+                if (image != null)
+                {
+                    image.color = Color.white;
+                    // A control is painted through its ColorBlock, so the alpha test below would
+                    // read white-opaque whatever the real colour is. It is a control: it is round.
+                    UIFactory.SetShape(image, UIFactory.Shapes.Control);
+                }
                 var cb = selectable.colors;
                 cb.normalColor = color;
                 cb.highlightedColor = new Color(
@@ -350,6 +436,10 @@ namespace UnityGameTranslator.Core.UI
             if (image != null)
             {
                 image.color = color;
+
+                // Anything actually painted gets the card radius. Below that alpha the surface is
+                // there to hold a layout together, not to be seen — see the overload above.
+                if (color.a > 0.02f) UIFactory.SetShape(image, UIFactory.Shapes.Card);
             }
         }
 
@@ -415,8 +505,7 @@ namespace UnityGameTranslator.Core.UI
                 UIFactory.SetLayoutElement(card, minWidth: width, preferredWidth: width);
 
             SetBackground(card, CardBackground);
-
-            // No outline - website uses clean, borderless cards
+            UIFactory.AddBorder(card, BorderSubtle);
 
             var layout = card.GetComponent<VerticalLayoutGroup>();
             if (layout != null)
@@ -765,8 +854,9 @@ namespace UnityGameTranslator.Core.UI
             }
 
             SetBackground(card, CardBackground);
-
-            // No outline - clean borderless design like website
+            // The site's card is `bg-gray-800 rounded-lg p-6 border border-gray-700`, and that
+            // border is 242 of its elements. Without it a card floats instead of sitting.
+            UIFactory.AddBorder(card, BorderSubtle);
 
             var layout = card.GetComponent<VerticalLayoutGroup>();
             if (layout != null)
@@ -866,7 +956,14 @@ namespace UnityGameTranslator.Core.UI
             UIFactory.SetLayoutElement(item,
                 minHeight: minHeight > 0 ? minHeight : RowHeightMedium,
                 flexibleWidth: 9999);
-            SetBackground(item, selected ? ItemBackgroundSelected : ItemBackground);
+            // The small radius, not the card's: these rows are stacked and dense, and a row is not
+            // a card. Same distinction the site makes between a card and a list line.
+            SetBackground(item, selected ? ItemBackgroundSelected : ItemBackground, UIFactory.Shapes.Small);
+
+            // A chosen row is tinted AND edged, as it is in the Manager and on the site. The tint
+            // alone has to be strong enough to be unmistakable, which means burying the text under
+            // it; an accent edge says the same thing at the same glance and costs no contrast.
+            if (selected) UIFactory.AddBorder(item, ButtonHover, UIFactory.Shapes.BorderSmall);
 
             var layout = item.GetComponent<HorizontalLayoutGroup>();
             if (layout != null)

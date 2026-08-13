@@ -251,6 +251,13 @@ namespace UnityGameTranslator.Core.UI
             // by UniverseLib itself (toggles/checkboxes, sliders, default buttons, dropdowns, inputs)
             // now follow the theme too — previously only DefaultLayoutBackground was wired, so e.g. the
             // unchecked checkbox stayed on UniverseLib's own hardcoded default.
+            // Same idea for the SHAPE of things, and it has to happen before the palette is used:
+            // UniverseLib rounds a control by putting a sprite on the Image it is about to create,
+            // so a shape supplied later would only reach whatever is built after it. uGUI has no
+            // border-radius, hence a drawn 9-slice sprite — see UIShapes for why it is drawn here
+            // rather than in the fork. Nothing supplied means square corners, i.e. yesterday.
+            UIShapes.Initialize();
+
             UIFactory.Colors.DefaultLayoutBackground = UIStyles.ViewportBackground;
             UIFactory.Colors.DefaultLayoutPadding = new Vector4(
                 UIStyles.SmallSpacing, UIStyles.SmallSpacing,

@@ -865,11 +865,25 @@ namespace UnityGameTranslator.Core
         #region CreateSpriteSafe (NEW)
 
         /// <summary>
-        /// Create a Sprite via reflection (IL2CPP-safe).
+        /// Create a Sprite from the whole texture, via reflection (IL2CPP-safe).
         /// Uses Sprite.Create overload 5: (Texture2D, Rect, Vector2, float, uint, SpriteMeshType, Vector4)
         /// to support 9-slice borders.
         /// </summary>
         public static object CreateSpriteSafe(Texture2D texture, Vector2 pivot, float pixelsPerUnit, Vector4 border)
+        {
+            if (texture == null) return null;
+            return CreateSpriteSafe(texture, Compat.MakeRect(0, 0, texture.width, texture.height),
+                pivot, pixelsPerUnit, border);
+        }
+
+        /// <summary>
+        /// Same, for one region of a larger texture.
+        ///
+        /// A shape atlas needs this: several 9-slice shapes share a single texture so that drawing
+        /// them all costs one texture swap instead of one per shape, and each sprite is then a
+        /// <paramref name="rect"/> inside it.
+        /// </summary>
+        public static object CreateSpriteSafe(Texture2D texture, Rect rect, Vector2 pivot, float pixelsPerUnit, Vector4 border)
         {
             if (texture == null) return null;
 
@@ -880,8 +894,6 @@ namespace UnityGameTranslator.Core
                     _spriteCreateMethodSearched = true;
                     ResolveSpriteCreateMethod();
                 }
-
-                var rect = Compat.MakeRect(0, 0, texture.width, texture.height);
 
                 if (_spriteCreateMethod != null)
                 {
@@ -918,10 +930,11 @@ namespace UnityGameTranslator.Core
             {
                 TranslatorCore.LogWarning($"[TextureUtils] CreateSpriteSafe failed: {ex.Message}");
 
-                // Last resort direct call
+                // Last resort direct call. Same rect as asked for — falling back to the whole
+                // texture would hand an atlas user every shape at once instead of the one wanted.
                 try
                 {
-                    return Sprite.Create(texture, Compat.MakeRect(0, 0, texture.width, texture.height), pivot, pixelsPerUnit);
+                    return Sprite.Create(texture, rect, pivot, pixelsPerUnit);
                 }
                 catch (Exception ex2)
                 {

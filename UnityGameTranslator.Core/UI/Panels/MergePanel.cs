@@ -5,6 +5,7 @@ using UnityEngine;
 using UnityEngine.UI;
 using UniverseLib.UI;
 using UniverseLib.UI.Models;
+using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core.UI.Panels
 {
@@ -109,7 +110,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // can absorb the extra space when the user enlarges the panel.
             var card = CreateAdaptiveCard(scrollContent, "MergeCard", PanelWidth - 40, stretchVertically: true);
 
-            var title = CreateTitle(card, "Title", "Merge Conflicts");
+            var title = CreateScopedTitle(card, "Title", "Merge Conflicts", EditSide.Local);
             RegisterUIText(title);
 
             UIStyles.CreateSpacer(card, 5);

@@ -5,6 +5,7 @@ using UniverseLib;
 using UniverseLib.UI;
 using UniverseLib.UI.Models;
 using UnityGameTranslator.Core.UI.Components;
+using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core.UI.Panels
 {
@@ -69,7 +70,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             var card = CreateAdaptiveCard(scrollContent, "UploadCard", PanelWidth - 40);
 
             // Title
-            _titleLabel = CreateTitle(card, "TitleLabel", "Upload Translation");
+            _titleLabel = CreateScopedTitle(card, "TitleLabel", "Upload Translation", EditSide.Server);
             RegisterExcluded(_titleLabel);
 
             UIStyles.CreateSpacer(card, 5);

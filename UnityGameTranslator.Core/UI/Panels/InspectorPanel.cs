@@ -8,6 +8,7 @@ using UniverseLib;
 using UniverseLib.Input;
 using UniverseLib.UI;
 using UniverseLib.UI.Models;
+using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core.UI.Panels
 {
@@ -673,7 +674,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _helpZone = CreateHelpZone(buttonRow, "Hover an element to see what it does");
 
             // Title
-            _titleLabel = CreateTitle(scrollContent, "Title", "Element Inspector");
+            _titleLabel = CreateScopedTitle(scrollContent, "Title", "Element Inspector", EditSide.Local);
             RegisterExcluded(_titleLabel);
 
             UIStyles.CreateSpacer(scrollContent, 5);

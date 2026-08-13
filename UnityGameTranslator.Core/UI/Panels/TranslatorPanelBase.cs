@@ -6,6 +6,7 @@ using UniverseLib.UI;
 using UniverseLib.UI.Models;
 using UniverseLib.UI.Panels;
 using UnityGameTranslator.Core.UI.Components;
+using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core.UI.Panels
 {
@@ -56,6 +57,66 @@ namespace UnityGameTranslator.Core.UI.Panels
         protected Text CreateTitle(GameObject parent, string name, string text)
         {
             return UIStyles.CreateTitle(parent, name, text);
+        }
+
+        /// <summary>
+        /// A title with the three-position scope switch to its left: which copy this panel writes
+        /// to — the published translation, both, or the file in this game.
+        ///
+        /// ⚠ **On EVERY screen that shows translation lines, without exception.** One missing is
+        /// worse than never having had it: the glance stops being a habit, and an absent badge
+        /// starts to mean something it does not. That is why this sits on the panel base rather
+        /// than being pasted into the panels that happened to be edited.
+        ///
+        /// ⚠ The positions, their order and their words come from
+        /// <see cref="UnityGameTranslator.Common.EditScope"/> — the same answers the manager and
+        /// the website draw their own control from. Somebody who learns it in a browser must not
+        /// have to relearn it here.
+        /// </summary>
+        protected Text CreateScopedTitle(GameObject parent, string name, string text, EditSide side)
+        {
+            var row = UIFactory.CreateHorizontalGroup(parent, name + "Row", false, false, true, true, 8);
+            UIFactory.SetLayoutElement(row, minHeight: UIStyles.RowHeightMedium, flexibleWidth: 9999);
+
+            foreach (var standing in ScopeSides(side))
+            {
+                bool selected = standing.Side == side && standing.Available;
+
+                var chip = UIFactory.CreateLabel(row, name + standing.Side, EditScope.Name(standing.Side),
+                                                 TextAnchor.MiddleCenter, supportRichText: false);
+                chip.fontSize = UIStyles.FontSizeHint;
+                chip.color = selected ? UIStyles.TextPrimary : UIStyles.TextMuted;
+                chip.fontStyle = selected ? FontStyle.Bold : FontStyle.Normal;
+                UIFactory.SetLayoutElement(chip.gameObject, minWidth: 72, minHeight: UIStyles.RowHeightSmall);
+                UIStyles.SetBackground(chip.gameObject,
+                    selected ? UIStyles.ItemBackgroundSelected : UIStyles.ItemBackground);
+
+                // Never translated: these are the product's own words, identical in three places,
+                // and a translation of the mod's interface must not make them diverge.
+                RegisterExcluded(chip);
+            }
+
+            var title = CreateTitle(row, name, text);
+            UIFactory.SetLayoutElement(title.gameObject, flexibleWidth: 9999);
+            return title;
+        }
+
+        /// <summary>
+        /// What is reachable from inside a running game: the file here always, the published
+        /// version once signed in and leading its lineage.
+        /// </summary>
+        private static SideStanding[] ScopeSides(EditSide side)
+        {
+            bool signedIn = !string.IsNullOrEmpty(TranslatorCore.Config?.api_token);
+
+            return EditScope.Sides(
+                hasLocalFile: true,
+                // A game IS the machine — that is the whole difference from a browser on its own.
+                canReachMachine: true,
+                signedIn: signedIn,
+                // The mod knows it owns the lineage when the server said so at the last check.
+                publishedByThisAccount: signedIn && TranslatorCore.ServerState is { IsOwner: true },
+                publishedBySomebodyElse: TranslatorCore.ServerState is { IsOwner: false });
         }
 
         /// <summary>

@@ -3503,9 +3503,12 @@ namespace UnityGameTranslator.Core.UI
                         _seenRetranslateIds.Dequeue();
                 }
 
-                if (!TranslatorCore.Config.enable_ai)
+                // IsTranslationEnabled, not enable_ai: with the backend set to "none" the flag says
+                // yes and nothing can answer, and capture-only mode would file the line as an
+                // empty human entry — the browser would watch its line go blank.
+                if (!TranslatorCore.Config.IsTranslationEnabled)
                 {
-                    TranslatorCore.LogWarning("[EditSSE] Retranslate requested but AI is disabled, ignored");
+                    TranslatorCore.LogWarning("[EditSSE] Retranslate requested but translation is disabled, ignored");
                     return;
                 }
 

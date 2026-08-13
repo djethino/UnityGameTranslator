@@ -1776,6 +1776,12 @@ namespace UnityGameTranslator.Core
             // Dispose HttpClient (cancels in-flight requests)
             try { httpClient?.Dispose(); } catch { }
 
+            // A retranslation the worker never got to had its line taken out of the cache to make
+            // room for an answer that will now never arrive. The save below writes the WHOLE cache,
+            // so leaving it out here is how the line would vanish from the file — restored before,
+            // not after.
+            RestoreOutstandingRetranslations();
+
             if (cacheModified)
             {
                 try { SaveCache(); } catch { }
@@ -3302,19 +3308,320 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Remove a translation entry and queue its key for AI retranslation
-        /// (in-game text editor "Retranslate" action).
+        /// The tag currently carried by a key ("A", "H", "V", "S", "M"), or null when the key is
+        /// unknown. Read by the editors, which do not offer the same gesture on a line a human
+        /// wrote as on one the machine produced.
         /// </summary>
-        public static void RemoveTranslationForRetranslate(string key)
+        public static string GetTranslationTag(string key)
         {
-            if (string.IsNullOrEmpty(key)) return;
+            if (string.IsNullOrEmpty(key)) return null;
+            return TranslationCache.TryGetValue(key, out var entry) ? (entry.Tag ?? "A") : null;
+        }
 
-            TranslationCache.Remove(key);
+        #endregion
+
+        #region Retranslation (asking again for a line the human did not like)
+
+        /// <summary>What became of a retranslation the human asked for.</summary>
+        public enum RetranslateOutcome
+        {
+            /// <summary>A different translation came back and is now in the file.</summary>
+            Replaced,
+            /// <summary>The backend kept answering the same thing. Nothing changed.</summary>
+            Unchanged,
+            /// <summary>Nothing usable came back. The previous translation was put back.</summary>
+            Failed
+        }
+
+        /// <summary>
+        /// Fired when a retranslation ends, WHATEVER the outcome — the editors show a waiting state
+        /// and a silence would leave it spinning forever, which is the very complaint this whole
+        /// path exists to answer.
+        ///
+        /// ⚠ Raised from the worker thread: a handler touching Unity objects must hop through
+        /// TranslatorUIManager.RunOnMainThread itself.
+        /// </summary>
+        public static Action<string, string, RetranslateOutcome> OnRetranslateFinished;
+
+        /// <summary>
+        /// A line whose translation was taken out to make room for a new answer. Everything needed
+        /// to put it back exactly as it was is carried here — the value, its tag, and its capture
+        /// order, which the file's editors sort on and which a plain re-add would send to the end.
+        /// </summary>
+        private sealed class RetranslateRequest
+        {
+            public string Key;
+            public bool HadEntry;
+            public string PreviousValue;
+            public string PreviousTag;
+            public long? PreviousIndex;
+            public bool IsOwnUI;
+        }
+
+        // Keyed on the text handed to the queue, which is the cache key itself.
+        private static readonly Dictionary<string, RetranslateRequest> retranslateRequests =
+            new Dictionary<string, RetranslateRequest>();
+
+        /// <summary>
+        /// How many times a retranslation asks again when the backend returns the text that was
+        /// already there. The human clicked because they did not like that answer; handing it back
+        /// unchanged is the same as doing nothing.
+        /// </summary>
+        private const int RetranslateRounds = 3;
+
+        /// <summary>
+        /// Temperature used for a retranslation, and ONLY for one.
+        ///
+        /// ⚠ Ordinary translation stays at 0 on purpose: it wants the same answer for the same line
+        /// forever, so a cache is worth having and two players get the same file. A retranslation
+        /// wants the opposite — same instructions, different draw.
+        /// </summary>
+        private const double RetranslateTemperature = 0.8;
+
+        // System.Random, not UnityEngine.Random: this runs on the worker thread, where Unity's
+        // static generator is not allowed to be touched.
+        private static readonly System.Random retranslateRandom = new System.Random();
+
+        /// <summary>
+        /// Take the translation out and ask the backend again for the same line, with the same
+        /// instructions and a different draw (see RetranslateTemperature).
+        ///
+        /// ⚠ The entry is removed because AddToCache refuses to overwrite an existing key. That
+        /// makes this the one path able to LOSE a translation, so nothing is thrown away until the
+        /// queue has accepted the request, and the previous value is put back by the worker if
+        /// nothing usable comes out of it.
+        ///
+        /// Returns false when the request could not even be submitted (translation switched off,
+        /// backend offline); the file is untouched in that case.
+        /// </summary>
+        public static bool RemoveTranslationForRetranslate(string key)
+        {
+            if (string.IsNullOrEmpty(key)) return false;
+
+            // Asked before anything is removed, and not left to the queue: capture-only mode DOES
+            // accept a queued text, and would store this line as an empty human entry — the line
+            // would come back blank, from a button that promised a better translation.
+            if (!Config.IsTranslationEnabled)
+            {
+                Adapter?.LogWarning("[Retranslate] Refused: translation is switched off");
+                return false;
+            }
+
+            RetranslateRequest request;
+            lock (lockObj)
+            {
+                bool hadEntry = TranslationCache.TryGetValue(key, out var previous);
+                request = new RetranslateRequest
+                {
+                    Key = key,
+                    HadEntry = hadEntry,
+                    PreviousValue = hadEntry ? previous.Value : null,
+                    PreviousTag = hadEntry ? (previous.Tag ?? "A") : null,
+                    PreviousIndex = hadEntry ? previous.Index : null,
+                    // The mod's own interface is translated with its own prompt and its own tag.
+                    // The worker normally infers that from the components attached to the request,
+                    // and a retranslation attaches none — so it is said here, from the tag the line
+                    // already carries, or an M line comes back as game text tagged A.
+                    IsOwnUI = hadEntry && previous.Tag == "M"
+                };
+                retranslateRequests[key] = request;
+                TranslationCache.Remove(key);
+            }
+
             if (key.Contains(PlaceholderPrefix))
                 BuildPatternEntries();
 
-            QueueForTranslation(key);
+            if (QueueForTranslation(key, isOwnUI: request.IsOwnUI))
+                return true;
+
+            // Turned away at the door: put the line back exactly as it was, say so, and let the
+            // caller tell the human rather than leave them in front of a spinner.
+            Adapter?.LogWarning("[Retranslate] Request refused by the queue (translation off, offline, or text too long)");
+            RestorePreviousEntry(request);
+            FinishRetranslation(request, request.PreviousValue, RetranslateOutcome.Failed);
+            return false;
         }
+
+        /// <summary>Take the pending request for a dequeued text, if that text is one.</summary>
+        private static RetranslateRequest TakeRetranslateRequest(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return null;
+            lock (lockObj)
+            {
+                if (!retranslateRequests.TryGetValue(text, out var request)) return null;
+                retranslateRequests.Remove(text);
+                return request;
+            }
+        }
+
+        /// <summary>
+        /// Ask again, up to RetranslateRounds times, until the answer differs from the one the
+        /// human rejected. Each round draws a new seed — where the provider honours it, the run is
+        /// reproducible; where it ignores it, the temperature alone does the work (see
+        /// Negotiation.SendSeed).
+        /// </summary>
+        private static void RunRetranslation(RetranslateRequest request, string normalizedKey,
+            List<string> extractedNumbers, List<KeyValuePair<int, string>> extractedVars,
+            string originalText, List<object> componentsToUpdate)
+        {
+            // The worker re-normalizes what it dequeues, and a cache key is already normalized — so
+            // these two are the same string, except when a variable became known in between and the
+            // key now reads as [!STR*N]. That is a different question: answering it would file the
+            // reply under a key nobody asked about and leave this line with none at all.
+            if (!string.Equals(normalizedKey, request.Key, StringComparison.Ordinal))
+            {
+                Adapter?.LogWarning("[Retranslate] The line changed shape since it was captured, keeping the previous translation");
+                RestorePreviousEntry(request);
+                FinishRetranslation(request, request.PreviousValue, RetranslateOutcome.Failed);
+                return;
+            }
+
+            // An explicit request overrides the session's give-up list: that list exists so a line
+            // that failed validation is not hammered on every scan, and this is a human asking once.
+            validationFailedTexts.TryRemove(normalizedKey, out _);
+
+            string backend = Config.translation_backend;
+            bool deterministicBackend = backend == "google" || backend == "deepl";
+            string accepted = null;
+            bool sameAnswerAgain = false;
+
+            int rounds = deterministicBackend ? 1 : RetranslateRounds;
+            for (int round = 0; round < rounds; round++)
+            {
+                string candidate;
+                if (deterministicBackend)
+                {
+                    candidate = TranslateWithAPI(normalizedKey, extractedNumbers);
+                }
+                else
+                {
+                    int seed;
+                    lock (retranslateRandom) { seed = retranslateRandom.Next(1, int.MaxValue); }
+                    candidate = TranslateWithAI(normalizedKey, extractedNumbers, request.IsOwnUI,
+                        new Variation { Temperature = RetranslateTemperature, Seed = seed });
+                }
+
+                if (string.IsNullOrEmpty(candidate))
+                    continue;
+
+                // A refusal marker must never be written over an existing translation: stored as
+                // tag S it would replace the line with its own source text, which is a loss
+                // dressed up as a decision.
+                if (Answers.Read(candidate) != AnswerKind.Translation)
+                {
+                    Adapter?.LogWarning("[Retranslate] Backend refused the line, keeping the previous translation");
+                    continue;
+                }
+
+                if (FindInventedPlaceholders(normalizedKey, candidate) != null)
+                    continue;
+
+                if (request.HadEntry && string.Equals(candidate, request.PreviousValue, StringComparison.Ordinal))
+                {
+                    sameAnswerAgain = true;
+                    LogDebug($"[Retranslate] Round {round + 1}/{rounds} returned the same text, asking again");
+                    continue;
+                }
+
+                accepted = candidate;
+                break;
+            }
+
+            if (accepted == null)
+            {
+                RestorePreviousEntry(request);
+                FinishRetranslation(request, request.PreviousValue,
+                    sameAnswerAgain ? RetranslateOutcome.Unchanged : RetranslateOutcome.Failed);
+                return;
+            }
+
+            AddToCache(normalizedKey, accepted, request.IsOwnUI ? "M" : "A");
+
+            // Keep the line where it was in the file: the editors sort on the capture order, and a
+            // key re-added after a removal would otherwise jump to the end of a list the human is
+            // reading top to bottom.
+            lock (lockObj)
+            {
+                if (request.PreviousIndex.HasValue
+                    && TranslationCache.TryGetValue(normalizedKey, out var stored))
+                    stored.Index = request.PreviousIndex;
+            }
+
+            aiTranslationCount++;
+
+            string forComponents = extractedNumbers != null
+                ? RestoreNumbersFromPlaceholders(accepted, extractedNumbers)
+                : accepted;
+            forComponents = VariableManager.RestoreVariables(forComponents, extractedVars);
+            OnTranslationComplete?.Invoke(originalText, forComponents, componentsToUpdate);
+            PendingVisualRefresh = true;
+
+            FinishRetranslation(request, accepted, RetranslateOutcome.Replaced);
+        }
+
+        /// <summary>
+        /// Put back every line a retranslation took out and never answered for — the game is
+        /// closing, or the worker stopped, and the file is about to be written whole.
+        /// </summary>
+        private static void RestoreOutstandingRetranslations()
+        {
+            List<RetranslateRequest> outstanding;
+            lock (lockObj)
+            {
+                if (retranslateRequests.Count == 0) return;
+                outstanding = new List<RetranslateRequest>(retranslateRequests.Values);
+                retranslateRequests.Clear();
+            }
+
+            foreach (var request in outstanding)
+            {
+                RestorePreviousEntry(request);
+                Adapter?.LogWarning("[Retranslate] Unanswered when stopping — previous translation kept");
+                // Told, not just repaired: an editor is showing a waiting row for each of these.
+                FinishRetranslation(request, request.PreviousValue, RetranslateOutcome.Failed);
+            }
+        }
+
+        /// <summary>Put back the entry a retranslation took out, tag and capture order included.</summary>
+        private static void RestorePreviousEntry(RetranslateRequest request)
+        {
+            if (request == null || !request.HadEntry) return;
+
+            lock (lockObj)
+            {
+                TranslationCache[request.Key] = new TranslationEntry
+                {
+                    Value = request.PreviousValue,
+                    Tag = request.PreviousTag,
+                    Index = request.PreviousIndex ?? NextOrderIndex()
+                };
+            }
+
+            if (request.Key.Contains(PlaceholderPrefix))
+                BuildPatternEntries();
+        }
+
+        private static void FinishRetranslation(RetranslateRequest request, string value, RetranslateOutcome outcome)
+        {
+            if (request == null) return;
+            lock (lockObj) { retranslateRequests.Remove(request.Key); }
+
+            if (outcome == RetranslateOutcome.Replaced)
+                SaveCache();
+
+            try
+            {
+                OnRetranslateFinished?.Invoke(request.Key, value, outcome);
+            }
+            catch (Exception e)
+            {
+                Adapter?.LogWarning($"[Retranslate] Notification handler error: {e.Message}");
+            }
+        }
+
+        #endregion
+
+        #region Placeholders
 
         /// <summary>
         /// Replace [!v*N] placeholders with live numbers captured by ResolveDisplayedText.
@@ -3977,6 +4284,9 @@ namespace UnityGameTranslator.Core
                 if (!Config.IsTranslationEnabled && !Config.capture_keys_only)
                 {
                     LogDebug("[Worker] Translation disabled, stopping worker thread");
+                    // Nobody is left to answer a retranslation still in the queue: give those lines
+                    // their previous translation back rather than let the next save drop them.
+                    RestoreOutstandingRetranslations();
                     workerRunning = false;
                     return;
                 }
@@ -4047,6 +4357,10 @@ namespace UnityGameTranslator.Core
                     }
                     currentTextIsOwnUI = isOwnUI;
 
+                    // Declared out here so the catch below can put back what a retranslation took
+                    // out: this is the one item in the queue that arrives with something to lose.
+                    RetranslateRequest retranslate = null;
+
                     try
                     {
                         if (Config.debug_ai)
@@ -4069,9 +4383,14 @@ namespace UnityGameTranslator.Core
                             normalizedOriginal = ExtractNumbersToPlaceholders(normalizedOriginal, out extractedNumbers);
                         }
 
+                        // A human asked for this line again, having read the answer we already had.
+                        // Everything below that shortcuts to a stored or previously refused answer
+                        // must be skipped for it — those are exactly the answers being rejected.
+                        retranslate = TakeRetranslateRequest(textToTranslate);
+
                         // Check cache first (another request might have already translated this)
                         string translation = null;
-                        if (TranslationCache.TryGetValue(normalizedOriginal, out var cachedEntry))
+                        if (retranslate == null && TranslationCache.TryGetValue(normalizedOriginal, out var cachedEntry))
                         {
                             if (cachedEntry.Value != normalizedOriginal && !cachedEntry.IsHumanEmpty && cachedEntry.Tag != "S")
                             {
@@ -4089,8 +4408,15 @@ namespace UnityGameTranslator.Core
                             }
                         }
 
+                        // Retranslation: its own loop, because it needs a DIFFERENT answer and has
+                        // a previous value to put back if it cannot get one.
+                        if (retranslate != null)
+                        {
+                            RunRetranslation(retranslate, normalizedOriginal, extractedNumbers,
+                                workerExtractedVars, originalText, componentsToUpdate);
+                        }
                         // Capture keys only mode: store H+empty without calling AI
-                        if (Config.capture_keys_only)
+                        else if (Config.capture_keys_only)
                         {
                             AddToCache(normalizedOriginal, "", "H");
                             if (Config.debug_ai)
@@ -4201,6 +4527,15 @@ namespace UnityGameTranslator.Core
                     catch (Exception e)
                     {
                         Adapter?.LogWarning($"[AI] Worker error: {e.Message}");
+
+                        // A retranslation in flight had its line taken out of the file. Whatever
+                        // just went wrong, the human must not be left with one line fewer than
+                        // they started with.
+                        if (retranslate != null)
+                        {
+                            RestorePreviousEntry(retranslate);
+                            FinishRetranslation(retranslate, retranslate.PreviousValue, RetranslateOutcome.Failed);
+                        }
                     }
                     finally
                     {
@@ -4232,7 +4567,23 @@ namespace UnityGameTranslator.Core
         // it missed models that do reason (Gemma 4), leaving them slow and occasionally answering
         // with nothing at all.
 
-        private static string TranslateWithAI(string textWithPlaceholders, List<string> extractedNumbers, bool isOwnUI = false)
+        /// <summary>
+        /// Asking the same question expecting a different answer.
+        ///
+        /// ⚠ Only a retranslation ever passes one of these. Ordinary translation must stay
+        /// deterministic: it is cached, shared and merged, and two runs disagreeing about the same
+        /// line would show up as a conflict nobody made.
+        ///
+        /// The instructions are NOT touched — the human rejected a draw, not the brief.
+        /// </summary>
+        private sealed class Variation
+        {
+            public double Temperature;
+            public int? Seed;
+        }
+
+        private static string TranslateWithAI(string textWithPlaceholders, List<string> extractedNumbers,
+            bool isOwnUI = false, Variation variation = null)
         {
             // Security: Reject text that's too long (prevents DoS via large requests).
             // QueueForTranslation turns these back at the door, so this is belt and braces for a
@@ -4338,10 +4689,15 @@ namespace UnityGameTranslator.Core
                 string failedResponse = null;
                 bool isValid = false;
 
+                // A retranslation raises the floor for all three: the whole point is to leave the
+                // basin the rejected answer came from, so a placeholder repair must not quietly
+                // drop back to a deterministic draw and hand back the same text.
+                double baseTemperature = variation != null ? variation.Temperature : 0.0;
+
                 for (int attempt = 0; attempt < Placeholders.MaxAttempts && !isValid; attempt++)
                 {
                     JArray messagesArray;
-                    double temperature = 0.0;
+                    double temperature = baseTemperature;
 
                     if (attempt == 0)
                     {
@@ -4366,7 +4722,7 @@ namespace UnityGameTranslator.Core
                     }
                     else
                     {
-                        temperature = 0.3;
+                        temperature = Math.Max(0.3, baseTemperature);
                         string reinforcedPrompt = systemPrompt + "\n" + Placeholders.MandatorySequences(frozenSequences);
                         messagesArray = new JArray
                         {
@@ -4377,7 +4733,8 @@ namespace UnityGameTranslator.Core
                             Adapter?.LogInfo("[AI] Retry 2 (fresh reinforced prompt, temperature 0.3)");
                     }
 
-                    translation = SendChatRequest(messagesArray, temperature, maxTokens);
+                    translation = SendChatRequest(messagesArray, temperature, maxTokens,
+                        variation != null ? variation.Seed : null);
 
                     // Transport/HTTP error (incl. 429): retrying here is pointless,
                     // the worker handles re-queueing on rate limit
@@ -4471,7 +4828,7 @@ namespace UnityGameTranslator.Core
         /// AdaptToRejection), and handles rate limiting and HTTP errors.
         /// Returns null on transport/HTTP failure.
         /// </summary>
-        private static string SendChatRequest(JArray messagesArray, double temperature, int maxTokens)
+        private static string SendChatRequest(JArray messagesArray, double temperature, int maxTokens, int? seed = null)
         {
             string aiEndpoint = Endpoints.Resolve(Config.ai_url, "chat/completions");
             EnsureProviderQuirks();
@@ -4498,6 +4855,12 @@ namespace UnityGameTranslator.Core
 
                 if (_negotiation.SendTemperature) requestObj["temperature"] = temperature;
                 else requestObj.Remove("temperature");
+
+                // Sent only when a caller asked for a different draw of an answer it already has.
+                // Several servers accept the field and ignore it, silently — which is why the
+                // variation rests on the temperature and treats the seed as a bonus.
+                if (seed.HasValue && _negotiation.SendSeed) requestObj["seed"] = seed.Value;
+                else requestObj.Remove("seed");
 
                 string effort = _negotiation.ReasoningEffort;
                 if (effort != null) requestObj["reasoning_effort"] = effort;
@@ -5206,15 +5569,24 @@ namespace UnityGameTranslator.Core
             return normalized;
         }
 
-        public static void QueueForTranslation(string text, object component = null, bool isOwnUI = false)
+        /// <summary>
+        /// Put a text in front of the translation backend.
+        ///
+        /// Returns false when the text was turned away at the door — switched off, offline, too
+        /// long, already in the target language. Every scanner path ignores that answer (a text
+        /// refused here is simply left as it is on screen), but a caller that DELETED something to
+        /// make room for the answer must know: see RemoveTranslationForRetranslate, which puts the
+        /// previous translation back rather than leave the line with nothing.
+        /// </summary>
+        public static bool QueueForTranslation(string text, object component = null, bool isOwnUI = false)
         {
             // Capture-only mode needs the queue too: entries are stored as
             // H+empty by the worker without any backend call
-            if (!Config.IsTranslationEnabled && !Config.capture_keys_only) return;
+            if (!Config.IsTranslationEnabled && !Config.capture_keys_only) return false;
             // Google/DeepL require online mode
-            if (Config.ActiveBackendRequiresOnline && !Config.online_mode) return;
-            if (string.IsNullOrEmpty(text)) return;
-            if (IsNumericOrSymbol(text)) return;
+            if (Config.ActiveBackendRequiresOnline && !Config.online_mode) return false;
+            if (string.IsNullOrEmpty(text)) return false;
+            if (IsNumericOrSymbol(text)) return false;
 
             // Longer than any backend will accept. Refused HERE, at the single door, rather than
             // deeper down where the refusal used to be recorded as a cache entry tagged "S".
@@ -5238,14 +5610,14 @@ namespace UnityGameTranslator.Core
                     if (tooLongTexts.Add(text))
                         Adapter?.LogWarning($"[Queue] Text too long ({text.Length} chars, limit {MaxAITextLength}), left untranslated");
                 }
-                return;
+                return false;
             }
             // Last line of defence, here rather than only at the call sites: this is the single door
             // into the queue, and guarding the two obvious callers still let target-language text
             // through by other routes (a stored entry whose translation was already indexed came back
             // and was translated again, drifting). Own UI is exempt: its labels are source text we
             // produce ourselves, never a read-back of the game's rendering.
-            if (!isOwnUI && IsAlreadyTargetText(text)) return;
+            if (!isOwnUI && IsAlreadyTargetText(text)) return false;
 
             lock (lockObj)
             {
@@ -5262,7 +5634,7 @@ namespace UnityGameTranslator.Core
                 if (isOwnUI)
                     pendingOwnUITexts.Add(text);
 
-                if (pendingTranslations.Contains(text)) return;
+                if (pendingTranslations.Contains(text)) return true;
 
                 pendingTranslations.Add(text);
                 translationQueue.Enqueue(text);
@@ -5275,6 +5647,8 @@ namespace UnityGameTranslator.Core
                     LogDebug($"[Queue] #{queueSize}: {preview}{(isOwnUI ? " (UI)" : "")}");
                 }
             }
+
+            return true;
         }
 
         /// <summary>

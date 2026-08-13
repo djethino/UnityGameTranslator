@@ -71,6 +71,25 @@ namespace UnityGameTranslator.Core.UI.Panels
         private GameObject _textEditListContent;
         private Text _textEditCountLabel;
 
+        /// <summary>
+        /// Rows waiting for an AI retranslation. The answer arrives seconds later, on the worker
+        /// thread, long after the click — without this the row would stay on "Queued for AI..."
+        /// forever, which is exactly what "the button does nothing" looked like.
+        /// A list, not a dictionary: the same text can be shown by several components at once.
+        /// </summary>
+        private readonly List<PendingRetranslateRow> _pendingRetranslateRows = new List<PendingRetranslateRow>();
+
+        private sealed class PendingRetranslateRow
+        {
+            public string Key;
+            public InputFieldRef Input;
+            public Text KeyLabel;
+            public object Component;
+            // Live values of the [!v*N] placeholders as displayed when the row was built: the
+            // answer comes back in its placeholder form, which is not what goes on screen.
+            public Dictionary<int, string> LiveNumbers;
+        }
+
         // Camera selection for world-space raycast
         private Components.SearchableDropdown _cameraDropdown;
         private Camera _selectedCamera = null; // null = UI Only mode
@@ -610,6 +629,11 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             // Initialize raycast infrastructure on first panel creation
             InitializeRaycast();
+
+            // Panels are built once for the life of the process (CreatePanels), so this
+            // subscription needs no matching removal — and must not be made per row, which would
+            // pile up one handler per click on a static event.
+            TranslatorCore.OnRetranslateFinished += OnRetranslateFinished;
         }
 
         protected override void ConstructPanelContent()
@@ -1339,6 +1363,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_selectedHighlight != null) _selectedHighlight.gameObject.SetActive(false);
 
             // Clear TextEdit UI
+            _pendingRetranslateRows.Clear();
             if (_textEditRow != null) _textEditRow.SetActive(false);
             if (_textEditListContent != null)
             {
@@ -1481,7 +1506,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 return;
             }
 
-            // Clear previous entries
+            // Clear previous entries — and with them any retranslation still expected for a row
+            // that is about to be destroyed
+            _pendingRetranslateRows.Clear();
             for (int i = _textEditListContent.transform.childCount - 1; i >= 0; i--)
                 UnityEngine.Object.Destroy(_textEditListContent.transform.GetChild(i).gameObject);
 
@@ -1638,12 +1665,117 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.SetLayoutElement(retranslateBtn.Component.gameObject, minWidth: 110, minHeight: UIStyles.RowHeightNormal);
             retranslateBtn.OnClick += () =>
             {
-                TranslatorCore.RemoveTranslationForRetranslate(capturedKey);
+                if (TranslatorCore.Config == null || !TranslatorCore.Config.IsTranslationEnabled)
+                {
+                    SetDynamicText(_statusLabel, "Translation is switched off — turn it on in Options first");
+                    _statusLabel.color = UIStyles.StatusWarning;
+                    return;
+                }
 
-                SetDynamicText(_statusLabel, "Queued for AI...");
-                _statusLabel.color = UIStyles.TextAccent;
-                keyLabel.text = $"[AI...] {capturedKey}";
+                // A human wrote this one. Asking a machine to redo it is a legitimate thing to
+                // want, and an accidental click away from losing work — so it is asked.
+                if (TranslatorCore.GetTranslationTag(capturedKey) == "H")
+                {
+                    TranslatorUIManager.ConfirmationPanel?.Show(
+                        "Replace a translation you wrote?",
+                        "This line was translated by hand. Asking the AI again replaces it, and the "
+                            + "text you wrote is not kept anywhere.",
+                        "Retranslate",
+                        () => StartRetranslate(capturedKey, input, keyLabel, capturedComponent, capturedNumbers));
+                    return;
+                }
+
+                StartRetranslate(capturedKey, input, keyLabel, capturedComponent, capturedNumbers);
             };
+        }
+
+        /// <summary>
+        /// Send one line back to the AI and remember the row, so the answer — or its absence —
+        /// lands where the human is looking.
+        /// </summary>
+        private void StartRetranslate(string key, InputFieldRef input, Text keyLabel,
+            object component, Dictionary<int, string> liveNumbers)
+        {
+            _pendingRetranslateRows.RemoveAll(r => r.Key == key && r.Component == component);
+            _pendingRetranslateRows.Add(new PendingRetranslateRow
+            {
+                Key = key,
+                Input = input,
+                KeyLabel = keyLabel,
+                Component = component,
+                LiveNumbers = liveNumbers
+            });
+
+            if (!TranslatorCore.RemoveTranslationForRetranslate(key))
+            {
+                // Refused outright: the notification already fired (or never will), so the row is
+                // told here rather than left waiting.
+                _pendingRetranslateRows.RemoveAll(r => r.Key == key && r.Component == component);
+                SetDynamicText(_statusLabel, "Could not ask the AI — check the backend in Options");
+                _statusLabel.color = UIStyles.StatusError;
+                keyLabel.text = $"[{TranslatorCore.GetTranslationTag(key) ?? "—"}] {key}";
+                return;
+            }
+
+            SetDynamicText(_statusLabel, "Asking the AI for another translation...");
+            _statusLabel.color = UIStyles.TextAccent;
+            keyLabel.text = $"[AI...] {key}";
+        }
+
+        /// <summary>
+        /// A retranslation ended. Raised on the WORKER thread — everything below touches Unity
+        /// objects, so it hops to the main thread first.
+        /// </summary>
+        private void OnRetranslateFinished(string key, string value, TranslatorCore.RetranslateOutcome outcome)
+        {
+            TranslatorUIManager.RunOnMainThread(() => ApplyRetranslateResult(key, value, outcome));
+        }
+
+        private void ApplyRetranslateResult(string key, string value, TranslatorCore.RetranslateOutcome outcome)
+        {
+            var rows = _pendingRetranslateRows.FindAll(r => r.Key == key);
+            if (rows.Count == 0) return;
+            _pendingRetranslateRows.RemoveAll(r => r.Key == key);
+
+            string tag = TranslatorCore.GetTranslationTag(key) ?? "—";
+
+            foreach (var row in rows)
+            {
+                // The row may have been destroyed since (another element was clicked)
+                if (row.Input?.Component == null || row.KeyLabel == null) continue;
+
+                if (outcome == TranslatorCore.RetranslateOutcome.Replaced && value != null)
+                {
+                    row.Input.Text = value;
+
+                    // Same treatment as the Save button: what goes on screen carries the live
+                    // numbers, never the [!v*N] placeholders the file stores.
+                    try
+                    {
+                        TypeHelper.SetText(row.Component,
+                            TranslatorCore.RestoreNumbersFromPlaceholders(value, row.LiveNumbers));
+                    }
+                    catch { }
+                }
+
+                row.KeyLabel.text = $"[{tag}] {key}";
+            }
+
+            switch (outcome)
+            {
+                case TranslatorCore.RetranslateOutcome.Replaced:
+                    SetDynamicText(_statusLabel, "New translation applied");
+                    _statusLabel.color = UIStyles.StatusSuccess;
+                    break;
+                case TranslatorCore.RetranslateOutcome.Unchanged:
+                    SetDynamicText(_statusLabel, "The AI gave the same translation again — nothing changed");
+                    _statusLabel.color = UIStyles.StatusWarning;
+                    break;
+                default:
+                    SetDynamicText(_statusLabel, "The AI returned nothing — previous translation kept");
+                    _statusLabel.color = UIStyles.StatusError;
+                    break;
+            }
         }
 
         #endregion

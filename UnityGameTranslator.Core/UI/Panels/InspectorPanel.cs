@@ -1897,7 +1897,16 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void ApplyRetranslateResult(string key, string value, TranslatorCore.RetranslateOutcome outcome)
         {
             var rows = _pendingRetranslateRows.FindAll(r => r.Key == key);
-            if (rows.Count == 0) return;
+            if (rows.Count == 0)
+            {
+                // The rows were destroyed while the AI was answering — another element was clicked,
+                // or the selection was cleared. The proposal has nowhere to land and, being a
+                // proposal, was never written anywhere: it is simply lost. Said out loud rather
+                // than dropped in silence; nothing is damaged, but "I asked and got nothing" must
+                // have an explanation somewhere.
+                TranslatorCore.LogInfo("[Retranslate] Answer arrived after its row was gone — proposal discarded");
+                return;
+            }
             _pendingRetranslateRows.RemoveAll(r => r.Key == key);
 
             bool proposed = outcome == TranslatorCore.RetranslateOutcome.Replaced && value != null;

@@ -1543,6 +1543,52 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Hand the browser the answer to a retranslation it asked for.
+        ///
+        /// ⚠ Its own endpoint, NOT the content push: nothing was written, so the
+        /// file is unchanged and the push would skip itself — and it carries the
+        /// whole file, which for one proposed line would be absurd.
+        ///
+        /// The value travels as a PROPOSAL: the page stages it as a pending edit,
+        /// under the same Save button as anything typed there. That is the whole
+        /// point — a retranslation must not be the one gesture that writes without
+        /// being validated.
+        /// </summary>
+        public static async Task SendRetranslationResult(string modKey, string requestId, string key,
+            string value, string outcome)
+        {
+            if (string.IsNullOrEmpty(modKey) || string.IsNullOrEmpty(requestId)) return;
+
+            try
+            {
+                var payload = new JObject
+                {
+                    ["id"] = requestId,
+                    ["key"] = key,
+                    ["value"] = value,
+                    ["outcome"] = outcome
+                };
+
+                var content = new StringContent(payload.ToString(Newtonsoft.Json.Formatting.None),
+                    Encoding.UTF8, "application/json");
+                var response = await client.PostAsync(
+                    $"{DefaultBaseUrl}/edit-session/{Uri.EscapeDataString(modKey)}/retranslation", content);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    // Nothing is lost in the file — the proposal simply never reaches
+                    // the page, which frees its waiting row on its own timer.
+                    TranslatorCore.LogWarning(
+                        $"[ApiClient] Retranslation result not delivered: HTTP {(int)response.StatusCode}");
+                }
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogWarning($"[ApiClient] Retranslation result error: {e.Message}");
+            }
+        }
+
+        /// <summary>
         /// Initialize a live edit session: uploads the raw local translations
         /// file (metadata keys INCLUDED — the session file comes back verbatim
         /// to replace translations.json, so _uuid/_game/_source must survive

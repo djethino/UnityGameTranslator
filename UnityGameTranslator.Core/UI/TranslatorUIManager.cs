@@ -370,6 +370,10 @@ namespace UnityGameTranslator.Core.UI
 
             CreatePanels();
 
+            // Before the panels would need it and once for the process: a retranslation the
+            // browser asked for is answered here, not by any panel.
+            TranslatorCore.OnRetranslateFinished += OnRetranslateFinishedForBrowser;
+
             _initialized = true;
 
             // Notify listeners (e.g., TranslatorPatches to retry failed font replacements)
@@ -3238,6 +3242,9 @@ namespace UnityGameTranslator.Core.UI
             _keepaliveInFlight = false;
             _browserLeftSince = -1f;
             _seenRetranslateIds.Clear();
+            // Nobody left to hand an answer to. The proposals themselves are held by
+            // TranslatorCore and simply go nowhere — none of them wrote anything.
+            lock (_browserRetranslateRequests) { _browserRetranslateRequests.Clear(); }
         }
 
         /// <summary>
@@ -3470,6 +3477,40 @@ namespace UnityGameTranslator.Core.UI
         private static readonly Queue<string> _seenRetranslateIds = new Queue<string>();
         private const int MaxSeenRetranslateIds = 32;
 
+        // Retranslations the BROWSER is waiting for: key → its request id. The answer arrives
+        // through TranslatorCore's notification (worker thread) with no idea who asked, so this is
+        // what tells a browser request apart from an in-game one — both can be pending at once,
+        // and the in-game editor answers itself.
+        private static readonly Dictionary<string, string> _browserRetranslateRequests =
+            new Dictionary<string, string>();
+
+        /// <summary>
+        /// Send a finished retranslation back to the browser that asked for it. Subscribed once at
+        /// init; raised on the worker thread, and everything it touches is HTTP, so it stays there.
+        /// </summary>
+        private static void OnRetranslateFinishedForBrowser(string key, string value,
+            TranslatorCore.RetranslateOutcome outcome)
+        {
+            string requestId;
+            lock (_browserRetranslateRequests)
+            {
+                if (!_browserRetranslateRequests.TryGetValue(key, out requestId)) return;
+                _browserRetranslateRequests.Remove(key);
+            }
+
+            string modKey = _editSessionModKey;
+            if (string.IsNullOrEmpty(modKey)) return;
+
+            string outcomeName = outcome == TranslatorCore.RetranslateOutcome.Replaced ? "replaced"
+                : outcome == TranslatorCore.RetranslateOutcome.Unchanged ? "unchanged"
+                : "failed";
+
+            // Fire and forget: the page frees its waiting row on its own timer if this never
+            // arrives, and nothing in the file depends on it.
+            _ = ApiClient.SendRetranslationResult(modKey, requestId, key,
+                outcome == TranslatorCore.RetranslateOutcome.Replaced ? value : null, outcomeName);
+        }
+
         /// <summary>
         /// Handle an edit_retranslate SSE event — the browser asked to
         /// re-translate ONE entry with the player's own AI backend. Runs on
@@ -3519,14 +3560,18 @@ namespace UnityGameTranslator.Core.UI
                 }
 
                 TranslatorCore.LogInfo("[EditSSE] Browser requested AI retranslation of one entry");
-                // storeResult: the browser cannot be handed a proposal — what travels between the
-                // mod and a live edit session is the translation file itself, and there is no
-                // channel for "here is something you might want". The in-game editor, which can,
-                // proposes instead (see RemoveTranslationForRetranslate).
-                TranslatorCore.RemoveTranslationForRetranslate(key, storeResult: true);
-                // The user is waiting in the browser: push as soon as the
-                // AI worker saves, without the usual debounce window
-                _nextPushAllowedTime = 0f;
+
+                // Remembered so the answer can be sent back to the page it belongs to. Written
+                // BEFORE the request: the worker can finish before this line would otherwise run.
+                if (!string.IsNullOrEmpty(requestId))
+                    lock (_browserRetranslateRequests) { _browserRetranslateRequests[key] = requestId; }
+
+                // A PROPOSAL, like the in-game editor: nothing is written, the page stages it as a
+                // pending edit and its own Save decides. The result travels by its own endpoint
+                // (SendRetranslationResult) — the content push carries the whole file and skips
+                // itself when nothing changed, which is exactly the case here.
+                if (!TranslatorCore.RemoveTranslationForRetranslate(key, storeResult: false))
+                    lock (_browserRetranslateRequests) { _browserRetranslateRequests.Remove(key); }
             }
             catch (Exception e)
             {

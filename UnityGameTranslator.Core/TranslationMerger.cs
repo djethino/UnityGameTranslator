@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core
 {
@@ -135,6 +136,17 @@ namespace UnityGameTranslator.Core
             }
         }
 
+        /// <summary>
+        /// ⚠ **The rule itself now lives in UnityGameTranslator.Common.Merge**, and this is the
+        /// adapter over it. It was the mod's alone because nothing else needed it; the manager now
+        /// answers the same question about the same file, and two implementations would be two
+        /// truths with the last writer winning.
+        ///
+        /// What stays here is what cannot be shared: entries are objects the mod holds in memory
+        /// and hands back BY REFERENCE — the caller's own instances, whose capture index is
+        /// renumbered afterwards by identity. The shared rule speaks in values and says only what
+        /// to do; picking which object embodies that answer is this method's business.
+        /// </summary>
         private static KeyDecisionWithTags ResolveKeyWithTags(
             string key,
             TranslationEntry localEntry,
@@ -142,138 +154,51 @@ namespace UnityGameTranslator.Core
             TranslationEntry ancestorEntry,
             MergeStatistics stats)
         {
-            bool inLocal = localEntry != null;
-            bool inRemote = remoteEntry != null;
-            bool inAncestor = ancestorEntry != null;
+            var decision = Merge.Decide(Line(localEntry), Line(remoteEntry), Line(ancestorEntry));
 
-            // Case 1: Key only in local (locally added)
-            if (inLocal && !inRemote && !inAncestor)
+            switch (decision.Reason)
             {
-                stats.LocalOnlyCount++;
-                return new KeyDecisionWithTags { FinalEntry = localEntry };
+                case MergeReason.Unchanged: stats.UnchangedCount++; break;
+                case MergeReason.LocalOnly: stats.LocalOnlyCount++; break;
+                case MergeReason.LocalModified: stats.LocalModifiedCount++; break;
+                case MergeReason.RemoteAdded: stats.RemoteAddedCount++; break;
+                case MergeReason.RemoteUpdated: stats.RemoteUpdatedCount++; break;
+                case MergeReason.Deleted: stats.DeletedCount++; break;
+                case MergeReason.Conflict: stats.ConflictCount++; break;
             }
 
-            // Case 2: Key only in remote (remotely added)
-            if (!inLocal && inRemote && !inAncestor)
+            // ⚠ The ORIGINAL instance, never a copy built from the values: the merged dictionary
+            // reuses the caller's entries, and RenumberMergedIndices tells local from remote by
+            // reference. A rebuilt object would belong to neither and get renumbered wrongly.
+            TranslationEntry chosen;
+            switch (decision.Verdict)
             {
-                stats.RemoteAddedCount++;
-                return new KeyDecisionWithTags { FinalEntry = remoteEntry };
+                case MergeVerdict.TakeLocal: chosen = localEntry; break;
+                case MergeVerdict.TakeRemote: chosen = remoteEntry; break;
+                default: chosen = null; break;
             }
 
-            // Case 3: Key only in ancestor (deleted in both)
-            if (!inLocal && !inRemote && inAncestor)
+            return new KeyDecisionWithTags
             {
-                stats.DeletedCount++;
-                return new KeyDecisionWithTags { FinalEntry = null };
-            }
+                FinalEntry = chosen,
+                HasConflict = decision.IsConflict,
+                ConflictType = Translate(decision.Conflict),
+            };
+        }
 
-            // Case 4: Key in both local and remote
-            if (inLocal && inRemote)
+        /// <summary>One entry as the shared rule sees it, or nothing when the key is absent.</summary>
+        private static TranslationLine? Line(TranslationEntry entry) =>
+            entry == null ? (TranslationLine?)null : new TranslationLine(entry.Value, entry.Tag);
+
+        private static ConflictType Translate(ConflictKind kind)
+        {
+            switch (kind)
             {
-                // Same value AND tag = no conflict
-                if (localEntry.Value == remoteEntry.Value && localEntry.Tag == remoteEntry.Tag)
-                {
-                    stats.UnchangedCount++;
-                    return new KeyDecisionWithTags { FinalEntry = localEntry };
-                }
-
-                // Check if one can replace the other based on tag priority
-                // Higher priority wins without conflict
-                if (remoteEntry.CanReplace(localEntry))
-                {
-                    // Remote has higher priority - take remote (no conflict)
-                    stats.RemoteUpdatedCount++;
-                    return new KeyDecisionWithTags { FinalEntry = remoteEntry };
-                }
-                if (localEntry.CanReplace(remoteEntry))
-                {
-                    // Local has higher priority - keep local (no conflict)
-                    stats.LocalModifiedCount++;
-                    return new KeyDecisionWithTags { FinalEntry = localEntry };
-                }
-
-                // Same priority - check ancestor for traditional 3-way merge
-                if (inAncestor)
-                {
-                    // Local unchanged, remote changed = take remote
-                    if (localEntry.Value == ancestorEntry.Value && localEntry.Tag == ancestorEntry.Tag)
-                    {
-                        stats.RemoteUpdatedCount++;
-                        return new KeyDecisionWithTags { FinalEntry = remoteEntry };
-                    }
-
-                    // Remote unchanged, local changed = keep local
-                    if (remoteEntry.Value == ancestorEntry.Value && remoteEntry.Tag == ancestorEntry.Tag)
-                    {
-                        stats.LocalModifiedCount++;
-                        return new KeyDecisionWithTags { FinalEntry = localEntry };
-                    }
-
-                    // Both changed with same priority = conflict
-                    stats.ConflictCount++;
-                    return new KeyDecisionWithTags
-                    {
-                        HasConflict = true,
-                        ConflictType = ConflictType.BothModified,
-                        FinalEntry = remoteEntry  // Default to remote for display
-                    };
-                }
-                else
-                {
-                    // No ancestor, same priority = conflict
-                    stats.ConflictCount++;
-                    return new KeyDecisionWithTags
-                    {
-                        HasConflict = true,
-                        ConflictType = ConflictType.NoAncestor,
-                        FinalEntry = remoteEntry
-                    };
-                }
+                case ConflictKind.NoAncestor: return ConflictType.NoAncestor;
+                case ConflictKind.LocalModifiedRemoteDeleted: return ConflictType.LocalModifiedRemoteDeleted;
+                case ConflictKind.RemoteModifiedLocalDeleted: return ConflictType.RemoteModifiedLocalDeleted;
+                default: return ConflictType.BothModified;
             }
-
-            // Case 5: Key in local and ancestor but not remote (remote deleted)
-            if (inLocal && !inRemote && inAncestor)
-            {
-                if (localEntry.Value == ancestorEntry.Value && localEntry.Tag == ancestorEntry.Tag)
-                {
-                    stats.DeletedCount++;
-                    return new KeyDecisionWithTags { FinalEntry = null };
-                }
-                else
-                {
-                    stats.ConflictCount++;
-                    return new KeyDecisionWithTags
-                    {
-                        HasConflict = true,
-                        ConflictType = ConflictType.LocalModifiedRemoteDeleted,
-                        FinalEntry = localEntry
-                    };
-                }
-            }
-
-            // Case 6: Key in remote and ancestor but not local (locally deleted)
-            if (!inLocal && inRemote && inAncestor)
-            {
-                if (remoteEntry.Value == ancestorEntry.Value && remoteEntry.Tag == ancestorEntry.Tag)
-                {
-                    stats.DeletedCount++;
-                    return new KeyDecisionWithTags { FinalEntry = null };
-                }
-                else
-                {
-                    stats.ConflictCount++;
-                    return new KeyDecisionWithTags
-                    {
-                        HasConflict = true,
-                        ConflictType = ConflictType.RemoteModifiedLocalDeleted,
-                        FinalEntry = remoteEntry
-                    };
-                }
-            }
-
-            // Default: take whatever is available
-            stats.UnchangedCount++;
-            return new KeyDecisionWithTags { FinalEntry = remoteEntry ?? localEntry };
         }
 
         private class KeyDecisionWithTags

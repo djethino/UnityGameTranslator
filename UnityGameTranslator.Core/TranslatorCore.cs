@@ -7383,22 +7383,12 @@ namespace UnityGameTranslator.Core
         /// Higher priority wins: H empty (0) < A (1) < V (2) < H with value (3) < S/M (99)
         /// S and M are immutable and should never be replaced.
         /// </summary>
-        public int Priority
-        {
-            get
-            {
-                // Immutable tags (S/M) have highest priority - never replace
-                if (IsImmutableTag) return 99;
-                if (IsHumanEmpty) return 0;  // H empty = lowest priority
-                switch (Tag)
-                {
-                    case "A": return 1;  // AI
-                    case "V": return 2;  // Validated
-                    case "H": return 3;  // Human with value
-                    default: return 1;   // Default = AI
-                }
-            }
-        }
+        /// <summary>
+        /// ⚠ The ladder itself lives in <see cref="UnityGameTranslator.Common.Merge.PriorityOf"/>.
+        /// It decides who wins a merge with nobody asked, and the manager settles the same lines
+        /// from outside a running game — two tables would be two answers about one file.
+        /// </summary>
+        public int Priority => Common.Merge.PriorityOf(Tag, Value);
 
         /// <summary>
         /// Create a new TranslationEntry from a string value (defaults to AI tag).

@@ -118,6 +118,19 @@ namespace UnityGameTranslator.Core.UI.Panels
         // Rate limit
         private InputFieldRef _rateLimitDelayInput;
 
+        // Advanced (AI): how many requests one line may cost, and how the model is asked.
+        // Three jobs, three settings each, because they want opposite things — see the config.
+        private Text _advancedIconLabel;
+        private GameObject _advancedContent;
+        private bool _advancedExpanded;
+        private InputFieldRef _aiMaxAttemptsInput;
+        private InputFieldRef _aiTemperatureInput;
+        private InputFieldRef _aiTemperatureRepairInput;
+        private InputFieldRef _aiTemperatureRetranslateInput;
+        private InputFieldRef _aiSeedInput;
+        private InputFieldRef _aiSeedRepairInput;
+        private InputFieldRef _aiSeedRetranslateInput;
+
         // Proxy / Network section (in the Online tab)
         // Mode dropdown is shown to all users. Custom URL/user/pass + bypass toggle
         // are only visible when mode == "Custom" to avoid cluttering the regular case.
@@ -212,6 +225,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             public string deepl_api_key;
             public bool deepl_use_free;
             public float rate_limit_retry_delay;
+            public int ai_max_attempts;
+            public double ai_temperature;
+            public double ai_temperature_repair;
+            public double ai_temperature_retranslate;
+            public string ai_seed;
+            public string ai_seed_repair;
+            public string ai_seed_retranslate;
             public bool online_mode;
             public string update_check_frequency;
             public bool notify_updates;
@@ -271,6 +291,15 @@ namespace UnityGameTranslator.Core.UI.Panels
                     deepl_api_key = TranslatorCore.Config.deepl_api_key ?? "",
                     deepl_use_free = TranslatorCore.Config.deepl_use_free,
                     rate_limit_retry_delay = TranslatorCore.Config.rate_limit_retry_delay,
+                    ai_max_attempts = TranslatorCore.Config.ai_max_attempts,
+                    ai_temperature = TranslatorCore.Config.ai_temperature,
+                    ai_temperature_repair = TranslatorCore.Config.ai_temperature_repair,
+                    ai_temperature_retranslate = TranslatorCore.Config.ai_temperature_retranslate,
+                    // Compared as the TEXT of an optional number: "unset" and "0" are different
+                    // answers here, and a nullable compared through a float would merge them.
+                    ai_seed = SeedToText(TranslatorCore.Config.ai_seed),
+                    ai_seed_repair = SeedToText(TranslatorCore.Config.ai_seed_repair),
+                    ai_seed_retranslate = SeedToText(TranslatorCore.Config.ai_seed_retranslate),
                     online_mode = TranslatorCore.Config.online_mode,
                     update_check_frequency = UpdateCheckFrequency.Normalize(TranslatorCore.Config.sync.update_check_frequency),
                     notify_updates = TranslatorCore.Config.sync.notify_updates,
@@ -1111,6 +1140,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             var strictHint = UIStyles.CreateHint(_llmSection, "StrictHint", "Skip texts not matching source language (LLM only)");
             RegisterUIText(strictHint);
 
+            CreateAiAdvancedSection(_llmSection);
+
             // === TRANSLATION API SECTION (contains provider dropdown + sub-sections) ===
             _translationApiSection = UIFactory.CreateVerticalGroup(_backendTypeSection, "TranslationApiSection", false, false, true, true, 3);
             UIFactory.SetLayoutElement(_translationApiSection, flexibleWidth: 9999);
@@ -1216,11 +1247,131 @@ namespace UnityGameTranslator.Core.UI.Panels
             RegisterUIText(rateLimitHint);
 
             // Initial visibility - all hidden until UpdateBackendSections
+            _advancedContent?.SetActive(false);
             _backendTypeSection.SetActive(false);
             _llmSection.SetActive(false);
             _translationApiSection.SetActive(false);
             _googleSection.SetActive(false);
             _deeplSection.SetActive(false);
+        }
+
+        /// <summary>
+        /// What the model is asked, and how many times — folded away by default.
+        ///
+        /// ⚠ Collapsed on purpose, and not out of shyness: a temperature is a real translation
+        /// change, and every one of these has a default that is right for nearly everybody. What is
+        /// behind this header is for someone who already knows what a seed does; putting it in
+        /// front of everyone else would make them think a choice was expected of them.
+        /// </summary>
+        private void CreateAiAdvancedSection(GameObject parent)
+        {
+            UIStyles.CreateSpacer(parent, 8);
+
+            var (container, header, icon, title, content) =
+                UIStyles.CreateCollapsibleSection(parent, "AiAdvanced", "Advanced", initiallyExpanded: false);
+            _advancedIconLabel = icon;
+            _advancedContent = content;
+            _advancedExpanded = false;
+            RegisterUIText(title);
+
+            var headerBtn = header.GetComponent<Button>();
+            if (headerBtn != null)
+            {
+                UIHelpers.AddButtonListener(headerBtn, () =>
+                {
+                    _advancedExpanded = !_advancedExpanded;
+                    UIStyles.SetCollapsibleState(_advancedIconLabel, _advancedContent, _advancedExpanded);
+                    // The window measures its content to size itself; a section that just unfolded
+                    // is content it has never measured.
+                    RecalculateSize();
+                });
+            }
+
+            var attemptsHint = UIStyles.CreateHint(content, "AttemptsHint",
+                "How many requests one line may cost at most — used both to repair a broken placeholder and to retranslate a line you did not like");
+            RegisterUIText(attemptsHint);
+
+            _aiMaxAttemptsInput = CreateAdvancedNumberRow(content, "MaxAttempts", "Attempts:", "3",
+                "Each attempt is a real request to your AI. 1 means never ask twice. Default 3.");
+
+            UIStyles.CreateSpacer(content, 8);
+
+            var tempHint = UIStyles.CreateHint(content, "TempHint",
+                "Temperature: 0 always gives the same answer for the same line, higher wanders further from it");
+            RegisterUIText(tempHint);
+
+            _aiTemperatureInput = CreateAdvancedNumberRow(content, "Temp", "Translating:", "0",
+                "Ordinary translation. Zero by default so the same line always gets the same translation — the file is cached, shared and merged with other people's.");
+            _aiTemperatureRepairInput = CreateAdvancedNumberRow(content, "TempRepair", "Repairing:", "0.3",
+                "Used when the answer broke a [!v*0]-style marker and has to be asked again. Just above zero: the same request would return the same broken answer.");
+            _aiTemperatureRetranslateInput = CreateAdvancedNumberRow(content, "TempRetrans", "Retranslating:", "0.8",
+                "Used by the Retranslate button, when you did not like the translation. High on purpose: same instructions, different wording.");
+
+            UIStyles.CreateSpacer(content, 8);
+
+            var seedHint = UIStyles.CreateHint(content, "SeedHint",
+                "Seed: leave empty unless you want the same run twice. Many servers accept it and ignore it");
+            RegisterUIText(seedHint);
+
+            _aiSeedInput = CreateAdvancedNumberRow(content, "Seed", "Translating:", "empty",
+                "Fixed seed for ordinary translation. Empty sends none.");
+            _aiSeedRepairInput = CreateAdvancedNumberRow(content, "SeedRepair", "Repairing:", "empty",
+                "Fixed seed when re-asking after a broken marker. Empty sends none.");
+            _aiSeedRetranslateInput = CreateAdvancedNumberRow(content, "SeedRetrans", "Retranslating:", "empty",
+                "Fixed seed for the Retranslate button. It is offset by the attempt number, so retranslating still varies — a single fixed seed would hand back the answer you just rejected, every time. Empty draws a new one each attempt.");
+        }
+
+        /// <summary>One labelled number field of the Advanced block.</summary>
+        private InputFieldRef CreateAdvancedNumberRow(GameObject parent, string name, string label,
+            string placeholder, string help)
+        {
+            var row = UIStyles.CreateFormRow(parent, name + "Row", UIStyles.InputHeight, 5);
+
+            var caption = UIFactory.CreateLabel(row, name + "Label", label, TextAnchor.MiddleLeft);
+            caption.color = UIStyles.TextSecondary;
+            UIFactory.SetLayoutElement(caption.gameObject, minWidth: 110);
+            RegisterUIText(caption);
+
+            var input = UIFactory.CreateInputField(row, name + "Input", placeholder);
+            UIFactory.SetLayoutElement(input.Component.gameObject, minWidth: 70, minHeight: UIStyles.InputHeight);
+            UIStyles.SetBackground(input.Component.gameObject, UIStyles.InputBackground);
+            _helpZone?.Describe(input.Component.gameObject, help);
+
+            // Deliberately NOT ContentType.DecimalNumber: it is locale-aware, so on a machine whose
+            // decimal separator is a comma the field refuses the dot these values are written with,
+            // and the value is parsed with InvariantCulture on the way out. Validation happens at
+            // Apply, where a bad entry falls back to the default instead of being silently eaten.
+            return input;
+        }
+
+        /// <summary>An optional seed as the text of a field: null becomes empty, never "0".</summary>
+        private static string SeedToText(int? seed)
+        {
+            return seed.HasValue ? seed.Value.ToString(System.Globalization.CultureInfo.InvariantCulture) : "";
+        }
+
+        /// <summary>
+        /// Read an optional seed back from a field. Anything unreadable is treated as "none" rather
+        /// than as zero: zero is a legitimate seed, and guessing it from a typo would quietly pin
+        /// every request to it.
+        /// </summary>
+        private static int? SeedFromText(string text)
+        {
+            if (string.IsNullOrEmpty(text) || string.IsNullOrEmpty(text.Trim())) return null;
+            int value;
+            return int.TryParse(text.Trim(), System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture, out value) ? (int?)value : null;
+        }
+
+        /// <summary>A temperature from a field, falling back to the default when unreadable.</summary>
+        private static double TemperatureFromText(string text, double fallback)
+        {
+            double value;
+            if (!double.TryParse((text ?? "").Trim(), System.Globalization.NumberStyles.Float,
+                                 System.Globalization.CultureInfo.InvariantCulture, out value))
+                return fallback;
+            if (value < 0.0) return 0.0;
+            return value > 2.0 ? 2.0 : value;
         }
 
         private void CreateOnlineTabContent(GameObject parent)
@@ -1625,6 +1776,16 @@ namespace UnityGameTranslator.Core.UI.Panels
             _deeplApiKeyInput.Text = TranslatorCore.Config.deepl_api_key ?? "";
             _deeplUseFreeToggle.isOn = TranslatorCore.Config.deepl_use_free;
             _rateLimitDelayInput.Text = TranslatorCore.Config.rate_limit_retry_delay.ToString();
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            // Invariant on the way in as well as out: written back with the machine's culture, a
+            // comma-separator locale would store "0,8" and read it as 8 on the next launch.
+            if (_aiMaxAttemptsInput != null) _aiMaxAttemptsInput.Text = TranslatorCore.Config.ai_max_attempts.ToString(inv);
+            if (_aiTemperatureInput != null) _aiTemperatureInput.Text = TranslatorCore.Config.ai_temperature.ToString(inv);
+            if (_aiTemperatureRepairInput != null) _aiTemperatureRepairInput.Text = TranslatorCore.Config.ai_temperature_repair.ToString(inv);
+            if (_aiTemperatureRetranslateInput != null) _aiTemperatureRetranslateInput.Text = TranslatorCore.Config.ai_temperature_retranslate.ToString(inv);
+            if (_aiSeedInput != null) _aiSeedInput.Text = SeedToText(TranslatorCore.Config.ai_seed);
+            if (_aiSeedRepairInput != null) _aiSeedRepairInput.Text = SeedToText(TranslatorCore.Config.ai_seed_repair);
+            if (_aiSeedRetranslateInput != null) _aiSeedRetranslateInput.Text = SeedToText(TranslatorCore.Config.ai_seed_retranslate);
             string currentModel = TranslatorCore.Config.ai_model ?? "";
             if (!string.IsNullOrEmpty(currentModel))
             {
@@ -2197,6 +2358,23 @@ namespace UnityGameTranslator.Core.UI.Panels
                 else
                     TranslatorCore.Config.rate_limit_retry_delay = 3f;
 
+                // Advanced (AI). Anything unreadable falls back to the default rather than to zero:
+                // an empty attempts field must not mean "never ask", and a mistyped temperature must
+                // not silently turn every translation deterministic — or the opposite.
+                int attempts;
+                if (int.TryParse((_aiMaxAttemptsInput?.Text ?? "").Trim(), System.Globalization.NumberStyles.Integer,
+                                 System.Globalization.CultureInfo.InvariantCulture, out attempts) && attempts >= 1 && attempts <= 10)
+                    TranslatorCore.Config.ai_max_attempts = attempts;
+                else
+                    TranslatorCore.Config.ai_max_attempts = Placeholders.MaxAttempts;
+
+                TranslatorCore.Config.ai_temperature = TemperatureFromText(_aiTemperatureInput?.Text, 0.0);
+                TranslatorCore.Config.ai_temperature_repair = TemperatureFromText(_aiTemperatureRepairInput?.Text, 0.3);
+                TranslatorCore.Config.ai_temperature_retranslate = TemperatureFromText(_aiTemperatureRetranslateInput?.Text, 0.8);
+                TranslatorCore.Config.ai_seed = SeedFromText(_aiSeedInput?.Text);
+                TranslatorCore.Config.ai_seed_repair = SeedFromText(_aiSeedRepairInput?.Text);
+                TranslatorCore.Config.ai_seed_retranslate = SeedFromText(_aiSeedRetranslateInput?.Text);
+
                 // Online mode - detect transition for sync stream management
                 bool wasOnline = TranslatorCore.Config.online_mode;
                 bool nowOnline = _onlineModeToggle.isOn;
@@ -2397,6 +2575,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             _googleApiKeyInput.OnValueChanged += _ => UpdateApplyButtonText();
             _deeplApiKeyInput.OnValueChanged += _ => UpdateApplyButtonText();
             _rateLimitDelayInput.OnValueChanged += _ => UpdateApplyButtonText();
+            if (_aiMaxAttemptsInput != null) _aiMaxAttemptsInput.OnValueChanged += _ => UpdateApplyButtonText();
+            if (_aiTemperatureInput != null) _aiTemperatureInput.OnValueChanged += _ => UpdateApplyButtonText();
+            if (_aiTemperatureRepairInput != null) _aiTemperatureRepairInput.OnValueChanged += _ => UpdateApplyButtonText();
+            if (_aiTemperatureRetranslateInput != null) _aiTemperatureRetranslateInput.OnValueChanged += _ => UpdateApplyButtonText();
+            if (_aiSeedInput != null) _aiSeedInput.OnValueChanged += _ => UpdateApplyButtonText();
+            if (_aiSeedRepairInput != null) _aiSeedRepairInput.OnValueChanged += _ => UpdateApplyButtonText();
+            if (_aiSeedRetranslateInput != null) _aiSeedRetranslateInput.OnValueChanged += _ => UpdateApplyButtonText();
 
             // Language dropdowns - hook into their change events
             _sourceLanguageDropdown.OnSelectionChanged += _ => UpdateApplyButtonText();
@@ -2474,6 +2659,21 @@ namespace UnityGameTranslator.Core.UI.Panels
             float parsedDelay;
             float currentDelay = (float.TryParse(_rateLimitDelayInput?.Text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out parsedDelay) && parsedDelay >= 0.1f) ? parsedDelay : 3f;
             if (Math.Abs(currentDelay - _initialSnapshot.rate_limit_retry_delay) > 0.01f) count++;
+
+            // Advanced (AI) — counted through the SAME readers Apply uses, so what the counter
+            // promises and what Apply writes cannot drift apart.
+            int parsedAttempts;
+            int currentAttempts = (int.TryParse((_aiMaxAttemptsInput?.Text ?? "").Trim(), System.Globalization.NumberStyles.Integer,
+                                   System.Globalization.CultureInfo.InvariantCulture, out parsedAttempts)
+                                   && parsedAttempts >= 1 && parsedAttempts <= 10)
+                                  ? parsedAttempts : Placeholders.MaxAttempts;
+            if (currentAttempts != _initialSnapshot.ai_max_attempts) count++;
+            if (Math.Abs(TemperatureFromText(_aiTemperatureInput?.Text, 0.0) - _initialSnapshot.ai_temperature) > 0.001) count++;
+            if (Math.Abs(TemperatureFromText(_aiTemperatureRepairInput?.Text, 0.3) - _initialSnapshot.ai_temperature_repair) > 0.001) count++;
+            if (Math.Abs(TemperatureFromText(_aiTemperatureRetranslateInput?.Text, 0.8) - _initialSnapshot.ai_temperature_retranslate) > 0.001) count++;
+            if (SeedToText(SeedFromText(_aiSeedInput?.Text)) != _initialSnapshot.ai_seed) count++;
+            if (SeedToText(SeedFromText(_aiSeedRepairInput?.Text)) != _initialSnapshot.ai_seed_repair) count++;
+            if (SeedToText(SeedFromText(_aiSeedRetranslateInput?.Text)) != _initialSnapshot.ai_seed_retranslate) count++;
 
             // Online
             if (_onlineModeToggle.isOn != _initialSnapshot.online_mode) count++;

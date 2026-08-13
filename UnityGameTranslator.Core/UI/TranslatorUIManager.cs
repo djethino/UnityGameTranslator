@@ -3519,7 +3519,11 @@ namespace UnityGameTranslator.Core.UI
                 }
 
                 TranslatorCore.LogInfo("[EditSSE] Browser requested AI retranslation of one entry");
-                TranslatorCore.RemoveTranslationForRetranslate(key);
+                // storeResult: the browser cannot be handed a proposal — what travels between the
+                // mod and a live edit session is the translation file itself, and there is no
+                // channel for "here is something you might want". The in-game editor, which can,
+                // proposes instead (see RemoveTranslationForRetranslate).
+                TranslatorCore.RemoveTranslationForRetranslate(key, storeResult: true);
                 // The user is waiting in the browser: push as soon as the
                 // AI worker saves, without the usual debounce window
                 _nextPushAllowedTime = 0f;

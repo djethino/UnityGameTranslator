@@ -68,8 +68,21 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         // UI elements — TextEdit mode
         private GameObject _textEditRow;
+        private GameObject _textEditScroll;
         private GameObject _textEditListContent;
         private Text _textEditCountLabel;
+
+        /// <summary>
+        /// The list's floor, and its ceiling once filled. One text needs a small box; a busy screen
+        /// hands this panel a dozen at once, and 260px of them was the complaint. The ceiling is
+        /// not a limit on the list — it scrolls — but on how much window it may claim by itself;
+        /// past that the panel is still resizable by hand, up to the screen.
+        /// </summary>
+        private const int TextEditListMinHeight = 260;
+        private const int TextEditListMaxHeight = 560;
+
+        /// <summary>Rough height of one edit row: labels + field + preview + buttons + spacing.</summary>
+        private const int TextEditRowHeight = 120;
 
         /// <summary>
         /// Rows waiting for an AI retranslation. The answer arrives seconds later, on the worker
@@ -77,20 +90,33 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// forever, which is exactly what "the button does nothing" looked like.
         /// A list, not a dictionary: the same text can be shown by several components at once.
         /// </summary>
-        private readonly List<PendingRetranslateRow> _pendingRetranslateRows = new List<PendingRetranslateRow>();
+        private readonly List<TextEditRowState> _pendingRetranslateRows = new List<TextEditRowState>();
 
-        private sealed class PendingRetranslateRow
+        /// <summary>
+        /// One editable line of the in-game text editor, whole. Its handlers, the answer that
+        /// comes back from another thread seconds later, and the button/preview refresh all read
+        /// from this — passing the pieces around one by one is how one of them gets forgotten.
+        /// </summary>
+        private sealed class TextEditRowState
         {
             public string Key;
+            public object Component;
+            // Live values of the [!v*N] placeholders as displayed when the row was built: what is
+            // stored and edited carries placeholders, what the game draws carries numbers.
+            public Dictionary<int, string> LiveNumbers;
+
             public InputFieldRef Input;
             public Text KeyLabel;
-            public object Component;
-            // Live values of the [!v*N] placeholders as displayed when the row was built: the
-            // answer comes back in its placeholder form, which is not what goes on screen.
-            public Dictionary<int, string> LiveNumbers;
-            // Both buttons of the row: what they may do changes when the answer lands.
+            public Text PreviewLabel;
             public ButtonRef SaveBtn;
             public ButtonRef RetranslateBtn;
+            public ButtonRef RevertBtn;
+
+            /// <summary>
+            /// What the AI last proposed for this line, or null. Kept so that saving it untouched
+            /// can be filed as "A" — the machine wrote it — instead of claiming a human did.
+            /// </summary>
+            public string AiProposal;
         }
 
         // Camera selection for world-space raycast
@@ -768,11 +794,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             _textEditCountLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(_textEditCountLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
 
-            var textEditScroll = UIFactory.CreateScrollView(_textEditRow, "TextEditScroll", out _textEditListContent, out _);
-            // See TranslatorPanelBase.ScrollingListHeightRule
-            UIFactory.SetLayoutElement(textEditScroll, minHeight: 260, preferredHeight: 260,
+            _textEditScroll = UIFactory.CreateScrollView(_textEditRow, "TextEditScroll", out _textEditListContent, out _);
+            // See TranslatorPanelBase.ScrollingListHeightRule. Both numbers are revised once the
+            // list is filled (SizeTextEditList): the smallest useful box for one line is not the
+            // smallest useful box for a dozen, and this panel is regularly handed a dozen.
+            UIFactory.SetLayoutElement(_textEditScroll, minHeight: TextEditListMinHeight, preferredHeight: TextEditListMinHeight,
                 flexibleHeight: 9999, flexibleWidth: 9999);
-            UIStyles.SetBackground(textEditScroll, UIStyles.InputBackground);
+            UIStyles.SetBackground(_textEditScroll, UIStyles.InputBackground);
             UIFactory.SetLayoutGroup<VerticalLayoutGroup>(_textEditListContent, false, false, true, true, 5, 5, 5, 5, 5);
 
             _textEditRow.SetActive(false); // Hidden by default
@@ -1525,8 +1553,30 @@ namespace UnityGameTranslator.Core.UI.Panels
                 CreateTextEditRow(textEntries[i]);
             }
 
+            SizeTextEditList(textEntries.Count);
+
             SetDynamicText(_statusLabel, "Edit translations and click Save");
             _statusLabel.color = UIStyles.TextSecondary;
+        }
+
+        /// <summary>
+        /// Ask the window for the height this many rows actually need, and let it grow.
+        ///
+        /// ⚠ The panel measures its content to size itself, and a scrolling list is weighed at its
+        /// PREFERRED height, not at what it holds — so a list left at its floor keeps the window at
+        /// the size of one or two rows however many were found. Revising the floor is what makes
+        /// the measurement tell the truth. A size the user picked themselves still wins:
+        /// RecalculateSize leaves it alone.
+        /// </summary>
+        private void SizeTextEditList(int rowCount)
+        {
+            if (_textEditScroll == null) return;
+
+            int wanted = Mathf.Clamp(rowCount * TextEditRowHeight, TextEditListMinHeight, TextEditListMaxHeight);
+            UIFactory.SetLayoutElement(_textEditScroll, minHeight: wanted, preferredHeight: wanted,
+                flexibleHeight: 9999, flexibleWidth: 9999);
+
+            RecalculateSize();
         }
 
         /// <summary>
@@ -1594,8 +1644,15 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.SetLayoutElement(row, flexibleWidth: 9999);
             UIStyles.SetBackground(row, UIStyles.CardBackground);
 
-            // Original key: full text, word-wrapped (translating needs the whole source)
-            var keyLabel = UIFactory.CreateLabel(row, "Key", $"[{entry.tag}] {entry.originalKey}", TextAnchor.UpperLeft);
+            // Original key: full text, word-wrapped (translating needs the whole source).
+            //
+            // ⚠ supportRichText: false, and this is the whole point of the row. Left on — the
+            // UIFactory default — the label RENDERS `<color=#FF0000>` instead of showing it, so a
+            // decorated line appeared coloured with its markup invisible, and there was no way to
+            // see what had to be preserved while editing. What is edited here is the file's exact
+            // text; that is what has to be on screen. The rendering is shown separately below.
+            var keyLabel = UIFactory.CreateLabel(row, "Key", $"[{entry.tag}] {entry.originalKey}", TextAnchor.UpperLeft,
+                                                 supportRichText: false);
             keyLabel.fontSize = UIStyles.FontSizeSmall;
             keyLabel.color = UIStyles.TextMuted;
             keyLabel.horizontalOverflow = HorizontalWrapMode.Wrap;
@@ -1608,25 +1665,49 @@ namespace UnityGameTranslator.Core.UI.Panels
                 foreach (var kv in entry.liveNumbers)
                     parts.Add($"[!v*{kv.Key}] = {kv.Value}");
                 var hintLabel = UIFactory.CreateLabel(row, "LiveValues",
-                    $"Keep placeholders as-is. Current values: {string.Join("   ", parts)}", TextAnchor.UpperLeft);
+                    $"Keep placeholders as-is. Current values: {string.Join("   ", parts)}", TextAnchor.UpperLeft,
+                    supportRichText: false);
                 hintLabel.fontSize = UIStyles.FontSizeHint;
                 hintLabel.color = UIStyles.TextAccent;
                 hintLabel.horizontalOverflow = HorizontalWrapMode.Wrap;
                 UIFactory.SetLayoutElement(hintLabel.gameObject, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999);
             }
 
-            // Editable translation field
+            // Editable translation field — raw text, markup included, exactly as the file holds it
             var input = UIFactory.CreateInputField(row, "TranslationInput", "Enter translation...");
             UIFactory.SetLayoutElement(input.Component.gameObject, minHeight: 40, flexibleWidth: 9999);
             UIStyles.SetBackground(input.Component.gameObject, UIStyles.InputBackground);
             input.Component.lineType = UnityEngine.UI.InputField.LineType.MultiLineNewline;
+            if (input.Component.textComponent != null)
+                input.Component.textComponent.supportRichText = false;
             input.Text = entry.text;
+
+            // …and right under it, the same string RENDERED. One shows what you are editing, the
+            // other what the game will draw — a colour tag broken while typing shows up here
+            // immediately, instead of on a screen you have to go back to.
+            var previewLabel = UIFactory.CreateLabel(row, "Preview", "", TextAnchor.UpperLeft);
+            previewLabel.fontSize = UIStyles.FontSizeSmall;
+            previewLabel.color = UIStyles.TextSecondary;
+            previewLabel.horizontalOverflow = HorizontalWrapMode.Wrap;
+            UIFactory.SetLayoutElement(previewLabel.gameObject, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999);
+            RegisterExcluded(previewLabel);
 
             // Buttons row
             var btnRow = UIFactory.CreateHorizontalGroup(row, "BtnRow", false, false, true, true, 4);
             UIFactory.SetLayoutElement(btnRow, minHeight: UIStyles.RowHeightNormal, flexibleWidth: 9999);
 
-            // Capture for closures
+            // Everything this row needs, in one place: its handlers, the answer that arrives
+            // seconds later on another thread, and the button-state refresh all work from it.
+            // Passing the pieces around separately is how one of them ends up forgotten.
+            var rowState = new TextEditRowState
+            {
+                Key = entry.originalKey,
+                Component = entry.component,
+                LiveNumbers = entry.liveNumbers,
+                Input = input,
+                KeyLabel = keyLabel,
+                PreviewLabel = previewLabel
+            };
             string capturedKey = entry.originalKey;
             object capturedComponent = entry.component;
             var capturedNumbers = entry.liveNumbers;
@@ -1637,6 +1718,15 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             var retranslateBtn = UIFactory.CreateButton(btnRow, "RetranslateBtn", "Retranslate (AI)");
             UIFactory.SetLayoutElement(retranslateBtn.Component.gameObject, minWidth: 110, minHeight: UIStyles.RowHeightNormal);
+
+            var revertBtn = UIFactory.CreateButton(btnRow, "RevertBtn", "Revert");
+            UIFactory.SetLayoutElement(revertBtn.Component.gameObject, minWidth: 70, minHeight: UIStyles.RowHeightNormal);
+            _helpZone?.Describe(revertBtn.Component.gameObject,
+                "Put the field back to what the translation file holds, discarding what you typed or what the AI proposed.");
+
+            rowState.SaveBtn = saveBtn;
+            rowState.RetranslateBtn = retranslateBtn;
+            rowState.RevertBtn = revertBtn;
 
             // Both buttons exist before either handler is written: each one has to be able to put
             // the other back in its right state, and a lambda cannot reach a local declared later.
@@ -1659,7 +1749,14 @@ namespace UnityGameTranslator.Core.UI.Panels
                     return;
                 }
 
-                TranslatorCore.SetTranslationFromEditor(capturedKey, newValue);
+                // Who wrote what is being saved. Accepting an AI proposal untouched files it as A:
+                // stamping H would claim a review nobody performed, and that tag drives the
+                // quality score, the A → V gesture and what the community sees.
+                string tag = rowState.AiProposal != null
+                             && string.Equals(newValue, rowState.AiProposal, StringComparison.Ordinal)
+                    ? "A" : "H";
+
+                TranslatorCore.SetTranslationFromEditor(capturedKey, newValue, tag);
 
                 // Apply immediately to the component, with the live numbers re-injected
                 try
@@ -1669,10 +1766,10 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
                 catch { }
 
-                SetDynamicText(_statusLabel, "Saved!");
+                SetDynamicText(_statusLabel, tag == "A" ? "AI translation applied" : "Saved!");
                 _statusLabel.color = UIStyles.StatusSuccess;
-                keyLabel.text = $"[H] {capturedKey}";
-                RefreshRowButtons(capturedKey, input, saveBtn, retranslateBtn);
+                keyLabel.text = $"[{tag}] {capturedKey}";
+                RefreshRow(rowState);
             };
 
             retranslateBtn.OnClick += () =>
@@ -1684,27 +1781,27 @@ namespace UnityGameTranslator.Core.UI.Panels
                     return;
                 }
 
-                // A human wrote this one. Asking a machine to redo it is a legitimate thing to
-                // want, and an accidental click away from losing work — so it is asked.
-                if (TranslatorCore.GetTranslationTag(capturedKey) == "H")
-                {
-                    TranslatorUIManager.ConfirmationPanel?.Show(
-                        "Replace a translation you wrote?",
-                        "This line was translated by hand. Asking the AI again replaces it, and the "
-                            + "text you wrote is not kept anywhere.",
-                        "Retranslate",
-                        () => StartRetranslate(capturedKey, input, keyLabel, capturedComponent, capturedNumbers,
-                                               saveBtn, retranslateBtn));
-                    return;
-                }
+                // No confirmation here any more, and its absence is deliberate: a retranslation
+                // now only PROPOSES. A hand-written line is replaced by the Save click, never by
+                // this one — asking twice for something that has not happened yet trains people to
+                // dismiss the question. The browser still asks, because there it does write.
+                StartRetranslate(rowState);
+            };
 
-                StartRetranslate(capturedKey, input, keyLabel, capturedComponent, capturedNumbers,
-                                 saveBtn, retranslateBtn);
+            revertBtn.OnClick += () =>
+            {
+                // Back to what the file holds — the AI's proposal and anything typed both go.
+                input.Text = TranslatorCore.GetTranslationValue(capturedKey) ?? capturedKey;
+                rowState.AiProposal = null;
+                keyLabel.text = $"[{TranslatorCore.GetTranslationTag(capturedKey) ?? "—"}] {capturedKey}";
+                SetDynamicText(_statusLabel, "Back to the saved translation");
+                _statusLabel.color = UIStyles.TextSecondary;
+                RefreshRow(rowState);
             };
 
             // The C# event of InputFieldRef, never onValueChanged.AddListener — see UIHelpers.
-            input.OnValueChanged += _ => RefreshRowButtons(capturedKey, input, saveBtn, retranslateBtn);
-            RefreshRowButtons(capturedKey, input, saveBtn, retranslateBtn);
+            input.OnValueChanged += _ => RefreshRow(rowState);
+            RefreshRow(rowState);
         }
 
         /// <summary>
@@ -1722,58 +1819,70 @@ namespace UnityGameTranslator.Core.UI.Panels
         }
 
         /// <summary>
-        /// Grey out what would do nothing: Save while the field matches the file, Retranslate while
-        /// an answer for that line is already on its way.
+        /// Grey out what would do nothing — Save and Revert while the field matches the file,
+        /// Retranslate while an answer for that line is already on its way — and keep the rendered
+        /// preview in step with what is being typed.
         /// </summary>
-        private void RefreshRowButtons(string key, InputFieldRef input, ButtonRef saveBtn, ButtonRef retranslateBtn)
+        private void RefreshRow(TextEditRowState row)
         {
-            if (input?.Component == null) return;
+            if (row?.Input?.Component == null) return;
 
-            if (saveBtn?.Component != null)
-                saveBtn.Component.interactable = HasUnsavedEdit(key, input.Text);
+            bool changed = HasUnsavedEdit(row.Key, row.Input.Text);
 
-            if (retranslateBtn?.Component != null)
-                retranslateBtn.Component.interactable = !_pendingRetranslateRows.Exists(r => r.Key == key);
+            if (row.SaveBtn?.Component != null)
+                row.SaveBtn.Component.interactable = changed;
+
+            // Revert answers the same question as Save, from the other side: there is something to
+            // undo exactly when there is something to save.
+            if (row.RevertBtn?.Component != null)
+                row.RevertBtn.Component.interactable = changed;
+
+            if (row.RetranslateBtn?.Component != null)
+                row.RetranslateBtn.Component.interactable = !_pendingRetranslateRows.Contains(row);
+
+            if (row.PreviewLabel != null)
+            {
+                string field = row.Input.Text ?? "";
+                // Shown only when there is markup to interpret. On a plain line the preview would
+                // repeat the field word for word, costing a row of height per entry in a list that
+                // routinely holds a dozen — and this panel was reported as too short.
+                bool worthShowing = field.IndexOf('<') >= 0 && field.IndexOf('>') >= 0;
+                row.PreviewLabel.gameObject.SetActive(worthShowing);
+                if (worthShowing)
+                {
+                    // The only place in this row where markup is meant to be interpreted. Numbers
+                    // are put back too, so this is the line as the game would draw it right now.
+                    row.PreviewLabel.text = TranslatorCore.RestoreNumbersFromPlaceholders(
+                        field, row.LiveNumbers);
+                }
+            }
         }
 
         /// <summary>
-        /// Send one line back to the AI and remember the row, so the answer — or its absence —
-        /// lands where the human is looking.
+        /// Ask the AI for another translation of this line. It PROPOSES: nothing is written, the
+        /// answer lands in the field and waits for Save — which is why there is no confirmation
+        /// step and nothing to lose if it goes wrong.
         /// </summary>
-        private void StartRetranslate(string key, InputFieldRef input, Text keyLabel,
-            object component, Dictionary<int, string> liveNumbers,
-            ButtonRef saveBtn, ButtonRef retranslateBtn)
+        private void StartRetranslate(TextEditRowState row)
         {
-            _pendingRetranslateRows.RemoveAll(r => r.Key == key && r.Component == component);
-            _pendingRetranslateRows.Add(new PendingRetranslateRow
-            {
-                Key = key,
-                Input = input,
-                KeyLabel = keyLabel,
-                Component = component,
-                LiveNumbers = liveNumbers,
-                SaveBtn = saveBtn,
-                RetranslateBtn = retranslateBtn
-            });
+            if (row == null) return;
+            if (!_pendingRetranslateRows.Contains(row))
+                _pendingRetranslateRows.Add(row);
 
-            if (!TranslatorCore.RemoveTranslationForRetranslate(key))
+            if (!TranslatorCore.RemoveTranslationForRetranslate(row.Key, storeResult: false))
             {
-                // Refused outright: the notification already fired (or never will), so the row is
-                // told here rather than left waiting.
-                _pendingRetranslateRows.RemoveAll(r => r.Key == key && r.Component == component);
+                _pendingRetranslateRows.Remove(row);
                 SetDynamicText(_statusLabel, "Could not ask the AI — check the backend in Options");
                 _statusLabel.color = UIStyles.StatusError;
-                keyLabel.text = $"[{TranslatorCore.GetTranslationTag(key) ?? "—"}] {key}";
-                RefreshRowButtons(key, input, saveBtn, retranslateBtn);
+                row.KeyLabel.text = $"[{TranslatorCore.GetTranslationTag(row.Key) ?? "—"}] {row.Key}";
+                RefreshRow(row);
                 return;
             }
 
             SetDynamicText(_statusLabel, "Asking the AI for another translation...");
             _statusLabel.color = UIStyles.TextAccent;
-            keyLabel.text = $"[AI...] {key}";
-            // Nothing to click while the answer is on its way: a second request would take the line
-            // out again, this time with nothing left to put back.
-            RefreshRowButtons(key, input, saveBtn, retranslateBtn);
+            row.KeyLabel.text = $"[AI...] {row.Key}";
+            RefreshRow(row);
         }
 
         /// <summary>
@@ -1791,38 +1900,29 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (rows.Count == 0) return;
             _pendingRetranslateRows.RemoveAll(r => r.Key == key);
 
-            string tag = TranslatorCore.GetTranslationTag(key) ?? "—";
+            bool proposed = outcome == TranslatorCore.RetranslateOutcome.Replaced && value != null;
 
             foreach (var row in rows)
             {
                 // The row may have been destroyed since (another element was clicked)
                 if (row.Input?.Component == null || row.KeyLabel == null) continue;
 
-                if (outcome == TranslatorCore.RetranslateOutcome.Replaced && value != null)
+                if (proposed)
                 {
+                    // Into the FIELD, not into the file and not onto the game screen. Remembered
+                    // so that accepting it untouched can be filed as A rather than as human work.
+                    row.AiProposal = value;
                     row.Input.Text = value;
-
-                    // Same treatment as the Save button: what goes on screen carries the live
-                    // numbers, never the [!v*N] placeholders the file stores.
-                    try
-                    {
-                        TypeHelper.SetText(row.Component,
-                            TranslatorCore.RestoreNumbersFromPlaceholders(value, row.LiveNumbers));
-                    }
-                    catch { }
                 }
 
-                row.KeyLabel.text = $"[{tag}] {key}";
-
-                // Removed from the pending list above, so Retranslate comes back — and Save settles
-                // itself: after a replacement the field matches the file again, so it greys out.
-                RefreshRowButtons(key, row.Input, row.SaveBtn, row.RetranslateBtn);
+                row.KeyLabel.text = $"[{TranslatorCore.GetTranslationTag(key) ?? "—"}] {key}";
+                RefreshRow(row);
             }
 
             switch (outcome)
             {
                 case TranslatorCore.RetranslateOutcome.Replaced:
-                    SetDynamicText(_statusLabel, "New translation applied");
+                    SetDynamicText(_statusLabel, "New translation proposed — Save to keep it, Revert to drop it");
                     _statusLabel.color = UIStyles.StatusSuccess;
                     break;
                 case TranslatorCore.RetranslateOutcome.Unchanged:
@@ -1830,7 +1930,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     _statusLabel.color = UIStyles.StatusWarning;
                     break;
                 default:
-                    SetDynamicText(_statusLabel, "The AI returned nothing — previous translation kept");
+                    SetDynamicText(_statusLabel, "The AI returned nothing — the line is untouched");
                     _statusLabel.color = UIStyles.StatusError;
                     break;
             }

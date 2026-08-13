@@ -3256,18 +3256,27 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Create or update a translation entry from the in-game text editor (human edit).
+        /// Create or update a translation entry from the in-game text editor.
         /// Keeps the reverse cache in sync, rebuilds pattern entries when the key contains
         /// placeholders, and persists the cache.
         /// </summary>
-        public static void SetTranslationFromEditor(string key, string newValue)
+        /// <param name="tag">
+        /// Who wrote what is being saved. "H" for anything typed by the person at the keyboard.
+        ///
+        /// ⚠ "A" when they are accepting an AI proposal verbatim, and that distinction is not
+        /// bookkeeping: the tag drives the quality score, the validation gesture (A → V) and what
+        /// the community sees on upload. Filing a machine sentence as human work claims a review
+        /// nobody performed.
+        /// </param>
+        public static void SetTranslationFromEditor(string key, string newValue, string tag = "H")
         {
             if (string.IsNullOrEmpty(key) || string.IsNullOrEmpty(newValue)) return;
+            if (string.IsNullOrEmpty(tag)) tag = "H";
 
             if (TranslationCache.TryGetValue(key, out var existing))
             {
                 existing.Value = newValue;
-                existing.Tag = "H";
+                existing.Tag = tag;
                 // Editing never changes the capture order; only entries that
                 // somehow have no index yet get one (defensive — LoadCache
                 // backfills everything)
@@ -3278,7 +3287,7 @@ namespace UnityGameTranslator.Core
             }
             else
             {
-                TranslationCache[key] = new TranslationEntry { Value = newValue, Tag = "H", Index = NextOrderIndex() };
+                TranslationCache[key] = new TranslationEntry { Value = newValue, Tag = tag, Index = NextOrderIndex() };
             }
 
             // Reverse cache sync so the new value isn't detected as untranslated text
@@ -3370,45 +3379,52 @@ namespace UnityGameTranslator.Core
             public string PreviousTag;
             public long? PreviousIndex;
             public bool IsOwnUI;
+
+            /// <summary>
+            /// Whether the answer replaces the entry, or is merely handed back for a human to
+            /// accept. Proposing is the rule everywhere a person is looking at the result: nothing
+            /// in this mod applies itself, everything waits for Apply.
+            ///
+            /// ⚠ The browser is the exception, and not by preference: a proposal has no way to
+            /// reach the page. What travels between the mod and a live edit session IS the
+            /// translation file — there is no channel for "here is something you might want". So a
+            /// request coming from there writes, and the page's own undo covers the rest.
+            /// </summary>
+            public bool StoreResult;
         }
 
         // Keyed on the text handed to the queue, which is the cache key itself.
         private static readonly Dictionary<string, RetranslateRequest> retranslateRequests =
             new Dictionary<string, RetranslateRequest>();
 
-        /// <summary>
-        /// How many times a retranslation asks again when the backend returns the text that was
-        /// already there. The human clicked because they did not like that answer; handing it back
-        /// unchanged is the same as doing nothing.
-        /// </summary>
-        private const int RetranslateRounds = 3;
-
-        /// <summary>
-        /// Temperature used for a retranslation, and ONLY for one.
-        ///
-        /// ⚠ Ordinary translation stays at 0 on purpose: it wants the same answer for the same line
-        /// forever, so a cache is worth having and two players get the same file. A retranslation
-        /// wants the opposite — same instructions, different draw.
-        /// </summary>
-        private const double RetranslateTemperature = 0.8;
+        // How many times a retranslation asks again when the backend returns the text that was
+        // already there, and how warm each draw is: Config.AttemptsAllowed and
+        // Config.TemperatureRetranslate. Same number of requests as a placeholder repair is
+        // allowed, on purpose — there is no reason for the two to differ, and one setting is one
+        // thing to understand.
 
         // System.Random, not UnityEngine.Random: this runs on the worker thread, where Unity's
         // static generator is not allowed to be touched.
         private static readonly System.Random retranslateRandom = new System.Random();
 
         /// <summary>
-        /// Take the translation out and ask the backend again for the same line, with the same
-        /// instructions and a different draw (see RetranslateTemperature).
+        /// Ask the backend for another translation of a line somebody did not like — same
+        /// instructions, different draw (see the retranslation temperature).
         ///
-        /// ⚠ The entry is removed because AddToCache refuses to overwrite an existing key. That
-        /// makes this the one path able to LOSE a translation, so nothing is thrown away until the
-        /// queue has accepted the request, and the previous value is put back by the worker if
-        /// nothing usable comes out of it.
+        /// <paramref name="storeResult"/> false PROPOSES: the file is not touched at all, the
+        /// answer comes back through <see cref="OnRetranslateFinished"/> and it is up to whoever
+        /// asked to keep it. Nothing can be lost this way, which is why it is the mode used by the
+        /// in-game editor.
+        ///
+        /// true REPLACES, which is what the browser needs: the entry is taken out (AddToCache
+        /// refuses to overwrite a key), so this is the one path able to LOSE a translation.
+        /// Nothing is thrown away before the queue has accepted the request, and the previous
+        /// value goes back if nothing usable comes out of it.
         ///
         /// Returns false when the request could not even be submitted (translation switched off,
         /// backend offline); the file is untouched in that case.
         /// </summary>
-        public static bool RemoveTranslationForRetranslate(string key)
+        public static bool RemoveTranslationForRetranslate(string key, bool storeResult = true)
         {
             if (string.IsNullOrEmpty(key)) return false;
 
@@ -3448,13 +3464,18 @@ namespace UnityGameTranslator.Core
                     // The worker normally infers that from the components attached to the request,
                     // and a retranslation attaches none — so it is said here, from the tag the line
                     // already carries, or an M line comes back as game text tagged A.
-                    IsOwnUI = hadEntry && previous.Tag == "M"
+                    IsOwnUI = hadEntry && previous.Tag == "M",
+                    StoreResult = storeResult
                 };
                 retranslateRequests[key] = request;
-                TranslationCache.Remove(key);
+
+                // Proposing changes nothing until a human says so — the entry stays exactly where
+                // it is, and the worker is told to skip the cache rather than read it.
+                if (storeResult)
+                    TranslationCache.Remove(key);
             }
 
-            if (key.Contains(PlaceholderPrefix))
+            if (storeResult && key.Contains(PlaceholderPrefix))
                 BuildPatternEntries();
 
             if (QueueForTranslation(key, isOwnUI: request.IsOwnUI))
@@ -3481,7 +3502,7 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Ask again, up to RetranslateRounds times, until the answer differs from the one the
+        /// Ask again, up to Config.AttemptsAllowed times, until the answer differs from the one the
         /// human rejected. Each round draws a new seed — where the provider honours it, the run is
         /// reproducible; where it ignores it, the temperature alone does the work (see
         /// Negotiation.SendSeed).
@@ -3511,7 +3532,7 @@ namespace UnityGameTranslator.Core
             string accepted = null;
             bool sameAnswerAgain = false;
 
-            int rounds = deterministicBackend ? 1 : RetranslateRounds;
+            int rounds = deterministicBackend ? 1 : Config.AttemptsAllowed;
             for (int round = 0; round < rounds; round++)
             {
                 string candidate;
@@ -3521,10 +3542,17 @@ namespace UnityGameTranslator.Core
                 }
                 else
                 {
+                    // A configured seed is offset by the round, never used as-is: a single fixed
+                    // seed would redraw the very answer being rejected, every round, forever.
+                    // Left unset, each round draws its own — variation without reproducibility.
                     int seed;
-                    lock (retranslateRandom) { seed = retranslateRandom.Next(1, int.MaxValue); }
+                    if (Config.ai_seed_retranslate.HasValue)
+                        seed = unchecked(Config.ai_seed_retranslate.Value + round);
+                    else
+                        lock (retranslateRandom) { seed = retranslateRandom.Next(1, int.MaxValue); }
+
                     candidate = TranslateWithAI(normalizedKey, extractedNumbers, request.IsOwnUI,
-                        new Variation { Temperature = RetranslateTemperature, Seed = seed });
+                        new Variation { Temperature = Config.TemperatureRetranslate, Seed = seed });
                 }
 
                 if (string.IsNullOrEmpty(candidate))
@@ -3558,6 +3586,16 @@ namespace UnityGameTranslator.Core
                 RestorePreviousEntry(request);
                 FinishRetranslation(request, request.PreviousValue,
                     sameAnswerAgain ? RetranslateOutcome.Unchanged : RetranslateOutcome.Failed);
+                return;
+            }
+
+            // A proposal stops here: the answer goes to whoever asked and the file stays as it is,
+            // game screen included. Applying it would be deciding for the human — the very thing
+            // the button was reported for.
+            if (!request.StoreResult)
+            {
+                aiTranslationCount++;
+                FinishRetranslation(request, accepted, RetranslateOutcome.Replaced);
                 return;
             }
 
@@ -3612,6 +3650,9 @@ namespace UnityGameTranslator.Core
         private static void RestorePreviousEntry(RetranslateRequest request)
         {
             if (request == null || !request.HadEntry) return;
+            // A proposal never took it out; putting it "back" would overwrite whatever the human
+            // has done to that line in the meantime.
+            if (!request.StoreResult) return;
 
             lock (lockObj)
             {
@@ -3632,7 +3673,9 @@ namespace UnityGameTranslator.Core
             if (request == null) return;
             lock (lockObj) { retranslateRequests.Remove(request.Key); }
 
-            if (outcome == RetranslateOutcome.Replaced)
+            // Only a request that actually wrote has anything to save. A proposal deliberately
+            // leaves the file alone, so there is nothing to push to a browser either.
+            if (outcome == RetranslateOutcome.Replaced && request.StoreResult)
                 SaveCache();
 
             try
@@ -4718,12 +4761,17 @@ namespace UnityGameTranslator.Core
                 // A retranslation raises the floor for all three: the whole point is to leave the
                 // basin the rejected answer came from, so a placeholder repair must not quietly
                 // drop back to a deterministic draw and hand back the same text.
-                double baseTemperature = variation != null ? variation.Temperature : 0.0;
+                double baseTemperature = variation != null ? variation.Temperature : Config.TemperatureNormal;
+                int? baseSeed = variation != null ? variation.Seed : Config.ai_seed;
+                int maxAttempts = Config.AttemptsAllowed;
 
-                for (int attempt = 0; attempt < Placeholders.MaxAttempts && !isValid; attempt++)
+                for (int attempt = 0; attempt < maxAttempts && !isValid; attempt++)
                 {
                     JArray messagesArray;
                     double temperature = baseTemperature;
+                    // Attempts past the first are repairs — a job with its own settings, because it
+                    // asks a different question: the same translation, correctly marked up.
+                    int? seed = attempt == 0 ? baseSeed : (variation != null ? variation.Seed : Config.ai_seed_repair);
 
                     if (attempt == 0)
                     {
@@ -4748,7 +4796,7 @@ namespace UnityGameTranslator.Core
                     }
                     else
                     {
-                        temperature = Math.Max(0.3, baseTemperature);
+                        temperature = Math.Max(Config.TemperatureRepair, baseTemperature);
                         string reinforcedPrompt = systemPrompt + "\n" + Placeholders.MandatorySequences(frozenSequences);
                         messagesArray = new JArray
                         {
@@ -4759,8 +4807,7 @@ namespace UnityGameTranslator.Core
                             Adapter?.LogInfo("[AI] Retry 2 (fresh reinforced prompt, temperature 0.3)");
                     }
 
-                    translation = SendChatRequest(messagesArray, temperature, maxTokens,
-                        variation != null ? variation.Seed : null);
+                    translation = SendChatRequest(messagesArray, temperature, maxTokens, seed);
 
                     // Transport/HTTP error (incl. 429): retrying here is pointless,
                     // the worker handles re-queueing on rate limit
@@ -4808,7 +4855,7 @@ namespace UnityGameTranslator.Core
                     if (!isValid)
                     {
                         failedResponse = translation;
-                        Adapter?.LogWarning($"[AI] Attempt {attempt + 1}/{Placeholders.MaxAttempts}: invalid placeholders ({string.Join("; ", validationErrors)}) for: {textToTranslate.Substring(0, Math.Min(60, textToTranslate.Length))}...");
+                        Adapter?.LogWarning($"[AI] Attempt {attempt + 1}/{maxAttempts}: invalid placeholders ({string.Join("; ", validationErrors)}) for: {textToTranslate.Substring(0, Math.Min(60, textToTranslate.Length))}...");
                     }
                 }
 
@@ -4817,7 +4864,7 @@ namespace UnityGameTranslator.Core
                     // Never cache the corruption. In-memory marker only:
                     // left untranslated this session, retried on next launch.
                     validationFailedTexts.TryAdd(textWithPlaceholders, 0);
-                    Adapter?.LogWarning($"[AI] Placeholder validation failed after {Placeholders.MaxAttempts} attempts, left untranslated: {textToTranslate.Substring(0, Math.Min(60, textToTranslate.Length))}...");
+                    Adapter?.LogWarning($"[AI] Placeholder validation failed after {maxAttempts} attempts, left untranslated: {textToTranslate.Substring(0, Math.Min(60, textToTranslate.Length))}...");
                     return null;
                 }
 
@@ -6654,6 +6701,87 @@ namespace UnityGameTranslator.Core
         /// Applies to all backends (LLM, Google, DeepL). Supports decimals (e.g., 0.5).
         /// </summary>
         public float rate_limit_retry_delay { get; set; } = 3f;
+
+        #region What the model is asked, and how hard (Advanced)
+
+        /// <summary>
+        /// How many requests one line may cost, at most. Governs BOTH jobs that ask twice:
+        /// repairing an answer that broke a placeholder, and retranslating a line somebody did not
+        /// like. One number for both because there is no reason for them to differ — the default
+        /// is <see cref="Placeholders.MaxAttempts"/>, which is also what the Manager's model bench
+        /// scores against, so a model measured there behaves as measured here.
+        ///
+        /// ⚠ Every unit above 1 is a real request to a real backend, paid in time and possibly in
+        /// money. Clamped on read, never trusted from the file.
+        /// </summary>
+        public int ai_max_attempts { get; set; } = Placeholders.MaxAttempts;
+
+        /// <summary>
+        /// Temperature for an ordinary translation.
+        ///
+        /// ⚠ Zero by default, and that is not timidity: the answer is cached, shared through the
+        /// website and merged with other people's files. Two runs disagreeing about the same line
+        /// would surface as a conflict nobody made.
+        /// </summary>
+        public double ai_temperature { get; set; } = 0.0;
+
+        /// <summary>
+        /// Temperature when re-asking because the answer broke a placeholder. Slightly above zero:
+        /// an identical request would return the identical broken answer, so something has to move
+        /// — but the goal is still the SAME translation, correctly marked up.
+        /// </summary>
+        public double ai_temperature_repair { get; set; } = 0.3;
+
+        /// <summary>
+        /// Temperature when a human rejected the translation and asked for another.
+        /// High on purpose: the instructions are unchanged, only the draw is meant to differ.
+        /// </summary>
+        public double ai_temperature_retranslate { get; set; } = 0.8;
+
+        /// <summary>
+        /// Fixed seeds, one per job, null meaning "send none" (and, for a retranslation, "draw a
+        /// new one every time").
+        ///
+        /// ⚠ Setting one makes runs comparable between machines — the point of a seed. For the
+        /// retranslation it is used as seed + round number, so it still varies from one attempt to
+        /// the next while staying reproducible; a single fixed seed there would hand back the same
+        /// rejected answer forever.
+        ///
+        /// ⚠ Being accepted is not being honoured: several servers take the field and ignore it,
+        /// saying nothing. The variation rests on the temperature; the seed only makes it
+        /// repeatable where it is actually implemented (see Negotiation.SendSeed).
+        /// </summary>
+        public int? ai_seed { get; set; } = null;
+        public int? ai_seed_repair { get; set; } = null;
+        public int? ai_seed_retranslate { get; set; } = null;
+
+        /// <summary>Attempts as an actually usable number, whatever the file says.</summary>
+        [JsonIgnore]
+        public int AttemptsAllowed
+        {
+            get
+            {
+                if (ai_max_attempts < 1) return 1;
+                if (ai_max_attempts > 10) return 10;
+                return ai_max_attempts;
+            }
+        }
+
+        /// <summary>Temperatures clamped to what an OpenAI-compatible server accepts.</summary>
+        [JsonIgnore]
+        public double TemperatureNormal => ClampTemperature(ai_temperature);
+        [JsonIgnore]
+        public double TemperatureRepair => ClampTemperature(ai_temperature_repair);
+        [JsonIgnore]
+        public double TemperatureRetranslate => ClampTemperature(ai_temperature_retranslate);
+
+        private static double ClampTemperature(double value)
+        {
+            if (double.IsNaN(value) || value < 0.0) return 0.0;
+            return value > 2.0 ? 2.0 : value;
+        }
+
+        #endregion
 
         /// <summary>
         /// Maximum time, in seconds, that a newly instantiated text component can stay

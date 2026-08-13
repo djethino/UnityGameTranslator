@@ -88,6 +88,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Live values of the [!v*N] placeholders as displayed when the row was built: the
             // answer comes back in its placeholder form, which is not what goes on screen.
             public Dictionary<int, string> LiveNumbers;
+            // Both buttons of the row: what they may do changes when the answer lands.
+            public ButtonRef SaveBtn;
+            public ButtonRef RetranslateBtn;
         }
 
         // Camera selection for world-space raycast
@@ -1631,10 +1634,20 @@ namespace UnityGameTranslator.Core.UI.Panels
             var saveBtn = UIFactory.CreateButton(btnRow, "SaveBtn", "Save (H)");
             UIFactory.SetLayoutElement(saveBtn.Component.gameObject, minWidth: 80, minHeight: UIStyles.RowHeightNormal);
             UIStyles.SetBackground(saveBtn.Component.gameObject, UIStyles.ButtonSuccess);
+
+            var retranslateBtn = UIFactory.CreateButton(btnRow, "RetranslateBtn", "Retranslate (AI)");
+            UIFactory.SetLayoutElement(retranslateBtn.Component.gameObject, minWidth: 110, minHeight: UIStyles.RowHeightNormal);
+
+            // Both buttons exist before either handler is written: each one has to be able to put
+            // the other back in its right state, and a lambda cannot reach a local declared later.
             saveBtn.OnClick += () =>
             {
                 string newValue = input.Text;
                 if (string.IsNullOrEmpty(newValue)) return;
+                // Saving an unchanged field is not a no-op: it would stamp the line "H", turning a
+                // machine translation into a human one nobody wrote. The button is greyed for it,
+                // and refuses anyway — a greyed button is a hint, not a guarantee.
+                if (!HasUnsavedEdit(capturedKey, newValue)) return;
 
                 // Refuse edits that drop or invent placeholders — they would break
                 // dynamic numbers for every future value
@@ -1659,10 +1672,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 SetDynamicText(_statusLabel, "Saved!");
                 _statusLabel.color = UIStyles.StatusSuccess;
                 keyLabel.text = $"[H] {capturedKey}";
+                RefreshRowButtons(capturedKey, input, saveBtn, retranslateBtn);
             };
 
-            var retranslateBtn = UIFactory.CreateButton(btnRow, "RetranslateBtn", "Retranslate (AI)");
-            UIFactory.SetLayoutElement(retranslateBtn.Component.gameObject, minWidth: 110, minHeight: UIStyles.RowHeightNormal);
             retranslateBtn.OnClick += () =>
             {
                 if (TranslatorCore.Config == null || !TranslatorCore.Config.IsTranslationEnabled)
@@ -1681,12 +1693,47 @@ namespace UnityGameTranslator.Core.UI.Panels
                         "This line was translated by hand. Asking the AI again replaces it, and the "
                             + "text you wrote is not kept anywhere.",
                         "Retranslate",
-                        () => StartRetranslate(capturedKey, input, keyLabel, capturedComponent, capturedNumbers));
+                        () => StartRetranslate(capturedKey, input, keyLabel, capturedComponent, capturedNumbers,
+                                               saveBtn, retranslateBtn));
                     return;
                 }
 
-                StartRetranslate(capturedKey, input, keyLabel, capturedComponent, capturedNumbers);
+                StartRetranslate(capturedKey, input, keyLabel, capturedComponent, capturedNumbers,
+                                 saveBtn, retranslateBtn);
             };
+
+            // The C# event of InputFieldRef, never onValueChanged.AddListener — see UIHelpers.
+            input.OnValueChanged += _ => RefreshRowButtons(capturedKey, input, saveBtn, retranslateBtn);
+            RefreshRowButtons(capturedKey, input, saveBtn, retranslateBtn);
+        }
+
+        /// <summary>
+        /// True when the field holds something the file does not. The comparison is against the
+        /// stored value read NOW, so a line the AI or the browser changed under an untouched field
+        /// settles back to "nothing to save" on its own.
+        /// </summary>
+        private static bool HasUnsavedEdit(string key, string fieldText)
+        {
+            if (string.IsNullOrEmpty(fieldText)) return false;
+            // No entry yet: the field was prefilled with the source text, so saving it verbatim
+            // would file the source as its own translation — still nothing worth saving.
+            string stored = TranslatorCore.GetTranslationValue(key) ?? key;
+            return !string.Equals(fieldText, stored, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Grey out what would do nothing: Save while the field matches the file, Retranslate while
+        /// an answer for that line is already on its way.
+        /// </summary>
+        private void RefreshRowButtons(string key, InputFieldRef input, ButtonRef saveBtn, ButtonRef retranslateBtn)
+        {
+            if (input?.Component == null) return;
+
+            if (saveBtn?.Component != null)
+                saveBtn.Component.interactable = HasUnsavedEdit(key, input.Text);
+
+            if (retranslateBtn?.Component != null)
+                retranslateBtn.Component.interactable = !_pendingRetranslateRows.Exists(r => r.Key == key);
         }
 
         /// <summary>
@@ -1694,7 +1741,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// lands where the human is looking.
         /// </summary>
         private void StartRetranslate(string key, InputFieldRef input, Text keyLabel,
-            object component, Dictionary<int, string> liveNumbers)
+            object component, Dictionary<int, string> liveNumbers,
+            ButtonRef saveBtn, ButtonRef retranslateBtn)
         {
             _pendingRetranslateRows.RemoveAll(r => r.Key == key && r.Component == component);
             _pendingRetranslateRows.Add(new PendingRetranslateRow
@@ -1703,7 +1751,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 Input = input,
                 KeyLabel = keyLabel,
                 Component = component,
-                LiveNumbers = liveNumbers
+                LiveNumbers = liveNumbers,
+                SaveBtn = saveBtn,
+                RetranslateBtn = retranslateBtn
             });
 
             if (!TranslatorCore.RemoveTranslationForRetranslate(key))
@@ -1714,12 +1764,16 @@ namespace UnityGameTranslator.Core.UI.Panels
                 SetDynamicText(_statusLabel, "Could not ask the AI — check the backend in Options");
                 _statusLabel.color = UIStyles.StatusError;
                 keyLabel.text = $"[{TranslatorCore.GetTranslationTag(key) ?? "—"}] {key}";
+                RefreshRowButtons(key, input, saveBtn, retranslateBtn);
                 return;
             }
 
             SetDynamicText(_statusLabel, "Asking the AI for another translation...");
             _statusLabel.color = UIStyles.TextAccent;
             keyLabel.text = $"[AI...] {key}";
+            // Nothing to click while the answer is on its way: a second request would take the line
+            // out again, this time with nothing left to put back.
+            RefreshRowButtons(key, input, saveBtn, retranslateBtn);
         }
 
         /// <summary>
@@ -1759,6 +1813,10 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
 
                 row.KeyLabel.text = $"[{tag}] {key}";
+
+                // Removed from the pending list above, so Retranslate comes back — and Save settles
+                // itself: after a replacement the field matches the file again, so it greys out.
+                RefreshRowButtons(key, row.Input, row.SaveBtn, row.RetranslateBtn);
             }
 
             switch (outcome)

@@ -3318,6 +3318,20 @@ namespace UnityGameTranslator.Core
             return TranslationCache.TryGetValue(key, out var entry) ? (entry.Tag ?? "A") : null;
         }
 
+        /// <summary>
+        /// The value currently stored for a key, or null when the key has no entry at all.
+        ///
+        /// ⚠ Returns the stored form, placeholders and all — not what a player sees. An editor
+        /// asking "has this been changed?" must compare against THIS, and never against a
+        /// remembered copy: the file also moves under it (a retranslation, a browser save), and a
+        /// baseline captured when the row was drawn would answer for a version nobody is looking at.
+        /// </summary>
+        public static string GetTranslationValue(string key)
+        {
+            if (string.IsNullOrEmpty(key)) return null;
+            return TranslationCache.TryGetValue(key, out var entry) ? entry.Value : null;
+        }
+
         #endregion
 
         #region Retranslation (asking again for a line the human did not like)
@@ -3410,6 +3424,18 @@ namespace UnityGameTranslator.Core
             RetranslateRequest request;
             lock (lockObj)
             {
+                // Already asked and not yet answered. Recording a second request would capture the
+                // cache as it stands NOW — with the entry already taken out — and the line's real
+                // translation, held only by the first request, would become unrecoverable. The
+                // queue deduplicates the text anyway, so there is nothing to gain and a value to
+                // lose. The editors grey the button for this; this is the part that cannot be
+                // clicked around.
+                if (retranslateRequests.ContainsKey(key))
+                {
+                    LogDebug("[Retranslate] Already pending for this line, second request ignored");
+                    return true;
+                }
+
                 bool hadEntry = TranslationCache.TryGetValue(key, out var previous);
                 request = new RetranslateRequest
                 {

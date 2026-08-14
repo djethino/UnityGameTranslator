@@ -104,14 +104,27 @@ namespace UnityGameTranslator.Core.UI.Components
             // "three pictures and a word" into one control with two parts, and it is the piece that
             // made the two products look like different things. One ecosystem: the same bar, in the
             // same place, in the same colour.
+            // ⚠ **The line is a CHILD of a transparent slot, not the slot itself.** Put the Image on
+            // the slot and it fills whatever width the slot was given — which is how a one-pixel
+            // rule shipped as an eight-pixel grey rectangle. The slot carries the gaps; only its
+            // child is painted.
             var bar = UIFactory.CreateUIObject("ScopeMarkBar", buttonObj);
-            var barImage = bar.AddComponent<Image>();
-            barImage.color = UIStyles.BorderSubtle;
-            barImage.raycastTarget = false;
-            UIFactory.SetLayoutElement(bar, minWidth: 1, preferredWidth: 1,
+            UIFactory.SetLayoutElement(bar, minWidth: 1 + 2 * LabelGap, preferredWidth: 1 + 2 * LabelGap,
                                        minHeight: MarkSize, preferredHeight: MarkSize,
                                        flexibleWidth: 0, flexibleHeight: 0);
             bar.transform.SetSiblingIndex(index);
+
+            var rule = UIFactory.CreateUIObject("ScopeMarkRule", bar);
+            var barImage = rule.AddComponent<Image>();
+            barImage.color = UIStyles.BorderSubtle;
+            barImage.raycastTarget = false;
+
+            var ruleRect = rule.GetComponent<RectTransform>();
+            ruleRect.anchorMin = new Vector2(0.5f, 0.5f);
+            ruleRect.anchorMax = new Vector2(0.5f, 0.5f);
+            ruleRect.pivot = new Vector2(0.5f, 0.5f);
+            ruleRect.sizeDelta = new Vector2(1f, MarkSize);
+            ruleRect.anchoredPosition = Vector2.zero;
 
             // ⚠ **flexibleWidth 0, minWidth 0** — and this is what makes the group CENTRE. Given
             // flexible width the label swells to fill the button, the group becomes the button, and
@@ -137,11 +150,62 @@ namespace UnityGameTranslator.Core.UI.Components
                                                             MarkGap, 2, 2, EdgePad, EdgePad,
                                                             TextAnchor.MiddleCenter);
 
-            // A wider gap on each side of the bar than between the marks, so the three marks read
-            // as one object and the bar as what separates them from the word.
-            UIFactory.SetLayoutElement(bar, minWidth: 1 + LabelGap, preferredWidth: 1 + LabelGap,
-                                       minHeight: MarkSize, preferredHeight: MarkSize,
-                                       flexibleWidth: 0, flexibleHeight: 0);
+            var selectable = buttonObj.GetComponent<Button>();
+            Tint(buttonObj, side, selectable == null || selectable.interactable);
+        }
+
+        /// <summary>
+        /// Recolours an adorned button for the state it is in — call it wherever `interactable`
+        /// is set.
+        ///
+        /// 🔴 **The colours are NOT decided once at build time**, which is what shipped: the lit
+        /// mark stayed accent-purple on a button nobody could press, so a dead control was the
+        /// brightest thing on the card. Unity greys a Button's own Image through its ColorBlock and
+        /// leaves every child alone — the marks and the label are children.
+        ///
+        /// ⚠ The label is dimmed too, and that was the other half of the report: a disabled button
+        /// kept text as white as a live one, so it was told apart only by a slightly different grey
+        /// behind it. Text carries far more weight than a background shade.
+        /// </summary>
+        public static void Tint(ButtonRef button, EditSide side, bool interactable)
+        {
+            if (button?.Component == null) return;
+            Tint(button.Component.gameObject, side, interactable);
+        }
+
+        /// <summary>Same, for a button held as a GameObject.</summary>
+        public static void Tint(GameObject buttonObj, EditSide side, bool interactable)
+        {
+            if (buttonObj == null) return;
+
+            int index = 0;
+            foreach (var standing in EditScope.Sides(hasLocalFile: true, canReachMachine: true,
+                                                     signedIn: true, publishedByThisAccount: true,
+                                                     publishedBySomebodyElse: false))
+            {
+                var mark = buttonObj.transform.Find("ScopeMark" + index);
+                index++;
+
+                var image = mark == null ? null : mark.GetComponent<Image>();
+                if (image == null) continue;
+
+                bool lit = standing.Side == side;
+
+                // Disabled, the lit one keeps its rank by being LIGHTER than the other two rather
+                // than a different hue: which side the action aims at is still worth knowing while
+                // you read why you cannot take it.
+                image.color = lit
+                    ? (interactable ? UIStyles.TextAccent : UIStyles.TextSecondary)
+                    : UIStyles.TextMuted;
+            }
+
+            var rule = buttonObj.transform.Find("ScopeMarkBar/ScopeMarkRule");
+            var ruleImage = rule == null ? null : rule.GetComponent<Image>();
+            if (ruleImage != null) ruleImage.color = UIStyles.BorderSubtle;
+
+            var label = buttonObj.transform.Find("Text");
+            var text = label == null ? null : label.GetComponent<Text>();
+            if (text != null) text.color = interactable ? UIStyles.TextPrimary : UIStyles.TextMuted;
         }
     }
 }

@@ -208,6 +208,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             _scopeMirror = UIFactory.CreateUIObject(name + "Mirror", row);
             UIFactory.SetLayoutElement(_scopeMirror, flexibleWidth: 0, flexibleHeight: 0);
 
+            // Kept so the width can be measured rather than guessed, from the first resize on.
+            _scopeTitle = title;
+
+            // ⚠ Forces the first real measurement now that the title exists: the tier chosen a few
+            // lines above was based on the estimate, and the estimate is the thing that was wrong.
+            _scopeLastWidth = -1f;
+            RefreshScopeStrip();
+
             ApplyScopeTier();
             return title;
         }
@@ -232,6 +240,17 @@ namespace UnityGameTranslator.Core.UI.Panels
         private GameObject _scopeMirror;
 
         /// <summary>
+        /// The title itself, kept to MEASURE it rather than guess at it.
+        ///
+        /// 🔴 A section title is bold and a size up, and the per-character factor used everywhere
+        /// else models neither. Under-guessing its width is not a cosmetic error: the strip reserves
+        /// what it believes the title needs and bids for the rest, so a title that needs more than
+        /// it was granted wraps while the strip is still holding its full form — which is exactly
+        /// the ladder failing to have any rungs.
+        /// </summary>
+        private Text _scopeTitle;
+
+        /// <summary>
         /// Re-measures the room the title leaves and changes form only if the answer moved.
         ///
         /// ⚠ Called on every resize, including the programmatic ones. The dead band inside
@@ -247,6 +266,12 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // ⚠ Nothing moved, nothing to ask. This runs on EVERY FRAME through the mod's single
             // tick, so the cheap test comes before the arithmetic and before anything else.
+            // ⚠ Measured here rather than at build: preferredWidth needs the font, which is not
+            // necessarily ready when a panel assembles its card. By the time anything is resized it
+            // certainly is, and the estimate below is only the stand-in until then.
+            if (_scopeTitle != null && _scopeTitle.preferredWidth > 1f)
+                _scopeTitleWidth = _scopeTitle.preferredWidth;
+
             if (Mathf.Abs(width - _scopeLastWidth) < 0.5f) return;
             _scopeLastWidth = width;
 

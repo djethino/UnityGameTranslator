@@ -1088,6 +1088,10 @@ namespace UnityGameTranslator.Core.UI
                     // The scope strips follow the width of the panel holding them, live.
                     TickResponsiveStrips();
 
+                    // And every themed button's label follows whether it can be pressed. See
+                    // ButtonStates for why this is a registry ticked here rather than a component.
+                    ButtonStates.Tick();
+
                     // Everything below TOUCHES THE GAME — reads its scene, rewrites its text,
                     // writes the cache to disk. None of it may happen before someone said yes.
                     if (TranslatorCore.SetupCompleted)

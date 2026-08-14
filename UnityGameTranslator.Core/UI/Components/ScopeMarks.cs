@@ -203,9 +203,10 @@ namespace UnityGameTranslator.Core.UI.Components
             var ruleImage = rule == null ? null : rule.GetComponent<Image>();
             if (ruleImage != null) ruleImage.color = UIStyles.BorderSubtle;
 
-            var label = buttonObj.transform.Find("Text");
-            var text = label == null ? null : label.GetComponent<Text>();
-            if (text != null) text.color = interactable ? UIStyles.TextPrimary : UIStyles.TextMuted;
+            // ⚠ The label is NOT touched here any more. It used to be, back when a disabled button
+            // kept white text and only the seven marked buttons had been fixed; that now happens
+            // for every themed button, from UIStyles.SetBackground through ButtonStates. Two places
+            // writing one colour is how they end up disagreeing.
         }
     }
 }

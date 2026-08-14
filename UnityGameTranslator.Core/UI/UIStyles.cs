@@ -430,6 +430,14 @@ namespace UnityGameTranslator.Core.UI
                 // like a black smudge over the dark panel (e.g. Upload Translation when not uploadable).
                 cb.disabledColor = ButtonDisabled;
                 cb.colorMultiplier = 1f;
+
+                // 🔴 **The ColorBlock above dresses the BACKGROUND and nothing else.** Unity tints
+                // a Selectable's targetGraphic and leaves every child alone, so the label kept its
+                // full-strength white on a control nobody could press — a disabled button was told
+                // apart from a live one by a shade of grey behind it, and got confused with an
+                // ordinary button on another surface. The label is followed from here, which is the
+                // same act that gives this control its colours in the first place.
+                ButtonStates.Watch(selectable);
                 selectable.colors = cb;
                 return;
             }

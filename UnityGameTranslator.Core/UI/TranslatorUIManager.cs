@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -1196,6 +1196,7 @@ namespace UnityGameTranslator.Core.UI
                 UniversalUI.DefaultFont = freshFont;
                 int changed = 0;
                 SwapModUIFont(UiBase.RootObject.transform, freshFont, ref changed);
+                InvalidateScopeStrips();
                 _uiFontRebacked = false;
                 _pendingRebackFont = null;
             }
@@ -1228,6 +1229,7 @@ namespace UnityGameTranslator.Core.UI
                 UniversalUI.DefaultFont = _originalUIFont;
                 int changed = 0;
                 SwapModUIFont(UiBase.RootObject.transform, _originalUIFont, ref changed);
+                InvalidateScopeStrips();
             }
         }
 
@@ -1236,6 +1238,33 @@ namespace UnityGameTranslator.Core.UI
         /// restore). Warms the atlas at each label's size and toggles enabled to rebind — a fresh font
         /// object has an empty atlas so this renders at runtime.
         /// </summary>
+        /// <summary>
+        /// Tells every scope strip its measurements are stale.
+        ///
+        /// 🔴 **A font change invalidates every width the strips reason about.** They decide when to
+        /// give up their words by comparing measured widths to the room available, and those
+        /// measurements belong to the font that produced them. Without this the strip keeps the OLD
+        /// font's metrics until somebody happens to resize the window — the one failure of that
+        /// mechanism that testing the layout can never find, because testing the layout never
+        /// changes the font.
+        /// </summary>
+        private static void InvalidateScopeStrips()
+        {
+            for (int i = 0; i < _interactivePanels.Count; i++)
+            {
+                var panel = _interactivePanels[i];
+                if (panel == null) continue;
+
+                try { panel.InvalidateScopeStrip(); }
+                catch (Exception e)
+                {
+                    // A frontier with the layout system, and one panel must not stop the others
+                    // from being told. Logged, never swallowed.
+                    TranslatorCore.LogError($"[ScopeStrip] {e.GetType().Name}: {e.Message}");
+                }
+            }
+        }
+
         private static void SwapModUIFont(Transform node, UnityEngine.Font font, ref int changed)
         {
             if (node == null) return;

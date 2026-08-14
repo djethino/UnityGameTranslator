@@ -99,47 +99,22 @@ namespace UnityGameTranslator.Core.UI.Panels
             // anything is built, so the form is chosen once instead of being noticed after a
             // layout pass and rebuilt, which flickers and can oscillate.
             //
-            // ⚠ Widths estimated the same way BadgeStrip estimates its chips, and deliberately
-            // generously: over-estimating drops a tier early, under-estimating clips a word.
             // ⚠ **These numbers ARE the cell built below — they were not, and that was the defect.**
             // The cell padding went from 5 to 8 a side to give the marks room, and this estimate
             // was left at the old figure: the strip believed it needed eighteen pixels less than it
             // did, so it kept its words at widths where they wrapped onto a second line beside
             // their own icon. An estimate that drifts from the thing it estimates is worse than no
             // estimate, because it is confidently wrong.
-            const float cellPad = 8f * 2f;                 // left and right, as built
-            const float iconWord = 4f;                     // the group's spacing, icon to word
-            const float markCell = 11f + cellPad;          // a picture in its cell, no words
-            const float rowGaps = 3f * 8f;                 // between the three cells and the title
 
-            // Deliberately generous. Over-estimating drops a tier a few pixels early, which nobody
-            // notices; under-estimating wraps a word, which is what was reported.
-            const float safety = 12f;
-
-            float words = 0f;
-            foreach (var standing in sides)
-                words += EditScope.Name(standing.Side).Length * UIStyles.FontSizeHint * 0.62f + iconWord;
-
-            float chosenWords = EditScope.Name(lit).Length * UIStyles.FontSizeHint * 0.62f + iconWord;
-            float spacing = rowGaps + safety;
-
-            float available = PanelWidth - 2f * UIStyles.SectionPadding
-                              - text.Length * UIStyles.FontSizeSectionTitle * 0.62f;
-
-            // Kept so a resize can ask the same question again without re-measuring anything.
-            _scopeFull = 3f * markCell + words + spacing;
-            _scopeMedium = 3f * markCell + chosenWords + spacing;
-            _scopeMini = 3f * markCell + spacing;
             _scopeTitleWidth = text.Length * UIStyles.FontSizeSectionTitle * 0.62f;
             _scopeLit = lit;
             _scopeWords.Clear();
             _scopeOrder.Clear();
+            _scopeWordWidths.Clear();
 
-            // Built for the first time: start at the floor so the strip only grows into room it
-            // certainly has.
-            var tier = ScopeStrip.Fits(available, _scopeFull, _scopeMedium, _scopeMini,
-                                       StripTier.Mini);
-            _scopeTier = tier;
+            // Built at the floor so the strip only grows into room it certainly has; the first
+            // refresh, once everything exists and can be measured, decides for real.
+            _scopeTier = StripTier.Mini;
 
             foreach (var standing in sides)
             {
@@ -191,7 +166,13 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 _scopeWords.Add(chip);
                 _scopeOrder.Add(standing.Side);
+
+                // The stand-in until the real thing can be read. Every word is created ACTIVE, so
+                // the measurement below sees all three before any of them is hidden.
+                _scopeWordWidths.Add(EditScope.Name(standing.Side).Length * UIStyles.FontSizeHint * 0.62f);
             }
+
+            MeasureScopeWords();
 
             var title = CreateTitle(row, name, text);
             UIFactory.SetLayoutElement(title.gameObject, flexibleWidth: 9999);
@@ -229,6 +210,9 @@ namespace UnityGameTranslator.Core.UI.Panels
         // created.
         private readonly List<Text> _scopeWords = new List<Text>();
         private readonly List<EditSide> _scopeOrder = new List<EditSide>();
+
+        /// <summary>Each word's real width, read while it was on screen. Never a guess after that.</summary>
+        private readonly List<float> _scopeWordWidths = new List<float>();
         private EditSide _scopeLit;
         private StripTier _scopeTier = StripTier.Mini;
         private float _scopeFull, _scopeMedium, _scopeMini, _scopeTitleWidth;
@@ -257,9 +241,87 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// <see cref="ScopeStrip.Fits"/> is what keeps a size resting on a threshold from flipping
         /// back and forth — without it this method would be the thing doing the flapping.
         /// </summary>
+        /// <summary>
+        /// The size of a cell holding a mark and nothing else, as the cell is actually built.
+        ///
+        /// ⚠ Kept beside the code that builds it. The pair drifted apart once — the padding was
+        /// raised for looks and this was not — and the strip then reasoned about a cell that no
+        /// longer existed.
+        /// </summary>
+        private const float ScopeCellPad = 8f * 2f;
+        private const float ScopeIconWord = 4f;
+        private const float ScopeMarkCell = 11f + ScopeCellPad;
+        private const float ScopeRowGaps = 3f * 8f;
+
+        /// <summary>
+        /// Over-estimating drops a tier a few pixels early, which nobody notices; under-estimating
+        /// wraps a word, which is what got reported. So the guess leans one way on purpose.
+        /// </summary>
+        private const float ScopeSafety = 12f;
+
+        /// <summary>
+        /// Reads the words' real width from the words themselves, and rebuilds the three tier
+        /// widths from it.
+        ///
+        /// 🔴 **Because the interface font is a SETTING.** `ui_font` can be changed while a panel
+        /// is open, and a per-character factor models one font — the wrong one for a condensed, a
+        /// wide or a CJK face. Every width this mechanism reasons about was a guess against metrics
+        /// nobody promised.
+        ///
+        /// ⚠ **A hidden label cannot be measured**, so a width is only ever overwritten while its
+        /// word is on screen; otherwise the last good reading stands. That is also why all three
+        /// are measured at build, while none is hidden yet: a panel that opened straight into Mini
+        /// would otherwise have no word visible, nothing to measure, and no way of ever learning it
+        /// could grow.
+        /// </summary>
+        private void MeasureScopeWords()
+        {
+            for (int i = 0; i < _scopeWords.Count && i < _scopeWordWidths.Count; i++)
+            {
+                var word = _scopeWords[i];
+                if (word == null || !word.gameObject.activeInHierarchy) continue;
+
+                // Zero means the font is not ready yet; the stand-in holds until it is.
+                if (word.preferredWidth > 1f) _scopeWordWidths[i] = word.preferredWidth;
+            }
+
+            float words = 0f, chosen = 0f;
+            for (int i = 0; i < _scopeWordWidths.Count && i < _scopeOrder.Count; i++)
+            {
+                words += _scopeWordWidths[i] + ScopeIconWord;
+                if (_scopeOrder[i] == _scopeLit) chosen = _scopeWordWidths[i] + ScopeIconWord;
+            }
+
+            float spacing = ScopeRowGaps + ScopeSafety;
+            _scopeFull = 3f * ScopeMarkCell + words + spacing;
+            _scopeMedium = 3f * ScopeMarkCell + chosen + spacing;
+            _scopeMini = 3f * ScopeMarkCell + spacing;
+        }
+
+        /// <summary>
+        /// Forget every measurement and take them again — after the interface font changes.
+        ///
+        /// ⚠ Without this a font change leaves the strip reasoning with the OLD font's metrics
+        /// until somebody happens to resize the window. It is the one failure of this mechanism
+        /// that cannot be found by testing the layout, because testing the layout never changes
+        /// the font.
+        /// </summary>
+        public void InvalidateScopeStrip()
+        {
+            if (_scopeWords.Count == 0) return;
+
+            _scopeLastWidth = -1f;
+            if (_scopeTitle != null && _scopeTitle.preferredWidth > 1f)
+                _scopeTitleWidth = _scopeTitle.preferredWidth;
+
+            RefreshScopeStrip();
+        }
+
         public void RefreshScopeStrip()
         {
             if (_scopeWords.Count == 0) return;
+
+            MeasureScopeWords();
 
             // The panel's real width now, not the one it was designed at.
             float width = Rect != null && Rect.rect.width > 1f ? Rect.rect.width : PanelWidth;

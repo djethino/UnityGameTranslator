@@ -79,9 +79,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             // its children into the top-left corner and flush against the edge — the strip and the
             // title read as stuck in the corner of the bar rather than sitting on its line. The
             // same omission was fixed on the main panel's section title; it was here too.
-            var row = UIFactory.CreateHorizontalGroup(parent, name + "Row", false, false, true, true, 8,
-                                                      new Vector4(UIStyles.SectionPadding,
-                                                                  UIStyles.SectionPadding, 3, 3),
+            var row = UIFactory.CreateHorizontalGroup(parent, name + "Row", false, false, true, true, 4,
+                                                      new Vector4(3, 3, UIStyles.SectionPadding,
+                                                                  UIStyles.SectionPadding),
                                                       default, TextAnchor.MiddleLeft);
             UIFactory.SetLayoutElement(row, minHeight: UIStyles.RowHeightMedium,
                                        flexibleWidth: 9999, flexibleHeight: 0);
@@ -135,8 +135,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // — a chip whose contents touch its border reads as clipped rather than as placed,
                 // and three of them in a row read as a smudge.
                 var cell = UIFactory.CreateHorizontalGroup(row, name + standing.Side + "Cell",
-                                                           false, false, true, true, 4,
-                                                           new Vector4(8, 8, 4, 4), default,
+                                                           false, false, true, true, 5,
+                                                           new Vector4(3, 3, 8, 8), default,
                                                            TextAnchor.MiddleLeft);
                 UIFactory.SetLayoutElement(cell, minHeight: UIStyles.RowHeightSmall,
                                            flexibleWidth: 0, flexibleHeight: 0);
@@ -185,6 +185,32 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
 
             MeasureScopeWords();
+
+            // 🔴 **The same rule the buttons carry**, and for the same reason: it turns three
+            // pictures and a word into one control with two parts. One ecosystem — a player who
+            // reads it on a button must meet it here unchanged.
+            //
+            // ⚠ It belongs to the STRIP, not to the title: it stays on the icons' side and never
+            // travels with the title as it drifts to centre. What separates two things has to sit
+            // where the boundary is, not where one of them happens to be.
+            var rule = UIFactory.CreateUIObject(name + "Rule", row);
+            UIFactory.SetLayoutElement(rule, minWidth: 1 + 2 * 7, preferredWidth: 1 + 2 * 7,
+                                       minHeight: 12, preferredHeight: 12,
+                                       flexibleWidth: 0, flexibleHeight: 0);
+
+            var ruleLine = UIFactory.CreateUIObject(name + "RuleLine", rule);
+            var ruleImage = ruleLine.AddComponent<Image>();
+            ruleImage.color = UIStyles.BorderSubtle;
+            ruleImage.raycastTarget = false;
+
+            // The line is a child of a transparent slot: painted on the slot itself it would fill
+            // its whole width and come out as a grey block, which is exactly what happened once.
+            var ruleRect = ruleLine.GetComponent<RectTransform>();
+            ruleRect.anchorMin = new Vector2(0.5f, 0.5f);
+            ruleRect.anchorMax = new Vector2(0.5f, 0.5f);
+            ruleRect.pivot = new Vector2(0.5f, 0.5f);
+            ruleRect.sizeDelta = new Vector2(1f, 12f);
+            ruleRect.anchoredPosition = Vector2.zero;
 
             var title = CreateTitle(row, name, text);
             UIFactory.SetLayoutElement(title.gameObject, flexibleWidth: 9999);
@@ -270,10 +296,11 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// raised for looks and this was not — and the strip then reasoned about a cell that no
         /// longer existed.
         /// </summary>
-        private const float ScopeCellPad = 8f * 2f;
-        private const float ScopeIconWord = 4f;
+        private const float ScopeCellPad = 8f * 2f;        // left + right, as built
+        private const float ScopeIconWord = 5f;             // the cell's spacing, icon to word
         private const float ScopeMarkCell = 11f + ScopeCellPad;
-        private const float ScopeRowGaps = 3f * 8f;
+        private const float ScopeRule = 1f + 2f * 7f;       // the separator and its two gaps
+        private const float ScopeRowGaps = 4f * 4f;         // three cells, the rule, the title
 
         /// <summary>
         /// Over-estimating drops a tier a few pixels early, which nobody notices; under-estimating
@@ -336,7 +363,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 if (_scopeOrder[i] == _scopeLit) chosen = _scopeWordWidths[i] + ScopeIconWord;
             }
 
-            float spacing = ScopeRowGaps + ScopeSafety;
+            float spacing = ScopeRowGaps + ScopeRule + ScopeSafety;
             _scopeFull = 3f * ScopeMarkCell + words + spacing;
             _scopeMedium = 3f * ScopeMarkCell + chosen + spacing;
             _scopeMini = 3f * ScopeMarkCell + spacing;
@@ -362,10 +389,13 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (_scopeWords.Count == 0) return;
 
-            MeasureScopeWords();
-
-            // The panel's real width now, not the one it was designed at.
+            // ⚠ The panel's real width now, not the one it was designed at — and read FIRST, so a
+            // frame where nothing moved leaves on a comparison. This runs on every frame for every
+            // open panel, which is what makes it follow a drag whatever caused it.
             float width = Rect != null && Rect.rect.width > 1f ? Rect.rect.width : PanelWidth;
+            if (Mathf.Abs(width - _scopeLastWidth) < 0.5f) return;
+
+            MeasureScopeWords();
 
             // ⚠ Nothing moved, nothing to ask. This runs on EVERY FRAME through the mod's single
             // tick, so the cheap test comes before the arithmetic and before anything else.

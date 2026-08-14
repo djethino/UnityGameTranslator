@@ -1048,12 +1048,14 @@ namespace UnityGameTranslator.Core.UI
         /// </summary>
         private static void TickResponsiveStrips()
         {
-            // 🔴 **Only while something is actually being dragged.** Nothing here needs to run on a
-            // frame where no window is moving, and this loop sits in the tick that also carries the
-            // scene scan — spending anything on a game that is simply being played is the one thing
-            // it must not do. One static bool, then out.
-            if (!UniverseLib.UI.Panels.PanelManager.Resizing) return;
-
+            // ⚠ **The "only while resizing" gate was removed**, and this is the correction of a
+            // wrong economy. PanelManager.Resizing is not raised for every way a panel's width can
+            // change, so gating on it made the strips stop following at moments nobody could
+            // predict — and the thing it saved is one float comparison per open panel.
+            //
+            // What actually protects a game being played is the early return inside
+            // RefreshScopeStrip: a width that has not moved costs a read and a compare, and there
+            // are rarely more than one or two panels open at all.
             for (int i = 0; i < _interactivePanels.Count; i++)
             {
                 var panel = _interactivePanels[i];

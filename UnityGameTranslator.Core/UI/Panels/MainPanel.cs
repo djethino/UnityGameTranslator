@@ -366,7 +366,22 @@ namespace UnityGameTranslator.Core.UI.Panels
             _statusSection = UIFactory.CreateVerticalGroup(parent, "StatusSection", false, false, true, true, 0);
             UIFactory.SetLayoutElement(_statusSection, flexibleWidth: 9999);
 
-            var sectionTitle = UIStyles.CreateSectionTitle(_statusSection, "StatusSectionLabel", "Current Translation");
+            // ⚠ The title sat directly in the section: flush against the left edge while the box
+            // below it is inset by SectionPadding, and squashed to the exact height of its own text
+            // so it read as stuck to the bottom-left corner. Its own row gives it the same left
+            // margin as the content it introduces, and the height to sit in the middle of.
+            var titleRow = UIFactory.CreateHorizontalGroup(_statusSection, "StatusSectionTitleRow",
+                                                           false, false, true, true, 0,
+                                                           new Vector4(UIStyles.SectionPadding,
+                                                                       UIStyles.SectionPadding, 2, 4),
+                                                           default, TextAnchor.MiddleLeft);
+            UIFactory.SetLayoutElement(titleRow, minHeight: UIStyles.RowHeightMedium,
+                                       flexibleWidth: 9999, flexibleHeight: 0);
+            UIStyles.ClearRowBackground(titleRow);
+
+            var sectionTitle = UIStyles.CreateSectionTitle(titleRow, "StatusSectionLabel", "Current Translation");
+            UIFactory.SetLayoutElement(sectionTitle.gameObject, minHeight: UIStyles.RowHeightMedium,
+                                       flexibleWidth: 9999, flexibleHeight: 0);
             RegisterUIText(sectionTitle);
 
             // Create StatusCard widget

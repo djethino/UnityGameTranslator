@@ -110,14 +110,22 @@ namespace UnityGameTranslator.Core.UI.Components
             }
             else
             {
-                // Create a card that fills available width
+                // ⚠ **A SECTION, not a card, because of where it sits.** This lands inside the
+                // "My translation" card, between boxes built by UIStyles.CreateSection — and it was
+                // dressing itself as a top-level card: CardPadding (20) against their SectionPadding
+                // (12), and CardBackground against SectionBackground. Same outer width, so the frame
+                // lined up while its contents started eight pixels further in and on a different
+                // shade — which reads as a box of the wrong width stacked among the others.
+                //
+                // The width parameter above is the other case: used on its own, it IS a card.
                 _root = UIFactory.CreateVerticalGroup(parent, "StatusCard", false, false, true, true, UIStyles.ElementSpacing);
                 UIFactory.SetLayoutElement(_root, flexibleWidth: 9999);
-                UIStyles.SetBackground(_root, UIStyles.CardBackground);
+                UIStyles.SetBackground(_root, UIStyles.SectionBackground);
                 var layout = _root.GetComponent<VerticalLayoutGroup>();
                 if (layout != null)
                 {
-                    layout.padding = Compat.MakeRectOffset(UIStyles.CardPadding, UIStyles.CardPadding, UIStyles.CardPadding, UIStyles.CardPadding);
+                    layout.padding = Compat.MakeRectOffset(UIStyles.SectionPadding, UIStyles.SectionPadding,
+                                                           UIStyles.SectionPadding, UIStyles.SectionPadding);
                     layout.childAlignment = TextAnchor.UpperLeft;
                 }
             }

@@ -348,21 +348,25 @@ namespace UnityGameTranslator.Core.UI.Panels
         private const float ScopeIconWord = 5f;             // the cell's spacing, icon to word
         private const float ScopeMarkCell = 11f + ScopeCellPad;
         private const float ScopeRule = 1f + 2f * 7f;       // the separator and its two gaps
-        private const float ScopeRowGaps = 4f * 4f;         // three cells, the rule, the title
+        // Two gaps in the row now that the cells and the rule live in one box: box to title, and
+        // title to mirror. It counted four, from when they were four siblings.
+        private const float ScopeRowGaps = 2f * 4f;
 
         /// <summary>
         /// Over-estimating drops a tier a few pixels early, which nobody notices; under-estimating
         /// wraps a word, which is what got reported. So the guess leans one way on purpose.
         /// </summary>
         /// <remarks>
-        /// ⚠ Raised from 12 on 2026-08-14: with everything else measured, the title still met the
-        /// separator by a few pixels. What is left unmeasured is the row's own spacing and the
-        /// rounding of a measurement taken one frame before the layout it describes — small, real,
-        /// and exactly what a margin is for. **This is the only number here to turn**: too small
-        /// and the title touches the strip, too large and a tier is dropped while there was still
-        /// room. Nothing else in this mechanism is guessed.
+        /// ⚠ Went 12 → 28 → 6. It was raised while the tier arithmetic was the only thing keeping
+        /// the title off the separator, and had to be generous for that. It is not any more: the
+        /// title now has a minimum width the layout cannot take from it, so overlap is impossible
+        /// whatever this number says. All it decides is how early a tier is given up — and at 28
+        /// it gave one up with plenty of room still to the right of the title.
+        ///
+        /// What is left is the rounding of a reading taken one frame before the layout it
+        /// describes. A few pixels, which is all it should ever have been.
         /// </remarks>
-        private const float ScopeSafety = 28f;
+        private const float ScopeSafety = 6f;
 
         /// <summary>
         /// Reads the words' real width from the words themselves, and rebuilds the three tier

@@ -193,10 +193,22 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _scopeOrder.Add(standing.Side);
             }
 
-            ApplyScopeTier();
-
             var title = CreateTitle(row, name, text);
             UIFactory.SetLayoutElement(title.gameObject, flexibleWidth: 9999);
+
+            // 🔴 **A TITLE BAR, so the title is centred on the WINDOW.** Left to itself it centres
+            // on what the strip has not taken, which pushes it right by half the strip — the more
+            // the strip says, the further off-centre the title of the window sits.
+            //
+            // ⚠ And here, unlike on a button, the marks genuinely belong on the LEFT. A button is
+            // an inline group that travels with its label; a title bar has a leading slot, a title,
+            // and a slot mirroring the first so the middle really is the middle. The empty right
+            // slot is not padding — it is what buys the centring, exactly as it does in every
+            // window title bar and every navigation bar.
+            _scopeMirror = UIFactory.CreateUIObject(name + "Mirror", row);
+            UIFactory.SetLayoutElement(_scopeMirror, flexibleWidth: 0, flexibleHeight: 0);
+
+            ApplyScopeTier();
             return title;
         }
 
@@ -215,6 +227,9 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         /// <summary>The width the strip was last asked about, so an unchanged frame costs nothing.</summary>
         private float _scopeLastWidth = -1f;
+
+        /// <summary>The empty slot on the right that makes the title's centre the window's.</summary>
+        private GameObject _scopeMirror;
 
         /// <summary>
         /// Re-measures the room the title leaves and changes form only if the answer moved.
@@ -253,6 +268,18 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 word.gameObject.SetActive(ScopeStrip.ShowsWords(_scopeTier, _scopeOrder[i] == _scopeLit));
             }
+
+            // The mirror follows the strip: it is only worth its width because the strip has that
+            // width, and both change together when a tier does.
+            if (_scopeMirror == null) return;
+
+            float mirrored = _scopeTier == StripTier.Full ? _scopeFull
+                           : _scopeTier == StripTier.Medium ? _scopeMedium
+                           : _scopeMini;
+
+            UIFactory.SetLayoutElement(_scopeMirror, minWidth: Mathf.RoundToInt(mirrored),
+                                       preferredWidth: Mathf.RoundToInt(mirrored),
+                                       flexibleWidth: 0, flexibleHeight: 0);
         }
 
         /// <summary>

@@ -87,6 +87,18 @@ namespace UnityGameTranslator.Core.UI.Panels
                                        flexibleWidth: 9999, flexibleHeight: 0);
             _scopeRow = row.GetComponent<RectTransform>();
 
+            // 🔴 **ONE box holding the three cells AND the separator.** They were four siblings of
+            // the row, counted together in the arithmetic and laid out separately by uGUI — so the
+            // reserved width and the drawn width were never quite the same number, and every
+            // correction moved the discrepancy somewhere else. As one box the strip has a single
+            // width, which can be READ rather than added up, and the mirror can copy it exactly.
+            var box = UIFactory.CreateHorizontalGroup(row, name + "Strip", false, false, true, true, 4,
+                                                      Vector4.zero, default, TextAnchor.MiddleLeft);
+            UIFactory.SetLayoutElement(box, minHeight: UIStyles.RowHeightSmall,
+                                       flexibleWidth: 0, flexibleHeight: 0);
+            UIStyles.ClearRowBackground(box);
+            _scopeStrip = box.GetComponent<RectTransform>();
+
             // 🔴 **Something is ALWAYS lit.** The chosen side was lit only when it happened to be
             // available, so on any screen where it is not — the published side with nothing of
             // yours published, which is most people — all three positions came out grey and the
@@ -136,7 +148,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // ⚠ Room on every side. At 5 and 1 the picture sat flush against its own cell edge
                 // — a chip whose contents touch its border reads as clipped rather than as placed,
                 // and three of them in a row read as a smudge.
-                var cell = UIFactory.CreateHorizontalGroup(row, name + standing.Side + "Cell",
+                var cell = UIFactory.CreateHorizontalGroup(box, name + standing.Side + "Cell",
                                                            false, false, true, true, 5,
                                                            new Vector4(3, 3, 8, 8), default,
                                                            TextAnchor.MiddleLeft);
@@ -199,7 +211,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // ⚠ It belongs to the STRIP, not to the title: it stays on the icons' side and never
             // travels with the title as it drifts to centre. What separates two things has to sit
             // where the boundary is, not where one of them happens to be.
-            var rule = UIFactory.CreateUIObject(name + "Rule", row);
+            var rule = UIFactory.CreateUIObject(name + "Rule", box);
             UIFactory.SetLayoutElement(rule, minWidth: 1 + 2 * 7, preferredWidth: 1 + 2 * 7,
                                        minHeight: 12, preferredHeight: 12,
                                        flexibleWidth: 0, flexibleHeight: 0);
@@ -218,24 +230,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             ruleRect.sizeDelta = new Vector2(1f, 12f);
             ruleRect.anchoredPosition = Vector2.zero;
 
-            // 🔴 **The title is clipped to its own space, not free to spill into the strip's.**
-            // Overflow was set on it so its width could be read honestly — a label that wraps
-            // reports the wrong one — but Overflow spills BOTH ways, so a title too long for its
-            // room rendered straight over the separator and the tags, as if it belonged to no
-            // container at all.
-            //
-            // ⚠ A mask, rather than giving the wrap back: wrapping is what made every measurement
-            // circular. The title still reports its true single-line width, it simply stops being
-            // drawn where it has no business being. Clipping is also what was asked for — a window
-            // title belongs on one line, and a cut one still says which window it is.
-            var clip = UIFactory.CreateUIObject(name + "TitleClip", row);
-            UIFactory.SetLayoutElement(clip, minWidth: 0, minHeight: UIStyles.RowHeightMedium,
-                                       flexibleWidth: 9999, flexibleHeight: 0);
-            UIFactory.SetLayoutGroup<HorizontalLayoutGroup>(clip, false, false, true, true, 0,
-                                                            0, 0, 0, 0, TextAnchor.MiddleCenter);
-            clip.AddComponent<RectMask2D>();
-
-            var title = CreateTitle(clip, name, text);
+            // ⚠ A RectMask2D was tried here and made things worse: the title came out cut at both
+            // ends, a fragment floating in the middle of the row. Masking hides a symptom whose
+            // cause is that the title is not being given the room it needs — and the cause was the
+            // strip being counted in one place and laid out in another.
+            var title = CreateTitle(row, name, text);
             UIFactory.SetLayoutElement(title.gameObject, minWidth: 0, flexibleWidth: 9999);
 
             // 🔴 Same rule, same reason. A title that may wrap reports the width of one of its
@@ -301,6 +300,15 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         /// <summary>The empty slot on the right that makes the title's centre the window's.</summary>
         private GameObject _scopeMirror;
+
+        /// <summary>
+        /// The box holding the three cells and the separator — the strip, as one thing.
+        ///
+        /// ⚠ Its width is READ, never added up. The pieces were siblings of the row and the
+        /// arithmetic that reserved room for them was a separate reconstruction of what uGUI would
+        /// lay out; the two disagreed, and every fix moved the disagreement rather than removing it.
+        /// </summary>
+        private RectTransform _scopeStrip;
 
         /// <summary>
         /// The row the strip and the title share — the thing whose width actually matters.
@@ -519,9 +527,13 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             if (_scopeMirror == null) return;
 
-            float strip = _scopeTier == StripTier.Full ? _scopeFull
-                        : _scopeTier == StripTier.Medium ? _scopeMedium
-                        : _scopeMini;
+            // ⚠ READ from the box, and only reconstructed while it has not been laid out yet. The
+            // mirror exists to match the strip exactly; matching it to a number that merely tries
+            // to predict it is how the title ended up off-centre by a few pixels at every tier.
+            float strip = _scopeStrip != null && _scopeStrip.rect.width > 1f
+                ? _scopeStrip.rect.width
+                : (_scopeTier == StripTier.Full ? _scopeFull
+                   : _scopeTier == StripTier.Medium ? _scopeMedium : _scopeMini);
 
             float width = Rect != null && Rect.rect.width > 1f ? Rect.rect.width : PanelWidth;
             float room = width - 2f * UIStyles.SectionPadding - strip;

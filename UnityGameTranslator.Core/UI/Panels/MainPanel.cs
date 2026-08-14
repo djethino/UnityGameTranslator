@@ -292,6 +292,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             _modUpdateBtn = UIFactory.CreateButton(_modUpdateBanner, "ModUpdateBtn", "Download");
             UIFactory.SetLayoutElement(_modUpdateBtn.Component.gameObject, minWidth: 90, minHeight: UIStyles.RowHeightNormal);
+            UIStyles.SetBackground(_modUpdateBtn.Component.gameObject, UIStyles.ButtonPrimary);
             _modUpdateBtn.OnClick += OnModUpdateClicked;
             RegisterExcluded(_modUpdateBtn.ButtonText);
             _helpZone?.Describe(_modUpdateBtn.Component.gameObject,

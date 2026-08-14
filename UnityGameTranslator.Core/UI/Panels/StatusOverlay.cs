@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using UnityEngine.UI;
 using UniverseLib;
 using UniverseLib.UI;
@@ -395,11 +395,13 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             _modUpdateBtn = UIFactory.CreateButton(btnRow, "ModDownloadBtn", "Download");
             UIFactory.SetLayoutElement(_modUpdateBtn.Component.gameObject, minWidth: 80, minHeight: UIStyles.RowHeightNormal);
+            UIStyles.SetBackground(_modUpdateBtn.Component.gameObject, UIStyles.ButtonPrimary);
             _modUpdateBtn.OnClick += OnModUpdateClicked;
             RegisterExcluded(_modUpdateBtn.ButtonText);
 
             _modIgnoreBtn = UIFactory.CreateButton(btnRow, "ModIgnoreBtn", "Ignore");
             UIFactory.SetLayoutElement(_modIgnoreBtn.Component.gameObject, minWidth: 60, minHeight: UIStyles.RowHeightNormal);
+            UIStyles.SetBackground(_modIgnoreBtn.Component.gameObject, UIStyles.ButtonSecondary);
             _modIgnoreBtn.OnClick += OnModIgnoreClicked;
             RegisterUIText(_modIgnoreBtn.ButtonText);
 
@@ -442,18 +444,21 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Generic action button (Download/Update/Merge) - for other scenarios
             _syncActionBtn = UIFactory.CreateButton(syncBtnRow, "SyncActionBtn", "Action");
             UIFactory.SetLayoutElement(_syncActionBtn.Component.gameObject, minWidth: 75, minHeight: UIStyles.RowHeightNormal);
+            UIStyles.SetBackground(_syncActionBtn.Component.gameObject, UIStyles.ButtonPrimary);
             _syncActionBtn.OnClick += OnSyncActionClicked;
             RegisterExcluded(_syncActionBtn.ButtonText);
 
             // Settings button
             _syncSettingsBtn = UIFactory.CreateButton(syncBtnRow, "SyncSettingsBtn", "Settings");
             UIFactory.SetLayoutElement(_syncSettingsBtn.Component.gameObject, minWidth: 65, minHeight: UIStyles.RowHeightNormal);
+            UIStyles.SetBackground(_syncSettingsBtn.Component.gameObject, UIStyles.ButtonSecondary);
             _syncSettingsBtn.OnClick += OnSyncSettingsClicked;
             RegisterUIText(_syncSettingsBtn.ButtonText);
 
             // Ignore button (last)
             _syncIgnoreBtn = UIFactory.CreateButton(syncBtnRow, "SyncIgnoreBtn", "Ignore");
             UIFactory.SetLayoutElement(_syncIgnoreBtn.Component.gameObject, minWidth: 55, minHeight: UIStyles.RowHeightNormal);
+            UIStyles.SetBackground(_syncIgnoreBtn.Component.gameObject, UIStyles.ButtonSecondary);
             _syncIgnoreBtn.OnClick += OnSyncIgnoreClicked;
             RegisterUIText(_syncIgnoreBtn.ButtonText);
 
@@ -497,6 +502,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             _webNotifDismissBtn = UIFactory.CreateButton(notifBtnRow, "WebNotifDismissBtn", "Dismiss");
             UIFactory.SetLayoutElement(_webNotifDismissBtn.Component.gameObject, minWidth: 70, minHeight: UIStyles.RowHeightNormal);
+            UIStyles.SetBackground(_webNotifDismissBtn.Component.gameObject, UIStyles.ButtonSecondary);
             _webNotifDismissBtn.OnClick += OnWebNotifDismissClicked;
             RegisterUIText(_webNotifDismissBtn.ButtonText);
 

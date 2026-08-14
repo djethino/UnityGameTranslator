@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Runtime.CompilerServices;
@@ -1719,9 +1719,11 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             var retranslateBtn = UIFactory.CreateButton(btnRow, "RetranslateBtn", "Retranslate (AI)");
             UIFactory.SetLayoutElement(retranslateBtn.Component.gameObject, minWidth: 110, minHeight: UIStyles.RowHeightNormal);
+            UIStyles.SetBackground(retranslateBtn.Component.gameObject, UIStyles.ButtonPrimary);
 
             var revertBtn = UIFactory.CreateButton(btnRow, "RevertBtn", "Revert");
             UIFactory.SetLayoutElement(revertBtn.Component.gameObject, minWidth: 70, minHeight: UIStyles.RowHeightNormal);
+            UIStyles.SetBackground(revertBtn.Component.gameObject, UIStyles.ButtonSecondary);
             _helpZone?.Describe(revertBtn.Component.gameObject,
                 "Put the field back to what the translation file holds, discarding what you typed or what the AI proposed.");
 

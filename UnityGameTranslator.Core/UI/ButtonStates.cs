@@ -37,9 +37,30 @@ namespace UnityGameTranslator.Core.UI
         /// Starts following a button. Called where the mod makes a control look like its own, so a
         /// button is watched by the same act that gives it its colours.
         /// </summary>
+        /// <summary>
+        /// Buttons whose label colour SAYS something, and which must therefore be left alone.
+        ///
+        /// 🔴 **This registry owns the label colour of what it watches**, so anything already using
+        /// that colour to carry meaning would have its meaning overwritten. Found by looking, not
+        /// assumed: HotkeyCapture paints its key accent when a key is set and muted when none is,
+        /// TabBar and TranslationParametersPanel mark the selected tab, VoteButtons turns an arrow
+        /// white when it is the one you cast, MergePanel marks a chosen side.
+        ///
+        /// ⚠ Excluded by NAME rather than by a flag on the call, deliberately: a flag would have to
+        /// be remembered at each of those sites, and forgetting it looks like nothing until the
+        /// meaning quietly disappears. The list is short, it is here, and it is checked.
+        /// </summary>
+        private static readonly string[] _labelSpeaks =
+        {
+            "KeyButton", "Tab_", "IdentifyBtn", "UpButton", "DownButton",
+        };
+
         public static void Watch(Selectable selectable)
         {
             if (selectable == null) return;
+
+            foreach (var reserved in _labelSpeaks)
+                if (selectable.name.IndexOf(reserved, System.StringComparison.Ordinal) >= 0) return;
 
             var label = selectable.GetComponentInChildren<Text>(true);
             if (label == null) return;

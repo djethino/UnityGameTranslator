@@ -126,6 +126,7 @@ namespace UnityGameTranslator.Core.UI.Components
 
             _clearButton = UIFactory.CreateButton(modContainer, "KeyClearBtn", "X");
             UIFactory.SetLayoutElement(_clearButton.Component.gameObject, minWidth: 24, minHeight: UIStyles.SmallButtonHeight);
+            UIStyles.SetBackground(_clearButton.Component.gameObject, UIStyles.ButtonSecondary);
             _clearButton.OnClick += ClearHotkey;
 
             if (includeDisplayLabel)

@@ -1046,6 +1046,44 @@ namespace UnityGameTranslator.Core.UI
         /// where the form actually changes, and even then nothing is created — the words are hidden
         /// and shown.
         /// </summary>
+        /// <summary>Which panels were on screen last frame, so a NEW one can be spotted.</summary>
+        private static readonly List<bool> _panelWasVisible = new List<bool>();
+
+        /// <summary>
+        /// Gives the focus to a panel that has just appeared.
+        ///
+        /// 🔴 **The focus was decided on a TRANSITION, not from the state.** It was set when the
+        /// interface went from "nothing open" to "something open" — so opening a second window
+        /// while a first one was already up produced no transition at all, and the new window came
+        /// up behind the old one's focus. Opened by hotkey or by a button made no difference: there
+        /// was simply no moment at which anybody asked.
+        ///
+        /// ⚠ This is the failure this project has recorded before and paid for more than once:
+        /// reacting to a change of state instead of reconciling from the state itself. Each panel
+        /// is compared to what it was, so every appearance is seen, however many were already open.
+        ///
+        /// ⚠ Opening a window means wanting to use it — including with the keyboard, where nobody
+        /// is going to click it afterwards to say so.
+        /// </summary>
+        private static void TickNewlyOpenedPanels()
+        {
+            while (_panelWasVisible.Count < _interactivePanels.Count) _panelWasVisible.Add(false);
+
+            for (int i = 0; i < _interactivePanels.Count; i++)
+            {
+                var panel = _interactivePanels[i];
+                bool visible = panel != null && panel.Enabled;
+
+                if (visible && !_panelWasVisible[i])
+                {
+                    _focusedPanel = panel;
+                    _interfaceHasFocus = true;
+                }
+
+                _panelWasVisible[i] = visible;
+            }
+        }
+
         private static void TickResponsiveStrips()
         {
             // ⚠ **The "only while resizing" gate was removed**, and this is the correction of a
@@ -1084,6 +1122,9 @@ namespace UnityGameTranslator.Core.UI
                     // Always, and outside the setup latch: this is what returns the game's input.
                     // A game must never stay held because the mod was not configured yet.
                     TickInputOwnership();
+
+                    // A window that has just appeared takes the focus, however many were open.
+                    TickNewlyOpenedPanels();
 
                     // The scope strips follow the width of the panel holding them, live.
                     TickResponsiveStrips();

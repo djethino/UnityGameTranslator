@@ -249,6 +249,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             _gameSearchBtn = UIFactory.CreateButton(searchRow, "SearchBtn", "Search");
             UIFactory.SetLayoutElement(_gameSearchBtn.Component.gameObject, minWidth: 70, minHeight: UIStyles.InputHeight);
+            UIStyles.SetBackground(_gameSearchBtn.Component.gameObject, UIStyles.ButtonPrimary);
             _gameSearchBtn.OnClick += PerformGameSearch;
             RegisterUIText(_gameSearchBtn.ButtonText);
             _helpZone?.Describe(_gameSearchBtn.Component.gameObject,

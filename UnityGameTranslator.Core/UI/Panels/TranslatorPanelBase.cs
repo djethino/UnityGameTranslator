@@ -142,9 +142,12 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // where a save lands was competing with the name of the panel. It is now the
                 // smallest thing on the line: fixed marks, tight cells, no stretch. Somebody
                 // reading the title should notice it without being stopped by it.
+                // ⚠ Room on every side. At 5 and 1 the picture sat flush against its own cell edge
+                // — a chip whose contents touch its border reads as clipped rather than as placed,
+                // and three of them in a row read as a smudge.
                 var cell = UIFactory.CreateHorizontalGroup(row, name + standing.Side + "Cell",
-                                                           false, false, true, true, 3,
-                                                           new Vector4(5, 5, 1, 1), default,
+                                                           false, false, true, true, 4,
+                                                           new Vector4(8, 8, 4, 4), default,
                                                            TextAnchor.MiddleLeft);
                 UIFactory.SetLayoutElement(cell, minHeight: UIStyles.RowHeightSmall,
                                            flexibleWidth: 0, flexibleHeight: 0);

@@ -293,8 +293,16 @@ namespace UnityGameTranslator.Core.UI.Panels
             // strip says as much as it can second, and only what is left over is spent on symmetry.
             // Growing a window therefore un-wraps the title, then feeds the strip's words, and only
             // then centres.
-            bool roomToSpare = room >= _scopeTitleWidth + strip;
-            int mirrored = roomToSpare ? Mathf.RoundToInt(strip) : 0;
+            //
+            // 🔴 **Continuous, not a threshold — so there is nothing to jump across.** This was a
+            // yes-or-no test, and crossing it moved the title by half the strip in one step. A dead
+            // band would only have stopped that jump from repeating, not from happening. Giving the
+            // surplus away a pixel at a time instead means the title DRIFTS to the centre as the
+            // window widens, and the question of hysteresis never arises: a measure with no
+            // threshold cannot sit on one.
+            //
+            // Everything the title does not need, up to the width that balances the strip.
+            int mirrored = Mathf.RoundToInt(Mathf.Clamp(room - _scopeTitleWidth, 0f, strip));
 
             UIFactory.SetLayoutElement(_scopeMirror, minWidth: 0, preferredWidth: mirrored,
                                        flexibleWidth: 0, flexibleHeight: 0);

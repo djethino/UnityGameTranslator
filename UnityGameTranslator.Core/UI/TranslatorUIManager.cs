@@ -3383,10 +3383,34 @@ namespace UnityGameTranslator.Core.UI
 
             try
             {
+                // 🔴 **Drained before it is deleted.** Ending the session used to discard whatever
+                // had been saved in the browser since the last event: somebody clicks Save on the
+                // site, quits the game a second later, and their work is gone with nothing said.
+                //
+                // ⚠ The inversion this removes is what gives it away: a session that survived a
+                // CRASH was picked up at the next start and merged, while one ended properly was
+                // deleted with its last save inside. Quitting cleanly was worse than being killed.
+                //
+                // ⚠ Bounded like the delete below — this runs while the game is tearing down, and
+                // nothing here may hold that up for more than a moment.
+                var pending = ApiClient.GetEditSessionContent(modKey);
+                if (pending.Wait(2000) && pending.Result is { Success: true, Content: { } content })
+                {
+                    // On the main thread by construction: shutdown runs there, which is what makes
+                    // it safe to touch the cache from here at all.
+                    if (ApplyEditSessionMerge(content))
+                        TranslatorCore.LogInfo("[EditSSE] Last browser save applied before closing");
+                }
+
                 ApiClient.EndEditSession(modKey).Wait(2000);
                 TranslatorCore.LogInfo("[EditSSE] Session ended (game shutdown)");
             }
-            catch { }
+            catch (Exception e)
+            {
+                // A frontier with somebody else's server, on a path that must not stop a shutdown.
+                // Logged, never swallowed: a save lost here is a save lost for good.
+                TranslatorCore.LogWarning($"[EditSSE] Closing the session: {e.GetType().Name}: {e.Message}");
+            }
         }
 
         // ── Surviving a game restart ─────────────────────────────────────────

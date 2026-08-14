@@ -74,14 +74,11 @@ namespace UnityGameTranslator.Core
         {
             ReviewStage? stage = Quality.Stage(human, validated, skipped, ai, captured);
 
-            switch (stage)
-            {
-                case Common.ReviewStage.Reviewed: return "Fully reviewed";
-                case Common.ReviewStage.Advanced: return "Review well under way";
-                case Common.ReviewStage.Started: return "Review started";
-                case Common.ReviewStage.Machine: return "Machine translation";
-                default: return null;
-            }
+            // ⚠ The words come from the socle. They used to be written out here AND, identically,
+            // in the manager's QualityBar — the rule that produces the stage was already shared, so
+            // only the wording was free to drift, and a file called "fully reviewed" in one product
+            // and something else in the other is the exact failure the socle exists to prevent.
+            return stage.HasValue ? Quality.StageName(stage.Value) : null;
         }
     }
 }

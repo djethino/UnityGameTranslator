@@ -354,7 +354,15 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// Over-estimating drops a tier a few pixels early, which nobody notices; under-estimating
         /// wraps a word, which is what got reported. So the guess leans one way on purpose.
         /// </summary>
-        private const float ScopeSafety = 12f;
+        /// <remarks>
+        /// ⚠ Raised from 12 on 2026-08-14: with everything else measured, the title still met the
+        /// separator by a few pixels. What is left unmeasured is the row's own spacing and the
+        /// rounding of a measurement taken one frame before the layout it describes — small, real,
+        /// and exactly what a margin is for. **This is the only number here to turn**: too small
+        /// and the title touches the strip, too large and a tier is dropped while there was still
+        /// room. Nothing else in this mechanism is guessed.
+        /// </remarks>
+        private const float ScopeSafety = 28f;
 
         /// <summary>
         /// Reads the words' real width from the words themselves, and rebuilds the three tier

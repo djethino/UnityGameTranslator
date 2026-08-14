@@ -274,15 +274,36 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// would otherwise have no word visible, nothing to measure, and no way of ever learning it
         /// could grow.
         /// </summary>
+        /// <summary>
+        /// The width this label needs on ONE line, or nothing if it cannot be known right now.
+        ///
+        /// 🔴 **preferredWidth lies about a label that has already wrapped.** It reports the width
+        /// of the longest generated line, so a label broken in two claims to need HALF of what it
+        /// really does. Believing it closes a loop: the label wraps, says it needs less, is granted
+        /// less, and stays wrapped for ever with empty space beside it. That is what shipped, and
+        /// both the title and the words did it.
+        ///
+        /// So a reading counts only while the label is on ONE line. Wrapped, the last good value
+        /// stands — which is exactly what lets it be given room back and recover.
+        /// </summary>
+        private static float SingleLineWidth(Text label)
+        {
+            if (label == null || !label.gameObject.activeInHierarchy) return 0f;
+
+            // 0 means nothing has been generated yet — before the first layout pass, or with a font
+            // that is not ready. Not an answer, and not a reason to overwrite a good one.
+            var generator = label.cachedTextGenerator;
+            if (generator == null || generator.lineCount != 1) return 0f;
+
+            return label.preferredWidth > 1f ? label.preferredWidth : 0f;
+        }
+
         private void MeasureScopeWords()
         {
             for (int i = 0; i < _scopeWords.Count && i < _scopeWordWidths.Count; i++)
             {
-                var word = _scopeWords[i];
-                if (word == null || !word.gameObject.activeInHierarchy) continue;
-
-                // Zero means the font is not ready yet; the stand-in holds until it is.
-                if (word.preferredWidth > 1f) _scopeWordWidths[i] = word.preferredWidth;
+                float measured = SingleLineWidth(_scopeWords[i]);
+                if (measured > 0f) _scopeWordWidths[i] = measured;
             }
 
             float words = 0f, chosen = 0f;
@@ -311,9 +332,6 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_scopeWords.Count == 0) return;
 
             _scopeLastWidth = -1f;
-            if (_scopeTitle != null && _scopeTitle.preferredWidth > 1f)
-                _scopeTitleWidth = _scopeTitle.preferredWidth;
-
             RefreshScopeStrip();
         }
 
@@ -328,11 +346,11 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // ⚠ Nothing moved, nothing to ask. This runs on EVERY FRAME through the mod's single
             // tick, so the cheap test comes before the arithmetic and before anything else.
-            // ⚠ Measured here rather than at build: preferredWidth needs the font, which is not
-            // necessarily ready when a panel assembles its card. By the time anything is resized it
-            // certainly is, and the estimate below is only the stand-in until then.
-            if (_scopeTitle != null && _scopeTitle.preferredWidth > 1f)
-                _scopeTitleWidth = _scopeTitle.preferredWidth;
+            // ⚠ Same rule as the words, and for the same reason: a title already broken in two
+            // reports the width of one of its lines, so believing it would grant it even less and
+            // keep it broken. Only a one-line reading counts.
+            float titleWidth = SingleLineWidth(_scopeTitle);
+            if (titleWidth > 0f) _scopeTitleWidth = titleWidth;
 
             if (Mathf.Abs(width - _scopeLastWidth) < 0.5f) return;
             _scopeLastWidth = width;

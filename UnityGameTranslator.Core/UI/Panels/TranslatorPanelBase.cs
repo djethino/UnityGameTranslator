@@ -85,6 +85,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                                                       default, TextAnchor.MiddleLeft);
             UIFactory.SetLayoutElement(row, minHeight: UIStyles.RowHeightMedium,
                                        flexibleWidth: 9999, flexibleHeight: 0);
+            _scopeRow = row.GetComponent<RectTransform>();
 
             // 🔴 **Something is ALWAYS lit.** The chosen side was lit only when it happened to be
             // available, so on any screen where it is not — the published side with nothing of
@@ -275,6 +276,15 @@ namespace UnityGameTranslator.Core.UI.Panels
         private GameObject _scopeMirror;
 
         /// <summary>
+        /// The row the strip and the title share — the thing whose width actually matters.
+        ///
+        /// ⚠ Not the panel's. This row sits inside a card inside a section, each with its own
+        /// padding, so it is dozens of pixels narrower than the window; reasoning from the window
+        /// granted the strip room that did not exist.
+        /// </summary>
+        private RectTransform _scopeRow;
+
+        /// <summary>
         /// The title itself, kept to MEASURE it rather than guess at it.
         ///
         /// 🔴 A section title is bold and a size up, and the per-character factor used everywhere
@@ -392,10 +402,20 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (_scopeWords.Count == 0) return;
 
-            // ⚠ The panel's real width now, not the one it was designed at — and read FIRST, so a
-            // frame where nothing moved leaves on a comparison. This runs on every frame for every
-            // open panel, which is what makes it follow a drag whatever caused it.
-            float width = Rect != null && Rect.rect.width > 1f ? Rect.rect.width : PanelWidth;
+            // 🔴 **The ROW's width, not the panel's.** This row lives inside a card inside a
+            // section, each with its own padding, so it is far narrower than the window around it —
+            // by fifty pixels or more. Measuring the panel told the strip it had room it did not
+            // have, which is why it kept a tier that no longer fitted and simply overflowed instead
+            // of dropping to the next one.
+            //
+            // ⚠ No circularity: the row is stretched by its parent and its width does not depend on
+            // which tier the strip is in, so this is an input, not the answer being sought.
+            float width = _scopeRow != null && _scopeRow.rect.width > 1f
+                ? _scopeRow.rect.width
+                : (Rect != null && Rect.rect.width > 1f ? Rect.rect.width : PanelWidth);
+
+            // Read FIRST, so a frame where nothing moved leaves on a comparison. This runs every
+            // frame for every open panel, which is what makes it follow a drag whatever caused it.
             if (Mathf.Abs(width - _scopeLastWidth) < 0.5f) return;
 
             MeasureScopeWords();

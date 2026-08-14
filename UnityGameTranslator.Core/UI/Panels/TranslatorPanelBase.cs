@@ -101,13 +101,27 @@ namespace UnityGameTranslator.Core.UI.Panels
             //
             // ⚠ Widths estimated the same way BadgeStrip estimates its chips, and deliberately
             // generously: over-estimating drops a tier early, under-estimating clips a word.
-            const float markCell = 11f + 10f;              // the picture and its cell padding
+            // ⚠ **These numbers ARE the cell built below — they were not, and that was the defect.**
+            // The cell padding went from 5 to 8 a side to give the marks room, and this estimate
+            // was left at the old figure: the strip believed it needed eighteen pixels less than it
+            // did, so it kept its words at widths where they wrapped onto a second line beside
+            // their own icon. An estimate that drifts from the thing it estimates is worse than no
+            // estimate, because it is confidently wrong.
+            const float cellPad = 8f * 2f;                 // left and right, as built
+            const float iconWord = 4f;                     // the group's spacing, icon to word
+            const float markCell = 11f + cellPad;          // a picture in its cell, no words
+            const float rowGaps = 3f * 8f;                 // between the three cells and the title
+
+            // Deliberately generous. Over-estimating drops a tier a few pixels early, which nobody
+            // notices; under-estimating wraps a word, which is what was reported.
+            const float safety = 12f;
+
             float words = 0f;
             foreach (var standing in sides)
-                words += EditScope.Name(standing.Side).Length * UIStyles.FontSizeHint * 0.62f;
+                words += EditScope.Name(standing.Side).Length * UIStyles.FontSizeHint * 0.62f + iconWord;
 
-            float chosenWords = EditScope.Name(lit).Length * UIStyles.FontSizeHint * 0.62f;
-            float spacing = 4f * 8f;
+            float chosenWords = EditScope.Name(lit).Length * UIStyles.FontSizeHint * 0.62f + iconWord;
+            float spacing = rowGaps + safety;
 
             float available = PanelWidth - 2f * UIStyles.SectionPadding
                               - text.Length * UIStyles.FontSizeSectionTitle * 0.62f;

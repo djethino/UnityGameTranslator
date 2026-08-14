@@ -1048,6 +1048,12 @@ namespace UnityGameTranslator.Core.UI
         /// </summary>
         private static void TickResponsiveStrips()
         {
+            // 🔴 **Only while something is actually being dragged.** Nothing here needs to run on a
+            // frame where no window is moving, and this loop sits in the tick that also carries the
+            // scene scan — spending anything on a game that is simply being played is the one thing
+            // it must not do. One static bool, then out.
+            if (!UniverseLib.UI.Panels.PanelManager.Resizing) return;
+
             for (int i = 0; i < _interactivePanels.Count; i++)
             {
                 var panel = _interactivePanels[i];

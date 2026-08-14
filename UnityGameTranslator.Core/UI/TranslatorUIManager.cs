@@ -3505,6 +3505,11 @@ namespace UnityGameTranslator.Core.UI
         /// another account of this computer, which is very much alive and none of our business.
         /// The two cases are indistinguishable from here, so the marker is kept and the holder and
         /// the time — which are plain text, deliberately — are handed to the caller to ask with.
+        ///
+        /// ⚠ **That is a fact about ownership, not a wall.** `Secrets` derives from values any
+        /// local account can look up, and says so in its own header; what keeps this safe is that
+        /// the key reaches no further than the translation beside it. See the socle, above
+        /// `MarkerSuffix`, for what may and may not be written in this file.
         /// </summary>
         private static EditSessionMarker ReadEditSessionMarker()
         {
@@ -3514,10 +3519,15 @@ namespace UnityGameTranslator.Core.UI
 
                 var state = JObject.Parse(System.IO.File.ReadAllText(EditSessionStatePath));
 
+                // ⚠ Checked before it is believed, let alone put in a URL. This file is writable by
+                // anybody with an account on this computer, so what comes out of it is data.
+                string key = TokenProtection.DecryptToken(
+                    state[EditSessions.MarkerKeyField]?.Value<string>());
+                if (!string.IsNullOrEmpty(key) && !EditSessions.IsPlausibleKey(key)) key = null;
+
                 var marker = new EditSessionMarker
                 {
-                    ModKey = TokenProtection.DecryptToken(
-                        state[EditSessions.MarkerKeyField]?.Value<string>()),
+                    ModKey = key,
                     // Absent on a marker this mod wrote before the field existed. The game is the
                     // only thing that wrote one back then, so that is the honest reading.
                     Holder = string.Equals(state[EditSessions.MarkerHolderField]?.Value<string>(),

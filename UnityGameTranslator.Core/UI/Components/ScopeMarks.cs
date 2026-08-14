@@ -31,8 +31,17 @@ namespace UnityGameTranslator.Core.UI.Components
         /// <summary>Between the last mark and the first letter.</summary>
         private const float LabelGap = 7f;
 
+        /// <summary>Room between the button's edge and the first mark.</summary>
+        private const float EdgePad = 7f;
+
         /// <summary>The three marks and the gaps between them.</summary>
         private static float MarksBlock => 3f * MarkSize + 2f * MarkGap;
+
+        /// <summary>
+        /// One side column. Held on BOTH sides — the left one carries the marks, the right one
+        /// stays empty so the label centres on the button rather than on what is left of it.
+        /// </summary>
+        private static float SlotWidth => EdgePad + MarksBlock + LabelGap;
 
         /// <summary>
         /// Puts the three marks on a button that already exists.
@@ -56,19 +65,21 @@ namespace UnityGameTranslator.Core.UI.Components
             // panels rebuild their cards on every refresh.
             if (buttonObj.transform.Find("ScopeMark0") != null) return;
 
-            // 🔴 **The marks and the label are ONE centred group.** Pinned to the left edge with the
-            // label still centring itself on the whole button, they read as debris stuck to the
-            // side of a control whose text has drifted off centre — which is what shipped, and what
-            // was reported. The manager centres its whole content by construction; this reproduces
-            // that, which is the only reason the two look like the same control.
+            // 🔴 **THREE SLOTS: marks · label · reserved.** The label keeps the middle and stays
+            // centred on the BUTTON; the marks sit in a left slot, right-justified against it; and
+            // a slot of the same width is held empty on the right.
+            //
+            // ⚠ **The empty right slot is the whole point, not padding.** These buttons have fixed
+            // widths and are stacked — 250, 200, 80. Centre "marks + label" as one group and every
+            // label lands at a different place depending on what is beside it, so a column of
+            // buttons has a column of labels that will not line up. Reserving the mirror slot keeps
+            // the label on the button's own centre line, so they align down the stack whatever each
+            // one carries. It is also where a trailing state would go, without moving anything.
+            //
+            // ⚠ Deterministic: no text measurement, so it does not depend on the font being ready
+            // or on a layout pass that has not happened when a panel builds its card.
             var label = buttonObj.transform.Find("Text");
-            var labelText = label == null ? null : label.GetComponent<Text>();
-            if (labelText == null) return;
-
-            // Measured from the font and the string, without waiting for a layout pass — which has
-            // not happened when a panel builds its card.
-            float labelWidth = labelText.preferredWidth;
-            float total = MarksBlock + LabelGap + labelWidth;
+            if (label == null) return;
 
             int index = 0;
             foreach (var standing in EditScope.Sides(hasLocalFile: true, canReachMachine: true,
@@ -90,28 +101,26 @@ namespace UnityGameTranslator.Core.UI.Components
                 // spot exactly where the eye is drawn.
                 image.raycastTarget = false;
 
-                // Anchored to the button's CENTRE, then walked left by half the group: the pair
-                // stays centred whatever the button's width turns out to be, where anchoring to the
-                // edge made the arrangement depend on it.
+                // In the left slot, right-justified against the label — the marks belong to the
+                // word beside them, not to the button's edge.
                 var rect = holder.GetComponent<RectTransform>();
-                rect.anchorMin = new Vector2(0.5f, 0.5f);
-                rect.anchorMax = new Vector2(0.5f, 0.5f);
+                rect.anchorMin = new Vector2(0f, 0.5f);
+                rect.anchorMax = new Vector2(0f, 0.5f);
                 rect.pivot = new Vector2(0f, 0.5f);
                 rect.sizeDelta = new Vector2(MarkSize, MarkSize);
                 rect.anchoredPosition =
-                    new Vector2(-total / 2f + index * (MarkSize + MarkGap), 0f);
+                    new Vector2(SlotWidth - LabelGap - MarksBlock + index * (MarkSize + MarkGap), 0f);
 
                 index++;
             }
 
-            // The label keeps filling the button and centring itself; shifting it right by half the
-            // marks puts the group's centre back on the button's.
+            // The middle column. Inset by the SAME width on both sides, so what the label centres
+            // itself on is the button's own centre.
             var labelRect = label.GetComponent<RectTransform>();
             if (labelRect != null)
             {
-                float shift = (MarksBlock + LabelGap) / 2f;
-                labelRect.offsetMin = new Vector2(labelRect.offsetMin.x + shift, labelRect.offsetMin.y);
-                labelRect.offsetMax = new Vector2(labelRect.offsetMax.x + shift, labelRect.offsetMax.y);
+                labelRect.offsetMin = new Vector2(SlotWidth, labelRect.offsetMin.y);
+                labelRect.offsetMax = new Vector2(-SlotWidth, labelRect.offsetMax.y);
             }
         }
     }

@@ -293,7 +293,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 return;
             }
 
-            StartBrowserEditorSession();
+            BeginBrowserEditorSession();
         }
 
         /// <summary>
@@ -320,6 +320,57 @@ namespace UnityGameTranslator.Core.UI.Panels
                 "Session resumed — your browser tab is connected again.",
                 UIStyles.StatusSuccess);
             SetBrowserEditorBusy(false);
+        }
+
+        /// <summary>
+        /// Clicked "Edit in browser": make sure nobody else is already editing this translation,
+        /// then open the session.
+        ///
+        /// ⚠ The question comes BEFORE anything is uploaded. Asking after would mean the file has
+        /// already travelled and a second session already exists on the site — which is the state
+        /// this exists to prevent.
+        /// </summary>
+        private async void BeginBrowserEditorSession()
+        {
+            SetBrowserEditorBusy(true, "Checking...");
+
+            var blocking = await TranslatorUIManager.FindBlockingEditSession();
+
+            TranslatorUIManager.RunOnMainThread(() =>
+            {
+                if (blocking == null)
+                {
+                    StartBrowserEditorSession();
+                    return;
+                }
+
+                if (TranslatorUIManager.ConfirmationPanel == null)
+                {
+                    // No way to ask is not a licence to decide: the safe answer is to do nothing
+                    // and say why, rather than erase a session somebody may be typing in.
+                    SetBrowserEditorStatus(blocking.Question, UIStyles.StatusWarning);
+                    SetBrowserEditorBusy(false);
+                    return;
+                }
+
+                TranslatorUIManager.ConfirmationPanel.Show(
+                    "Already being edited",
+                    blocking.Question,
+                    blocking.ModKey != null ? "End it and open mine" : "Open mine anyway",
+                    () => TakeOverAndStart(blocking.ModKey),
+                    () => SetBrowserEditorBusy(false),
+                    isDanger: true);
+            });
+        }
+
+        private async void TakeOverAndStart(string modKey)
+        {
+            // Null when the other session belongs to another account of this computer: we cannot
+            // end it, and the player has chosen to open theirs regardless.
+            if (modKey != null)
+                await TranslatorUIManager.TakeOverEditSession(modKey);
+
+            TranslatorUIManager.RunOnMainThread(StartBrowserEditorSession);
         }
 
         private async void StartBrowserEditorSession()

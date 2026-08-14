@@ -1741,6 +1741,58 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Ask whether a session still exists, WITHOUT claiming to be present.
+        ///
+        /// ⚠ Not <see cref="KeepAliveEditSession"/>, although it would answer the same question.
+        /// Keepalive means "still here" and pushes the expiry back; used to inspect a session
+        /// another program opened, it would hold that session alive on behalf of a window nobody
+        /// has looked at since yesterday. The state route exists precisely because asking is not
+        /// being present, and says so in its own comment.
+        ///
+        /// <see cref="EditSessionProbe.Exists"/> is null when the site could not be reached — never
+        /// false. The caller must not read a network failure as "nobody is editing".
+        /// </summary>
+        public static async Task<EditSessionProbe> GetEditSessionState(string modKey)
+        {
+            try
+            {
+                var response = await client.GetAsync(
+                    $"{DefaultBaseUrl}/edit-session/{Uri.EscapeDataString(modKey)}/state");
+
+                if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+                    return new EditSessionProbe { Exists = false };
+
+                if (!response.IsSuccessStatusCode)
+                    return new EditSessionProbe { Exists = null };
+
+                var data = ParseJsonSafe(await response.Content.ReadAsStringAsync());
+                return new EditSessionProbe
+                {
+                    Exists = true,
+                    PendingChanges = data["pending_changes"]?.Value<int>() ?? 0
+                };
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogWarning($"[ApiClient] Edit session state error: {e.Message}");
+                return new EditSessionProbe { Exists = null };
+            }
+        }
+
+        /// <summary>What the site says about a session we are asking about, not living in.</summary>
+        public class EditSessionProbe
+        {
+            /// <summary>True alive, false gone, null could not ask.</summary>
+            public bool? Exists { get; set; }
+
+            /// <summary>
+            /// Saves the browser made that nobody has fetched. ⚠ Until somebody does, the session
+            /// is the only place that work exists.
+            /// </summary>
+            public int PendingChanges { get; set; }
+        }
+
+        /// <summary>
         /// End the edit session server-side (user clicked Stop in the mod,
         /// the browser page was closed past the grace period, or the game is
         /// shutting down). Idempotent.

@@ -3413,7 +3413,7 @@ namespace UnityGameTranslator.Core.UI
             }
         }
 
-        // ── Surviving a game restart ─────────────────────────────────────────
+        // ── Surviving a game restart, and staying out of the manager's way ───
         // A crash, a kill or a power cut never sends the DELETE: the session
         // outlives the process, and the browser page is very likely still open
         // with work in it. The mod key is all that is needed to pick it back up,
@@ -3422,8 +3422,16 @@ namespace UnityGameTranslator.Core.UI
         //
         // The file is removed only when the session is really over — never on a
         // mere SSE drop, which would throw away a session the server still holds.
+        //
+        // ⚠ **The same file is the rendezvous with the manager**, which opens
+        // sessions on this very translation while the game is closed. Two of
+        // them holding one file means the last to save erases the other, and
+        // the site cannot arbitrate: sessions are anonymous, so it cannot tell
+        // that two of them are about the same game on the same machine. Hence a
+        // holder and a time beside the key — see EditSessions in the socle.
 
-        private static string EditSessionStatePath => TranslatorCore.CachePath + ".editsession";
+        private static string EditSessionStatePath =>
+            TranslatorCore.CachePath + EditSessions.MarkerSuffix;
 
         /// <summary>
         /// Remember the session credential for the next launch. Encrypted at
@@ -3437,7 +3445,11 @@ namespace UnityGameTranslator.Core.UI
             {
                 var state = new JObject
                 {
-                    ["mod_key"] = TokenProtection.EncryptToken(modKey)
+                    [EditSessions.MarkerKeyField] = TokenProtection.EncryptToken(modKey),
+                    // Who and when: the manager reads this file too, and "a session is already
+                    // open" is not a question anybody can answer without those two facts.
+                    [EditSessions.MarkerHolderField] = EditSessions.EditSessionHolder.Game.ToString(),
+                    [EditSessions.MarkerOpenedField] = DateTime.UtcNow.ToString("o")
                 };
                 System.IO.File.WriteAllText(EditSessionStatePath, state.ToString());
             }
@@ -3466,34 +3478,89 @@ namespace UnityGameTranslator.Core.UI
         }
 
         /// <summary>
-        /// Mod key of the session left behind by a previous run, or null.
-        /// A file we cannot read or decrypt is worthless — drop it rather than
-        /// keep retrying at every launch.
+        /// What the marker says: who opened a session on this translation, when, and — when we are
+        /// able to read it — the key that can end it.
         /// </summary>
-        private static string ReadPersistedEditSession()
+        public class EditSessionMarker
+        {
+            /// <summary>Null when the key could not be decrypted. Everything else still stands.</summary>
+            public string ModKey;
+
+            public EditSessions.EditSessionHolder Holder;
+
+            /// <summary>Null on a marker written before this field existed.</summary>
+            public DateTime? OpenedUtc;
+
+            /// <summary>This game's own session, as opposed to one the manager opened.</summary>
+            public bool IsOurs { get { return Holder == EditSessions.EditSessionHolder.Game; } }
+        }
+
+        /// <summary>
+        /// Read the marker, or null when there is none.
+        ///
+        /// ⚠ **A key we cannot decrypt no longer means "throw it away".** It used to: the only
+        /// reading was "this came from another machine, it is worthless". But the same file is now
+        /// how the manager and the game keep out of each other's way, and `Secrets` binds to the
+        /// USER as well as the machine — so an unreadable key also describes a session opened by
+        /// another account of this computer, which is very much alive and none of our business.
+        /// The two cases are indistinguishable from here, so the marker is kept and the holder and
+        /// the time — which are plain text, deliberately — are handed to the caller to ask with.
+        /// </summary>
+        private static EditSessionMarker ReadEditSessionMarker()
         {
             try
             {
                 if (!System.IO.File.Exists(EditSessionStatePath)) return null;
 
                 var state = JObject.Parse(System.IO.File.ReadAllText(EditSessionStatePath));
-                string modKey = TokenProtection.DecryptToken(state["mod_key"]?.Value<string>());
 
-                if (string.IsNullOrEmpty(modKey))
+                var marker = new EditSessionMarker
                 {
-                    TranslatorCore.LogWarning("[EditSSE] Persisted session unreadable (machine changed?), discarding it");
-                    ClearPersistedEditSession();
-                    return null;
+                    ModKey = TokenProtection.DecryptToken(
+                        state[EditSessions.MarkerKeyField]?.Value<string>()),
+                    // Absent on a marker this mod wrote before the field existed. The game is the
+                    // only thing that wrote one back then, so that is the honest reading.
+                    Holder = string.Equals(state[EditSessions.MarkerHolderField]?.Value<string>(),
+                                           EditSessions.EditSessionHolder.Manager.ToString(),
+                                           StringComparison.OrdinalIgnoreCase)
+                        ? EditSessions.EditSessionHolder.Manager
+                        : EditSessions.EditSessionHolder.Game
+                };
+
+                DateTime opened;
+                if (DateTime.TryParse(state[EditSessions.MarkerOpenedField]?.Value<string>(),
+                                      System.Globalization.CultureInfo.InvariantCulture,
+                                      System.Globalization.DateTimeStyles.AdjustToUniversal
+                                      | System.Globalization.DateTimeStyles.AssumeUniversal,
+                                      out opened))
+                {
+                    marker.OpenedUtc = opened;
                 }
 
-                return modKey;
+                if (string.IsNullOrEmpty(marker.ModKey))
+                    TranslatorCore.LogWarning("[EditSSE] The session marker's key cannot be read here "
+                                            + "(another user of this computer, or a machine change)");
+
+                return marker;
             }
             catch (Exception e)
             {
-                TranslatorCore.LogWarning($"[EditSSE] Persisted session unusable: {e.Message}");
+                // A marker we cannot parse at all says nothing about anybody's session, and
+                // keeping it would block every future one on a file nobody can read.
+                TranslatorCore.LogWarning($"[EditSSE] Session marker unusable: {e.Message}");
                 ClearPersistedEditSession();
                 return null;
             }
+        }
+
+        /// <summary>
+        /// Mod key of a session THIS GAME left open, or null. A session the manager opened is not
+        /// ours to resume, discard or keep alive — only to ask about before opening another.
+        /// </summary>
+        private static string ReadPersistedEditSession()
+        {
+            var marker = ReadEditSessionMarker();
+            return marker != null && marker.IsOurs ? marker.ModKey : null;
         }
 
         /// <summary>
@@ -3594,6 +3661,106 @@ namespace UnityGameTranslator.Core.UI
                 MainPanel?.RefreshUI();
                 StatusOverlay?.ShowToast("Live edit session resumed", Panels.StatusOverlay.ToastTone.On);
             });
+        }
+
+        /// <summary>A session on this translation that somebody else's window is holding.</summary>
+        public class BlockingEditSession
+        {
+            /// <summary>The question to put to the player, already worded by the socle.</summary>
+            public string Question;
+
+            /// <summary>
+            /// The key, when we can read it. Null means the session belongs to another account of
+            /// this computer: we can see it, we cannot end it, and it is not ours to end.
+            /// </summary>
+            public string ModKey;
+        }
+
+        /// <summary>
+        /// Is somebody else's window already editing this translation in a browser?
+        ///
+        /// 🔴 **Two sessions on one file destroy work silently.** Each holds the whole translation
+        /// as it stood when it opened and saves it back entire, so the second to save erases
+        /// everything the first did. The site cannot notice — sessions are anonymous, it cannot
+        /// tell that two of them are the same game on the same machine — so this is decided here,
+        /// from the marker the two programs share.
+        ///
+        /// Returns null when the way is clear, INCLUDING when the session found is this game's own:
+        /// that one is closed by <see cref="DiscardPersistedEditSession"/>, which needs no question.
+        /// </summary>
+        public static async Task<BlockingEditSession> FindBlockingEditSession()
+        {
+            var marker = ReadEditSessionMarker();
+            if (marker == null) return null;
+
+            bool endable = !string.IsNullOrEmpty(marker.ModKey);
+
+            // Ours and readable: not a conflict, just a leftover to close.
+            if (endable && marker.IsOurs) return null;
+
+            string when = marker.OpenedUtc.HasValue
+                ? "on " + marker.OpenedUtc.Value.ToLocalTime().ToString("d MMM, HH:mm")
+                : "at an unknown time";
+
+            if (!endable)
+            {
+                // Seen, not touchable. Ending it would need the key, and the key is unreadable
+                // precisely because it belongs to another account of this computer — the same
+                // reason we never write into a game somebody else set up.
+                return new BlockingEditSession
+                {
+                    Question = "A browser editing session for this game was opened from "
+                             + EditSessions.HolderName(marker.Holder) + " " + when
+                             + " by another user of this computer, or before this game was moved "
+                             + "here. It cannot be ended from your account, and two sessions on one "
+                             + "translation erase each other's saves. Open yours anyway?"
+                };
+            }
+
+            var probe = await ApiClient.GetEditSessionState(marker.ModKey);
+
+            if (!EditSessions.MarkerIsLive(probe.Exists))
+            {
+                // The site has forgotten it. Nothing to ask about, and the marker would otherwise
+                // block every future session over a session that ended days ago.
+                ClearPersistedEditSession();
+                return null;
+            }
+
+            return new BlockingEditSession
+            {
+                Question = EditSessions.ConflictQuestion(marker.Holder, when, probe.PendingChanges),
+                ModKey = marker.ModKey
+            };
+        }
+
+        /// <summary>
+        /// End a session another window opened, keeping what the browser saved into it.
+        ///
+        /// ⚠ **Drained before it is ended**, exactly as our own is on shutdown. Saves the browser
+        /// made and nobody fetched exist in the session and NOWHERE else; deleting it first would
+        /// destroy work the site told somebody was saved. The merge is purely additive here (no
+        /// baseline is known for a session we did not open), so nothing can read as a deletion.
+        /// </summary>
+        public static async Task TakeOverEditSession(string modKey)
+        {
+            if (string.IsNullOrEmpty(modKey)) return;
+
+            var result = await ApiClient.GetEditSessionContent(modKey);
+            var content = result.Success ? result.Content : null;
+
+            if (!string.IsNullOrEmpty(content))
+            {
+                var captured = content;
+                RunOnMainThread(() =>
+                {
+                    if (ApplyEditSessionMerge(captured))
+                        TranslatorCore.LogInfo("[EditSSE] Took in what the other window's browser had saved");
+                });
+            }
+
+            await ApiClient.EndEditSession(modKey);
+            RunOnMainThread(ClearPersistedEditSession);
         }
 
         /// <summary>

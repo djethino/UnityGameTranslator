@@ -86,9 +86,17 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.SetLayoutElement(row, minHeight: UIStyles.RowHeightMedium,
                                        flexibleWidth: 9999, flexibleHeight: 0);
 
-            foreach (var standing in ScopeSides(side))
+            // 🔴 **Something is ALWAYS lit.** The chosen side was lit only when it happened to be
+            // available, so on any screen where it is not — the published side with nothing of
+            // yours published, which is most people — all three positions came out grey and the
+            // control said nothing at all. EditScope.Default answers what a screen actually falls
+            // back to, and it falls towards the local side, never towards publishing.
+            var sides = ScopeSides(side);
+            var lit = EditScope.Default(sides, side);
+
+            foreach (var standing in sides)
             {
-                bool selected = standing.Side == side && standing.Available;
+                bool selected = standing.Side == lit && standing.Available;
                 var colour = selected ? UIStyles.TextPrimary : UIStyles.TextMuted;
 
                 // ⚠ Each position is a mark AND a word here, where a button elsewhere carries the

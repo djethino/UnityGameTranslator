@@ -155,6 +155,18 @@ namespace UnityGameTranslator.Core.UI.Panels
                 chip.color = colour;
                 chip.fontStyle = selected ? FontStyle.Bold : FontStyle.Normal;
 
+                // 🔴 **NEVER WRAPS, and this is the fix the last three attempts were working
+                // around.** A label allowed to wrap has a width that depends on the room it was
+                // given — which is the very thing being decided from it. Measuring one is measuring
+                // the answer one is looking for, one frame late, and it latches: it wraps, reports
+                // half its width, is granted half, stays wrapped. Forbidding the wrap makes every
+                // reading honest and the whole loop disappears.
+                //
+                // ⚠ These are three short fixed words. Wrapping them was never wanted anywhere —
+                // it was only ever the default nobody turned off.
+                chip.horizontalOverflow = HorizontalWrapMode.Overflow;
+                chip.verticalOverflow = VerticalWrapMode.Overflow;
+
                 // ⚠ flexibleWidth 0, and it is the whole fix: at 9999 each of the three cells
                 // claimed an equal share of the row and the title got what was left.
                 UIFactory.SetLayoutElement(chip.gameObject, minHeight: UIStyles.RowHeightSmall,
@@ -176,6 +188,16 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             var title = CreateTitle(row, name, text);
             UIFactory.SetLayoutElement(title.gameObject, flexibleWidth: 9999);
+
+            // 🔴 Same rule, same reason. A title that may wrap reports the width of one of its
+            // lines, so the strip reads "the title needs little" exactly when the title is
+            // suffering — and takes the room that would have fixed it.
+            //
+            // ⚠ It CLIPS instead of wrapping when a window is genuinely too narrow, which is the
+            // behaviour asked for: a window title belongs on one line, and a clipped one still
+            // says which window it is.
+            title.horizontalOverflow = HorizontalWrapMode.Overflow;
+            title.verticalOverflow = VerticalWrapMode.Overflow;
 
             // 🔴 **A TITLE BAR, so the title is centred on the WINDOW.** Left to itself it centres
             // on what the strip has not taken, which pushes it right by half the strip — the more
@@ -290,10 +312,11 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (label == null || !label.gameObject.activeInHierarchy) return 0f;
 
-            // 0 means nothing has been generated yet — before the first layout pass, or with a font
-            // that is not ready. Not an answer, and not a reason to overwrite a good one.
+            // ⚠ The one-line test stays, as a belt: these labels are now set to Overflow so they
+            // cannot wrap, but a reading taken before anything was generated is still not an
+            // answer, and must not overwrite a good one.
             var generator = label.cachedTextGenerator;
-            if (generator == null || generator.lineCount != 1) return 0f;
+            if (generator == null || generator.lineCount > 1) return 0f;
 
             return label.preferredWidth > 1f ? label.preferredWidth : 0f;
         }

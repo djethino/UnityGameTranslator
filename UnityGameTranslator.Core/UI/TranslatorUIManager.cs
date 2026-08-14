@@ -1033,6 +1033,30 @@ namespace UnityGameTranslator.Core.UI
 
         }
 
+        /// <summary>
+        /// Lets each visible panel's scope strip follow its width, while it is being dragged.
+        ///
+        /// ⚠ **Per frame, because the dragger offers nothing else.** PanelDragger raises exactly
+        /// one event, OnFinishResize, at the END of a drag — so a strip hooked on it only changes
+        /// form once the corner is released, which reads as the window lagging behind the pointer.
+        ///
+        /// ⚠ **And it is cheap by construction, which is what earns it a place in the single tick.**
+        /// A panel that has not moved compares one float and returns; a panel that has moved but
+        /// stays inside its tier compares a few more. The strip is only rebuilt on the rare frame
+        /// where the form actually changes, and even then nothing is created — the words are hidden
+        /// and shown.
+        /// </summary>
+        private static void TickResponsiveStrips()
+        {
+            for (int i = 0; i < _interactivePanels.Count; i++)
+            {
+                var panel = _interactivePanels[i];
+                if (panel == null || !panel.Enabled) continue;
+
+                panel.RefreshScopeStrip();
+            }
+        }
+
         private static IEnumerator MainTickLoop()
         {
             while (true)
@@ -1052,6 +1076,9 @@ namespace UnityGameTranslator.Core.UI
                     // Always, and outside the setup latch: this is what returns the game's input.
                     // A game must never stay held because the mod was not configured yet.
                     TickInputOwnership();
+
+                    // The scope strips follow the width of the panel holding them, live.
+                    TickResponsiveStrips();
 
                     // Everything below TOUCHES THE GAME — reads its scene, rewrites its text,
                     // writes the cache to disk. None of it may happen before someone said yes.

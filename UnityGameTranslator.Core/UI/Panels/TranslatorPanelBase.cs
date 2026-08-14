@@ -199,6 +199,9 @@ namespace UnityGameTranslator.Core.UI.Panels
         private StripTier _scopeTier = StripTier.Mini;
         private float _scopeFull, _scopeMedium, _scopeMini, _scopeTitleWidth;
 
+        /// <summary>The width the strip was last asked about, so an unchanged frame costs nothing.</summary>
+        private float _scopeLastWidth = -1f;
+
         /// <summary>
         /// Re-measures the room the title leaves and changes form only if the answer moved.
         ///
@@ -206,12 +209,18 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// <see cref="ScopeStrip.Fits"/> is what keeps a size resting on a threshold from flipping
         /// back and forth — without it this method would be the thing doing the flapping.
         /// </summary>
-        protected void RefreshScopeStrip()
+        public void RefreshScopeStrip()
         {
             if (_scopeWords.Count == 0) return;
 
             // The panel's real width now, not the one it was designed at.
             float width = Rect != null && Rect.rect.width > 1f ? Rect.rect.width : PanelWidth;
+
+            // ⚠ Nothing moved, nothing to ask. This runs on EVERY FRAME through the mod's single
+            // tick, so the cheap test comes before the arithmetic and before anything else.
+            if (Mathf.Abs(width - _scopeLastWidth) < 0.5f) return;
+            _scopeLastWidth = width;
+
             float available = width - 2f * UIStyles.SectionPadding - _scopeTitleWidth;
 
             var tier = ScopeStrip.Fits(available, _scopeFull, _scopeMedium, _scopeMini, _scopeTier);
@@ -1126,9 +1135,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Invalidate content measurement cache since size changed
             _contentMeasured = false;
 
-            // ⚠ Before the programmatic-resize guard, on purpose: the strip has to follow the width
-            // whatever moved it. This costs a comparison when the tier does not change, which is
-            // almost always.
+            // Kept as a backstop although the tick already does this every frame: a panel that is
+            // not registered as interactive is never ticked, and one float comparison is a cheaper
+            // insurance than finding out later which panel that was.
             RefreshScopeStrip();
 
             // Ignore programmatic resizes (dynamic sizing, etc.) — the flag is cleared by the

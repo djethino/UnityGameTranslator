@@ -81,15 +81,31 @@ namespace UnityGameTranslator.Core.UI.Panels
             foreach (var standing in ScopeSides(side))
             {
                 bool selected = standing.Side == side && standing.Available;
+                var colour = selected ? UIStyles.TextPrimary : UIStyles.TextMuted;
 
-                var chip = UIFactory.CreateLabel(row, name + standing.Side, EditScope.Name(standing.Side),
-                                                 TextAnchor.MiddleCenter, supportRichText: false);
-                chip.fontSize = UIStyles.FontSizeHint;
-                chip.color = selected ? UIStyles.TextPrimary : UIStyles.TextMuted;
-                chip.fontStyle = selected ? FontStyle.Bold : FontStyle.Normal;
-                UIFactory.SetLayoutElement(chip.gameObject, minWidth: 72, minHeight: UIStyles.RowHeightSmall);
-                UIStyles.SetBackground(chip.gameObject,
+                // ⚠ Each position is a mark AND a word here, where a button elsewhere carries the
+                // marks alone. That is the whole arrangement: the full form teaches the pictures
+                // beside the words, the small one relies on having been taught.
+                // Padding given explicitly: left at its default, the group would take the library's
+                // roomy one and a row of three cells would no longer fit beside a title.
+                var cell = UIFactory.CreateHorizontalGroup(row, name + standing.Side + "Cell",
+                                                           false, false, true, true, 4,
+                                                           new Vector4(6, 6, 2, 2), default,
+                                                           TextAnchor.MiddleCenter);
+                UIFactory.SetLayoutElement(cell, minWidth: 88, minHeight: UIStyles.RowHeightSmall);
+                UIStyles.SetBackground(cell,
                     selected ? UIStyles.ItemBackgroundSelected : UIStyles.ItemBackground);
+
+                AddScopeMark(cell, name + standing.Side + "Mark",
+                             EditScope.Mark(standing.Side), colour);
+
+                var chip = UIFactory.CreateLabel(cell, name + standing.Side, EditScope.Name(standing.Side),
+                                                 TextAnchor.MiddleLeft, supportRichText: false);
+                chip.fontSize = UIStyles.FontSizeHint;
+                chip.color = colour;
+                chip.fontStyle = selected ? FontStyle.Bold : FontStyle.Normal;
+                UIFactory.SetLayoutElement(chip.gameObject, minHeight: UIStyles.RowHeightSmall,
+                                           flexibleWidth: 9999);
 
                 // Never translated: these are the product's own words, identical in three places,
                 // and a translation of the mod's interface must not make them diverge.
@@ -99,6 +115,30 @@ namespace UnityGameTranslator.Core.UI.Panels
             var title = CreateTitle(row, name, text);
             UIFactory.SetLayoutElement(title.gameObject, flexibleWidth: 9999);
             return title;
+        }
+
+        /// <summary>
+        /// One of the switch's three pictures, beside its word.
+        ///
+        /// ⚠ Silent when the mark cannot be built — an unreadable texture on a game that refuses
+        /// one must not take the label with it. The words alone still say everything; the pictures
+        /// are what makes the control recognisable elsewhere, not what makes it legible here.
+        /// </summary>
+        private static void AddScopeMark(GameObject parent, string name, string mark, Color colour)
+        {
+            var sprite = Icons.Get(mark);
+            if (sprite == null) return;
+
+            var holder = UIFactory.CreateUIObject(name, parent);
+            UIFactory.SetLayoutElement(holder, minWidth: UIStyles.FontSizeHint + 2,
+                                       minHeight: UIStyles.FontSizeHint + 2,
+                                       flexibleWidth: 0, flexibleHeight: 0);
+
+            var image = holder.AddComponent<Image>();
+            image.sprite = sprite;
+            image.color = colour;
+            image.preserveAspect = true;
+            image.raycastTarget = false;
         }
 
         /// <summary>

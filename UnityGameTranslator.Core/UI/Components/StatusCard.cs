@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using UnityEngine;
 using UnityEngine.UI;
 using UniverseLib.UI;
@@ -27,7 +27,7 @@ namespace UnityGameTranslator.Core.UI.Components
         None,
         Main,
         Branch,
-        Contributor
+        HoldingAnothersLineage
     }
 
     /// <summary>
@@ -474,8 +474,12 @@ namespace UnityGameTranslator.Core.UI.Components
                     _roleBadgeImage.color = UIStyles.StatusInfo;
                     _roleBadge.SetActive(true);
                     break;
-                case TranslationRoleType.Contributor:
-                    _roleLabel.text = "CONTRIBUTOR";
+                // ⚠ NOT "CONTRIBUTOR". Becoming a Branch IS contributing, so this badge claimed a
+                // role its holder does not have — one becomes a Branch by uploading, and this
+                // person has sent nothing. It names what is true instead: the translation belongs
+                // to somebody else's lineage and their own changes are still only here.
+                case TranslationRoleType.HoldingAnothersLineage:
+                    _roleLabel.text = "NOT YOURS";
                     _roleBadgeImage.color = UIStyles.ButtonPrimary;
                     _roleBadge.SetActive(true);
                     break;
@@ -861,7 +865,7 @@ namespace UnityGameTranslator.Core.UI.Components
         /// Configure card for same lineage state (same UUID, not owner, not yet uploaded).
         /// User hasn't decided yet whether to contribute (branch) or fork.
         /// </summary>
-        public void ConfigureAsContributor(SyncStatusType syncStatus, int entryCount, string language, string mainOwner)
+        public void ConfigureAsHoldingAnothersLineage(SyncStatusType syncStatus, int entryCount, string language, string mainOwner)
         {
             SetStatus(syncStatus);
             // Don't show a role badge - user hasn't decided yet (not a contributor until they upload as branch)

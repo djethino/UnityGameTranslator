@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
@@ -7334,7 +7334,7 @@ namespace UnityGameTranslator.Core
         None,
         /// <summary>Owner of this translation (same UUID + same user)</summary>
         Main,
-        /// <summary>Contributor to someone else's translation (same UUID + different user)</summary>
+        /// <summary>Holding someone else's lineage: same UUID, different user. NOT a Branch — one becomes a Branch by uploading.</summary>
         Branch
     }
 

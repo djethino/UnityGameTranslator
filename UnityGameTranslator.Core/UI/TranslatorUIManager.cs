@@ -1909,9 +1909,22 @@ namespace UnityGameTranslator.Core.UI
         {
             if (TranslatorCore.ServerState != null && TranslatorCore.ServerState.Checked) return;
             if (_syncCheckInFlight) return;
-            // Silent: this runs on every panel refresh, and a reason logged that
-            // often is noise, not information
-            if (!CanWatchSync(logReason: false)) return;
+
+            // ⚠ **Falls through to the public check, exactly as StartSyncWatch does.** This used to
+            // stop at CanWatchSync, which is false without an account — so a panel opened by
+            // somebody signed out found ServerState null, decided the translation was "local only",
+            // and said nothing about the community version it had actually been downloaded from.
+            //
+            // The same mistake was already fixed once, at the startup call: the token test there
+            // duplicated a decision StartSyncWatch makes properly, and shut out the very branch
+            // written for people with no account. It was fixed in one place and not the other.
+            if (!CanWatchSync(logReason: false))
+            {
+                // Silent on the reason: this runs on every panel refresh, and a line logged that
+                // often is noise rather than information.
+                if (TranslatorCore.Config.online_mode) CheckPublicUpdateNow();
+                return;
+            }
 
             CheckSyncStateNow();
         }

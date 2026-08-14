@@ -10,14 +10,26 @@ namespace UnityGameTranslator.Core.UI.Panels
     /// <summary>
     /// Layout states for context-aware UI display.
     /// </summary>
+    /// <summary>
+    /// Layout states for context-aware UI display.
+    ///
+    /// 🔴 **These describe the TRANSLATION, never the account.** There used to be a `NotLogged`
+    /// state, tested before every other, which meant somebody with no account was shown a sign-up
+    /// pitch instead of what their translation was doing. Whether to invite somebody to sign in is
+    /// a separate question, read from the account where it is needed.
+    ///
+    /// ⚠ **No state is called "Contributor".** Becoming a Branch IS contributing, so a second word
+    /// for it would put two names on one thing across three products — and this state is not a
+    /// Branch anyway: it is somebody holding a lineage that is not theirs, who has diverged and
+    /// sent nothing. One becomes a Branch by uploading.
+    /// </summary>
     public enum LayoutState
     {
-        NotLogged,           // Show login CTA + community list prominent
-        NoLocal,             // Show download prominent
-        OwnerMain,           // Status + Update + Review Branches
-        OwnerBranch,         // Status + Upload + Fork option
-        ContributorSameUuid, // Contribute/Download/Fork choice (3 buttons)
-        VisitorDiffUuid      // Download with lineage warning
+        NoLocal,                // Show download prominent
+        OwnerMain,              // Status + Update + Review Branches
+        OwnerBranch,            // Status + Upload + Fork option
+        HoldingAnothersLineage, // Contribute (branch) / Download / Fork — three choices
+        VisitorDiffUuid         // Download with lineage warning
     }
 
     /// <summary>
@@ -82,8 +94,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         private ButtonRef _loginCTABtn;
         private GameObject _statusSection;
 
-        // UI references - Contributor choice section (GAP 8: 3 guided buttons)
-        private GameObject _contributorChoiceSection;
+        // UI references - the three choices when holding another lineage (GAP 8)
+        private GameObject _lineageChoiceSection;
         private ButtonRef _contributeAsBranchBtn;
         private ButtonRef _downloadLatestBtn;
         private ButtonRef _createIndependentBtn;
@@ -103,7 +115,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private const string TAB_COMMUNITY = "Community";
 
         // Current layout state (cached for efficiency)
-        private LayoutState _currentLayoutState = LayoutState.NotLogged;
+        private LayoutState _currentLayoutState = LayoutState.NoLocal;
 
         public MainPanel(UIBase owner) : base(owner)
         {
@@ -172,8 +184,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Actions Section (context-dependent)
             CreateActionsSection(myTransCard);
 
-            // Contributor Choice Section (GAP 8: 3 guided buttons for ContributorSameUuid state)
-            CreateContributorChoiceSection(myTransCard);
+            // The three choices offered when holding another lineage (GAP 8: HoldingAnothersLineage state)
+            CreateLineageChoiceSection(myTransCard);
 
             // Guidance Section (GAP 9: contextual messages)
             CreateGuidanceSection(myTransCard);
@@ -538,18 +550,18 @@ namespace UnityGameTranslator.Core.UI.Panels
         }
 
         /// <summary>
-        /// Creates the contributor choice section with 3 guided buttons (GAP 8).
-        /// Shown only for ContributorSameUuid state.
+        /// The three choices offered to somebody holding a lineage that is not theirs (GAP 8):
+        /// Shown only for HoldingAnothersLineage state.
         /// </summary>
-        private void CreateContributorChoiceSection(GameObject parent)
+        private void CreateLineageChoiceSection(GameObject parent)
         {
-            _contributorChoiceSection = UIFactory.CreateVerticalGroup(parent, "ContributorChoiceSection", false, false, true, true, UIStyles.SmallSpacing);
-            UIFactory.SetLayoutElement(_contributorChoiceSection, flexibleWidth: 9999);
+            _lineageChoiceSection = UIFactory.CreateVerticalGroup(parent, "LineageChoiceSection", false, false, true, true, UIStyles.SmallSpacing);
+            UIFactory.SetLayoutElement(_lineageChoiceSection, flexibleWidth: 9999);
 
-            var sectionTitle = UIStyles.CreateSectionTitle(_contributorChoiceSection, "ChoiceSectionLabel", "What would you like to do?");
+            var sectionTitle = UIStyles.CreateSectionTitle(_lineageChoiceSection, "ChoiceSectionLabel", "What would you like to do?");
             RegisterUIText(sectionTitle);
 
-            var choiceBox = CreateSection(_contributorChoiceSection, "ChoiceBox");
+            var choiceBox = CreateSection(_lineageChoiceSection, "ChoiceBox");
 
             // Button 1: Contribute as Branch
             var branchRow = UIFactory.CreateVerticalGroup(choiceBox, "BranchRow", false, false, true, true, 2);
@@ -784,16 +796,20 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         private LayoutState DetectCurrentState()
         {
-            bool isLoggedIn = !string.IsNullOrEmpty(TranslatorCore.Config.api_token);
             int localCount = TranslatorCore.TranslationCache.Count;
             var serverState = TranslatorCore.ServerState;
             bool existsOnServer = serverState != null && serverState.Exists && serverState.SiteId.HasValue;
 
-            // Not logged in
-            if (!isLoggedIn)
-            {
-                return LayoutState.NotLogged;
-            }
+            // 🔴 **Having an account is NOT a layout state**, and testing it first here is what made
+            // the panel useless to the person who most needed it. Somebody with no account can
+            // download a community translation and go on adding lines: they diverge exactly like a
+            // branch would, while being neither branch nor fork because they never published. The
+            // mod already DETECTS that the main moved — StartSyncWatch has a public branch for
+            // precisely this case, see analyse/false-branch-role-after-download.md — and this line
+            // then hid the answer behind a "create an account" pitch.
+            //
+            // ⚠ The account decides which ACTIONS are offered, never what somebody is allowed to
+            // KNOW. Merging and taking the main's version again write nothing but the local file.
 
             // No local translation
             if (localCount == 0)
@@ -816,7 +832,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     // User doesn't own - check if same UUID (same lineage)
                     // ServerState.Exists means the UUID exists on server
                     // We're working with the same UUID but not the owner
-                    return LayoutState.ContributorSameUuid;
+                    return LayoutState.HoldingAnothersLineage;
                 }
             }
             else
@@ -827,7 +843,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     if (serverState.Exists && !serverState.IsOwner)
                     {
                         // UUID exists on server but we don't own it
-                        return LayoutState.ContributorSameUuid;
+                        return LayoutState.HoldingAnothersLineage;
                     }
                 }
                 // Local only - treat as potential new upload or visitor
@@ -880,10 +896,14 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         private void RefreshLayoutVisibility()
         {
-            // Login CTA - only show when not logged in
+            // ⚠ Read from the account directly, no longer from the layout state. The two were the
+            // same test and are two different questions: whether to invite somebody to sign in, and
+            // what their translation is doing. Tying them meant an invitation REPLACED the answer.
+            bool isLoggedIn = !string.IsNullOrEmpty(TranslatorCore.Config.api_token);
+
             if (_loginCTASection != null)
             {
-                _loginCTASection.SetActive(_currentLayoutState == LayoutState.NotLogged);
+                _loginCTASection.SetActive(!isLoggedIn);
 
                 // Disable CTA button when offline
                 if (_loginCTABtn != null)
@@ -892,9 +912,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
             }
 
-            // Determine if we should show StatusCard vs legacy TranslationInfo
-            bool showStatusCard = _currentLayoutState != LayoutState.NotLogged &&
-                                  _currentLayoutState != LayoutState.NoLocal;
+            // The card describes a translation, so it appears whenever there is one — with or
+            // without a name attached to it.
+            bool showStatusCard = _currentLayoutState != LayoutState.NoLocal;
 
             // Status section with StatusCard - show when logged in and has local content
             if (_statusSection != null)
@@ -912,10 +932,20 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _translationInfoSection.SetActive(!showStatusCard);
             }
 
-            // Contributor choice section (GAP 8) - only for ContributorSameUuid state
-            if (_contributorChoiceSection != null)
+            // The three choices offered to somebody holding a lineage that is not theirs.
+            if (_lineageChoiceSection != null)
             {
-                _contributorChoiceSection.SetActive(_currentLayoutState == LayoutState.ContributorSameUuid);
+                _lineageChoiceSection.SetActive(_currentLayoutState == LayoutState.HoldingAnothersLineage);
+
+                // ⚠ Two of the three need a name, one does not. Taking the main's version again
+                // writes only the local file, so it stays live without an account — that is the
+                // whole point of showing this section to somebody signed out. Contributing and
+                // forking put something on the site under a name, so they wait for one.
+                if (_contributeAsBranchBtn != null)
+                    _contributeAsBranchBtn.Component.interactable = isLoggedIn;
+
+                if (_createIndependentBtn != null)
+                    _createIndependentBtn.Component.interactable = isLoggedIn;
             }
 
             // Guidance section (GAP 9) - show contextual messages
@@ -938,14 +968,6 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             switch (_currentLayoutState)
             {
-                case LayoutState.NotLogged:
-                    if (localCount > 0)
-                    {
-                        // Has local but not logged - encourage account creation
-                        message = "Create an account to sync your translations and contribute to the community.";
-                    }
-                    break;
-
                 case LayoutState.NoLocal:
                     // No local translation - guide user
                     if (TranslatorCore.Config.IsTranslationEnabled)
@@ -958,7 +980,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     }
                     break;
 
-                case LayoutState.ContributorSameUuid:
+                case LayoutState.HoldingAnothersLineage:
                     // Same UUID but not owner - show info about parent
                     if (serverState != null)
                     {
@@ -981,14 +1003,23 @@ namespace UnityGameTranslator.Core.UI.Panels
                     break;
             }
 
+            // ⚠ The invitation to sign up is appended, never substituted. It used to BE the message
+            // for anybody without an account, which is how somebody holding a diverged community
+            // translation was told to create an account instead of being told they had diverged.
+            if (message is null && string.IsNullOrEmpty(TranslatorCore.Config.api_token)
+                && localCount > 0)
+            {
+                message = "Create an account to publish your translation or contribute to the community.";
+            }
+
             // Show or hide guidance section based on message
             bool hasMessage = !string.IsNullOrEmpty(message);
             _guidanceSection.SetActive(hasMessage);
             if (hasMessage)
             {
-                // The ContributorSameUuid branch already translated (it appends a username);
+                // The HoldingAnothersLineage branch already translated (it appends a username);
                 // the others are plain sentences translated here.
-                _guidanceLabel.text = _currentLayoutState == LayoutState.ContributorSameUuid
+                _guidanceLabel.text = _currentLayoutState == LayoutState.HoldingAnothersLineage
                     ? message
                     : TranslatorCore.TranslateOwnUIDynamic(message, _guidanceLabel);
             }
@@ -1058,8 +1089,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                         _statusCard.SetModeAction($"{localChanges} change(s) not submitted", "Compare", OnCompareWithServerClicked);
                     break;
 
-                case LayoutState.ContributorSameUuid:
-                    _statusCard.ConfigureAsContributor(
+                case LayoutState.HoldingAnothersLineage:
+                    _statusCard.ConfigureAsHoldingAnothersLineage(
                         syncStatus,
                         entryCount,
                         targetLang,

@@ -94,6 +94,33 @@ namespace UnityGameTranslator.Core.UI.Panels
             var sides = ScopeSides(side);
             var lit = EditScope.Default(sides, side);
 
+            // 🔴 **The strip takes what is left AFTER the title.** It gives up its words rather
+            // than push the title onto a second line — which is what it was doing. Measured before
+            // anything is built, so the form is chosen once instead of being noticed after a
+            // layout pass and rebuilt, which flickers and can oscillate.
+            //
+            // ⚠ Widths estimated the same way BadgeStrip estimates its chips, and deliberately
+            // generously: over-estimating drops a tier early, under-estimating clips a word.
+            const float markCell = 11f + 10f;              // the picture and its cell padding
+            float words = 0f;
+            foreach (var standing in sides)
+                words += EditScope.Name(standing.Side).Length * UIStyles.FontSizeHint * 0.62f;
+
+            float chosenWords = EditScope.Name(lit).Length * UIStyles.FontSizeHint * 0.62f;
+            float spacing = 4f * 8f;
+
+            float available = PanelWidth - 2f * UIStyles.SectionPadding
+                              - text.Length * UIStyles.FontSizeSectionTitle * 0.62f;
+
+            var tier = ScopeStrip.Fits(available,
+                                       full: 3f * markCell + words + spacing,
+                                       medium: 3f * markCell + chosenWords + spacing,
+                                       mini: 3f * markCell + spacing,
+
+                                       // Built for the first time: start at the floor so the strip
+                                       // only grows into room it certainly has.
+                                       current: StripTier.Mini);
+
             foreach (var standing in sides)
             {
                 bool selected = standing.Side == lit && standing.Available;
@@ -120,6 +147,10 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 AddScopeMark(cell, name + standing.Side + "Mark",
                              EditScope.Mark(standing.Side), colour);
+
+                // The words are what teach the pictures, so they are the first thing given up and
+                // the chosen position keeps them longest — it is the one that answers the question.
+                if (!ScopeStrip.ShowsWords(tier, standing.Side == lit)) continue;
 
                 var chip = UIFactory.CreateLabel(cell, name + standing.Side, EditScope.Name(standing.Side),
                                                  TextAnchor.MiddleLeft, supportRichText: false);

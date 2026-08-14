@@ -548,6 +548,22 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
             }
 
+            // 🔴 **The title cannot be given less than it needs — a constraint, not a calculation.**
+            // Every previous attempt tuned the arithmetic so the tier would drop before the title
+            // ran out of room, and a few pixels of error always came back as the title drawn over
+            // the separator. With a minimum equal to its own measured width the layout can no
+            // longer squeeze it at all: if the row is genuinely too small, the row overflows to the
+            // RIGHT and the title is cut by the panel edge — never drawn across the strip.
+            //
+            // ⚠ This is what makes the tier arithmetic merely a nicety instead of a guarantee. It
+            // was carrying a promise it could not keep.
+            if (_scopeTitle != null && _scopeTitleWidth > 1f)
+            {
+                UIFactory.SetLayoutElement(_scopeTitle.gameObject,
+                                           minWidth: Mathf.CeilToInt(_scopeTitleWidth),
+                                           flexibleWidth: 9999);
+            }
+
             if (_scopeMirror == null) return;
 
             // ⚠ READ from the box, and only reconstructed while it has not been laid out yet. The

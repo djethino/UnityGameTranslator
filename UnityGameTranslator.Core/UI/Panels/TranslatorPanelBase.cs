@@ -112,14 +112,20 @@ namespace UnityGameTranslator.Core.UI.Panels
             float available = PanelWidth - 2f * UIStyles.SectionPadding
                               - text.Length * UIStyles.FontSizeSectionTitle * 0.62f;
 
-            var tier = ScopeStrip.Fits(available,
-                                       full: 3f * markCell + words + spacing,
-                                       medium: 3f * markCell + chosenWords + spacing,
-                                       mini: 3f * markCell + spacing,
+            // Kept so a resize can ask the same question again without re-measuring anything.
+            _scopeFull = 3f * markCell + words + spacing;
+            _scopeMedium = 3f * markCell + chosenWords + spacing;
+            _scopeMini = 3f * markCell + spacing;
+            _scopeTitleWidth = text.Length * UIStyles.FontSizeSectionTitle * 0.62f;
+            _scopeLit = lit;
+            _scopeWords.Clear();
+            _scopeOrder.Clear();
 
-                                       // Built for the first time: start at the floor so the strip
-                                       // only grows into room it certainly has.
-                                       current: StripTier.Mini);
+            // Built for the first time: start at the floor so the strip only grows into room it
+            // certainly has.
+            var tier = ScopeStrip.Fits(available, _scopeFull, _scopeMedium, _scopeMini,
+                                       StripTier.Mini);
+            _scopeTier = tier;
 
             foreach (var standing in sides)
             {
@@ -148,10 +154,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 AddScopeMark(cell, name + standing.Side + "Mark",
                              EditScope.Mark(standing.Side), colour);
 
-                // The words are what teach the pictures, so they are the first thing given up and
-                // the chosen position keeps them longest — it is the one that answers the question.
-                if (!ScopeStrip.ShowsWords(tier, standing.Side == lit)) continue;
-
+                // ⚠ Always CREATED, shown or hidden according to the tier. Creating them only when
+                // they fit would mean rebuilding the row to get them back on a resize — and the
+                // row holds the Text this method returns, which callers keep.
                 var chip = UIFactory.CreateLabel(cell, name + standing.Side, EditScope.Name(standing.Side),
                                                  TextAnchor.MiddleLeft, supportRichText: false);
                 chip.fontSize = UIStyles.FontSizeHint;
@@ -166,11 +171,62 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // Never translated: these are the product's own words, identical in three places,
                 // and a translation of the mod's interface must not make them diverge.
                 RegisterExcluded(chip);
+
+                _scopeWords.Add(chip);
+                _scopeOrder.Add(standing.Side);
             }
+
+            ApplyScopeTier();
 
             var title = CreateTitle(row, name, text);
             UIFactory.SetLayoutElement(title.gameObject, flexibleWidth: 9999);
             return title;
+        }
+
+        // ── The scope strip, and what it needs to follow a resize ────────────────────────────
+        //
+        // 🔴 **The words are HIDDEN, never destroyed and rebuilt.** Rebuilding the row would drop
+        // the Text this method returns — panels keep it (`_titleLabel = CreateScopedTitle(...)`) —
+        // and every caller would be left holding a destroyed object. Toggling costs nothing, the
+        // layout group recomputes the widths itself, and there is no flicker because nothing is
+        // created.
+        private readonly List<Text> _scopeWords = new List<Text>();
+        private readonly List<EditSide> _scopeOrder = new List<EditSide>();
+        private EditSide _scopeLit;
+        private StripTier _scopeTier = StripTier.Mini;
+        private float _scopeFull, _scopeMedium, _scopeMini, _scopeTitleWidth;
+
+        /// <summary>
+        /// Re-measures the room the title leaves and changes form only if the answer moved.
+        ///
+        /// ⚠ Called on every resize, including the programmatic ones. The dead band inside
+        /// <see cref="ScopeStrip.Fits"/> is what keeps a size resting on a threshold from flipping
+        /// back and forth — without it this method would be the thing doing the flapping.
+        /// </summary>
+        protected void RefreshScopeStrip()
+        {
+            if (_scopeWords.Count == 0) return;
+
+            // The panel's real width now, not the one it was designed at.
+            float width = Rect != null && Rect.rect.width > 1f ? Rect.rect.width : PanelWidth;
+            float available = width - 2f * UIStyles.SectionPadding - _scopeTitleWidth;
+
+            var tier = ScopeStrip.Fits(available, _scopeFull, _scopeMedium, _scopeMini, _scopeTier);
+            if (tier == _scopeTier) return;
+
+            _scopeTier = tier;
+            ApplyScopeTier();
+        }
+
+        private void ApplyScopeTier()
+        {
+            for (int i = 0; i < _scopeWords.Count && i < _scopeOrder.Count; i++)
+            {
+                var word = _scopeWords[i];
+                if (word == null) continue;
+
+                word.gameObject.SetActive(ScopeStrip.ShowsWords(_scopeTier, _scopeOrder[i] == _scopeLit));
+            }
         }
 
         /// <summary>
@@ -1066,6 +1122,11 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             // Invalidate content measurement cache since size changed
             _contentMeasured = false;
+
+            // ⚠ Before the programmatic-resize guard, on purpose: the strip has to follow the width
+            // whatever moved it. This costs a comparison when the tier does not change, which is
+            // almost always.
+            RefreshScopeStrip();
 
             // Ignore programmatic resizes (dynamic sizing, etc.) — the flag is cleared by the
             // scope that set it, never here (see UpdateDraggerCache).

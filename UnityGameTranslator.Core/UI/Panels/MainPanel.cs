@@ -488,6 +488,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             _uploadBtn = CreatePrimaryButton(syncRow, "UploadBtn", "Upload Translation", 200);
             UIFactory.SetLayoutElement(_uploadBtn.Component.gameObject, flexibleWidth: 9999);
             _uploadBtn.OnClick += OnUploadClicked;
+            // Publier : ça quitte la machine.
+            ScopeMarks.Adorn(_uploadBtn, EditSide.Server);
             RegisterExcluded(_uploadBtn.ButtonText);
             _helpZone?.Describe(_uploadBtn.Component.gameObject,
                 "Send your local translation to the website so others can use it");
@@ -541,6 +543,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             _forkBtn = CreateSecondaryButton(roleActionsRow, "ForkBtn", "Fork", 80);
             UIStyles.SetBackground(_forkBtn.Component.gameObject, UIStyles.ButtonDanger);
             _forkBtn.OnClick += OnForkClicked;
+            // Forker crée une lignée à soi SUR le site.
+            ScopeMarks.Adorn(_forkBtn, EditSide.Server);
             RegisterUIText(_forkBtn.ButtonText);
             _helpZone?.Describe(_forkBtn.Component.gameObject,
                 "Leave the owner's translation and continue on your own — asks for confirmation first");
@@ -572,6 +576,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIStyles.SetBackground(_contributeAsBranchBtn.Component.gameObject, UIStyles.ButtonSuccess);
             UIFactory.SetLayoutElement(_contributeAsBranchBtn.Component.gameObject, flexibleWidth: 9999);
             _contributeAsBranchBtn.OnClick += OnContributeAsBranchClicked;
+            ScopeMarks.Adorn(_contributeAsBranchBtn, EditSide.Server);
             RegisterUIText(_contributeAsBranchBtn.ButtonText);
             _helpZone?.Describe(_contributeAsBranchBtn.Component.gameObject,
                 "Your changes are sent to the owner, who can merge them into the main translation");
@@ -592,6 +597,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIStyles.SetBackground(_downloadLatestBtn.Component.gameObject, UIStyles.ButtonPrimary);
             UIFactory.SetLayoutElement(_downloadLatestBtn.Component.gameObject, flexibleWidth: 9999);
             _downloadLatestBtn.OnClick += OnDownloadLatestClicked;
+            // Lit le publié, écrit ici : la paire, c'est ce qui en fait Both.
+            ScopeMarks.Adorn(_downloadLatestBtn, EditSide.Both);
             RegisterExcluded(_downloadLatestBtn.ButtonText);
             _helpZone?.Describe(_downloadLatestBtn.Component.gameObject,
                 "Replace your local file with the owner's latest version from the website");
@@ -612,6 +619,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIStyles.SetBackground(_createIndependentBtn.Component.gameObject, UIStyles.ButtonDanger);
             UIFactory.SetLayoutElement(_createIndependentBtn.Component.gameObject, flexibleWidth: 9999);
             _createIndependentBtn.OnClick += OnCreateIndependentClicked;
+            ScopeMarks.Adorn(_createIndependentBtn, EditSide.Server);
             RegisterUIText(_createIndependentBtn.ButtonText);
             _helpZone?.Describe(_createIndependentBtn.Component.gameObject,
                 "Start your own independent translation from your current file — asks for confirmation first");
@@ -726,6 +734,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             _downloadBtn = CreatePrimaryButton(downloadRow, "DownloadBtn", "Download Selected", 160);
             UIStyles.SetBackground(_downloadBtn.Component.gameObject, UIStyles.ButtonSuccess);
             _downloadBtn.OnClick += OnDownloadCommunityClicked;
+            // Prendre une traduction de la communauté écrit le fichier d'ici.
+            ScopeMarks.Adorn(_downloadBtn, EditSide.Both);
             _downloadBtn.Component.interactable = false;
             RegisterUIText(_downloadBtn.ButtonText);
             _helpZone?.Describe(_downloadBtn.Component.gameObject,

@@ -6,6 +6,8 @@ using UnityEngine.UI;
 using UniverseLib;
 using UniverseLib.UI;
 using UniverseLib.UI.Models;
+using UnityGameTranslator.Common;
+using UnityGameTranslator.Core.UI.Components;
 using UnityGameTranslator.Core.UI.Components;
 
 namespace UnityGameTranslator.Core.UI.Panels
@@ -209,6 +211,8 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             _browserEditorBtn = CreatePrimaryButton(card, "BrowserEditorBtn", "Edit in browser", PanelWidth - 100);
             _browserEditorBtn.OnClick += OnBrowserEditorClicked;
+            // Éditer dans le navigateur ne change que le fichier d'ici — rien n'est publié.
+            ScopeMarks.Adorn(_browserEditorBtn, EditSide.Local);
             RegisterExcluded(_browserEditorBtn.ButtonText);
             _helpZone?.Describe(_browserEditorBtn.Component.gameObject,
                 "Open your translation in a browser editor: search, filters, and every save applied in-game live");

@@ -138,7 +138,10 @@ namespace UnityGameTranslator.Core.UI.Panels
                                                            false, false, true, true, 5,
                                                            new Vector4(3, 3, 8, 8), default,
                                                            TextAnchor.MiddleLeft);
-                UIFactory.SetLayoutElement(cell, minHeight: UIStyles.RowHeightSmall,
+                // ⚠ minWidth as well as no flex: without a minimum a cell is squeezed below what it
+                // holds the moment the row is tight, and its contents spill out of it.
+                UIFactory.SetLayoutElement(cell, minWidth: Mathf.CeilToInt(ScopeMarkCell),
+                                           minHeight: UIStyles.RowHeightSmall,
                                            flexibleWidth: 0, flexibleHeight: 0);
                 UIStyles.SetBackground(cell,
                     selected ? UIStyles.ItemBackgroundSelected : UIStyles.ItemBackground);
@@ -429,7 +432,26 @@ namespace UnityGameTranslator.Core.UI.Panels
                 var word = _scopeWords[i];
                 if (word == null) continue;
 
-                word.gameObject.SetActive(ScopeStrip.ShowsWords(_scopeTier, _scopeOrder[i] == _scopeLit));
+                bool shown = ScopeStrip.ShowsWords(_scopeTier, _scopeOrder[i] == _scopeLit);
+                word.gameObject.SetActive(shown);
+                if (!shown) continue;
+
+                // 🔴 **A word is RIGID: its minimum is its width.** Left without one, the layout
+                // squeezes a cell below what it needs as soon as the row is tight — so the tags
+                // visibly shrank before any tier changed, and once the text stopped wrapping it
+                // simply spilled out of its own cell instead.
+                //
+                // ⚠ Rigid here means the TITLE absorbs a shortage, which is the order that was
+                // asked for: the strip gives up whole words, never letters, and the title is the
+                // one thing allowed to clip — and only once the strip has nothing left to drop.
+                int needed = Mathf.CeilToInt(i < _scopeWordWidths.Count ? _scopeWordWidths[i] : 0f);
+                if (needed > 0)
+                {
+                    UIFactory.SetLayoutElement(word.gameObject, minWidth: needed,
+                                               preferredWidth: needed,
+                                               minHeight: UIStyles.RowHeightSmall,
+                                               flexibleWidth: 0, flexibleHeight: 0);
+                }
             }
 
             if (_scopeMirror == null) return;

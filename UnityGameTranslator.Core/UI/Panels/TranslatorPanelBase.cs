@@ -404,17 +404,32 @@ namespace UnityGameTranslator.Core.UI.Panels
                 if (measured > 0f) _scopeWordWidths[i] = measured;
             }
 
-            float words = 0f, chosen = 0f;
+            // 🔴 **Anchored on what the strip ACTUALLY measures, with only the deltas computed.**
+            // The three candidate widths were reconstructions of what uGUI would lay out — cells,
+            // paddings, spacings, the rule, all added up by hand — and they came out short, so a
+            // tier was kept until the title was already touching the strip. What is added or taken
+            // away between tiers is nothing but WORDS, and every word's width is measured.
+            float shown = 0f, all = 0f, chosen = 0f;
             for (int i = 0; i < _scopeWordWidths.Count && i < _scopeOrder.Count; i++)
             {
-                words += _scopeWordWidths[i] + ScopeIconWord;
-                if (_scopeOrder[i] == _scopeLit) chosen = _scopeWordWidths[i] + ScopeIconWord;
+                float piece = _scopeWordWidths[i] + ScopeIconWord;
+
+                all += piece;
+                if (_scopeOrder[i] == _scopeLit) chosen = piece;
+                if (ScopeStrip.ShowsWords(_scopeTier, _scopeOrder[i] == _scopeLit)) shown += piece;
             }
 
-            float spacing = ScopeRowGaps + ScopeRule + ScopeSafety;
-            _scopeFull = 3f * ScopeMarkCell + words + spacing;
-            _scopeMedium = 3f * ScopeMarkCell + chosen + spacing;
-            _scopeMini = 3f * ScopeMarkCell + spacing;
+            // The strip as it stands, minus the words it is currently showing: the bare form, from
+            // which the other two are one addition away.
+            float stripNow = _scopeStrip != null && _scopeStrip.rect.width > 1f
+                ? _scopeStrip.rect.width
+                : 3f * ScopeMarkCell + ScopeRule + shown;
+
+            float bare = stripNow - shown;
+
+            _scopeMini = bare + ScopeRowGaps + ScopeSafety;
+            _scopeMedium = bare + chosen + ScopeRowGaps + ScopeSafety;
+            _scopeFull = bare + all + ScopeRowGaps + ScopeSafety;
         }
 
         /// <summary>

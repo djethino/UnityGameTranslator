@@ -88,11 +88,17 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // beside the words, the small one relies on having been taught.
                 // Padding given explicitly: left at its default, the group would take the library's
                 // roomy one and a row of three cells would no longer fit beside a title.
+                // ⚠ **The strip announces, the title is the subject.** It first took a third of the
+                // row — cells 88 wide, marks as tall as their container — so a badge that only says
+                // where a save lands was competing with the name of the panel. It is now the
+                // smallest thing on the line: fixed marks, tight cells, no stretch. Somebody
+                // reading the title should notice it without being stopped by it.
                 var cell = UIFactory.CreateHorizontalGroup(row, name + standing.Side + "Cell",
-                                                           false, false, true, true, 4,
-                                                           new Vector4(6, 6, 2, 2), default,
-                                                           TextAnchor.MiddleCenter);
-                UIFactory.SetLayoutElement(cell, minWidth: 88, minHeight: UIStyles.RowHeightSmall);
+                                                           false, false, true, true, 3,
+                                                           new Vector4(5, 5, 1, 1), default,
+                                                           TextAnchor.MiddleLeft);
+                UIFactory.SetLayoutElement(cell, minHeight: UIStyles.RowHeightSmall,
+                                           flexibleWidth: 0, flexibleHeight: 0);
                 UIStyles.SetBackground(cell,
                     selected ? UIStyles.ItemBackgroundSelected : UIStyles.ItemBackground);
 
@@ -104,8 +110,11 @@ namespace UnityGameTranslator.Core.UI.Panels
                 chip.fontSize = UIStyles.FontSizeHint;
                 chip.color = colour;
                 chip.fontStyle = selected ? FontStyle.Bold : FontStyle.Normal;
+
+                // ⚠ flexibleWidth 0, and it is the whole fix: at 9999 each of the three cells
+                // claimed an equal share of the row and the title got what was left.
                 UIFactory.SetLayoutElement(chip.gameObject, minHeight: UIStyles.RowHeightSmall,
-                                           flexibleWidth: 9999);
+                                           flexibleWidth: 0);
 
                 // Never translated: these are the product's own words, identical in three places,
                 // and a translation of the mod's interface must not make them diverge.
@@ -129,9 +138,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             var sprite = Icons.Get(mark);
             if (sprite == null) return;
 
+            // ⚠ A FIXED square, not a share of the row. Given only a minimum, the mark took the
+            // full height of its cell and a matching width — three of those beside a title is most
+            // of the line gone. preferredWidth/Height pin it; flexible 0 stops it growing.
             var holder = UIFactory.CreateUIObject(name, parent);
-            UIFactory.SetLayoutElement(holder, minWidth: UIStyles.FontSizeHint + 2,
-                                       minHeight: UIStyles.FontSizeHint + 2,
+            UIFactory.SetLayoutElement(holder, minWidth: 11, minHeight: 11,
+                                       preferredWidth: 11, preferredHeight: 11,
                                        flexibleWidth: 0, flexibleHeight: 0);
 
             var image = holder.AddComponent<Image>();

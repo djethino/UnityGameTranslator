@@ -27,10 +27,12 @@ namespace UnityGameTranslator.Core.UI.Components
     {
         private const float MarkSize = 12f;
         private const float MarkGap = 3f;
-        private const float EdgePad = 7f;
 
-        /// <summary>Where the label has to start so it clears the marks.</summary>
-        private static float LabelStart => EdgePad + 3f * MarkSize + 2f * MarkGap + 7f;
+        /// <summary>Between the last mark and the first letter.</summary>
+        private const float LabelGap = 7f;
+
+        /// <summary>The three marks and the gaps between them.</summary>
+        private static float MarksBlock => 3f * MarkSize + 2f * MarkGap;
 
         /// <summary>
         /// Puts the three marks on a button that already exists.
@@ -54,6 +56,20 @@ namespace UnityGameTranslator.Core.UI.Components
             // panels rebuild their cards on every refresh.
             if (buttonObj.transform.Find("ScopeMark0") != null) return;
 
+            // 🔴 **The marks and the label are ONE centred group.** Pinned to the left edge with the
+            // label still centring itself on the whole button, they read as debris stuck to the
+            // side of a control whose text has drifted off centre — which is what shipped, and what
+            // was reported. The manager centres its whole content by construction; this reproduces
+            // that, which is the only reason the two look like the same control.
+            var label = buttonObj.transform.Find("Text");
+            var labelText = label == null ? null : label.GetComponent<Text>();
+            if (labelText == null) return;
+
+            // Measured from the font and the string, without waiting for a layout pass — which has
+            // not happened when a panel builds its card.
+            float labelWidth = labelText.preferredWidth;
+            float total = MarksBlock + LabelGap + labelWidth;
+
             int index = 0;
             foreach (var standing in EditScope.Sides(hasLocalFile: true, canReachMachine: true,
                                                      signedIn: true, publishedByThisAccount: true,
@@ -74,24 +90,28 @@ namespace UnityGameTranslator.Core.UI.Components
                 // spot exactly where the eye is drawn.
                 image.raycastTarget = false;
 
+                // Anchored to the button's CENTRE, then walked left by half the group: the pair
+                // stays centred whatever the button's width turns out to be, where anchoring to the
+                // edge made the arrangement depend on it.
                 var rect = holder.GetComponent<RectTransform>();
-                rect.anchorMin = new Vector2(0f, 0.5f);
-                rect.anchorMax = new Vector2(0f, 0.5f);
+                rect.anchorMin = new Vector2(0.5f, 0.5f);
+                rect.anchorMax = new Vector2(0.5f, 0.5f);
                 rect.pivot = new Vector2(0f, 0.5f);
                 rect.sizeDelta = new Vector2(MarkSize, MarkSize);
-                rect.anchoredPosition = new Vector2(EdgePad + index * (MarkSize + MarkGap), 0f);
+                rect.anchoredPosition =
+                    new Vector2(-total / 2f + index * (MarkSize + MarkGap), 0f);
 
                 index++;
             }
 
-            // The label starts after them. Left alone, it stays centred on the whole button and the
-            // marks sit on top of its first letters.
-            var text = buttonObj.transform.Find("Text");
-            if (text != null)
+            // The label keeps filling the button and centring itself; shifting it right by half the
+            // marks puts the group's centre back on the button's.
+            var labelRect = label.GetComponent<RectTransform>();
+            if (labelRect != null)
             {
-                var textRect = text.GetComponent<RectTransform>();
-                if (textRect != null)
-                    textRect.offsetMin = new Vector2(LabelStart, textRect.offsetMin.y);
+                float shift = (MarksBlock + LabelGap) / 2f;
+                labelRect.offsetMin = new Vector2(labelRect.offsetMin.x + shift, labelRect.offsetMin.y);
+                labelRect.offsetMax = new Vector2(labelRect.offsetMax.x + shift, labelRect.offsetMax.y);
             }
         }
     }

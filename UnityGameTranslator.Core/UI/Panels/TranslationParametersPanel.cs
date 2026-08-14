@@ -195,6 +195,8 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             var editorBtn = CreatePrimaryButton(card, "TextEditorBtn", "Start Text Editor", PanelWidth - 100);
             editorBtn.OnClick += OnStartTextEditorClicked;
+            // L'éditeur en jeu écrit le fichier d'ici, comme l'éditeur navigateur juste dessous.
+            ScopeMarks.Adorn(editorBtn, EditSide.Local);
             RegisterUIText(editorBtn.ButtonText);
             _helpZone?.Describe(editorBtn.Component.gameObject,
                 "Pick any text on screen to fix its translation without leaving the game");

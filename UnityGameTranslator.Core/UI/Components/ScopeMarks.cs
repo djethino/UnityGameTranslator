@@ -36,20 +36,14 @@ namespace UnityGameTranslator.Core.UI.Components
         /// <summary>
         /// Puts the three marks on a button that already exists.
         /// </summary>
-        /// <param name="centred">
-        /// ⚠ **Left by default, and that is the case that matters here.** These buttons are full
-        /// width and STACKED — a column of them is a list, and a list aligns left, as every
-        /// settings screen does. Centring is for a button standing alone or sharing a row, where
-        /// there is nothing above and below for its label to line up with.
-        /// </param>
-        public static void Adorn(ButtonRef button, EditSide side, bool centred = false)
+        public static void Adorn(ButtonRef button, EditSide side)
         {
             if (button?.Component == null) return;
-            Adorn(button.Component.gameObject, side, centred);
+            Adorn(button.Component.gameObject, side);
         }
 
         /// <summary>Same, for a button held as a GameObject.</summary>
-        public static void Adorn(GameObject buttonObj, EditSide side, bool centred = false)
+        public static void Adorn(GameObject buttonObj, EditSide side)
         {
             if (buttonObj == null) return;
 
@@ -106,35 +100,48 @@ namespace UnityGameTranslator.Core.UI.Components
                 index++;
             }
 
-            // The last mark is followed by a wider gap than the marks have between them, so the
-            // three read as one object rather than four things evenly spaced.
-            UIFactory.SetLayoutElement(label.gameObject, minHeight: MarkSize,
-                                       flexibleWidth: 9999, flexibleHeight: 0);
+            // 🔴 **The separator bar, which the manager has and this did not.** It is what turns
+            // "three pictures and a word" into one control with two parts, and it is the piece that
+            // made the two products look like different things. One ecosystem: the same bar, in the
+            // same place, in the same colour.
+            var bar = UIFactory.CreateUIObject("ScopeMarkBar", buttonObj);
+            var barImage = bar.AddComponent<Image>();
+            barImage.color = UIStyles.BorderSubtle;
+            barImage.raycastTarget = false;
+            UIFactory.SetLayoutElement(bar, minWidth: 1, preferredWidth: 1,
+                                       minHeight: MarkSize, preferredHeight: MarkSize,
+                                       flexibleWidth: 0, flexibleHeight: 0);
+            bar.transform.SetSiblingIndex(index);
+
+            // ⚠ **flexibleWidth 0, minWidth 0** — and this is what makes the group CENTRE. Given
+            // flexible width the label swells to fill the button, the group becomes the button, and
+            // there is nothing left to centre; that is how everything ended up flush left. At its
+            // natural width the group is smaller than a wide button and sits in the middle of it,
+            // while minWidth 0 still lets it shrink on a narrow one instead of pushing the marks
+            // out.
+            UIFactory.SetLayoutElement(label.gameObject, minWidth: 0, minHeight: MarkSize,
+                                       flexibleWidth: 0, flexibleHeight: 0);
 
             var text = label.GetComponent<Text>();
-            if (text != null) text.alignment = centred ? TextAnchor.MiddleCenter : TextAnchor.MiddleLeft;
+            if (text != null) text.alignment = TextAnchor.MiddleLeft;
 
             // (forceWidth, forceHeight, childControlWidth, childControlHeight, spacing,
             //  padTop, padBottom, padLeft, padRight, childAlignment)
             //
-            // ⚠ forceExpandWidth FALSE: everything sits at its own width, and only the label was
-            // given any give — so a long label is what shortens, never the marks that get pushed
-            // out of the button.
+            // 🔴 **Centred, always.** There are two kinds of button — one sized by its content, one
+            // stretched to the width of its card — and they take the SAME arrangement: the group is
+            // centred, and the only difference is how much room is left around it. Aligning the
+            // wide ones left was my reading of "a stack is a list", and it is not what this product
+            // does: the manager centres, so this centres.
             UIFactory.SetLayoutGroup<HorizontalLayoutGroup>(buttonObj, false, false, true, true,
                                                             MarkGap, 2, 2, EdgePad, EdgePad,
-                                                            centred ? TextAnchor.MiddleCenter
-                                                                    : TextAnchor.MiddleLeft);
+                                                            TextAnchor.MiddleCenter);
 
-            // The gap before the word, added to the last mark rather than to the group's spacing so
-            // the marks stay tight against each other.
-            var lastMark = buttonObj.transform.Find("ScopeMark" + (index - 1));
-            if (lastMark != null)
-            {
-                UIFactory.SetLayoutElement(lastMark.gameObject,
-                                           minWidth: MarkSize + LabelGap - MarkGap,
-                                           preferredWidth: MarkSize + LabelGap - MarkGap,
-                                           flexibleWidth: 0);
-            }
+            // A wider gap on each side of the bar than between the marks, so the three marks read
+            // as one object and the bar as what separates them from the word.
+            UIFactory.SetLayoutElement(bar, minWidth: 1 + LabelGap, preferredWidth: 1 + LabelGap,
+                                       minHeight: MarkSize, preferredHeight: MarkSize,
+                                       flexibleWidth: 0, flexibleHeight: 0);
         }
     }
 }

@@ -75,8 +75,16 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         protected Text CreateScopedTitle(GameObject parent, string name, string text, EditSide side)
         {
-            var row = UIFactory.CreateHorizontalGroup(parent, name + "Row", false, false, true, true, 8);
-            UIFactory.SetLayoutElement(row, minHeight: UIStyles.RowHeightMedium, flexibleWidth: 9999);
+            // ⚠ Alignment and padding stated, not left to the default. Without them the row packs
+            // its children into the top-left corner and flush against the edge — the strip and the
+            // title read as stuck in the corner of the bar rather than sitting on its line. The
+            // same omission was fixed on the main panel's section title; it was here too.
+            var row = UIFactory.CreateHorizontalGroup(parent, name + "Row", false, false, true, true, 8,
+                                                      new Vector4(UIStyles.SectionPadding,
+                                                                  UIStyles.SectionPadding, 3, 3),
+                                                      default, TextAnchor.MiddleLeft);
+            UIFactory.SetLayoutElement(row, minHeight: UIStyles.RowHeightMedium,
+                                       flexibleWidth: 9999, flexibleHeight: 0);
 
             foreach (var standing in ScopeSides(side))
             {

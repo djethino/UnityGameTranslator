@@ -2,6 +2,7 @@ using UnityEngine;
 using UnityEngine.UI;
 using UniverseLib.UI;
 using UniverseLib.UI.Models;
+using UnityGameTranslator.Common;
 using UnityGameTranslator.Core;
 using UnityGameTranslator.Core.UI.Components;
 
@@ -1037,31 +1038,47 @@ namespace UnityGameTranslator.Core.UI.Panels
             string targetLang = TranslatorCore.Config.GetTargetLanguage();
             int localChanges = TranslatorCore.LocalChangesCount;
 
-            // Determine sync status
-            SyncStatusType syncStatus;
+            // Where this translation stands, on the four questions the socle keeps apart.
+            Standing standing;
             bool needsMerge = TranslatorUIManager.HasPendingUpdate &&
                 TranslatorUIManager.PendingUpdateDirection == UpdateDirection.Merge;
             bool hasServerUpdate = TranslatorUIManager.HasPendingUpdate &&
                 TranslatorUIManager.PendingUpdateDirection == UpdateDirection.Download;
 
-            if (needsMerge)
+            // ⚠ **The direction is kept now.** "OutOfSync" said only that the two differed; which
+            // side had moved decides whether the answer is to take an update or to publish, and
+            // the reader had to work it out from the buttons.
+            SyncDirection? sync;
+            if (serverState == null || !serverState.Exists) sync = null;
+            else if (needsMerge) sync = SyncDirection.Merge;
+            else if (hasServerUpdate && localChanges > 0) sync = SyncDirection.Merge;
+            else if (hasServerUpdate) sync = SyncDirection.Download;
+
+            // Metadata counts: settings edited but not pushed are still something to send.
+            // Leaving it out showed "up to date" next to a button offering an update.
+            else if (localChanges > 0 || TranslatorCore.MetadataDirty) sync = SyncDirection.Upload;
+            else sync = SyncDirection.InSync;
+
+            standing = new Standing
             {
-                syncStatus = SyncStatusType.OutOfSync;
-            }
-            else if (localChanges > 0 || hasServerUpdate || TranslatorCore.MetadataDirty)
-            {
-                // Metadata counts: settings edited but not pushed are still something to sync.
-                // Leaving it out showed SYNCED next to a button offering an update.
-                syncStatus = SyncStatusType.OutOfSync;
-            }
-            else if (serverState != null && serverState.Exists)
-            {
-                syncStatus = SyncStatusType.Synced;
-            }
-            else
-            {
-                syncStatus = SyncStatusType.LocalOnly;
-            }
+                Publication = Publications.Of(hereOnDisk: entryCount > 0,
+                                              onTheSite: serverState != null && serverState.Exists),
+                Sync = sync,
+
+                // ⚠ From the point of view of the game itself, which holds its own credential: the
+                // question the manager asks — is this somebody else's game — cannot arise here.
+                Account = string.IsNullOrEmpty(TranslatorCore.Config.api_token)
+                    ? AccountStanding.Anonymous
+                    : AccountStanding.Ours,
+
+                Role = _currentLayoutState == LayoutState.OwnerMain ? LineageRole.Main
+                     : _currentLayoutState == LayoutState.OwnerBranch ? LineageRole.Branch
+                     : LineageRole.None,
+
+                BranchesWaiting = _currentLayoutState == LayoutState.OwnerMain
+                    ? serverState?.BranchesCount
+                    : null,
+            };
 
             // Identity leads the card: which languages, whatever the mode
             _statusCard.SetIdentity(TranslatorCore.Config.GetSourceLanguage(), targetLang);
@@ -1071,7 +1088,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 case LayoutState.OwnerMain:
                     int branches = serverState?.BranchesCount ?? 0;
-                    _statusCard.ConfigureAsMainOwner(syncStatus, entryCount, targetLang, branches);
+                    _statusCard.ConfigureAsMainOwner(standing, entryCount, targetLang, branches);
                     // One key action per mode, next to what motivates it. Contributions to review
                     // live on the website, which is where a maintainer accepts or rejects them.
                     if (branches > 0 && _reviewOnWebsiteBtn != null)
@@ -1080,7 +1097,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 case LayoutState.OwnerBranch:
                     _statusCard.ConfigureAsBranchOwner(
-                        syncStatus,
+                        standing,
                         entryCount,
                         targetLang,
                         serverState?.MainUsername ?? serverState?.Uploader);
@@ -1091,7 +1108,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 case LayoutState.HoldingAnothersLineage:
                     _statusCard.ConfigureAsHoldingAnothersLineage(
-                        syncStatus,
+                        standing,
                         entryCount,
                         targetLang,
                         serverState?.Uploader);
@@ -1105,7 +1122,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                     break;
 
                 default:
-                    _statusCard.ConfigureAsNoLocal();
+                    // ⚠ Only NoLocal reaches here, and RefreshLayoutVisibility has already hidden
+                    // the card for it: a card describing a file says nothing when there is no file.
+                    // It used to be configured anyway, with counts of zero and a language of "None".
                     break;
             }
 
@@ -1115,8 +1134,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             _statusCard.SetVote(
                 serverState?.Vote,
                 _currentLayoutState == LayoutState.OwnerMain
-                    ? TranslationRoleType.Main
-                    : TranslationRoleType.None);
+                    ? LineageRole.Main
+                    : LineageRole.None);
 
             // Show/hide external resources link
             if (_resourcesLinkSection != null)

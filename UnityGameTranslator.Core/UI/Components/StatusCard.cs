@@ -1,34 +1,19 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using UniverseLib.UI;
+using UnityGameTranslator.Common;
 using UnityGameTranslator.Core.UI;
 
 namespace UnityGameTranslator.Core.UI.Components
 {
-    /// <summary>
-    /// Status types for the sync indicator.
-    /// </summary>
-    public enum SyncStatusType
-    {
-        Synced,
-        OutOfSync,
-        Conflict,
-        LocalOnly,
-        NotLoggedIn,
-        NoLocal
-    }
+    // 🔴 SyncStatusType and TranslationRoleType lived here and are gone. Between them they
+    // answered three independent questions — up to date, published, under whose name — as one
+    // list, so "LocalOnly" and "NotLoggedIn" sat beside "Synced" as if they were alternatives to
+    // it. Replaced by Standing in the socle, which keeps the four apart and which the manager
+    // reads too. See CLAUDE.md, "What each product is FOR".
 
-    /// <summary>
-    /// Role types for the translation.
-    /// </summary>
-    public enum TranslationRoleType
-    {
-        None,
-        Main,
-        Branch,
-        HoldingAnothersLineage
-    }
 
     /// <summary>
     /// Local translation quality statistics.
@@ -76,11 +61,14 @@ namespace UnityGameTranslator.Core.UI.Components
         // UI elements
         private GameObject _root;
         private Text _identityLabel;
-        private GameObject _roleBadge;
-        private Image _roleBadgeImage;
-        private Text _statusIcon;
-        private Text _statusLabel;
-        private Text _roleLabel;
+        private GameObject _badgeHost;
+
+        /// <summary>
+        /// How much room the chips have. The card sits in a 450-wide panel with padding either
+        /// side; a generous under-estimate simply breaks a line early, where an over-estimate would
+        /// push a chip off the edge.
+        /// </summary>
+        private const float _stripWidth = 380f;
         private Text _detailsLabel;
         private GameObject _qualityRow;
         private GameObject _stageRow;
@@ -153,41 +141,30 @@ namespace UnityGameTranslator.Core.UI.Components
             UIFactory.SetLayoutElement(_identityLabel.gameObject, flexibleWidth: 9999);
             TranslatorCore.RegisterExcluded(_identityLabel);
 
-            // Role badge: a coloured chip rather than a raw "[MAIN]" tag, so the mode reads at a
-            // glance and each role owns a colour.
-            _roleBadge = UIFactory.CreateUIObject("RoleBadge", identityRow);
-            _roleBadgeImage = _roleBadge.AddComponent<Image>();
-            _roleBadgeImage.color = UIStyles.ButtonSecondary;
-            UIFactory.SetLayoutGroup<HorizontalLayoutGroup>(_roleBadge, true, true, true, true, 0, 8, 8, 3, 3);
-            // A chip has the size of its text, never the size of what surrounds it
-            UIFactory.SetLayoutElement(_roleBadge, minWidth: 62, minHeight: 20, preferredHeight: 20,
-                flexibleWidth: 0, flexibleHeight: 0);
+            // ⚠ The role chip used to live here, alone and in its own colours. It moved into the
+            // badge strip below, where it sits beside the other things it has to be read WITH —
+            // being a Branch means something different depending on whether you are up to date.
 
-            _roleLabel = UIFactory.CreateLabel(_roleBadge, "RoleLabel", "MAIN", TextAnchor.MiddleCenter);
-            _roleLabel.fontStyle = FontStyle.Bold;
-            _roleLabel.fontSize = UIStyles.FontSizeHint;
-            _roleLabel.color = Color.white;
-            TranslatorCore.RegisterExcluded(_roleLabel);
+            // Row 2 — what this translation IS, in chips, then how much of it there is.
+            //
+            // 🔴 **Replaces a coloured dot with one word beside it, and a role chip up in row 1.**
+            // Those two answered three questions between them — up to date, published, whose — in a
+            // vocabulary this product used nowhere else. The chips come from the socle, so a player
+            // reads the same words here, in the manager and on the website.
+            //
+            // ⚠ The card keeps its quality bar and its vote row, so the chips ABOUT those are
+            // dropped rather than shown twice: BadgeKind is what makes that a selection instead of
+            // a second opinion.
+            _badgeHost = UIFactory.CreateVerticalGroup(_root, "BadgeHost", false, false, true, true, 0);
+            UIFactory.SetLayoutElement(_badgeHost, flexibleWidth: 9999, flexibleHeight: 0);
+            UIStyles.ClearRowBackground(_badgeHost);
 
-            // Row 2 — how it is doing, and how much of it there is
             var statusRow = UIFactory.CreateHorizontalGroup(_root, "StatusRow", false, false, true, true, UIStyles.SmallSpacing);
             UIFactory.SetLayoutElement(statusRow, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999, flexibleHeight: 0);
 
             UIStyles.ClearRowBackground(statusRow);
 
-            // Status indicator (colored dot). Technical symbol/status/role tags — never translate.
-            _statusIcon = UIFactory.CreateLabel(statusRow, "StatusIcon", "●", TextAnchor.MiddleLeft);
-            _statusIcon.fontSize = UIStyles.FontSizeNormal;
-            UIFactory.SetLayoutElement(_statusIcon.gameObject, minWidth: 16, flexibleWidth: 0);
-            TranslatorCore.RegisterExcluded(_statusIcon);
-
-            _statusLabel = UIFactory.CreateLabel(statusRow, "StatusLabel", "SYNCED", TextAnchor.MiddleLeft);
-            _statusLabel.fontStyle = FontStyle.Bold;
-            _statusLabel.fontSize = UIStyles.FontSizeSmall;
-            UIFactory.SetLayoutElement(_statusLabel.gameObject, flexibleWidth: 0);
-            TranslatorCore.RegisterExcluded(_statusLabel);
-
-            // Volume + game, kept next to the status so the second line reads as one sentence
+            // Volume + game
             _detailsLabel = UIFactory.CreateLabel(statusRow, "DetailsLabel", "", TextAnchor.MiddleLeft);
             _detailsLabel.fontSize = UIStyles.FontSizeSmall;
             _detailsLabel.color = UIStyles.TextSecondary;
@@ -345,7 +322,7 @@ namespace UnityGameTranslator.Core.UI.Components
         /// Hidden entirely when the server said nothing about votes — an older site, or a
         /// translation with nothing published. Absence is not "0 votes".
         /// </summary>
-        public void SetVote(VoteState vote, TranslationRoleType role)
+        public void SetVote(VoteState vote, LineageRole role)
         {
             if (_voteRow == null) return;
 
@@ -382,7 +359,7 @@ namespace UnityGameTranslator.Core.UI.Components
                 hint = "Rate this translation";
             else if (!signedIn)
                 hint = "Sign in to rate this translation";
-            else if (role == TranslationRoleType.Main)
+            else if (role == LineageRole.Main)
                 hint = "You cannot rate your own translation";
             else if (!playedEnough)
                 hint = "Play with it a little, then rate it";
@@ -413,81 +390,42 @@ namespace UnityGameTranslator.Core.UI.Components
         }
 
         /// <summary>
-        /// Update the sync status display.
+        /// What this translation IS, in the chips the socle decides.
+        ///
+        /// 🔴 **Replaces SetStatus and SetRole.** Those answered three questions between them — up
+        /// to date, published, whose — in an enum that mixed them: "LocalOnly" was about publishing
+        /// and "NotLoggedIn" about an account, neither about being in sync, and "OutOfSync" could
+        /// not say WHICH side had moved. Standing keeps the four apart and Badges words them the
+        /// same way in all three products.
+        ///
+        /// ⚠ The chips this card already answers another way are dropped, not repeated: the
+        /// quality bar carries the review stage and the completeness, the vote row carries the
+        /// votes. Showing them twice would spend attention on something already on screen.
         /// </summary>
-        public void SetStatus(SyncStatusType status)
+        public void SetStanding(Standing standing)
         {
-            if (_statusIcon == null || _statusLabel == null) return;
+            if (_badgeHost == null) return;
 
-            switch (status)
+            UIHelpers.DestroyChildren(_badgeHost);
+
+            var all = Badges.For(standing.Publication, standing.Role == LineageRole.Main ? true
+                                     : standing.Role == LineageRole.Branch ? (bool?)false : null,
+                                 standing.BranchesWaiting, standing.MainMissing, standing.Sync,
+                                 null, null, 0, 0);
+
+            var shown = new List<Badge>();
+            foreach (var badge in all)
             {
-                case SyncStatusType.Synced:
-                    _statusIcon.color = UIStyles.StatusSuccess;
-                    _statusLabel.text = TranslatorCore.TranslateOwnUIDynamic("SYNCED", _statusLabel);
-                    _statusLabel.color = UIStyles.StatusSuccess;
-                    break;
-                case SyncStatusType.OutOfSync:
-                    _statusIcon.color = UIStyles.StatusWarning;
-                    _statusLabel.text = TranslatorCore.TranslateOwnUIDynamic("OUT OF SYNC", _statusLabel);
-                    _statusLabel.color = UIStyles.StatusWarning;
-                    break;
-                case SyncStatusType.Conflict:
-                    _statusIcon.color = UIStyles.StatusError;
-                    _statusLabel.text = TranslatorCore.TranslateOwnUIDynamic("CONFLICT", _statusLabel);
-                    _statusLabel.color = UIStyles.StatusError;
-                    break;
-                case SyncStatusType.LocalOnly:
-                    _statusIcon.color = UIStyles.TextMuted;
-                    _statusLabel.text = TranslatorCore.TranslateOwnUIDynamic("NOT SHARED", _statusLabel);
-                    _statusLabel.color = UIStyles.TextMuted;
-                    break;
-                case SyncStatusType.NotLoggedIn:
-                    _statusIcon.color = UIStyles.TextMuted;
-                    _statusLabel.text = TranslatorCore.TranslateOwnUIDynamic("NOT LOGGED IN", _statusLabel);
-                    _statusLabel.color = UIStyles.TextMuted;
-                    break;
-                case SyncStatusType.NoLocal:
-                    _statusIcon.color = UIStyles.TextMuted;
-                    _statusLabel.text = TranslatorCore.TranslateOwnUIDynamic("NO TRANSLATION", _statusLabel);
-                    _statusLabel.color = UIStyles.TextMuted;
-                    break;
-            }
-        }
+                if (badge.Kind == BadgeKind.ReviewStage || badge.Kind == BadgeKind.Completeness
+                    || badge.Kind == BadgeKind.Votes || badge.Kind == BadgeKind.Downloads)
+                {
+                    continue;
+                }
 
-        /// <summary>
-        /// Update the role display.
-        /// </summary>
-        public void SetRole(TranslationRoleType role, string additionalInfo = null)
-        {
-            if (_roleLabel == null) return;
-
-            // A coloured chip, one colour per role: the mode is recognised before being read.
-            switch (role)
-            {
-                case TranslationRoleType.Main:
-                    _roleLabel.text = "MAIN";
-                    _roleBadgeImage.color = UIStyles.StatusSuccess;
-                    _roleBadge.SetActive(true);
-                    break;
-                case TranslationRoleType.Branch:
-                    _roleLabel.text = "BRANCH";
-                    _roleBadgeImage.color = UIStyles.StatusInfo;
-                    _roleBadge.SetActive(true);
-                    break;
-                // ⚠ NOT "CONTRIBUTOR". Becoming a Branch IS contributing, so this badge claimed a
-                // role its holder does not have — one becomes a Branch by uploading, and this
-                // person has sent nothing. It names what is true instead: the translation belongs
-                // to somebody else's lineage and their own changes are still only here.
-                case TranslationRoleType.HoldingAnothersLineage:
-                    _roleLabel.text = "NOT YOURS";
-                    _roleBadgeImage.color = UIStyles.ButtonPrimary;
-                    _roleBadge.SetActive(true);
-                    break;
-                case TranslationRoleType.None:
-                default:
-                    _roleBadge.SetActive(false);
-                    break;
+                shown.Add(badge);
             }
+
+            BadgeStrip.Create(_badgeHost, "Badges", shown, _stripWidth);
         }
 
         /// <summary>
@@ -836,10 +774,9 @@ namespace UnityGameTranslator.Core.UI.Components
         /// <summary>
         /// Configure card for Main owner state.
         /// </summary>
-        public void ConfigureAsMainOwner(SyncStatusType syncStatus, int entryCount, string language, int branchCount)
+        public void ConfigureAsMainOwner(Standing standing, int entryCount, string language, int branchCount)
         {
-            SetStatus(syncStatus);
-            SetRole(TranslationRoleType.Main);
+            SetStanding(standing);
             SetDetails(entryCount, language);
             SetQualityStats(CalculateLocalStats());
             SetSecondaryInfo(branchCount > 0
@@ -850,10 +787,9 @@ namespace UnityGameTranslator.Core.UI.Components
         /// <summary>
         /// Configure card for Branch owner state.
         /// </summary>
-        public void ConfigureAsBranchOwner(SyncStatusType syncStatus, int entryCount, string language, string mainOwner)
+        public void ConfigureAsBranchOwner(Standing standing, int entryCount, string language, string mainOwner)
         {
-            SetStatus(syncStatus);
-            SetRole(TranslationRoleType.Branch);
+            SetStanding(standing);
             SetDetails(entryCount, language);
             SetQualityStats(CalculateLocalStats());
             SetSecondaryInfo(!string.IsNullOrEmpty(mainOwner)
@@ -865,11 +801,9 @@ namespace UnityGameTranslator.Core.UI.Components
         /// Configure card for same lineage state (same UUID, not owner, not yet uploaded).
         /// User hasn't decided yet whether to contribute (branch) or fork.
         /// </summary>
-        public void ConfigureAsHoldingAnothersLineage(SyncStatusType syncStatus, int entryCount, string language, string mainOwner)
+        public void ConfigureAsHoldingAnothersLineage(Standing standing, int entryCount, string language, string mainOwner)
         {
-            SetStatus(syncStatus);
-            // Don't show a role badge - user hasn't decided yet (not a contributor until they upload as branch)
-            SetRole(TranslationRoleType.None);
+            SetStanding(standing);
             SetDetails(entryCount, language);
             SetQualityStats(CalculateLocalStats());
             // Show whose translation this is based on, prompting user to make a choice
@@ -883,36 +817,16 @@ namespace UnityGameTranslator.Core.UI.Components
         /// </summary>
         public void ConfigureAsLocalOnly(int entryCount, string language)
         {
-            SetStatus(SyncStatusType.LocalOnly);
-            SetRole(TranslationRoleType.None);
+            SetStanding(new Standing { Publication = Publication.NeverPublished, Role = LineageRole.None });
             SetDetails(entryCount, language);
             SetQualityStats(CalculateLocalStats());
             SetSecondaryInfo("Upload to share with others");
         }
 
-        /// <summary>
-        /// Configure card for not logged in state.
-        /// </summary>
-        public void ConfigureAsNotLoggedIn(int entryCount, string language)
-        {
-            SetStatus(SyncStatusType.NotLoggedIn);
-            SetRole(TranslationRoleType.None);
-            SetDetails(entryCount, language);
-            SetQualityStats(CalculateLocalStats());
-            SetSecondaryInfo("Login to sync your translation");
-        }
-
-        /// <summary>
-        /// Configure card for no local translation state.
-        /// </summary>
-        public void ConfigureAsNoLocal()
-        {
-            SetStatus(SyncStatusType.NoLocal);
-            SetRole(TranslationRoleType.None);
-            SetDetails(0, "None");
-            SetQualityStats(null);
-            SetSecondaryInfo("Download from community or create new");
-        }
+        // ⚠ ConfigureAsNotLoggedIn and ConfigureAsNoLocal stood here and are gone with the states
+        // that called them. "Not logged in" was never a description of a translation — it is an
+        // account, and it now sits on its own axis; "no local" hides this card entirely, since a
+        // card describing a file says nothing when there is no file.
 
         /// <summary>
         /// Show or hide the entire card.

@@ -250,12 +250,17 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (Mathf.Abs(width - _scopeLastWidth) < 0.5f) return;
             _scopeLastWidth = width;
 
+            // ⚠ The title's width is taken out FIRST, so the strip only ever bids for what the
+            // title does not need. That is what makes a widening window un-wrap the title before it
+            // gives the strip its words back.
             float available = width - 2f * UIStyles.SectionPadding - _scopeTitleWidth;
 
             var tier = ScopeStrip.Fits(available, _scopeFull, _scopeMedium, _scopeMini, _scopeTier);
-            if (tier == _scopeTier) return;
-
             _scopeTier = tier;
+
+            // ⚠ Applied on every width change, not only when the tier moves: the mirror depends on
+            // the room, and the room changes with every pixel. Skipping it here is what left a
+            // stale mirror squeezing the title.
             ApplyScopeTier();
         }
 
@@ -269,16 +274,29 @@ namespace UnityGameTranslator.Core.UI.Panels
                 word.gameObject.SetActive(ScopeStrip.ShowsWords(_scopeTier, _scopeOrder[i] == _scopeLit));
             }
 
-            // The mirror follows the strip: it is only worth its width because the strip has that
-            // width, and both change together when a tier does.
             if (_scopeMirror == null) return;
 
-            float mirrored = _scopeTier == StripTier.Full ? _scopeFull
-                           : _scopeTier == StripTier.Medium ? _scopeMedium
-                           : _scopeMini;
+            float strip = _scopeTier == StripTier.Full ? _scopeFull
+                        : _scopeTier == StripTier.Medium ? _scopeMedium
+                        : _scopeMini;
 
-            UIFactory.SetLayoutElement(_scopeMirror, minWidth: Mathf.RoundToInt(mirrored),
-                                       preferredWidth: Mathf.RoundToInt(mirrored),
+            float width = Rect != null && Rect.rect.width > 1f ? Rect.rect.width : PanelWidth;
+            float room = width - 2f * UIStyles.SectionPadding - strip;
+
+            // 🔴 **The mirror only exists when there is room to spare.** It buys one thing — a title
+            // centred on the window rather than on the leftovers — and it is worth nothing at all
+            // if paying for it costs the title a line. Given a minimum width it kept its place while
+            // everything around it wrapped, which is how a strip of empty space ended up beside a
+            // title broken in two.
+            //
+            // ⚠ **The order of priority, and it is the whole rule**: the title reads first, the
+            // strip says as much as it can second, and only what is left over is spent on symmetry.
+            // Growing a window therefore un-wraps the title, then feeds the strip's words, and only
+            // then centres.
+            bool roomToSpare = room >= _scopeTitleWidth + strip;
+            int mirrored = roomToSpare ? Mathf.RoundToInt(strip) : 0;
+
+            UIFactory.SetLayoutElement(_scopeMirror, minWidth: 0, preferredWidth: mirrored,
                                        flexibleWidth: 0, flexibleHeight: 0);
         }
 

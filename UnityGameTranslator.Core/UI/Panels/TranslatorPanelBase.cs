@@ -218,8 +218,25 @@ namespace UnityGameTranslator.Core.UI.Panels
             ruleRect.sizeDelta = new Vector2(1f, 12f);
             ruleRect.anchoredPosition = Vector2.zero;
 
-            var title = CreateTitle(row, name, text);
-            UIFactory.SetLayoutElement(title.gameObject, flexibleWidth: 9999);
+            // 🔴 **The title is clipped to its own space, not free to spill into the strip's.**
+            // Overflow was set on it so its width could be read honestly — a label that wraps
+            // reports the wrong one — but Overflow spills BOTH ways, so a title too long for its
+            // room rendered straight over the separator and the tags, as if it belonged to no
+            // container at all.
+            //
+            // ⚠ A mask, rather than giving the wrap back: wrapping is what made every measurement
+            // circular. The title still reports its true single-line width, it simply stops being
+            // drawn where it has no business being. Clipping is also what was asked for — a window
+            // title belongs on one line, and a cut one still says which window it is.
+            var clip = UIFactory.CreateUIObject(name + "TitleClip", row);
+            UIFactory.SetLayoutElement(clip, minWidth: 0, minHeight: UIStyles.RowHeightMedium,
+                                       flexibleWidth: 9999, flexibleHeight: 0);
+            UIFactory.SetLayoutGroup<HorizontalLayoutGroup>(clip, false, false, true, true, 0,
+                                                            0, 0, 0, 0, TextAnchor.MiddleCenter);
+            clip.AddComponent<RectMask2D>();
+
+            var title = CreateTitle(clip, name, text);
+            UIFactory.SetLayoutElement(title.gameObject, minWidth: 0, flexibleWidth: 9999);
 
             // 🔴 Same rule, same reason. A title that may wrap reports the width of one of its
             // lines, so the strip reads "the title needs little" exactly when the title is

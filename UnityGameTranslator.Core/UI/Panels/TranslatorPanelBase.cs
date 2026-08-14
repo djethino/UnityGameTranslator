@@ -112,6 +112,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _scopeWords.Clear();
             _scopeOrder.Clear();
             _scopeWordWidths.Clear();
+            _scopeCells.Clear();
 
             // Built at the floor so the strip only grows into room it certainly has; the first
             // refresh, once everything exists and can be measured, decides for real.
@@ -182,6 +183,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 _scopeWords.Add(chip);
                 _scopeOrder.Add(standing.Side);
+                _scopeCells.Add(cell);
 
                 // The stand-in until the real thing can be read. Every word is created ACTIVE, so
                 // the measurement below sees all three before any of them is hidden.
@@ -265,6 +267,14 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         /// <summary>Each word's real width, read while it was on screen. Never a guess after that.</summary>
         private readonly List<float> _scopeWordWidths = new List<float>();
+
+        /// <summary>
+        /// The cells holding a mark and its word.
+        ///
+        /// ⚠ Kept because a cell is the LAST compressible thing in this row: pinning the word and
+        /// leaving its cell free lets the layout squeeze the cell and crush the word inside it.
+        /// </summary>
+        private readonly List<GameObject> _scopeCells = new List<GameObject>();
         private EditSide _scopeLit;
         private StripTier _scopeTier = StripTier.Mini;
         private float _scopeFull, _scopeMedium, _scopeMini, _scopeTitleWidth;
@@ -454,6 +464,22 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 bool shown = ScopeStrip.ShowsWords(_scopeTier, _scopeOrder[i] == _scopeLit);
                 word.gameObject.SetActive(shown);
+
+                float wordWidth = i < _scopeWordWidths.Count ? _scopeWordWidths[i] : 0f;
+
+                // 🔴 **The cell is the LAST compressible thing in this row.** Pinning the word and
+                // leaving its cell free changes nothing: the layout squeezes the cell instead and
+                // crushes the word inside it, which is the shrinking that survived every previous
+                // fix. A cell's minimum is what it actually holds — mark alone, or mark and word.
+                int cellNeeds = Mathf.CeilToInt(ScopeMarkCell + (shown ? ScopeIconWord + wordWidth : 0f));
+                if (i < _scopeCells.Count && _scopeCells[i] != null)
+                {
+                    UIFactory.SetLayoutElement(_scopeCells[i], minWidth: cellNeeds,
+                                               preferredWidth: cellNeeds,
+                                               minHeight: UIStyles.RowHeightSmall,
+                                               flexibleWidth: 0, flexibleHeight: 0);
+                }
+
                 if (!shown) continue;
 
                 // 🔴 **A word is RIGID: its minimum is its width.** Left without one, the layout
@@ -464,7 +490,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // ⚠ Rigid here means the TITLE absorbs a shortage, which is the order that was
                 // asked for: the strip gives up whole words, never letters, and the title is the
                 // one thing allowed to clip — and only once the strip has nothing left to drop.
-                int needed = Mathf.CeilToInt(i < _scopeWordWidths.Count ? _scopeWordWidths[i] : 0f);
+                int needed = Mathf.CeilToInt(wordWidth);
                 if (needed > 0)
                 {
                     UIFactory.SetLayoutElement(word.gameObject, minWidth: needed,

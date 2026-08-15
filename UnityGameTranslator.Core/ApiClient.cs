@@ -843,6 +843,10 @@ namespace UnityGameTranslator.Core
                         Status = t["status"]?.Value<string>(),
                         Notes = t["notes"]?.Value<string>(),
                         ResourcesUrl = t["resources_url"]?.Value<string>(),
+                        // The row's own link, which is not the same question as the one above.
+                        // Null on a server that predates the field — the edit field then falls
+                        // back to the effective value, exactly as it behaved before.
+                        OwnResourcesUrl = t["resources_url_own"]?.Value<string>(),
                         LineCount = t["line_count"]?.Value<int>() ?? 0,
                         FileHash = t["file_hash"]?.Value<string>(),
                         UpdatedAt = t["updated_at"]?.Value<string>()
@@ -2201,7 +2205,21 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public string Status { get; set; }
         public string Notes { get; set; }
+
+        /// <summary>
+        /// The link to show: this translation's own, or the Main's when a branch has none.
+        /// </summary>
         public string ResourcesUrl { get; set; }
+
+        /// <summary>
+        /// The link to EDIT: this row's own, never an inherited one.
+        ///
+        /// 🔴 Prefilling the edit field from <see cref="ResourcesUrl"/> and posting it back makes
+        /// a branch adopt a copy of its Main's link and stop following it, over an edit its author
+        /// never made. Null on servers older than the field, where the caller falls back.
+        /// </summary>
+        public string OwnResourcesUrl { get; set; }
+
         public int LineCount { get; set; }
         public string FileHash { get; set; }
         public string UpdatedAt { get; set; }

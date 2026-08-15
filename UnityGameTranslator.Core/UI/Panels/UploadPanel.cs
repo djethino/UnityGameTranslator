@@ -328,7 +328,12 @@ namespace UnityGameTranslator.Core.UI.Panels
                         // Capture for closure
                         var siteId = TranslatorCore.ServerState.SiteId;
                         var existingNotes = result.ExistingTranslation?.Notes ?? "";
-                        var existingUrl = result.ExistingTranslation?.ResourcesUrl ?? "";
+                        // ⚠ The OWN link, not the effective one. A branch with no link of its own
+                        // is shown its Main's everywhere it is displayed — and prefilling this
+                        // field with it would post a copy back, pinning the branch to a link it
+                        // was only borrowing. Falls back for servers older than the field.
+                        var existingUrl = result.ExistingTranslation?.OwnResourcesUrl
+                                          ?? result.ExistingTranslation?.ResourcesUrl ?? "";
 
                         TranslatorUIManager.RunOnMainThread(() =>
                         {
@@ -501,11 +506,25 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// make every republication from the game undo a "complete" set on the website — which is
         /// exactly the bug this replaces.
         /// </summary>
+        /// <summary>
+        /// Whether this upload lands on a BRANCH — the row being written, not the act being done.
+        ///
+        /// 🔴 Two different situations, and only one of them was covered. UploadMode.Branch means
+        /// "you would become a branch"; an author who already IS one comes back through UPDATE,
+        /// with their role in ServerState. Reading only the mode showed an established contributor
+        /// a "This translation is finished" switch that the server discards on arrival — a branch
+        /// inherits its Main's, always. A control that changes nothing is worse than no control:
+        /// it is a promise the product does not keep.
+        /// </summary>
+        private bool WritingOnABranch =>
+            _uploadMode == UploadMode.Branch
+            || TranslatorCore.ServerState?.Role == TranslationRole.Branch;
+
         private void RefreshStatusControl()
         {
             if (_statusToggle == null || _statusInherited == null) return;
 
-            bool branch = _uploadMode == UploadMode.Branch;
+            bool branch = WritingOnABranch;
 
             _statusToggle.gameObject.SetActive(!branch);
             if (_statusToggle.transform.parent != null)
@@ -616,7 +635,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     TargetLanguage = tgtLang,
                     // ⚠ Null for a Branch: the server makes it inherit its Main's, and sending a
                     // value would be this client deciding something it has no say in.
-                    Status = _uploadMode == UploadMode.Branch
+                    Status = WritingOnABranch
                         ? null
                         : (_statusToggle != null && _statusToggle.isOn ? "complete" : "in_progress"),
                     Content = BuildTranslationContent(),

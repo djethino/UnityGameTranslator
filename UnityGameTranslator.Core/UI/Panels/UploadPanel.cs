@@ -41,6 +41,12 @@ namespace UnityGameTranslator.Core.UI.Panels
         private InputFieldRef _resourcesUrlInput;
         private ButtonRef _backBtn;
         private ButtonRef _uploadBtn;
+
+        /// <summary>The author's "this is finished". Hidden for a Branch, which inherits.</summary>
+        private Toggle _statusToggle;
+
+        /// <summary>Says what a Branch inherits, in place of the toggle it may not use.</summary>
+        private Text _statusInherited;
         private Components.HelpZone _helpZone;
 
         // State
@@ -106,6 +112,27 @@ namespace UnityGameTranslator.Core.UI.Panels
             RegisterExcluded(_modeInfoLabel);
 
             UIStyles.CreateSpacer(card, 10);
+
+            // 🔴 **Whether this translation is finished — the author's own word.** The mod posted
+            // "in_progress" unconditionally, so it had two effects and both were wrong: nobody
+            // could ever declare a translation complete from the game, and republishing from the
+            // game silently UNDID a "complete" set on the website.
+            //
+            // ⚠ Same shape as the site's own screen, deliberately: a Main owner chooses, a Branch
+            // inherits its Main's and is told so rather than shown a control that does nothing.
+            var statusBox = CreateSection(card, "StatusBox");
+
+            var (statusRow, statusToggle) = UIStyles.CreateStyledToggle(
+                statusBox, "StatusToggle", "Mark this translation as complete");
+            _statusToggle = statusToggle;
+            _helpZone?.Describe(statusRow,
+                "Your own declaration that this translation is finished. Players see it on the "
+                + "listing, and it is what separates a translation you can play with from one still "
+                + "being written.");
+
+            _statusInherited = CreateSmallLabel(statusBox, "StatusInherited", "");
+            _statusInherited.color = UIStyles.TextMuted;
+            RegisterExcluded(_statusInherited);
 
             // Note: Translation type is now auto-calculated by server from HVASM tags
             // (Human/Validated/AI/System/Missing percentages in the file)
@@ -221,6 +248,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Update display
             _uploadMode = UploadMode.New;
+            RefreshStatusControl();
             SetDynamicText(_titleLabel, "Upload Translation");
             _modeInfoLabel.text = Tr("Languages:") + $" {sourceLanguage} -> {targetLanguage}";
             SetDynamicText(_uploadBtn.ButtonText, "Upload");
@@ -293,7 +321,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                             Type = result.ExistingTranslation?.Type,
                             Notes = result.ExistingTranslation?.Notes,
                             Hash = result.ExistingTranslation?.FileHash,
-                            ResourcesUrl = result.ExistingTranslation?.ResourcesUrl
+                            ResourcesUrl = result.ExistingTranslation?.ResourcesUrl,
+                            Status = result.ExistingTranslation?.Status
                         };
 
                         // Capture for closure
@@ -304,6 +333,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                         TranslatorUIManager.RunOnMainThread(() =>
                         {
                             _uploadMode = UploadMode.Update;
+                            RefreshStatusControl();
                             SetDynamicText(_titleLabel, "Update Translation");
                             SetDynamicText(_modeInfoLabel, $"Updating: ID #{siteId}");
                             SetDynamicText(_uploadBtn.ButtonText, "Update");
@@ -341,6 +371,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                         TranslatorUIManager.RunOnMainThread(() =>
                         {
                             _uploadMode = UploadMode.Branch;
+                            RefreshStatusControl();
                             SetDynamicText(_titleLabel, "Contribute as Branch");
                             // What a branch IS, said before sending rather than discovered after.
                             // The panel announced the role and never the visibility: players
@@ -352,6 +383,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                             _modeInfoLabel.text = Tr("Contributing to:") + " @" + uploader + "\n"
                                 + Tr("Only they can open and merge it. Players cannot download a branch.");
                             SetDynamicText(_uploadBtn.ButtonText, "Contribute");
+                            RefreshStatusControl();
                             DescribeUploadButton($"Send your changes to @{uploader} for review — they can merge them into the main translation. To publish a translation players can install, make yours independent instead");
                             // Note: Type is now auto-calculated by server from HVASM tags
                             _statusLabel.text = "";
@@ -379,6 +411,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                         TranslatorUIManager.RunOnMainThread(() =>
                         {
                             _uploadMode = UploadMode.New;
+                            RefreshStatusControl();
                             _selectedSourceLanguage = forkSourceLang;
                             _selectedTargetLanguage = forkTargetLang;
                             _setupComplete = true;
@@ -403,6 +436,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                         TranslatorUIManager.RunOnMainThread(() =>
                         {
                             _uploadMode = UploadMode.New;
+                            RefreshStatusControl();
                             _isChecking = false;
                             SetActive(false);
 
@@ -457,6 +491,40 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// Asked once, at the moment of publishing: a permanent warning in the panel would be
         /// read as noise by the many authors who are simply not finished yet.
         /// </summary>
+        /// <summary>
+        /// Show the status control the way the mode allows.
+        ///
+        /// ⚠ A Branch is told what it inherits rather than shown a switch that would do nothing:
+        /// a dead control is read as a broken one, and the reason it is dead is worth a sentence.
+        ///
+        /// ⚠ The toggle starts on what the SERVER says, never on a default. Starting it off would
+        /// make every republication from the game undo a "complete" set on the website — which is
+        /// exactly the bug this replaces.
+        /// </summary>
+        private void RefreshStatusControl()
+        {
+            if (_statusToggle == null || _statusInherited == null) return;
+
+            bool branch = _uploadMode == UploadMode.Branch;
+
+            _statusToggle.gameObject.SetActive(!branch);
+            if (_statusToggle.transform.parent != null)
+                _statusToggle.transform.parent.gameObject.SetActive(!branch);
+
+            _statusInherited.gameObject.SetActive(branch);
+
+            if (branch)
+            {
+                _statusInherited.text = TranslatorCore.TranslateOwnUIDynamic(
+                    "Whether this is finished is the Main's to say — your contribution inherits it.");
+                return;
+            }
+
+            var published = TranslatorCore.ServerState?.Status;
+            _statusToggle.isOn =
+                string.Equals(published, "complete", StringComparison.OrdinalIgnoreCase);
+        }
+
         private void ConfirmThenUpload()
         {
             var stats = StatusCard.CalculateLocalStats();
@@ -546,7 +614,11 @@ namespace UnityGameTranslator.Core.UI.Panels
                     GameName = TranslatorCore.CurrentGame?.name ?? "Unknown Game",
                     SourceLanguage = srcLang,
                     TargetLanguage = tgtLang,
-                    Status = "in_progress",
+                    // ⚠ Null for a Branch: the server makes it inherit its Main's, and sending a
+                    // value would be this client deciding something it has no say in.
+                    Status = _uploadMode == UploadMode.Branch
+                        ? null
+                        : (_statusToggle != null && _statusToggle.isOn ? "complete" : "in_progress"),
                     Content = BuildTranslationContent(),
                     Notes = notes,
                     ResourcesUrl = string.IsNullOrEmpty(resourcesUrl) ? null : resourcesUrl

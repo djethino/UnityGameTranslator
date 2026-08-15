@@ -429,7 +429,16 @@ namespace UnityGameTranslator.Core.UI.Components
 
             var byLabel = UIFactory.CreateLabel(infoCol, "Author", by, TextAnchor.MiddleLeft);
             byLabel.fontSize = UIStyles.FontSizeHint;
-            byLabel.color = isLineageMatch ? UIStyles.ButtonPrimary : UIStyles.TextSecondary;
+            // 🔴 **Never the accent here.** It was ButtonPrimary — purple-600, a FILL colour used as
+            // text — which scores 1.86 against this row and is simply unreadable. The palette says
+            // as much: 600 fills, 400 writes. And even purple-400 only manages 3.69 on a raised
+            // row, because a row is LIGHTER than the card it sits on: accent text belongs on the
+            // card, not on the row.
+            //
+            // ⚠ Nothing is lost. The row already carries a purple stripe for the lineage it
+            // matches, and the line spells "installed" out in words. The colour was a third way of
+            // saying the same thing, and the only one that cost legibility.
+            byLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(byLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
 
             // The verdict leads, the size follows: "has anyone read this" decides between two

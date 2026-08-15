@@ -7288,6 +7288,12 @@ namespace UnityGameTranslator.Core
         /// <summary>URL to external resources (fonts, images)</summary>
         public string ResourcesUrl { get; set; }
 
+        /// <summary>
+        /// "in_progress" or "complete", as published. Null when unknown — an older server, or a
+        /// lineage we do not own — and a caller must then leave it alone rather than pick one.
+        /// </summary>
+        public string Status { get; set; }
+
         /// <summary>User's role for this translation</summary>
         public TranslationRole Role { get; set; } = TranslationRole.None;
 

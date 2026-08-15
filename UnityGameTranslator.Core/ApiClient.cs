@@ -838,6 +838,9 @@ namespace UnityGameTranslator.Core
                         SourceLanguage = t["source_language"]?.Value<string>(),
                         TargetLanguage = t["target_language"]?.Value<string>(),
                         Type = t["type"]?.Value<string>(),
+                        // Null on a server that predates this field — the caller then leaves the
+                        // status alone rather than guessing at one.
+                        Status = t["status"]?.Value<string>(),
                         Notes = t["notes"]?.Value<string>(),
                         ResourcesUrl = t["resources_url"]?.Value<string>(),
                         LineCount = t["line_count"]?.Value<int>() ?? 0,
@@ -2188,6 +2191,15 @@ namespace UnityGameTranslator.Core
         public string SourceLanguage { get; set; }
         public string TargetLanguage { get; set; }
         public string Type { get; set; }
+
+        /// <summary>
+        /// "in_progress" or "complete" — the author's own declaration.
+        ///
+        /// ⚠ Read so it can be SHOWN and sent back unchanged. Without it the upload posted
+        /// "in_progress" every time, quietly undoing a translation its author had marked complete
+        /// on the website.
+        /// </summary>
+        public string Status { get; set; }
         public string Notes { get; set; }
         public string ResourcesUrl { get; set; }
         public int LineCount { get; set; }

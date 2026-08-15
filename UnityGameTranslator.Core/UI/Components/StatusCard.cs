@@ -61,6 +61,9 @@ namespace UnityGameTranslator.Core.UI.Components
         // UI elements
         private GameObject _root;
         private Text _identityLabel;
+
+        /// <summary>Holds the two flags in front of the language pair. Rebuilt with the pair.</summary>
+        private GameObject _identityMarks;
         private GameObject _badgeHost;
 
         /// <summary>
@@ -140,6 +143,16 @@ namespace UnityGameTranslator.Core.UI.Components
             UIStyles.ClearRowBackground(identityRow);
             var idLayout = identityRow.GetComponent<HorizontalLayoutGroup>();
             if (idLayout != null) idLayout.childAlignment = TextAnchor.MiddleLeft;
+
+            // The flags lead, the names follow. ⚠ Both: a flag is found faster in a glance and
+            // cannot always name a language on its own — ten Indian languages share one — so the
+            // words stay and the pictures are added in front. Rebuilt by SetIdentity, since the
+            // pair changes when a different translation is taken.
+            _identityMarks = UIFactory.CreateUIObject("IdentityMarks", identityRow);
+            UIFactory.SetLayoutGroup<HorizontalLayoutGroup>(_identityMarks, false, false, true, true,
+                                                            4, 0, 0, 0, 0, TextAnchor.MiddleLeft);
+            UIFactory.SetLayoutElement(_identityMarks, minHeight: UIStyles.RowHeightSmall,
+                                       flexibleWidth: 0, flexibleHeight: 0);
 
             // "English → Français" — language names are data, never translated
             _identityLabel = UIFactory.CreateLabel(identityRow, "IdentityLabel", "", TextAnchor.MiddleLeft);
@@ -453,6 +466,36 @@ namespace UnityGameTranslator.Core.UI.Components
                 ? TranslatorCore.TranslateOwnUIDynamic("Auto")
                 : targetLanguage;
             _identityLabel.text = $"{source} → {target}";
+
+            RebuildIdentityMarks(sourceLanguage, targetLanguage);
+        }
+
+        /// <summary>
+        /// The two flags in front of the pair.
+        ///
+        /// ⚠ Torn down and rebuilt rather than recoloured: the pair changes when a different
+        /// translation is taken, and a mark left over from the previous one would name a language
+        /// this card is no longer about.
+        /// </summary>
+        private void RebuildIdentityMarks(string sourceLanguage, string targetLanguage)
+        {
+            if (_identityMarks == null) return;
+
+            for (int i = _identityMarks.transform.childCount - 1; i >= 0; i--)
+                UnityEngine.Object.Destroy(_identityMarks.transform.GetChild(i).gameObject);
+
+            bool drawn = LanguageMark.Create(_identityMarks, "IdSource", sourceLanguage) != null;
+
+            if (drawn && !string.IsNullOrEmpty(targetLanguage))
+            {
+                var arrow = UIFactory.CreateLabel(_identityMarks, "IdArrow", "→", TextAnchor.MiddleCenter);
+                arrow.fontSize = UIStyles.FontSizeHint;
+                arrow.color = UIStyles.TextMuted;
+                UIFactory.SetLayoutElement(arrow.gameObject, minHeight: UIStyles.RowHeightSmall,
+                                           flexibleWidth: 0);
+            }
+
+            LanguageMark.Create(_identityMarks, "IdTarget", targetLanguage);
         }
 
         /// <summary>

@@ -565,7 +565,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Scrollable container for exclusions
             var scrollObj = UIFactory.CreateScrollView(card, "ExclusionsScroll", out var scrollContent, out var scrollbar);
             UIFactory.SetLayoutElement(scrollObj, minHeight: 200, preferredHeight: 200, flexibleHeight: 9999, flexibleWidth: 9999);
-            UIStyles.SetBackground(scrollObj, UIStyles.InputBackground);
+            UIStyles.SetBackground(scrollObj, UIStyles.TroughBackground);
             UIFactory.ConfigureAutoHideScrollbar(scrollObj);
 
             _exclusionsListContainer = scrollContent;
@@ -998,7 +998,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // which overflows the screen for the same double-scrollbar result.
             UIFactory.SetLayoutElement(scrollObj, minHeight: 180, preferredHeight: 180,
                 flexibleHeight: 9999, flexibleWidth: 9999);
-            UIStyles.SetBackground(scrollObj, UIStyles.InputBackground);
+            UIStyles.SetBackground(scrollObj, UIStyles.TroughBackground);
             UIFactory.ConfigureAutoHideScrollbar(scrollObj);
 
             _fontsListContainer = scrollContent;
@@ -1091,7 +1091,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Scrollable list of overrides
             var scrollObj = UIFactory.CreateScrollView(card, "OverridesScroll", out var scrollContent, out var scrollbar);
             UIFactory.SetLayoutElement(scrollObj, minHeight: 200, preferredHeight: 200, flexibleHeight: 9999, flexibleWidth: 9999);
-            UIStyles.SetBackground(scrollObj, UIStyles.InputBackground);
+            UIStyles.SetBackground(scrollObj, UIStyles.TroughBackground);
             UIFactory.ConfigureAutoHideScrollbar(scrollObj);
 
             _fontOverridesListContainer = scrollContent;

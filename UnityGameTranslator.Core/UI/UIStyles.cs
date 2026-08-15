@@ -130,6 +130,20 @@ namespace UnityGameTranslator.Core.UI
         public static readonly Color SectionBackground = Transparent;                               // Transparent (no auto-padding)
         public static readonly Color InputBackground = Of(Theme.SurfaceRaised);
 
+        /// <summary>
+        /// The trough a list sits in: a scroll viewport, a tab strip. `SurfaceDeep`.
+        ///
+        /// 🔴 **Not <see cref="InputBackground"/>, which is what every list used.** That is the
+        /// same value as <see cref="ItemBackground"/>, so a row was painted the exact colour of the
+        /// thing it sits on: one card in a list was invisible, and several read as one block. The
+        /// ramp exists precisely to prevent this — `Theme.SurfaceDeep` is documented as "a
+        /// viewport, a tab strip, the trough of a list" — and the wrong rung was picked.
+        ///
+        /// ⚠ A field is not a trough. An input sits ON a card and stays `SurfaceRaised`; a list
+        /// RECESSES into it. Sharing one key for both is what made the mistake invisible.
+        /// </summary>
+        public static readonly Color TroughBackground = Of(Theme.SurfaceDeep);
+
         // Edges. The site draws a 1px line around every card (`border-gray-700`, 242 times) and
         // every field (`border-gray-600`); the mod drew none at all, which is half of why the same
         // card read as a different object here.

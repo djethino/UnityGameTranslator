@@ -801,7 +801,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // smallest useful box for a dozen, and this panel is regularly handed a dozen.
             UIFactory.SetLayoutElement(_textEditScroll, minHeight: TextEditListMinHeight, preferredHeight: TextEditListMinHeight,
                 flexibleHeight: 9999, flexibleWidth: 9999);
-            UIStyles.SetBackground(_textEditScroll, UIStyles.InputBackground);
+            UIStyles.SetBackground(_textEditScroll, UIStyles.TroughBackground);
             UIFactory.SetLayoutGroup<VerticalLayoutGroup>(_textEditListContent, false, false, true, true, 5, 5, 5, 5, 5);
 
             _textEditRow.SetActive(false); // Hidden by default

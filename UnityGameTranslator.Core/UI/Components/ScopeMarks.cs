@@ -224,6 +224,30 @@ namespace UnityGameTranslator.Core.UI.Components
                                                             MarkGap, 2, 2, EdgePad, EdgePad,
                                                             TextAnchor.MiddleCenter);
 
+            // 🔴 **The marks are not free, and the caller's width was chosen without them.** A
+            // button built 160 wide for "Download Selected" fitted its label and nothing else;
+            // adding three pictures, a rule and their gaps left the label with less room than its
+            // text needs, and it ran straight out of the coloured rectangle.
+            //
+            // ⚠ Grown by exactly what is INSERTED, not by a guess and not by measuring the label:
+            // the caller already sized for its own text, so the right correction is the room this
+            // method takes and no more. Measuring the label here would read a font that may not be
+            // loaded yet — the trap the scope strip spent a dozen rounds on.
+            //
+            // ⚠ Only a width that was FIXED is corrected. A button told to stretch (flexibleWidth)
+            // already has all the room its row can give, and raising its minimum would make it
+            // push its neighbours out instead.
+            var element = buttonObj.GetComponent<LayoutElement>();
+            if (element != null)
+            {
+                // Three marks, the rule slot, the four gaps between five children, and the padding
+                // this layout group adds on each side.
+                const float inserted = 3 * MarkSize + (1 + 2 * LabelGap) + 4 * MarkGap + 2 * EdgePad;
+
+                if (element.minWidth > 0) element.minWidth += inserted;
+                if (element.preferredWidth > 0) element.preferredWidth += inserted;
+            }
+
             // The side is already recorded above, so this reads it back like every other caller.
             var selectable = buttonObj.GetComponent<Button>();
             Tint(buttonObj, selectable == null || selectable.interactable);

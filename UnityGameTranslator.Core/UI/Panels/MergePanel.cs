@@ -141,7 +141,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.SetLayoutElement(scrollObj, minHeight: 240, preferredHeight: 240,
                 flexibleHeight: 9999, flexibleWidth: 9999);
             UIFactory.SetLayoutGroup<VerticalLayoutGroup>(_conflictListContent, false, false, true, true, 5, 5, 5, 5, 5);
-            UIStyles.SetBackground(scrollObj, UIStyles.InputBackground);
+            UIStyles.SetBackground(scrollObj, UIStyles.TroughBackground);
             UIStyles.ConfigureScrollViewNoScrollbar(scrollObj);
 
             UIStyles.CreateSpacer(card, 10);

@@ -98,7 +98,10 @@ namespace UnityGameTranslator.Core.UI.Components
             UIFactory.SetLayoutElement(scrollObj, minHeight: listHeight, preferredHeight: listHeight,
                 flexibleHeight: 9999);
             UIFactory.SetLayoutGroup<VerticalLayoutGroup>(_listContent, false, false, true, true, 5, 5, 5, 5, 5);
-            UIStyles.SetBackground(scrollObj, UIStyles.InputBackground);
+            // ⚠ The trough, not a field. It was InputBackground — the same value as
+            // ItemBackground — so every row was painted the exact colour of what it sits on and
+            // the card disappeared into its own list.
+            UIStyles.SetBackground(scrollObj, UIStyles.TroughBackground);
             UIStyles.ConfigureScrollViewNoScrollbar(scrollObj);
         }
 

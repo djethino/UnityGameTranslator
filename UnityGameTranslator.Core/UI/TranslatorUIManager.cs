@@ -2268,6 +2268,12 @@ namespace UnityGameTranslator.Core.UI
                     serverState.Uploader = TranslatorCore.Config.api_user;
                     serverState.Hash = translation["file_hash"]?.Value<string>();
                     serverState.Type = translation["type"]?.Value<string>();
+
+                    // ⚠ Read HERE as well as in the upload panel: this is the path the main screen
+                    // takes at startup, and a card that only learned the status once somebody
+                    // opened the upload screen would show nothing on the screen that matters.
+                    serverState.Status = translation["status"]?.Value<string>();
+
                     serverState.Notes = translation["notes"]?.Value<string>();
                     serverState.ResourcesUrl = translation["resources_url"]?.Value<string>();
 

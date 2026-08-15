@@ -434,7 +434,16 @@ namespace UnityGameTranslator.Core.UI.Components
             var all = Badges.For(standing.Publication, standing.Role == LineageRole.Main ? true
                                      : standing.Role == LineageRole.Branch ? (bool?)false : null,
                                  standing.BranchesWaiting, standing.MainMissing, standing.Sync,
-                                 null, null, 0, 0);
+                                 null, null, 0, 0,
+
+                                 // ⚠ The author's own word, which nothing else on this card says.
+                                 // Without it somebody cannot tell whether they still have to open
+                                 // Edit details and declare it — the measurements beside it answer
+                                 // a different question.
+                                 finished: TranslatorCore.ServerState?.Status is string published
+                                     ? string.Equals(published, "complete",
+                                                     StringComparison.OrdinalIgnoreCase)
+                                     : (bool?)null);
 
             var shown = new List<Badge>();
             foreach (var badge in all)

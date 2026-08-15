@@ -17,6 +17,9 @@ namespace UnityGameTranslator.Core.UI.Components
         private GameObject _listContent;
         private Text _selectedLabel;
 
+        /// <summary>Holds the selected language's flag. Rebuilt whenever the choice changes.</summary>
+        private GameObject _selectedMark;
+
         // State
         private string[] _languages;
         private string _selectedLanguage;
@@ -72,13 +75,16 @@ namespace UnityGameTranslator.Core.UI.Components
         {
             _onLanguageChanged = onLanguageChanged;
 
-            var (_, searchInput, listContent, selectedLabel) = UIStyles.CreateLanguageSelector(parent, _name, _listHeight);
+            var (_, searchInput, listContent, selectedLabel, selectedMark) =
+                UIStyles.CreateLanguageSelector(parent, _name, _listHeight);
+            _selectedMark = selectedMark;
             _searchInput = searchInput;
             _listContent = listContent;
             _selectedLabel = selectedLabel;
 
             // Set initial state
             _selectedLabel.text = _selectedLanguage;
+            RebuildSelectedMark();
             _searchInput.OnValueChanged += (val) => Refresh();
 
             // Initial population
@@ -172,7 +178,25 @@ namespace UnityGameTranslator.Core.UI.Components
             if (_selectedLabel != null)
             {
                 _selectedLabel.text = _selectedLanguage;
+            RebuildSelectedMark();
             }
+        }
+
+        /// <summary>
+        /// Redraw the flag beside the selected name.
+        ///
+        /// ⚠ Torn down and rebuilt rather than recoloured: the choice changes, and a mark left over
+        /// from the previous language would name something nobody picked.
+        /// </summary>
+        private void RebuildSelectedMark()
+        {
+            if (_selectedMark == null) return;
+
+            for (int i = _selectedMark.transform.childCount - 1; i >= 0; i--)
+                UnityEngine.Object.Destroy(_selectedMark.transform.GetChild(i).gameObject);
+
+            // Flag alone, and NO tag chip: _selectedLabel writes the name right beside it.
+            LanguageMark.Create(_selectedMark, "Mark", _selectedLanguage, nameElsewhere: true);
         }
     }
 }

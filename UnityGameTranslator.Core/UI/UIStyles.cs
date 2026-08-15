@@ -1018,7 +1018,7 @@ namespace UnityGameTranslator.Core.UI
         /// <param name="languages">Array of language names</param>
         /// <param name="listHeight">Height of the scrollable list</param>
         /// <returns>Tuple with (container, searchInput, listContent, selectedLabel)</returns>
-        public static (GameObject container, InputFieldRef searchInput, GameObject listContent, Text selectedLabel)
+        public static (GameObject container, InputFieldRef searchInput, GameObject listContent, Text selectedLabel, GameObject selectedMark)
             CreateLanguageSelector(GameObject parent, string name, int listHeight = 120)
         {
             var container = UIFactory.CreateVerticalGroup(parent, name + "Container", false, false, true, true, SmallSpacing);
@@ -1033,6 +1033,14 @@ namespace UnityGameTranslator.Core.UI
             selectedLabelPrefix.fontSize = FontSizeSmall;
             UIFactory.SetLayoutElement(selectedLabelPrefix.gameObject, minWidth: 60);
 
+            // Holds the flag of whatever is selected. Rebuilt by LanguageSelector when the choice
+            // changes — a mark left over from the previous one would name a language nobody picked.
+            var selectedMark = UIFactory.CreateUIObject(name + "SelectedMark", selectedRow);
+            UIFactory.SetLayoutGroup<HorizontalLayoutGroup>(selectedMark, false, false, true, true,
+                                                            4, 0, 0, 0, 0, TextAnchor.MiddleLeft);
+            UIFactory.SetLayoutElement(selectedMark, minHeight: RowHeightSmall,
+                                       flexibleWidth: 0, flexibleHeight: 0);
+
             var selectedLabel = UIFactory.CreateLabel(selectedRow, name + "Selected", "", TextAnchor.MiddleLeft);
             selectedLabel.color = TextAccent;
             selectedLabel.fontStyle = FontStyle.Bold;
@@ -1046,10 +1054,13 @@ namespace UnityGameTranslator.Core.UI
             var scrollObj = UIFactory.CreateScrollView(container, name + "Scroll", out var listContent, out _);
             UIFactory.SetLayoutElement(scrollObj, minHeight: listHeight, flexibleWidth: 9999);
             UIFactory.SetLayoutGroup<VerticalLayoutGroup>(listContent, false, false, true, true, 2, 5, 5, 5, 5);
-            SetBackground(scrollObj, InputBackground);
+            // ⚠ The seventh trough, missed when the other six were fixed because it is built
+            // in here rather than at a call site: InputBackground is the same value as
+            // ItemBackground, so every row was the colour of the list it sits in.
+            SetBackground(scrollObj, TroughBackground);
             ConfigureScrollViewNoScrollbar(scrollObj);
 
-            return (container, searchInput, listContent, selectedLabel);
+            return (container, searchInput, listContent, selectedLabel, selectedMark);
         }
 
         /// <summary>
@@ -1086,10 +1097,25 @@ namespace UnityGameTranslator.Core.UI
                 bool isSelected = lang == selectedLanguage;
                 var item = CreateListItem(listContent, $"Lang_{lang}", RowHeightMedium, isSelected);
 
-                var label = UIFactory.CreateLabel(item, "Label", lang, TextAnchor.MiddleLeft);
-                label.color = isSelected ? TextPrimary : TextSecondary;
-                label.fontSize = FontSizeNormal;
-                UIFactory.SetLayoutElement(label.gameObject, flexibleWidth: 9999);
+                // Flag then name, in one control. ⚠ The row is a horizontal group already, so the
+                // mark drops in where the label used to be; the socle suppresses the tag chip
+                // because the name is right there, which is what it exists to replace.
+                var mark = Components.LanguageMark.Create(
+                    item, "Mark", lang, withName: true,
+                    nameColour: isSelected ? TextPrimary : TextSecondary);
+
+                if (mark != null)
+                {
+                    UIFactory.SetLayoutElement(mark, flexibleWidth: 9999);
+                }
+                else
+                {
+                    // A language the catalogue does not mark still has to be pickable.
+                    var label = UIFactory.CreateLabel(item, "Label", lang, TextAnchor.MiddleLeft);
+                    label.color = isSelected ? TextPrimary : TextSecondary;
+                    label.fontSize = FontSizeNormal;
+                    UIFactory.SetLayoutElement(label.gameObject, flexibleWidth: 9999);
+                }
 
                 // Make clickable (use helper for IL2CPP compatibility)
                 var btn = item.AddComponent<Button>();

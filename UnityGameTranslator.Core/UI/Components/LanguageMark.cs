@@ -38,10 +38,24 @@ namespace UnityGameTranslator.Core.UI.Components
         /// the chip answers "which language is this flag", and the name answers it better. A row
         /// reading "🇬🇧 → 🇫🇷 English → French" said everything twice, which is what this replaces.
         /// </param>
+        /// <param name="nameColour">
+        /// The colour of the written name. Null takes the ordinary one — a list that dims its
+        /// unselected rows passes its own, so the flag's row reads like every other row of that
+        /// list rather than like a brighter exception.
+        /// </param>
+        /// <param name="nameElsewhere">
+        /// The name is written by the CALLER, next to this mark rather than inside it.
+        ///
+        /// ⚠ Distinct from <paramref name="withName"/>, and both silence the tag chip: what the
+        /// chip answers — which language is this flag — a name answers, wherever that name is. The
+        /// selected line of a picker writes it in its own label, so the mark draws the flag alone
+        /// and must still not add a chip.
+        /// </param>
         public static GameObject Create(GameObject parent, string name, string languageName,
-                                        bool withName = false)
+                                        bool withName = false, Color? nameColour = null,
+                                        bool nameElsewhere = false)
         {
-            var mark = Flags.Mark(languageName, nameIsWritten: withName);
+            var mark = Flags.Mark(languageName, nameIsWritten: withName || nameElsewhere);
             if (mark.Flag == null && string.IsNullOrEmpty(mark.Tag)
                 && !(withName && !string.IsNullOrEmpty(languageName))) return null;
 
@@ -79,7 +93,7 @@ namespace UnityGameTranslator.Core.UI.Components
                 var written = UIFactory.CreateLabel(row, name + "Name", languageName,
                                                     TextAnchor.MiddleLeft);
                 written.fontSize = UIStyles.FontSizeNormal;
-                written.color = UIStyles.TextPrimary;
+                written.color = nameColour ?? UIStyles.TextPrimary;
 
                 // Never wraps: a name folded onto a second line takes the row's height with it.
                 written.horizontalOverflow = HorizontalWrapMode.Overflow;

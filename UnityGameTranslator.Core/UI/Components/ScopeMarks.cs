@@ -83,7 +83,7 @@ namespace UnityGameTranslator.Core.UI.Components
                 var holder = UIFactory.CreateUIObject("ScopeMark" + index, buttonObj);
                 var image = holder.AddComponent<Image>();
                 image.sprite = sprite;
-                image.color = lit ? UIStyles.TextAccent : UIStyles.TextMuted;
+                image.color = lit ? UIStyles.MarkLit : UIStyles.TextMuted;
                 image.preserveAspect = true;
 
                 // ⚠ Never a raycast target. A mark that swallows a click is a button with a dead
@@ -195,7 +195,7 @@ namespace UnityGameTranslator.Core.UI.Components
                 // than a different hue: which side the action aims at is still worth knowing while
                 // you read why you cannot take it.
                 image.color = lit
-                    ? (interactable ? UIStyles.TextAccent : UIStyles.TextSecondary)
+                    ? (interactable ? UIStyles.MarkLit : UIStyles.TextSecondary)
                     : UIStyles.TextMuted;
             }
 

@@ -142,6 +142,15 @@ namespace UnityGameTranslator.Core.UI
         public static readonly Color TextMuted = Of(Theme.TextMuted);
         public static readonly Color TextAccent = Of(Theme.AccentSoft);
 
+        /// <summary>
+        /// The chosen one of the three scope marks.
+        ///
+        /// ⚠ NOT <see cref="TextAccent"/>, and the socle explains at length why: the marks sit
+        /// inside buttons, including accent-filled ones, where a light purple scored less against
+        /// the fill than the two DIMMED marks did.
+        /// </summary>
+        public static readonly Color MarkLit = Of(Theme.MarkLit);
+
         // Buttons. FOUR purples, as the site has: 600 fills, 500 edges and highlights, 400 writes,
         // 700 presses. One purple for all four was most of what made the mod read as another
         // product — the accent was flat where the site's has depth.

@@ -135,6 +135,12 @@ namespace UnityGameTranslator.Core.UI.Panels
                 bool selected = standing.Side == lit && standing.Available;
                 var colour = selected ? UIStyles.TextPrimary : UIStyles.TextMuted;
 
+                // ⚠ The MARK takes the same colour here as it does on a button, while the word
+                // keeps the text ramp. The two sizes of this control are only one control if the
+                // picture is identical — including what "lit" looks like — and the small form has
+                // nothing but the picture to say it with.
+                var markColour = selected ? UIStyles.MarkLit : UIStyles.TextMuted;
+
                 // ⚠ Each position is a mark AND a word here, where a button elsewhere carries the
                 // marks alone. That is the whole arrangement: the full form teaches the pictures
                 // beside the words, the small one relies on having been taught.
@@ -161,7 +167,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     selected ? UIStyles.ItemBackgroundSelected : UIStyles.ItemBackground);
 
                 AddScopeMark(cell, name + standing.Side + "Mark",
-                             EditScope.Mark(standing.Side), colour);
+                             EditScope.Mark(standing.Side), markColour);
 
                 // ⚠ Always CREATED, shown or hidden according to the tier. Creating them only when
                 // they fit would mean rebuilding the row to get them back on a resize — and the

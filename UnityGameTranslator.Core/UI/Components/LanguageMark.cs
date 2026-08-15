@@ -31,10 +31,19 @@ namespace UnityGameTranslator.Core.UI.Components
         /// Returns null when the language is unknown — the caller then writes its name and nothing
         /// else, which is the truth rather than a placeholder.
         /// </summary>
-        public static GameObject Create(GameObject parent, string name, string languageName)
+        /// <param name="withName">
+        /// Write the language's name after the flag.
+        ///
+        /// 🔴 **Then the tag chip disappears**, and the socle decides that rather than this file:
+        /// the chip answers "which language is this flag", and the name answers it better. A row
+        /// reading "🇬🇧 → 🇫🇷 English → French" said everything twice, which is what this replaces.
+        /// </param>
+        public static GameObject Create(GameObject parent, string name, string languageName,
+                                        bool withName = false)
         {
-            var mark = Flags.Mark(languageName);
-            if (mark.Flag == null && string.IsNullOrEmpty(mark.Tag)) return null;
+            var mark = Flags.Mark(languageName, nameIsWritten: withName);
+            if (mark.Flag == null && string.IsNullOrEmpty(mark.Tag)
+                && !(withName && !string.IsNullOrEmpty(languageName))) return null;
 
             var row = UIFactory.CreateUIObject(name, parent);
             UIFactory.SetLayoutGroup<HorizontalLayoutGroup>(row, false, false, true, true,
@@ -63,6 +72,24 @@ namespace UnityGameTranslator.Core.UI.Components
                 UIFactory.SetLayoutElement(holder, minWidth: width, preferredWidth: width,
                                            minHeight: FlagHeight, preferredHeight: FlagHeight,
                                            flexibleWidth: 0, flexibleHeight: 0);
+            }
+
+            if (withName && !string.IsNullOrEmpty(languageName))
+            {
+                var written = UIFactory.CreateLabel(row, name + "Name", languageName,
+                                                    TextAnchor.MiddleLeft);
+                written.fontSize = UIStyles.FontSizeNormal;
+                written.color = UIStyles.TextPrimary;
+
+                // Never wraps: a name folded onto a second line takes the row's height with it.
+                written.horizontalOverflow = HorizontalWrapMode.Overflow;
+                written.verticalOverflow = VerticalWrapMode.Overflow;
+
+                UIFactory.SetLayoutElement(written.gameObject, minHeight: FlagHeight,
+                                           flexibleWidth: 0, flexibleHeight: 0);
+
+                // ⚠ Language names are data, never translated — same rule as everywhere else.
+                TranslatorCore.RegisterExcluded(written);
             }
 
             if (mark.ShowTag && !string.IsNullOrEmpty(mark.Tag))

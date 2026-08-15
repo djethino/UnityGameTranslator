@@ -382,34 +382,39 @@ namespace UnityGameTranslator.Core.UI.Components
             // Languages alone on the first line, author on the second. Together they ran past
             // the width and wrapped, which cost a line and broke the hierarchy: the pair of
             // languages is what a reader scans for, the author is context.
-            // ⚠ The flags go on their own line ABOVE the words rather than beside them: this row
-            // is already narrow enough that the pair of names wraps, and two pictures inserted into
-            // it would push the target language onto a second line — costing the very thing they
-            // are there to speed up.
-            var flagRow = UIFactory.CreateUIObject("Flags", infoCol);
-            UIFactory.SetLayoutGroup<HorizontalLayoutGroup>(flagRow, false, false, true, true,
+            // 🔴 **Each flag beside the language it names**, on one line: "🇬🇧 English → 🇫🇷 French".
+            // The first attempt put the two flags on their own line above the two names, which said
+            // everything twice and cost a row.
+            var pairRow = UIFactory.CreateUIObject("LanguagePair", infoCol);
+            UIFactory.SetLayoutGroup<HorizontalLayoutGroup>(pairRow, false, false, true, true,
                                                             6, 0, 0, 0, 0, TextAnchor.MiddleLeft);
-            UIFactory.SetLayoutElement(flagRow, minHeight: 13, flexibleWidth: 9999);
+            UIFactory.SetLayoutElement(pairRow, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999);
 
-            var drawn = LanguageMark.Create(flagRow, "Source", translation.SourceLanguage) != null;
-            if (drawn && !string.IsNullOrEmpty(translation.TargetLanguage))
+            var marked = LanguageMark.Create(pairRow, "Source", translation.SourceLanguage,
+                                             withName: true) != null;
+            if (marked)
             {
-                var arrow = UIFactory.CreateLabel(flagRow, "Arrow", "→", TextAnchor.MiddleCenter);
-                arrow.fontSize = UIStyles.FontSizeHint;
+                var arrow = UIFactory.CreateLabel(pairRow, "Arrow", "→", TextAnchor.MiddleCenter);
+                arrow.fontSize = UIStyles.FontSizeNormal;
                 arrow.color = UIStyles.TextMuted;
-                UIFactory.SetLayoutElement(arrow.gameObject, minHeight: 13, flexibleWidth: 0);
+                UIFactory.SetLayoutElement(arrow.gameObject, minHeight: UIStyles.RowHeightSmall,
+                                           flexibleWidth: 0);
+
+                marked = LanguageMark.Create(pairRow, "Target", translation.TargetLanguage,
+                                             withName: true) != null;
             }
 
-            LanguageMark.Create(flagRow, "Target", translation.TargetLanguage);
+            // Falls back to the plain sentence when a side could not be marked at all — a half-built
+            // pair would name one language and leave the other missing.
+            if (!marked)
+            {
+                UnityEngine.Object.Destroy(pairRow);
 
-            // The row is removed entirely when neither language could be marked — an empty band
-            // above the title would read as a rendering fault.
-            if (flagRow.transform.childCount == 0) UnityEngine.Object.Destroy(flagRow);
-
-            var titleLabel = UIFactory.CreateLabel(infoCol, "Title", languages, TextAnchor.MiddleLeft);
-            titleLabel.fontStyle = FontStyle.Bold;
-            titleLabel.color = UIStyles.TextPrimary;
-            UIFactory.SetLayoutElement(titleLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+                var titleLabel = UIFactory.CreateLabel(infoCol, "Title", languages, TextAnchor.MiddleLeft);
+                titleLabel.fontStyle = FontStyle.Bold;
+                titleLabel.color = UIStyles.TextPrimary;
+                UIFactory.SetLayoutElement(titleLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+            }
 
             string by = "by " + translation.Uploader;
             if (isOwnTranslation) by += " (you)";

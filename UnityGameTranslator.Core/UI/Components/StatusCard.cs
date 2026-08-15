@@ -154,7 +154,9 @@ namespace UnityGameTranslator.Core.UI.Components
             UIFactory.SetLayoutElement(_identityMarks, minHeight: UIStyles.RowHeightSmall,
                                        flexibleWidth: 0, flexibleHeight: 0);
 
-            // "English → Français" — language names are data, never translated
+            // ⚠ Kept for the states that have no pair to show — "Auto", or a language we do not
+            // recognise. It is EMPTY whenever the marks carry the names, because "🇬🇧 English →
+            // 🇫🇷 French  English → French" is the same sentence twice.
             _identityLabel = UIFactory.CreateLabel(identityRow, "IdentityLabel", "", TextAnchor.MiddleLeft);
             _identityLabel.fontStyle = FontStyle.Bold;
             _identityLabel.fontSize = UIStyles.FontSizeNormal;
@@ -465,9 +467,10 @@ namespace UnityGameTranslator.Core.UI.Components
             string target = string.IsNullOrEmpty(targetLanguage)
                 ? TranslatorCore.TranslateOwnUIDynamic("Auto")
                 : targetLanguage;
-            _identityLabel.text = $"{source} → {target}";
-
-            RebuildIdentityMarks(sourceLanguage, targetLanguage);
+            // The pair is drawn as "flag name → flag name". The text label only speaks when a side
+            // has no language to mark — auto-detection, or a name the catalogue does not know.
+            bool marked = RebuildIdentityMarks(sourceLanguage, targetLanguage);
+            _identityLabel.text = marked ? "" : $"{source} → {target}";
         }
 
         /// <summary>
@@ -477,25 +480,26 @@ namespace UnityGameTranslator.Core.UI.Components
         /// translation is taken, and a mark left over from the previous one would name a language
         /// this card is no longer about.
         /// </summary>
-        private void RebuildIdentityMarks(string sourceLanguage, string targetLanguage)
+        /// <returns>True when the marks name both sides, so the text label has nothing to add.</returns>
+        private bool RebuildIdentityMarks(string sourceLanguage, string targetLanguage)
         {
-            if (_identityMarks == null) return;
+            if (_identityMarks == null) return false;
 
             for (int i = _identityMarks.transform.childCount - 1; i >= 0; i--)
                 UnityEngine.Object.Destroy(_identityMarks.transform.GetChild(i).gameObject);
 
-            bool drawn = LanguageMark.Create(_identityMarks, "IdSource", sourceLanguage) != null;
+            bool from = LanguageMark.Create(_identityMarks, "IdSource", sourceLanguage,
+                                            withName: true) != null;
+            if (!from) return false;
 
-            if (drawn && !string.IsNullOrEmpty(targetLanguage))
-            {
-                var arrow = UIFactory.CreateLabel(_identityMarks, "IdArrow", "→", TextAnchor.MiddleCenter);
-                arrow.fontSize = UIStyles.FontSizeHint;
-                arrow.color = UIStyles.TextMuted;
-                UIFactory.SetLayoutElement(arrow.gameObject, minHeight: UIStyles.RowHeightSmall,
-                                           flexibleWidth: 0);
-            }
+            var arrow = UIFactory.CreateLabel(_identityMarks, "IdArrow", "→", TextAnchor.MiddleCenter);
+            arrow.fontSize = UIStyles.FontSizeNormal;
+            arrow.color = UIStyles.TextMuted;
+            UIFactory.SetLayoutElement(arrow.gameObject, minHeight: UIStyles.RowHeightSmall,
+                                       flexibleWidth: 0);
 
-            LanguageMark.Create(_identityMarks, "IdTarget", targetLanguage);
+            return LanguageMark.Create(_identityMarks, "IdTarget", targetLanguage,
+                                       withName: true) != null;
         }
 
         /// <summary>

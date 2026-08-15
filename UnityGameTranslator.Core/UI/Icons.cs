@@ -62,6 +62,66 @@ namespace UnityGameTranslator.Core.UI
         }
 
         /// <summary>
+        /// A language's flag, drawn from the pixels the socle holds.
+        ///
+        /// 🔴 **Not the same path as a mark, and it cannot be.** <see cref="FromCoverage"/> makes a
+        /// WHITE sprite whose alpha carries the shape, exactly so that one texture serves every
+        /// colour a mark is ever shown in. A flag carries its own colours, so it needs a texture of
+        /// its own — and ⚠ **the Image that shows it must be left white**, or the button's tint
+        /// repaints the flag.
+        ///
+        /// ⚠ Point filtering, deliberately: these are drawn as pixels and a blurred sixteen-pixel
+        /// flag is worse than a crisp one, since half of them are only told apart by an edge.
+        ///
+        /// Returns null for a language whose flag has not been drawn yet — ordinary, and the caller
+        /// shows the tag alone.
+        /// </summary>
+        public static Sprite Flag(string flagId)
+        {
+            if (string.IsNullOrEmpty(flagId)) return null;
+
+            var key = "flag:" + flagId;
+
+            Sprite cached;
+            if (_cache.TryGetValue(key, out cached)) return cached;
+
+            var pixels = Common.Flags.Pixels(flagId);
+            if (pixels == null) return null;
+
+            int w = Common.Flags.Width, h = Common.Flags.Height;
+            var colours = new Color32[w * h];
+
+            foreach (var pixel in pixels)
+            {
+                // ⚠ **Unity's textures start at the BOTTOM, the catalogue describes flags from the
+                // top.** Forgetting this ships every flag upside down — which for a good half of
+                // them (Poland and Indonesia, Netherlands and Croatia) is another country's flag,
+                // not an obvious glitch.
+                int at = (h - 1 - pixel.Y) * w + pixel.X;
+
+                colours[at] = pixel.Transparent
+                    ? new Color32(0, 0, 0, 0)
+                    : new Color32((byte)((pixel.Rgb >> 16) & 0xFF),
+                                  (byte)((pixel.Rgb >> 8) & 0xFF),
+                                  (byte)(pixel.Rgb & 0xFF), 255);
+            }
+
+            var texture = TextureHelper.NewTexture2D(w, h, TextureFormat.RGBA32, false);
+            texture.filterMode = FilterMode.Point;
+            texture.wrapMode = TextureWrapMode.Clamp;
+
+            TextureHelper.SetPixels32Safe(texture, colours);
+            texture.Apply(false, false);
+
+            // Same reason as a mark's texture: the cache outlives every panel that asked for it.
+            UnityEngine.Object.DontDestroyOnLoad(texture);
+
+            var sprite = TextureHelper.CreateSprite(texture);
+            _cache[key] = sprite;
+            return sprite;
+        }
+
+        /// <summary>
         /// Turns coverage — one byte of "how much of this pixel is inside the shape" — into a white
         /// sprite whose transparency carries the drawing.
         ///

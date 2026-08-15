@@ -382,6 +382,30 @@ namespace UnityGameTranslator.Core.UI.Components
             // Languages alone on the first line, author on the second. Together they ran past
             // the width and wrapped, which cost a line and broke the hierarchy: the pair of
             // languages is what a reader scans for, the author is context.
+            // ⚠ The flags go on their own line ABOVE the words rather than beside them: this row
+            // is already narrow enough that the pair of names wraps, and two pictures inserted into
+            // it would push the target language onto a second line — costing the very thing they
+            // are there to speed up.
+            var flagRow = UIFactory.CreateUIObject("Flags", infoCol);
+            UIFactory.SetLayoutGroup<HorizontalLayoutGroup>(flagRow, false, false, true, true,
+                                                            6, 0, 0, 0, 0, TextAnchor.MiddleLeft);
+            UIFactory.SetLayoutElement(flagRow, minHeight: 13, flexibleWidth: 9999);
+
+            var drawn = LanguageMark.Create(flagRow, "Source", translation.SourceLanguage) != null;
+            if (drawn && !string.IsNullOrEmpty(translation.TargetLanguage))
+            {
+                var arrow = UIFactory.CreateLabel(flagRow, "Arrow", "→", TextAnchor.MiddleCenter);
+                arrow.fontSize = UIStyles.FontSizeHint;
+                arrow.color = UIStyles.TextMuted;
+                UIFactory.SetLayoutElement(arrow.gameObject, minHeight: 13, flexibleWidth: 0);
+            }
+
+            LanguageMark.Create(flagRow, "Target", translation.TargetLanguage);
+
+            // The row is removed entirely when neither language could be marked — an empty band
+            // above the title would read as a rendering fault.
+            if (flagRow.transform.childCount == 0) UnityEngine.Object.Destroy(flagRow);
+
             var titleLabel = UIFactory.CreateLabel(infoCol, "Title", languages, TextAnchor.MiddleLeft);
             titleLabel.fontStyle = FontStyle.Bold;
             titleLabel.color = UIStyles.TextPrimary;

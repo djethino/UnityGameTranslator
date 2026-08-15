@@ -70,7 +70,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             var card = CreateAdaptiveCard(scrollContent, "UploadCard", PanelWidth - 40);
 
             // Title
-            _titleLabel = CreateScopedTitle(card, "TitleLabel", "Upload Translation", EditSide.Server);
+            // ⚠ Both, not Server. What this screen sends is the file from here, so afterwards the
+            // published translation and this machine carry the same thing — which is the question
+            // the strip answers, rather than "which file does it write".
+            _titleLabel = CreateScopedTitle(card, "TitleLabel", "Upload Translation",
+                                            EditScope.SideAfter(onThisMachine: true, published: true));
             RegisterExcluded(_titleLabel);
 
             UIStyles.CreateSpacer(card, 5);

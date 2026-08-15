@@ -27,6 +27,30 @@ namespace UnityGameTranslator.Core.UI.Components
         private const int MarkSize = 12;
         private const int MarkGap = 3;
 
+        /// <summary>Names the empty child that remembers which side this button aims at.</summary>
+        private const string SideRecordPrefix = "ScopeSide";
+
+        /// <summary>
+        /// Which side a button was adorned for, read from the button itself.
+        ///
+        /// False when it was never adorned — a caller tinting an ordinary button, which must do
+        /// nothing rather than guess a side and light a mark that is not there.
+        /// </summary>
+        private static bool TryReadSide(GameObject buttonObj, out EditSide side)
+        {
+            foreach (EditSide candidate in System.Enum.GetValues(typeof(EditSide)))
+            {
+                if (buttonObj.transform.Find(SideRecordPrefix + candidate) != null)
+                {
+                    side = candidate;
+                    return true;
+                }
+            }
+
+            side = EditSide.Local;
+            return false;
+        }
+
         /// <summary>Between the last mark and the first letter.</summary>
         private const int LabelGap = 7;
 
@@ -67,6 +91,20 @@ namespace UnityGameTranslator.Core.UI.Components
                 labelRect.offsetMin = Vector2.zero;
                 labelRect.offsetMax = Vector2.zero;
             }
+
+            // 🔴 **The side is RECORDED on the button, not repeated by every caller.** It used to
+            // be passed to Adorn and then again to Tint, at thirteen call sites — and when four
+            // buttons were reclassified, the Adorn calls were fixed and the Tint calls were not.
+            // Nothing would have said so: the button would simply light a different mark the next
+            // time anything refreshed it.
+            //
+            // ⚠ An empty object, ignored by the layout. There is no MonoBehaviour to hang it on —
+            // the Core is compiled once for Mono and IL2CPP, where a custom component would have
+            // to be registered — so the hierarchy is the only place left that belongs to this
+            // button and survives with it.
+            var record = UIFactory.CreateUIObject(SideRecordPrefix + side, buttonObj);
+            var ignored = record.AddComponent<LayoutElement>();
+            ignored.ignoreLayout = true;
 
             // The marks are built BEFORE the row is arranged, and inserted before the label: the
             // group lays its children out in sibling order, and the label already exists.
@@ -150,8 +188,9 @@ namespace UnityGameTranslator.Core.UI.Components
                                                             MarkGap, 2, 2, EdgePad, EdgePad,
                                                             TextAnchor.MiddleCenter);
 
+            // The side is already recorded above, so this reads it back like every other caller.
             var selectable = buttonObj.GetComponent<Button>();
-            Tint(buttonObj, side, selectable == null || selectable.interactable);
+            Tint(buttonObj, selectable == null || selectable.interactable);
         }
 
         /// <summary>
@@ -167,16 +206,21 @@ namespace UnityGameTranslator.Core.UI.Components
         /// kept text as white as a live one, so it was told apart only by a slightly different grey
         /// behind it. Text carries far more weight than a background shade.
         /// </summary>
-        public static void Tint(ButtonRef button, EditSide side, bool interactable)
+        public static void Tint(ButtonRef button, bool interactable)
         {
             if (button?.Component == null) return;
-            Tint(button.Component.gameObject, side, interactable);
+            Tint(button.Component.gameObject, interactable);
         }
 
         /// <summary>Same, for a button held as a GameObject.</summary>
-        public static void Tint(GameObject buttonObj, EditSide side, bool interactable)
+        public static void Tint(GameObject buttonObj, bool interactable)
         {
             if (buttonObj == null) return;
+
+            // ⚠ Read back from the button, never taken from the caller. See Adorn: the side used to
+            // be repeated here and drifted from what was built the day four buttons changed side.
+            EditSide side;
+            if (!TryReadSide(buttonObj, out side)) return;
 
             int index = 0;
             foreach (var standing in EditScope.Sides(hasLocalFile: true, canReachMachine: true,

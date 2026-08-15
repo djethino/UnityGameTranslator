@@ -507,7 +507,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Publier laisse les deux côtés porteurs du même fichier : c'est Both, pas Server.
             // ⚠ Server voudrait dire « le publié a le résultat, pas cette machine » — ce qui ne
             // peut pas arriver depuis un jeu, puisque le fichier envoyé est celui d'ici.
-            ScopeMarks.Adorn(_uploadBtn, EditScope.SideAfter(onThisMachine: true, published: true));
+            ScopeMarks.Adorn(_uploadBtn, EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: true));
             RegisterExcluded(_uploadBtn.ButtonText);
             _helpZone?.Describe(_uploadBtn.Component.gameObject,
                 "Send your local translation to the website so others can use it");
@@ -563,7 +563,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _forkBtn.OnClick += OnForkClicked;
             // Forker crée une lignée à soi sur le site, à partir du fichier d'ici : après, les deux
             // portent la même chose.
-            ScopeMarks.Adorn(_forkBtn, EditScope.SideAfter(onThisMachine: true, published: true));
+            ScopeMarks.Adorn(_forkBtn, EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: true));
             RegisterUIText(_forkBtn.ButtonText);
             _helpZone?.Describe(_forkBtn.Component.gameObject,
                 "Leave the owner's translation and continue on your own — asks for confirmation first");
@@ -597,7 +597,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _contributeAsBranchBtn.OnClick += OnContributeAsBranchClicked;
             // La branche créée porte le fichier d'ici — les deux côtés en step.
             ScopeMarks.Adorn(_contributeAsBranchBtn,
-                             EditScope.SideAfter(onThisMachine: true, published: true));
+                             EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: true));
             RegisterUIText(_contributeAsBranchBtn.ButtonText);
             _helpZone?.Describe(_contributeAsBranchBtn.Component.gameObject,
                 "Your changes are sent to the owner, who can merge them into the main translation");
@@ -618,10 +618,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIStyles.SetBackground(_downloadLatestBtn.Component.gameObject, UIStyles.ButtonPrimary);
             UIFactory.SetLayoutElement(_downloadLatestBtn.Component.gameObject, flexibleWidth: 9999);
             _downloadLatestBtn.OnClick += OnDownloadLatestClicked;
-            // ⚠ Both, et pour la bonne raison : APRÈS, les deux côtés portent la même traduction.
-            // Ça n'écrit qu'un fichier — celui d'ici — et c'est justement ce qui trompe.
+            // ⚠ Le côté DÉPEND du rôle, il est donc corrigé à chaque rafraîchissement par
+            // RetargetDownloadButtons. Construit au plus prudent : tant qu'on ne sait pas si cette
+            // lignée est la nôtre, annoncer « les deux en step » rassurerait à tort.
             ScopeMarks.Adorn(_downloadLatestBtn,
-                             EditScope.SideAfter(onThisMachine: true, published: true));
+                             EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: false));
             RegisterExcluded(_downloadLatestBtn.ButtonText);
             _helpZone?.Describe(_downloadLatestBtn.Component.gameObject,
                 "Replace your local file with the owner's latest version from the website");
@@ -644,7 +645,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _createIndependentBtn.OnClick += OnCreateIndependentClicked;
             // Une lignée neuve, faite du fichier d'ici — les deux côtés en step.
             ScopeMarks.Adorn(_createIndependentBtn,
-                             EditScope.SideAfter(onThisMachine: true, published: true));
+                             EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: true));
             RegisterUIText(_createIndependentBtn.ButtonText);
             _helpZone?.Describe(_createIndependentBtn.Component.gameObject,
                 "Start your own independent translation from your current file — asks for confirmation first");
@@ -742,7 +743,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 if (_downloadBtn != null)
                 {
                     _downloadBtn.Component.interactable = t != null;
-                    ScopeMarks.Tint(_downloadBtn, t != null);
+                    SetCommunityDownloadState(t != null);
                 }
             });
 
@@ -760,10 +761,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             _downloadBtn = CreatePrimaryButton(downloadRow, "DownloadBtn", "Download Selected", 160);
             UIStyles.SetBackground(_downloadBtn.Component.gameObject, UIStyles.ButtonSuccess);
             _downloadBtn.OnClick += OnDownloadCommunityClicked;
-            // Prendre une traduction de la communauté : après, le fichier d'ici EST la publiée.
-            ScopeMarks.Adorn(_downloadBtn, EditScope.SideAfter(onThisMachine: true, published: true));
+            // ⚠ Même chose : prendre une traduction de la communauté, c'est presque toujours prendre
+            // celle de quelqu'un d'autre — donc Local. RetargetDownloadButtons corrige le seul cas
+            // où c'est la nôtre.
+            ScopeMarks.Adorn(_downloadBtn,
+                             EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: false));
             _downloadBtn.Component.interactable = false;
-            ScopeMarks.Tint(_downloadBtn, false);
+            SetCommunityDownloadState(false);
             RegisterUIText(_downloadBtn.ButtonText);
             _helpZone?.Describe(_downloadBtn.Component.gameObject,
                 "Use the selected translation in your game — the mod asks before replacing anything you changed");
@@ -825,7 +829,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 if (_downloadBtn != null)
                 {
                     _downloadBtn.Component.interactable = _translationList?.SelectedTranslation != null;
-                    ScopeMarks.Tint(_downloadBtn, _translationList?.SelectedTranslation != null);
+                    SetCommunityDownloadState(_translationList?.SelectedTranslation != null);
                 }
             });
         }
@@ -1735,13 +1739,69 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
         }
 
+        /// <summary>
+        /// Colour the "Download Latest" marks for the state it is really in.
+        ///
+        /// 🔴 **The side of a download depends on WHOSE translation it is**, which is why this
+        /// exists instead of a constant written when the button was built. Taking the latest of a
+        /// lineage you lead leaves your published copy and this machine carrying the same thing —
+        /// Both. Taking somebody else's leaves nothing of yours moved: it is Local, and saying
+        /// Both there tells a Main owner they are in step at the moment they stop being.
+        ///
+        /// ⚠ Retargeting and tinting in ONE method on purpose. Done separately, a caller that
+        /// tints without retargeting repaints the previous role's answer — which is the same class
+        /// of bug as the side that used to be passed to both Adorn and Tint.
+        /// </summary>
+        private void SetDownloadLatestState(bool interactable)
+        {
+            if (_downloadLatestBtn == null) return;
+
+            var state = TranslatorCore.ServerState;
+            ScopeMarks.Retarget(_downloadLatestBtn,
+                EditScope.SideAfter(onThisMachine: true,
+                                    yourPublishedCopy: state != null && state.IsOwner));
+            ScopeMarks.Tint(_downloadLatestBtn, interactable);
+        }
+
+        /// <summary>
+        /// Same, for taking a translation from the community list.
+        ///
+        /// ⚠ Almost always somebody else's, hence Local almost always. The exception is real
+        /// though: one's own published translation is listed there like any other.
+        /// </summary>
+        private void SetCommunityDownloadState(bool interactable)
+        {
+            if (_downloadBtn == null) return;
+
+            ScopeMarks.Retarget(_downloadBtn,
+                EditScope.SideAfter(onThisMachine: true,
+                                    yourPublishedCopy: PublishedByUs(_translationList?.SelectedTranslation)));
+            ScopeMarks.Tint(_downloadBtn, interactable);
+        }
+
+        /// <summary>
+        /// Was this published under the account signed in here?
+        ///
+        /// ⚠ The uploader's name, NOT the lineage id: a Branch carries the Main's uuid and is
+        /// somebody else's line. Matching on the uuid would call a Main owner's translation ours
+        /// while we hold a branch of it — the exact confusion the vocabulary exists to prevent.
+        /// </summary>
+        private static bool PublishedByUs(TranslationInfo translation)
+        {
+            var us = TranslatorCore.Config.api_user;
+
+            return translation != null
+                && !string.IsNullOrEmpty(us)
+                && string.Equals(translation.Uploader, us, System.StringComparison.OrdinalIgnoreCase);
+        }
+
         private async System.Threading.Tasks.Task PerformDownloadLatest(ServerTranslationState serverState)
         {
             // Disable buttons while downloading
             if (_downloadLatestBtn != null)
             {
                 _downloadLatestBtn.Component.interactable = false;
-                ScopeMarks.Tint(_downloadLatestBtn, false);
+                SetDownloadLatestState(false);
                 SetDynamicText(_downloadLatestBtn.ButtonText, "Downloading...");
             }
 
@@ -1772,7 +1832,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     if (_downloadLatestBtn != null)
                     {
                         _downloadLatestBtn.Component.interactable = true;
-                        ScopeMarks.Tint(_downloadLatestBtn, true);
+                        SetDownloadLatestState(true);
                         SetDynamicText(_downloadLatestBtn.ButtonText, "Download Latest");
                     }
                 });
@@ -1783,7 +1843,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 if (_downloadLatestBtn != null)
                 {
                     _downloadLatestBtn.Component.interactable = true;
-                    ScopeMarks.Tint(_downloadLatestBtn, true);
+                    SetDownloadLatestState(true);
                     SetDynamicText(_downloadLatestBtn.ButtonText, "Download Latest");
                 }
             }
@@ -1974,7 +2034,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private async System.Threading.Tasks.Task PerformDownload(TranslationInfo translation)
         {
             _downloadBtn.Component.interactable = false;
-            ScopeMarks.Tint(_downloadBtn, false);
+            SetCommunityDownloadState(false);
             _translationList.SetStatus("Downloading...", UIStyles.StatusWarning);
 
             await TranslatorUIManager.DownloadTranslation(translation, (success, message) =>
@@ -1991,7 +2051,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
 
                 _downloadBtn.Component.interactable = _translationList?.SelectedTranslation != null;
-                ScopeMarks.Tint(_downloadBtn, _translationList?.SelectedTranslation != null);
+                SetCommunityDownloadState(_translationList?.SelectedTranslation != null);
             });
         }
     }

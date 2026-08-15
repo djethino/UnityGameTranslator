@@ -31,6 +31,42 @@ namespace UnityGameTranslator.Core.UI.Components
         private const string SideRecordPrefix = "ScopeSide";
 
         /// <summary>
+        /// Change the side a button aims at, after it was built.
+        ///
+        /// 🔴 **Some buttons do not have one fixed side, and pretending otherwise was a defect.**
+        /// Taking a translation is Both when it is the latest of a lineage you lead, and Local when
+        /// it belongs to somebody else — the same button, deciding on who owns what. A side written
+        /// once at construction cannot say that, and said the reassuring half.
+        ///
+        /// ⚠ Goes through the record, so <see cref="Tint"/> keeps reading one source. Silent on a
+        /// button that was never adorned: a caller retargeting an ordinary button has made a
+        /// mistake, and inventing marks for it would hide the mistake rather than the button.
+        /// </summary>
+        public static void Retarget(ButtonRef button, EditSide side)
+        {
+            if (button?.Component == null) return;
+            Retarget(button.Component.gameObject, side);
+        }
+
+        /// <summary>Same, for a button held as a GameObject.</summary>
+        public static void Retarget(GameObject buttonObj, EditSide side)
+        {
+            if (buttonObj == null) return;
+
+            EditSide current;
+            if (!TryReadSide(buttonObj, out current)) return;
+            if (current == side) return;
+
+            var record = buttonObj.transform.Find(SideRecordPrefix + current);
+            if (record == null) return;
+
+            record.gameObject.name = SideRecordPrefix + side;
+
+            var selectable = buttonObj.GetComponent<Button>();
+            Tint(buttonObj, selectable == null || selectable.interactable);
+        }
+
+        /// <summary>
         /// Which side a button was adorned for, read from the button itself.
         ///
         /// False when it was never adorned — a caller tinting an ordinary button, which must do

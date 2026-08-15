@@ -74,7 +74,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // published translation and this machine carry the same thing — which is the question
             // the strip answers, rather than "which file does it write".
             _titleLabel = CreateScopedTitle(card, "TitleLabel", "Upload Translation",
-                                            EditScope.SideAfter(onThisMachine: true, published: true));
+                                            EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: true));
             RegisterExcluded(_titleLabel);
 
             UIStyles.CreateSpacer(card, 5);

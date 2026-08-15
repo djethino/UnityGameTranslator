@@ -43,7 +43,9 @@ namespace UnityGameTranslator.Core.UI.Panels
         // UI elements - Mod update notification
         private GameObject _modUpdateBox;
         private Text _modUpdateLabel;
+        private Text _modManagerHint;
         private ButtonRef _modUpdateBtn;
+        private ButtonRef _modManagerBtn;
         private ButtonRef _modIgnoreBtn;
 
         // UI elements - Translation sync notification
@@ -391,6 +393,15 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.SetLayoutElement(_modUpdateLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
             RegisterExcluded(_modUpdateLabel);
 
+            // ⚠ Only shown when the Manager has to be fetched. "Open Manager" is a verb that
+            // explains itself; "Get Manager" is an offer, and an offer with no reason beside it is
+            // one nobody takes.
+            _modManagerHint = UIFactory.CreateLabel(_modUpdateBox, "ModManagerHint",
+                "Or let the Manager keep it up to date", TextAnchor.MiddleLeft);
+            _modManagerHint.fontSize = UIStyles.FontSizeSmall;
+            UIFactory.SetLayoutElement(_modManagerHint.gameObject, minHeight: UIStyles.RowHeightSmall);
+            RegisterUIText(_modManagerHint);
+
             var btnRow = UIStyles.CreateFormRow(_modUpdateBox, "ModBtnRow", UIStyles.RowHeightMedium, 5);
 
             _modUpdateBtn = UIFactory.CreateButton(btnRow, "ModDownloadBtn", "Download");
@@ -398,6 +409,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIStyles.SetBackground(_modUpdateBtn.Component.gameObject, UIStyles.ButtonPrimary);
             _modUpdateBtn.OnClick += OnModUpdateClicked;
             RegisterExcluded(_modUpdateBtn.ButtonText);
+
+            // The other way to update, beside the manual one rather than in place of it. Secondary
+            // on purpose: whoever came here to grab a zip should still find the zip first.
+            _modManagerBtn = UIFactory.CreateButton(btnRow, "ModManagerBtn", "Get Manager");
+            UIFactory.SetLayoutElement(_modManagerBtn.Component.gameObject, minWidth: 100, minHeight: UIStyles.RowHeightNormal);
+            UIStyles.SetBackground(_modManagerBtn.Component.gameObject, UIStyles.ButtonSecondary);
+            _modManagerBtn.OnClick += OnModManagerClicked;
+            RegisterExcluded(_modManagerBtn.ButtonText);
 
             _modIgnoreBtn = UIFactory.CreateButton(btnRow, "ModIgnoreBtn", "Ignore");
             UIFactory.SetLayoutElement(_modIgnoreBtn.Component.gameObject, minWidth: 60, minHeight: UIStyles.RowHeightNormal);
@@ -641,6 +660,13 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // Show appropriate button
                 bool hasDirectDownload = !string.IsNullOrEmpty(info?.DownloadUrl);
                 SetDynamicText(_modUpdateBtn.ButtonText, hasDirectDownload ? "Download" : "View Release");
+
+                // The verb follows what pressing it will actually do — open the Manager already on
+                // this machine, or go and fetch it. Naming the wrong one is how a button that
+                // launches a program reads as a download, and the other way round.
+                bool managerHere = ManagerLink.IsOnThisMachine;
+                SetDynamicText(_modManagerBtn.ButtonText, managerHere ? "Open Manager" : "Get Manager");
+                _modManagerHint?.gameObject.SetActive(!managerHere);
             }
             else
             {
@@ -893,7 +919,15 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void AdjustHeight()
         {
             int height = 10; // padding
-            if (_modUpdateBox != null && _modUpdateBox.activeSelf) height += 60;
+
+            // ⚠ The mod box grew a line: the hint under the headline, which is only there while the
+            // Manager still has to be fetched. Counted for what is actually on screen — a fixed 80
+            // would leave a gap under the box for everybody who already has it.
+            if (_modUpdateBox != null && _modUpdateBox.activeSelf)
+            {
+                height += 60;
+                if (_modManagerHint != null && _modManagerHint.gameObject.activeSelf) height += 18;
+            }
             if (_syncBox != null && _syncBox.activeSelf) height += 60;
             if (_aiBox != null && _aiBox.activeSelf) height += 50;
             if (_connectionBox != null && _connectionBox.activeSelf) height += 20;
@@ -911,6 +945,18 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 TranslatorCore.OpenUrlSafe(url);
             }
+        }
+
+        /// <summary>
+        /// Opens the Manager, or the page to get it from — ManagerLink decides which, and does it.
+        /// </summary>
+        private void OnModManagerClicked()
+        {
+            ManagerLink.Open();
+
+            // Looked at again on the next refresh: somebody who just went to fetch it may come back
+            // with it installed, and the button should stop offering what they now have.
+            ManagerLink.Forget();
         }
 
         private void OnModIgnoreClicked()

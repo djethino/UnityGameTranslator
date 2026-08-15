@@ -109,6 +109,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private GameObject _modUpdateBanner;
         private Text _modUpdateLabel;
         private ButtonRef _modUpdateBtn;
+        private ButtonRef _modManagerBtn;
 
         // Tab system
         private TabBar _tabBar;
@@ -290,6 +291,18 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.SetLayoutElement(_modUpdateLabel.gameObject, flexibleWidth: 9999);
             RegisterExcluded(_modUpdateLabel);
 
+            // ⚠ Before the download button, and it is the only place on this banner where order is
+            // a statement: read left to right, the tool that does the whole job comes first and the
+            // manual zip stays available beside it. Neither is taken away.
+            _modManagerBtn = UIFactory.CreateButton(_modUpdateBanner, "ModManagerBtn", "Get Manager");
+            UIFactory.SetLayoutElement(_modManagerBtn.Component.gameObject, minWidth: 110, minHeight: UIStyles.RowHeightNormal);
+            UIStyles.SetBackground(_modManagerBtn.Component.gameObject, UIStyles.ButtonSecondary);
+            _modManagerBtn.OnClick += OnModManagerClicked;
+            RegisterExcluded(_modManagerBtn.ButtonText);
+            _helpZone?.Describe(_modManagerBtn.Component.gameObject,
+                "The Manager installs and updates the mod for every game on this machine. "
+                + "Opens it when it is already here, otherwise opens the page to get it.");
+
             _modUpdateBtn = UIFactory.CreateButton(_modUpdateBanner, "ModUpdateBtn", "Download");
             UIFactory.SetLayoutElement(_modUpdateBtn.Component.gameObject, minWidth: 90, minHeight: UIStyles.RowHeightNormal);
             UIStyles.SetBackground(_modUpdateBtn.Component.gameObject, UIStyles.ButtonPrimary);
@@ -310,6 +323,18 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 TranslatorCore.OpenUrlSafe(url);
             }
+        }
+
+        /// <summary>
+        /// Opens the Manager, or the page to get it from — ManagerLink decides which, and does it.
+        /// </summary>
+        private void OnModManagerClicked()
+        {
+            ManagerLink.Open();
+
+            // Looked at again next time this banner is drawn: somebody who just went to fetch it
+            // may come back with it installed, and the button should stop offering what they have.
+            ManagerLink.Forget();
         }
 
         private void OnResourcesLinkClicked()
@@ -931,6 +956,11 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // Show appropriate button text
                 bool hasDirectDownload = !string.IsNullOrEmpty(info?.DownloadUrl);
                 SetDynamicText(_modUpdateBtn.ButtonText, hasDirectDownload ? "Download" : "View Release");
+
+                // The verb follows what pressing it will do: open what is already on this machine,
+                // or go and fetch it.
+                SetDynamicText(_modManagerBtn.ButtonText,
+                    ManagerLink.IsOnThisMachine ? "Open Manager" : "Get Manager");
             }
         }
 

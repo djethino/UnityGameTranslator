@@ -5,6 +5,15 @@
     <ApiBaseUrl>https://unitygametranslator.asymptomatikgames.com/api/v1</ApiBaseUrl>
     <WebsiteBaseUrl>https://unitygametranslator.asymptomatikgames.com</WebsiteBaseUrl>
     <SseBaseUrl>https://sse-unitygametranslator.asymptomatikgames.com</SseBaseUrl>
+    <!--
+      Where somebody gets the Manager, offered beside the manual download.
+
+      /releases/latest is resolved by GitHub itself, so this never goes stale and costs no API
+      call: the mod knows the address without asking anything. Here rather than in the code
+      because a self-hosted setup redirects its own users somewhere else, exactly like the URLs
+      above.
+    -->
+    <ManagerReleaseUrl>https://github.com/djethino/unitygametranslator-manager/releases/latest</ManagerReleaseUrl>
   </PropertyGroup>
 
   <!-- Generate PluginInfo.g.cs with version and API constants before build -->
@@ -20,6 +29,8 @@ namespace UnityGameTranslator {
         public const string WebsiteBaseUrl = "$(WebsiteBaseUrl)"%3B
         /// &lt;summary&gt;Base URL for SSE streams (e.g., https://sse-example.com)&lt;/summary&gt;
         public const string SseBaseUrl = "$(SseBaseUrl)"%3B
+        /// &lt;summary&gt;Where the Manager is downloaded from, when it is not already on the machine&lt;/summary&gt;
+        public const string ManagerReleaseUrl = "$(ManagerReleaseUrl)"%3B
     }
 }
       </VersionFileContent>

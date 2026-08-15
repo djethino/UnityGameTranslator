@@ -1892,6 +1892,42 @@ namespace UnityGameTranslator.Core
             }
         }
 
+        /// <summary>
+        /// Starts a program on this machine. Returns false when it did not start, so the caller can
+        /// offer something else rather than leave a button that did nothing.
+        /// </summary>
+        /// <remarks>
+        /// 🔴 **Separate from <see cref="OpenUrlSafe"/> on purpose, and narrower.** That one refuses
+        /// anything but http(s) precisely so a URL arriving from the network or from a config file
+        /// can never become a command. This one runs a program, so the rule has to be stricter, and
+        /// it lives in the CALLER: the only path ever passed here is one we found ourselves on this
+        /// machine — a record the Manager wrote in its own folder, or a process already running
+        /// under this user. Nothing that reaches us over the network, and nothing from config.json,
+        /// may be handed to this. See ManagerLink, which is its only caller.
+        ///
+        /// ⚠ No arguments, ever. A program is started, never given instructions — an argument list
+        /// is where a path turns into a command line.
+        /// </remarks>
+        public static bool LaunchSafe(string path)
+        {
+            if (string.IsNullOrEmpty(path) || !System.IO.File.Exists(path))
+                return false;
+
+            try
+            {
+                using (System.Diagnostics.Process.Start(path)) { }
+                return true;
+            }
+            catch (Exception ex)
+            {
+                // The boundary with the operating system, which is allowed to refuse: a policy, an
+                // antivirus, a runtime that stripped the class. Logged rather than swallowed, and
+                // answered by the caller offering the download page instead.
+                LogWarning($"[Manager] Could not start {System.IO.Path.GetFileName(path)}: {ex.Message}");
+                return false;
+            }
+        }
+
         #endregion
 
         #region Config persistence

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using UniverseLib.UI;
+using UnityGameTranslator.Common;
 using UnityGameTranslator.Core.UI;
 
 namespace UnityGameTranslator.Core.UI.Components
@@ -416,8 +417,10 @@ namespace UnityGameTranslator.Core.UI.Components
                 UIFactory.SetLayoutElement(titleLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
             }
 
-            string by = "by " + translation.Uploader;
-            if (isOwnTranslation) by += " (you)";
+            // ⚠ One form for the whole ecosystem, composed in `common`: "@name", and "@name (you)"
+            // on your own. The mark is a WORD and not a colour — this row already spends colour on
+            // the lineage stripe, and a second meaning on the same channel reads as neither.
+            string by = "by " + People.Mention(translation.Uploader, isOwnTranslation);
             // The two things about a translation that catch the eye and are written nowhere else
             // on its row. Deliberately only two: a badge works by being rare, and the line count,
             // the review stage and the download count are already there in plain words.

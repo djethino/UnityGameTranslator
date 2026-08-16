@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityGameTranslator.Common;
 using UnityEngine.UI;
 using UniverseLib;
 using UniverseLib.UI;
@@ -708,7 +709,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 bool actionIsReview = false;
 
                 // Get owner name for context
-                string ownerName = serverState?.Uploader ?? "owner";
+                // One form for the ecosystem, and it marks your own name — see People.Mention.
+                string ownerName = People.MentionOf(serverState?.Uploader,
+                                                    TranslatorCore.Config.api_user);
 
                 // Translated as each message is built. Counts stay inline (the pipeline replaces
                 // numbers with placeholders, so every count shares one cache entry); the uploader
@@ -1081,7 +1084,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void OnSyncForkClicked()
         {
             var serverState = TranslatorCore.ServerState;
-            string ownerName = serverState?.Uploader ?? "the original owner";
+            string ownerName = People.MentionOf(serverState?.Uploader,
+                                                TranslatorCore.Config.api_user);
 
             // Show warning dialog before forking (destructive action)
             TranslatorUIManager.ConfirmationPanel?.Show(

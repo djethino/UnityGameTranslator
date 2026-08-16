@@ -1071,7 +1071,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                         {
                             // Count inline (placeholdered), uploader appended as data
                             message = Tr($"You have {localChanges} changes compared to the translation of")
-                                      + $" @{serverState.Uploader}";
+                                      + " " + People.MentionOf(serverState.Uploader,
+                                                                  TranslatorCore.Config.api_user);
                         }
                     }
                     break;
@@ -1312,7 +1313,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (existsOnServer)
             {
                 _sourceLabel.text = Tr("Source:")
-                    + $" {serverState.Uploader ?? "Website"} (#{serverState.SiteId})";
+                    + $" {People.MentionOf(serverState.Uploader, TranslatorCore.Config.api_user)}"
+                    + $" (#{serverState.SiteId})";
 
                 // Role indicator.
                 //
@@ -1339,7 +1341,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                     case TranslationRole.Branch:
                         _roleLabel.text = "[BRANCH] "
                             + Tr("Your changes are reviewed by")
-                            + $" @{serverState.MainUsername ?? serverState.Uploader}";
+                            + " " + People.MentionOf(serverState.MainUsername ?? serverState.Uploader,
+                                                        TranslatorCore.Config.api_user);
                         _roleLabel.color = UIStyles.StatusWarning;
                         break;
                     default:
@@ -1481,7 +1484,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 uploadAction = "Contribute";
                 uploadHint = Tr("Contribute as a branch to")
-                    + $" @{state.Uploader}";
+                    + " " + People.MentionOf(state.Uploader, TranslatorCore.Config.api_user);
             }
             else
             {
@@ -1576,7 +1579,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                         hint = Tr("The original translation has changed — Update from Main brings it in");
                     else if (isBranch)
                         hint = Tr("Fork = continue on your own, leaving the translation of")
-                               + " @" + (state.MainUsername ?? state.Uploader ?? "?");
+                               + " " + People.MentionOf(state.MainUsername ?? state.Uploader,
+                                                           TranslatorCore.Config.api_user);
                     else if (isMain && hasBranches)
                         hint = Tr("Review Branches opens the website to accept or reject contributions");
                     else if (canCompare)
@@ -1756,7 +1760,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 TranslatorUIManager.ConfirmationPanel?.Show(
                     "Download Latest Version?",
-                    $"This will replace your {localChanges} local change(s) with @{serverState.Uploader}'s latest version.\n\n" +
+                    $"This will replace your {localChanges} local change(s) with the latest version from "
+                    + $"{People.MentionOf(serverState.Uploader, TranslatorCore.Config.api_user)}.\n\n" +
                     "Your local changes will be lost. This cannot be undone.",
                     "Replace",
                     async () => await PerformDownloadLatest(serverState),
@@ -2036,7 +2041,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TranslatorUIManager.ConfirmationPanel?.Show(
                     "Switch to Different Translation?",
                     $"This translation is not related to yours — it is a separate translation, not an update.\n\n" +
-                    $"Your current translation ({localCount} entries) will be replaced with @{selectedTranslation.Uploader}'s translation.\n\n" +
+                    $"Your current translation ({localCount} entries) will be replaced with the translation from "
+                    + $"{People.MentionOf(selectedTranslation.Uploader, TranslatorCore.Config.api_user)}.\n\n" +
                     "You will lose your current translation and its history.\n\n" +
                     "This cannot be undone.",
                     "Switch Translation",
@@ -2049,7 +2055,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // WARNING: Local changes will be lost
                 TranslatorUIManager.ConfirmationPanel?.Show(
                     "Replace Local Translation?",
-                    $"You have {localChanges} local change(s) that will be replaced.\n\nDownload '{selectedTranslation.TargetLanguage}' by {selectedTranslation.Uploader}?",
+                    $"You have {localChanges} local change(s) that will be replaced.\n\nDownload "
+                    + $"'{selectedTranslation.TargetLanguage}' by "
+                    + $"{People.MentionOf(selectedTranslation.Uploader, TranslatorCore.Config.api_user)}?",
                     "Replace",
                     async () => await PerformDownload(selectedTranslation),
                     isDanger: true

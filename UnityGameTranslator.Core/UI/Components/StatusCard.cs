@@ -443,7 +443,12 @@ namespace UnityGameTranslator.Core.UI.Components
                                  finished: TranslatorCore.ServerState?.Status is string published
                                      ? string.Equals(published, "complete",
                                                      StringComparison.OrdinalIgnoreCase)
-                                     : (bool?)null);
+                                     : (bool?)null,
+
+                                 // The Main's other declaration, and the one a would-be
+                                 // contributor needs before writing anything. Null on a server
+                                 // that never sent it — unknown is not "solo work".
+                                 acceptsContributions: TranslatorCore.ServerState?.AcceptsBranches);
 
             var shown = new List<Badge>();
             foreach (var badge in all)

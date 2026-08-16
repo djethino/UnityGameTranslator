@@ -7294,6 +7294,14 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public string Status { get; set; }
 
+        /// <summary>
+        /// Whether this lineage takes contributions — the Main's own decision.
+        ///
+        /// Null when unknown: an older server, or a lineage nobody has asked about yet. Unknown
+        /// is NOT "solo work", and every reader must leave it alone rather than pick one.
+        /// </summary>
+        public bool? AcceptsBranches { get; set; }
+
         /// <summary>User's role for this translation</summary>
         public TranslationRole Role { get; set; } = TranslationRole.None;
 

@@ -2277,6 +2277,11 @@ namespace UnityGameTranslator.Core.UI
                     serverState.Notes = translation["notes"]?.Value<string>();
                     serverState.ResourcesUrl = translation["resources_url"]?.Value<string>();
 
+                    // Same reason as the status right above: this is the path the main screen
+                    // takes at startup, and learning it only when somebody opens the upload panel
+                    // would be learning it at the one moment it is too late to be useful.
+                    serverState.AcceptsBranches = translation["accepts_branches"]?.ToObject<bool?>();
+
                     // A branch now also hears about the Main it derives from. Absent
                     // from an older site: stays null, which reads as "unknown" and
                     // never as "the Main is gone".

@@ -45,6 +45,12 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// <summary>The author's "this is finished". Hidden for a Branch, which inherits.</summary>
         private Toggle _statusToggle;
 
+        /// <summary>
+        /// The Main's decision on contributions. A Branch never sees it, and an older server
+        /// never answers about it — so every read of it is guarded.
+        /// </summary>
+        private Toggle _acceptBranchesToggle;
+
         /// <summary>Says what a Branch inherits, in place of the toggle it may not use.</summary>
         private Text _statusInherited;
         private Components.HelpZone _helpZone;
@@ -133,6 +139,22 @@ namespace UnityGameTranslator.Core.UI.Panels
             _statusInherited = CreateSmallLabel(statusBox, "StatusInherited", "");
             _statusInherited.color = UIStyles.TextMuted;
             RegisterExcluded(_statusInherited);
+
+            // 🔴 **Whether anybody may contribute — the Main's other declaration.** Beside the
+            // first for the same reason: only a Main can take it, only a Main is shown it, and it
+            // is off unless somebody says otherwise. Keeping a translation open to contributions
+            // is work nobody agreed to by publishing.
+            //
+            // ⚠ The reminder says what a contribution IS. Somebody publishing their first
+            // translation has no idea, and a checkbox whose subject is unknown gets left alone —
+            // which happens to be the safe answer here, but for the wrong reason.
+            var (branchesRow, branchesToggle) = UIStyles.CreateStyledToggle(
+                statusBox, "AcceptBranchesToggle", "Let others contribute to this translation");
+            _acceptBranchesToggle = branchesToggle;
+            _helpZone?.Describe(branchesRow,
+                "A contribution is a copy of your work with someone else's changes, sent to you to "
+                + "accept or not. Leave this off to work alone — others can still publish their "
+                + "own version of it.");
 
             // Note: Translation type is now auto-calculated by server from HVASM tags
             // (Human/Validated/AI/System/Missing percentages in the file)
@@ -322,7 +344,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                             Notes = result.ExistingTranslation?.Notes,
                             Hash = result.ExistingTranslation?.FileHash,
                             ResourcesUrl = result.ExistingTranslation?.ResourcesUrl,
-                            Status = result.ExistingTranslation?.Status
+                            Status = result.ExistingTranslation?.Status,
+                            AcceptsBranches = result.AcceptsBranches
                         };
 
                         // Capture for closure
@@ -372,6 +395,35 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                         // Capture for closure
                         var uploader = TranslatorCore.ServerState.Uploader ?? "unknown";
+
+                        // 🔴 **The Main may not take contributions at all.** Announcing "Contribute"
+                        // and letting the server refuse after the click is the one thing this
+                        // check exists to avoid: the work is already done by then, and the answer
+                        // arrives as a failure rather than as a choice.
+                        //
+                        // ⚠ Only when the server SAID so. AcceptsBranches is null on a server that
+                        // predates the field, and null means "not asked" — behaving as a refusal
+                        // there would put words in an author's mouth.
+                        if (result.AcceptsBranches == false)
+                        {
+                            TranslatorUIManager.RunOnMainThread(() =>
+                            {
+                                _uploadMode = UploadMode.Branch;
+                                RefreshStatusControl();
+                                SetDynamicText(_titleLabel, "This translation is solo work");
+                                _modeInfoLabel.text = "@" + uploader + " "
+                                    + Tr("works alone on this one and does not take contributions.")
+                                    + System.Environment.NewLine
+                                    + Tr("Your lines are safe. Make yours independent to publish them.");
+                                SetDynamicText(_uploadBtn.ButtonText, "Contribute");
+                                DescribeUploadButton("This translation does not take contributions. Make yours independent instead — it keeps your lines and publishes them under your own name.");
+                                _statusLabel.text = "";
+                                _isChecking = false;
+                                _uploadBtn.Component.interactable = false;
+                            });
+
+                            return;
+                        }
 
                         TranslatorUIManager.RunOnMainThread(() =>
                         {
@@ -532,6 +584,16 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             _statusInherited.gameObject.SetActive(branch);
 
+            // The Main's other declaration follows the same rule: shown to a Main, hidden from a
+            // contributor. Hidden rather than disabled — a control a branch may never use is not
+            // a choice greyed out, it is a question that is not theirs.
+            if (_acceptBranchesToggle != null)
+            {
+                _acceptBranchesToggle.gameObject.SetActive(!branch);
+                if (_acceptBranchesToggle.transform.parent != null)
+                    _acceptBranchesToggle.transform.parent.gameObject.SetActive(!branch);
+            }
+
             if (branch)
             {
                 _statusInherited.text = TranslatorCore.TranslateOwnUIDynamic(
@@ -542,6 +604,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             var published = TranslatorCore.ServerState?.Status;
             _statusToggle.isOn =
                 string.Equals(published, "complete", StringComparison.OrdinalIgnoreCase);
+
+            // ⚠ Only when the server answered. Null means it never said, and forcing the box off
+            // there would show "solo work" as this translation's state on the strength of a
+            // missing field — then write it back on the next upload.
+            if (_acceptBranchesToggle != null && TranslatorCore.ServerState?.AcceptsBranches is bool open)
+                _acceptBranchesToggle.isOn = open;
         }
 
         private void ConfirmThenUpload()
@@ -638,6 +706,13 @@ namespace UnityGameTranslator.Core.UI.Panels
                     Status = WritingOnABranch
                         ? null
                         : (_statusToggle != null && _statusToggle.isOn ? "complete" : "in_progress"),
+
+                    // ⚠ Null on a branch, for the same reason as Status: the decision belongs to
+                    // the Main of the lineage, and a contributor sending it would be answering for
+                    // somebody else's translation.
+                    AcceptsBranches = WritingOnABranch
+                        ? (bool?) null
+                        : (_acceptBranchesToggle != null && _acceptBranchesToggle.isOn),
                     Content = BuildTranslationContent(),
                     Notes = notes,
                     ResourcesUrl = string.IsNullOrEmpty(resourcesUrl) ? null : resourcesUrl
@@ -663,7 +738,14 @@ namespace UnityGameTranslator.Core.UI.Panels
                         Hash = result.FileHash,
                         // Type is now auto-calculated by server from HVASM tags
                         Notes = notes,
-                        ResourcesUrl = string.IsNullOrEmpty(resourcesUrl) ? null : resourcesUrl
+                        ResourcesUrl = string.IsNullOrEmpty(resourcesUrl) ? null : resourcesUrl,
+
+                        // What was just sent IS what the site now holds — reading it back would
+                        // cost a round trip to learn something this client decided a second ago.
+                        // ⚠ Null on a branch, where nothing was sent about it.
+                        AcceptsBranches = WritingOnABranch
+                            ? (bool?) null
+                            : (_acceptBranchesToggle != null && _acceptBranchesToggle.isOn)
                     };
                     TranslatorCore.LastSyncedHash = result.FileHash;
                     // Keep the local file in step with what was just published

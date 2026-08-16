@@ -808,7 +808,12 @@ namespace UnityGameTranslator.Core
                     // Null on older servers: "unknown", never "the Main is fine"
                     MainMissing = data["main_missing"]?.ToObject<bool?>(),
                     // Use ToObject<int?>() to handle explicit JSON null values
-                    BranchesCount = data["branches_count"]?.ToObject<int?>() ?? 0
+                    BranchesCount = data["branches_count"]?.ToObject<int?>() ?? 0,
+
+                    // ⚠ ToObject<bool?> rather than Value<bool>: a missing field must stay null
+                    // and not become false. See the properties.
+                    AcceptsBranches = data["accepts_branches"]?.ToObject<bool?>(),
+                    BranchFrozen = data["branch_frozen"]?.ToObject<bool?>()
                 };
 
                 // Votes on the published translation of this lineage. Absent on older servers,
@@ -1299,6 +1304,7 @@ namespace UnityGameTranslator.Core
                     content = request.Content,
                     notes = request.Notes,
                     resources_url = request.ResourcesUrl,
+                    accepts_branches = request.AcceptsBranches,
                     // Provenance of a fork, sent in the REQUEST rather than inside the file: an
                     // older version rebuilds translations.json from the metadata it knows and
                     // would drop an unknown block on its next save. Null on every upload that is
@@ -2133,6 +2139,12 @@ namespace UnityGameTranslator.Core
         public string Content { get; set; }
         public string Notes { get; set; }
         public string ResourcesUrl { get; set; }
+
+        /// <summary>
+        /// Whether this lineage takes contributions. Null on a branch — the decision belongs to
+        /// the Main, and a contributor sending it would answer for somebody else's translation.
+        /// </summary>
+        public bool? AcceptsBranches { get; set; }
     }
 
     public class UploadResult
@@ -2162,6 +2174,21 @@ namespace UnityGameTranslator.Core
         public bool? MainMissing { get; set; }
         /// <summary>Number of branches contributing to this UUID (if this is Main)</summary>
         public int BranchesCount { get; set; }
+
+        /// <summary>
+        /// Whether this lineage takes contributions at all — the Main's own decision.
+        ///
+        /// Null on a server that predates the field. Null is NOT "no": announcing that somebody
+        /// works alone because a server said nothing would put words in their mouth, so an unknown
+        /// answer behaves exactly as before and the refusal, if any, arrives from the upload.
+        /// </summary>
+        public bool? AcceptsBranches { get; set; }
+
+        /// <summary>
+        /// A branch whose Main has since closed: nothing can be done with it as a branch any more.
+        /// The way on is to publish it as a translation of its own.
+        /// </summary>
+        public bool? BranchFrozen { get; set; }
         public UuidCheckTranslationInfo ExistingTranslation { get; set; } // For UPDATE
         public UuidCheckTranslationInfo OriginalTranslation { get; set; } // For FORK
 

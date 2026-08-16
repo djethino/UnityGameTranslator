@@ -572,6 +572,29 @@ namespace UnityGameTranslator.Core.UI.Panels
             _uploadMode == UploadMode.Branch
             || TranslatorCore.ServerState?.Role == TranslationRole.Branch;
 
+        /// <summary>
+        /// Whether this upload must say NOTHING about contributions.
+        ///
+        /// Two cases, and the second is the one that bites. A branch never decides it. And a
+        /// translation ALREADY published under this account whose current setting we never learned
+        /// — an older site, or a check that did not answer — must not be answered for: the box
+        /// reads unticked because nothing filled it, and sending that would close a lineage its
+        /// owner had opened, freezing every contributor writing into it.
+        ///
+        /// ⚠ A first publication is deliberately not in here. Nothing is published, so there is
+        /// no setting to lose, the box is the answer, and closed is the default everybody gets.
+        /// </summary>
+        private bool ContributionsUnknownHere
+        {
+            get
+            {
+                if (WritingOnABranch) return true;
+
+                var state = TranslatorCore.ServerState;
+                return state != null && state.Exists && state.IsOwner && state.AcceptsBranches == null;
+            }
+        }
+
         private void RefreshStatusControl()
         {
             if (_statusToggle == null || _statusInherited == null) return;
@@ -710,7 +733,14 @@ namespace UnityGameTranslator.Core.UI.Panels
                     // ⚠ Null on a branch, for the same reason as Status: the decision belongs to
                     // the Main of the lineage, and a contributor sending it would be answering for
                     // somebody else's translation.
-                    AcceptsBranches = WritingOnABranch
+                    //
+                    // 🔴 Null ALSO on an already-published translation whose current setting we
+                    // never learned — an older site, or a check that failed. The box would then
+                    // read unticked without anybody having unticked it, and sending that would
+                    // CLOSE the lineage and freeze its contributors. Omitted, the server keeps
+                    // what it holds. A first publication is not that case: nothing is published,
+                    // so the unticked box is the answer, and closed is the default.
+                    AcceptsBranches = ContributionsUnknownHere
                         ? (bool?) null
                         : (_acceptBranchesToggle != null && _acceptBranchesToggle.isOn),
                     Content = BuildTranslationContent(),
@@ -742,8 +772,9 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                         // What was just sent IS what the site now holds — reading it back would
                         // cost a round trip to learn something this client decided a second ago.
-                        // ⚠ Null on a branch, where nothing was sent about it.
-                        AcceptsBranches = WritingOnABranch
+                        // ⚠ Null wherever nothing was sent about it, so the same reasoning as
+                        // above applies: unknown stays unknown rather than becoming "solo work".
+                        AcceptsBranches = ContributionsUnknownHere
                             ? (bool?) null
                             : (_acceptBranchesToggle != null && _acceptBranchesToggle.isOn)
                     };

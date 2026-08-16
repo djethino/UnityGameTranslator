@@ -2259,6 +2259,12 @@ namespace UnityGameTranslator.Core.UI
                     // as "the Main is fine".
                     MainMissing = data["main_missing"]?.ToObject<bool?>(),
                     MainIgnoring = data["main_ignoring"]?.ToObject<bool?>(),
+
+                    // 🔴 Read at the TOP level, because it is a fact about the lineage. Taken from
+                    // the caller's own row alone, it reached only somebody who had published into
+                    // it — never the player running somebody else's translation, who is precisely
+                    // the person deciding whether to send their corrections back.
+                    AcceptsBranches = data["accepts_branches"]?.ToObject<bool?>(),
                     MergedLinesTotal = data["merged_lines_total"]?.ToObject<int?>() ?? 0,
                 };
 
@@ -2280,7 +2286,11 @@ namespace UnityGameTranslator.Core.UI
                     // Same reason as the status right above: this is the path the main screen
                     // takes at startup, and learning it only when somebody opens the upload panel
                     // would be learning it at the one moment it is too late to be useful.
-                    serverState.AcceptsBranches = translation["accepts_branches"]?.ToObject<bool?>();
+                    // ⚠ Only when the row carries it: the lineage answer is already in from the
+                    // top level above, and an absent key here must not wipe it.
+                    if (translation["accepts_branches"] != null)
+                        serverState.AcceptsBranches = translation["accepts_branches"].ToObject<bool?>();
+
                     serverState.BranchFrozen = translation["branch_frozen"]?.ToObject<bool?>();
 
                     // A branch now also hears about the Main it derives from. Absent

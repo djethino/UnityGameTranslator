@@ -633,6 +633,9 @@ namespace UnityGameTranslator.Core
                 Type = t["type"]?.Value<string>(),
                 Notes = t["notes"]?.Value<string>(),
                 ResourcesUrl = t["resources_url"]?.Value<string>(),
+                // Whether its Main takes contributions. Null on a server that predates the
+                // field, and null shows nothing — silence is not "solo work".
+                AcceptsBranches = t["accepts_branches"]?.ToObject<bool?>(),
                 VoteCount = t["vote_count"]?.Value<int>() ?? 0,
                 // Null for anonymous callers and for servers older than this field.
                 UserVote = t["user_vote"]?.Value<int?>(),
@@ -1961,6 +1964,9 @@ namespace UnityGameTranslator.Core
         public string Type { get; set; }
         public string Notes { get; set; }
         public string ResourcesUrl { get; set; }
+        /// <summary>Whether this lineage takes contributions. Null on an older server, and null
+        /// is not "no" — nothing is said rather than inventing somebody's decision.</summary>
+        public bool? AcceptsBranches { get; set; }
         public int VoteCount { get; set; }
         /// <summary>This user's own vote (+1 / -1), null when they haven't voted, aren't
         /// signed in, or the server predates the field.</summary>

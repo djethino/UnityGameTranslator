@@ -501,6 +501,14 @@ namespace UnityGameTranslator.Core.UI.Components
             if (!string.IsNullOrEmpty(dateLabel)) facts.Add(dateLabel);
             if (string.Equals(translation.Status, "complete", StringComparison.OrdinalIgnoreCase))
                 facts.Add("complete");
+
+            // ⚠ Said only when it is TRUE, unlike the badge strip on the current translation,
+            // which shows both states. Two different jobs: the strip describes the one file you
+            // hold, this line helps you choose between candidates — and working alone is the
+            // ordinary state, so putting "solo work" on nine rows out of ten would bury the one
+            // row that differs. Same rule as "complete" right above.
+            if (translation.AcceptsBranches == true) facts.Add("accepts contributions");
+
             if (translation.DownloadCount > 0) facts.Add($"{translation.DownloadCount} downloads");
 
 

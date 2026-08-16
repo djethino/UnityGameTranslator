@@ -738,6 +738,28 @@ namespace UnityGameTranslator.Core.UI.Components
                 return;
             }
 
+            // Then the road that closed. Like the orphan above, nothing in the game shows it and
+            // no amount of work will reopen it — the Main decided to work alone. Not dismissable
+            // for the same reason: it is not an opinion about somebody, it is what may still be
+            // done with this file.
+            if (state.BranchFrozen == true)
+            {
+                if (_emptyLabel != null)
+                {
+                    _emptyLabel.color = UIStyles.StatusError;
+                    _emptyLabel.text = TranslatorCore.TranslateOwnUIDynamic(
+                        "The translation you contribute to no longer takes contributions: this can no longer be sent.");
+                }
+
+                if (_emptyBtn?.ButtonText != null)
+                {
+                    _emptyBtn.ButtonText.text = TranslatorCore.TranslateOwnUIDynamic("Manage online");
+                }
+
+                _emptyRow.SetActive(true);
+                return;
+            }
+
             // Told, came back, took nothing in. Not silence — that is dormancy, and it is said
             // elsewhere — but a judgement about somebody else, so it is said ONCE and carries a
             // way to put it away for good.

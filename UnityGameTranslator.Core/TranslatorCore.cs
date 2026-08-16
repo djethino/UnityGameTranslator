@@ -7302,6 +7302,16 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public bool? AcceptsBranches { get; set; }
 
+        /// <summary>
+        /// This branch's Main has closed to contributions since: it can no longer be sent, nor
+        /// have its details changed.
+        ///
+        /// 🔴 Nothing inside the game changes when it happens — the file opens, translates and
+        /// saves exactly as before — so unless a screen says it, the discovery happens at the
+        /// moment of publishing, after the work. Null is unknown, never "all is well".
+        /// </summary>
+        public bool? BranchFrozen { get; set; }
+
         /// <summary>User's role for this translation</summary>
         public TranslationRole Role { get; set; } = TranslationRole.None;
 

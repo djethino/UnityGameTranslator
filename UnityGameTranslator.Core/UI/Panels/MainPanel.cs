@@ -1157,8 +1157,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
 
             _backupsLabel.text = saved == 0 && automatic == 0
-                ? "Backups: none kept yet"
-                : $"Backups: {saved} saved by you, {automatic} automatic";
+                ? "Backups: none yet"
+                : $"Backups: {saved} of your own, {automatic} automatic";
         }
 
         private void RefreshStatusCard()

@@ -14,13 +14,13 @@ namespace UnityGameTranslator.Core.UI.Panels
     /// 🔴 **A panel and not a section on the main screen.** The main screen already carries five
     /// sections; a list of a dozen rows with three verbs each would swamp the one thing it exists
     /// to show — what your translation IS right now. The main screen gains a single line naming
-    /// how many copies exist and a way in, which is how Merge, Upload and Login already work here.
+    /// how many backups exist and a way in, which is how Merge, Upload and Login already work here.
     ///
-    /// ⚠ **Two lists, never one.** They do not live equally long: an automatic copy ages out on
-    /// its own, a saved one stays until somebody removes it. Two rows that look alike and do not
+    /// ⚠ **Two lists, never one.** They do not live equally long: an automatic backup ages out
+    /// on its own, one you took stays until you delete it. Two rows that look alike and do not
     /// survive alike is how people lose things they thought were kept.
     ///
-    /// ⚠ Everything the rows say comes from <see cref="Backups"/>, so a copy taken in the game and
+    /// ⚠ Everything the rows say comes from <see cref="Backups"/>, so a backup taken in the game and
     /// read in the Manager reads identically. What differs is only the drawing.
     /// </summary>
     public class BackupsPanel : TranslatorPanelBase
@@ -63,7 +63,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             var head = CreateAdaptiveCard(header, "BackupsHead", PanelWidth - 40);
 
-            var title = CreateTitle(head, "Title", "Backups");
+            var title = CreateTitle(head, "Title", Backups.ScreenTitle);
             RegisterUIText(title);
 
             // ⚠ Said once, at the top. Somebody looking at a list of their own work deserves to
@@ -127,14 +127,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             // own scroll area, so its heading is always above its own rows and never above
             // somebody else's.
             Group(Backups.SavedHeading, $"{saved.Count} of {Backups.SavedKept}", saved,
-                  "Nothing kept yet. Keep one before you try something, and you can walk back out "
+                  "No backups yet. Take one before you try something, and you can walk back out "
                   + "of whatever you try.",
                   height: 190, saved: true);
 
             UIStyles.CreateSpacer(_listHost, 12);
 
             Group(Backups.AutomaticHeading, Backups.AutomaticNote, automatic,
-                  "Nothing yet. One is kept whenever something replaces your translation.",
+                  "Nothing yet. One is taken whenever something replaces your translation.",
                   height: 150);
         }
 
@@ -146,7 +146,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _nowLabel.text = $"Now: {lines} lines";
         }
 
-        /// <summary>Whether another copy may be taken, and why not when it may not.</summary>
+        /// <summary>Whether another backup may be taken, and why not when it may not.</summary>
         private void RefreshSaveButton()
         {
             if (_saveBtn?.Component == null) return;
@@ -158,7 +158,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // ⚠ Never a control that cannot be pressed without words saying why.
             _helpZone?.Describe(_saveBtn.Component.gameObject, can
-                ? "Keeps the translation as it stands, with the fonts and images it uses."
+                ? "Backs up the translation as it stands, with the fonts and images it uses."
                 : why);
         }
 
@@ -245,7 +245,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             var filler = UIFactory.CreateUIObject("Filler", row);
             UIFactory.SetLayoutElement(filler, flexibleWidth: 9999, minHeight: 1);
 
-            _saveBtn = CreatePrimaryButton(row, "SaveBtn", "Save a copy");
+            _saveBtn = CreatePrimaryButton(row, "SaveBtn", "Backup");
             _saveBtn.OnClick += SaveCopy;
             RegisterUIText(_saveBtn.ButtonText);
 
@@ -306,7 +306,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 RegisterUIText(warn);
             }
 
-            // ⚠ Absent entirely when there is nothing to say, rather than an empty line: a copy
+            // ⚠ Absent entirely when there is nothing to say, rather than an empty line: a backup
             // taken a second ago, unnamed and with no assets, is one line and no more.
             if (details.Count > 0)
             {
@@ -338,8 +338,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             restore.OnClick += () => ConfirmRestore(entry);
             RegisterUIText(restore.ButtonText);
             _helpZone?.Describe(restore.Component.gameObject,
-                "Puts this one back in the game. What you have now is kept first, so this can be "
-                + "walked back.");
+                "Puts this backup into the game. What is there now is backed up first, so this "
+                + "can be walked back.");
 
             if (entry.IsSaved)
             {
@@ -353,7 +353,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 delete.OnClick += () => ConfirmDelete(entry);
                 RegisterUIText(delete.ButtonText);
                 _helpZone?.Describe(delete.Component.gameObject,
-                    "Removes this copy and frees a slot. Nothing else is touched.");
+                    "Deletes this backup and frees a slot. Nothing else is touched.");
             }
             else
             {
@@ -373,7 +373,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 };
                 RegisterUIText(keep.ButtonText);
                 _helpZone?.Describe(keep.Component.gameObject,
-                    "Moves it in with the ones you saved, so it stops ageing out.");
+                    "Moves it into " + Backups.SavedHeading + ", so it stops ageing out.");
             }
         }
 
@@ -407,7 +407,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (TranslationBackups.SaveCopy() == null)
             {
                 TranslatorUIManager.StatusOverlay?.ShowToast(
-                    Backups.WhyCannotSave(TranslationBackups.List()) ?? "Could not keep a copy.",
+                    Backups.WhyCannotSave(TranslationBackups.List()) ?? "It could not be kept.",
                     StatusOverlay.ToastTone.Off);
             }
 
@@ -446,7 +446,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void ConfirmDelete(BackupEntry entry)
         {
             var what = string.IsNullOrEmpty(entry.Label)
-                ? $"the copy from {entry.At:dd MMM HH:mm}"
+                ? $"from {entry.At:dd MMM HH:mm}"
                 : $"\"{entry.Label}\"";
 
             TranslatorUIManager.ConfirmationPanel?.Show(

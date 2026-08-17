@@ -270,10 +270,22 @@ namespace UnityGameTranslator.Core.UI.Panels
             var text = UIFactory.CreateVerticalGroup(box, "Text", false, false, true, true, 1);
             UIFactory.SetLayoutElement(text, flexibleWidth: 9999);
 
-            // ── what it is ──
+            // 🔴 **What identifies stays on the first line; what qualifies goes underneath,
+            // small.** Everything on one line grew wider than the row and pushed against the
+            // verbs beside it. Split in two, nothing is cut and the row reads the way every other
+            // list in this product reads.
             var facts = $"{entry.At:dd MMM HH:mm}   {entry.Lines} lines";
-            if (entry.ByHand > 0) facts += $" · {entry.ByHand} by hand";
-            if (entry.WithAssets) facts += " · with fonts and images";
+
+            var details = new List<string>();
+
+            // The name somebody gave it, or the act that caused it — first, because it is what
+            // the eye looks for. An unnamed saved copy says nothing here: "Saved by you" would be
+            // the heading of the very list it sits in, repeated on every row.
+            if (!string.IsNullOrEmpty(entry.Label)) details.Add("\"" + entry.Label + "\"");
+            else if (!entry.IsSaved) details.Add(Backups.Describe(entry.Reason, entry.By));
+
+            if (entry.ByHand > 0) details.Add($"{entry.ByHand} by hand");
+            if (entry.WithAssets) details.Add("with fonts and images");
 
             var factsLabel = UIFactory.CreateLabel(text, "Facts", facts, TextAnchor.MiddleLeft);
             factsLabel.color = UIStyles.TextPrimary;
@@ -294,25 +306,20 @@ namespace UnityGameTranslator.Core.UI.Panels
                 RegisterUIText(warn);
             }
 
-            // 🔴 **Nothing when there is nothing to add.** An unnamed saved copy used to print
-            // "Saved by you" — the heading of the very list it sits in — on every single row: a
-            // whole line, repeated, saying what the block above already said. The act is worth a
-            // line on an automatic copy, where it differs from row to row; a name is worth one
-            // when somebody wrote it. Otherwise the row is the date and the counts.
-            var subtitle = !string.IsNullOrEmpty(entry.Label) ? "\"" + entry.Label + "\""
-                         : entry.IsSaved ? null
-                         : Backups.Describe(entry.Reason, entry.By);
-
-            if (subtitle != null)
+            // ⚠ Absent entirely when there is nothing to say, rather than an empty line: a copy
+            // taken a second ago, unnamed and with no assets, is one line and no more.
+            if (details.Count > 0)
             {
-                var subtitleLabel = UIFactory.CreateLabel(text, "Why", subtitle, TextAnchor.MiddleLeft);
+                var subtitleLabel = UIFactory.CreateLabel(text, "Why", string.Join(" · ", details),
+                                                          TextAnchor.MiddleLeft);
                 subtitleLabel.color = UIStyles.TextSecondary;
                 subtitleLabel.fontSize = UIStyles.FontSizeHint;
                 UIFactory.SetLayoutElement(subtitleLabel.gameObject,
                                            minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999);
 
-                if (string.IsNullOrEmpty(entry.Label)) RegisterUIText(subtitleLabel);
-                else RegisterExcluded(subtitleLabel);
+                // ⚠ Excluded from the mod's own translation pass: it carries a name somebody
+                // wrote and figures, neither of which is ours to rewrite.
+                RegisterExcluded(subtitleLabel);
             }
 
             if (_renaming == entry.Id)

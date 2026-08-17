@@ -133,29 +133,21 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             RefreshHeader(saved.Count);
 
-            Section(Backups.SavedHeading, null);
+            // 🔴 **Two lists, and they must LOOK like two.** Both groups used to be rows in one
+            // scrolling column with a bold line between them: the headings drifted away with the
+            // rows, nothing said which heading a row belonged to, and by the fifth entry the
+            // screen was one undifferentiated list. Each group now owns a titled block with its
+            // own scroll area, so its heading is always above its own rows and never above
+            // somebody else's.
+            Group(Backups.SavedHeading, $"{saved.Count} of {Backups.SavedKept}", saved,
+                  "Nothing kept yet. \"Save a copy\" puts one here before you try something.",
+                  height: 190);
 
-            if (saved.Count == 0)
-            {
-                Empty("Nothing kept yet. \"Save a copy\" puts one here before you try something.");
-            }
-            else
-            {
-                foreach (var entry in saved) Row(entry);
-            }
+            UIStyles.CreateSpacer(_listHost, 12);
 
-            UIStyles.CreateSpacer(_listHost, 10);
-
-            Section(Backups.AutomaticHeading, Backups.AutomaticNote);
-
-            if (automatic.Count == 0)
-            {
-                Empty("Nothing yet. One is kept whenever something replaces your translation.");
-            }
-            else
-            {
-                foreach (var entry in automatic) Row(entry);
-            }
+            Group(Backups.AutomaticHeading, Backups.AutomaticNote, automatic,
+                  "Nothing yet. One is kept whenever something replaces your translation.",
+                  height: 150);
         }
 
         private void RefreshHeader(int savedCount)
@@ -176,43 +168,71 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 _saveBtn.Component.interactable = can;
 
-                // ⚠ Never a control that cannot be pressed without words saying why — the rule
-                // this product holds everywhere.
+                // ⚠ Never a control that cannot be pressed without words saying why.
                 _helpZone?.Describe(_saveBtn.Component.gameObject, can
                     ? "Keeps the translation as it stands, with the fonts and images it uses."
                     : why);
             }
         }
 
-        private void Section(string heading, string note)
+        /// <summary>
+        /// One titled block: its heading, and its own rows under it.
+        ///
+        /// ⚠ The heading uses the panel's shared section title — the same size, weight and colour
+        /// every other section of this product wears. Hand-rolling a bold label made it the same
+        /// weight as the rows beneath it, which is how a heading stops reading as one.
+        /// </summary>
+        private void Group(string heading, string note, List<BackupEntry> entries, string empty,
+                           int height)
         {
-            var row = UIStyles.CreateFormRow(_listHost, "Heading", UIStyles.RowHeightSmall, 8);
+            var block = UIFactory.CreateVerticalGroup(_listHost, "Group", false, false, true, true,
+                                                      4, new Vector4(8, 8, 6, 8));
+            UIStyles.SetBackground(block, UIStyles.CardElevated);
+            UIFactory.SetLayoutElement(block, flexibleWidth: 9999);
 
-            var label = UIFactory.CreateLabel(row, "Text", heading, TextAnchor.MiddleLeft);
-            label.fontStyle = FontStyle.Bold;
-            label.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(label.gameObject, minWidth: 180);
-            RegisterUIText(label);
+            var titleRow = UIStyles.CreateFormRow(block, "Heading", UIStyles.SectionTitleHeight, 8);
 
-            if (note == null) return;
+            var title = UIStyles.CreateSectionTitle(titleRow, "Text", heading);
+            UIFactory.SetLayoutElement(title.gameObject, minWidth: 190,
+                                       minHeight: UIStyles.SectionTitleHeight);
+            RegisterUIText(title);
 
-            // ⚠ Beside the heading, not under a row. It is a property of the LIST — these age out
-            // — and putting it on one row would read as being about that row.
-            var hint = UIFactory.CreateLabel(row, "Note", note, TextAnchor.MiddleRight);
+            // ⚠ Beside the heading, right-aligned: it qualifies the LIST — how full it is, or that
+            // it ages out — and on a row it would read as being about that row.
+            var hint = UIFactory.CreateLabel(titleRow, "Note", note, TextAnchor.MiddleRight);
             hint.color = UIStyles.TextMuted;
             hint.fontSize = UIStyles.FontSizeHint;
             UIFactory.SetLayoutElement(hint.gameObject, flexibleWidth: 9999);
-            RegisterUIText(hint);
-        }
+            RegisterExcluded(hint);
 
-        private void Empty(string text)
-        {
-            var label = UIFactory.CreateLabel(_listHost, "Empty", text, TextAnchor.MiddleLeft);
-            label.color = UIStyles.TextMuted;
-            label.fontSize = UIStyles.FontSizeHint;
-            UIFactory.SetLayoutElement(label.gameObject, minHeight: UIStyles.RowHeightSmall,
-                                       flexibleWidth: 9999);
-            RegisterUIText(label);
+            if (entries.Count == 0)
+            {
+                var none = UIFactory.CreateLabel(block, "Empty", empty, TextAnchor.MiddleLeft);
+                none.color = UIStyles.TextMuted;
+                none.fontSize = UIStyles.FontSizeHint;
+                UIFactory.SetLayoutElement(none.gameObject, minHeight: UIStyles.RowHeightSmall,
+                                           flexibleWidth: 9999);
+                RegisterUIText(none);
+                return;
+            }
+
+            // 🔴 Its own scroll area, capped. Ten rows in the outer scroll would push the second
+            // heading below the fold, and somebody scrolling to reach it loses the first — which
+            // is the state the whole screen exists to compare against.
+            var scroll = UIFactory.CreateScrollView(block, "Rows", out var rows, out _);
+            UIFactory.SetLayoutElement(scroll, minHeight: Math.Min(height, entries.Count * 62 + 8),
+                                       preferredHeight: height, flexibleWidth: 9999);
+            UIFactory.SetLayoutGroup<VerticalLayoutGroup>(rows, false, false, true, true, 4,
+                                                          4, 4, 4, 4);
+            UIStyles.SetBackground(scroll, UIStyles.TroughBackground);
+            UIStyles.ConfigureScrollViewNoScrollbar(scroll);
+
+            var host = _listHost;
+            _listHost = rows;
+
+            foreach (var entry in entries) Row(entry);
+
+            _listHost = host;
         }
 
         private void Row(BackupEntry entry)
@@ -247,18 +267,27 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
 
             // ── second line: why it exists, or what you called it ──
-            var subtitle = string.IsNullOrEmpty(entry.Label)
-                ? Backups.Describe(entry.Reason, entry.By)
-                : "\"" + entry.Label + "\"";
+            // 🔴 **Nothing when there is nothing to add.** An unnamed saved copy used to print
+            // "Saved by you" — the heading of the very list it sits in — on every single row: a
+            // whole line, repeated, saying what the block above already said. The act is worth a
+            // line on an automatic copy, where it differs from row to row; a name is worth one
+            // when somebody wrote it. Otherwise the row is the date and the counts, and that is
+            // enough.
+            var subtitle = !string.IsNullOrEmpty(entry.Label) ? "\"" + entry.Label + "\""
+                         : entry.IsSaved ? null
+                         : Backups.Describe(entry.Reason, entry.By);
 
-            var subtitleLabel = UIFactory.CreateLabel(box, "Why", subtitle, TextAnchor.MiddleLeft);
-            subtitleLabel.color = UIStyles.TextSecondary;
-            subtitleLabel.fontSize = UIStyles.FontSizeHint;
-            UIFactory.SetLayoutElement(subtitleLabel.gameObject, minHeight: UIStyles.RowHeightSmall,
-                                       flexibleWidth: 9999);
+            if (subtitle != null)
+            {
+                var subtitleLabel = UIFactory.CreateLabel(box, "Why", subtitle, TextAnchor.MiddleLeft);
+                subtitleLabel.color = UIStyles.TextSecondary;
+                subtitleLabel.fontSize = UIStyles.FontSizeHint;
+                UIFactory.SetLayoutElement(subtitleLabel.gameObject,
+                                           minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999);
 
-            if (string.IsNullOrEmpty(entry.Label)) RegisterUIText(subtitleLabel);
-            else RegisterExcluded(subtitleLabel);
+                if (string.IsNullOrEmpty(entry.Label)) RegisterUIText(subtitleLabel);
+                else RegisterExcluded(subtitleLabel);
+            }
 
             if (_renaming == entry.Id)
             {

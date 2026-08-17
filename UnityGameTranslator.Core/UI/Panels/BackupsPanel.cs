@@ -212,7 +212,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // heading below the fold, and somebody scrolling to reach it loses the first — which
             // is the state the whole screen exists to compare against.
             var scroll = UIFactory.CreateScrollView(block, "Rows", out var rows, out _);
-            UIFactory.SetLayoutElement(scroll, minHeight: Math.Min(height, entries.Count * 62 + 8),
+            UIFactory.SetLayoutElement(scroll, minHeight: Math.Min(height, entries.Count * 40 + 8),
                                        preferredHeight: height, flexibleWidth: 9999);
             UIFactory.SetLayoutGroup<VerticalLayoutGroup>(rows, false, false, true, true, 4,
                                                           4, 4, 4, 4);
@@ -252,19 +252,30 @@ namespace UnityGameTranslator.Core.UI.Panels
             RefreshSaveButton();
         }
 
+        /// <summary>
+        /// One copy: what it is, why it exists, and what may be done with it.
+        ///
+        /// 🔴 **Two lines at most, and the verbs share the first one.** Stacked — facts, then
+        /// reason, then a row of buttons — a copy took four lines and each list showed less than
+        /// two entries. A list you cannot read two rows of is not a list, it is a keyhole.
+        /// </summary>
         private void Row(BackupEntry entry)
         {
-            var box = UIFactory.CreateVerticalGroup(_listHost, "Entry", false, false, true, true, 2,
-                                                    new Vector4(6, 6, 8, 8));
+            var box = UIFactory.CreateUIObject("Entry", _listHost);
+            UIFactory.SetLayoutGroup<HorizontalLayoutGroup>(box, false, false, true, true, 8,
+                                                            6, 6, 4, 4, TextAnchor.MiddleLeft);
             UIStyles.SetBackground(box, UIStyles.ItemBackground);
             UIFactory.SetLayoutElement(box, flexibleWidth: 9999);
 
-            // ── first line: when, and what is in it ──
+            var text = UIFactory.CreateVerticalGroup(box, "Text", false, false, true, true, 1);
+            UIFactory.SetLayoutElement(text, flexibleWidth: 9999);
+
+            // ── what it is ──
             var facts = $"{entry.At:dd MMM HH:mm}   {entry.Lines} lines";
             if (entry.ByHand > 0) facts += $" · {entry.ByHand} by hand";
             if (entry.WithAssets) facts += " · with fonts and images";
 
-            var factsLabel = UIFactory.CreateLabel(box, "Facts", facts, TextAnchor.MiddleLeft);
+            var factsLabel = UIFactory.CreateLabel(text, "Facts", facts, TextAnchor.MiddleLeft);
             factsLabel.color = UIStyles.TextPrimary;
             UIFactory.SetLayoutElement(factsLabel.gameObject, minHeight: UIStyles.RowHeightSmall,
                                        flexibleWidth: 9999);
@@ -274,7 +285,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // are and not in small print underneath.
             if (Backups.IsAnotherLineage(entry.Uuid, TranslatorCore.FileUuid))
             {
-                var warn = UIFactory.CreateLabel(box, "Foreign", Backups.AnotherLineageNote,
+                var warn = UIFactory.CreateLabel(text, "Foreign", Backups.AnotherLineageNote,
                                                  TextAnchor.MiddleLeft);
                 warn.color = UIStyles.StatusWarning;
                 warn.fontSize = UIStyles.FontSizeHint;
@@ -283,20 +294,18 @@ namespace UnityGameTranslator.Core.UI.Panels
                 RegisterUIText(warn);
             }
 
-            // ── second line: why it exists, or what you called it ──
             // 🔴 **Nothing when there is nothing to add.** An unnamed saved copy used to print
             // "Saved by you" — the heading of the very list it sits in — on every single row: a
             // whole line, repeated, saying what the block above already said. The act is worth a
             // line on an automatic copy, where it differs from row to row; a name is worth one
-            // when somebody wrote it. Otherwise the row is the date and the counts, and that is
-            // enough.
+            // when somebody wrote it. Otherwise the row is the date and the counts.
             var subtitle = !string.IsNullOrEmpty(entry.Label) ? "\"" + entry.Label + "\""
                          : entry.IsSaved ? null
                          : Backups.Describe(entry.Reason, entry.By);
 
             if (subtitle != null)
             {
-                var subtitleLabel = UIFactory.CreateLabel(box, "Why", subtitle, TextAnchor.MiddleLeft);
+                var subtitleLabel = UIFactory.CreateLabel(text, "Why", subtitle, TextAnchor.MiddleLeft);
                 subtitleLabel.color = UIStyles.TextSecondary;
                 subtitleLabel.fontSize = UIStyles.FontSizeHint;
                 UIFactory.SetLayoutElement(subtitleLabel.gameObject,
@@ -312,8 +321,11 @@ namespace UnityGameTranslator.Core.UI.Panels
                 return;
             }
 
-            // ── the verbs ──
-            var buttons = UIStyles.CreateFormRow(box, "Verbs", UIStyles.RowHeightSmall, 6);
+            // ── the verbs, on the same line, at the right edge ──
+            var buttons = UIFactory.CreateUIObject("Verbs", box);
+            UIFactory.SetLayoutGroup<HorizontalLayoutGroup>(buttons, false, false, true, true, 4,
+                                                            0, 0, 0, 0, TextAnchor.MiddleRight);
+            UIFactory.SetLayoutElement(buttons, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 0);
 
             var restore = CreateSecondaryButton(buttons, "Restore", "Restore");
             restore.OnClick += () => ConfirmRestore(entry);

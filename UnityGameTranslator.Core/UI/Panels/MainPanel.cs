@@ -66,6 +66,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         // UI references - Resources link
         private GameObject _resourcesLinkSection;
+        private Text _backupsLabel;
         private Text _resourcesByLabel;
         private Text _resourcesUrlLabel;
         private ButtonRef _resourcesLinkBtn;
@@ -415,6 +416,29 @@ namespace UnityGameTranslator.Core.UI.Panels
             _statusCard.CreateUI(_statusSection);
             _helpZone?.Describe(_statusCard.Root,
                 "Your translation at a glance: sync state with the website, your role (Main = owner, Branch = contributor), and quality (Human / Validated / AI lines)");
+
+            // 🔴 **One line, and a way in — not a section.** Backups are the HISTORY of the very
+            // thing this section shows, so this is where somebody looks for them; but a dozen rows
+            // with three verbs each would swamp the card that says what the translation IS. The
+            // list lives in its own panel, exactly as Merge, Upload and Login do.
+            //
+            // ⚠ Not in "Actions" either: that row is about the world — publishing, comparing,
+            // arbitrating, forking. What you keep on your own machine is a different subject.
+            var backupsRow = UIStyles.CreateFormRow(_statusSection, "BackupsRow",
+                                                    UIStyles.RowHeightNormal, 8);
+
+            _backupsLabel = UIFactory.CreateLabel(backupsRow, "BackupsLabel", "", TextAnchor.MiddleLeft);
+            _backupsLabel.color = UIStyles.TextSecondary;
+            _backupsLabel.fontSize = UIStyles.FontSizeHint;
+            UIFactory.SetLayoutElement(_backupsLabel.gameObject, flexibleWidth: 9999);
+            RegisterExcluded(_backupsLabel);
+
+            var backupsBtn = CreateSecondaryButton(backupsRow, "BackupsBtn", "Backups…");
+            backupsBtn.OnClick += () => TranslatorUIManager.BackupsPanel?.ShowPanel();
+            RegisterUIText(backupsBtn.ButtonText);
+            _helpZone?.Describe(backupsBtn.Component.gameObject,
+                "Your translation as it stood at earlier moments — kept here when something "
+                + "replaces it, and whenever you ask.");
 
             // External Resources section (visible only when ResourcesUrl is set)
             _resourcesLinkSection = UIFactory.CreateVerticalGroup(_statusSection, "ResourcesLinkSection", false, false, true, true, UIStyles.SmallSpacing);
@@ -1111,9 +1135,37 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// <summary>
         /// Updates the StatusCard with current translation state.
         /// </summary>
+        /// <summary>
+        /// How much history this translation has, in one line.
+        ///
+        /// ⚠ Both figures, always — the two families do not live equally long, and a single total
+        /// would hide that half of it ages out on its own. Said even at zero: an empty line is how
+        /// somebody learns the feature exists before they need it, which is the only moment worth
+        /// learning it.
+        /// </summary>
+        private void RefreshBackupsLine()
+        {
+            if (_backupsLabel == null) return;
+
+            var saved = 0;
+            var automatic = 0;
+
+            foreach (var entry in TranslationBackups.List())
+            {
+                if (entry.IsSaved) saved++;
+                else automatic++;
+            }
+
+            _backupsLabel.text = saved == 0 && automatic == 0
+                ? "Backups: none kept yet"
+                : $"Backups: {saved} saved by you, {automatic} automatic";
+        }
+
         private void RefreshStatusCard()
         {
             if (_statusCard == null) return;
+
+            RefreshBackupsLine();
 
             var serverState = TranslatorCore.ServerState;
             int entryCount = TranslatorCore.TranslationCache.Count;

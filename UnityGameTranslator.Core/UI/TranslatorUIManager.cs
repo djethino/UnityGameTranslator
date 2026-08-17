@@ -83,6 +83,9 @@ namespace UnityGameTranslator.Core.UI
         public static Panels.UploadSetupPanel UploadSetupPanel { get; private set; }
         public static Panels.MergePanel MergePanel { get; private set; }
         public static Panels.LanguagePanel LanguagePanel { get; private set; }
+
+        /// <summary>This game's translation as it stood at earlier moments.</summary>
+        public static Panels.BackupsPanel BackupsPanel { get; private set; }
         public static Panels.StatusOverlay StatusOverlay { get; private set; }
         public static Panels.ConfirmationPanel ConfirmationPanel { get; private set; }
         public static Panels.SettingsChoicePanel SettingsChoicePanel { get; private set; }
@@ -1160,6 +1163,7 @@ namespace UnityGameTranslator.Core.UI
             UploadSetupPanel = new Panels.UploadSetupPanel(UiBase);
             MergePanel = new Panels.MergePanel(UiBase);
             LanguagePanel = new Panels.LanguagePanel(UiBase);
+            BackupsPanel = new Panels.BackupsPanel(UiBase);
             StatusOverlay = new Panels.StatusOverlay(UiBase);
             ConfirmationPanel = new Panels.ConfirmationPanel(UiBase);
             SettingsChoicePanel = new Panels.SettingsChoicePanel(UiBase);
@@ -2885,18 +2889,21 @@ namespace UnityGameTranslator.Core.UI
         ///
         /// Failure is swallowed on purpose: a backup that cannot be written must not stop the
         /// operation the player asked for, and it is reported rather than silently skipped.
+        ///
+        /// 🔴 **It no longer writes `translations.json.backup`.** That was ONE file, overwritten
+        /// every time, with no date, no reason and no screen able to put it back — so the second
+        /// replacement in a session destroyed the copy protecting the first, silently. It is now
+        /// one entry in the game's own history (see <see cref="TranslationBackups"/>), which keeps
+        /// five, dates them, and says which act caused each.
+        ///
+        /// ⚠ The reason is not decoration: choosing between five dated copies is a lottery,
+        /// choosing between "before installing @Seniorito's translation" and "before writing a
+        /// merge" is a decision. Every caller therefore names its act.
         /// </summary>
-        public static void BackupCacheFile()
+        public static void BackupCacheFile(BackupReason reason = BackupReason.Unknown,
+                                           string by = null)
         {
-            try
-            {
-                if (System.IO.File.Exists(TranslatorCore.CachePath))
-                    System.IO.File.Copy(TranslatorCore.CachePath, TranslatorCore.CachePath + ".backup", true);
-            }
-            catch (Exception e)
-            {
-                TranslatorCore.LogWarning($"[UIManager] Could not back up the translation file: {e.Message}");
-            }
+            TranslationBackups.TakeAutomatic(reason, by);
         }
 
         /// <summary>
@@ -2970,7 +2977,7 @@ namespace UnityGameTranslator.Core.UI
                 return false;
             }
 
-            BackupCacheFile();
+            BackupCacheFile(BackupReason.Edited);
 
             // Snapshot our settings BEFORE the file replaces them: the reload
             // below applies the incoming ones wholesale, and this is the only
@@ -4051,8 +4058,8 @@ namespace UnityGameTranslator.Core.UI
                 return false;
             }
 
-            // Backup the current file before we rewrite it.
-            BackupCacheFile();
+            // Kept before we rewrite it, named by the act that is about to happen.
+            BackupCacheFile(BackupReason.Edited);
 
             var mergeResult = TranslationMerger.MergeWithTags(
                 TranslatorCore.TranslationCache, remote, _editSessionAncestor);
@@ -4199,8 +4206,9 @@ namespace UnityGameTranslator.Core.UI
                 {
                     if (success && !string.IsNullOrEmpty(content))
                     {
-                        // Backup current file
-                        BackupCacheFile();
+                        // Kept first, named by the act: an update coming down from the site.
+                        BackupCacheFile(BackupReason.Downloaded,
+                                        TranslatorCore.ServerState?.Uploader);
 
                         // Our settings, captured before the incoming file replaces them
                         var ourSettings = TranslationSettings.FromCurrentState();
@@ -4506,11 +4514,12 @@ namespace UnityGameTranslator.Core.UI
                         var ourSettings = TranslationSettings.FromCurrentState();
                         var ancestorSettings = TranslatorCore.AncestorSettings;
 
-                        // Same safety net as the other two paths that replace the file wholesale
-                        // (ApplyDownloadedTranslationFile, DownloadUpdate). This one overwrote a
-                        // player's own work with a community version and left nothing behind —
-                        // and the settings dialog was meanwhile promising a backup.
-                        BackupCacheFile();
+                        // Same safety net as the other paths that replace the file wholesale.
+                        // 🔴 This one overwrote a player's own work with a community version and
+                        // left nothing behind — while the settings dialog promised a backup. It is
+                        // the reason the copy is now named by its act and kept five deep: one
+                        // overwritten file could not survive a second replacement in one session.
+                        BackupCacheFile(BackupReason.Installed, translationUploader);
 
                         // Write content to file
                         System.IO.File.WriteAllText(TranslatorCore.CachePath, content);

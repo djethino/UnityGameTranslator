@@ -4466,13 +4466,29 @@ namespace UnityGameTranslator.Core
         /// This is the best approach — TMP generates the SDF atlas, glyph tables,
         /// character tables, material, and metrics automatically.
         /// </summary>
-        private static object CreateTMPFontAssetFromFont(Font font)
+        private static object CreateTMPFontAssetFromFont(Font font) =>
+            CreateSdfFontAsset(font, TypeHelper.TMP_FontAssetType);
+
+        /// <summary>
+        /// The same thing for any SDF font asset type — TMPro's, or UI Toolkit's
+        /// <c>UnityEngine.TextCore.Text.FontAsset</c>, which is a different type wrapping the same
+        /// engine.
+        ///
+        /// 🔴 **Parameterised rather than copied.** The one-argument `CreateFontAsset(Font)` is not
+        /// equivalent to the long overload: it leaves the sampling size, padding, atlas size and
+        /// render mode at whatever the runtime defaults to, and a UI laid out for the game's own
+        /// metrics comes out misplaced — text landing anywhere, some of it not drawn at all. The
+        /// values below (SDFAA_HINTED, Dynamic, 48, 512, multi-atlas) are the ones already proven
+        /// on the TMP path; writing a second creator would have meant proving them twice and
+        /// letting the two drift.
+        /// </summary>
+        internal static object CreateSdfFontAsset(Font font, Type fontAssetType)
         {
-            if (font == null || TypeHelper.TMP_FontAssetType == null) return null;
+            if (font == null || fontAssetType == null) return null;
 
             try
             {
-                var tmpFontType = TypeHelper.TMP_FontAssetType;
+                var tmpFontType = fontAssetType;
 
                 // Try ALL CreateFontAsset overloads, match Font by name (IL2CPP: Il2CppUnityEngine.Font)
                 foreach (var method in tmpFontType.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static))

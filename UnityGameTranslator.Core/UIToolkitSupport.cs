@@ -60,7 +60,7 @@ namespace UnityGameTranslator.Core
         private static PropertyInfo _fontDefFontProp;     // FontDefinition.font      -> Font
         private static PropertyInfo _fontDefAssetProp;    // FontDefinition.fontAsset -> Object
         private static MethodInfo _fromSdfFontMethod;     // FontDefinition.FromSDFFont(FontAsset)
-        private static MethodInfo _createFontAssetMethod; // TextCore FontAsset.CreateFontAsset(Font)
+        private static Type _textCoreFontAssetType;       // UnityEngine.TextCore.Text.FontAsset
 
         private static PropertyInfo _styleColorProp;      // IStyle.color         -> StyleColor
         private static PropertyInfo _resolvedColorProp;   // IResolvedStyle.color -> Color
@@ -191,24 +191,9 @@ namespace UnityGameTranslator.Core
                 _fromSdfFontMethod = _fontDefinitionType.GetMethod(
                     "FromSDFFont", BindingFlags.Public | BindingFlags.Static);
 
-                // Building an SDF asset out of a plain Font — the same thing the TMP path does with
-                // TMP_FontAsset.CreateFontAsset, on the other engine's type.
-                var textCoreFontAsset = FindTextCoreFontAssetType();
-                if (textCoreFontAsset != null)
-                {
-                    foreach (var candidate in textCoreFontAsset.GetMethods(
-                                 BindingFlags.Public | BindingFlags.Static))
-                    {
-                        if (candidate.Name != "CreateFontAsset") continue;
-
-                        var parameters = candidate.GetParameters();
-                        if (parameters.Length == 1 && parameters[0].ParameterType == typeof(Font))
-                        {
-                            _createFontAssetMethod = candidate;
-                            break;
-                        }
-                    }
-                }
+                // The type only — building the asset is FontManager's job, which already knows
+                // which overload to reach for and with what.
+                _textCoreFontAssetType = FindTextCoreFontAssetType();
 
                 // Reading the font must work one way or the other; writing it must work one way or
                 // the other. Neither branch alone is enough to call this available.
@@ -659,9 +644,6 @@ namespace UnityGameTranslator.Core
         private static void ApplyReplacement(object element, string settingsName,
                                              UnityEngine.Object currentFont, bool isSdf)
         {
-            // Already wearing it: what resolves is no longer the name we recorded.
-            if (!string.Equals(currentFont.name, settingsName, StringComparison.Ordinal)) return;
-
             var replacement = FontManager.GetUnityReplacementFont(settingsName);
 
             if (replacement == null)
@@ -678,6 +660,16 @@ namespace UnityGameTranslator.Core
                 return;
             }
 
+            // 🔴 **Compared against the font we WANT, never against the original.** The first
+            // version returned early as soon as the element no longer wore its original font —
+            // which is true the moment one replacement lands, so a second choice from the Fonts tab
+            // could never be applied. Picking Bravura then Carlito left Bravura on screen for good.
+            //
+            // This is the test FontManager.ApplyFontReplacement makes too: current == replacement,
+            // stop; anything else, write.
+            string wanted = replacement.name;
+            if (string.Equals(currentFont.name, wanted, StringComparison.Ordinal)) return;
+
             object definition = BuildDefinition(replacement, isSdf);
             if (definition == null) return;
 
@@ -687,11 +679,12 @@ namespace UnityGameTranslator.Core
 
             _styleFontProp.SetValue(style, styleValue, null);
 
-            if (!_replacementDiagnosed)
+            // ⚠ Said once PER FONT, not once ever: the one-shot flag hid every later change and
+            // made a working replacement look like a dead one in the log.
+            if (_replacementLogged.Add(wanted))
             {
-                _replacementDiagnosed = true;
                 TranslatorCore.LogInfo(
-                    $"[UIToolkit] Font replaced: {settingsName} -> {replacement.name}"
+                    $"[UIToolkit] Font replaced: {settingsName} -> {wanted}"
                     + $" ({(isSdf ? "as an SDF asset" : "as a Font")})");
             }
         }
@@ -700,7 +693,7 @@ namespace UnityGameTranslator.Core
         private static readonly ConditionalWeakTable<object, object> _originalFontSize =
             new ConditionalWeakTable<object, object>();
 
-        private static bool _replacementDiagnosed;
+        private static readonly HashSet<string> _replacementLogged = new HashSet<string>();
         private static bool _scaleDiagnosed;
 
         /// <summary>
@@ -820,13 +813,17 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static object BuildDefinition(Font replacement, bool isSdf)
         {
-            if (isSdf && _createFontAssetMethod != null && _fromSdfFontMethod != null)
+            if (isSdf && _textCoreFontAssetType != null && _fromSdfFontMethod != null)
             {
                 string key = replacement.name ?? "?";
 
                 if (!_sdfCache.TryGetValue(key, out var asset))
                 {
-                    asset = _createFontAssetMethod.Invoke(null, new object[] { replacement });
+                    // ⚠ FontManager's creator, not a second one here. It tries every overload and
+                    // fills in the sampling size, padding, atlas size and render mode that the
+                    // one-argument call leaves at defaults — which is what made replaced text land
+                    // in the wrong places and sometimes not draw at all.
+                    asset = FontManager.CreateSdfFontAsset(replacement, _textCoreFontAssetType);
                     _sdfCache[key] = asset;
                 }
 

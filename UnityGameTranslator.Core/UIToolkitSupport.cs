@@ -574,6 +574,17 @@ namespace UnityGameTranslator.Core
             new ConditionalWeakTable<object, string>();
 
         /// <summary>
+        /// The font OBJECT each element started with, kept so it can be put back.
+        ///
+        /// 🔴 The name is not enough to restore. Once an inline style carries our replacement,
+        /// clearing the fallback in the Fonts tab has to write something — and the only thing that
+        /// puts the element back exactly as it was is the object it had. This is what
+        /// FontManager.RestoreOriginalFont does per component, with `_originalFontsPerComponent`.
+        /// </summary>
+        private static readonly ConditionalWeakTable<object, object> _originalFontObject =
+            new ConditionalWeakTable<object, object>();
+
+        /// <summary>
         /// Registers the element's font, applies the configured replacement, and says whether this
         /// element may be translated at all.
         ///
@@ -606,6 +617,7 @@ namespace UnityGameTranslator.Core
                 {
                     settingsName = currentFont.name;
                     _originalFontName.Add(element, settingsName);
+                    _originalFontObject.Add(element, currentFont);
 
                     // The shared registry, so the font reaches the Fonts tab and can be given a
                     // fallback. RegisterFontObject rather than ...ByName: we hold the object, which
@@ -648,8 +660,14 @@ namespace UnityGameTranslator.Core
 
             if (replacement == null)
             {
-                // ⚠ Also said once. "Read, but nothing configured to replace it" is the ordinary
-                // case, and silence made it indistinguishable from a failure.
+                // 🔴 **Putting it back is an action, not the absence of one.** Clearing the fallback
+                // used to fall straight through this return, so the replacement stayed on screen and
+                // "(none)" could never be gone back to while the game ran. Nothing else was going to
+                // undo an inline style we wrote.
+                RestoreOriginalFont(element, settingsName, currentFont);
+
+                // ⚠ Said once. "Read, but nothing configured to replace it" is the ordinary case,
+                // and silence made it indistinguishable from a failure.
                 if (!_noReplacementDiagnosed)
                 {
                     _noReplacementDiagnosed = true;
@@ -688,6 +706,46 @@ namespace UnityGameTranslator.Core
                     + $" ({(isSdf ? "as an SDF asset" : "as a Font")})");
             }
         }
+
+        /// <summary>
+        /// Puts back the font an element started with, when nothing is configured to replace it.
+        ///
+        /// ⚠ Only when it is actually wearing something else — otherwise every element of every
+        /// pass would be written for nothing, on the ordinary path where no fallback is set.
+        ///
+        /// ⚠ The original OBJECT is re-applied rather than the inline style being cleared: it is
+        /// what FontManager does per component, and it puts the element back in the state we found
+        /// it in without depending on how the game had styled it.
+        /// </summary>
+        private static void RestoreOriginalFont(object element, string settingsName,
+                                                UnityEngine.Object currentFont)
+        {
+            if (string.Equals(currentFont.name, settingsName, StringComparison.Ordinal)) return;
+            if (!_originalFontObject.TryGetValue(element, out var original) || original == null) return;
+
+            try
+            {
+                bool originalIsSdf = !(original is Font);
+
+                object definition = originalIsSdf
+                    ? _fromSdfFontMethod?.Invoke(null, new[] { original })
+                    : _fromFontMethod?.Invoke(null, new[] { original });
+
+                if (definition == null) return;
+
+                var styleValue = Activator.CreateInstance(_styleFontDefinitionType, definition);
+                var style = _styleProp.GetValue(element, null);
+                if (style == null) return;
+
+                _styleFontProp.SetValue(style, styleValue, null);
+
+                if (_restoreLogged.Add(settingsName))
+                    TranslatorCore.LogInfo($"[UIToolkit] Font restored: back to {settingsName}");
+            }
+            catch { }
+        }
+
+        private static readonly HashSet<string> _restoreLogged = new HashSet<string>();
 
         /// <summary>Elements whose original size we hold, so a scale can be undone.</summary>
         private static readonly ConditionalWeakTable<object, object> _originalFontSize =

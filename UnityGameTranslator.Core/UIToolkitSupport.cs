@@ -54,6 +54,14 @@ namespace UnityGameTranslator.Core
         private static PropertyInfo _resolvedStyleProp; // VisualElement.resolvedStyle
         private static PropertyInfo _resolvedFontProp;  // IResolvedStyle.unityFont -> Font
 
+        // The SDF side. Modern UI Toolkit states its font as a TextCore FontAsset, and then
+        // `unityFont` is null — reading only that one finds nothing and says nothing.
+        private static PropertyInfo _resolvedFontDefProp; // IResolvedStyle.unityFontDefinition
+        private static PropertyInfo _fontDefFontProp;     // FontDefinition.font      -> Font
+        private static PropertyInfo _fontDefAssetProp;    // FontDefinition.fontAsset -> Object
+        private static MethodInfo _fromSdfFontMethod;     // FontDefinition.FromSDFFont(FontAsset)
+        private static MethodInfo _createFontAssetMethod; // TextCore FontAsset.CreateFontAsset(Font)
+
         /// <summary>True when this game has UI Toolkit and we can read its text.</summary>
         public static bool Available { get; private set; }
 
@@ -151,17 +159,98 @@ namespace UnityGameTranslator.Core
                 // font we applied would be one we picked on the player's behalf.
                 _resolvedStyleProp = VisualElementType.GetProperty("resolvedStyle", pubInst);
                 if (_resolvedStyleProp != null)
-                    _resolvedFontProp = _resolvedStyleProp.PropertyType.GetProperty("unityFont", pubInst);
+                {
+                    var resolvedType = _resolvedStyleProp.PropertyType;
+                    _resolvedFontProp = resolvedType.GetProperty("unityFont", pubInst);
+                    _resolvedFontDefProp = resolvedType.GetProperty("unityFontDefinition", pubInst);
+                }
 
-                CanSetFont = _fromFontMethod != null
-                             && _styleFontProp != null
-                             && _styleFontDefinitionType != null
-                             && _resolvedFontProp != null;
+                _fontDefFontProp = _fontDefinitionType.GetProperty("font", pubInst);
+                _fontDefAssetProp = _fontDefinitionType.GetProperty("fontAsset", pubInst);
+                _fromSdfFontMethod = _fontDefinitionType.GetMethod(
+                    "FromSDFFont", BindingFlags.Public | BindingFlags.Static);
+
+                // Building an SDF asset out of a plain Font — the same thing the TMP path does with
+                // TMP_FontAsset.CreateFontAsset, on the other engine's type.
+                var textCoreFontAsset = FindTextCoreFontAssetType();
+                if (textCoreFontAsset != null)
+                {
+                    foreach (var candidate in textCoreFontAsset.GetMethods(
+                                 BindingFlags.Public | BindingFlags.Static))
+                    {
+                        if (candidate.Name != "CreateFontAsset") continue;
+
+                        var parameters = candidate.GetParameters();
+                        if (parameters.Length == 1 && parameters[0].ParameterType == typeof(Font))
+                        {
+                            _createFontAssetMethod = candidate;
+                            break;
+                        }
+                    }
+                }
+
+                // Reading the font must work one way or the other; writing it must work one way or
+                // the other. Neither branch alone is enough to call this available.
+                bool canRead = _resolvedFontProp != null || _resolvedFontDefProp != null;
+                bool canWrite = _styleFontProp != null && _styleFontDefinitionType != null
+                                && (_fromFontMethod != null || _fromSdfFontMethod != null);
+
+                CanSetFont = canRead && canWrite;
             }
             catch
             {
                 CanSetFont = false;
             }
+        }
+
+        /// <summary>
+        /// UI Toolkit's SDF font type — <c>UnityEngine.TextCore.Text.FontAsset</c>, which is NOT
+        /// TMPro's <c>TMP_FontAsset</c> even though both wrap the same engine.
+        ///
+        /// ⚠ That distinction is the whole reason fonts looked absent here: the game reports
+        /// "No game TMP fonts found" and it is telling the truth — its fonts are TextCore assets.
+        /// </summary>
+        private static Type FindTextCoreFontAssetType()
+        {
+            var direct = FindTypeAnywhere("UnityEngine.TextCore.Text.FontAsset");
+            if (direct != null) return direct;
+
+            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                try
+                {
+                    foreach (var type in asm.GetTypes())
+                    {
+                        if (type.Name == "FontAsset"
+                            && type.Namespace != null
+                            && type.Namespace.IndexOf("TextCore", StringComparison.Ordinal) >= 0)
+                        {
+                            return type;
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            return null;
+        }
+
+        private static Type FindTypeAnywhere(string fullName)
+        {
+            var direct = Type.GetType(fullName, false);
+            if (direct != null) return direct;
+
+            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                try
+                {
+                    var found = asm.GetType(fullName, false);
+                    if (found != null) return found;
+                }
+                catch { }
+            }
+
+            return null;
         }
 
         /// <summary>
@@ -456,6 +545,10 @@ namespace UnityGameTranslator.Core
         /// ⚠ An element the game styles explicitly keeps its font: an inline style beats an
         /// inherited one. Forcing each element instead would undo the game's own layout decisions.
         /// </summary>
+        /// <summary>Said once, so a font that never arrives can be diagnosed from the log.</summary>
+        private static bool _fontDiagnosed;
+        private static bool _noReplacementDiagnosed;
+
         private static void ApplyFontIfNeeded(object root)
         {
             if (!CanSetFont) return;
@@ -463,22 +556,51 @@ namespace UnityGameTranslator.Core
 
             try
             {
-                var resolved = _resolvedStyleProp.GetValue(root, null);
+                var resolved = _resolvedStyleProp?.GetValue(root, null);
                 if (resolved == null) return;
 
-                var currentFont = _resolvedFontProp.GetValue(resolved, null) as Font;
-                if (currentFont == null || string.IsNullOrEmpty(currentFont.name)) return;
+                // What the game actually renders with, whichever engine it states it in.
+                var current = ReadResolvedFont(resolved, out bool isSdf);
 
-                string originalName = currentFont.name;
+                // 🔴 Reported, not swallowed. The first version read only `unityFont`, found null on
+                // an SDF game and returned in silence: the log said "font replacement=True" while
+                // nothing was ever replaced, and nothing said which of the four exits was taken.
+                if (!_fontDiagnosed)
+                {
+                    _fontDiagnosed = true;
+                    TranslatorCore.LogInfo(current == null
+                        ? "[UIToolkit] No font on the document root — neither unityFont nor "
+                          + "unityFontDefinition resolved to one; leaving the game's own."
+                        : $"[UIToolkit] Document font: {current.name} "
+                          + $"({(isSdf ? "SDF/TextCore" : "legacy Font")})");
+                }
 
-                // Already ours: the resolved font IS the replacement, so asking again would look
-                // up a replacement for a replacement.
+                if (current == null || string.IsNullOrEmpty(current.name)) return;
+
+                string originalName = current.name;
+
+                // Already ours: the resolved font IS the replacement, so asking again would look up
+                // a replacement for a replacement.
                 if (_fontApplied.TryGetValue(root, out var applied) && applied == originalName) return;
 
                 var replacement = FontManager.GetUnityReplacementFont(originalName);
-                if (replacement == null || replacement == currentFont) return;
 
-                var definition = _fromFontMethod.Invoke(null, new object[] { replacement });
+                if (replacement == null)
+                {
+                    // ⚠ Also said once. "The font was read but nothing replaces it" is the ordinary
+                    // case — no replacement is configured for it — and it is indistinguishable from
+                    // a failure unless it says so.
+                    if (!_noReplacementDiagnosed)
+                    {
+                        _noReplacementDiagnosed = true;
+                        TranslatorCore.LogInfo(
+                            $"[UIToolkit] No replacement configured for '{originalName}' — the "
+                            + "game's own font is kept.");
+                    }
+                    return;
+                }
+
+                object definition = BuildDefinition(replacement, isSdf);
                 if (definition == null) return;
 
                 // StyleFontDefinition wraps it. An implicit operator hides this in C#; through
@@ -493,13 +615,91 @@ namespace UnityGameTranslator.Core
                 _fontApplied.Remove(root);
                 _fontApplied.Add(root, replacement.name ?? originalName);
 
-                TranslatorCore.LogDebug(
+                TranslatorCore.LogInfo(
                     $"[UIToolkit] Font on document root: {originalName} -> {replacement.name}");
             }
             catch (Exception ex)
             {
-                TranslatorCore.LogDebug($"[UIToolkit] Font replacement failed: {ex.Message}");
+                TranslatorCore.LogWarning($"[UIToolkit] Font replacement failed: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// The font in force on an element, from either of the two ways UI Toolkit states one.
+        ///
+        /// ⚠ `unityFont` first because it is the cheaper read, but it is null on any modern build:
+        /// UI Toolkit states its font as a TextCore FontAsset, and `unityFontDefinition` is where
+        /// that lives. Both are UnityEngine.Objects, so the caller only needs the name.
+        /// </summary>
+        private static UnityEngine.Object ReadResolvedFont(object resolvedStyle, out bool isSdf)
+        {
+            isSdf = false;
+
+            try
+            {
+                if (_resolvedFontProp != null
+                    && _resolvedFontProp.GetValue(resolvedStyle, null) is Font legacy && legacy != null)
+                {
+                    return legacy;
+                }
+            }
+            catch { }
+
+            try
+            {
+                var definition = _resolvedFontDefProp?.GetValue(resolvedStyle, null);
+                if (definition == null) return null;
+
+                if (_fontDefAssetProp?.GetValue(definition, null) is UnityEngine.Object asset
+                    && asset != null)
+                {
+                    isSdf = true;
+                    return asset;
+                }
+
+                if (_fontDefFontProp?.GetValue(definition, null) is Font font && font != null)
+                    return font;
+            }
+            catch { }
+
+            return null;
+        }
+
+        /// <summary>Replacement fonts already turned into SDF assets, by font name.</summary>
+        private static readonly Dictionary<string, object> _sdfCache =
+            new Dictionary<string, object>();
+
+        /// <summary>
+        /// Wraps our replacement the way the game states its own.
+        ///
+        /// ⚠ Matching the engine matters: handing a legacy Font to a document laid out for SDF
+        /// changes how every glyph is rasterised, and USS styles written against SDF stop applying.
+        /// Building the SDF asset is the same move the TMP path makes with
+        /// TMP_FontAsset.CreateFontAsset — on the other engine's type.
+        ///
+        /// ⚠ Cached by name: creating a font asset rasterises an atlas, and doing it once per scan
+        /// pass would be the kind of leak that only shows up after twenty minutes of play.
+        /// </summary>
+        private static object BuildDefinition(Font replacement, bool isSdf)
+        {
+            if (isSdf && _createFontAssetMethod != null && _fromSdfFontMethod != null)
+            {
+                string key = replacement.name ?? "?";
+
+                if (!_sdfCache.TryGetValue(key, out var asset))
+                {
+                    asset = _createFontAssetMethod.Invoke(null, new object[] { replacement });
+                    _sdfCache[key] = asset;
+                }
+
+                if (asset != null)
+                    return _fromSdfFontMethod.Invoke(null, new[] { asset });
+
+                // Falls through to the legacy path below: a document with our font in the wrong
+                // engine still reads better than one showing squares.
+            }
+
+            return _fromFontMethod?.Invoke(null, new object[] { replacement });
         }
 
         #endregion

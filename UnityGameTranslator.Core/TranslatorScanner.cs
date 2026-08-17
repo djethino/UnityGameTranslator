@@ -1917,6 +1917,11 @@ namespace UnityGameTranslator.Core
                 // Keep Animators disabled during highlight (diagnostic mode).
                 // They override text color every frame when enabled.
 
+                // Pass 3: UI Toolkit. Its text is not a Component, so neither the scanner cache nor
+                // the patch refs above hold any of it — a game whose interface is UI Toolkit would
+                // light up nothing at all and read as "this font is used nowhere".
+                UIToolkitSupport.HighlightFont(fontName, HighlightColor, DimColor);
+
                 string wanted = FontManager.GetConfiguredFallback(fontName);
                 TranslatorCore.LogInfo($"[HighlightAudit] '{fontName}' → fallback '{wanted ?? "(none)"}': {_hlMatched} component(s), {_hlReplaced} wearing the replacement, {_hlMatched - _hlReplaced} still on the original");
                 foreach (var laggard in _hlLaggards)
@@ -1975,6 +1980,9 @@ namespace UnityGameTranslator.Core
                 }
             }
             catch { }
+
+            // The UI Toolkit half keeps its own record — no instance id to key one here.
+            UIToolkitSupport.ClearHighlight();
 
             _highlightOriginalColors.Clear();
             _highlightedFontName = null;

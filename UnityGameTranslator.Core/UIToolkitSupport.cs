@@ -62,6 +62,10 @@ namespace UnityGameTranslator.Core
         private static MethodInfo _fromSdfFontMethod;     // FontDefinition.FromSDFFont(FontAsset)
         private static MethodInfo _createFontAssetMethod; // TextCore FontAsset.CreateFontAsset(Font)
 
+        private static PropertyInfo _styleColorProp;      // IStyle.color         -> StyleColor
+        private static PropertyInfo _resolvedColorProp;   // IResolvedStyle.color -> Color
+        private static Type _styleColorType;              // UnityEngine.UIElements.StyleColor
+
         /// <summary>True when this game has UI Toolkit and we can read its text.</summary>
         public static bool Available { get; private set; }
 
@@ -164,6 +168,13 @@ namespace UnityGameTranslator.Core
                     _resolvedFontProp = resolvedType.GetProperty("unityFont", pubInst);
                     _resolvedFontDefProp = resolvedType.GetProperty("unityFontDefinition", pubInst);
                 }
+
+                // Colour, for the Fonts tab's highlight. Same two-sided shape as the font: read
+                // what is resolved, write an inline style.
+                _styleColorProp = _styleProp.PropertyType.GetProperty("color", pubInst);
+                if (_resolvedStyleProp != null)
+                    _resolvedColorProp = _resolvedStyleProp.PropertyType.GetProperty("color", pubInst);
+                _styleColorType = FindTypeAnywhere("UnityEngine.UIElements.StyleColor");
 
                 _fontDefFontProp = _fontDefinitionType.GetProperty("font", pubInst);
                 _fontDefAssetProp = _fontDefinitionType.GetProperty("fontAsset", pubInst);
@@ -417,9 +428,7 @@ namespace UnityGameTranslator.Core
 
                     if (root == null) continue;
 
-                    ApplyFontIfNeeded(root);
-
-                    visited += WalkTree(root, MaxElementsPerPass - visited);
+                    visited += Walk(root, MaxElementsPerPass - visited, TranslateElement);
                     if (visited >= MaxElementsPerPass) break;
                 }
             }
@@ -430,13 +439,18 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Walks one document, translating the text it finds.
+        /// Walks one document and hands over every TextElement in it. Returns how many elements
+        /// were looked at, so a caller can spend a budget across several documents.
         ///
         /// ⚠ An explicit stack, not recursion: a UI Toolkit tree is as deep as its author made it,
         /// and a deep one would take the whole game down with a StackOverflow that no catch can
         /// intercept.
+        ///
+        /// ⚠ One walker for both readers — translating and highlighting. Two would drift apart, and
+        /// the one that drifts is whichever is used less: the Fonts tab would light up a set of
+        /// elements the translation pass never visits.
         /// </summary>
-        private static int WalkTree(object root, int budget)
+        private static int Walk(object root, int budget, Action<object> action)
         {
             int visited = 0;
             var stack = new Stack<object>();
@@ -447,8 +461,7 @@ namespace UnityGameTranslator.Core
                 var element = stack.Pop();
                 visited++;
 
-                if (TextElementType.IsInstanceOfType(element))
-                    TranslateElement(element);
+                if (TextElementType.IsInstanceOfType(element)) action(element);
 
                 int count = ChildCount(element);
                 for (int i = 0; i < count; i++)
@@ -471,6 +484,11 @@ namespace UnityGameTranslator.Core
                 // Ours already. Reading it back and asking for a translation would be asking to
                 // translate the target language into itself.
                 if (_written.TryGetValue(element, out var mine) && mine == current) return;
+
+                // ⚠ Before translating, and the order is the one every other path uses: the font is
+                // what the "translate this font or not" switch is keyed on, so a font must be known
+                // before the decision to translate can be taken.
+                if (!HandleFont(element)) return;
 
                 string translated = TranslatorCore.TranslateTextWithTracking(current, element);
                 if (string.IsNullOrEmpty(translated) || translated == current) return;
@@ -526,102 +544,121 @@ namespace UnityGameTranslator.Core
 
         #region Fonts
 
-        /// <summary>Roots already carrying a replacement, and which one.</summary>
-        private static readonly ConditionalWeakTable<object, string> _fontApplied =
-            new ConditionalWeakTable<object, string>();
-
-        /// <summary>
-        /// Puts the replacement font on a document's root, once.
-        ///
-        /// ⚠ **Once per document, not once per element** — a property of UI Toolkit rather than a
-        /// shortcut: `-unity-font-definition` is an INHERITED style, so a root carries it down the
-        /// whole tree. uGUI has no equivalent, which is why the TMP path has to touch every
-        /// component and force a mesh update afterwards.
-        ///
-        /// ⚠ **The original font is READ, never assumed.** FontManager answers "what replaces this
-        /// one", so it needs a name; picking a font here because none could be read would be
-        /// choosing on the player's behalf, and choosing wrong is worse than leaving the game's own.
-        ///
-        /// ⚠ An element the game styles explicitly keeps its font: an inline style beats an
-        /// inherited one. Forcing each element instead would undo the game's own layout decisions.
-        /// </summary>
         /// <summary>Said once, so a font that never arrives can be diagnosed from the log.</summary>
         private static bool _fontDiagnosed;
         private static bool _noReplacementDiagnosed;
 
-        private static void ApplyFontIfNeeded(object root)
+        /// <summary>
+        /// The font each element STARTED with — its "settings font name".
+        ///
+        /// 🔴 The equivalent of FontManager's `_originalFontsPerComponent`, and needed for the same
+        /// reason: once the font is swapped, reading the element gives OUR font back. Everything the
+        /// Fonts tab does — matching, highlighting, deciding what to replace — is keyed on the
+        /// game's original name, never on the replacement.
+        ///
+        /// ⚠ Keyed by element rather than by instance id, because a VisualElement has none. That is
+        /// also why FontManager.GetSettingsFontName is not called here: it is an instance-id API.
+        /// </summary>
+        private static readonly ConditionalWeakTable<object, string> _originalFontName =
+            new ConditionalWeakTable<object, string>();
+
+        /// <summary>
+        /// Registers the element's font, applies the configured replacement, and says whether this
+        /// element may be translated at all.
+        ///
+        /// 🔴 **Registration is the point.** Nothing can be replaced before the font is in
+        /// FontSettingsMap: `GetUnityReplacementFont` returns null for a name it does not know, and
+        /// the Fonts tab cannot offer what it was never told about. A first version read the font
+        /// and never registered it — so the tab kept listing only the mod's own Arial while every
+        /// font in the game stayed invisible and unconfigurable.
+        ///
+        /// ⚠ Registered as **"Unity"**, not as a type of our own. The replacement really does travel
+        /// the Unity path — `GetUnityReplacementFont` → `CreateUnityFontFromSystem` yields a Font,
+        /// not a TMP asset with its atlas and material — and `BelongsToFamily` rejects any type it
+        /// does not know, which would quietly drop these fonts out of every list.
+        ///
+        /// Returns false when translation is switched off for this font.
+        /// </summary>
+        private static bool HandleFont(object element)
         {
-            if (!CanSetFont) return;
-            if (!TranslatorCore.FontReplacementActive) return;
+            if (!CanSetFont) return true;
 
             try
             {
-                var resolved = _resolvedStyleProp?.GetValue(root, null);
-                if (resolved == null) return;
+                var resolved = _resolvedStyleProp?.GetValue(element, null);
+                if (resolved == null) return true;
 
-                // What the game actually renders with, whichever engine it states it in.
-                var current = ReadResolvedFont(resolved, out bool isSdf);
+                var currentFont = ReadResolvedFont(resolved, out bool isSdf);
+                if (currentFont == null || string.IsNullOrEmpty(currentFont.name)) return true;
 
-                // 🔴 Reported, not swallowed. The first version read only `unityFont`, found null on
-                // an SDF game and returned in silence: the log said "font replacement=True" while
-                // nothing was ever replaced, and nothing said which of the four exits was taken.
-                if (!_fontDiagnosed)
+                if (!_originalFontName.TryGetValue(element, out var settingsName))
                 {
-                    _fontDiagnosed = true;
-                    TranslatorCore.LogInfo(current == null
-                        ? "[UIToolkit] No font on the document root — neither unityFont nor "
-                          + "unityFontDefinition resolved to one; leaving the game's own."
-                        : $"[UIToolkit] Document font: {current.name} "
-                          + $"({(isSdf ? "SDF/TextCore" : "legacy Font")})");
-                }
+                    settingsName = currentFont.name;
+                    _originalFontName.Add(element, settingsName);
 
-                if (current == null || string.IsNullOrEmpty(current.name)) return;
+                    // The shared registry, so the font reaches the Fonts tab and can be given a
+                    // fallback. RegisterFontObject rather than ...ByName: we hold the object, which
+                    // is what the other paths hand over.
+                    FontManager.RegisterFontObject(currentFont, "Unity");
 
-                string originalName = current.name;
-
-                // Already ours: the resolved font IS the replacement, so asking again would look up
-                // a replacement for a replacement.
-                if (_fontApplied.TryGetValue(root, out var applied) && applied == originalName) return;
-
-                var replacement = FontManager.GetUnityReplacementFont(originalName);
-
-                if (replacement == null)
-                {
-                    // ⚠ Also said once. "The font was read but nothing replaces it" is the ordinary
-                    // case — no replacement is configured for it — and it is indistinguishable from
-                    // a failure unless it says so.
-                    if (!_noReplacementDiagnosed)
+                    if (!_fontDiagnosed)
                     {
-                        _noReplacementDiagnosed = true;
+                        _fontDiagnosed = true;
                         TranslatorCore.LogInfo(
-                            $"[UIToolkit] No replacement configured for '{originalName}' — the "
-                            + "game's own font is kept.");
+                            $"[UIToolkit] First document font: {settingsName} "
+                            + $"({(isSdf ? "SDF/TextCore" : "legacy Font")}) — registered as a game font");
                     }
-                    return;
                 }
 
-                object definition = BuildDefinition(replacement, isSdf);
-                if (definition == null) return;
+                if (!FontManager.IsTranslationEnabled(settingsName)) return false;
 
-                // StyleFontDefinition wraps it. An implicit operator hides this in C#; through
-                // reflection the conversion has to be made by hand.
-                var styleValue = Activator.CreateInstance(_styleFontDefinitionType, definition);
-
-                var style = _styleProp.GetValue(root, null);
-                if (style == null) return;
-
-                _styleFontProp.SetValue(style, styleValue, null);
-
-                _fontApplied.Remove(root);
-                _fontApplied.Add(root, replacement.name ?? originalName);
-
-                TranslatorCore.LogInfo(
-                    $"[UIToolkit] Font on document root: {originalName} -> {replacement.name}");
+                ApplyReplacement(element, settingsName, currentFont, isSdf);
+                return true;
             }
-            catch (Exception ex)
+            catch
             {
-                TranslatorCore.LogWarning($"[UIToolkit] Font replacement failed: {ex.Message}");
+                return true;
             }
+        }
+
+        /// <summary>
+        /// Swaps in the configured replacement.
+        ///
+        /// ⚠ Inline on the element, not inherited from the root. Inheritance would be simpler — and
+        /// a first version used it — but it cannot see what each element actually uses: a document
+        /// mixes fonts, and the Fonts tab lists them one by one. Acting per element is also what the
+        /// other paths do per component, which is what keeps the tab's counts truthful.
+        /// </summary>
+        private static void ApplyReplacement(object element, string settingsName,
+                                             UnityEngine.Object currentFont, bool isSdf)
+        {
+            // Already wearing it: what resolves is no longer the name we recorded.
+            if (!string.Equals(currentFont.name, settingsName, StringComparison.Ordinal)) return;
+
+            var replacement = FontManager.GetUnityReplacementFont(settingsName);
+
+            if (replacement == null)
+            {
+                // ⚠ Also said once. "Read, but nothing configured to replace it" is the ordinary
+                // case, and silence made it indistinguishable from a failure.
+                if (!_noReplacementDiagnosed)
+                {
+                    _noReplacementDiagnosed = true;
+                    TranslatorCore.LogInfo(
+                        $"[UIToolkit] No fallback configured for '{settingsName}' — the game's own "
+                        + "font is kept. Pick one in the Fonts tab to replace it.");
+                }
+                return;
+            }
+
+            object definition = BuildDefinition(replacement, isSdf);
+            if (definition == null) return;
+
+            var styleValue = Activator.CreateInstance(_styleFontDefinitionType, definition);
+            var style = _styleProp.GetValue(element, null);
+            if (style == null) return;
+
+            _styleFontProp.SetValue(style, styleValue, null);
         }
 
         /// <summary>
@@ -701,6 +738,128 @@ namespace UnityGameTranslator.Core
 
             return _fromFontMethod?.Invoke(null, new object[] { replacement });
         }
+
+        #endregion
+
+        #region Highlight (Fonts tab — which text wears which font)
+
+        /// <summary>Colour each element had before we tinted it.</summary>
+        private static readonly ConditionalWeakTable<object, object> _highlightOriginalColor =
+            new ConditionalWeakTable<object, object>();
+
+        /// <summary>Elements currently tinted, so clearing does not have to walk the tree again.</summary>
+        private static readonly List<object> _highlighted = new List<object>();
+
+        /// <summary>
+        /// Tints the text using <paramref name="fontName"/> and dims the rest — the UI Toolkit half
+        /// of the Fonts tab's "show me where this font is used".
+        ///
+        /// ⚠ Same colours and same rule as the component path (TranslatorScanner.HighlightComponent):
+        /// matched by the font the element STARTED with, never by the one it wears now, or every
+        /// element we already replaced would stop matching the font it is filed under.
+        /// </summary>
+        public static void HighlightFont(string fontName, Color highlight, Color dim)
+        {
+            if (!Available || _styleColorProp == null || _styleColorType == null) return;
+
+            ClearHighlight();
+
+            try
+            {
+                var documents = TypeHelper.FindAllObjectsOfType(UIDocumentType);
+                if (documents == null) return;
+
+                foreach (var document in documents)
+                {
+                    if (document == null) continue;
+
+                    object root = null;
+                    try { root = _rootProp.GetValue(document, null); }
+                    catch { }
+                    if (root == null) continue;
+
+                    Walk(root, MaxElementsPerPass, element =>
+                    {
+                        string settingsName = SettingsFontNameOf(element);
+                        bool matches = !string.IsNullOrEmpty(settingsName)
+                                       && string.Equals(settingsName, fontName,
+                                                        StringComparison.OrdinalIgnoreCase);
+
+                        RememberColour(element);
+                        SetColour(element, matches ? highlight : dim);
+                        _highlighted.Add(element);
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogWarning($"[UIToolkit] HighlightFont error: {ex.Message}");
+            }
+        }
+
+        public static void ClearHighlight()
+        {
+            if (_highlighted.Count == 0) return;
+
+            foreach (var element in _highlighted)
+            {
+                try
+                {
+                    if (_highlightOriginalColor.TryGetValue(element, out var stored)
+                        && stored is Color original)
+                    {
+                        SetColour(element, original);
+                    }
+                }
+                catch { }
+            }
+
+            _highlighted.Clear();
+        }
+
+        /// <summary>The font this element is filed under: the one it had before any replacement.</summary>
+        private static string SettingsFontNameOf(object element)
+        {
+            if (_originalFontName.TryGetValue(element, out var recorded)) return recorded;
+
+            try
+            {
+                var resolved = _resolvedStyleProp?.GetValue(element, null);
+                if (resolved == null) return null;
+
+                return ReadResolvedFont(resolved, out _)?.name;
+            }
+            catch { return null; }
+        }
+
+        private static void RememberColour(object element)
+        {
+            if (_highlightOriginalColor.TryGetValue(element, out _)) return;
+
+            try
+            {
+                var resolved = _resolvedStyleProp?.GetValue(element, null);
+                if (resolved == null || _resolvedColorProp == null) return;
+
+                if (_resolvedColorProp.GetValue(resolved, null) is Color current)
+                    _highlightOriginalColor.Add(element, current);
+            }
+            catch { }
+        }
+
+        private static void SetColour(object element, Color colour)
+        {
+            try
+            {
+                var style = _styleProp.GetValue(element, null);
+                if (style == null) return;
+
+                var styleColour = Activator.CreateInstance(_styleColorType, colour);
+                _styleColorProp.SetValue(style, styleColour, null);
+            }
+            catch { }
+        }
+
 
         #endregion
     }

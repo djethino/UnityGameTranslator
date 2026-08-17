@@ -56,41 +56,43 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             _helpZone = CreateHelpZone(buttonRow, "Hover an element to see what it does");
 
-            var card = CreateAdaptiveCard(scrollContent, "BackupsCard", PanelWidth - 40);
+            // 🔴 **What must stay put stays put.** The title, the state you are in and the button
+            // that keeps a copy are what somebody reads BEFORE choosing a row — scrolled away by
+            // the twelfth entry, they would have to scroll back up to remember where they stand.
+            // CreateFixedHeader exists for exactly this and is what the other panels use.
+            var header = CreateFixedHeader("BackupsHeader");
 
-            var title = CreateTitle(card, "Title", "Backups");
+            var head = CreateAdaptiveCard(header, "BackupsHead", PanelWidth - 40);
+
+            var title = CreateTitle(head, "Title", "Backups");
             RegisterUIText(title);
 
             // ⚠ Said once, at the top. Somebody looking at a list of their own work deserves to
             // know it goes nowhere before they wonder whether it does.
-            var privacy = UIFactory.CreateLabel(card, "Privacy", Backups.PrivacyNote, TextAnchor.MiddleLeft);
+            var privacy = UIFactory.CreateLabel(head, "Privacy", Backups.PrivacyNote,
+                                                TextAnchor.MiddleLeft);
             privacy.color = UIStyles.TextMuted;
             privacy.fontSize = UIStyles.FontSizeHint;
             UIFactory.SetLayoutElement(privacy.gameObject, minHeight: UIStyles.RowHeightSmall,
                                        flexibleWidth: 9999);
             RegisterUIText(privacy);
 
-            UIStyles.CreateSpacer(card, 8);
+            UIStyles.CreateSpacer(head, 6);
 
-            // 🔴 The current state, first. Without it no row can be read: "3 210 lines" is neither
+            // 🔴 The current state, first. Without it no row can be read: a line count is neither
             // more nor less until you know where you stand today.
-            _nowLabel = UIFactory.CreateLabel(card, "Now", "", TextAnchor.MiddleLeft);
+            _nowLabel = UIFactory.CreateLabel(head, "Now", "", TextAnchor.MiddleLeft);
             _nowLabel.fontStyle = FontStyle.Bold;
             _nowLabel.color = UIStyles.TextPrimary;
             UIFactory.SetLayoutElement(_nowLabel.gameObject, minHeight: UIStyles.RowHeightNormal,
                                        flexibleWidth: 9999);
             RegisterExcluded(_nowLabel);
 
-            UIStyles.CreateSpacer(card, 8);
-
-            var actionRow = UIStyles.CreateFormRow(card, "SaveRow", UIStyles.RowHeightNormal, 8);
+            var actionRow = UIStyles.CreateFormRow(head, "SaveRow", UIStyles.RowHeightNormal, 8);
 
             _saveBtn = CreatePrimaryButton(actionRow, "SaveBtn", "Save a copy");
             _saveBtn.OnClick += SaveCopy;
             RegisterUIText(_saveBtn.ButtonText);
-            _helpZone?.Describe(_saveBtn.Component.gameObject,
-                "Keeps the translation as it stands, with the fonts and images it uses. It stays "
-                + "until you remove it.");
 
             _countLabel = UIFactory.CreateLabel(actionRow, "Count", "", TextAnchor.MiddleRight);
             _countLabel.color = UIStyles.TextSecondary;
@@ -98,7 +100,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.SetLayoutElement(_countLabel.gameObject, flexibleWidth: 9999);
             RegisterExcluded(_countLabel);
 
-            UIStyles.CreateSpacer(card, 10);
+            // The rows themselves are the only thing that scrolls, in the panel's own scroll area.
+            var card = CreateAdaptiveCard(scrollContent, "BackupsCard", PanelWidth - 40);
 
             _listHost = UIFactory.CreateVerticalGroup(card, "List", false, false, true, true, 6);
             UIFactory.SetLayoutElement(_listHost, flexibleWidth: 9999);

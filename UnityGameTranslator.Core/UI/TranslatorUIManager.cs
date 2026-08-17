@@ -1180,6 +1180,7 @@ namespace UnityGameTranslator.Core.UI
             _interactivePanels.Add(UploadSetupPanel);
             _interactivePanels.Add(MergePanel);
             _interactivePanels.Add(LanguagePanel);
+            _interactivePanels.Add(BackupsPanel);
             _interactivePanels.Add(ConfirmationPanel);
             _interactivePanels.Add(SettingsChoicePanel);
             _interactivePanels.Add(InspectorPanel);
@@ -4378,6 +4379,11 @@ namespace UnityGameTranslator.Core.UI
             string mainHash,
             TranslationSettings mainSettings = null)
         {
+            // 🔴 Kept first. This replaces the player's whole set in memory, and the timer writes
+            // it out a moment later — so it is a wholesale replacement like any download, and it
+            // was the one family of them that took no copy at all.
+            BackupCacheFile(BackupReason.Merged);
+
             TranslatorCore.TranslationCache.Clear();
             foreach (var kvp in mergeResult.Merged)
             {
@@ -4415,6 +4421,11 @@ namespace UnityGameTranslator.Core.UI
             TranslationSettings remoteSettings = null)
         {
             // Apply the merged translations with their tags preserved
+            // 🔴 Kept first. This replaces the player's whole set in memory, and the timer writes
+            // it out a moment later — so it is a wholesale replacement like any download, and it
+            // was the one family of them that took no copy at all.
+            BackupCacheFile(BackupReason.Merged);
+
             TranslatorCore.TranslationCache.Clear();
             foreach (var kvp in mergeResult.Merged)
             {

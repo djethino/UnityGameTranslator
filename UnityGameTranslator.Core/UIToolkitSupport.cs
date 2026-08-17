@@ -423,6 +423,8 @@ namespace UnityGameTranslator.Core
 
                     if (root == null) continue;
 
+                    ReportProxyIdentityOnce(root);
+
                     visited += Walk(root, MaxElementsPerPass - visited, ProcessElement);
                     if (visited >= MaxElementsPerPass) break;
                 }
@@ -456,7 +458,8 @@ namespace UnityGameTranslator.Core
                 var element = stack.Pop();
                 visited++;
 
-                if (TextElementType.IsInstanceOfType(element)) action(element);
+                var asText = AsTextElement(element);
+                if (asText != null) action(asText);
 
                 int count = ChildCount(element);
                 for (int i = 0; i < count; i++)
@@ -512,6 +515,75 @@ namespace UnityGameTranslator.Core
                 _written.Add(element, translated);
             }
             catch { }
+        }
+
+        private static bool _identityReported;
+
+        /// <summary>
+        /// Says, once, whether asking twice for the same child hands back the same object.
+        ///
+        /// 🔴 **The one assumption this whole file rests on, and the one IL2CPP is entitled to
+        /// break.** Everything remembered per element — what we wrote, the font it started with,
+        /// its original size, its highlight colour — is held in a ConditionalWeakTable keyed on the
+        /// element itself. That works while a given element is always the same object. On IL2CPP,
+        /// each call can build a fresh interop proxy around the same native object, and then every
+        /// one of those tables misses on every pass: text retranslated endlessly, fonts never seen
+        /// as already replaced, sizes rescaled from an already-scaled value.
+        ///
+        /// ⚠ Measured rather than assumed, and reported rather than worked around: rewriting all of
+        /// it to key on native pointers would be a large change, and doing it before knowing whether
+        /// it is needed is how a fix lands on a problem nobody has. The line below is what tells us.
+        /// </summary>
+        private static void ReportProxyIdentityOnce(object root)
+        {
+            if (_identityReported) return;
+
+            try
+            {
+                if (ChildCount(root) < 1) return;
+
+                _identityReported = true;
+
+                var first = ChildAt(root, 0);
+                var again = ChildAt(root, 0);
+
+                bool stable = ReferenceEquals(first, again);
+
+                TranslatorCore.LogInfo(stable
+                    ? "[UIToolkit] Element identity is stable — per-element state will work."
+                    : "🔴 [UIToolkit] Element identity is NOT stable (a fresh proxy per call): "
+                      + "per-element state cannot be keyed on the object. Translation will repeat "
+                      + "and fonts will be re-applied every pass.");
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// The element as a TextElement, or null when it is not one.
+        ///
+        /// 🔴 **Not just `IsInstanceOfType`, because of IL2CPP.** There, what a call hands back is an
+        /// interop PROXY, and the proxy is often typed as the declared return type — `VisualElement`
+        /// — while the native object is a Label. A managed type test then answers "not text" about
+        /// every piece of text in the game, and the pass would walk the whole tree finding nothing,
+        /// silently. TryCast asks the native side instead, which is what TypeHelper.Il2CppCast wraps.
+        ///
+        /// ⚠ The CAST result is what gets returned, not the original: reading `text` off a proxy
+        /// typed as the base class would not find the property.
+        /// </summary>
+        private static object AsTextElement(object element)
+        {
+            if (element == null) return null;
+            if (TextElementType.IsInstanceOfType(element)) return element;
+
+            // Mono: the test above is the whole answer, and this call is a no-op that returns null.
+            if (TranslatorCore.Adapter?.IsIL2CPP != true) return null;
+
+            try
+            {
+                var cast = TypeHelper.Il2CppCast(element, TextElementType);
+                return TextElementType.IsInstanceOfType(cast) ? cast : null;
+            }
+            catch { return null; }
         }
 
         private static int ChildCount(object element)

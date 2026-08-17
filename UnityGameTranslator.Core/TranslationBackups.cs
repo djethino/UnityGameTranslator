@@ -35,6 +35,9 @@ namespace UnityGameTranslator.Core
         private const string TranslationFile = "translations.json";
         private const string AncestorFile = "translations.json.ancestor";
 
+        /// <summary>Marks an id naming a file an earlier version left, rather than a folder.</summary>
+        private const string LegacyPrefix = "legacy:";
+
         // ── Reading ───────────────────────────────────────────────────────
 
         /// <summary>
@@ -51,20 +54,27 @@ namespace UnityGameTranslator.Core
             try
             {
                 var root = Folder;
-                if (root == null || !Directory.Exists(root)) return entries;
 
-                foreach (var directory in Directory.GetDirectories(root))
+                // ⚠ Not an early return. Every install that exists today has no backups folder and
+                // several older copies beside the translation; leaving at the first line would
+                // have shown "nothing kept" to exactly the people who have the most to lose.
+                if (root != null && Directory.Exists(root))
                 {
-                    var name = Path.GetFileName(directory);
-                    if (!Backups.IsBackupFolder(name, out var saved)) continue;
+                    foreach (var directory in Directory.GetDirectories(root))
+                    {
+                        var name = Path.GetFileName(directory);
+                        if (!Backups.IsBackupFolder(name, out var saved)) continue;
 
-                    // A folder with no translation in it is not a copy of anything. It happens
-                    // when a write was interrupted, and offering it would promise a restore that
-                    // puts nothing back.
-                    if (!File.Exists(Path.Combine(directory, TranslationFile))) continue;
+                        // A folder with no translation in it is not a copy of anything. It happens
+                        // when a write was interrupted, and offering it would promise a restore
+                        // that puts nothing back.
+                        if (!File.Exists(Path.Combine(directory, TranslationFile))) continue;
 
-                    entries.Add(ReadAbout(directory, name, saved));
+                        entries.Add(ReadAbout(directory, name, saved));
+                    }
                 }
+
+                entries.AddRange(Legacy());
             }
             catch (Exception e)
             {
@@ -73,6 +83,120 @@ namespace UnityGameTranslator.Core
 
             entries.Sort((a, b) => b.At.CompareTo(a.At));
             return entries;
+        }
+
+        /// <summary>
+        /// What earlier versions left beside the translation: the single `.backup` this mod used
+        /// to overwrite, the orphaned `.prepurge`, and the folder the Manager filled.
+        ///
+        /// 🔴 **Listed, not ignored.** Each of them is somebody's translation. And the Manager
+        /// lists them, so a mod that did not would show "nothing kept" over the same folder the
+        /// tool describes as holding four copies — two windows disagreeing about one disk.
+        ///
+        /// ⚠ Read-only in practice: nothing new is written in those shapes, and the rotation never
+        /// touches them because they do not live in the backups folder.
+        /// </summary>
+        private static List<BackupEntry> Legacy()
+        {
+            var found = new List<BackupEntry>();
+
+            void Add(string path)
+            {
+                try
+                {
+                    found.Add(new BackupEntry
+                    {
+                        Id = LegacyPrefix + Path.GetFileName(path),
+                        At = File.GetLastWriteTime(path),
+                        Reason = BackupReason.Unknown,
+                        Lines = CountLines(path),
+                        Uuid = UuidIn(path),
+                        WithAssets = false,
+                    });
+                }
+                catch (Exception e)
+                {
+                    TranslatorCore.LogWarning($"[Backups] Skipped {path}: {e.Message}");
+                }
+            }
+
+            try
+            {
+                var folder = TranslatorCore.ModFolder;
+                if (string.IsNullOrEmpty(folder)) return found;
+
+                foreach (var loose in new[] { ".backup", ".prepurge" })
+                {
+                    var file = TranslatorCore.CachePath + loose;
+                    if (File.Exists(file)) Add(file);
+                }
+
+                var removed = Path.Combine(folder, "removed");
+                if (Directory.Exists(removed))
+                {
+                    foreach (var file in Directory.GetFiles(removed, "translations-*.json"))
+                        Add(file);
+                }
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogWarning($"[Backups] Could not read older copies: {e.Message}");
+            }
+
+            return found;
+        }
+
+        /// <summary>
+        /// The file behind a legacy id, or null when the id names one of our own folders.
+        ///
+        /// ⚠ The name only, never a path: an id is data read off a disk, and one walking up with
+        /// ".." would have a restore reach outside the folder it belongs to.
+        /// </summary>
+        private static string LegacyPath(string id)
+        {
+            if (id == null || !id.StartsWith(LegacyPrefix, StringComparison.Ordinal)) return null;
+
+            var name = Path.GetFileName(id.Substring(LegacyPrefix.Length));
+            if (string.IsNullOrEmpty(name)) return null;
+
+            // The two loose ones sit beside the translation; the dated ones in `removed/`.
+            var beside = Path.Combine(TranslatorCore.ModFolder, name);
+            if (File.Exists(beside)) return beside;
+
+            var removed = Path.Combine(TranslatorCore.ModFolder, "removed", name);
+            return File.Exists(removed) ? removed : null;
+        }
+
+        private static int CountLines(string path)
+        {
+            try
+            {
+                var root = JObject.Parse(File.ReadAllText(path));
+                var count = 0;
+
+                foreach (var property in root.Properties())
+                {
+                    if (!property.Name.StartsWith("_", StringComparison.Ordinal)) count++;
+                }
+
+                return count;
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+
+        private static string UuidIn(string path)
+        {
+            try
+            {
+                return JObject.Parse(File.ReadAllText(path))["_uuid"]?.Value<string>();
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private static BackupEntry ReadAbout(string directory, string id, bool saved)
@@ -430,11 +554,28 @@ namespace UnityGameTranslator.Core
                 var root = Folder;
                 if (root == null) return false;
 
+                TakeAutomatic(BackupReason.Restored);
+
+                // A copy an older version left: one loose file, no ancestor of its own.
+                if (LegacyPath(id) is { } loose)
+                {
+                    if (!File.Exists(loose)) return false;
+
+                    File.Copy(loose, TranslatorCore.CachePath, overwrite: true);
+
+                    // ⚠ The stale ancestor goes rather than staying to describe an agreement that
+                    // never happened. A blind first merge is a known state; a wrong base is not.
+                    var stale = TranslatorCore.CachePath + ".ancestor";
+                    if (File.Exists(stale)) File.Delete(stale);
+
+                    TranslatorCore.ReloadCache();
+                    TranslatorCore.LogInfo($"[Backups] Put {id} back");
+                    return true;
+                }
+
                 var directory = Path.Combine(root, id);
                 var source = Path.Combine(directory, TranslationFile);
                 if (!File.Exists(source)) return false;
-
-                TakeAutomatic(BackupReason.Restored);
 
                 File.Copy(source, TranslatorCore.CachePath, overwrite: true);
 
@@ -492,6 +633,14 @@ namespace UnityGameTranslator.Core
                 var root = Folder;
                 if (root == null) return false;
 
+                if (LegacyPath(id) is { } loose)
+                {
+                    if (!File.Exists(loose)) return false;
+
+                    File.Delete(loose);
+                    return true;
+                }
+
                 var directory = Path.Combine(root, id);
                 if (!Directory.Exists(directory)) return false;
 
@@ -520,6 +669,21 @@ namespace UnityGameTranslator.Core
 
                 var entries = List();
                 if (!Backups.CanSaveAnother(entries)) return false;
+
+                // ⚠ A loose file is promoted by being moved INTO a proper folder: it has no
+                // description of its own, and left where it is the next tidy-up owns its fate.
+                if (LegacyPath(id) is { } loose)
+                {
+                    if (!File.Exists(loose)) return false;
+
+                    Directory.CreateDirectory(root);
+                    var home = Path.Combine(root, UniqueId(root, BackupReason.Saved));
+                    Directory.CreateDirectory(home);
+
+                    File.Move(loose, Path.Combine(home, TranslationFile));
+                    WriteAbout(home, BackupReason.Saved, by: null, label: null, withAssets: false);
+                    return true;
+                }
 
                 var directory = Path.Combine(root, id);
                 if (!Directory.Exists(directory)) return false;

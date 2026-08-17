@@ -417,23 +417,22 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// <summary>
         /// ⚠ Always confirmed, and the sentence names what is at stake rather than asking "are you
         /// sure": this replaces the translation the game is running.
+        ///
+        /// ⚠ **The words come from `Backups`, not from here.** They were written twice — once in
+        /// this panel, once nowhere at all, since the manager asked nothing — and two screens onto
+        /// one folder must not differ about what an act costs. Written twice they drift, and the
+        /// drift is invisible: nobody has both dialogs open at once to notice.
         /// </summary>
         private void ConfirmRestore(BackupEntry entry)
         {
             var now = TranslatorCore.TranslationCache?.Count ?? 0;
 
-            var body = $"The game will use the {entry.Lines}-line version from "
-                     + $"{entry.At:dd MMM HH:mm} instead of the {now} lines it has now.\n\n"
-                     + "What you have now is kept as a backup, so you can come back to it.";
-
-            if (Backups.IsAnotherLineage(entry.Uuid, TranslatorCore.FileUuid))
-            {
-                body += "\n\n⚠ This copy is " + Backups.AnotherLineageNote
-                      + ". Its lines and its history are not yours.";
-            }
+            var body = Backups.ConfirmRestoreBody(
+                entry.Lines, now, entry.At.ToString("dd MMM HH:mm"),
+                Backups.IsAnotherLineage(entry.Uuid, TranslatorCore.FileUuid));
 
             TranslatorUIManager.ConfirmationPanel?.Show(
-                "Put this copy back?", body, "Put it back",
+                Backups.ConfirmRestoreTitle, body, Backups.ConfirmRestoreVerb,
                 () =>
                 {
                     if (!TranslationBackups.Restore(entry.Id))
@@ -451,10 +450,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 : $"\"{entry.Label}\"";
 
             TranslatorUIManager.ConfirmationPanel?.Show(
-                "Delete this copy?",
-                $"This removes {what} and its {entry.Lines} lines. Nothing else is touched, and "
-                + "the translation you are playing with stays as it is.",
-                "Delete",
+                Backups.ConfirmDeleteTitle,
+                Backups.ConfirmDeleteBody(what, entry.Lines),
+                Backups.ConfirmDeleteVerb,
                 () => { TranslationBackups.Delete(entry.Id); Refresh(); });
         }
     }

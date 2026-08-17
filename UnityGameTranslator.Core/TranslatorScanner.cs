@@ -1920,7 +1920,13 @@ namespace UnityGameTranslator.Core
                 // Pass 3: UI Toolkit. Its text is not a Component, so neither the scanner cache nor
                 // the patch refs above hold any of it — a game whose interface is UI Toolkit would
                 // light up nothing at all and read as "this font is used nowhere".
-                UIToolkitSupport.HighlightFont(fontName, HighlightColor, DimColor);
+                //
+                // ⚠ Its counts join the audit rather than being printed apart: two totals for one
+                // question is how a reader ends up trusting the smaller one.
+                int uitkMatched = UIToolkitSupport.HighlightFont(
+                    fontName, HighlightColor, DimColor, out int uitkReplaced);
+                _hlMatched += uitkMatched;
+                _hlReplaced += uitkReplaced;
 
                 string wanted = FontManager.GetConfiguredFallback(fontName);
                 TranslatorCore.LogInfo($"[HighlightAudit] '{fontName}' → fallback '{wanted ?? "(none)"}': {_hlMatched} component(s), {_hlReplaced} wearing the replacement, {_hlMatched - _hlReplaced} still on the original");

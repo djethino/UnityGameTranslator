@@ -66,6 +66,10 @@ namespace UnityGameTranslator.Core
         private static PropertyInfo _resolvedColorProp;   // IResolvedStyle.color -> Color
         private static Type _styleColorType;              // UnityEngine.UIElements.StyleColor
 
+        private static PropertyInfo _styleFontSizeProp;   // IStyle.fontSize         -> StyleLength
+        private static PropertyInfo _resolvedFontSizeProp;// IResolvedStyle.fontSize -> float
+        private static Type _styleLengthType;             // UnityEngine.UIElements.StyleLength
+
         /// <summary>True when this game has UI Toolkit and we can read its text.</summary>
         public static bool Available { get; private set; }
 
@@ -175,6 +179,12 @@ namespace UnityGameTranslator.Core
                 if (_resolvedStyleProp != null)
                     _resolvedColorProp = _resolvedStyleProp.PropertyType.GetProperty("color", pubInst);
                 _styleColorType = FindTypeAnywhere("UnityEngine.UIElements.StyleColor");
+
+                // Size, same two-sided shape again.
+                _styleFontSizeProp = _styleProp.PropertyType.GetProperty("fontSize", pubInst);
+                if (_resolvedStyleProp != null)
+                    _resolvedFontSizeProp = _resolvedStyleProp.PropertyType.GetProperty("fontSize", pubInst);
+                _styleLengthType = FindTypeAnywhere("UnityEngine.UIElements.StyleLength");
 
                 _fontDefFontProp = _fontDefinitionType.GetProperty("font", pubInst);
                 _fontDefAssetProp = _fontDefinitionType.GetProperty("fontAsset", pubInst);
@@ -428,7 +438,7 @@ namespace UnityGameTranslator.Core
 
                     if (root == null) continue;
 
-                    visited += Walk(root, MaxElementsPerPass - visited, TranslateElement);
+                    visited += Walk(root, MaxElementsPerPass - visited, ProcessElement);
                     if (visited >= MaxElementsPerPass) break;
                 }
             }
@@ -474,6 +484,27 @@ namespace UnityGameTranslator.Core
             return visited;
         }
 
+        /// <summary>
+        /// One element, both jobs: its font, then its text.
+        ///
+        /// 🔴 **The font FIRST, and outside the "already translated" shortcut.** Putting the font
+        /// handling behind that shortcut made replacement impossible in practice: an element is
+        /// translated once, after which the shortcut returns immediately, and a fallback chosen in
+        /// the Fonts tab *afterwards* was never applied to anything already on screen. Which is
+        /// every element, one pass after the game opens.
+        ///
+        /// Fonts and text also change on different schedules — a font is re-picked from a settings
+        /// screen, a text is written by the game — so tying one to the other's state was wrong in
+        /// principle as well as in effect.
+        /// </summary>
+        private static void ProcessElement(object element)
+        {
+            // Also the switch for "translate this font or not", so it is asked every pass.
+            if (!HandleFont(element)) return;
+
+            TranslateElement(element);
+        }
+
         private static void TranslateElement(object element)
         {
             try
@@ -484,11 +515,6 @@ namespace UnityGameTranslator.Core
                 // Ours already. Reading it back and asking for a translation would be asking to
                 // translate the target language into itself.
                 if (_written.TryGetValue(element, out var mine) && mine == current) return;
-
-                // ⚠ Before translating, and the order is the one every other path uses: the font is
-                // what the "translate this font or not" switch is keyed on, so a font must be known
-                // before the decision to translate can be taken.
-                if (!HandleFont(element)) return;
 
                 string translated = TranslatorCore.TranslateTextWithTracking(current, element);
                 if (string.IsNullOrEmpty(translated) || translated == current) return;
@@ -613,6 +639,7 @@ namespace UnityGameTranslator.Core
                 if (!FontManager.IsTranslationEnabled(settingsName)) return false;
 
                 ApplyReplacement(element, settingsName, currentFont, isSdf);
+                ApplyScale(element, settingsName);
                 return true;
             }
             catch
@@ -659,6 +686,80 @@ namespace UnityGameTranslator.Core
             if (style == null) return;
 
             _styleFontProp.SetValue(style, styleValue, null);
+
+            if (!_replacementDiagnosed)
+            {
+                _replacementDiagnosed = true;
+                TranslatorCore.LogInfo(
+                    $"[UIToolkit] Font replaced: {settingsName} -> {replacement.name}"
+                    + $" ({(isSdf ? "as an SDF asset" : "as a Font")})");
+            }
+        }
+
+        /// <summary>Elements whose original size we hold, so a scale can be undone.</summary>
+        private static readonly ConditionalWeakTable<object, object> _originalFontSize =
+            new ConditionalWeakTable<object, object>();
+
+        private static bool _replacementDiagnosed;
+        private static bool _scaleDiagnosed;
+
+        /// <summary>
+        /// Applies the font's size multiplier, and puts the original back when it returns to 1.
+        ///
+        /// ⚠ The size the element STARTED with is kept, not the current one: scaling the scaled
+        /// value compounds, and a slider dragged three times would end up multiplying three times.
+        /// Same reason FontManager keeps `_originalFontSizes` per component.
+        ///
+        /// ⚠ `GetFontScale(name)` — the overload without a component id. The per-component override
+        /// needs an instance id, which a VisualElement has none of, so what applies here is the
+        /// font-wide setting. Per-element overrides are simply not offered on this path.
+        /// </summary>
+        private static void ApplyScale(object element, string settingsName)
+        {
+            if (_styleFontSizeProp == null || _resolvedFontSizeProp == null
+                || _styleLengthType == null) return;
+
+            try
+            {
+                var resolved = _resolvedStyleProp.GetValue(element, null);
+                if (resolved == null) return;
+
+                if (!(_resolvedFontSizeProp.GetValue(resolved, null) is float currentSize)) return;
+                if (currentSize <= 0f) return;
+
+                float original;
+                if (_originalFontSize.TryGetValue(element, out var stored) && stored is float kept)
+                {
+                    original = kept;
+                }
+                else
+                {
+                    original = currentSize;
+                    _originalFontSize.Add(element, original);
+                }
+
+                float scale = FontManager.GetFontScale(settingsName);
+                float wanted = original * scale;
+
+                // Below what the eye or the layout can tell apart — writing it would cost a style
+                // resolution every pass for nothing.
+                if (Math.Abs(wanted - currentSize) < 0.1f) return;
+
+                var style = _styleProp.GetValue(element, null);
+                if (style == null) return;
+
+                _styleFontSizeProp.SetValue(
+                    style, Activator.CreateInstance(_styleLengthType, wanted), null);
+
+                if (!_scaleDiagnosed && Math.Abs(scale - 1f) > 0.001f)
+                {
+                    _scaleDiagnosed = true;
+                    TranslatorCore.LogInfo(
+                        $"[UIToolkit] Font size scaled for '{settingsName}': ×{scale:F2} "
+                        + $"({original:F1} -> {wanted:F1})");
+                }
+            }
+            catch { }
         }
 
         /// <summary>
@@ -758,16 +859,24 @@ namespace UnityGameTranslator.Core
         /// matched by the font the element STARTED with, never by the one it wears now, or every
         /// element we already replaced would stop matching the font it is filed under.
         /// </summary>
-        public static void HighlightFont(string fontName, Color highlight, Color dim)
+        /// <returns>How many elements use this font; <paramref name="replaced"/> how many of them
+        /// are wearing the replacement. Reported so the audit line does not say "0 component(s)"
+        /// about a game where every piece of text matched — a count that is wrong in the reassuring
+        /// direction is worse than no count.</returns>
+        public static int HighlightFont(string fontName, Color highlight, Color dim, out int replaced)
         {
-            if (!Available || _styleColorProp == null || _styleColorType == null) return;
+            int matched = 0;
+            int wearing = 0;
+            replaced = 0;
+
+            if (!Available || _styleColorProp == null || _styleColorType == null) return 0;
 
             ClearHighlight();
 
             try
             {
                 var documents = TypeHelper.FindAllObjectsOfType(UIDocumentType);
-                if (documents == null) return;
+                if (documents == null) return 0;
 
                 foreach (var document in documents)
                 {
@@ -785,6 +894,19 @@ namespace UnityGameTranslator.Core
                                        && string.Equals(settingsName, fontName,
                                                         StringComparison.OrdinalIgnoreCase);
 
+                        if (matches)
+                        {
+                            matched++;
+
+                            // Wearing the replacement when what resolves is no longer what it
+                            // started with — the same test the component audit makes.
+                            if (!string.Equals(ResolvedFontNameOf(element), settingsName,
+                                               StringComparison.OrdinalIgnoreCase))
+                            {
+                                wearing++;
+                            }
+                        }
+
                         RememberColour(element);
                         SetColour(element, matches ? highlight : dim);
                         _highlighted.Add(element);
@@ -795,6 +917,22 @@ namespace UnityGameTranslator.Core
             {
                 TranslatorCore.LogWarning($"[UIToolkit] HighlightFont error: {ex.Message}");
             }
+
+            replaced = wearing;
+            return matched;
+        }
+
+        /// <summary>What the element resolves to right now — the replacement once one is applied.</summary>
+        private static string ResolvedFontNameOf(object element)
+        {
+            try
+            {
+                var resolved = _resolvedStyleProp?.GetValue(element, null);
+                if (resolved == null) return null;
+
+                return ReadResolvedFont(resolved, out _)?.name;
+            }
+            catch { return null; }
         }
 
         public static void ClearHighlight()

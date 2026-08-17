@@ -337,6 +337,12 @@ namespace UnityGameTranslator.Core
             if (ShouldSkipScanning())
                 return;
 
+            // ⚠ Its own pass, before the component work and not part of it. UI Toolkit text is not
+            // a Component, so none of the machinery below — the registered types, the incremental
+            // component cache, the per-component batch — can reach it. It has its own cadence and
+            // its own budget inside UIToolkitSupport.
+            UIToolkitSupport.Scan();
+
             bool profiling = TranslatorCore.DebugMode;
             if (profiling) _scanProfSw.Restart();
             float currentTime = Time.realtimeSinceStartup;

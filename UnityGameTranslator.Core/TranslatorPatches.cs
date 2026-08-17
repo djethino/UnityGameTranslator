@@ -274,6 +274,11 @@ namespace UnityGameTranslator.Core
 
                 // Image replacement patches — intercept sprite/texture assignments
                 patchCount += PatchImageComponents(patcher);
+
+                // UI Toolkit — a whole framework whose text is not a Component and which none of
+                // the above can reach. One setter covers all of it; see UIToolkitSupport.
+                UIToolkitSupport.Initialize();
+                patchCount += UIToolkitSupport.ApplyPatches(patcher);
             }
             catch (Exception e)
             {

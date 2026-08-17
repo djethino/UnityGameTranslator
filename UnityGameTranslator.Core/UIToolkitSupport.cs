@@ -819,19 +819,32 @@ namespace UnityGameTranslator.Core
 
                 if (!_sdfCache.TryGetValue(key, out var asset))
                 {
-                    // ⚠ FontManager's creator, not a second one here. It tries every overload and
-                    // fills in the sampling size, padding, atlas size and render mode that the
-                    // one-argument call leaves at defaults — which is what made replaced text land
-                    // in the wrong places and sometimes not draw at all.
-                    asset = FontManager.CreateSdfFontAsset(replacement, _textCoreFontAssetType);
+                    // ⚠ FontManager's creators, not new ones here — and BOTH, in its order. The
+                    // first hands the engine a Font; when that comes back null (a dynamic OS font
+                    // with no usable data) the second asks by family name and often succeeds on the
+                    // very same font. Using only the first is what made some fonts work and others
+                    // not: Ebrima and Lato went through, Liberation Sans and the Adobe faces did not.
+                    asset = FontManager.CreateSdfFontAsset(replacement, _textCoreFontAssetType)
+                            ?? FontManager.CreateSdfFontAssetByFamily(replacement, _textCoreFontAssetType);
+
                     _sdfCache[key] = asset;
+
+                    if (asset == null)
+                    {
+                        TranslatorCore.LogWarning(
+                            $"[UIToolkit] '{replacement.name}' cannot be turned into an SDF asset — "
+                            + "keeping the game's font. Pick another one in the Fonts tab.");
+                    }
                 }
 
                 if (asset != null)
                     return _fromSdfFontMethod.Invoke(null, new[] { asset });
 
-                // Falls through to the legacy path below: a document with our font in the wrong
-                // engine still reads better than one showing squares.
+                // 🔴 **Nothing, rather than a legacy Font.** A document laid out for SDF renders one
+                // with different metrics: text lands in the wrong places and some of it is not drawn
+                // at all — which reads as "the mod broke the game", not as "that font is unusable".
+                // Keeping the game's own font is the honest outcome, and the warning above says why.
+                return null;
             }
 
             return _fromFontMethod?.Invoke(null, new object[] { replacement });

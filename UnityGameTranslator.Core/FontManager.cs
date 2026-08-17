@@ -4684,14 +4684,31 @@ namespace UnityGameTranslator.Core
         /// Create a TMP_FontAsset from a Unity Font.
         /// Uses reflection to handle different TMP versions.
         /// </summary>
-        private static object CreateTMPFontAsset(Font font)
+        private static object CreateTMPFontAsset(Font font) =>
+            CreateSdfFontAssetByFamily(font, TypeHelper.TMP_FontAssetType);
+
+        /// <summary>
+        /// The second strategy, for any SDF font asset type: ask the engine for a FAMILY NAME
+        /// instead of handing it a Font object.
+        ///
+        /// 🔴 **Not interchangeable with <see cref="CreateSdfFontAsset"/>, and that is the whole
+        /// point of having both.** A dynamic Font built from an OS family sometimes carries no data
+        /// the rasteriser can use — `CreateFontAsset(Font)` then returns null — while asking by
+        /// family name succeeds on the very same font. Observed live: Ebrima and Lato went through
+        /// the Font path, Liberation Sans, Amiri Quran and the Adobe Std faces all came back null
+        /// and only the family path could serve them.
+        ///
+        /// ⚠ Parameterised for the same reason as the other one: UI Toolkit needs this to produce
+        /// a TextCore FontAsset, and a copy would have to be kept in step by hand.
+        /// </summary>
+        internal static object CreateSdfFontAssetByFamily(Font font, Type fontAssetType)
         {
             try
             {
-                var tmpFontType = TypeHelper.TMP_FontAssetType;
+                var tmpFontType = fontAssetType;
                 if (tmpFontType == null)
                 {
-                    TranslatorCore.LogWarning("[FontManager] TMP_FontAsset type not resolved");
+                    TranslatorCore.LogWarning("[FontManager] SDF font asset type not resolved");
                     return null;
                 }
 

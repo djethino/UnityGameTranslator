@@ -35,7 +35,6 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private GameObject _listHost;
         private Text _nowLabel;
-        private Text _countLabel;
         private ButtonRef _saveBtn;
         private Components.HelpZone _helpZone;
 
@@ -88,18 +87,6 @@ namespace UnityGameTranslator.Core.UI.Panels
                                        flexibleWidth: 9999);
             RegisterExcluded(_nowLabel);
 
-            var actionRow = UIStyles.CreateFormRow(head, "SaveRow", UIStyles.RowHeightNormal, 8);
-
-            _saveBtn = CreatePrimaryButton(actionRow, "SaveBtn", "Save a copy");
-            _saveBtn.OnClick += SaveCopy;
-            RegisterUIText(_saveBtn.ButtonText);
-
-            _countLabel = UIFactory.CreateLabel(actionRow, "Count", "", TextAnchor.MiddleRight);
-            _countLabel.color = UIStyles.TextSecondary;
-            _countLabel.fontSize = UIStyles.FontSizeHint;
-            UIFactory.SetLayoutElement(_countLabel.gameObject, flexibleWidth: 9999);
-            RegisterExcluded(_countLabel);
-
             // The rows themselves are the only thing that scrolls, in the panel's own scroll area.
             var card = CreateAdaptiveCard(scrollContent, "BackupsCard", PanelWidth - 40);
 
@@ -140,8 +127,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             // own scroll area, so its heading is always above its own rows and never above
             // somebody else's.
             Group(Backups.SavedHeading, $"{saved.Count} of {Backups.SavedKept}", saved,
-                  "Nothing kept yet. \"Save a copy\" puts one here before you try something.",
-                  height: 190);
+                  "Nothing kept yet. Keep one before you try something, and you can walk back out "
+                  + "of whatever you try.",
+                  height: 190, saved: true);
 
             UIStyles.CreateSpacer(_listHost, 12);
 
@@ -152,27 +140,26 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private void RefreshHeader(int savedCount)
         {
-            if (_nowLabel != null)
-            {
-                var lines = TranslatorCore.TranslationCache?.Count ?? 0;
-                _nowLabel.text = $"Now: {lines} lines";
-            }
+            if (_nowLabel == null) return;
 
-            if (_countLabel != null)
-                _countLabel.text = $"{savedCount} of {Backups.SavedKept} saved";
+            var lines = TranslatorCore.TranslationCache?.Count ?? 0;
+            _nowLabel.text = $"Now: {lines} lines";
+        }
 
-            if (_saveBtn?.Component != null)
-            {
-                var why = Backups.WhyCannotSave(TranslationBackups.List());
-                var can = why == null;
+        /// <summary>Whether another copy may be taken, and why not when it may not.</summary>
+        private void RefreshSaveButton()
+        {
+            if (_saveBtn?.Component == null) return;
 
-                _saveBtn.Component.interactable = can;
+            var why = Backups.WhyCannotSave(TranslationBackups.List());
+            var can = why == null;
 
-                // ⚠ Never a control that cannot be pressed without words saying why.
-                _helpZone?.Describe(_saveBtn.Component.gameObject, can
-                    ? "Keeps the translation as it stands, with the fonts and images it uses."
-                    : why);
-            }
+            _saveBtn.Component.interactable = can;
+
+            // ⚠ Never a control that cannot be pressed without words saying why.
+            _helpZone?.Describe(_saveBtn.Component.gameObject, can
+                ? "Keeps the translation as it stands, with the fonts and images it uses."
+                : why);
         }
 
         /// <summary>
@@ -183,7 +170,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// weight as the rows beneath it, which is how a heading stops reading as one.
         /// </summary>
         private void Group(string heading, string note, List<BackupEntry> entries, string empty,
-                           int height)
+                           int height, bool saved = false)
         {
             var block = UIFactory.CreateVerticalGroup(_listHost, "Group", false, false, true, true,
                                                       4, new Vector4(8, 8, 6, 8));
@@ -213,6 +200,11 @@ namespace UnityGameTranslator.Core.UI.Panels
                 UIFactory.SetLayoutElement(none.gameObject, minHeight: UIStyles.RowHeightSmall,
                                            flexibleWidth: 9999);
                 RegisterUIText(none);
+
+                // ⚠ Offered even on an empty list: this is the one control that puts the FIRST
+                // copy there, and hiding it until a copy exists would hide it from everybody who
+                // has never made one.
+                AddSaveButton(block, saved);
                 return;
             }
 
@@ -233,6 +225,31 @@ namespace UnityGameTranslator.Core.UI.Panels
             foreach (var entry in entries) Row(entry);
 
             _listHost = host;
+
+            AddSaveButton(block, saved);
+        }
+
+        /// <summary>
+        /// 🔴 **Under the list it fills, not above it.** Every verb in this product sits below the
+        /// zone it acts on — the Apply of a settings block, the Apply of a hotkey. Above, it read
+        /// as a heading for the list rather than an act upon it, and the eye had to travel back up
+        /// to find it.
+        /// </summary>
+        private void AddSaveButton(GameObject block, bool saved)
+        {
+            if (!saved) return;
+
+            var row = UIStyles.CreateFormRow(block, "SaveRow", UIStyles.RowHeightNormal, 8);
+
+            // Pushes the button to the right edge, as every action row in this product does.
+            var filler = UIFactory.CreateUIObject("Filler", row);
+            UIFactory.SetLayoutElement(filler, flexibleWidth: 9999, minHeight: 1);
+
+            _saveBtn = CreatePrimaryButton(row, "SaveBtn", "Save a copy");
+            _saveBtn.OnClick += SaveCopy;
+            RegisterUIText(_saveBtn.ButtonText);
+
+            RefreshSaveButton();
         }
 
         private void Row(BackupEntry entry)

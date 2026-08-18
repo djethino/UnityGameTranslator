@@ -64,6 +64,72 @@ namespace UnityGameTranslator.Core.UI
         /// <summary>Set once a texture could not be made, so the reason is stated a single time.</summary>
         private static bool _texturesUnavailable;
 
+        /// <summary>Which of the two ways worked, so the fallback is not re-tried on every icon.</summary>
+        private static bool _cloneInsteadOfConstruct;
+
+        /// <summary>
+        /// A blank texture of this size, however this runtime is willing to give one.
+        ///
+        /// 🔴 **IL2CPP can strip every Texture2D constructor.** They are kept only if the game
+        /// itself calls one; Il2CppInterop still declares them from the metadata, so the call
+        /// compiles and then finds nothing behind it. Seen on Unity 2022.3.62f2 and 6000.0.77f1:
+        /// the six-argument form is gone, and so is the four-argument one.
+        ///
+        /// So the second way does not CONSTRUCT a texture, it COPIES one Unity already made.
+        /// <c>Texture2D.whiteTexture</c> is a built-in the engine always has, <c>Instantiate</c> is
+        /// in every game there is, and resizing the copy is what makes it ours. Nothing here is an
+        /// ICall: the engine's internal creation entry point exists, but its signature moves
+        /// between Unity versions and calling it with the wrong one corrupts memory rather than
+        /// throwing — a crash with no message, which is exactly what must not be traded for a
+        /// missing icon.
+        ///
+        /// ⚠ Every step is a direct call, deliberately. A stripped member then raises
+        /// <see cref="MissingMethodException"/>, which the caller can survive; reflection over the
+        /// same member would hand back a declaration with no pointer and take the game down.
+        ///
+        /// ⚠ Which way worked is remembered: it follows from how the game was built and cannot
+        /// change while it runs.
+        /// </summary>
+        private static Texture2D NewTexture(int width, int height)
+        {
+            if (!_cloneInsteadOfConstruct)
+            {
+                try
+                {
+                    return TextureHelper.NewTexture2D(width, height, TextureFormat.RGBA32, false);
+                }
+                catch (Exception ex)
+                {
+                    _cloneInsteadOfConstruct = true;
+                    TranslatorCore.LogInfo(
+                        $"[Icons] No Texture2D constructor in this build ({ex.GetType().Name}) — "
+                        + "copying a built-in texture instead.");
+                }
+            }
+
+            var seed = Texture2D.whiteTexture;
+            if (seed == null) throw new InvalidOperationException("No built-in texture to copy.");
+
+            var copy = UnityEngine.Object.Instantiate(seed) as Texture2D
+                       ?? TypeHelper.Il2CppCast(UnityEngine.Object.Instantiate(seed),
+                                                typeof(Texture2D)) as Texture2D;
+
+            if (copy == null) throw new InvalidOperationException("Instantiate returned no texture.");
+
+            // Reinitialize is the modern name, Resize the one before it. Both are direct calls, so a
+            // build that has neither says so with an exception the caller already handles.
+            try
+            {
+                copy.Reinitialize(width, height, TextureFormat.RGBA32, false);
+            }
+            catch (MissingMethodException)
+            {
+                copy.Resize(width, height, TextureFormat.RGBA32, false);
+            }
+
+            return copy;
+        }
+
         /// <summary>
         /// Builds a sprite, or gives up and says so.
         ///
@@ -148,7 +214,7 @@ namespace UnityGameTranslator.Core.UI
             // window the flag sits in. See TryBuild.
             var sprite = TryBuild(() =>
             {
-                var texture = TextureHelper.NewTexture2D(w, h, TextureFormat.RGBA32, false);
+                var texture = NewTexture(w, h);
                 texture.filterMode = FilterMode.Point;
                 texture.wrapMode = TextureWrapMode.Clamp;
 
@@ -181,7 +247,7 @@ namespace UnityGameTranslator.Core.UI
             for (int i = 0; i < pixels.Length; i++)
                 pixels[i] = new Color32(255, 255, 255, coverage[i]);
 
-            var texture = TextureHelper.NewTexture2D(w, h, TextureFormat.RGBA32, false);
+            var texture = NewTexture(w, h);
             texture.filterMode = FilterMode.Bilinear;
             texture.wrapMode = TextureWrapMode.Clamp;
 

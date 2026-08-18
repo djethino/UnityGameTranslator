@@ -56,9 +56,47 @@ namespace UnityGameTranslator.Core.UI
             var shape = Draw(id);
             if (shape == null) return null;
 
-            var sprite = FromCoverage(shape, Box * Scale, Box * Scale);
-            _cache[id] = sprite;
+            var sprite = TryBuild(() => FromCoverage(shape, Box * Scale, Box * Scale));
+            _cache[id] = sprite;   // null cached on purpose: a runtime that cannot make one never will
             return sprite;
+        }
+
+        /// <summary>Set once a texture could not be made, so the reason is stated a single time.</summary>
+        private static bool _texturesUnavailable;
+
+        /// <summary>
+        /// Builds a sprite, or gives up and says so.
+        ///
+        /// 🔴 **An icon is optional; the window it decorates is not.** Making a Texture2D can fail
+        /// outright on IL2CPP — a game whose build stripped the Texture2D constructors leaves
+        /// Il2CppInterop declaring one with nothing behind it. That throw used to escape into
+        /// <c>MainPanel</c>'s construction and abort <c>CreatePanels()</c>: panels built before it
+        /// stayed on screen, panels after it never existed, the tick loop never started. What the
+        /// user saw was one oversized window; what it was, was the mod dead at startup.
+        ///
+        /// ⚠ This is NOT the "wrap each panel in a try/catch" that CLAUDE.md rules out — that would
+        /// hide a missing panel. This is one optional resource declining to be built, at the only
+        /// place that can tell the difference, and saying which runtime refused it.
+        ///
+        /// ⚠ The failure is remembered rather than retried: it depends on how the game was built,
+        /// which does not change while it runs, and every mark and flag would otherwise throw again.
+        /// </summary>
+        private static Sprite TryBuild(Func<Sprite> build)
+        {
+            if (_texturesUnavailable) return null;
+
+            try
+            {
+                return build();
+            }
+            catch (Exception ex)
+            {
+                _texturesUnavailable = true;
+                TranslatorCore.LogWarning(
+                    $"[Icons] This game cannot create textures at runtime ({ex.GetType().Name}: "
+                    + $"{ex.Message}). Marks and flags will not be drawn; everything else works.");
+                return null;
+            }
         }
 
         /// <summary>
@@ -106,17 +144,23 @@ namespace UnityGameTranslator.Core.UI
                                   (byte)(pixel.Rgb & 0xFF), 255);
             }
 
-            var texture = TextureHelper.NewTexture2D(w, h, TextureFormat.RGBA32, false);
-            texture.filterMode = FilterMode.Point;
-            texture.wrapMode = TextureWrapMode.Clamp;
+            // Same guard as a mark: a runtime that cannot build a texture must cost a flag, not the
+            // window the flag sits in. See TryBuild.
+            var sprite = TryBuild(() =>
+            {
+                var texture = TextureHelper.NewTexture2D(w, h, TextureFormat.RGBA32, false);
+                texture.filterMode = FilterMode.Point;
+                texture.wrapMode = TextureWrapMode.Clamp;
 
-            TextureHelper.SetPixels32Safe(texture, colours);
-            texture.Apply(false, false);
+                TextureHelper.SetPixels32Safe(texture, colours);
+                texture.Apply(false, false);
 
-            // Same reason as a mark's texture: the cache outlives every panel that asked for it.
-            UnityEngine.Object.DontDestroyOnLoad(texture);
+                // The cache outlives every panel that asked for it.
+                UnityEngine.Object.DontDestroyOnLoad(texture);
 
-            var sprite = TextureHelper.CreateSprite(texture);
+                return TextureHelper.CreateSprite(texture);
+            });
+
             _cache[key] = sprite;
             return sprite;
         }

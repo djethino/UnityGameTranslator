@@ -107,39 +107,59 @@ namespace UnityGameTranslator.Core.UI
                 }
             }
 
-            // 🔴 **Asked BEFORE calling, never found out by calling.** A stripped method whose stub
-            // Il2CppInterop still generated does not raise MissingMethodException — it jumps to a
-            // null pointer and the game dies with AccessViolationException and no message. Only a
-            // constructor that was never generated at all throws something catchable, which is what
-            // made the first version look safe. Checked the same way UniverseLib checks before
-            // patching: the generated NativeMethodInfoPtr_* field is present and non-zero.
-            string resize = NativeName(typeof(Texture2D), "Reinitialize")
-                            ?? NativeName(typeof(Texture2D), "Resize");
+            // 🔴 **No second attempt until the ground is known.** Three of them were written on
+            // guesses tonight and each one traded a missing icon for a dead game, because the rule
+            // they rested on is false: a stripped METHOD whose stub Il2CppInterop generated does not
+            // throw, it jumps to a null pointer and the process ends with no message. Only a
+            // constructor that was never generated raises something catchable.
+            //
+            // So this reports what the build actually has — by READING the generated
+            // NativeMethodInfoPtr_* fields, which is safe — and declines. The report is what the
+            // next attempt will be written from, instead of another guess.
+            ReportWhatExists();
 
-            if (resize == null || !NativeMethodExists(typeof(Texture2D), "get_whiteTexture"))
-            {
-                throw new InvalidOperationException(
-                    "this build has no way to make a texture (no constructor, and no resizable copy)");
-            }
-
-            var seed = Texture2D.whiteTexture;
-            if (seed == null) throw new InvalidOperationException("No built-in texture to copy.");
-
-            var copy = UnityEngine.Object.Instantiate(seed) as Texture2D
-                       ?? TypeHelper.Il2CppCast(UnityEngine.Object.Instantiate(seed),
-                                                typeof(Texture2D)) as Texture2D;
-
-            if (copy == null) throw new InvalidOperationException("Instantiate returned no texture.");
-
-            if (resize == "Reinitialize") copy.Reinitialize(width, height, TextureFormat.RGBA32, false);
-            else copy.Resize(width, height, TextureFormat.RGBA32, false);
-
-            return copy;
+            throw new InvalidOperationException(
+                "no Texture2D constructor, and no verified way to copy one yet");
         }
 
-        /// <summary>The name if this runtime really has it behind the declaration, else null.</summary>
-        private static string NativeName(Type type, string method) =>
-            NativeMethodExists(type, method) ? method : null;
+        private static bool _reported;
+
+        /// <summary>
+        /// Lists which texture-related members are real in this build, once.
+        ///
+        /// ⚠ Reads only. Every member here is one a texture path might need, and any of them may
+        /// have been stripped: the point is to learn which, without calling a single one.
+        /// </summary>
+        private static void ReportWhatExists()
+        {
+            if (_reported) return;
+            _reported = true;
+
+            try
+            {
+                var lines = new List<string>();
+
+                foreach (var member in new[]
+                         {
+                             "get_whiteTexture", "get_blackTexture", "Reinitialize", "Resize",
+                             "SetPixels32", "SetPixels", "Apply", "GetRawTextureData",
+                             "LoadRawTextureData",
+                         })
+                {
+                    lines.Add($"Texture2D.{member}={NativeMethodExists(typeof(Texture2D), member)}");
+                }
+
+                lines.Add($"Object.Instantiate={NativeMethodExists(typeof(UnityEngine.Object), "Instantiate")}");
+                lines.Add($"Sprite.Create={NativeMethodExists(typeof(Sprite), "Create")}");
+                lines.Add($"Texture2D.ctor={NativeMethodExists(typeof(Texture2D), ".ctor")}");
+
+                TranslatorCore.LogWarning("[Icons] What this build really has — " + string.Join(", ", lines));
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogWarning($"[Icons] Could not read what this build has: {ex.Message}");
+            }
+        }
 
         /// <summary>
         /// Whether a method exists as native code, not merely as a declaration.

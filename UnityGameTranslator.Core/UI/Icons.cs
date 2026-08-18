@@ -200,15 +200,17 @@ namespace UnityGameTranslator.Core.UI
 
                 lines.Add($"Object.Instantiate={NativeMethodExists(typeof(UnityEngine.Object), "Instantiate")}");
                 lines.Add($"Sprite.Create={NativeMethodExists(typeof(Sprite), "Create")}");
-                lines.Add($"Texture2D.ctor={NativeMethodExists(typeof(Texture2D), ".ctor")}");
+                // ⚠ "_ctor", not ".ctor": Il2CppInterop writes the dot as an underscore in the
+                // generated field name, so the earlier report answered False about constructors it
+                // had simply looked up under a name that never exists.
+                lines.Add($"Texture2D._ctor={NativeMethodExists(typeof(Texture2D), "_ctor")}");
 
                 TranslatorCore.LogWarning("[Icons] What this build really has — " + string.Join(", ", lines));
 
                 // ⚠ The signatures too, not just the names. The names alone said "Reinitialize
                 // exists" about a build whose four-argument form did not — which is what crashed.
                 // Printed so a failure needs no further round trip to diagnose.
-                ReportSignatures(typeof(Texture2D), "Reinitialize");
-                ReportSignatures(typeof(UnityEngine.Object), "Instantiate");
+                ReportSignatures(typeof(Texture2D), "_ctor");
             }
             catch (Exception ex)
             {

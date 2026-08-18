@@ -1,4 +1,5 @@
 using System;
+using System.Reflection;
 using UnityEngine;
 
 namespace UnityGameTranslator.Core
@@ -61,23 +62,57 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static Texture2D MakeTexture2D(int width, int height, TextureFormat format, bool mipmap)
         {
+            // 🔴 **Asked before it is called, because catching is not enough.** A stripped
+            // constructor does NOT reliably raise MissingMethodException: on Unity 2022.3.62f2 and
+            // 6000.0.77f1 the six-argument form threw, while the four-argument form below jumped to
+            // a null pointer and ended the process — no exception, no log line, nothing to catch.
+            // The `catch` under this call therefore protected nothing on exactly the builds it was
+            // written for.
+            //
+            // Il2CppInterop names its pointer field after the member, with `.ctor` written `_ctor`,
+            // and a stripped one is absent or zero. Reading that field is safe; calling what it
+            // describes is not. On Mono there is nothing to ask and every constructor is real.
+            if (HasConstructor("Int32_Int32_TextureFormat_Boolean"))
+                return new Texture2D(width, height, format, mipmap);
+
+            // 2-arg ctor is more universally preserved (used by the engine itself)
+            if (HasConstructor("Int32_Int32"))
+                return new Texture2D(width, height);
+
+            throw new InvalidOperationException(
+                "this build has no Texture2D constructor — textures cannot be created here");
+        }
+
+        /// <summary>
+        /// Whether Texture2D really has the constructor taking these parameters.
+        ///
+        /// ⚠ A field READ and never an Invoke: reflection that ends in a call meets the same null
+        /// pointer as the direct call. <paramref name="signature"/> is the parameter part of the
+        /// generated field name, e.g. "Int32_Int32_TextureFormat_Boolean".
+        /// </summary>
+        private static bool HasConstructor(string signature)
+        {
+            // Mono: nothing is stripped and no such fields exist, so everything declared is real.
+            if (TranslatorCore.Adapter?.IsIL2CPP != true) return true;
+
             try
             {
-                return new Texture2D(width, height, format, mipmap);
-            }
-            catch (MissingMethodException)
-            {
-                try
+                var fields = typeof(Texture2D).GetFields(BindingFlags.Static
+                                                         | BindingFlags.NonPublic
+                                                         | BindingFlags.Public);
+
+                foreach (var field in fields)
                 {
-                    // 2-arg ctor is more universally preserved (used by the engine itself)
-                    return new Texture2D(width, height);
-                }
-                catch
-                {
-                    // Last resort: tiny placeholder, caller will see a blank texture
-                    return new Texture2D(2, 2);
+                    if (field.Name.IndexOf("ctor", StringComparison.Ordinal) < 0) continue;
+                    if (field.Name.IndexOf(signature, StringComparison.Ordinal) < 0) continue;
+
+                    if (field.GetValue(null) is IntPtr pointer && pointer != IntPtr.Zero)
+                        return true;
                 }
             }
+            catch { }
+
+            return false;
         }
     }
 }

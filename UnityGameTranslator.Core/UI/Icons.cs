@@ -96,14 +96,27 @@ namespace UnityGameTranslator.Core.UI
             {
                 try
                 {
-                    return TextureHelper.NewTexture2D(width, height, TextureFormat.RGBA32, false);
+                    // 🔴 **Compat.MakeTexture2D, not UniverseLib's helper — and not a new attempt of
+                    // our own.** This project already had a texture factory, used by
+                    // CustomFontLoader and FontManager for glyph atlases, which falls back from the
+                    // four-argument constructor to the two-argument one "more universally preserved
+                    // (used by the engine itself)". It was never called from here, so this file
+                    // went through UniverseLib's six-argument path and then grew a hand-written
+                    // fallback beside a working one.
+                    //
+                    // ⚠ It also cannot crash, which the hand-written fallback could: it only ever
+                    // calls CONSTRUCTORS. A constructor IL2CPP never generated raises
+                    // MissingMethodException, which is catchable — a stripped METHOD jumps to a
+                    // null pointer and ends the process. That distinction is why cloning a built-in
+                    // texture and resizing it killed two games and this does not.
+                    return Compat.MakeTexture2D(width, height, TextureFormat.RGBA32, false);
                 }
                 catch (Exception ex)
                 {
                     _cloneInsteadOfConstruct = true;
                     TranslatorCore.LogInfo(
-                        $"[Icons] No Texture2D constructor in this build ({ex.GetType().Name}) — "
-                        + "copying a built-in texture instead.");
+                        $"[Icons] No Texture2D constructor at all in this build "
+                        + $"({ex.GetType().Name}).");
                 }
             }
 

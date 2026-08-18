@@ -107,19 +107,98 @@ namespace UnityGameTranslator.Core.UI
                 }
             }
 
-            // 🔴 **No second attempt until the ground is known.** Three of them were written on
-            // guesses tonight and each one traded a missing icon for a dead game, because the rule
-            // they rested on is false: a stripped METHOD whose stub Il2CppInterop generated does not
-            // throw, it jumps to a null pointer and the process ends with no message. Only a
-            // constructor that was never generated raises something catchable.
-            //
-            // So this reports what the build actually has — by READING the generated
-            // NativeMethodInfoPtr_* fields, which is safe — and declines. The report is what the
-            // next attempt will be written from, instead of another guess.
             ReportWhatExists();
 
-            throw new InvalidOperationException(
-                "no Texture2D constructor, and no verified way to copy one yet");
+            // 🔴 **The overload matters, and a name-only check cannot see it.** The report says
+            // Reinitialize, Instantiate and whiteTexture are all real on the games that crashed —
+            // so the member was never the problem: the SIGNATURE was. Il2CppInterop names its
+            // pointer fields after the full signature, and a check on the name alone matches any
+            // overload, including ones the build dropped.
+            //
+            // Two traps, both avoided below:
+            //   • `Instantiate(seed)` binds to the GENERIC Instantiate<T>. A generic has to be
+            //     instantiated per type on IL2CPP and Instantiate<Texture2D> may exist nowhere.
+            //     The cast forces the plain Object overload.
+            //   • `Reinitialize(w, h, format, mipChain)` is the four-argument form; only the
+            //     two-argument one is asked for here, and it is verified by signature.
+            if (!HasNativeSignature(typeof(Texture2D), "Reinitialize", "Int32_Int32")
+                || !HasNativeSignature(typeof(UnityEngine.Object), "Instantiate", "Object"))
+            {
+                throw new InvalidOperationException(
+                    "no Texture2D constructor, and no usable overload to copy one");
+            }
+
+            var seed = Texture2D.whiteTexture;
+            if (seed == null) throw new InvalidOperationException("No built-in texture to copy.");
+
+            // The cast is what picks the non-generic overload — see above.
+            var made = UnityEngine.Object.Instantiate((UnityEngine.Object)seed);
+
+            var copy = made as Texture2D
+                       ?? TypeHelper.Il2CppCast(made, typeof(Texture2D)) as Texture2D;
+
+            if (copy == null) throw new InvalidOperationException("Instantiate returned no texture.");
+
+            copy.Reinitialize(width, height);
+            return copy;
+        }
+
+        /// <summary>Names every real overload of one method, so a signature need not be guessed.</summary>
+        private static void ReportSignatures(Type type, string method)
+        {
+            if (TranslatorCore.Adapter?.IsIL2CPP != true) return;
+
+            try
+            {
+                var found = new List<string>();
+
+                foreach (var field in type.GetFields(System.Reflection.BindingFlags.Static
+                                                     | System.Reflection.BindingFlags.NonPublic
+                                                     | System.Reflection.BindingFlags.Public))
+                {
+                    if (!field.Name.StartsWith("NativeMethodInfoPtr_" + method + "_",
+                                               StringComparison.Ordinal)) continue;
+
+                    bool live = field.GetValue(null) is IntPtr p && p != IntPtr.Zero;
+                    found.Add((live ? "" : "(dead) ") + field.Name);
+                }
+
+                TranslatorCore.LogWarning($"[Icons] {type.Name}.{method} overloads: "
+                                          + (found.Count == 0 ? "none" : string.Join(" | ", found)));
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Whether a specific OVERLOAD is real, not merely a method of that name.
+        ///
+        /// ⚠ Il2CppInterop names each pointer field after the whole signature —
+        /// <c>NativeMethodInfoPtr_Reinitialize_Public_Boolean_Int32_Int32_</c> — so matching the
+        /// name alone accepts an overload the build dropped, and calling that one is a null jump.
+        /// <paramref name="signature"/> is the parameter part to look for.
+        /// </summary>
+        private static bool HasNativeSignature(Type type, string method, string signature)
+        {
+            if (TranslatorCore.Adapter?.IsIL2CPP != true) return true;
+
+            try
+            {
+                foreach (var field in type.GetFields(System.Reflection.BindingFlags.Static
+                                                     | System.Reflection.BindingFlags.NonPublic
+                                                     | System.Reflection.BindingFlags.Public))
+                {
+                    if (!field.Name.StartsWith("NativeMethodInfoPtr_" + method + "_",
+                                               StringComparison.Ordinal)) continue;
+
+                    if (field.Name.IndexOf(signature, StringComparison.Ordinal) < 0) continue;
+
+                    if (field.GetValue(null) is IntPtr pointer && pointer != IntPtr.Zero)
+                        return true;
+                }
+            }
+            catch { }
+
+            return false;
         }
 
         private static bool _reported;
@@ -154,6 +233,12 @@ namespace UnityGameTranslator.Core.UI
                 lines.Add($"Texture2D.ctor={NativeMethodExists(typeof(Texture2D), ".ctor")}");
 
                 TranslatorCore.LogWarning("[Icons] What this build really has — " + string.Join(", ", lines));
+
+                // ⚠ The signatures too, not just the names. The names alone said "Reinitialize
+                // exists" about a build whose four-argument form did not — which is what crashed.
+                // Printed so a failure needs no further round trip to diagnose.
+                ReportSignatures(typeof(Texture2D), "Reinitialize");
+                ReportSignatures(typeof(UnityEngine.Object), "Instantiate");
             }
             catch (Exception ex)
             {

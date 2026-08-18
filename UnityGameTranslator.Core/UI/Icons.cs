@@ -109,38 +109,27 @@ namespace UnityGameTranslator.Core.UI
 
             ReportWhatExists();
 
-            // 🔴 **The overload matters, and a name-only check cannot see it.** The report says
-            // Reinitialize, Instantiate and whiteTexture are all real on the games that crashed —
-            // so the member was never the problem: the SIGNATURE was. Il2CppInterop names its
-            // pointer fields after the full signature, and a check on the name alone matches any
-            // overload, including ones the build dropped.
+            // 🔴 **Stopped here, deliberately, and this is what is known.**
             //
-            // Two traps, both avoided below:
-            //   • `Instantiate(seed)` binds to the GENERIC Instantiate<T>. A generic has to be
-            //     instantiated per type on IL2CPP and Instantiate<Texture2D> may exist nowhere.
-            //     The cast forces the plain Object overload.
-            //   • `Reinitialize(w, h, format, mipChain)` is the four-argument form; only the
-            //     two-argument one is asked for here, and it is verified by signature.
-            if (!HasNativeSignature(typeof(Texture2D), "Reinitialize", "Int32_Int32")
-                || !HasNativeSignature(typeof(UnityEngine.Object), "Instantiate", "Object"))
-            {
-                throw new InvalidOperationException(
-                    "no Texture2D constructor, and no usable overload to copy one");
-            }
-
-            var seed = Texture2D.whiteTexture;
-            if (seed == null) throw new InvalidOperationException("No built-in texture to copy.");
-
-            // The cast is what picks the non-generic overload — see above.
-            var made = UnityEngine.Object.Instantiate((UnityEngine.Object)seed);
-
-            var copy = made as Texture2D
-                       ?? TypeHelper.Il2CppCast(made, typeof(Texture2D)) as Texture2D;
-
-            if (copy == null) throw new InvalidOperationException("Instantiate returned no texture.");
-
-            copy.Reinitialize(width, height);
-            return copy;
+            // The report settles what it can: NOTHING relevant is stripped. Reinitialize exists in
+            // both its two- and four-argument forms, Instantiate exists generic and non-generic,
+            // whiteTexture exists — every pointer live. Only `.ctor` is absent, which matches the
+            // MissingMethodException the constructor raises.
+            //
+            // So the crash is not the interop refusing a missing member: it is the ENGINE refusing
+            // the operation from native code, where nothing managed can intercept it. The most
+            // likely culprit is resizing a copy of `whiteTexture` — a built-in the engine owns and
+            // does not expect to be reshaped — but "most likely" is not knowledge, and each attempt
+            // to find out costs a crashed session. Five were spent tonight.
+            //
+            // ⚠ Anyone continuing this: do NOT try the next idea at startup. Every attempt here
+            // runs while the UI is being built, so a wrong guess kills the game before it is
+            // playable and takes the log with it. Drive it from a command the user triggers when
+            // they choose, one candidate per run — the report above already says which members are
+            // available to build a candidate from.
+            throw new InvalidOperationException(
+                "this build has no Texture2D constructor, and copying a built-in one crashes the "
+                + "engine natively — icons cannot be drawn here yet");
         }
 
         /// <summary>Names every real overload of one method, so a signature need not be guessed.</summary>
@@ -167,38 +156,6 @@ namespace UnityGameTranslator.Core.UI
                                           + (found.Count == 0 ? "none" : string.Join(" | ", found)));
             }
             catch { }
-        }
-
-        /// <summary>
-        /// Whether a specific OVERLOAD is real, not merely a method of that name.
-        ///
-        /// ⚠ Il2CppInterop names each pointer field after the whole signature —
-        /// <c>NativeMethodInfoPtr_Reinitialize_Public_Boolean_Int32_Int32_</c> — so matching the
-        /// name alone accepts an overload the build dropped, and calling that one is a null jump.
-        /// <paramref name="signature"/> is the parameter part to look for.
-        /// </summary>
-        private static bool HasNativeSignature(Type type, string method, string signature)
-        {
-            if (TranslatorCore.Adapter?.IsIL2CPP != true) return true;
-
-            try
-            {
-                foreach (var field in type.GetFields(System.Reflection.BindingFlags.Static
-                                                     | System.Reflection.BindingFlags.NonPublic
-                                                     | System.Reflection.BindingFlags.Public))
-                {
-                    if (!field.Name.StartsWith("NativeMethodInfoPtr_" + method + "_",
-                                               StringComparison.Ordinal)) continue;
-
-                    if (field.Name.IndexOf(signature, StringComparison.Ordinal) < 0) continue;
-
-                    if (field.GetValue(null) is IntPtr pointer && pointer != IntPtr.Zero)
-                        return true;
-                }
-            }
-            catch { }
-
-            return false;
         }
 
         private static bool _reported;

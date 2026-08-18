@@ -383,6 +383,9 @@ namespace UnityGameTranslator.Core
 
         private static float _lastScanTime;
 
+        /// <summary>Which document the next pass starts from. See the note in Scan.</summary>
+        private static int _resumeAt;
+
         /// <summary>
         /// How many elements one pass may look at.
         ///
@@ -413,8 +416,23 @@ namespace UnityGameTranslator.Core
 
                 int visited = 0;
 
-                foreach (var document in documents)
+                // 🔴 **Resumed, not restarted.** The budget is shared across documents and the walk
+                // used to begin at the first one every pass — so whatever sat past the ceiling was
+                // never reached, always the same things, while the early documents were re-walked
+                // for nothing. On screen that is "some text translated and some not", and "the font
+                // finally applies to the rest" when something else happens to shift the order.
+                //
+                // Starting where the last pass stopped gives every document its turn. The list can
+                // change between passes, so this is a position rather than a promise — but a
+                // rotating position is what stops a tail from starving.
+                if (_resumeAt >= documents.Length) _resumeAt = 0;
+                int startedAt = _resumeAt;
+
+                for (int step = 0; step < documents.Length; step++)
                 {
+                    int index = (startedAt + step) % documents.Length;
+                    var document = documents[index];
+
                     if (document == null) continue;
 
                     object root = null;
@@ -423,10 +441,17 @@ namespace UnityGameTranslator.Core
 
                     if (root == null) continue;
 
-                    ReportProxyIdentityOnce(root);
-
                     visited += Walk(root, MaxElementsPerPass - visited, ProcessElement);
-                    if (visited >= MaxElementsPerPass) break;
+
+                    if (visited >= MaxElementsPerPass)
+                    {
+                        // Next pass takes over from the document after this one.
+                        _resumeAt = (index + 1) % documents.Length;
+                        break;
+                    }
+
+                    // Everything fitted: start again from the top next time.
+                    _resumeAt = 0;
                 }
             }
             catch (Exception ex)
@@ -457,6 +482,8 @@ namespace UnityGameTranslator.Core
             {
                 var element = stack.Pop();
                 visited++;
+
+                ReportProxyIdentityOnce(element);
 
                 var asText = AsTextElement(element);
                 if (asText != null) action(asText);
@@ -534,18 +561,22 @@ namespace UnityGameTranslator.Core
         /// it to key on native pointers would be a large change, and doing it before knowing whether
         /// it is needed is how a fix lands on a problem nobody has. The line below is what tells us.
         /// </summary>
-        private static void ReportProxyIdentityOnce(object root)
+        private static void ReportProxyIdentityOnce(object element)
         {
             if (_identityReported) return;
 
             try
             {
-                if (ChildCount(root) < 1) return;
+                // ⚠ Asked of the first element that HAS a child, wherever it turns up — not of the
+                // first document. A first version probed the first document only, that one had no
+                // children, and the probe returned in silence on every pass: the very question it
+                // was added to answer stayed unanswered while the log looked healthy.
+                if (ChildCount(element) < 1) return;
 
                 _identityReported = true;
 
-                var first = ChildAt(root, 0);
-                var again = ChildAt(root, 0);
+                var first = ChildAt(element, 0);
+                var again = ChildAt(element, 0);
 
                 bool stable = ReferenceEquals(first, again);
 

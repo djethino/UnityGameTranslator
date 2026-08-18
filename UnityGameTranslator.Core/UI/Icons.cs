@@ -107,6 +107,21 @@ namespace UnityGameTranslator.Core.UI
                 }
             }
 
+            // 🔴 **Asked BEFORE calling, never found out by calling.** A stripped method whose stub
+            // Il2CppInterop still generated does not raise MissingMethodException — it jumps to a
+            // null pointer and the game dies with AccessViolationException and no message. Only a
+            // constructor that was never generated at all throws something catchable, which is what
+            // made the first version look safe. Checked the same way UniverseLib checks before
+            // patching: the generated NativeMethodInfoPtr_* field is present and non-zero.
+            string resize = NativeName(typeof(Texture2D), "Reinitialize")
+                            ?? NativeName(typeof(Texture2D), "Resize");
+
+            if (resize == null || !NativeMethodExists(typeof(Texture2D), "get_whiteTexture"))
+            {
+                throw new InvalidOperationException(
+                    "this build has no way to make a texture (no constructor, and no resizable copy)");
+            }
+
             var seed = Texture2D.whiteTexture;
             if (seed == null) throw new InvalidOperationException("No built-in texture to copy.");
 
@@ -116,18 +131,49 @@ namespace UnityGameTranslator.Core.UI
 
             if (copy == null) throw new InvalidOperationException("Instantiate returned no texture.");
 
-            // Reinitialize is the modern name, Resize the one before it. Both are direct calls, so a
-            // build that has neither says so with an exception the caller already handles.
-            try
-            {
-                copy.Reinitialize(width, height, TextureFormat.RGBA32, false);
-            }
-            catch (MissingMethodException)
-            {
-                copy.Resize(width, height, TextureFormat.RGBA32, false);
-            }
+            if (resize == "Reinitialize") copy.Reinitialize(width, height, TextureFormat.RGBA32, false);
+            else copy.Resize(width, height, TextureFormat.RGBA32, false);
 
             return copy;
+        }
+
+        /// <summary>The name if this runtime really has it behind the declaration, else null.</summary>
+        private static string NativeName(Type type, string method) =>
+            NativeMethodExists(type, method) ? method : null;
+
+        /// <summary>
+        /// Whether a method exists as native code, not merely as a declaration.
+        ///
+        /// ⚠ On Mono there is nothing to check and everything declared is real. On IL2CPP,
+        /// Il2CppInterop emits a static <c>NativeMethodInfoPtr_&lt;name&gt;…</c> field per generated
+        /// method: absent or zero means the game's build stripped it. Reading that field is safe;
+        /// calling the method it describes is not, which is the whole reason to look first.
+        ///
+        /// ⚠ Deliberately a field READ and never an Invoke — reflection that ends in a call has the
+        /// same fate as the direct call.
+        /// </summary>
+        private static bool NativeMethodExists(Type type, string method)
+        {
+            if (TranslatorCore.Adapter?.IsIL2CPP != true) return true;
+
+            try
+            {
+                var fields = type.GetFields(System.Reflection.BindingFlags.Static
+                                            | System.Reflection.BindingFlags.NonPublic
+                                            | System.Reflection.BindingFlags.Public);
+
+                foreach (var field in fields)
+                {
+                    if (!field.Name.StartsWith("NativeMethodInfoPtr_" + method, StringComparison.Ordinal))
+                        continue;
+
+                    if (field.GetValue(null) is IntPtr pointer && pointer != IntPtr.Zero)
+                        return true;
+                }
+            }
+            catch { }
+
+            return false;
         }
 
         /// <summary>

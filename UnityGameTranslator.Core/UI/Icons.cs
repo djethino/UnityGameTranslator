@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
-using UniverseLib.Runtime;
 
 namespace UnityGameTranslator.Core.UI
 {
@@ -24,19 +23,21 @@ namespace UnityGameTranslator.Core.UI
     /// <see cref="Draw"/> knows they were computed. A flag atlas plugs into the first without
     /// touching the second.
     ///
-    /// 🔴 Every Unity call here goes through <see cref="TextureHelper"/>. `SetPixels32` takes a
-    /// managed array, which on IL2CPP is not the array the engine expects — the same class of trap
-    /// as AddListener, and UniverseLib has already solved it. Never call the engine directly from
-    /// this file.
+    /// 🔴 **Every Unity call here goes through <see cref="Compat"/> and <see cref="TextureUtils"/> —
+    /// this mod's own, never UniverseLib's `TextureHelper`.** `SetPixels32` takes a managed array,
+    /// which on IL2CPP is not the array the engine expects, and `Sprite.Create` has overloads a game
+    /// may not carry: the same class of trap as AddListener. This file used `TextureHelper` for both
+    /// and was the ONLY place in the mod that did — every other texture the mod makes (the rounded
+    /// corners in <see cref="UIShapes"/>, replacement images, glyph atlases) already went through
+    /// `TextureUtils`, which resolves the overload the game actually has instead of naming one.
     ///
-    /// 🔴 **Except the texture itself, which comes from <see cref="Compat.MakeTexture2D"/>.**
-    /// UniverseLib builds one through the SIX-argument constructor, and that overload is absent on
-    /// some IL2CPP builds — the marks then threw MissingMethodException from inside
-    /// MainPanel's construction, which aborted CreatePanels() and left the mod dead behind one
-    /// oversized window. Compat asks for the FOUR-argument one instead, which those same games do
-    /// have: it is what CustomFontLoader and ImageReplacer already use to build glyph atlases and
-    /// replacement images there. One factory for every texture this mod makes, and the one already
-    /// proven on the runtimes that refuse the other.
+    /// ⚠ **What that cost, and why the symptom pointed the wrong way.** On some IL2CPP games the
+    /// marks killed the process outright — no exception, no log line, the game simply gone. It read
+    /// as "textures do not work here", and it was not: on those very games <see cref="UIShapes"/>
+    /// builds a 256x256 atlas and its sprites through `TextureUtils` — before any panel exists, so a
+    /// window with rounded corners is proof both calls went through. Only the two helper calls below
+    /// differed. So when a texture misbehaves on IL2CPP, compare against the paths that already work
+    /// in this mod before concluding anything about the runtime.
     /// </summary>
     public static class Icons
     {
@@ -119,13 +120,13 @@ namespace UnityGameTranslator.Core.UI
             texture.filterMode = FilterMode.Point;
             texture.wrapMode = TextureWrapMode.Clamp;
 
-            TextureHelper.SetPixels32Safe(texture, colours);
+            TextureUtils.SetPixels32Safe(texture, colours);
             texture.Apply(false, false);
 
             // Same reason as a mark's texture: the cache outlives every panel that asked for it.
             UnityEngine.Object.DontDestroyOnLoad(texture);
 
-            var sprite = TextureHelper.CreateSprite(texture);
+            var sprite = MakeSprite(texture);
             _cache[key] = sprite;
             return sprite;
         }
@@ -150,14 +151,36 @@ namespace UnityGameTranslator.Core.UI
             texture.filterMode = FilterMode.Bilinear;
             texture.wrapMode = TextureWrapMode.Clamp;
 
-            TextureHelper.SetPixels32Safe(texture, pixels);
+            TextureUtils.SetPixels32Safe(texture, pixels);
             texture.Apply(false, false);
 
             // Not destroyed with the panel that first asked for it: the cache outlives every panel,
             // and a texture collected while another still points at it renders as a pink square.
             UnityEngine.Object.DontDestroyOnLoad(texture);
 
-            return TextureHelper.CreateSprite(texture);
+            return MakeSprite(texture);
+        }
+
+        /// <summary>
+        /// One whole texture, as a sprite the interface can show.
+        ///
+        /// ⚠ Written out rather than calling UniverseLib: <see cref="TextureUtils.CreateSpriteSafe"/>
+        /// picks whichever `Sprite.Create` overload the running game carries, which is the difference
+        /// between a mark and a dead process on IL2CPP (see the class remarks).
+        ///
+        /// 100 pixels per unit, no border, centre pivot — the numbers <see cref="UIShapes"/> uses, so
+        /// a 32-texel mark is 32 pixels on screen. No border because a mark is never nine-sliced: it
+        /// is scaled as a whole, and a border would pin its edges while stretching the middle.
+        /// </summary>
+        private static Sprite MakeSprite(Texture2D texture)
+        {
+            var sprite = TextureUtils.CreateSpriteSafe(
+                texture, new Vector2(0.5f, 0.5f), 100f, Vector4.zero) as Sprite;
+
+            if (sprite == null)
+                TranslatorCore.LogWarning("[Icons] Sprite.Create returned nothing — that mark stays blank");
+
+            return sprite;
         }
 
         /// <summary>

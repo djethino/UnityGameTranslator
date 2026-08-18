@@ -28,6 +28,15 @@ namespace UnityGameTranslator.Core.UI
     /// managed array, which on IL2CPP is not the array the engine expects — the same class of trap
     /// as AddListener, and UniverseLib has already solved it. Never call the engine directly from
     /// this file.
+    ///
+    /// 🔴 **Except the texture itself, which comes from <see cref="Compat.MakeTexture2D"/>.**
+    /// UniverseLib builds one through the SIX-argument constructor, and that overload is absent on
+    /// some IL2CPP builds — the marks then threw MissingMethodException from inside
+    /// MainPanel's construction, which aborted CreatePanels() and left the mod dead behind one
+    /// oversized window. Compat asks for the FOUR-argument one instead, which those same games do
+    /// have: it is what CustomFontLoader and ImageReplacer already use to build glyph atlases and
+    /// replacement images there. One factory for every texture this mod makes, and the one already
+    /// proven on the runtimes that refuse the other.
     /// </summary>
     public static class Icons
     {
@@ -49,7 +58,6 @@ namespace UnityGameTranslator.Core.UI
         public static Sprite Get(string id)
         {
             if (string.IsNullOrEmpty(id)) return null;
-            if (TexturesRefused) return null;
 
             Sprite cached;
             if (_cache.TryGetValue(id, out cached)) return cached;
@@ -57,258 +65,9 @@ namespace UnityGameTranslator.Core.UI
             var shape = Draw(id);
             if (shape == null) return null;
 
-            var sprite = TryBuild(() => FromCoverage(shape, Box * Scale, Box * Scale));
-            _cache[id] = sprite;   // null cached on purpose: a runtime that cannot make one never will
+            var sprite = FromCoverage(shape, Box * Scale, Box * Scale);
+            _cache[id] = sprite;
             return sprite;
-        }
-
-        /// <summary>
-        /// 🔴 **No texture is built on IL2CPP at all, for now — and this is a retreat, not a
-        /// design.** Creating one there ends the process instead of throwing: on Unity 2022.3.62f2
-        /// and 6000.0.77f1 the four-argument constructor jumps to a null pointer, and reading the
-        /// generated pointer field first did not save it either. Six attempts were spent on it.
-        ///
-        /// ⚠ **What made it unfixable was not the bug, it was the instrument.** An
-        /// AccessViolationException ends the process outright and BepInEx's log is buffered, so the
-        /// last lines — precisely the ones saying how far the attempt got — are lost. Every run
-        /// therefore answered "it crashed" and nothing more, which is not enough to work from.
-        ///
-        /// Whoever picks this up needs a channel that survives the crash (an unbuffered file
-        /// written before each step) and a trigger the player controls, so a wrong guess costs a
-        /// click rather than a session. `ReportWhatExists` already prints what the build has; what
-        /// is missing is knowing which call is the one that kills it.
-        ///
-        /// ⚠ Same factory feeds ImageReplacer and CustomFontLoader, so image replacement carries
-        /// the same limit on these games — it had only ever been tried on a 2020.3 build.
-        /// </summary>
-        private static bool TexturesRefused =>
-            TranslatorCore.Adapter?.IsIL2CPP == true;
-
-        /// <summary>Set once a texture could not be made, so the reason is stated a single time.</summary>
-        private static bool _texturesUnavailable;
-
-        /// <summary>Which of the two ways worked, so the fallback is not re-tried on every icon.</summary>
-        private static bool _cloneInsteadOfConstruct;
-
-        /// <summary>
-        /// A blank texture of this size, however this runtime is willing to give one.
-        ///
-        /// 🔴 **IL2CPP can strip every Texture2D constructor.** They are kept only if the game
-        /// itself calls one; Il2CppInterop still declares them from the metadata, so the call
-        /// compiles and then finds nothing behind it. Seen on Unity 2022.3.62f2 and 6000.0.77f1:
-        /// the six-argument form is gone, and so is the four-argument one.
-        ///
-        /// So the second way does not CONSTRUCT a texture, it COPIES one Unity already made.
-        /// <c>Texture2D.whiteTexture</c> is a built-in the engine always has, <c>Instantiate</c> is
-        /// in every game there is, and resizing the copy is what makes it ours. Nothing here is an
-        /// ICall: the engine's internal creation entry point exists, but its signature moves
-        /// between Unity versions and calling it with the wrong one corrupts memory rather than
-        /// throwing — a crash with no message, which is exactly what must not be traded for a
-        /// missing icon.
-        ///
-        /// ⚠ Every step is a direct call, deliberately. A stripped member then raises
-        /// <see cref="MissingMethodException"/>, which the caller can survive; reflection over the
-        /// same member would hand back a declaration with no pointer and take the game down.
-        ///
-        /// ⚠ Which way worked is remembered: it follows from how the game was built and cannot
-        /// change while it runs.
-        /// </summary>
-        private static Texture2D NewTexture(int width, int height)
-        {
-            if (!_cloneInsteadOfConstruct)
-            {
-                try
-                {
-                    // 🔴 **Compat.MakeTexture2D, not UniverseLib's helper — and not a new attempt of
-                    // our own.** This project already had a texture factory, used by
-                    // CustomFontLoader and FontManager for glyph atlases, which falls back from the
-                    // four-argument constructor to the two-argument one "more universally preserved
-                    // (used by the engine itself)". It was never called from here, so this file
-                    // went through UniverseLib's six-argument path and then grew a hand-written
-                    // fallback beside a working one.
-                    //
-                    // ⚠ It also cannot crash, which the hand-written fallback could: it only ever
-                    // calls CONSTRUCTORS. A constructor IL2CPP never generated raises
-                    // MissingMethodException, which is catchable — a stripped METHOD jumps to a
-                    // null pointer and ends the process. That distinction is why cloning a built-in
-                    // texture and resizing it killed two games and this does not.
-                    return Compat.MakeTexture2D(width, height, TextureFormat.RGBA32, false);
-                }
-                catch (Exception ex)
-                {
-                    _cloneInsteadOfConstruct = true;
-                    TranslatorCore.LogInfo(
-                        $"[Icons] No Texture2D constructor at all in this build "
-                        + $"({ex.GetType().Name}).");
-                }
-            }
-
-            ReportWhatExists();
-
-            // 🔴 **Stopped here, deliberately, and this is what is known.**
-            //
-            // The report settles what it can: NOTHING relevant is stripped. Reinitialize exists in
-            // both its two- and four-argument forms, Instantiate exists generic and non-generic,
-            // whiteTexture exists — every pointer live. Only `.ctor` is absent, which matches the
-            // MissingMethodException the constructor raises.
-            //
-            // So the crash is not the interop refusing a missing member: it is the ENGINE refusing
-            // the operation from native code, where nothing managed can intercept it. The most
-            // likely culprit is resizing a copy of `whiteTexture` — a built-in the engine owns and
-            // does not expect to be reshaped — but "most likely" is not knowledge, and each attempt
-            // to find out costs a crashed session. Five were spent tonight.
-            //
-            // ⚠ Anyone continuing this: do NOT try the next idea at startup. Every attempt here
-            // runs while the UI is being built, so a wrong guess kills the game before it is
-            // playable and takes the log with it. Drive it from a command the user triggers when
-            // they choose, one candidate per run — the report above already says which members are
-            // available to build a candidate from.
-            throw new InvalidOperationException(
-                "this build has no Texture2D constructor, and copying a built-in one crashes the "
-                + "engine natively — icons cannot be drawn here yet");
-        }
-
-        /// <summary>Names every real overload of one method, so a signature need not be guessed.</summary>
-        private static void ReportSignatures(Type type, string method)
-        {
-            if (TranslatorCore.Adapter?.IsIL2CPP != true) return;
-
-            try
-            {
-                var found = new List<string>();
-
-                foreach (var field in type.GetFields(System.Reflection.BindingFlags.Static
-                                                     | System.Reflection.BindingFlags.NonPublic
-                                                     | System.Reflection.BindingFlags.Public))
-                {
-                    if (!field.Name.StartsWith("NativeMethodInfoPtr_" + method + "_",
-                                               StringComparison.Ordinal)) continue;
-
-                    bool live = field.GetValue(null) is IntPtr p && p != IntPtr.Zero;
-                    found.Add((live ? "" : "(dead) ") + field.Name);
-                }
-
-                TranslatorCore.LogWarning($"[Icons] {type.Name}.{method} overloads: "
-                                          + (found.Count == 0 ? "none" : string.Join(" | ", found)));
-            }
-            catch { }
-        }
-
-        private static bool _reported;
-
-        /// <summary>
-        /// Lists which texture-related members are real in this build, once.
-        ///
-        /// ⚠ Reads only. Every member here is one a texture path might need, and any of them may
-        /// have been stripped: the point is to learn which, without calling a single one.
-        /// </summary>
-        private static void ReportWhatExists()
-        {
-            if (_reported) return;
-            _reported = true;
-
-            try
-            {
-                var lines = new List<string>();
-
-                foreach (var member in new[]
-                         {
-                             "get_whiteTexture", "get_blackTexture", "Reinitialize", "Resize",
-                             "SetPixels32", "SetPixels", "Apply", "GetRawTextureData",
-                             "LoadRawTextureData",
-                         })
-                {
-                    lines.Add($"Texture2D.{member}={NativeMethodExists(typeof(Texture2D), member)}");
-                }
-
-                lines.Add($"Object.Instantiate={NativeMethodExists(typeof(UnityEngine.Object), "Instantiate")}");
-                lines.Add($"Sprite.Create={NativeMethodExists(typeof(Sprite), "Create")}");
-                // ⚠ "_ctor", not ".ctor": Il2CppInterop writes the dot as an underscore in the
-                // generated field name, so the earlier report answered False about constructors it
-                // had simply looked up under a name that never exists.
-                lines.Add($"Texture2D._ctor={NativeMethodExists(typeof(Texture2D), "_ctor")}");
-
-                TranslatorCore.LogWarning("[Icons] What this build really has — " + string.Join(", ", lines));
-
-                // ⚠ The signatures too, not just the names. The names alone said "Reinitialize
-                // exists" about a build whose four-argument form did not — which is what crashed.
-                // Printed so a failure needs no further round trip to diagnose.
-                ReportSignatures(typeof(Texture2D), "_ctor");
-            }
-            catch (Exception ex)
-            {
-                TranslatorCore.LogWarning($"[Icons] Could not read what this build has: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// Whether a method exists as native code, not merely as a declaration.
-        ///
-        /// ⚠ On Mono there is nothing to check and everything declared is real. On IL2CPP,
-        /// Il2CppInterop emits a static <c>NativeMethodInfoPtr_&lt;name&gt;…</c> field per generated
-        /// method: absent or zero means the game's build stripped it. Reading that field is safe;
-        /// calling the method it describes is not, which is the whole reason to look first.
-        ///
-        /// ⚠ Deliberately a field READ and never an Invoke — reflection that ends in a call has the
-        /// same fate as the direct call.
-        /// </summary>
-        private static bool NativeMethodExists(Type type, string method)
-        {
-            if (TranslatorCore.Adapter?.IsIL2CPP != true) return true;
-
-            try
-            {
-                var fields = type.GetFields(System.Reflection.BindingFlags.Static
-                                            | System.Reflection.BindingFlags.NonPublic
-                                            | System.Reflection.BindingFlags.Public);
-
-                foreach (var field in fields)
-                {
-                    if (!field.Name.StartsWith("NativeMethodInfoPtr_" + method, StringComparison.Ordinal))
-                        continue;
-
-                    if (field.GetValue(null) is IntPtr pointer && pointer != IntPtr.Zero)
-                        return true;
-                }
-            }
-            catch { }
-
-            return false;
-        }
-
-        /// <summary>
-        /// Builds a sprite, or gives up and says so.
-        ///
-        /// 🔴 **An icon is optional; the window it decorates is not.** Making a Texture2D can fail
-        /// outright on IL2CPP — a game whose build stripped the Texture2D constructors leaves
-        /// Il2CppInterop declaring one with nothing behind it. That throw used to escape into
-        /// <c>MainPanel</c>'s construction and abort <c>CreatePanels()</c>: panels built before it
-        /// stayed on screen, panels after it never existed, the tick loop never started. What the
-        /// user saw was one oversized window; what it was, was the mod dead at startup.
-        ///
-        /// ⚠ This is NOT the "wrap each panel in a try/catch" that CLAUDE.md rules out — that would
-        /// hide a missing panel. This is one optional resource declining to be built, at the only
-        /// place that can tell the difference, and saying which runtime refused it.
-        ///
-        /// ⚠ The failure is remembered rather than retried: it depends on how the game was built,
-        /// which does not change while it runs, and every mark and flag would otherwise throw again.
-        /// </summary>
-        private static Sprite TryBuild(Func<Sprite> build)
-        {
-            if (_texturesUnavailable) return null;
-
-            try
-            {
-                return build();
-            }
-            catch (Exception ex)
-            {
-                _texturesUnavailable = true;
-                TranslatorCore.LogWarning(
-                    $"[Icons] This game cannot create textures at runtime ({ex.GetType().Name}: "
-                    + $"{ex.Message}). Marks and flags will not be drawn; everything else works.");
-                return null;
-            }
         }
 
         /// <summary>
@@ -329,7 +88,6 @@ namespace UnityGameTranslator.Core.UI
         public static Sprite Flag(string flagId)
         {
             if (string.IsNullOrEmpty(flagId)) return null;
-            if (TexturesRefused) return null;   // same retreat as Get — see TexturesRefused
 
             var key = "flag:" + flagId;
 
@@ -357,23 +115,17 @@ namespace UnityGameTranslator.Core.UI
                                   (byte)(pixel.Rgb & 0xFF), 255);
             }
 
-            // Same guard as a mark: a runtime that cannot build a texture must cost a flag, not the
-            // window the flag sits in. See TryBuild.
-            var sprite = TryBuild(() =>
-            {
-                var texture = NewTexture(w, h);
-                texture.filterMode = FilterMode.Point;
-                texture.wrapMode = TextureWrapMode.Clamp;
+            var texture = Compat.MakeTexture2D(w, h, TextureFormat.RGBA32, false);
+            texture.filterMode = FilterMode.Point;
+            texture.wrapMode = TextureWrapMode.Clamp;
 
-                TextureHelper.SetPixels32Safe(texture, colours);
-                texture.Apply(false, false);
+            TextureHelper.SetPixels32Safe(texture, colours);
+            texture.Apply(false, false);
 
-                // The cache outlives every panel that asked for it.
-                UnityEngine.Object.DontDestroyOnLoad(texture);
+            // Same reason as a mark's texture: the cache outlives every panel that asked for it.
+            UnityEngine.Object.DontDestroyOnLoad(texture);
 
-                return TextureHelper.CreateSprite(texture);
-            });
-
+            var sprite = TextureHelper.CreateSprite(texture);
             _cache[key] = sprite;
             return sprite;
         }
@@ -394,7 +146,7 @@ namespace UnityGameTranslator.Core.UI
             for (int i = 0; i < pixels.Length; i++)
                 pixels[i] = new Color32(255, 255, 255, coverage[i]);
 
-            var texture = NewTexture(w, h);
+            var texture = Compat.MakeTexture2D(w, h, TextureFormat.RGBA32, false);
             texture.filterMode = FilterMode.Bilinear;
             texture.wrapMode = TextureWrapMode.Clamp;
 

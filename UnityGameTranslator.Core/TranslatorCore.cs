@@ -4758,7 +4758,9 @@ namespace UnityGameTranslator.Core
 
                 string systemPrompt = isOwnUI
                     ? Prompts.ForOwnInterface(targetLang, textType, markers)
-                    : Prompts.ForGameText(targetLang, sourceLang, Config.game_context,
+                    // The game's own name, never the folder's — see GameInfo.product_name.
+                    : Prompts.ForGameText(targetLang, sourceLang, CurrentGame?.product_name,
+                                          Config.game_context,
                                           Config.strict_source_language, textType, markers);
 
                 if (Config.debug_ai)
@@ -7481,6 +7483,14 @@ namespace UnityGameTranslator.Core
         public string steam_id { get; set; }
         public string name { get; set; }
         public string folder_name { get; set; }
+
+        /// <summary>
+        /// What the game calls itself — Unity's `Application.productName` — or null when it does
+        /// not say. ⚠ Deliberately NOT the same as <see cref="name"/>, which falls back to the
+        /// folder: `HyperEchelon6vYY3`, `Forsaken.Frontiers.v1510`. The two are only told apart
+        /// here, so anything that needs a name a human would recognise reads this one.
+        /// </summary>
+        public string product_name { get; set; }
         /// <summary>
         /// How the steam_id was detected: "steam_appid.txt", "appmanifest", or null if not detected
         /// </summary>

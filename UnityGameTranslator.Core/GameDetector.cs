@@ -101,6 +101,7 @@ namespace UnityGameTranslator.Core
                 if (!string.IsNullOrEmpty(productName) && productName != "DefaultCompany")
                 {
                     info.name = productName;
+                    info.product_name = productName;
                     TranslatorCore.LogInfo($"[GameDetector] Application.productName: {productName}");
                 }
             }

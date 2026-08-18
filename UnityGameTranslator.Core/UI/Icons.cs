@@ -49,6 +49,7 @@ namespace UnityGameTranslator.Core.UI
         public static Sprite Get(string id)
         {
             if (string.IsNullOrEmpty(id)) return null;
+            if (TexturesRefused) return null;
 
             Sprite cached;
             if (_cache.TryGetValue(id, out cached)) return cached;
@@ -60,6 +61,28 @@ namespace UnityGameTranslator.Core.UI
             _cache[id] = sprite;   // null cached on purpose: a runtime that cannot make one never will
             return sprite;
         }
+
+        /// <summary>
+        /// 🔴 **No texture is built on IL2CPP at all, for now — and this is a retreat, not a
+        /// design.** Creating one there ends the process instead of throwing: on Unity 2022.3.62f2
+        /// and 6000.0.77f1 the four-argument constructor jumps to a null pointer, and reading the
+        /// generated pointer field first did not save it either. Six attempts were spent on it.
+        ///
+        /// ⚠ **What made it unfixable was not the bug, it was the instrument.** An
+        /// AccessViolationException ends the process outright and BepInEx's log is buffered, so the
+        /// last lines — precisely the ones saying how far the attempt got — are lost. Every run
+        /// therefore answered "it crashed" and nothing more, which is not enough to work from.
+        ///
+        /// Whoever picks this up needs a channel that survives the crash (an unbuffered file
+        /// written before each step) and a trigger the player controls, so a wrong guess costs a
+        /// click rather than a session. `ReportWhatExists` already prints what the build has; what
+        /// is missing is knowing which call is the one that kills it.
+        ///
+        /// ⚠ Same factory feeds ImageReplacer and CustomFontLoader, so image replacement carries
+        /// the same limit on these games — it had only ever been tried on a 2020.3 build.
+        /// </summary>
+        private static bool TexturesRefused =>
+            TranslatorCore.Adapter?.IsIL2CPP == true;
 
         /// <summary>Set once a texture could not be made, so the reason is stated a single time.</summary>
         private static bool _texturesUnavailable;
@@ -306,6 +329,7 @@ namespace UnityGameTranslator.Core.UI
         public static Sprite Flag(string flagId)
         {
             if (string.IsNullOrEmpty(flagId)) return null;
+            if (TexturesRefused) return null;   // same retreat as Get — see TexturesRefused
 
             var key = "flag:" + flagId;
 

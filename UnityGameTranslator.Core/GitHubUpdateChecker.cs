@@ -2,6 +2,7 @@ using System;
 using System.Net.Http;
 using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
+using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core
 {
@@ -135,11 +136,14 @@ namespace UnityGameTranslator.Core
             }
             catch (HttpRequestException ex)
             {
+                // ⚠ The raw sentence stays in the log — it names the mechanism, which is what a
+                // maintainer needs. What goes on screen names the CAUSE, which is what the player
+                // can act on. See Connectivity.
                 TranslatorCore.LogWarning($"[GitHubUpdate] Network error: {ex.Message}");
                 return new ModUpdateInfo
                 {
                     Success = false,
-                    Error = $"Network error: {ex.Message}",
+                    Error = Connectivity.Describe(ex),
                     CurrentVersion = currentVersion
                 };
             }
@@ -159,7 +163,7 @@ namespace UnityGameTranslator.Core
                 return new ModUpdateInfo
                 {
                     Success = false,
-                    Error = ex.Message,
+                    Error = Connectivity.Describe(ex),
                     CurrentVersion = currentVersion
                 };
             }

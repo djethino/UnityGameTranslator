@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
@@ -7,6 +7,7 @@ using System.Text;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core
 {
@@ -413,7 +414,7 @@ namespace UnityGameTranslator.Core
             catch (Exception e)
             {
                 TranslatorCore.LogWarning($"[ApiClient] Public update check error: {e.Message}");
-                return new TranslationCheckResult { Success = false, Error = e.Message };
+                return new TranslationCheckResult { Success = false, Error = Connectivity.Describe(e) };
             }
         }
 
@@ -503,7 +504,7 @@ namespace UnityGameTranslator.Core
             catch (Exception e)
             {
                 TranslatorCore.LogWarning($"[ApiClient] Notifications error: {e.Message}");
-                return new ModNotificationsResult { Success = false, Error = e.Message };
+                return new ModNotificationsResult { Success = false, Error = Connectivity.Describe(e) };
             }
         }
 
@@ -571,7 +572,7 @@ namespace UnityGameTranslator.Core
             catch (Exception e)
             {
                 TranslatorCore.LogWarning($"[ApiClient] Search error: {e.Message}");
-                return new TranslationSearchResult { Success = false, Error = e.Message };
+                return new TranslationSearchResult { Success = false, Error = Connectivity.Describe(e) };
             }
         }
 
@@ -611,7 +612,7 @@ namespace UnityGameTranslator.Core
             catch (Exception e)
             {
                 TranslatorCore.LogWarning($"[ApiClient] Search error: {e.Message}");
-                return new TranslationSearchResult { Success = false, Error = e.Message };
+                return new TranslationSearchResult { Success = false, Error = Connectivity.Describe(e) };
             }
         }
 
@@ -749,7 +750,7 @@ namespace UnityGameTranslator.Core
             catch (Exception e)
             {
                 TranslatorCore.LogWarning($"[ApiClient] Download error: {e.Message}");
-                return new TranslationDownloadResult { Success = false, Error = e.Message };
+                return new TranslationDownloadResult { Success = false, Error = Connectivity.Describe(e) };
             }
         }
 
@@ -887,7 +888,7 @@ namespace UnityGameTranslator.Core
                 {
                     TranslatorCore.LogWarning($"[ApiClient] Inner exception: {httpEx.InnerException.Message}");
                 }
-                return new UuidCheckResult { Success = false, Error = $"Network error: {httpEx.Message}" };
+                return new UuidCheckResult { Success = false, Error = Connectivity.Describe(httpEx) };
             }
             catch (TaskCanceledException tcEx)
             {
@@ -901,7 +902,7 @@ namespace UnityGameTranslator.Core
                 {
                     TranslatorCore.LogWarning($"[ApiClient] Inner exception: {e.InnerException.GetType().Name}: {e.InnerException.Message}");
                 }
-                return new UuidCheckResult { Success = false, Error = e.Message };
+                return new UuidCheckResult { Success = false, Error = Connectivity.Describe(e) };
             }
         }
 
@@ -963,7 +964,7 @@ namespace UnityGameTranslator.Core
             catch (Exception e)
             {
                 TranslatorCore.LogWarning($"[ApiClient] GetBranches error: {e.Message}");
-                return new BranchListResult { Success = false, Error = e.Message };
+                return new BranchListResult { Success = false, Error = Connectivity.Describe(e) };
             }
         }
 
@@ -1132,7 +1133,7 @@ namespace UnityGameTranslator.Core
             catch (Exception e)
             {
                 TranslatorCore.LogWarning($"[ApiClient] Game search error: {e.Message}");
-                return new GameSearchResult { Success = false, Error = e.Message };
+                return new GameSearchResult { Success = false, Error = Connectivity.Describe(e) };
             }
         }
 
@@ -1192,7 +1193,7 @@ namespace UnityGameTranslator.Core
             catch (Exception e)
             {
                 TranslatorCore.LogWarning($"[ApiClient] External game search error: {e.Message}");
-                return new GameSearchResult { Success = false, Error = e.Message };
+                return new GameSearchResult { Success = false, Error = Connectivity.Describe(e) };
             }
         }
 
@@ -1251,7 +1252,7 @@ namespace UnityGameTranslator.Core
             catch (Exception e)
             {
                 TranslatorCore.LogWarning($"[ApiClient] Device flow init error: {e.Message}");
-                return new DeviceFlowInitResult { Success = false, Error = e.Message };
+                return new DeviceFlowInitResult { Success = false, Error = Connectivity.Describe(e) };
             }
         }
 
@@ -1400,7 +1401,7 @@ namespace UnityGameTranslator.Core
             catch (Exception e)
             {
                 TranslatorCore.LogWarning($"[ApiClient] Upload error: {e.Message}");
-                return new UploadResult { Success = false, Error = e.Message };
+                return new UploadResult { Success = false, Error = Connectivity.Describe(e) };
             }
         }
 
@@ -1479,7 +1480,7 @@ namespace UnityGameTranslator.Core
             catch (Exception e)
             {
                 TranslatorCore.LogWarning($"[ApiClient] Merge preview init error: {e.Message}");
-                return new MergePreviewInitResult { Success = false, Error = e.Message };
+                return new MergePreviewInitResult { Success = false, Error = Connectivity.Describe(e) };
             }
         }
 
@@ -1518,7 +1519,7 @@ namespace UnityGameTranslator.Core
             catch (Exception e)
             {
                 TranslatorCore.LogWarning($"[ApiClient] Merge result fetch error: {e.Message}");
-                return new TranslationDownloadResult { Success = false, Error = e.Message };
+                return new TranslationDownloadResult { Success = false, Error = Connectivity.Describe(e) };
             }
         }
 
@@ -1669,7 +1670,7 @@ namespace UnityGameTranslator.Core
             catch (Exception e)
             {
                 TranslatorCore.LogWarning($"[ApiClient] Edit session init error: {e.Message}");
-                return new EditSessionInitResult { Success = false, Error = e.Message };
+                return new EditSessionInitResult { Success = false, Error = Connectivity.Describe(e) };
             }
         }
 
@@ -1730,7 +1731,7 @@ namespace UnityGameTranslator.Core
             }
             catch (Exception e)
             {
-                return new EditSessionUpdateResult { Success = false, Error = e.Message };
+                return new EditSessionUpdateResult { Success = false, Error = Connectivity.Describe(e) };
             }
         }
 
@@ -1854,7 +1855,7 @@ namespace UnityGameTranslator.Core
             }
             catch (Exception e)
             {
-                return new EditSessionContentResult { Success = false, Error = e.Message };
+                return new EditSessionContentResult { Success = false, Error = Connectivity.Describe(e) };
             }
         }
 
@@ -1916,7 +1917,7 @@ namespace UnityGameTranslator.Core
             catch (Exception e)
             {
                 TranslatorCore.LogWarning($"[ApiClient] Vote error: {e.Message}");
-                return new VoteResult { Success = false, Error = e.Message };
+                return new VoteResult { Success = false, Error = Connectivity.Describe(e) };
             }
         }
 

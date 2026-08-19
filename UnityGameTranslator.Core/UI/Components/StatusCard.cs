@@ -481,8 +481,8 @@ namespace UnityGameTranslator.Core.UI.Components
             string target = string.IsNullOrEmpty(targetLanguage)
                 ? TranslatorCore.TranslateOwnUIDynamic("Auto")
                 : targetLanguage;
-            // The pair is drawn as "flag name → flag name". The text label only speaks when a side
-            // has no language to mark — auto-detection, or a name the catalogue does not know.
+            // The pair is drawn as marks, each side carrying its flag when it has one. The text
+            // label is only the standby for when there is no row to draw them in at all.
             bool marked = RebuildIdentityMarks(sourceLanguage, targetLanguage);
             _identityLabel.text = marked ? "" : $"{source} → {target}";
         }
@@ -502,9 +502,7 @@ namespace UnityGameTranslator.Core.UI.Components
             for (int i = _identityMarks.transform.childCount - 1; i >= 0; i--)
                 UnityEngine.Object.Destroy(_identityMarks.transform.GetChild(i).gameObject);
 
-            bool from = LanguageMark.Create(_identityMarks, "IdSource", sourceLanguage,
-                                            withName: true) != null;
-            if (!from) return false;
+            AddIdentitySide("IdSource", sourceLanguage);
 
             var arrow = UIFactory.CreateLabel(_identityMarks, "IdArrow", "→", TextAnchor.MiddleCenter);
             arrow.fontSize = UIStyles.FontSizeNormal;
@@ -512,8 +510,34 @@ namespace UnityGameTranslator.Core.UI.Components
             UIFactory.SetLayoutElement(arrow.gameObject, minHeight: UIStyles.RowHeightSmall,
                                        flexibleWidth: 0);
 
-            return LanguageMark.Create(_identityMarks, "IdTarget", targetLanguage,
-                                       withName: true) != null;
+            AddIdentitySide("IdTarget", targetLanguage);
+            return true;
+        }
+
+        /// <summary>
+        /// One side of the pair: its flag and name when it has a language, the word "Auto" when it
+        /// does not.
+        ///
+        /// 🔴 **Each side stands on its own.** This used to give up on the WHOLE pair as soon as one
+        /// side could not be marked, which fell back to a plain "Auto → French" — so a target lost
+        /// its flag because the SOURCE was auto-detected. A language does not stop having a flag
+        /// because of what it is being translated from.
+        /// </summary>
+        private void AddIdentitySide(string name, string language)
+        {
+            if (LanguageMark.Create(_identityMarks, name, language, withName: true) != null) return;
+
+            // Nothing to mark: no language was chosen, which is auto-detection rather than a value
+            // we failed to record. The word takes the mark's place so the row still reads as a pair.
+            var word = UIFactory.CreateLabel(_identityMarks, name + "Auto",
+                                             TranslatorCore.TranslateOwnUIDynamic("Auto"),
+                                             TextAnchor.MiddleLeft);
+            word.fontSize = UIStyles.FontSizeNormal;
+            word.color = UIStyles.TextPrimary;
+            word.horizontalOverflow = HorizontalWrapMode.Overflow;
+            word.verticalOverflow = VerticalWrapMode.Overflow;
+            UIFactory.SetLayoutElement(word.gameObject, minHeight: UIStyles.RowHeightSmall,
+                                       flexibleWidth: 0, flexibleHeight: 0);
         }
 
         /// <summary>

@@ -749,11 +749,15 @@ namespace UnityGameTranslator.Core
                     catch { }
                 }
 
-                // Translate
-                string preVal = value;
-                value = TranslatorCore.TranslateTextWithTracking(value, component, isOwnUI);
+                // The same routing the TMP/UI.Text/TextMesh setter gets — input mirrors,
+                // procedural text, reveals, the already-written check. This used to call
+                // TranslateTextWithTracking on its own and inherited none of it.
+                var outcome = RouteText(__instance, component, TypeHelper.GetInstanceID(__instance),
+                                        isOwnUI, "Generic", ref value);
+                if (outcome == RouteOutcome.Stop) return;
 
-                // Apply font scale
+                // Apply font scale. Also on StopButRescale — that outcome exists precisely because
+                // a component with nothing to translate still needs its size re-asserted.
                 if (typeInfo?.FontSizeProp != null && !string.IsNullOrEmpty(settingsFontName ?? fontName))
                 {
                     ApplyGenericFontScale(__instance, typeInfo, settingsFontName ?? fontName);
@@ -4424,7 +4428,10 @@ namespace UnityGameTranslator.Core
 
                 // Check if own UI (use UI-specific prompt)
                 bool isOwnUI = TranslatorCore.IsOwnUITranslatable(component);
-                __0 = TranslatorCore.TranslateTextWithTracking(__0, component, isOwnUI);
+                // Same routing as the TMP/UI.Text/TextMesh setter — see RouteText. The font work
+                // above is already done by this point, so both stopping outcomes just leave.
+                if (RouteText(__instance, component, TypeHelper.GetInstanceID(__instance),
+                              isOwnUI, "TMP", ref __0) != RouteOutcome.Translated) return;
             }
             catch (Exception ex)
             {
@@ -4521,7 +4528,10 @@ namespace UnityGameTranslator.Core
 
                 // Check if own UI (use UI-specific prompt) - uses hierarchy check
                 bool isOwnUI = TranslatorCore.IsOwnUITranslatable(component);
-                value = TranslatorCore.TranslateTextWithTracking(value, component, isOwnUI);
+                // Same routing as the TMP/UI.Text/TextMesh setter — see RouteText. tk2d has no
+                // font scale of its own here, so both stopping outcomes just leave.
+                if (RouteText(__instance, component, TypeHelper.GetInstanceID(__instance),
+                              isOwnUI, "tk2d", ref value) != RouteOutcome.Translated) return;
             }
             catch { }
         }

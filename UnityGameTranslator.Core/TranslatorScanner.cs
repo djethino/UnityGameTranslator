@@ -1478,6 +1478,15 @@ namespace UnityGameTranslator.Core
 
             bool globalRestore = !TranslatorCore.TranslationsActive;
 
+            // ⚠ UI Toolkit here TOO, not only in RestoreAllOriginals. This is the method the
+            // enable-translations toggle calls, and that one is what a player actually uses — the
+            // other runs on a cache reload. Putting the call in one and not the other is why
+            // switching translation off left this framework translated at runtime.
+            //
+            // Only on the way OUT: when translations come back on, the UI Toolkit scan re-applies
+            // them by itself, and calling this then would undo the pass that just ran.
+            if (globalRestore) UIToolkitSupport.RestoreAll();
+
             var processedIds = new HashSet<int>();
 
             try

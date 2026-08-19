@@ -578,10 +578,16 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (rowLayout != null) rowLayout.childAlignment = TextAnchor.MiddleCenter;
 
             // Review on Website button (Main only) - opens page to review branches
+            //
+            // ⚠ Carries its count — "Review Branches (3)" — so how many are waiting is read where
+            // the decision is taken. RegisterExcluded, not RegisterUIText: the label is written by
+            // the code on every refresh, and letting the async pipeline write it too would put two
+            // writers on one Text. The pipeline turns the number into a placeholder, so every count
+            // shares one cache entry.
             _reviewOnWebsiteBtn = CreateSecondaryButton(roleActionsRow, "ReviewBtn", "Review Branches", 130);
             UIStyles.SetBackground(_reviewOnWebsiteBtn.Component.gameObject, UIStyles.ButtonLink);
             _reviewOnWebsiteBtn.OnClick += OnReviewOnWebsiteClicked;
-            RegisterUIText(_reviewOnWebsiteBtn.ButtonText);
+            RegisterExcluded(_reviewOnWebsiteBtn.ButtonText);
             _helpZone?.Describe(_reviewOnWebsiteBtn.Component.gameObject,
                 "Open the website to accept or reject changes proposed by other players");
 
@@ -1217,16 +1223,18 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Identity leads the card: which languages, whatever the mode
             _statusCard.SetIdentity(TranslatorCore.Config.GetSourceLanguage(), targetLang);
 
-            // Configure card based on layout state
+            // 🔴 **The card describes, it does not act.** Every action on this translation lives in
+            // "Actions" below, and there only — that row is where the conditions are (signed in,
+            // online, anything to send) and where a refusal is explained. Three buttons stood here
+            // between 2026-07-26 and 2026-08-19, each duplicating one of them a few rows higher
+            // WITHOUT its guards: Upload opened the upload screen while signed out, on a call that
+            // could only fail. What each mode has to SAY is set by the ConfigureAs* below; what it
+            // lets you DO is not this component's business.
             switch (_currentLayoutState)
             {
                 case LayoutState.OwnerMain:
                     int branches = serverState?.BranchesCount ?? 0;
                     _statusCard.ConfigureAsMainOwner(standing, entryCount, targetLang, branches);
-                    // One key action per mode, next to what motivates it. Contributions to review
-                    // live on the website, which is where a maintainer accepts or rejects them.
-                    if (branches > 0 && _reviewOnWebsiteBtn != null)
-                        _statusCard.SetModeAction($"{branches} contribution(s) waiting", "Review", OnReviewOnWebsiteClicked);
                     break;
 
                 case LayoutState.OwnerBranch:
@@ -1235,9 +1243,6 @@ namespace UnityGameTranslator.Core.UI.Panels
                         entryCount,
                         targetLang,
                         serverState?.MainUsername ?? serverState?.Uploader);
-                    // A branch owner's question is "what did I change?" — comparing answers it.
-                    if (localChanges > 0)
-                        _statusCard.SetModeAction($"{localChanges} change(s) not submitted", "Compare", OnCompareWithServerClicked);
                     break;
 
                 case LayoutState.HoldingAnothersLineage:
@@ -1250,9 +1255,6 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 case LayoutState.VisitorDiffUuid:
                     _statusCard.ConfigureAsLocalOnly(entryCount, targetLang);
-                    // Nothing shared yet: the one thing worth doing is sharing it.
-                    if (entryCount > 0)
-                        _statusCard.SetModeAction("Not shared yet", "Upload", OnUploadClicked);
                     break;
 
                 default:
@@ -1580,6 +1582,12 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 // Review Branches - only for Main role when there are branches to review
                 _reviewOnWebsiteBtn.Component.gameObject.SetActive(isMain && hasBranches);
+                if (isMain && hasBranches)
+                {
+                    // How many, on the button that acts on them.
+                    SetDynamicText(_reviewOnWebsiteBtn.ButtonText,
+                                   $"Review Branches ({state.BranchesCount})");
+                }
 
                 // Compare with Server - only for owners (Main or Branch) who have uploaded
                 // Non-owners can't compare because they don't have a server version to compare against

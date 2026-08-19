@@ -91,8 +91,6 @@ namespace UnityGameTranslator.Core.UI.Components
         private int _voteBuiltForId = -1;
         private bool _voteBuiltInteractive;
         private Text _secondaryLabel;
-        private UniverseLib.UI.Models.ButtonRef _modeActionBtn;
-        private Action _modeAction;
 
         /// <summary>
         /// The root GameObject of the status card.
@@ -291,8 +289,13 @@ namespace UnityGameTranslator.Core.UI.Components
             _stageRow.SetActive(false);
             _legendRow.SetActive(false);
 
-            // Row 5 — the ONE thing this mode wants to tell you, and the ONE action that answers
-            // it. Reading them side by side is what makes the card self-sufficient per mode.
+            // Row 5 — the ONE thing this mode has to tell you.
+            //
+            // ⚠ It carried a button too until 2026-08-19, and that was a mistake: each of the three
+            // it could show (Review, Compare, Upload) already existed in "Actions" WITH the
+            // conditions this row had no way to express — signed in, online, anything left to send.
+            // A card that describes must not offer a second door to an action, least of all one
+            // that skips the lock.
             _modeRow = UIFactory.CreateHorizontalGroup(_root, "ModeRow", false, false, true, true, UIStyles.SmallSpacing);
             UIFactory.SetLayoutElement(_modeRow, minHeight: UIStyles.RowHeightMedium, flexibleWidth: 9999, flexibleHeight: 0);
             UIStyles.ClearRowBackground(_modeRow);
@@ -304,10 +307,6 @@ namespace UnityGameTranslator.Core.UI.Components
             _secondaryLabel.color = UIStyles.TextMuted;
             UIFactory.SetLayoutElement(_secondaryLabel.gameObject, flexibleWidth: 9999);
             TranslatorCore.RegisterExcluded(_secondaryLabel);
-
-            _modeActionBtn = UIStyles.CreateSecondaryButton(_modeRow, "ModeActionBtn", "", 110);
-            _modeActionBtn.Component.gameObject.SetActive(false);
-            TranslatorCore.RegisterExcluded(_modeActionBtn.ButtonText);
 
             _modeRow.SetActive(false);
 
@@ -541,34 +540,6 @@ namespace UnityGameTranslator.Core.UI.Components
         }
 
         /// <summary>
-        /// The one thing this mode has to say, and the one action that answers it. Pass a null
-        /// action label to show the information alone.
-        /// </summary>
-        public void SetModeAction(string info, string actionLabel = null, Action onClick = null)
-        {
-            if (_modeRow == null) return;
-
-            bool hasInfo = !string.IsNullOrEmpty(info);
-            bool hasAction = !string.IsNullOrEmpty(actionLabel) && onClick != null;
-
-            if (hasInfo)
-                _secondaryLabel.text = TranslatorCore.TranslateOwnUIDynamic(info, _secondaryLabel);
-            _secondaryLabel.gameObject.SetActive(hasInfo);
-
-            if (hasAction)
-            {
-                _modeAction = onClick;
-                _modeActionBtn.ButtonText.text = TranslatorCore.TranslateOwnUIDynamic(actionLabel, _modeActionBtn.ButtonText);
-                // Rebound every time: OnClick is a single delegate here, so assigning replaces the
-                // previous mode's action instead of stacking them.
-                _modeActionBtn.OnClick = () => _modeAction?.Invoke();
-            }
-            _modeActionBtn.Component.gameObject.SetActive(hasAction);
-
-            _modeRow.SetActive(hasInfo || hasAction);
-        }
-
-        /// <summary>
         /// Update the details display (entry count, language, game).
         /// </summary>
         public void SetDetails(int entryCount, string targetLanguage, string gameName = null)
@@ -587,12 +558,20 @@ namespace UnityGameTranslator.Core.UI.Components
         }
 
         /// <summary>
-        /// Update the secondary info (branches count for Main, owner name for Branch).
+        /// The one thing this mode has to say — branches waiting for a Main, whose lineage this is
+        /// for a Branch, "not shared yet" for a local file. Information only: what to DO about it
+        /// belongs to "Actions", which is the one place that knows whether it is possible.
         /// </summary>
         public void SetSecondaryInfo(string info)
         {
-            // Same row as the mode action — information alone, no button.
-            SetModeAction(info);
+            if (_modeRow == null) return;
+
+            bool hasInfo = !string.IsNullOrEmpty(info);
+            if (hasInfo)
+                _secondaryLabel.text = TranslatorCore.TranslateOwnUIDynamic(info, _secondaryLabel);
+
+            _secondaryLabel.gameObject.SetActive(hasInfo);
+            _modeRow.SetActive(hasInfo);
         }
 
         /// <summary>

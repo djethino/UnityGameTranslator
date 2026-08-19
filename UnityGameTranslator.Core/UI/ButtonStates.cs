@@ -62,7 +62,10 @@ namespace UnityGameTranslator.Core.UI
             foreach (var reserved in _labelSpeaks)
                 if (selectable.name.IndexOf(reserved, System.StringComparison.Ordinal) >= 0) return;
 
-            var label = selectable.GetComponentInChildren<Text>(true);
+            // Inactive children included: a panel is built before it is shown, so the label is
+            // routinely under an inactive root at this point. ⚠ NOT GetComponentInChildren<Text>(true)
+            // — that overload throws on IL2CPP and killed CreatePanels; see FindInChildrenSafe.
+            var label = UIHelpers.FindInChildrenSafe<Text>(selectable.transform);
             if (label == null) return;
 
             for (int i = 0; i < _watched.Count; i++)

@@ -411,6 +411,42 @@ namespace UnityGameTranslator.Core.UI
         }
 
         /// <summary>
+        /// Finds a component on this object or anywhere below it, **including inactive children**.
+        ///
+        /// 🔴 **Never write `GetComponentInChildren&lt;T&gt;(true)` instead.** That overload dies on
+        /// IL2CPP with `VerificationException: Method Il2CppInterop.Runtime.InteropTypes.Il2CppObjectBase.Cast:
+        /// type argument 'T' violates the constraint of type parameter 'T'` — and it died inside a
+        /// panel constructor, which aborts CreatePanels and leaves the first-run wizard on screen
+        /// over an already-configured game.
+        ///
+        /// ⚠ The parameterless `GetComponentInChildren&lt;T&gt;()` is fine and has been running on
+        /// IL2CPP all along (VoteButtons, TranslatorPanelBase). **The one that takes
+        /// `includeInactive` is the one that cannot be instantiated** — same family as the
+        /// AddListener and TextureHelper traps: compiles anywhere, dies on one runtime only.
+        ///
+        /// Walking the tree here sidesteps the question rather than betting on an overload: only
+        /// `GetComponent&lt;T&gt;()` is called, which the whole Core already relies on, and inactive
+        /// children are reached because we visit them instead of asking Unity to. Depth-first with
+        /// self first, so the answer matches what GetComponentInChildren would have returned.
+        /// </summary>
+        public static T FindInChildrenSafe<T>(Transform root) where T : Component
+        {
+            if (root == null) return null;
+
+            var here = root.GetComponent<T>();
+            if (here != null) return here;
+
+            // Manual iteration: foreach over a Transform does not work under IL2CPP.
+            for (int i = 0; i < root.childCount; i++)
+            {
+                var found = FindInChildrenSafe<T>(root.GetChild(i));
+                if (found != null) return found;
+            }
+
+            return null;
+        }
+
+        /// <summary>
         /// Empty a container before rebuilding its contents.
         ///
         /// Backwards manual iteration because foreach over a Transform does not work under

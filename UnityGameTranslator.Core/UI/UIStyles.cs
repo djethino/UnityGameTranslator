@@ -268,6 +268,33 @@ namespace UnityGameTranslator.Core.UI
         public static readonly Color AccentPressed = Of(Theme.AccentDeep);
         public static readonly Color ButtonPressed = Of(Theme.SurfaceDeep);
 
+        /// <summary>
+        /// A colour as `RRGGBB`, for a rich-text `&lt;color=#…&gt;` tag.
+        ///
+        /// 🔴 **Do not reach for `ColorUtility.ToHtmlStringRGB`.** Some games strip it, and
+        /// Il2CppInterop cannot always rebuild what was stripped: the call then throws
+        /// `NotSupportedException: Method unstripping failed` — inside a panel constructor, which
+        /// aborts CreatePanels and leaves the first-run wizard and an oversized main panel on
+        /// screen over an already-configured game.
+        ///
+        /// Same family as TextureUtils versus UniverseLib's TextureHelper, and as the
+        /// GetComponentInChildren overload: **naming a Unity API is a bet that this game kept it.**
+        /// Arithmetic on three floats is not a bet. It lives here because this is where anyone
+        /// building a colour goes looking — in QualityBar it would not have stopped the next person.
+        /// </summary>
+        public static string Hex(Color color)
+        {
+            return Channel(color.r) + Channel(color.g) + Channel(color.b);
+        }
+
+        private static string Channel(float value)
+        {
+            if (value < 0f) value = 0f;
+            if (value > 1f) value = 1f;
+            int b = (int)(value * 255f + 0.5f);
+            return b.ToString("X2", System.Globalization.CultureInfo.InvariantCulture);
+        }
+
         #endregion
 
         #region Dimensions

@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using UniverseLib.UI;
@@ -239,12 +239,14 @@ namespace UnityGameTranslator.Core.UI.Components
             // Escaped, never the literal character: a non-breaking space is invisible in
             // an editor, and the first well-meaning cleanup would quietly turn it back
             // into an ordinary one, taking the protection with it.
-            return entry.Replace(' ', ' ');
+            return entry.Replace(' ', '\u00A0');
         }
 
         private static string Swatch(Color color)
         {
-            return $"<color=#{ColorUtility.ToHtmlStringRGB(color)}>■</color>";
+            // ⚠ UIStyles.Hex, never ColorUtility.ToHtmlStringRGB — the latter is stripped by some
+            // games and killed the whole panel pass there. See the note on UIStyles.Hex.
+            return $"<color=#{UIStyles.Hex(color)}>■</color>";
         }
 
         /// <summary>

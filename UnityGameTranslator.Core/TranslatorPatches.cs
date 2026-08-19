@@ -3076,6 +3076,291 @@ namespace UnityGameTranslator.Core
         // change what they return, for no demonstrated need.
         [ThreadStatic] internal static bool BypassTextPrefix;
 
+        /// <summary>
+        /// What the caller must do once the text has been routed.
+        /// </summary>
+        private enum RouteOutcome
+        {
+            /// <summary>Routed, possibly translated — carry on with the font work.</summary>
+            Translated,
+            /// <summary>Leave this setter alone entirely.</summary>
+            Stop,
+            /// <summary>Nothing to translate, but the component still needs its scale re-asserted.</summary>
+            StopButRescale,
+        }
+
+        /// <summary>
+        /// Decides what happens to one incoming text: is it the player's own typing, an assembly in
+        /// parts, a reveal in flight, something already translated — or an ordinary line to send.
+        ///
+        /// 🔴 **Split out of ProcessTextPatchPrefix so it is not welded to the font work.** Those
+        /// two were tressed together in one ~500-line method, so reusing the routing meant dragging
+        /// the whole font pipeline with it — and every text framework added since simply copied the
+        /// one line it could (the call to TranslateTextWithTracking) and inherited none of this.
+        /// That is why procedural text, input mirrors and the already-written check existed for
+        /// TMP, UI.Text and TextMesh alone.
+        ///
+        /// ⚠ Font work stays with the caller, in both directions: this never touches a font, and
+        /// the one branch that needed a scale re-asserted says so through StopButRescale rather
+        /// than doing it here.
+        /// </summary>
+        private static RouteOutcome RouteText(object instance, Component comp, int compId,
+                                              bool isOwnUI, string componentType, ref string textValue)
+        {
+            // Don't translate InputField textComponent (user's typed text)
+            if (componentType != "TextMesh" && IsInputFieldTextComponentCached(instance)) return RouteOutcome.Stop;
+
+            // Don't translate mirrors of the user's typed input (styled copy in
+            // the input widget, live preview elsewhere). Also purge TW/concat
+            // state for the component: char-by-char typing has the exact
+            // signature of a typewriting effect, and a one-frame-late mirror
+            // must not leave a stale prefix behind for the stabilizer to queue.
+            if (IsUserInputMirror(instance, textValue))
+            {
+                var typedState = PeekState(compId);
+                if (typedState != null)
+                {
+                    ForgetTypewriting(typedState);
+                    _typewritingPending.Remove(compId);
+                    LeaveConcat(typedState);
+                    typedState.Deltas = null;
+                    typedState.LastRaw = null;
+                }
+                return RouteOutcome.Stop;
+            }
+
+            // Own UI (UI-specific translation prompt) — computed once near the top.
+            string preTranslateText = textValue;
+
+            // Check concat assembled cache: if this exact text was already assembled
+            // by the concat system, apply the cached translation immediately.
+            // This prevents scanner refresh from re-queuing assembled texts.
+            bool concatCacheHit = false;
+            string concatCached;
+            if (_concatAssembledCache.TryGetValue(textValue, out concatCached))
+            {
+                // CN text matched → apply FR translation, skip all translate logic
+                textValue = concatCached;
+                concatCacheHit = true;
+            }
+            else if (_concatTranslatedValues.Contains(textValue))
+            {
+                // Text IS already a translated result → keep as-is
+                concatCacheHit = true;
+            }
+
+          // ⚠ This block sits two columns left of where it belongs. Inherited, not accidental: the
+          // concat cache was wrapped around code that already existed, and shifting it properly
+          // would have buried the real change under a re-indent of two hundred lines. Same reason
+          // it survived the move into this method.
+          if (!concatCacheHit)
+          {
+            // Everything below follows this one component. Created here rather than looked up
+            // five times: from this point on every branch either reads or writes it.
+            ComponentTextState state = compId != -1 ? StateFor(compId) : null;
+
+            // Skip if text is exactly our last translated output (scanner refresh, etc.)
+            if (state != null)
+            {
+                if (state.LastTranslated != null && textValue == state.LastTranslated)
+                {
+                    // Nothing to translate, but the font work above already ran on this
+                    // component — leaving without the scale left it at the unscaled size
+                    // while neighbours that took the full path were scaled, so a menu or a
+                    // scoreboard ended up with mismatched line sizes. The size is idempotent
+                    // (derived from the cached true original), so re-asserting it is free.
+                    return RouteOutcome.StopButRescale;
+                }
+            }
+
+            // === Frame tracking for concat detection ===
+            // Count set_text calls per component per frame.
+            // 2+ calls in same frame → concat mode (procedural text building).
+            if (state != null)
+            {
+                int currentFrame = Time.frameCount;
+                if (state.LastFrame == currentFrame)
+                {
+                    state.FrameCallCount++;
+
+                    // Flag as concat ONLY if the text is GROWING (prefix match).
+                    // Without this, game init (default→real value = 2 set_text) false-positives.
+                    if (state.FrameCallCount >= 2 && TranslatorCore.ConcatDetection && state.Mode != TextMode.Concat)
+                    {
+                        string prevRaw = state.LastRaw;
+                        // The delta must carry more than layout whitespace: a lone appended
+                        // "\n" at start-up is not procedural assembly (see LooksLikeConcatGrowth).
+                        if (!string.IsNullOrEmpty(prevRaw)
+                            && TextRelations.LooksLikeConcatGrowth(prevRaw, textValue))
+                        {
+                            EnterConcat(state, compId);
+                            TranslatorCore.LogDebug($"[CONCAT-DETECT] comp={compId} flagged (text grew {prevRaw.Length}c→{textValue.Length}c in frame {currentFrame})");
+                        }
+                    }
+                }
+                else
+                {
+                    state.LastFrame = currentFrame;
+                    state.FrameCallCount = 1;
+
+                    // Detect TW pattern on a concat-flagged component:
+                    // single set_text per frame with text growing by 1-3 chars = typewriting.
+                    // Unflag concat and let TW handle it.
+                    if (state.Mode == TextMode.Concat)
+                    {
+                        string prevRaw2 = state.LastRaw;
+                        if (!string.IsNullOrEmpty(prevRaw2)
+                            && TextRelations.LooksLikeTypewriterGrowth(prevRaw2, textValue))
+                        {
+                            LeaveConcat(state);
+                            TranslatorCore.LogDebug($"[CONCAT-UNFLAG] comp={compId} reverted to TW (grew by {textValue.Length - prevRaw2.Length} chars in separate frame)");
+                        }
+                    }
+                }
+
+                // Raw text update happens AFTER the concat handling block below,
+                // so the concat block can compare against the PREVIOUS raw text.
+            }
+
+            // === Concat handling ===
+            // For concat components: track raw text, extract deltas, translate each separately.
+            // For non-concat: use existing flow (TranslateTextWithTracking with TW detection).
+            bool handledAsConcat = false;
+            bool isConcatComp = state != null && state.Mode == TextMode.Concat;
+
+            if (isConcatComp)
+            {
+                string lastRaw = state.LastRaw;
+
+                if (!string.IsNullOrEmpty(lastRaw)
+                    && TextRelations.Grows(lastRaw, textValue))
+                {
+                    // Text grew — extract delta (pure source language)
+                    string delta = textValue.Substring(lastRaw.Length);
+
+                    // Store delta for re-assembly later (when AI translations arrive)
+                    List<string> deltas = state.Deltas;
+                    if (deltas == null)
+                    {
+                        deltas = new List<string>();
+                        // First delta: also store the base text
+                        deltas.Add(lastRaw);
+                        state.Deltas = deltas;
+                    }
+                    deltas.Add(delta);
+
+                    // Preserve leading/trailing newlines: AI may strip them during translation.
+                    // Extract \n before/after, translate the core, then re-add.
+                    string leadingNL = "", trailingNL = "";
+                    string deltaCore = delta;
+                    while (deltaCore.Length > 0 && deltaCore[0] == '\n') { leadingNL += "\n"; deltaCore = deltaCore.Substring(1); }
+                    while (deltaCore.Length > 0 && deltaCore[deltaCore.Length - 1] == '\n') { trailingNL = "\n" + trailingNL; deltaCore = deltaCore.Substring(0, deltaCore.Length - 1); }
+
+                    // Translate core delta directly (skip TW — concat deltas are immediate)
+                    string translatedCore = string.IsNullOrEmpty(deltaCore) ? "" : TranslatorCore.TranslateTextWithTracking(deltaCore, comp, isOwnUI, skipTypewriting: true);
+                    string translatedDelta = leadingNL + translatedCore + trailingNL;
+
+                    // Build display: previous translated + translated delta
+                    string lastTrans = state.LastTranslated;
+                    if (string.IsNullOrEmpty(lastTrans))
+                    {
+                        // First part wasn't translated yet (TW was capturing it before concat was detected).
+                        // Translate it now.
+                        lastTrans = TranslatorCore.TranslateTextWithTracking(lastRaw, comp, isOwnUI, skipTypewriting: true);
+                        if (string.IsNullOrEmpty(lastTrans)) lastTrans = lastRaw;
+                    }
+
+                    textValue = lastTrans + translatedDelta;
+                    state.LastRaw = preTranslateText; // full raw text so far
+                    state.LastTranslated = textValue;
+                    // Cache the assembled result: raw source → assembled target (runtime only)
+                    _concatAssembledCache[preTranslateText] = textValue;
+                    _concatTranslatedValues.Add(textValue);
+                    handledAsConcat = true;
+
+                    if (TranslatorCore.DebugMode)
+                        TranslatorCore.LogDebug($"[CONCAT] comp={compId} delta({delta.Length}c)='{(delta.Length > 40 ? delta.Substring(0, 40) + "..." : delta)}'");
+                }
+                else if (!string.IsNullOrEmpty(lastRaw) && textValue.Length <= lastRaw.Length
+                         && !textValue.StartsWith(lastRaw))
+                {
+                    // Text shrunk or changed completely — component likely reused for different content.
+                    // Unflag concat so the new text is treated normally (queued for AI if cache miss).
+                    // If the game does concat again (2+ set_text same frame), it'll be re-flagged.
+                    state.LastRaw = null;
+                    LeaveConcat(state);
+                    isConcatComp = false; // update local flag for rest of this prefix call
+                    TranslatorCore.LogDebug($"[CONCAT-RESET] comp={compId} unflagged, text changed from {lastRaw.Length}c to {textValue.Length}c");
+                }
+
+                // Raw text tracking is done in the frame tracking block above
+            }
+
+            // Also detect concat for non-flagged components (the game appending source text to
+            // the translation we already wrote)
+            string lastTranslatedTarget = state?.LastTranslated;
+            if (!handledAsConcat
+                && !string.IsNullOrEmpty(lastTranslatedTarget)
+                && TextRelations.Grows(lastTranslatedTarget, textValue))
+            {
+                // Game appended untranslated text to our translation → extract that delta
+                string delta = textValue.Substring(lastTranslatedTarget.Length);
+
+                // Preserve leading/trailing newlines
+                string leadNL = "", trailNL = "";
+                string dCore = delta;
+                while (dCore.Length > 0 && dCore[0] == '\n') { leadNL += "\n"; dCore = dCore.Substring(1); }
+                while (dCore.Length > 0 && dCore[dCore.Length - 1] == '\n') { trailNL = "\n" + trailNL; dCore = dCore.Substring(0, dCore.Length - 1); }
+
+                string transCore = string.IsNullOrEmpty(dCore) ? "" : TranslatorCore.TranslateTextWithTracking(dCore, comp, isOwnUI, skipTypewriting: true, skipQueueing: true);
+                string translatedDelta = leadNL + transCore + trailNL;
+                textValue = lastTranslatedTarget + translatedDelta;
+                state.LastTranslated = textValue;
+                // Also cache with the raw text as key (for scanner refresh lookups)
+                _concatAssembledCache[preTranslateText] = textValue;
+                _concatTranslatedValues.Add(textValue);
+                handledAsConcat = true;
+
+                if (TranslatorCore.DebugMode)
+                    TranslatorCore.LogDebug($"[CONCAT-FR] comp={compId} delta({delta.Length}c)='{(delta.Length > 40 ? delta.Substring(0, 40) + "..." : delta)}'");
+            }
+
+            if (!handledAsConcat)
+            {
+                // For concat components: check cache but do NOT queue full text to AI.
+                // Deltas are already queued individually by the concat handler above.
+                // For non-concat: normal flow (cache check + queue if miss).
+                textValue = TranslatorCore.TranslateTextWithTracking(textValue, comp, isOwnUI,
+                    skipQueueing: isConcatComp);
+
+                // Track translated text for concat detection (target-language prefix matching)
+                if (state != null && textValue != preTranslateText)
+                {
+                    state.LastTranslated = textValue;
+                    // For concat components: also remember the translated text so the
+                    // different target versions (AI vs concat-assembled) are all recognized.
+                    if (isConcatComp)
+                        _concatTranslatedValues.Add(textValue);
+                }
+                else if (state != null && textValue == preTranslateText)
+                {
+                    state.LastTranslated = null;
+                    // For concat components: the unchanged text might be an AI translation
+                    // (from Apply OK) that we don't recognize. Remember it to prevent re-queue.
+                    if (isConcatComp && textValue.Length > 20)
+                        _concatTranslatedValues.Add(textValue);
+                }
+            }
+
+            // Update raw text tracking AFTER concat/translate blocks
+            // (so next set_text can compare against this value)
+            if (state != null)
+                state.LastRaw = preTranslateText;
+          } // end if (!concatCacheHit)
+
+            return RouteOutcome.Translated;
+        }
+
         private static void ProcessTextPatchPrefix(object __instance, ref string textValue, string componentType)
         {
             if (string.IsNullOrEmpty(textValue)) return;
@@ -3233,253 +3518,22 @@ namespace UnityGameTranslator.Core
 
                 if (profiling) { t3 = _profSw.ElapsedTicks; _profFontOps += t3 - t2; }
 
-                // Don't translate InputField textComponent (user's typed text)
-                if (componentType != "TextMesh" && IsInputFieldTextComponentCached(__instance)) return;
-
-                // Don't translate mirrors of the user's typed input (styled copy in
-                // the input widget, live preview elsewhere). Also purge TW/concat
-                // state for the component: char-by-char typing has the exact
-                // signature of a typewriting effect, and a one-frame-late mirror
-                // must not leave a stale prefix behind for the stabilizer to queue.
-                if (IsUserInputMirror(__instance, textValue))
-                {
-                    var typedState = PeekState(compId);
-                    if (typedState != null)
-                    {
-                        ForgetTypewriting(typedState);
-                        _typewritingPending.Remove(compId);
-                        LeaveConcat(typedState);
-                        typedState.Deltas = null;
-                        typedState.LastRaw = null;
-                    }
-                    return;
-                }
-
-                // Own UI (UI-specific translation prompt) — computed once near the top.
+                // Kept here as well as inside RouteText: the font epilogue below compares against
+                // what arrived, to tell a translated component from an untouched one.
                 string preTranslateText = textValue;
 
-                // Check concat assembled cache: if this exact text was already assembled
-                // by the concat system, apply the cached translation immediately.
-                // This prevents scanner refresh from re-queuing assembled texts.
-                bool concatCacheHit = false;
-                string concatCached;
-                if (_concatAssembledCache.TryGetValue(textValue, out concatCached))
+                switch (RouteText(__instance, comp, compId, isOwnUI, componentType, ref textValue))
                 {
-                    // CN text matched → apply FR translation, skip all translate logic
-                    textValue = concatCached;
-                    concatCacheHit = true;
-                }
-                else if (_concatTranslatedValues.Contains(textValue))
-                {
-                    // Text IS already a translated result → keep as-is
-                    concatCacheHit = true;
-                }
-
-              if (!concatCacheHit)
-              {
-                // Everything below follows this one component. Created here rather than looked up
-                // five times: from this point on every branch either reads or writes it.
-                ComponentTextState state = compId != -1 ? StateFor(compId) : null;
-
-                // Skip if text is exactly our last translated output (scanner refresh, etc.)
-                if (state != null)
-                {
-                    if (state.LastTranslated != null && textValue == state.LastTranslated)
-                    {
+                    case RouteOutcome.Stop:
+                        return;
+                    case RouteOutcome.StopButRescale:
                         // Nothing to translate, but the font work above already ran on this
-                        // component — leaving without the scale left it at the unscaled size
-                        // while neighbours that took the full path were scaled, so a menu or a
-                        // scoreboard ended up with mismatched line sizes. The size is idempotent
+                        // component — leaving without the scale left it at the unscaled size while
+                        // neighbours that took the full path were scaled. The size is idempotent
                         // (derived from the cached true original), so re-asserting it is free.
                         ApplyFontScaleGated(__instance, unityCloneFont, unityCloneName, settingsFontName ?? fontName);
                         return;
-                    }
                 }
-
-                // === Frame tracking for concat detection ===
-                // Count set_text calls per component per frame.
-                // 2+ calls in same frame → concat mode (procedural text building).
-                if (state != null)
-                {
-                    int currentFrame = Time.frameCount;
-                    if (state.LastFrame == currentFrame)
-                    {
-                        state.FrameCallCount++;
-
-                        // Flag as concat ONLY if the text is GROWING (prefix match).
-                        // Without this, game init (default→real value = 2 set_text) false-positives.
-                        if (state.FrameCallCount >= 2 && TranslatorCore.ConcatDetection && state.Mode != TextMode.Concat)
-                        {
-                            string prevRaw = state.LastRaw;
-                            // The delta must carry more than layout whitespace: a lone appended
-                            // "\n" at start-up is not procedural assembly (see LooksLikeConcatGrowth).
-                            if (!string.IsNullOrEmpty(prevRaw)
-                                && TextRelations.LooksLikeConcatGrowth(prevRaw, textValue))
-                            {
-                                EnterConcat(state, compId);
-                                TranslatorCore.LogDebug($"[CONCAT-DETECT] comp={compId} flagged (text grew {prevRaw.Length}c→{textValue.Length}c in frame {currentFrame})");
-                            }
-                        }
-                    }
-                    else
-                    {
-                        state.LastFrame = currentFrame;
-                        state.FrameCallCount = 1;
-
-                        // Detect TW pattern on a concat-flagged component:
-                        // single set_text per frame with text growing by 1-3 chars = typewriting.
-                        // Unflag concat and let TW handle it.
-                        if (state.Mode == TextMode.Concat)
-                        {
-                            string prevRaw2 = state.LastRaw;
-                            if (!string.IsNullOrEmpty(prevRaw2)
-                                && TextRelations.LooksLikeTypewriterGrowth(prevRaw2, textValue))
-                            {
-                                LeaveConcat(state);
-                                TranslatorCore.LogDebug($"[CONCAT-UNFLAG] comp={compId} reverted to TW (grew by {textValue.Length - prevRaw2.Length} chars in separate frame)");
-                            }
-                        }
-                    }
-
-                    // Raw text update happens AFTER the concat handling block below,
-                    // so the concat block can compare against the PREVIOUS raw text.
-                }
-
-                // === Concat handling ===
-                // For concat components: track raw text, extract deltas, translate each separately.
-                // For non-concat: use existing flow (TranslateTextWithTracking with TW detection).
-                bool handledAsConcat = false;
-                bool isConcatComp = state != null && state.Mode == TextMode.Concat;
-
-                if (isConcatComp)
-                {
-                    string lastRaw = state.LastRaw;
-
-                    if (!string.IsNullOrEmpty(lastRaw)
-                        && TextRelations.Grows(lastRaw, textValue))
-                    {
-                        // Text grew — extract delta (pure source language)
-                        string delta = textValue.Substring(lastRaw.Length);
-
-                        // Store delta for re-assembly later (when AI translations arrive)
-                        List<string> deltas = state.Deltas;
-                        if (deltas == null)
-                        {
-                            deltas = new List<string>();
-                            // First delta: also store the base text
-                            deltas.Add(lastRaw);
-                            state.Deltas = deltas;
-                        }
-                        deltas.Add(delta);
-
-                        // Preserve leading/trailing newlines: AI may strip them during translation.
-                        // Extract \n before/after, translate the core, then re-add.
-                        string leadingNL = "", trailingNL = "";
-                        string deltaCore = delta;
-                        while (deltaCore.Length > 0 && deltaCore[0] == '\n') { leadingNL += "\n"; deltaCore = deltaCore.Substring(1); }
-                        while (deltaCore.Length > 0 && deltaCore[deltaCore.Length - 1] == '\n') { trailingNL = "\n" + trailingNL; deltaCore = deltaCore.Substring(0, deltaCore.Length - 1); }
-
-                        // Translate core delta directly (skip TW — concat deltas are immediate)
-                        string translatedCore = string.IsNullOrEmpty(deltaCore) ? "" : TranslatorCore.TranslateTextWithTracking(deltaCore, comp, isOwnUI, skipTypewriting: true);
-                        string translatedDelta = leadingNL + translatedCore + trailingNL;
-
-                        // Build display: previous translated + translated delta
-                        string lastTrans = state.LastTranslated;
-                        if (string.IsNullOrEmpty(lastTrans))
-                        {
-                            // First part wasn't translated yet (TW was capturing it before concat was detected).
-                            // Translate it now.
-                            lastTrans = TranslatorCore.TranslateTextWithTracking(lastRaw, comp, isOwnUI, skipTypewriting: true);
-                            if (string.IsNullOrEmpty(lastTrans)) lastTrans = lastRaw;
-                        }
-
-                        textValue = lastTrans + translatedDelta;
-                        state.LastRaw = preTranslateText; // full raw text so far
-                        state.LastTranslated = textValue;
-                        // Cache the assembled result: raw source → assembled target (runtime only)
-                        _concatAssembledCache[preTranslateText] = textValue;
-                        _concatTranslatedValues.Add(textValue);
-                        handledAsConcat = true;
-
-                        if (TranslatorCore.DebugMode)
-                            TranslatorCore.LogDebug($"[CONCAT] comp={compId} delta({delta.Length}c)='{(delta.Length > 40 ? delta.Substring(0, 40) + "..." : delta)}'");
-                    }
-                    else if (!string.IsNullOrEmpty(lastRaw) && textValue.Length <= lastRaw.Length
-                             && !textValue.StartsWith(lastRaw))
-                    {
-                        // Text shrunk or changed completely — component likely reused for different content.
-                        // Unflag concat so the new text is treated normally (queued for AI if cache miss).
-                        // If the game does concat again (2+ set_text same frame), it'll be re-flagged.
-                        state.LastRaw = null;
-                        LeaveConcat(state);
-                        isConcatComp = false; // update local flag for rest of this prefix call
-                        TranslatorCore.LogDebug($"[CONCAT-RESET] comp={compId} unflagged, text changed from {lastRaw.Length}c to {textValue.Length}c");
-                    }
-
-                    // Raw text tracking is done in the frame tracking block above
-                }
-
-                // Also detect concat for non-flagged components (the game appending source text to
-                // the translation we already wrote)
-                string lastTranslatedTarget = state?.LastTranslated;
-                if (!handledAsConcat
-                    && !string.IsNullOrEmpty(lastTranslatedTarget)
-                    && TextRelations.Grows(lastTranslatedTarget, textValue))
-                {
-                    // Game appended untranslated text to our translation → extract that delta
-                    string delta = textValue.Substring(lastTranslatedTarget.Length);
-
-                    // Preserve leading/trailing newlines
-                    string leadNL = "", trailNL = "";
-                    string dCore = delta;
-                    while (dCore.Length > 0 && dCore[0] == '\n') { leadNL += "\n"; dCore = dCore.Substring(1); }
-                    while (dCore.Length > 0 && dCore[dCore.Length - 1] == '\n') { trailNL = "\n" + trailNL; dCore = dCore.Substring(0, dCore.Length - 1); }
-
-                    string transCore = string.IsNullOrEmpty(dCore) ? "" : TranslatorCore.TranslateTextWithTracking(dCore, comp, isOwnUI, skipTypewriting: true, skipQueueing: true);
-                    string translatedDelta = leadNL + transCore + trailNL;
-                    textValue = lastTranslatedTarget + translatedDelta;
-                    state.LastTranslated = textValue;
-                    // Also cache with the raw text as key (for scanner refresh lookups)
-                    _concatAssembledCache[preTranslateText] = textValue;
-                    _concatTranslatedValues.Add(textValue);
-                    handledAsConcat = true;
-
-                    if (TranslatorCore.DebugMode)
-                        TranslatorCore.LogDebug($"[CONCAT-FR] comp={compId} delta({delta.Length}c)='{(delta.Length > 40 ? delta.Substring(0, 40) + "..." : delta)}'");
-                }
-
-                if (!handledAsConcat)
-                {
-                    // For concat components: check cache but do NOT queue full text to AI.
-                    // Deltas are already queued individually by the concat handler above.
-                    // For non-concat: normal flow (cache check + queue if miss).
-                    textValue = TranslatorCore.TranslateTextWithTracking(textValue, comp, isOwnUI,
-                        skipQueueing: isConcatComp);
-
-                    // Track translated text for concat detection (target-language prefix matching)
-                    if (state != null && textValue != preTranslateText)
-                    {
-                        state.LastTranslated = textValue;
-                        // For concat components: also remember the translated text so the
-                        // different target versions (AI vs concat-assembled) are all recognized.
-                        if (isConcatComp)
-                            _concatTranslatedValues.Add(textValue);
-                    }
-                    else if (state != null && textValue == preTranslateText)
-                    {
-                        state.LastTranslated = null;
-                        // For concat components: the unchanged text might be an AI translation
-                        // (from Apply OK) that we don't recognize. Remember it to prevent re-queue.
-                        if (isConcatComp && textValue.Length > 20)
-                            _concatTranslatedValues.Add(textValue);
-                    }
-                }
-
-                // Update raw text tracking AFTER concat/translate blocks
-                // (so next set_text can compare against this value)
-                if (state != null)
-                    state.LastRaw = preTranslateText;
-              } // end if (!concatCacheHit)
 
                 // Detect missed SetFont: text was translated but HasCachedTranslation said no
                 if (unityCloneFont != null && textValue != preTranslateText && componentType == "Unity")

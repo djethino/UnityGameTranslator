@@ -1165,30 +1165,41 @@ namespace UnityGameTranslator.Core
             // IL2CPP proxy is not free when nobody has written a single pattern.
             if (component == null || userExclusions.Count == 0) return false;
 
-            return IsUserExcludedPath(component.GetInstanceID(),
-                                      () => GetGameObjectPath(component.gameObject));
+            long id = component.GetInstanceID();
+            if (TryCachedExclusion(id, out bool cached)) return cached;
+
+            return RememberExclusion(id, GetGameObjectPath(component.gameObject));
+        }
+
+        /// <summary>True when any patterns exist at all. Ask before building a path.</summary>
+        public static bool HasExclusionPatterns => userExclusions.Count > 0;
+
+        /// <summary>
+        /// The answer already known for this target, if there is one.
+        ///
+        /// 🔴 Split from <see cref="RememberExclusion"/> so a caller can check the cache BEFORE
+        /// building a path. Walking a hierarchy on every text write, only to hit a cache, is the
+        /// kind of cost that does not show up anywhere and never goes away — and a version taking
+        /// the path as a callback was worse: it allocated a closure per call for anyone who had
+        /// written a single pattern.
+        /// </summary>
+        public static bool TryCachedExclusion(long id, out bool excluded)
+        {
+            return userExclusionCache.TryGetValue(id, out excluded);
         }
 
         /// <summary>
-        /// The exclusion decision itself, for any framework that can name its target.
+        /// Decide, and remember, whether this path is excluded.
         ///
-        /// 🔴 Split out of <see cref="IsUserExcluded(Component)"/> so UI Toolkit does not grow a
-        /// second set of exclusion rules. Only the PATH is framework-specific; the cache, the
-        /// pattern matching and the "no patterns, no work" shortcut are the same question whoever
-        /// asks it, and a player who writes one pattern expects it to mean one thing.
-        ///
-        /// ⚠ The path arrives as a factory rather than a string: building it walks a hierarchy,
-        /// and the common case is that there are no patterns at all — in which case nothing should
-        /// be walked. It is also never built twice, since the cache answers first.
+        /// 🔴 The decision itself, shared by every framework: only the PATH is theirs. A second
+        /// set of exclusion rules would mean one written pattern meaning two different things
+        /// depending on what the label happens to be made of.
         /// </summary>
-        public static bool IsUserExcludedPath(long id, Func<string> path)
+        public static bool RememberExclusion(long id, string path)
         {
-            if (userExclusions.Count == 0 || path == null) return false;
+            if (userExclusions.Count == 0) return false;
 
-            if (userExclusionCache.TryGetValue(id, out bool cached))
-                return cached;
-
-            string resolved = path() ?? "";
+            string resolved = path ?? "";
             bool excluded = MatchesAnyExclusionPattern(resolved);
             userExclusionCache[id] = excluded;
 

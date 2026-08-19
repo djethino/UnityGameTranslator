@@ -468,7 +468,12 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static bool IsExcluded(object element)
         {
-            return TranslatorCore.IsUserExcludedPath(IdFor(element), () => PathOf(element));
+            if (!TranslatorCore.HasExclusionPatterns) return false;
+
+            long id = IdFor(element);
+            if (TranslatorCore.TryCachedExclusion(id, out bool cached)) return cached;
+
+            return TranslatorCore.RememberExclusion(id, PathOf(element));
         }
 
         #endregion

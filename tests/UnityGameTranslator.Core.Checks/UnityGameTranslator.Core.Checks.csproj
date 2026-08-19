@@ -33,6 +33,7 @@
   <ItemGroup>
     <Compile Include="../../UnityGameTranslator.Core/TextRelations.cs" />
     <Compile Include="../../UnityGameTranslator.Core/InputEcho.cs" />
+    <Compile Include="../../UnityGameTranslator.Core/TargetPath.cs" />
   </ItemGroup>
 
   <!--

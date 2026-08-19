@@ -51,6 +51,8 @@ namespace UnityGameTranslator.Core
         private static PropertyInfo _parentProp;      // VisualElement.parent -> VisualElement
         private static PropertyInfo _nameProp;        // VisualElement.name   -> string
 
+        private static MethodInfo _getClassesMethod;       // VisualElement.GetClasses() -> IEnumerable<string>
+
         private static PropertyInfo _panelProp;            // VisualElement.panel     -> IPanel
         private static PropertyInfo _focusControllerProp;  // IPanel.focusController
         private static PropertyInfo _focusedElementProp;   // FocusController.focusedElement
@@ -135,6 +137,9 @@ namespace UnityGameTranslator.Core
 
                 // Who has the keyboard. UI Toolkit keeps its own focus, which is why
                 // EventSystem.currentSelectedGameObject — the uGUI answer — sees nothing here.
+                // USS classes, for elements the game never named — most of them.
+                _getClassesMethod = VisualElementType.GetMethod("GetClasses", pubInst, null, Type.EmptyTypes, null);
+
                 _panelProp = VisualElementType.GetProperty("panel", pubInst);
                 if (_panelProp != null)
                 {
@@ -371,6 +376,103 @@ namespace UnityGameTranslator.Core
         /// </summary>
         [ThreadStatic] private static bool _writingBack;
 
+        #region Naming a target
+
+        /// <summary>
+        /// How far up a path is built. A bound rather than a full walk: a malformed or cyclic
+        /// tree must not hang the game, and nobody writes a pattern on a thirty-deep ancestor.
+        /// </summary>
+        private const int MaxPathDepth = 32;
+
+        /// <summary>
+        /// A hierarchy path for an element, in the same shape and with the same contract as
+        /// TranslatorCore.GetGameObjectPath: parents joined by "/", read left to right.
+        ///
+        /// 🔴 **This is the brick every "name a target" feature was missing.** Exclusions and font
+        /// rules both work from a path, and a VisualElement had none — which is why a whole class
+        /// of games could be translated but never tuned. The path is deliberately NOT an identity:
+        /// two siblings can produce the same one, exactly as two GameObjects with the same name do.
+        /// Identity is the element's id; this is for matching patterns.
+        ///
+        /// ⚠ **Most elements have no name**, only USS classes — a path of empty segments would be
+        /// worth nothing. Hence three levels per segment: the name, then the first USS class, then
+        /// the type. The result reads like `root/main-panel/unity-label`.
+        /// </summary>
+        public static string PathOf(object element)
+        {
+            if (element == null || _parentProp == null) return "";
+
+            var parts = new List<string>();
+            object current = element;
+
+            for (int depth = 0; current != null && depth < MaxPathDepth; depth++)
+            {
+                parts.Insert(0, SegmentFor(current));
+                try { current = _parentProp.GetValue(current, null); }
+                catch { break; }
+            }
+
+            return string.Join("/", parts.ToArray());
+        }
+
+        /// <summary>One step of the path: what this element can be called.</summary>
+        private static string SegmentFor(object element)
+        {
+            try
+            {
+                // The rule itself lives in TargetPath, pure and checked without a game — including
+                // the interop prefix, which would otherwise make the same element name itself
+                // differently on Mono and on IL2CPP.
+                return TargetPath.Segment(_nameProp?.GetValue(element, null) as string,
+                                          FirstClass(element),
+                                          element.GetType().Name);
+            }
+            catch { return "?"; }
+        }
+
+        /// <summary>
+        /// The element's first USS class, or null.
+        ///
+        /// ⚠ Optional by design: a build that does not expose GetClasses simply falls through to
+        /// the type name. Losing readability in a path is a nuisance; refusing to build one at all
+        /// would take exclusions away again.
+        /// </summary>
+        private static string FirstClass(object element)
+        {
+            if (_getClassesMethod == null) return null;
+
+            try
+            {
+                if (!(_getClassesMethod.Invoke(element, null) is System.Collections.IEnumerable classes))
+                    return null;
+
+                foreach (var entry in classes)
+                {
+                    if (entry is string css && css.Length > 0) return css;
+                }
+            }
+            catch { }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Whether the player has excluded this element by pattern.
+        ///
+        /// ⚠ Asks the SAME decision uGUI asks — TranslatorCore holds the cache and the matching,
+        /// this only supplies the path. A second set of exclusion rules would mean one written
+        /// pattern meaning two things depending on the framework behind the label.
+        ///
+        /// ⚠ The path is passed as a factory: with no patterns configured, which is the common
+        /// case, nothing is walked at all.
+        /// </summary>
+        private static bool IsExcluded(object element)
+        {
+            return TranslatorCore.IsUserExcludedPath(IdFor(element), () => PathOf(element));
+        }
+
+        #endregion
+
         /// <summary>
         /// The UI Toolkit name of the editable part of a text field. Unity puts it there itself
         /// (<c>TextInputBaseField&lt;T&gt;.textInputUssName</c>).
@@ -506,6 +608,7 @@ namespace UnityGameTranslator.Core
 
             // Never the player's own typing — the box itself, or a live echo of it elsewhere.
             if (IsInsideTextInput(__instance)) return;
+            if (IsExcluded(__instance)) return;
             if (IsEchoOfTyping(__instance, value)) return;
 
             try
@@ -612,6 +715,10 @@ namespace UnityGameTranslator.Core
         {
             _byId.Remove(id);
             TranslatorPatches.ForgetElementState(id);
+
+            // ⚠ The exclusion and font-rule caches too: both are strong and keyed by id, so an
+            // element recycled by a list would leave an entry behind on every scroll.
+            TranslatorCore.ForgetTargetCaches(id);
         }
 
         /// <summary>
@@ -876,6 +983,7 @@ namespace UnityGameTranslator.Core
                 // The scan reaches the editable part of a text field like anything else — the
                 // setter is not the only way in. See IsInsideTextInput.
                 if (IsInsideTextInput(element)) return;
+                if (IsExcluded(element)) return;
 
                 var current = _textProp.GetValue(element, null) as string;
                 if (string.IsNullOrEmpty(current)) return;
@@ -1097,7 +1205,19 @@ namespace UnityGameTranslator.Core
 
                 if (!FontManager.IsTranslationEnabled(settingsName)) return false;
 
-                ApplyReplacement(element, settingsName, currentFont, isSdf);
+                // Font rules by pattern, the same ones the component path honours. Guarded on the
+                // rule count like the other caller: building a path costs a walk, and the common
+                // case is that nobody has written a rule.
+                string replacementName = settingsName;
+                if (TranslatorCore.FontOverrides.Count > 0)
+                {
+                    var rule = TranslatorCore.FindFontOverride(IdFor(element), PathOf(element),
+                                                               settingsName, _textProp.GetValue(element, null) as string);
+                    if (rule != null && !string.IsNullOrEmpty(rule.replacement))
+                        replacementName = rule.replacement;
+                }
+
+                ApplyReplacement(element, replacementName, currentFont, isSdf);
                 ApplyScale(element, settingsName);
                 return true;
             }

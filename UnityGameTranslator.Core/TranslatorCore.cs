@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
@@ -544,7 +544,10 @@ namespace UnityGameTranslator.Core
 
         // User exclusions (chat windows, player names, etc.) - stored in translations.json as _exclusions
         private static List<string> userExclusions = new List<string>();
-        private static Dictionary<int, bool> userExclusionCache = new Dictionary<int, bool>();
+        // ⚠ Keyed by long, like every other per-target map: uGUI passes an instance id, UI Toolkit
+        // passes an id from beyond the int range. The widening from int is implicit, so nothing
+        // that used to pass a component id had to change.
+        private static Dictionary<long, bool> userExclusionCache = new Dictionary<long, bool>();
 
         /// <summary>
         /// Current user exclusion patterns. Read-only access for UI.
@@ -553,7 +556,8 @@ namespace UnityGameTranslator.Core
 
         // Font overrides (per-pattern font/size rules) - stored in translations.json as _font_overrides
         private static List<FontOverrideRule> fontOverrides = new List<FontOverrideRule>();
-        private static Dictionary<int, FontOverrideRule> fontOverrideCache = new Dictionary<int, FontOverrideRule>();
+        // Long, like userExclusionCache and the routing state: one id space for every framework.
+        private static Dictionary<long, FontOverrideRule> fontOverrideCache = new Dictionary<long, FontOverrideRule>();
 
         /// <summary>
         /// Current font override rules. Read-only access for UI.
@@ -568,7 +572,7 @@ namespace UnityGameTranslator.Core
         /// <param name="gameObjectPath">Hierarchy path (e.g. "Canvas/Panel/Text")</param>
         /// <param name="fontName">Current font name</param>
         /// <param name="textContent">Current text content</param>
-        public static FontOverrideRule FindFontOverride(int componentId, string gameObjectPath, string fontName, string textContent)
+        public static FontOverrideRule FindFontOverride(long componentId, string gameObjectPath, string fontName, string textContent)
         {
             // Check cache first
             if (fontOverrideCache.TryGetValue(componentId, out var cached))
@@ -588,6 +592,21 @@ namespace UnityGameTranslator.Core
 
             fontOverrideCache[componentId] = matched;
             return matched;
+        }
+
+        /// <summary>
+        /// Drop what these caches hold for a target that no longer exists.
+        ///
+        /// 🔴 Both are STRONG dictionaries keyed by id. For a Component that is harmless — ids are
+        /// never reused and the maps are cleared wholesale when the rules change. For a UI Toolkit
+        /// element it is not: they are recycled by the hundred, so an entry per element scrolled
+        /// past would accumulate for the life of the process. The framework that holds its targets
+        /// weakly calls this when one is collected.
+        /// </summary>
+        public static void ForgetTargetCaches(long id)
+        {
+            userExclusionCache.Remove(id);
+            fontOverrideCache.Remove(id);
         }
 
         /// <summary>
@@ -1142,18 +1161,39 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static bool IsUserExcluded(Component component)
         {
+            // Before the instance id: this runs on every text write, and reading an id off an
+            // IL2CPP proxy is not free when nobody has written a single pattern.
             if (component == null || userExclusions.Count == 0) return false;
 
-            int id = component.GetInstanceID();
+            return IsUserExcludedPath(component.GetInstanceID(),
+                                      () => GetGameObjectPath(component.gameObject));
+        }
+
+        /// <summary>
+        /// The exclusion decision itself, for any framework that can name its target.
+        ///
+        /// 🔴 Split out of <see cref="IsUserExcluded(Component)"/> so UI Toolkit does not grow a
+        /// second set of exclusion rules. Only the PATH is framework-specific; the cache, the
+        /// pattern matching and the "no patterns, no work" shortcut are the same question whoever
+        /// asks it, and a player who writes one pattern expects it to mean one thing.
+        ///
+        /// ⚠ The path arrives as a factory rather than a string: building it walks a hierarchy,
+        /// and the common case is that there are no patterns at all — in which case nothing should
+        /// be walked. It is also never built twice, since the cache answers first.
+        /// </summary>
+        public static bool IsUserExcludedPath(long id, Func<string> path)
+        {
+            if (userExclusions.Count == 0 || path == null) return false;
+
             if (userExclusionCache.TryGetValue(id, out bool cached))
                 return cached;
 
-            string path = GetGameObjectPath(component.gameObject);
-            bool excluded = MatchesAnyExclusionPattern(path);
+            string resolved = path() ?? "";
+            bool excluded = MatchesAnyExclusionPattern(resolved);
             userExclusionCache[id] = excluded;
 
             if (excluded)
-                LogDebug($"[Exclusion] Matched: {path}");
+                LogDebug($"[Exclusion] Matched: {resolved}");
 
             return excluded;
         }

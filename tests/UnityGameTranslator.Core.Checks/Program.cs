@@ -24,6 +24,7 @@ namespace UnityGameTranslator.Core.Checks
         {
             HowTextChanges();
             WhenTextMayBeTyping();
+            HowATargetIsNamed();
 
             Console.WriteLine();
             if (_failures == 0)
@@ -48,6 +49,13 @@ namespace UnityGameTranslator.Core.Checks
         {
             Section("Input echo");
             InputEchoChecks.Run(Check);
+        }
+
+        /// <summary>How one step of a hierarchy path is named when the thing has no name.</summary>
+        private static void HowATargetIsNamed()
+        {
+            Section("Target path");
+            TargetPathChecks.Run(Check);
         }
 
         private static void Check(bool passed, string what, string why)

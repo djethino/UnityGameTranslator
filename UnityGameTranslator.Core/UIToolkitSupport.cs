@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Runtime.CompilerServices;
@@ -50,6 +50,10 @@ namespace UnityGameTranslator.Core
 
         private static PropertyInfo _parentProp;      // VisualElement.parent -> VisualElement
         private static PropertyInfo _nameProp;        // VisualElement.name   -> string
+
+        private static PropertyInfo _panelProp;            // VisualElement.panel     -> IPanel
+        private static PropertyInfo _focusControllerProp;  // IPanel.focusController
+        private static PropertyInfo _focusedElementProp;   // FocusController.focusedElement
 
         private static PropertyInfo _styleProp;       // VisualElement.style  -> IStyle
         private static PropertyInfo _styleFontProp;   // IStyle.unityFontDefinition
@@ -128,6 +132,17 @@ namespace UnityGameTranslator.Core
                 // Walking UPWARDS, to tell a label from the editable part of a text field.
                 _parentProp = VisualElementType.GetProperty("parent", pubInst);
                 _nameProp = VisualElementType.GetProperty("name", pubInst);
+
+                // Who has the keyboard. UI Toolkit keeps its own focus, which is why
+                // EventSystem.currentSelectedGameObject — the uGUI answer — sees nothing here.
+                _panelProp = VisualElementType.GetProperty("panel", pubInst);
+                if (_panelProp != null)
+                {
+                    _focusControllerProp = _panelProp.PropertyType.GetProperty("focusController", pubInst);
+                    if (_focusControllerProp != null)
+                        _focusedElementProp = _focusControllerProp.PropertyType
+                            .GetProperty("focusedElement", pubInst);
+                }
 
                 Available = _textProp != null && _rootProp != null
                             && (_elementAtMethod != null || _hierElementAt != null);
@@ -396,6 +411,89 @@ namespace UnityGameTranslator.Core
             return false;
         }
 
+        // What the focused field held, and when it last changed. Read once per frame: the setter
+        // fires many times a frame and a property walk per call is not free.
+        private static int _focusFrame = -1;
+        private static string _focusedText;
+        private static string _lastFocusedText;
+        private static float _lastTypedChange = -999f;
+
+        /// <summary>
+        /// What is being typed right now in this panel, or null.
+        ///
+        /// ⚠ UI Toolkit keeps its own focus, so the uGUI answer — EventSystem's selected
+        /// GameObject — sees nothing here. The element is in hand, so its panel is one property
+        /// away and no scene search is needed.
+        /// </summary>
+        private static string FocusedText(object element)
+        {
+            if (_focusedElementProp == null) return null;
+
+            int frame = Time.frameCount;
+            if (_focusFrame == frame) return _focusedText;
+            _focusFrame = frame;
+            _focusedText = null;
+
+            try
+            {
+                object panel = _panelProp.GetValue(element, null);
+                object controller = panel == null ? null : _focusControllerProp.GetValue(panel, null);
+                object focused = controller == null ? null : _focusedElementProp.GetValue(controller, null);
+                if (focused != null) _focusedText = ReadAnyText(focused);
+            }
+            catch { return null; }
+
+            if (!string.IsNullOrEmpty(_focusedText))
+            {
+                if (_focusedText != _lastFocusedText) _lastTypedChange = Time.realtimeSinceStartup;
+                _lastFocusedText = _focusedText;
+            }
+
+            return _focusedText;
+        }
+
+        /// <summary>
+        /// The text of whatever holds the keyboard: `text` on a TextElement, `value` on a field.
+        /// Which one it is depends on the widget, so both are tried rather than guessed.
+        /// </summary>
+        private static string ReadAnyText(object element)
+        {
+            try
+            {
+                var type = element.GetType();
+                var text = type.GetProperty("text", BindingFlags.Public | BindingFlags.Instance);
+                if (text != null && text.PropertyType == typeof(string))
+                    return text.GetValue(element, null) as string;
+
+                var val = type.GetProperty("value", BindingFlags.Public | BindingFlags.Instance);
+                if (val != null && val.PropertyType == typeof(string))
+                    return val.GetValue(element, null) as string;
+            }
+            catch { }
+            return null;
+        }
+
+        /// <summary>
+        /// True when this element is showing, somewhere else on screen, what the player is typing.
+        ///
+        /// The same rule as uGUI's external mirror, with the same two guards — a string this game
+        /// has already shown us is content, and only a recent keystroke opens the window. See
+        /// TranslatorPatches.CouldBeTypedText for why both are needed and what still slips through.
+        /// </summary>
+        private static bool IsEchoOfTyping(object element, string text)
+        {
+            if (string.IsNullOrEmpty(text)) return false;
+
+            string focused = FocusedText(element);
+            if (string.IsNullOrEmpty(focused)) return false;
+
+            string candidate = TranslatorCore.StripMarkupTags(text).Trim();
+            if (candidate.Length == 0) return false;
+            if (!string.Equals(candidate, focused.Trim(), StringComparison.Ordinal)) return false;
+
+            return TranslatorPatches.CouldBeTypedText(candidate, _lastTypedChange);
+        }
+
         public static void TextElement_SetText_Prefix(object __instance, ref string value)
         {
             if (_writingBack) return;
@@ -406,8 +504,9 @@ namespace UnityGameTranslator.Core
             // rather than throwing, which is not a failure anyone can diagnose from a log.
             if (!TranslatorCore.IsMainThread) return;
 
-            // Never the player's own typing.
+            // Never the player's own typing — the box itself, or a live echo of it elsewhere.
             if (IsInsideTextInput(__instance)) return;
+            if (IsEchoOfTyping(__instance, value)) return;
 
             try
             {

@@ -1711,6 +1711,18 @@ namespace UnityGameTranslator.Core
         private static string _focusedInputTextThisFrame;
         private static string _lastFocusedInputText;
         private static float _lastFocusedInputTime = -999f;
+        private static float _lastTypedChangeTime = -999f;
+
+        /// <summary>
+        /// Reads the two facts <see cref="InputEcho.CouldBeTyping"/> needs — the cache and the
+        /// clock — and asks it. The reasoning lives there, where it can be checked without a game.
+        /// </summary>
+        internal static bool CouldBeTypedText(string candidate, float lastTypedChange)
+        {
+            bool known = TranslatorCore.HasTranslationKey(TranslatorCore.NormalizeForCacheLookup(candidate));
+            float since = lastTypedChange < 0f ? -1f : Time.realtimeSinceStartup - lastTypedChange;
+            return InputEcho.CouldBeTyping(known, since);
+        }
 
         /// <summary>
         /// True when a text is the user's own typed input echoed by the game:
@@ -1727,7 +1739,9 @@ namespace UnityGameTranslator.Core
             string candidate = TranslatorCore.StripMarkupTags(text).Trim();
             if (candidate.Length == 0) return false;
 
-            // Internal mirror
+            // Internal mirror. Structural: it only matches a component that lives INSIDE the input
+            // it echoes, so no guard is needed and none is wanted — this is the branch that stops
+            // a typed word being replaced by its own translation.
             if (component is Component)
             {
                 object parentInput = GetParentInputFieldCached(component);
@@ -1735,8 +1749,12 @@ namespace UnityGameTranslator.Core
                     return true;
             }
 
-            // External mirror (focused field, then blur grace)
+            // Read first: it is what refreshes the keystroke clock the guard below reads.
             string focused = GetFocusedInputTextCached();
+
+            // External mirror — content only, hence the guards. See CouldBeTypedText.
+            if (!CouldBeTypedText(candidate, _lastTypedChangeTime)) return false;
+
             if (MatchesTypedText(candidate, focused)) return true;
             if (_lastFocusedInputText != null
                 && Time.realtimeSinceStartup - _lastFocusedInputTime <= InputBlurGraceSeconds
@@ -1778,6 +1796,11 @@ namespace UnityGameTranslator.Core
                         if (!string.IsNullOrEmpty(typed))
                         {
                             _focusedInputTextThisFrame = typed;
+                            // ⚠ The keystroke clock moves only when the CONTENT moves. Holding
+                            // focus is not typing, and treating it as such is what kept the
+                            // external mirror armed for as long as a box was selected.
+                            if (typed != _lastFocusedInputText)
+                                _lastTypedChangeTime = Time.realtimeSinceStartup;
                             _lastFocusedInputText = typed;
                             _lastFocusedInputTime = Time.realtimeSinceStartup;
                         }

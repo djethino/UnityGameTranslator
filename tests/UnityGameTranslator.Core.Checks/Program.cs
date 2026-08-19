@@ -23,6 +23,7 @@ namespace UnityGameTranslator.Core.Checks
         private static int Main()
         {
             HowTextChanges();
+            WhenTextMayBeTyping();
 
             Console.WriteLine();
             if (_failures == 0)
@@ -40,6 +41,13 @@ namespace UnityGameTranslator.Core.Checks
         {
             Section("Text relations");
             TextRelationsChecks.Run(Check);
+        }
+
+        /// <summary>When a text on screen may be read as an echo of the keyboard.</summary>
+        private static void WhenTextMayBeTyping()
+        {
+            Section("Input echo");
+            InputEchoChecks.Run(Check);
         }
 
         private static void Check(bool passed, string what, string why)

@@ -85,7 +85,9 @@ namespace UnityGameTranslator.Core
         // Cache for original font sizes (instance ID -> original fontSize)
         // Used to apply scale without cumulative errors
         private static readonly Dictionary<int, float> _originalFontSizes = new Dictionary<int, float>();
-        // Permanent backup — never cleared. Prevents cumulative scaling.
+        // Anti-cumulation reference: survives ClearFontSizeCache, which _originalFontSizes does not.
+        // Dropped per dead id in CleanDeadRefs only — a destroyed component can no longer cumulate.
+        // (This said "never cleared", which CleanDeadRefs has always contradicted.)
         private static readonly Dictionary<int, float> _trueOriginalFontSizes = new Dictionary<int, float>();
         public static Dictionary<int, float> TrueOriginalFontSizes => _trueOriginalFontSizes;
 
@@ -705,6 +707,7 @@ namespace UnityGameTranslator.Core
         public static void GenericText_SetText_Prefix(object __instance, ref string value)
         {
             if (string.IsNullOrEmpty(value)) return;
+            if (BypassTextPrefix) return;
             if (!TranslatorCore.TranslationsActive) return;
             if (SkipOffMainThread(__instance)) return;
             try
@@ -1910,6 +1913,7 @@ namespace UnityGameTranslator.Core
             _concatAssembledCache.Clear();
             _concatTranslatedValues.Clear();
             _concatDeltas.Clear();
+            _lastTranslation.Clear();
         }
 
         /// <summary>
@@ -1936,6 +1940,12 @@ namespace UnityGameTranslator.Core
                 _lastTranslatedText.Remove(id);
                 _lastRawText.Remove(id);
                 _concatComponents.Remove(id);
+                // Read-back only matters between "we translated this component" and "the game
+                // reads it back and appends" — a destroyed component never reads back.
+                _lastTranslation.Remove(id);
+                // Safe HERE and only here: the entry is the anti-cumulation reference, so it must
+                // survive a live component (see its declaration).
+                _originalMaxFontSizes.Remove(id);
             }
         }
 
@@ -2545,6 +2555,11 @@ namespace UnityGameTranslator.Core
         }
 
         // Cache original resizeTextMaxSize per component
+        // Original resizeTextMaxSize per component — the anti-cumulation reference for best-fit,
+        // the exact counterpart of _trueOriginalFontSizes.
+        // 🔴 Never Clear() this on a live component: the scaled max would then be read back as the
+        // original and every pass would grow it again. It is deliberately absent from
+        // ClearFontSizeCache for that reason; CleanDeadRefs drops it per dead id, which is safe.
         private static readonly Dictionary<int, int> _originalMaxFontSizes = new Dictionary<int, int>();
 
         public static void ApplyBestFitScalePublic(object instance, int instanceId, float scale)
@@ -2601,6 +2616,9 @@ namespace UnityGameTranslator.Core
         // translated text and appends untranslated content, we detect it and reconstruct
         // the source-language text for proper cache lookup.
         // Key: instanceId, Value: (original source text, translated text)
+        // ⚠ Lifetime: an entry is only useful between "we translated this component" and "the game
+        // reads it back". Cleared in ClearCache, dropped per dead id in CleanDeadRefs — it used to
+        // be cleared by nothing at all, which kept two strings per component alive for the session.
         private static readonly Dictionary<int, KeyValuePair<string, string>> _lastTranslation = new Dictionary<int, KeyValuePair<string, string>>();
 
         /// <summary>
@@ -2654,11 +2672,6 @@ namespace UnityGameTranslator.Core
             return null;
         }
 
-        public static void ClearReadBackTracking()
-        {
-            _lastTranslation.Clear();
-        }
-
         // === TYPEWRITING DETECTION ===
         // Per-component tracking to detect typewriting effects (text growing char by char).
         // When detected, skip translation until the text stabilizes.
@@ -2707,7 +2720,7 @@ namespace UnityGameTranslator.Core
             if (_concatComponents.Contains(compId)) return; // concat handled separately
             if (!_typewritingState.TryGetValue(compId, out var state)) return;
 
-            bool isGrowing = currentText.Length > state.Text.Length && currentText.StartsWith(state.Text);
+            bool isGrowing = TextRelations.Grows(state.Text, currentText);
             bool isSame = currentText == state.Text;
 
             if (state.Queued)
@@ -2767,7 +2780,7 @@ namespace UnityGameTranslator.Core
                 }
 
                 float elapsed = (now - state.Timestamp) * 1000f;
-                bool isGrowing = newText.Length > state.Text.Length && newText.StartsWith(state.Text);
+                bool isGrowing = TextRelations.Grows(state.Text, newText);
 
                 // Log every call for typewriting components
                 if (TranslatorCore.DebugMode)
@@ -2874,17 +2887,25 @@ namespace UnityGameTranslator.Core
             if (_activeTypewriting.Count == 0) return;
 
             float now = Time.realtimeSinceStartup;
-            var stabilized = new List<int>();
+            var toDrop = new List<int>();
 
             foreach (int compId in _activeTypewriting)
             {
-                if (!_typewritingState.TryGetValue(compId, out var state)) continue;
+                // 🔴 An id with no state left can never do anything again, so it is dropped rather
+                // than skipped. Skipping it kept it in the set for good, and one such id is enough
+                // to stop `Count == 0` from ever being true again — the early return above then
+                // never fires and this allocates a List every frame for the rest of the session.
+                // Self-healing on purpose: the state can vanish through ClearTypewritingState (scene
+                // unload) or through the concat/mirror paths, and this covers all of them at once.
+                if (!_typewritingState.TryGetValue(compId, out var state)) { toDrop.Add(compId); continue; }
                 float elapsed = (now - state.Timestamp) * 1000f;
                 if (elapsed >= TYPEWRITING_STABILIZE_MS)
-                    stabilized.Add(compId);
+                    toDrop.Add(compId);
             }
 
-            foreach (int compId in stabilized)
+            // Carries both the stabilized ids and the stateless ones; the latter fall out at the
+            // TryGetValue below, after having been removed from the set.
+            foreach (int compId in toDrop)
             {
                 _activeTypewriting.Remove(compId);
 
@@ -2914,6 +2935,9 @@ namespace UnityGameTranslator.Core
 
         /// <summary>
         /// Clear typewriting state (on scene change, settings change, etc.)
+        /// ⚠ Deliberately does NOT touch _activeTypewriting: that set is the work list, and
+        /// ProcessStabilizedTypewriting drops any id it finds without a state. Emptying it here as
+        /// well would work too, but only for this one cause — the self-healing covers every cause.
         /// </summary>
         public static void ClearTypewritingState()
         {
@@ -2936,7 +2960,22 @@ namespace UnityGameTranslator.Core
         // re-translation, no reverse-cache pollution, no re-queue. The game's own
         // TMP text-changed event still fires (it is independent of this prefix), which is
         // exactly what the nudge needs to re-run the game's reveal (issue #21).
-        internal static volatile bool BypassTextPrefix = false;
+        //
+        // ⚠ Checked by EVERY text setter prefix, not just the TMP/UI.Text/TextMesh one. It used to
+        // guard that single path, and TMProOld carried an inert stand-in for the same idea
+        // (a HashSet that was read and never filled). The guard is the cross-cutting kind: one
+        // path having it is one path's worth of protection.
+        //
+        // ⚠ ThreadStatic, not a process-wide flag: it belongs to the thread doing the writing.
+        // Every writer raises and lowers it around one synchronous SetText on the main thread, but
+        // the generic text prefix can fire on a background thread (Rewired's input thread), and a
+        // process-wide flag would silently skip that thread's own text while ours was in flight.
+        // Same reasoning and same shape as UIToolkitSupport._writingBack, which reached it first.
+        //
+        // ⚠ Deliberately NOT checked in the getter postfixes: their job is to catch text the game
+        // preloaded, and a read is not one of our writes. Suppressing them inside the window would
+        // change what they return, for no demonstrated need.
+        [ThreadStatic] internal static bool BypassTextPrefix;
 
         private static void ProcessTextPatchPrefix(object __instance, ref string textValue, string componentType)
         {
@@ -3173,31 +3212,19 @@ namespace UnityGameTranslator.Core
                         if (count + 1 >= 2 && TranslatorCore.ConcatDetection && !_concatComponents.Contains(compId))
                         {
                             string prevRaw;
+                            // The delta must carry more than layout whitespace: a lone appended
+                            // "\n" at start-up is not procedural assembly (see LooksLikeConcatGrowth).
                             if (_lastRawText.TryGetValue(compId, out prevRaw)
                                 && !string.IsNullOrEmpty(prevRaw)
-                                && textValue.Length > prevRaw.Length
-                                && textValue.StartsWith(prevRaw))
+                                && TextRelations.LooksLikeConcatGrowth(prevRaw, textValue))
                             {
-                                // Only flag if the delta contains non-whitespace content.
-                                // A delta of just "\n" is not concat (e.g., Hollow Knight adds trailing newline at init).
-                                string candidateDelta = textValue.Substring(prevRaw.Length);
-                                bool hasContent = false;
-                                foreach (char ch in candidateDelta)
-                                {
-                                    if (ch != '\n' && ch != '\r' && ch != ' ' && ch != '\t')
-                                    { hasContent = true; break; }
-                                }
+                                _concatComponents.Add(compId);
 
-                                if (hasContent)
-                                {
-                                    _concatComponents.Add(compId);
+                                // Cancel any pending TW for this component.
+                                _typewritingState.Remove(compId);
+                                _activeTypewriting.Remove(compId);
 
-                                    // Cancel any pending TW for this component.
-                                    _typewritingState.Remove(compId);
-                                    _activeTypewriting.Remove(compId);
-
-                                    TranslatorCore.LogDebug($"[CONCAT-DETECT] comp={compId} flagged (text grew {prevRaw.Length}c→{textValue.Length}c in frame {currentFrame})");
-                                }
+                                TranslatorCore.LogDebug($"[CONCAT-DETECT] comp={compId} flagged (text grew {prevRaw.Length}c→{textValue.Length}c in frame {currentFrame})");
                             }
                         }
                     }
@@ -3214,9 +3241,7 @@ namespace UnityGameTranslator.Core
                             string prevRaw2;
                             if (_lastRawText.TryGetValue(compId, out prevRaw2)
                                 && !string.IsNullOrEmpty(prevRaw2)
-                                && textValue.Length > prevRaw2.Length
-                                && textValue.Length - prevRaw2.Length <= 3
-                                && textValue.StartsWith(prevRaw2))
+                                && TextRelations.LooksLikeTypewriterGrowth(prevRaw2, textValue))
                             {
                                 _concatComponents.Remove(compId);
                                 _concatDeltas.Remove(compId);
@@ -3241,8 +3266,7 @@ namespace UnityGameTranslator.Core
                     _lastRawText.TryGetValue(compId, out lastRaw);
 
                     if (!string.IsNullOrEmpty(lastRaw)
-                        && textValue.Length > lastRaw.Length
-                        && textValue.StartsWith(lastRaw))
+                        && TextRelations.Grows(lastRaw, textValue))
                     {
                         // Text grew — extract delta (pure source language)
                         string delta = textValue.Substring(lastRaw.Length);
@@ -3311,8 +3335,7 @@ namespace UnityGameTranslator.Core
                 if (!handledAsConcat && compId != -1
                     && _lastTranslatedText.TryGetValue(compId, out string lastTranslatedFR)
                     && !string.IsNullOrEmpty(lastTranslatedFR)
-                    && textValue.Length > lastTranslatedFR.Length
-                    && textValue.StartsWith(lastTranslatedFR))
+                    && TextRelations.Grows(lastTranslatedFR, textValue))
                 {
                     // Game did text += "CN" on our FR text → extract CN delta
                     string delta = textValue.Substring(lastTranslatedFR.Length);
@@ -3693,6 +3716,8 @@ namespace UnityGameTranslator.Core
         // Pending font replacements: components that need font change but were encountered before init
         // Key: instance hashcode, Value: (WeakReference to instance, original font name, original English text)
         // We store the English text so we can replay the full set_text flow after init
+        // Drained once and for all by OnUIInitialized (Clear right after collecting), so it holds
+        // entries only during the window before the UI exists — nothing to clean elsewhere.
         private static Dictionary<int, (WeakReference instance, string fontName, string originalText)> _pendingFontReplacements = new Dictionary<int, (WeakReference, string, string)>();
 
         /// <summary>
@@ -3970,7 +3995,9 @@ namespace UnityGameTranslator.Core
             }
         }
 
-        // Track fonts that already have our custom fallback added
+        // Track fonts that already have our custom fallback added.
+        // Keyed by FONT, not by component: bounded by how many fonts the game ships, so it is not
+        // cleaned anywhere and does not need to be.
         private static HashSet<int> _fontsWithFallbackAdded = new HashSet<int>();
 
         /// <summary>
@@ -4197,12 +4224,14 @@ namespace UnityGameTranslator.Core
         public static void AlternateTMP_SetText_Prefix(object __instance, ref string __0)
         {
             if (string.IsNullOrEmpty(__0)) return;
+            // Our own write (render repair, mod UI) — never translate or track it. This replaces
+            // _skipTextResetInstances, a HashSet that expressed the same intent here and was read
+            // but never filled, so the protection it announced never once ran.
+            if (BypassTextPrefix) return;
             if (!TranslatorCore.TranslationsActive) return;
             try
             {
-                // Skip if this is a text re-set for glyph regeneration (avoid re-translation)
                 int instanceId = __instance.GetHashCode();
-                if (_skipTextResetInstances.Contains(instanceId)) return;
 
                 var component = __instance as Component;
                 if (component == null) return;
@@ -4275,11 +4304,10 @@ namespace UnityGameTranslator.Core
             // Translation also doesn't happen here (would re-translate already-translated text).
         }
 
-        // Track instances currently being processed to avoid recursion
+        // Track instances currently being processed to avoid recursion.
+        // Scoped: added on entry and removed in the finally of AlternateTMP_SetFont_Postfix, so an
+        // exception cannot leave an id behind. Nothing to clean elsewhere.
         private static HashSet<int> _fontSetInProgress = new HashSet<int>();
-
-        // Track instances being re-set for glyph regeneration (skip translation)
-        private static HashSet<int> _skipTextResetInstances = new HashSet<int>();
 
         /// <summary>
         /// Postfix for alternate TMP font setter.
@@ -4327,6 +4355,7 @@ namespace UnityGameTranslator.Core
         public static void Tk2dTextMesh_SetText_Prefix(object __instance, ref string value)
         {
             if (string.IsNullOrEmpty(value)) return;
+            if (BypassTextPrefix) return;
             if (!TranslatorCore.TranslationsActive) return;
             try
             {

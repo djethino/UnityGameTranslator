@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      Overrides the netstandard2.0 floor the mod sits on: this one is RUN, not shipped, so it needs
+      a framework that can execute. The rules it checks stay on the floor — checking them from the
+      outside is the point.
+    -->
+    <TargetFramework>net8.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <AssemblyName>UnityGameTranslator.Core.Checks</AssemblyName>
+    <RootNamespace>UnityGameTranslator.Core.Checks</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <!-- The Core carries no nullable annotations; matching it keeps the linked file compiling
+         identically on both sides. -->
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+
+  <!--
+    🔴 The FILE, not the assembly — and that is the whole trick.
+
+    UnityGameTranslator.Core references UnityEngine, UniverseLib and TextMeshPro, so a
+    ProjectReference here would drag a game engine into a console application and this project
+    could not exist. Linking the source file works because that file is pure by contract: no Unity,
+    no state, no clock. Nothing about IL2CPP, Mono, fonts or runtimes is involved, because none of
+    it is involved in the rules being checked.
+
+    ⚠ The day somebody adds a `using UnityEngine` to a linked file, THIS PROJECT STOPS COMPILING.
+    That is the alarm, not an accident — it is what keeps the purity claim honest instead of
+    aspirational.
+  -->
+  <ItemGroup>
+    <Compile Include="../../UnityGameTranslator.Core/TextRelations.cs" />
+  </ItemGroup>
+
+  <!--
+    ⚠ No test framework, deliberately — same reasoning as
+    common/tests/UnityGameTranslator.Common.Checks: the mod ships no third-party test dependency,
+    so this prints its own results and exits non-zero on failure. `dotnet run` is the whole
+    protocol; anything that can run a program can run these.
+  -->
+
+</Project>

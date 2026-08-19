@@ -339,7 +339,6 @@ namespace UnityGameTranslator.Core
         // Assign ONLY via NextOrderIndex() (lock-protected).
         private static long nextTranslationIndex = 1;
         private static HttpClient httpClient;
-        private static int skippedTargetLang = 0;
         private static int skippedAlreadyTranslated = 0;
         private static bool _enableTranslationsLogOnce = true; // Log once when translations disabled
 
@@ -1788,7 +1787,7 @@ namespace UnityGameTranslator.Core
             }
 
             Adapter?.LogInfo($"Session: {translatedCount} translations, {cacheHitCount} cache hits, {aiTranslationCount} AI calls");
-            Adapter?.LogInfo($"Skipped: {skippedTargetLang} (target lang heuristic), {skippedAlreadyTranslated} (reverse cache)");
+            Adapter?.LogInfo($"Skipped: {skippedAlreadyTranslated} (reverse cache)");
             Adapter?.LogInfo("[Shutdown] Cleanup complete");
         }
 
@@ -5906,21 +5905,14 @@ namespace UnityGameTranslator.Core
                 if (staleRefreshed != null)
                     return staleRefreshed;
 
-                if (!IsTargetLanguage(text))
-                {
-                    // A never-seen text may miss only because variable values went
-                    // stale (game assigned a new seed/name this frame). Refresh and
-                    // retry the whole lookup once — RefreshOnMiss is throttled to
-                    // once per frame, so the recursion cannot loop.
-                    if (VariableManager.RefreshOnMiss())
-                        return TranslateSingleText(text);
+                // A never-seen text may miss only because variable values went
+                // stale (game assigned a new seed/name this frame). Refresh and
+                // retry the whole lookup once — RefreshOnMiss is throttled to
+                // once per frame, so the recursion cannot loop.
+                if (VariableManager.RefreshOnMiss())
+                    return TranslateSingleText(text);
 
-                    QueueForTranslation(text);
-                }
-                else
-                {
-                    skippedTargetLang++;
-                }
+                QueueForTranslation(text);
             }
 
             return text;
@@ -6292,52 +6284,37 @@ namespace UnityGameTranslator.Core
                     return text;
                 }
 
-                if (!IsTargetLanguage(text))
+                // DEBUG LOG: if text contains Latin chars and wasn't caught by reverse cache
+                // Log AFTER all skip checks so we only see texts actually queued
+                if (_dbgReverseMiss < 20 && text.Length > 5)
                 {
-                    // DEBUG LOG: if text contains Latin chars and wasn't caught by reverse cache
-                    // Log AFTER all skip checks so we only see texts actually queued
-                    if (_dbgReverseMiss < 20 && text.Length > 5)
+                    bool hasLatin = false;
+                    foreach (char c in text)
                     {
-                        bool hasLatin = false;
-                        foreach (char c in text)
-                        {
-                            if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'))
-                            { hasLatin = true; break; }
-                        }
-                        if (hasLatin)
-                        {
-                            _dbgReverseMiss++;
-                            LogDebug($"[REVERSE-MISS] orig({text.Length}c)='{text}'\n  norm({trimmedNormalized.Length}c)='{trimmedNormalized}'");
-                        }
+                        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'))
+                        { hasLatin = true; break; }
                     }
-
-                    if (!skipQueueing)
+                    if (hasLatin)
                     {
-                        // Same stale-variables guard as TranslateSingleText: refresh
-                        // and retry once before minting a new queue entry (throttled
-                        // once per frame — the recursion cannot loop)
-                        if (VariableManager.RefreshOnMiss())
-                            return TranslateSingleTextWithTracking(text, component, isOwnUI, skipTypewriting, skipQueueing);
-
-                        QueueForTranslation(text, component, isOwnUI);
+                        _dbgReverseMiss++;
+                        LogDebug($"[REVERSE-MISS] orig({text.Length}c)='{text}'\n  norm({trimmedNormalized.Length}c)='{trimmedNormalized}'");
                     }
-                    // else: concat component — deltas are queued individually, skip full text queue
                 }
-                else
+
+                if (!skipQueueing)
                 {
-                    skippedTargetLang++;
+                    // Same stale-variables guard as TranslateSingleText: refresh
+                    // and retry once before minting a new queue entry (throttled
+                    // once per frame — the recursion cannot loop)
+                    if (VariableManager.RefreshOnMiss())
+                        return TranslateSingleTextWithTracking(text, component, isOwnUI, skipTypewriting, skipQueueing);
+
+                    QueueForTranslation(text, component, isOwnUI);
                 }
+                // else: concat component — deltas are queued individually, skip full text queue
             }
 
             return text;
-        }
-
-        public static bool IsTargetLanguage(string text)
-        {
-            // Disabled: too many false positives with mixed-language content
-            // The reverse cache (translatedTexts) handles exact matches
-            // AI can recognize already-translated text and return it unchanged
-            return false;
         }
 
         public static string TryPatternMatch(string text)

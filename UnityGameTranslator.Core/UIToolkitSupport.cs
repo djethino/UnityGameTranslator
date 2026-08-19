@@ -53,6 +53,10 @@ namespace UnityGameTranslator.Core
 
         private static MethodInfo _getClassesMethod;       // VisualElement.GetClasses() -> IEnumerable<string>
 
+        private static PropertyInfo _worldBoundProp;       // VisualElement.worldBound -> Rect
+        private static MethodInfo _screenToPanelMethod;    // RuntimePanelUtils.ScreenToPanel(IPanel, Vector2)
+        private static MethodInfo _pickMethod;             // IPanel.Pick(Vector2) -> VisualElement
+
         private static PropertyInfo _panelProp;            // VisualElement.panel     -> IPanel
         private static PropertyInfo _focusControllerProp;  // IPanel.focusController
         private static PropertyInfo _focusedElementProp;   // FocusController.focusedElement
@@ -140,9 +144,16 @@ namespace UnityGameTranslator.Core
                 // USS classes, for elements the game never named — most of them.
                 _getClassesMethod = VisualElementType.GetMethod("GetClasses", pubInst, null, Type.EmptyTypes, null);
 
+                // Picking under the cursor, and where the picked element sits on screen.
+                _worldBoundProp = VisualElementType.GetProperty("worldBound", pubInst);
+                _screenToPanelMethod = FindType("UnityEngine.UIElements.RuntimePanelUtils")
+                    ?.GetMethod("ScreenToPanel", BindingFlags.Public | BindingFlags.Static);
+
                 _panelProp = VisualElementType.GetProperty("panel", pubInst);
                 if (_panelProp != null)
                 {
+                    _pickMethod = _panelProp.PropertyType.GetMethod(
+                        "Pick", pubInst, null, new[] { typeof(Vector2) }, null);
                     _focusControllerProp = _panelProp.PropertyType.GetProperty("focusController", pubInst);
                     if (_focusControllerProp != null)
                         _focusedElementProp = _focusControllerProp.PropertyType
@@ -746,6 +757,144 @@ namespace UnityGameTranslator.Core
             if (dead == null) return;
             foreach (long id in dead) Forget(id);
         }
+
+        #region Picking
+
+        /// <summary>
+        /// The text element under a screen point, or null.
+        ///
+        /// 🔴 UI Toolkit does its own hit testing. The inspector asks a GraphicRaycaster, which is
+        /// the uGUI mechanism and returns nothing here — so on a game whose interface is entirely
+        /// UI Toolkit, clicking anywhere found nothing at all and the inspector could not be used.
+        ///
+        /// ⚠ Walks UP from whatever was hit: the point may land on a container, while the thing
+        /// worth naming is the label inside it. Stops at the first element that carries text.
+        /// </summary>
+        public static object PickAt(Vector2 screenPoint, out Rect screenRect)
+        {
+            screenRect = default(Rect);
+            if (!Available || _pickMethod == null || _textProp == null) return null;
+
+            try
+            {
+                var documents = TypeHelper.FindAllObjectsOfType(UIDocumentType);
+                if (documents == null) return null;
+
+                foreach (var document in documents)
+                {
+                    if (document == null) continue;
+
+                    object root = null;
+                    try { root = _rootProp.GetValue(document, null); } catch { }
+                    if (root == null) continue;
+
+                    object panel = null;
+                    try { panel = _panelProp.GetValue(root, null); } catch { }
+                    if (panel == null) continue;
+
+                    var mapping = PanelMapping.For(panel, _screenToPanelMethod);
+                    object hit = null;
+                    try { hit = _pickMethod.Invoke(panel, new object[] { mapping.ToPanel(screenPoint) }); }
+                    catch { }
+
+                    for (int depth = 0; hit != null && depth < MaxPathDepth; depth++)
+                    {
+                        if (HasText(hit) && !IsInsideTextInput(hit))
+                        {
+                            screenRect = mapping.ToScreen(WorldBoundOf(hit));
+                            return hit;
+                        }
+
+                        try { hit = _parentProp.GetValue(hit, null); } catch { break; }
+                    }
+                }
+            }
+            catch { }
+
+            return null;
+        }
+
+        private static bool HasText(object element)
+        {
+            try { return !string.IsNullOrEmpty(_textProp.GetValue(element, null) as string); }
+            catch { return false; }
+        }
+
+        private static Rect WorldBoundOf(object element)
+        {
+            try
+            {
+                if (_worldBoundProp?.GetValue(element, null) is Rect rect) return rect;
+            }
+            catch { }
+            return default(Rect);
+        }
+
+        /// <summary>
+        /// How this panel's coordinates relate to the screen's, in both directions.
+        ///
+        /// ⚠ **Derived from two measurements rather than assumed.** A panel can be scaled and
+        /// letterboxed by its PanelSettings, so "flip Y and you are done" is right only for the
+        /// default setup. Converting two known screen corners and reading the factors back gives
+        /// the real mapping, whatever the scale mode — and the inverse comes for free, which is
+        /// what the highlight needs and what UI Toolkit offers no helper for.
+        ///
+        /// ⚠ Falls back to the plain Y flip when RuntimePanelUtils is absent: a highlight in the
+        /// wrong place is a nuisance, no picking at all is a feature nobody can use.
+        /// </summary>
+        private struct PanelMapping
+        {
+            private Vector2 _origin;
+            private Vector2 _scale;
+
+            public static PanelMapping For(object panel, MethodInfo screenToPanel)
+            {
+                var mapping = new PanelMapping { _origin = Vector2.zero, _scale = Vector2.one };
+
+                if (screenToPanel == null)
+                {
+                    // The plain flip: panel coordinates start at the top, screen ones at the bottom.
+                    mapping._origin = new Vector2(0f, Screen.height);
+                    mapping._scale = new Vector2(1f, -1f);
+                    return mapping;
+                }
+
+                try
+                {
+                    var a = (Vector2)screenToPanel.Invoke(null, new object[] { panel, Vector2.zero });
+                    var b = (Vector2)screenToPanel.Invoke(null,
+                        new object[] { panel, new Vector2(Screen.width, Screen.height) });
+
+                    float sx = Screen.width != 0 ? (b.x - a.x) / Screen.width : 1f;
+                    float sy = Screen.height != 0 ? (b.y - a.y) / Screen.height : 1f;
+
+                    if (Mathf.Abs(sx) > 0.0001f && Mathf.Abs(sy) > 0.0001f)
+                    {
+                        mapping._origin = a;
+                        mapping._scale = new Vector2(sx, sy);
+                    }
+                }
+                catch { }
+
+                return mapping;
+            }
+
+            public Vector2 ToPanel(Vector2 screen) =>
+                new Vector2(_origin.x + screen.x * _scale.x, _origin.y + screen.y * _scale.y);
+
+            public Rect ToScreen(Rect panelRect)
+            {
+                float x0 = (panelRect.xMin - _origin.x) / _scale.x;
+                float x1 = (panelRect.xMax - _origin.x) / _scale.x;
+                float y0 = (panelRect.yMin - _origin.y) / _scale.y;
+                float y1 = (panelRect.yMax - _origin.y) / _scale.y;
+
+                return Rect.MinMaxRect(Mathf.Min(x0, x1), Mathf.Min(y0, y1),
+                                       Mathf.Max(x0, x1), Mathf.Max(y0, y1));
+            }
+        }
+
+        #endregion
 
         /// <summary>
         /// Every element carrying text, for the screens that list what is on screen.

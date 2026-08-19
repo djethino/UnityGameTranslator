@@ -916,18 +916,33 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
             }
 
-            float width = screenMax.x - screenMin.x;
-            float height = screenMax.y - screenMin.y;
+            // ⚠ Fully qualified: PanelBase exposes a `Rect` PROPERTY (this panel's RectTransform),
+            // which shadows the type inside any expression here.
+            PositionHighlightRect(highlightRect, highlightImage,
+                                  UnityEngine.Rect.MinMaxRect(screenMin.x, screenMin.y,
+                                                              screenMax.x, screenMax.y));
+        }
+
+        /// <summary>
+        /// Place the highlight over a screen rectangle.
+        ///
+        /// ⚠ Split from PositionHighlight so a third source of coordinates can use it. That method
+        /// already handled two — a RectTransform in a Canvas and a Renderer in the world — and
+        /// UI Toolkit is a third, which reports its own rectangle rather than any Unity transform.
+        /// </summary>
+        private void PositionHighlightRect(RectTransform highlightRect, Image highlightImage, Rect screen)
+        {
+            if (highlightRect == null || highlightImage == null) return;
 
             // Skip degenerate rects
-            if (width < 1f || height < 1f)
+            if (screen.width < 1f || screen.height < 1f)
             {
                 highlightImage.gameObject.SetActive(false);
                 return;
             }
 
-            highlightRect.anchoredPosition = screenMin;
-            highlightRect.sizeDelta = new Vector2(width, height);
+            highlightRect.anchoredPosition = new Vector2(screen.xMin, screen.yMin);
+            highlightRect.sizeDelta = new Vector2(screen.width, screen.height);
             highlightImage.gameObject.SetActive(true);
         }
 
@@ -1125,8 +1140,27 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
                 else
                 {
-                    if (_hoverHighlight != null) _hoverHighlight.gameObject.SetActive(false);
-                    ClearHoverLabel();
+                    // Nothing in the Canvas: this may be a UI Toolkit interface, which the
+                    // GraphicRaycaster cannot see at all. See UIToolkitSupport.PickAt.
+                    var element = UIToolkitSupport.PickAt(mousePos, out var elementRect);
+                    if (element != null)
+                    {
+                        string elementPath = UIToolkitSupport.PathOf(element);
+                        if (elementPath != _lastHoveredPath)
+                        {
+                            _lastHoveredPath = elementPath;
+                            _hoveredPathLabel.text = elementPath;
+                            _hoveredPathLabel.color = UIStyles.TextSecondary;
+                            _hoveredPathLabel.fontStyle = FontStyle.Italic;
+                        }
+
+                        PositionHighlightRect(_hoverHighlightRect, _hoverHighlight, elementRect);
+                    }
+                    else
+                    {
+                        if (_hoverHighlight != null) _hoverHighlight.gameObject.SetActive(false);
+                        ClearHoverLabel();
+                    }
                 }
             }
 
@@ -1134,6 +1168,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (InputManager.GetMouseButtonDown(0))
             {
                 var hitObject = RaycastUIElement(mousePos);
+                if (hitObject == null && SelectUIToolkitAt(mousePos)) return;
 
                 if (hitObject != null && !IsOwnUI(hitObject))
                 {
@@ -1149,7 +1184,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                     if (_currentMode == InspectorMode.TextEdit)
                     {
-                        ShowTextEditUI(hitObject, path);
+                        ShowTextEditUI(path);
                     }
                     else if (_currentMode == InspectorMode.FontOverride)
                     {
@@ -1510,7 +1545,66 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         #region TextEdit Mode
 
-        private void ShowTextEditUI(GameObject hitObject, string path)
+        /// <summary>
+        /// Select a UI Toolkit element under the pointer. True when one was taken.
+        ///
+        /// 🔴 The Canvas raycast returns nothing on a UI Toolkit interface, so before this the
+        /// inspector simply did not work on those games — clicking anywhere found nothing.
+        ///
+        /// ⚠ Everything after the selection already worked from the PATH alone: exclusions, font
+        /// rules and the text editor all match on it. Only the picking was uGUI's, so only the
+        /// picking had to be written again.
+        /// </summary>
+        private bool SelectUIToolkitAt(Vector2 mousePos)
+        {
+            var element = UIToolkitSupport.PickAt(mousePos, out var screenRect);
+            if (element == null) return false;
+
+            string path = UIToolkitSupport.PathOf(element);
+            if (string.IsNullOrEmpty(path)) return false;
+
+            _lastSelectedPath = path;
+            _lastSelectedObject = null;   // there is no GameObject behind a VisualElement
+            _lastSelectedSpriteObj = null;
+
+            _selectedPathLabel.text = path;
+            _selectedPathLabel.color = UIStyles.TextPrimary;
+            _selectedPathLabel.fontStyle = FontStyle.Normal;
+            _cancelBtn.Component.interactable = true;
+            PositionHighlightRect(_selectedHighlightRect, _selectedHighlight, screenRect);
+
+            if (_currentMode == InspectorMode.TextEdit)
+            {
+                ShowTextEditUI(path);
+            }
+            else if (_currentMode == InspectorMode.FontOverride)
+            {
+                string overridePath = path;
+                int lastSlash = path.LastIndexOf('/');
+                if (lastSlash > 0) overridePath = path.Substring(0, lastSlash) + "/**";
+
+                SetActive(false);
+                TranslatorUIManager.TranslationParamsPanel?.AddFontOverrideFromInspector("path:" + overridePath);
+            }
+            else if (_currentMode == InspectorMode.BitmapReplace)
+            {
+                // Said rather than left blank: this framework holds its pictures in styles, not in
+                // the components this mode replaces, so there is nothing here to swap — yet.
+                _spriteInfoLabel.text = "UI Toolkit draws its images in styles — not replaceable yet.";
+                _spriteInfoLabel.color = UIStyles.TextMuted;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Show what can be edited under a path.
+        ///
+        /// ⚠ The path is all it needs — it took a GameObject too and never read it, which is what
+        /// made the editor look tied to uGUI. It is not: FindTextComponentsAtPath matches on the
+        /// path string, so a UI Toolkit element works the same way.
+        /// </summary>
+        private void ShowTextEditUI(string path)
         {
             if (_textEditRow == null || _textEditListContent == null) return;
 
@@ -1587,55 +1681,32 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void FindTextComponentsAtPath(string pathPrefix,
             List<(object component, string text, string originalKey, string tag, string childPath, Dictionary<int, string> liveNumbers)> results)
         {
-            var seenIds = new HashSet<int>();
-
-            var textTypes = new List<Type>();
-            if (TypeHelper.UI_TextType != null) textTypes.Add(TypeHelper.UI_TextType);
-            if (TypeHelper.TMP_TextType != null) textTypes.Add(TypeHelper.TMP_TextType);
-
-            foreach (var textType in textTypes)
+            // 🔴 One enumeration for every framework. This used to name UI.Text and TMP_Text here,
+            // so the in-game editor could only ever edit those two — on an NGUI, tk2d, TMProOld,
+            // TextMesh or UI Toolkit game it opened on an empty list, whatever had been picked.
+            // See analyse/text-targets-audit.md.
+            foreach (var target in TextTargets.All())
             {
-                var allComponents = TypeHelper.FindAllObjectsOfType(textType);
-                if (allComponents == null) continue;
-
-                for (int i = 0; i < allComponents.Length; i++)
+                try
                 {
-                    var obj = allComponents[i];
-                    if (obj == null) continue;
-                    try
-                    {
-                        Component comp = obj as Component;
-                        if (comp == null)
-                            comp = TypeHelper.Il2CppCast(obj, typeof(Component)) as Component;
-                        if (comp == null || comp.gameObject == null) continue;
+                    string compPath = target.Path;
+                    if (compPath != pathPrefix && !compPath.StartsWith(pathPrefix + "/"))
+                        continue;
 
-                        int id = comp.GetInstanceID();
-                        if (seenIds.Contains(id)) continue;
-                        if (TranslatorCore.IsOwnUI(comp)) continue;
+                    // Resolve to the cache entry with pipeline normalization, so texts
+                    // with dynamic numbers map to their [!v*N] pattern key
+                    var resolution = TranslatorCore.ResolveDisplayedText(target.Text);
+                    if (resolution == null) continue;
 
-                        string compPath = TranslatorCore.GetGameObjectPath(comp.gameObject);
-                        if (compPath != pathPrefix && !compPath.StartsWith(pathPrefix + "/"))
-                            continue;
+                    string tag = resolution.Entry?.Tag ?? "—";
+                    // Prefill: current translation with placeholders, or the normalized
+                    // source text when no entry exists yet
+                    string translation = resolution.Entry?.Value ?? resolution.Key;
 
-                        string text = TypeHelper.GetText(obj);
-                        if (string.IsNullOrEmpty(text)) continue;
-
-                        seenIds.Add(id);
-
-                        // Resolve to the cache entry with pipeline normalization, so texts
-                        // with dynamic numbers map to their [!v*N] pattern key
-                        var resolution = TranslatorCore.ResolveDisplayedText(text);
-                        if (resolution == null) continue;
-
-                        string tag = resolution.Entry?.Tag ?? "—";
-                        // Prefill: current translation with placeholders, or the normalized
-                        // source text when no entry exists yet
-                        string translation = resolution.Entry?.Value ?? resolution.Key;
-
-                        results.Add((obj, translation, resolution.Key, tag, compPath, resolution.CapturedNumbers));
-                    }
-                    catch { }
+                    results.Add((target.Owner, translation, resolution.Key, tag, compPath,
+                                 resolution.CapturedNumbers));
                 }
+                catch { }
             }
         }
 
@@ -1764,7 +1835,10 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // Apply immediately to the component, with the live numbers re-injected
                 try
                 {
-                    TypeHelper.SetText(capturedComponent,
+                    // ⚠ TextTargets, not TypeHelper: the latter is the uGUI answer and does nothing
+                    // for a UI Toolkit element — the edit would be written to the file and never
+                    // appear, which reads as the save having failed.
+                    TextTargets.Write(capturedComponent,
                         TranslatorCore.RestoreNumbersFromPlaceholders(newValue, capturedNumbers));
                 }
                 catch { }

@@ -3021,16 +3021,8 @@ namespace UnityGameTranslator.Core
             return UIToolkitSupport.ElementFor(id);
         }
 
-        /// <summary>Put a text back where it came from, through whichever setter owns it.</summary>
-        private static void WriteText(object target, string text)
-        {
-            try
-            {
-                if (target is Component) TypeHelper.SetText(target, text);
-                else UIToolkitSupport.WriteBack(target, text);
-            }
-            catch { }
-        }
+        /// <summary>Put a text back where it came from. TextTargets owns the dispatch.</summary>
+        private static void WriteText(object target, string text) => TextTargets.Write(target, text);
 
         /// <summary>
         /// Check for stabilized typewriting texts and queue them for translation.

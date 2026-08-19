@@ -46,6 +46,30 @@ namespace UnityGameTranslator.Core
     public static class TextTargets
     {
         /// <summary>
+        /// Put a text into a target, through whichever setter owns it.
+        ///
+        /// 🔴 The one place that knows there is more than one way to write text. Every screen that
+        /// applies an edit used TypeHelper.SetText directly, which is the uGUI answer and silently
+        /// does nothing for a UI Toolkit element — the edit would be saved to the file and never
+        /// appear on screen, which reads as the save having failed.
+        ///
+        /// ⚠ Through UIToolkitSupport for an element, never by setting its property here: that
+        /// path carries the write-back guard, without which the setter patch reads our own write
+        /// as the game's and translates the translation.
+        /// </summary>
+        public static void Write(object owner, string text)
+        {
+            if (owner == null || text == null) return;
+
+            try
+            {
+                if (owner is Component) TypeHelper.SetText(owner, text);
+                else UIToolkitSupport.WriteBack(owner, text);
+            }
+            catch { }
+        }
+
+        /// <summary>
         /// Everything reachable, with its text. Pass a filter to stop building strings for texts
         /// nobody asked about — on a large scene that is most of them.
         /// </summary>

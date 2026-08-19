@@ -1372,6 +1372,12 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static void RestoreAllOriginals()
         {
+            // ⚠ Its own pass, for the same reason its scan is: a VisualElement is in no registered
+            // type and in no patched-component ref, so neither loop below can reach it. Without
+            // this call, switching translation off left that framework translated while every
+            // other one reverted.
+            UIToolkitSupport.RestoreAll();
+
             int restored = 0;
 
             // Suppress the text patches for the whole restore: the outgoing cache is

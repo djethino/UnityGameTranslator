@@ -514,8 +514,11 @@ namespace UnityGameTranslator.Core
                 // reveals, read-back, the already-written check. It used to call the translator
                 // directly and inherited none of it — the asymmetry the routing split removed
                 // for NGUI and tk2d, closed here too.
+                string before = value;
                 TranslatorPatches.RouteText(__instance, __instance, IdFor(__instance),
                                             isOwnUI: false, componentType: "UIToolkit", textValue: ref value);
+                if (!string.Equals(before, value, StringComparison.Ordinal))
+                    RememberOriginal(__instance, before);
             }
             catch { }
         }
@@ -533,6 +536,25 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static readonly ConditionalWeakTable<object, string> _written =
             new ConditionalWeakTable<object, string>();
+
+        /// <summary>
+        /// What the GAME had in an element before we wrote over it.
+        ///
+        /// 🔴 Without this, switching translation off left this framework translated. Restoring
+        /// works from TranslatorScanner's per-component originals, which are keyed by instance id —
+        /// a VisualElement has none, so it was stored nowhere and put back nowhere. Weak for the
+        /// same reason as everything else here: elements are recycled by the hundred.
+        /// </summary>
+        private static readonly ConditionalWeakTable<object, string> _originalText =
+            new ConditionalWeakTable<object, string>();
+
+        /// <summary>Remember what was there, the first time we replace it.</summary>
+        private static void RememberOriginal(object element, string original)
+        {
+            if (element == null || string.IsNullOrEmpty(original)) return;
+            if (_originalText.TryGetValue(element, out _)) return;
+            _originalText.Add(element, original);
+        }
 
         #region Identity
 
@@ -611,6 +633,72 @@ namespace UnityGameTranslator.Core
 
             if (dead == null) return;
             foreach (long id in dead) Forget(id);
+        }
+
+        /// <summary>
+        /// Put every element back the way the game had it: its own text, and its own font.
+        ///
+        /// 🔴 Called when translation is switched off. Every other framework is put back by
+        /// RestoreAllOriginals, which walks the registered component types and the patched
+        /// component refs — a VisualElement is in neither, so this framework stayed translated
+        /// while every other one reverted.
+        ///
+        /// ⚠ Walks the weak id map rather than the documents: an element that has scrolled out of
+        /// the tree still shows our text if it comes back, and the ones already collected simply
+        /// are not there. It also means this costs nothing on a game with no UI Toolkit.
+        /// </summary>
+        public static void RestoreAll()
+        {
+            if (!Available || _textProp == null) return;
+
+            int restored = 0;
+            foreach (var pair in new List<KeyValuePair<long, WeakReference>>(_byId))
+            {
+                var element = pair.Value.Target;
+                if (element == null) continue;
+
+                try
+                {
+                    if (_originalText.TryGetValue(element, out var original)
+                        && !string.IsNullOrEmpty(original))
+                    {
+                        _writingBack = true;
+                        try { _textProp.SetValue(element, original, null); }
+                        finally { _writingBack = false; }
+
+                        _originalText.Remove(element);
+                        _written.Remove(element);
+                        restored++;
+                    }
+
+                    RestoreFontOf(element);
+                }
+                catch { }
+            }
+
+            if (restored > 0)
+                TranslatorCore.LogInfo($"[UIToolkit] Restored {restored} element(s) to the game's own text");
+        }
+
+        /// <summary>
+        /// Give an element its own font back, if we ever replaced it.
+        ///
+        /// ⚠ Reads the font the element currently resolves to, because RestoreOriginalFont
+        /// compares against it to know whether there is anything to undo — the same shape
+        /// HandleFont uses when replacement is switched off mid-session.
+        /// </summary>
+        private static void RestoreFontOf(object element)
+        {
+            if (!CanSetFont) return;
+            if (!_originalFontName.TryGetValue(element, out var settingsName)) return;
+
+            var resolved = _resolvedStyleProp?.GetValue(element, null);
+            if (resolved == null) return;
+
+            var currentFont = ReadResolvedFont(resolved, out _);
+            if (currentFont == null || string.IsNullOrEmpty(currentFont.name)) return;
+
+            RestoreOriginalFont(element, settingsName, currentFont);
         }
 
         /// <summary>
@@ -802,6 +890,8 @@ namespace UnityGameTranslator.Core
                 TranslatorPatches.RouteText(element, element, IdFor(element),
                                             isOwnUI: false, componentType: "UIToolkit", textValue: ref translated);
                 if (string.IsNullOrEmpty(translated) || translated == current) return;
+
+                RememberOriginal(element, current);
 
                 _writingBack = true;
                 try { _textProp.SetValue(element, translated, null); }

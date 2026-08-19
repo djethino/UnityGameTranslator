@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
@@ -71,6 +71,19 @@ namespace UnityGameTranslator.Core.UI.Components
         /// Event fired when selection changes.
         /// </summary>
         public event Action<string> OnSelectionChanged;
+
+        /// <summary>
+        /// Optional: the language a row stands for, so its flag is drawn beside the name.
+        ///
+        /// ⚠ Null by default — most dropdowns are not about languages, and a list of fonts or of
+        /// hotkeys must not sprout flags. Set by the caller that knows, exactly like
+        /// CategoryProvider below.
+        ///
+        /// ⚠ The mark comes from LanguageMark rather than from a second flag drawing: the same
+        /// control the status card and the selector already use, so a language looks the same
+        /// wherever it appears.
+        /// </summary>
+        public Func<string, string> MarkProvider;
 
         /// <summary>
         /// Optional: classify an entry to offer a category filter bar in the popup (e.g. a font
@@ -628,6 +641,25 @@ namespace UnityGameTranslator.Core.UI.Components
             var itemBtnRef = new ButtonRef(itemButton);
             itemBtnRef.OnClick = () => SelectOption(capturedOption);
 
+            // The flag, when this list is about languages. Anchored by hand rather than laid out:
+            // the row positions its text with offsets, so the mark reserves its width the same way.
+            int textLeft = 8;
+            string markLanguage = MarkProvider?.Invoke(option);
+            if (!string.IsNullOrEmpty(markLanguage))
+            {
+                var markRow = LanguageMark.Create(itemObj, "Mark", markLanguage, nameElsewhere: true);
+                if (markRow != null)
+                {
+                    var markRect = markRow.GetComponent<RectTransform>();
+                    markRect.anchorMin = new Vector2(0f, 0.5f);
+                    markRect.anchorMax = new Vector2(0f, 0.5f);
+                    markRect.pivot = new Vector2(0f, 0.5f);
+                    markRect.anchoredPosition = new Vector2(8f, 0f);
+                    markRect.sizeDelta = new Vector2(LanguageMark.FlagWidth, LanguageMark.FlagHeight);
+                    textLeft = 8 + LanguageMark.FlagWidth + 6;
+                }
+            }
+
             // Option text
             Text itemText = UIFactory.CreateLabel(itemObj, "Text", "", TextAnchor.MiddleLeft,
                 isSelected ? Color.white : UIStyles.TextPrimary, fontSize: 13);
@@ -635,7 +667,7 @@ namespace UnityGameTranslator.Core.UI.Components
             RectTransform textRect = itemText.GetComponent<RectTransform>();
             textRect.anchorMin = Vector2.zero;
             textRect.anchorMax = Vector2.one;
-            textRect.offsetMin = new Vector2(8, 2);
+            textRect.offsetMin = new Vector2(textLeft, 2);
             textRect.offsetMax = new Vector2(-8, -2);
 
             // Register BEFORE setting text to exclude from translation

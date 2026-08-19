@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEngine.UI;
 using UniverseLib.UI;
 using UnityGameTranslator.Common;
@@ -20,7 +20,14 @@ namespace UnityGameTranslator.Core.UI.Components
     public static class LanguageMark
     {
         /// <summary>Height of the flag, in pixels. Its width follows the catalogue's grid.</summary>
-        private const int FlagHeight = 11;
+        internal const int FlagHeight = 11;
+
+        /// <summary>
+        /// How wide a flag comes out at <see cref="FlagHeight"/>, for callers that have to reserve
+        /// the space themselves — a row anchored by hand rather than laid out by a layout group.
+        /// </summary>
+        internal static int FlagWidth =>
+            Mathf.RoundToInt(FlagHeight * (float)Flags.Width / Flags.Height);
 
         /// <summary>Between the flag and the tag beside it.</summary>
         private const int Gap = 4;

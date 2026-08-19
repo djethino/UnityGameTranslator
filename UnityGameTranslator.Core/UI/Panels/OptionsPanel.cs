@@ -351,6 +351,12 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             _sourceLanguageDropdown = new SearchableDropdown("SourceLang", _sourceLanguages, "auto (Detect)", popupHeight: 250, showSearch: true);
             _targetLanguageDropdown = new SearchableDropdown("TargetLang", _languages, "auto (System)", popupHeight: 250, showSearch: true);
+
+            // The flag beside each name, the same one the status card and the selector draw.
+            // ⚠ The "auto …" rows stand for no language and get none — LanguageMark returns
+            // nothing for a name the catalogue does not know, so they simply stay plain text.
+            _sourceLanguageDropdown.MarkProvider = LanguageOfRow;
+            _targetLanguageDropdown.MarkProvider = LanguageOfRow;
             _hotkeyCapture = new HotkeyCapture("F10");
             _hotkeyToggleTranslations = new HotkeyCapture("");
             _hotkeyToggleAI = new HotkeyCapture("");
@@ -2720,5 +2726,19 @@ namespace UnityGameTranslator.Core.UI.Panels
             // the right state in the current language without racing the async pipeline. English when off.
             _applyBtn.ButtonText.text = TranslatorCore.TranslateOwnUIDynamic(label, _applyBtn.ButtonText);
         }
+
+        /// <summary>
+        /// The language a dropdown row stands for, or null when the row is not one.
+        ///
+        /// The rows are language NAMES, which is what the whole ecosystem keys on — so the row is
+        /// its own answer. The exceptions are the "auto …" entries, which name a behaviour rather
+        /// than a language; they are handed over unchanged and the mark comes back empty.
+        /// </summary>
+        private static string LanguageOfRow(string row)
+        {
+            if (string.IsNullOrEmpty(row)) return null;
+            return row.StartsWith("auto", System.StringComparison.OrdinalIgnoreCase) ? null : row;
+        }
+
     }
 }

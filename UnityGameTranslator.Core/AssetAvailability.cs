@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 
 namespace UnityGameTranslator.Core
 {
@@ -29,7 +29,7 @@ namespace UnityGameTranslator.Core
             if (FontManager.IsGameFontRef(fontRef))
                 return FontManager.IsGameFont(name);
 
-            if (fontRef.StartsWith("[Custom] "))
+            if (fontRef.StartsWith("[Custom] ", StringComparison.Ordinal))
                 return Array.Exists(CustomFontLoader.GetCustomFontNames(),
                     f => string.Equals(f, name, StringComparison.OrdinalIgnoreCase));
 

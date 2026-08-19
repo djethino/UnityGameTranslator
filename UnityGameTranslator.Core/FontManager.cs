@@ -5197,19 +5197,24 @@ namespace UnityGameTranslator.Core
         /// Strip origin prefix from a font name: [Custom], [Game].
         /// System fonts have no prefix.
         /// </summary>
+        /// 🔴 Ordinal, and here it is not a detail: the match is followed by a Substring of the
+        /// LITERAL's length. A linguistic comparison can match a prefix that is not that many
+        /// characters long — a font name carrying a soft hyphen would then be cut in the wrong
+        /// place and silently renamed. Ordinal also costs a fraction as much, and this runs on
+        /// every set_text through GetSettingsFontName.
         public static string StripFontPrefix(string fontName)
         {
             if (string.IsNullOrEmpty(fontName)) return fontName;
-            if (fontName.StartsWith("[Custom] "))
+            if (fontName.StartsWith("[Custom] ", StringComparison.Ordinal))
                 return fontName.Substring(9);
-            if (fontName.StartsWith("[Game] "))
+            if (fontName.StartsWith("[Game] ", StringComparison.Ordinal))
                 return fontName.Substring(7);
             return fontName;
         }
 
         public static bool IsGameFontRef(string fontName)
         {
-            return !string.IsNullOrEmpty(fontName) && fontName.StartsWith("[Game] ");
+            return !string.IsNullOrEmpty(fontName) && fontName.StartsWith("[Game] ", StringComparison.Ordinal);
         }
 
         /// <summary>Suffix marking a font the translation knows but the game has not loaded yet.</summary>
@@ -5225,10 +5230,12 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static string StripOptionMarker(string entry)
         {
+            // Ordinal: the cut below is the marker's literal length, so the match has to be that
+            // exact run of characters — see the note on StripFontPrefix.
             if (string.IsNullOrEmpty(entry)) return entry;
-            if (entry.EndsWith(UnloadedMarker))
+            if (entry.EndsWith(UnloadedMarker, StringComparison.Ordinal))
                 return entry.Substring(0, entry.Length - UnloadedMarker.Length);
-            if (entry.EndsWith(IncompatibleMarker))
+            if (entry.EndsWith(IncompatibleMarker, StringComparison.Ordinal))
                 return entry.Substring(0, entry.Length - IncompatibleMarker.Length);
             return entry;
         }
@@ -5319,9 +5326,10 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static string GetFontOrigin(string fontEntry)
         {
-            if (string.IsNullOrEmpty(fontEntry) || fontEntry.StartsWith("(")) return null;
-            if (fontEntry.StartsWith("[Game] ")) return "Game";
-            if (fontEntry.StartsWith("[Custom] ")) return "Custom";
+            // Ordinal: these decide a category from an exact marker; see StripFontPrefix.
+            if (string.IsNullOrEmpty(fontEntry) || fontEntry.StartsWith("(", StringComparison.Ordinal)) return null;
+            if (fontEntry.StartsWith("[Game] ", StringComparison.Ordinal)) return "Game";
+            if (fontEntry.StartsWith("[Custom] ", StringComparison.Ordinal)) return "Custom";
             return "System";
         }
 
@@ -5339,7 +5347,7 @@ namespace UnityGameTranslator.Core
             if (string.IsNullOrEmpty(fontName))
                 return false;
 
-            if (fontName.StartsWith("[Custom] "))
+            if (fontName.StartsWith("[Custom] ", StringComparison.Ordinal))
                 return true;
 
             var customFonts = CustomFontLoader.CustomFonts;

@@ -2724,8 +2724,12 @@ namespace UnityGameTranslator.Core
             string translated = state.ReadBackTranslated;
 
             // The incoming text must START WITH the translated text but be LONGER
-            // (the game appended something to the read-back)
-            if (incomingText.Length > translated.Length && incomingText.StartsWith(translated))
+            // (the game appended something to the read-back).
+            // ⚠ The SAME question the typewriting and concat detectors ask, so it asks it with the
+            // same words — it was written out separately here and kept the linguistic comparison
+            // when the other six moved to ordinal, which would have cut the suffix in the wrong
+            // place on any text carrying a soft hyphen or a joiner.
+            if (TextRelations.Grows(translated, incomingText))
             {
                 // Reconstruct: original source text + the appended suffix
                 string suffix = incomingText.Substring(translated.Length);
@@ -3285,8 +3289,10 @@ namespace UnityGameTranslator.Core
                     if (TranslatorCore.DebugMode)
                         TranslatorCore.LogDebug($"[CONCAT] comp={compId} delta({delta.Length}c)='{(delta.Length > 40 ? delta.Substring(0, 40) + "..." : delta)}'");
                 }
+                // ⚠ Ordinal for the same reason as TextRelations.Grows, which this mirrors: it is
+                // the negative half of the very same question, on the very same game text.
                 else if (!string.IsNullOrEmpty(lastRaw) && textValue.Length <= lastRaw.Length
-                         && !textValue.StartsWith(lastRaw))
+                         && !textValue.StartsWith(lastRaw, StringComparison.Ordinal))
                 {
                     // Text shrunk or changed completely — component likely reused for different content.
                     // Unflag concat so the new text is treated normally (queued for AI if cache miss).

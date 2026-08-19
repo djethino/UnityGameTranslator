@@ -39,6 +39,18 @@ namespace UnityGameTranslator.Core.Checks
             // pinned here so a future change to it is a deliberate one.
             Grows(check, "<v>Hel</v>lo", "<v>Hell</v>o", false,
                   "a marker that MOVES does not grow — the blind spot, on purpose");
+
+            // 🔴 These pin the comparison to Ordinal. A linguistic prefix test treats soft hyphens
+            // and zero-width joiners as irrelevant, so it would answer TRUE to both of these — the
+            // two texts would be read as one that grew, and the delta would be cut in the wrong
+            // place. Real game text carries these: justification, emoji, Arabic and Indic joining.
+            // ⚠ Written as escapes, never as the characters themselves: a soft hyphen pasted into
+            // a source file is invisible in every editor, and the day someone "tidies" the line it
+            // vanishes without a trace and the case silently stops testing anything.
+            Grows(check, "a\u00ADb", "abcd", false,
+                  "a soft hyphen is a character here, not a decoration");
+            Grows(check, "Hel\u200Dlo", "Hello world", false,
+                  "and so is a zero-width joiner");
         }
 
         /// <summary>Growth by a few characters: a reveal, not an assembly.</summary>
@@ -99,8 +111,11 @@ namespace UnityGameTranslator.Core.Checks
         {
             if (value == null) return "(null)";
             if (value.Length == 0) return "(empty)";
+            // The invisible ones matter most here: a result line showing "ab" for two different
+            // strings would make a failure impossible to read.
             return "\"" + value.Replace("\n", "\\n").Replace("\r", "\\r")
-                               .Replace("\t", "\\t").Replace("\u00A0", "\\u00A0") + "\"";
+                               .Replace("\t", "\\t").Replace("\u00A0", "\\u00A0")
+                               .Replace("\u00AD", "\\u00AD").Replace("\u200D", "\\u200D") + "\"";
         }
     }
 }

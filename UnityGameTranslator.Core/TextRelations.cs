@@ -1,3 +1,5 @@
+using System;
+
 namespace UnityGameTranslator.Core
 {
     /// <summary>
@@ -24,15 +26,30 @@ namespace UnityGameTranslator.Core
         /// them the same way, so each keeps its own check. Passing null throws here exactly as it
         /// threw before this was extracted.
         ///
-        /// ⚠ Uses the culture-sensitive <c>StartsWith(string)</c> overload — the one all six sites
-        /// used. `StringComparison.Ordinal` is almost certainly what is meant (a culture-sensitive
-        /// prefix test can ignore characters such as soft hyphens or zero-width joiners, which game
-        /// markup does contain), but switching is a DELIBERATE change to make on its own, with its
-        /// own cases. It is not a side effect of moving code.
+        /// 🔴 **Ordinal, and that is load-bearing.** The six call sites used the default
+        /// <c>StartsWith(string)</c>, which compares LINGUISTICALLY. Three reasons that was wrong
+        /// here, none of them cosmetic:
+        ///
+        /// 1. **It answers a different question.** A linguistic prefix test ignores characters the
+        ///    collation deems irrelevant — soft hyphens, zero-width joiners, some format marks —
+        ///    all of which occur in real game text (justification, emoji sequences, Arabic and
+        ///    Indic joining). Two texts differing only by those would read as "the same text that
+        ///    grew", and a delta would be cut in the wrong place. What is wanted is literally
+        ///    "these characters, then more".
+        /// 2. **It is not the same test on every runtime.** Unity's Mono, IL2CPP and the .NET that
+        ///    runs the checks project do not carry the same collation data — so a culture-sensitive
+        ///    rule verified here would not be the rule running in a game. That alone would make
+        ///    UnityGameTranslator.Core.Checks a decoration.
+        /// 3. **It is far slower**, and this runs on every single set_text of every text component.
+        ///
+        /// ⚠ Says nothing about empty or null inputs, on purpose: the call sites did not all guard
+        /// them the same way, so each keeps its own check. Passing null throws here exactly as it
+        /// threw before this was extracted.
         /// </summary>
         public static bool Grows(string previous, string current)
         {
-            return current.Length > previous.Length && current.StartsWith(previous);
+            return current.Length > previous.Length
+                   && current.StartsWith(previous, StringComparison.Ordinal);
         }
 
         /// <summary>Most characters a single typewriter step is assumed to reveal.</summary>
@@ -51,7 +68,7 @@ namespace UnityGameTranslator.Core
         {
             return current.Length > previous.Length
                    && current.Length - previous.Length <= TypewriterMaxCharsPerStep
-                   && current.StartsWith(previous);
+                   && current.StartsWith(previous, StringComparison.Ordinal);
         }
 
         /// <summary>

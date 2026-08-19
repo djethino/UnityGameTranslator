@@ -510,8 +510,12 @@ namespace UnityGameTranslator.Core
 
             try
             {
-                string translated = TranslatorCore.TranslateTextWithTracking(value, __instance);
-                if (!string.IsNullOrEmpty(translated)) value = translated;
+                // The same routing every other text framework goes through: procedural text,
+                // reveals, read-back, the already-written check. It used to call the translator
+                // directly and inherited none of it — the asymmetry the routing split removed
+                // for NGUI and tk2d, closed here too.
+                TranslatorPatches.RouteText(__instance, __instance, IdFor(__instance),
+                                            isOwnUI: false, componentType: "UIToolkit", textValue: ref value);
             }
             catch { }
         }
@@ -529,6 +533,110 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static readonly ConditionalWeakTable<object, string> _written =
             new ConditionalWeakTable<object, string>();
+
+        #region Identity
+
+        private sealed class IdBox { public long Value; }
+
+        /// <summary>
+        /// A stable number for an element, so it can be followed by the same routing every other
+        /// text framework uses.
+        ///
+        /// 🔴 **Weak, and that is the whole design.** The routing state lives in a strong
+        /// dictionary keyed by this number. UI Toolkit recycles elements by the hundred — list
+        /// virtualisation — so anything holding them strongly keeps every element ever scrolled
+        /// past alive for the life of the process. The number is attached to the element here and
+        /// dies with it; <see cref="Sweep"/> then drops the state it pointed at.
+        /// </summary>
+        private static readonly ConditionalWeakTable<object, IdBox> _ids =
+            new ConditionalWeakTable<object, IdBox>();
+
+        /// <summary>The other direction, weakly, so an id can be resolved and swept.</summary>
+        private static readonly Dictionary<long, WeakReference> _byId = new Dictionary<long, WeakReference>();
+
+        /// <summary>
+        /// 🔴 **Beyond every int, so a collision with a Unity instance id is impossible rather
+        /// than unlikely.** Unity hands out instance ids of either sign across the whole int range,
+        /// so no int window is free to claim — which is why the routing key is a long. The
+        /// widening from int is implicit, so every existing caller passing an instance id compiles
+        /// and behaves exactly as before.
+        /// </summary>
+        private static long _nextId = 1L << 32;
+
+        /// <summary>The element's number, assigned on first sight.</summary>
+        public static long IdFor(object element)
+        {
+            if (element == null) return 0;
+
+            if (_ids.TryGetValue(element, out var box)) return box.Value;
+
+            box = new IdBox { Value = _nextId++ };
+            _ids.Add(element, box);
+            _byId[box.Value] = new WeakReference(element);
+            return box.Value;
+        }
+
+        /// <summary>The element behind a number, or null once it has been collected.</summary>
+        public static object ElementFor(long id)
+        {
+            if (!_byId.TryGetValue(id, out var weak)) return null;
+
+            var target = weak.Target;
+            if (target == null) Forget(id);
+            return target;
+        }
+
+        private static void Forget(long id)
+        {
+            _byId.Remove(id);
+            TranslatorPatches.ForgetElementState(id);
+        }
+
+        /// <summary>
+        /// Drop the ids whose element is gone, and the routing state behind them.
+        ///
+        /// ⚠ Called from the scan rather than on a timer: it is the same pass that walks the
+        /// documents, so it costs nothing extra to know that a scroll has happened.
+        /// </summary>
+        private static void Sweep()
+        {
+            if (_byId.Count == 0) return;
+
+            List<long> dead = null;
+            foreach (var pair in _byId)
+            {
+                if (pair.Value.Target != null) continue;
+                (dead ?? (dead = new List<long>())).Add(pair.Key);
+            }
+
+            if (dead == null) return;
+            foreach (long id in dead) Forget(id);
+        }
+
+        /// <summary>
+        /// Put a text into an element from outside — the routing does this when a reveal settles
+        /// on something already translated.
+        ///
+        /// ⚠ Through the same write-back guard the scan uses, or the setter patch would read our
+        /// own write as the game's and translate the translation.
+        /// </summary>
+        public static void WriteBack(object element, string text)
+        {
+            if (_textProp == null || element == null || text == null) return;
+
+            try
+            {
+                _writingBack = true;
+                try { _textProp.SetValue(element, text, null); }
+                finally { _writingBack = false; }
+
+                _written.Remove(element);
+                _written.Add(element, text);
+            }
+            catch { }
+        }
+
+        #endregion
 
         private static float _lastScanTime;
 
@@ -560,6 +668,10 @@ namespace UnityGameTranslator.Core
 
             try
             {
+                // Elements recycled since the last pass: drop their ids and the routing state
+                // behind them. Here because this is the pass that knows a scroll has happened.
+                Sweep();
+
                 var documents = TypeHelper.FindAllObjectsOfType(UIDocumentType);
                 if (documents == null || documents.Length == 0) return;
 
@@ -684,7 +796,11 @@ namespace UnityGameTranslator.Core
                 // translate the target language into itself.
                 if (_written.TryGetValue(element, out var mine) && mine == current) return;
 
-                string translated = TranslatorCore.TranslateTextWithTracking(current, element);
+                if (IsEchoOfTyping(element, current)) return;
+
+                string translated = current;
+                TranslatorPatches.RouteText(element, element, IdFor(element),
+                                            isOwnUI: false, componentType: "UIToolkit", textValue: ref translated);
                 if (string.IsNullOrEmpty(translated) || translated == current) return;
 
                 _writingBack = true;

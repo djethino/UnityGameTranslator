@@ -1884,8 +1884,8 @@ namespace UnityGameTranslator.Core
             public bool TypewritingQueued;  // already handed over; do not hand it over twice
         }
 
-        private static readonly Dictionary<int, ComponentTextState> _componentState =
-            new Dictionary<int, ComponentTextState>();
+        private static readonly Dictionary<long, ComponentTextState> _componentState =
+            new Dictionary<long, ComponentTextState>();
 
         /// <summary>
         /// Components with typewriting in flight — an INDEX over <see cref="_componentState"/>, not
@@ -1896,10 +1896,10 @@ namespace UnityGameTranslator.Core
         /// proportional to the whole scene. Any id in here whose mode is no longer Typewriter gets
         /// dropped by the stabilizer, so it cannot drift into a source of truth.
         /// </summary>
-        private static readonly HashSet<int> _typewritingPending = new HashSet<int>();
+        private static readonly HashSet<long> _typewritingPending = new HashSet<long>();
 
         /// <summary>The record for this component, created on first need.</summary>
-        private static ComponentTextState StateFor(int compId)
+        private static ComponentTextState StateFor(long compId)
         {
             ComponentTextState state;
             if (!_componentState.TryGetValue(compId, out state))
@@ -1910,8 +1910,20 @@ namespace UnityGameTranslator.Core
             return state;
         }
 
+        /// <summary>
+        /// Drop everything followed for an id whose target no longer exists.
+        ///
+        /// Called by UIToolkitSupport when an element has been collected — the counterpart of
+        /// CleanDeadRefs for the framework whose elements are held weakly.
+        /// </summary>
+        internal static void ForgetElementState(long id)
+        {
+            _componentState.Remove(id);
+            _typewritingPending.Remove(id);
+        }
+
         /// <summary>The record for this component, or null. For readers that must not create one.</summary>
-        private static ComponentTextState PeekState(int compId)
+        private static ComponentTextState PeekState(long compId)
         {
             if (compId == -1) return null;
             ComponentTextState state;
@@ -1926,7 +1938,7 @@ namespace UnityGameTranslator.Core
         private static readonly HashSet<string> _concatTranslatedValues = new HashSet<string>();
 
         /// <summary>Check if a component is in concat mode.</summary>
-        public static bool IsConcatComponent(int compId)
+        public static bool IsConcatComponent(long compId)
         {
             var state = PeekState(compId);
             return state != null && state.Mode == TextMode.Concat;
@@ -1944,7 +1956,7 @@ namespace UnityGameTranslator.Core
         /// Re-assemble a concat component's text using stored deltas and current cache.
         /// Returns the assembled FR text, or null if no deltas stored.
         /// </summary>
-        public static string ReassembleConcat(int compId, object component)
+        public static string ReassembleConcat(long compId, object component)
         {
             var state = PeekState(compId);
             List<string> deltas = state?.Deltas;
@@ -2724,7 +2736,7 @@ namespace UnityGameTranslator.Core
         /// Record the translation applied to a component (called after successful translation).
         /// Read back by <see cref="DetectReadBack"/> when the game appends to what we wrote.
         /// </summary>
-        public static void TrackTranslation(int compId, string original, string translated)
+        public static void TrackTranslation(long compId, string original, string translated)
         {
             if (compId == -1 || string.IsNullOrEmpty(original) || string.IsNullOrEmpty(translated)) return;
             var state = StateFor(compId);
@@ -2737,7 +2749,7 @@ namespace UnityGameTranslator.Core
         /// If so, reconstruct the source-language equivalent and VERIFY it exists in cache.
         /// Returns null if not a read-back or if reconstructed text has no cache hit.
         /// </summary>
-        public static string DetectReadBack(int compId, string incomingText)
+        public static string DetectReadBack(long compId, string incomingText)
         {
             if (compId == -1 || string.IsNullOrEmpty(incomingText)) return null;
             var state = PeekState(compId);
@@ -2791,7 +2803,7 @@ namespace UnityGameTranslator.Core
         private const float TYPEWRITING_STABILIZE_MS = 500f; // ms without change = text is final
 
         /// <summary>Check if a component is currently being tracked for typewriting.</summary>
-        public static bool IsInTypewritingState(int compId)
+        public static bool IsInTypewritingState(long compId)
         {
             var state = PeekState(compId);
             return state != null && state.Mode == TextMode.Typewriter;
@@ -2802,7 +2814,7 @@ namespace UnityGameTranslator.Core
         /// to prevent the stabilizer from thinking the typewriting stopped.
         /// Also updates the stored text if it grew (StartsWith).
         /// </summary>
-        public static void TouchTypewritingTimestamp(int compId, string currentText)
+        public static void TouchTypewritingTimestamp(long compId, string currentText)
         {
             if (compId == -1 || string.IsNullOrEmpty(currentText)) return;
             var state = PeekState(compId);
@@ -2851,7 +2863,7 @@ namespace UnityGameTranslator.Core
         /// Hold this component's text back: a reveal is in progress, or has just restarted.
         /// Puts it on the work list so the stabilizer will look at it.
         /// </summary>
-        private static void HoldTypewriting(ComponentTextState state, int compId, string text, float now)
+        private static void HoldTypewriting(ComponentTextState state, long compId, string text, float now)
         {
             state.Mode = TextMode.Typewriter;
             state.TypewritingText = text;
@@ -2863,7 +2875,7 @@ namespace UnityGameTranslator.Core
         private static int _dbgTwProgress = 0;
         private static int _fontDebugOnce = 0;
 
-        public static bool IsTypewritingInProgress(int compId, string newText)
+        public static bool IsTypewritingInProgress(long compId, string newText)
         {
             if (compId == -1 || string.IsNullOrEmpty(newText)) return false;
             if (!TranslatorCore.TypewritingDetection) return false;
@@ -2935,7 +2947,7 @@ namespace UnityGameTranslator.Core
         /// Process a finalized typewriting text: queue for AI if not in cache,
         /// or re-trigger SetText if already cached.
         /// </summary>
-        private static void ProcessFinalizedText(int compId, string text)
+        private static void ProcessFinalizedText(long compId, string text)
         {
             if (string.IsNullOrEmpty(text)) return;
 
@@ -2956,11 +2968,8 @@ namespace UnityGameTranslator.Core
 
             if (inCache)
             {
-                if (_patchedComponentRefs.TryGetValue(compId, out var comp) && comp != null)
-                {
-                    try { TypeHelper.SetText(comp, text); }
-                    catch { }
-                }
+                var target = TargetOf(compId);
+                if (target != null) WriteText(target, text);
             }
             else if (alreadyTranslated)
             {
@@ -2970,10 +2979,36 @@ namespace UnityGameTranslator.Core
             }
             else
             {
-                object comp = null;
-                _patchedComponentRefs.TryGetValue(compId, out comp);
-                TranslatorCore.QueueForTranslation(text, comp);
+                TranslatorCore.QueueForTranslation(text, TargetOf(compId));
             }
+        }
+
+        /// <summary>
+        /// What an id points at, whichever framework it came from.
+        ///
+        /// ⚠ Two stores because the two have opposite lifetimes: a Component is held strongly and
+        /// swept when it dies, a UI Toolkit element is held WEAKLY because list virtualisation
+        /// recycles them by the hundred. See UIToolkitSupport.ElementFor.
+        /// </summary>
+        private static object TargetOf(long id)
+        {
+            if (id >= int.MinValue && id <= int.MaxValue)
+            {
+                _patchedComponentRefs.TryGetValue((int)id, out var comp);
+                return comp;
+            }
+            return UIToolkitSupport.ElementFor(id);
+        }
+
+        /// <summary>Put a text back where it came from, through whichever setter owns it.</summary>
+        private static void WriteText(object target, string text)
+        {
+            try
+            {
+                if (target is Component) TypeHelper.SetText(target, text);
+                else UIToolkitSupport.WriteBack(target, text);
+            }
+            catch { }
         }
 
         /// <summary>
@@ -2985,9 +3020,9 @@ namespace UnityGameTranslator.Core
             if (_typewritingPending.Count == 0) return;
 
             float now = Time.realtimeSinceStartup;
-            var toDrop = new List<int>();
+            var toDrop = new List<long>();
 
-            foreach (int compId in _typewritingPending)
+            foreach (long compId in _typewritingPending)
             {
                 // 🔴 An id with no state left can never do anything again, so it is dropped rather
                 // than skipped. Skipping it kept it in the set for good, and one such id is enough
@@ -3004,7 +3039,7 @@ namespace UnityGameTranslator.Core
 
             // Carries both the stabilized ids and the stateless ones; the latter fall out at the
             // mode test below, after having been removed from the set.
-            foreach (int compId in toDrop)
+            foreach (long compId in toDrop)
             {
                 _typewritingPending.Remove(compId);
 
@@ -3040,7 +3075,7 @@ namespace UnityGameTranslator.Core
         /// This component builds its text in parts. Cancels any reveal in flight — the two are
         /// exclusive, and this is now the ONE place that says so.
         /// </summary>
-        private static void EnterConcat(ComponentTextState state, int compId)
+        private static void EnterConcat(ComponentTextState state, long compId)
         {
             ForgetTypewriting(state);
             _typewritingPending.Remove(compId);
@@ -3110,7 +3145,7 @@ namespace UnityGameTranslator.Core
         /// <summary>
         /// What the caller must do once the text has been routed.
         /// </summary>
-        private enum RouteOutcome
+        internal enum RouteOutcome
         {
             /// <summary>Routed, possibly translated — carry on with the font work.</summary>
             Translated,
@@ -3135,7 +3170,7 @@ namespace UnityGameTranslator.Core
         /// the one branch that needed a scale re-asserted says so through StopButRescale rather
         /// than doing it here.
         /// </summary>
-        private static RouteOutcome RouteText(object instance, Component comp, int compId,
+        internal static RouteOutcome RouteText(object instance, object comp, long compId,
                                               bool isOwnUI, string componentType, ref string textValue)
         {
             // Don't translate InputField textComponent (user's typed text)

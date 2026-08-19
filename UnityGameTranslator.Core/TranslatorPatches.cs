@@ -1797,30 +1797,93 @@ namespace UnityGameTranslator.Core
         // - TW: 1 set_text per frame, text grows → defer for 500ms stabilization
         // Detection: track set_text count per frame per component.
 
-        // Last RAW text per component (pre-translation, for delta computation)
-        private static readonly Dictionary<int, string> _lastRawText = new Dictionary<int, string>();
-        // Last TRANSLATED text per component (for display: translatedBase + translatedDelta)
-        private static readonly Dictionary<int, string> _lastTranslatedText = new Dictionary<int, string>();
-        // Frame tracking: detect multiple set_text in same frame
-        private static readonly Dictionary<int, int> _compLastFrame = new Dictionary<int, int>();
-        private static readonly Dictionary<int, int> _compFrameCallCount = new Dictionary<int, int>();
+        /// <summary>
+        /// Everything followed per text component, in one record.
+        ///
+        /// 🔴 **Nine dictionaries keyed by the same instance id used to hold this, under FIVE
+        /// different cleanup policies.** Adding a tenth meant knowing which of three clear methods
+        /// it belonged in, and getting it wrong was invisible: the read-back map ended up cleaned
+        /// by nothing at all and kept two strings per component for the whole session, the
+        /// typewriting work list kept ids whose state was gone, and the best-fit reference was
+        /// never dropped. One record has ONE lifetime, so a field added later cannot be forgotten.
+        ///
+        /// ⚠ **Deliberately NOT in here**: `_concatAssembledCache` and `_concatTranslatedValues`,
+        /// which are keyed by TEXT and not by component. They answer "have I already seen this
+        /// string", a question that outlives any one component.
+        /// </summary>
+        private sealed class ComponentTextState
+        {
+            // --- What the game last wrote, and what we last showed ---
+            public string LastRaw;          // pre-translation, for delta computation
+            public string LastTranslated;   // for display: translatedBase + translatedDelta
+
+            // --- Procedural text (concat) ---
+            public bool IsConcat;           // 2+ set_text in one frame, text growing, seen at least once
+            public List<string> Deltas;     // ordered parts, for re-assembly when translations arrive
+
+            // --- Frame tracking that feeds the concat decision ---
+            // -1 and not 0: Time.frameCount really is 0 on the first frame, and a fresh record must
+            // read as "not seen this frame" there too, exactly as an absent dictionary entry did.
+            public int LastFrame = -1;
+            public int FrameCallCount;
+
+            // --- Read-back: what we translated, so an append can be reconstructed ---
+            public string ReadBackSource;
+            public string ReadBackTranslated;
+
+            // --- Typewriting ---
+            public bool HasTypewriting;     // a reveal is being followed on this component
+            public string TypewritingText;
+            public float TypewritingSince;
+            public bool TypewritingQueued;  // already handed over; do not hand it over twice
+        }
+
+        private static readonly Dictionary<int, ComponentTextState> _componentState =
+            new Dictionary<int, ComponentTextState>();
+
+        /// <summary>
+        /// Components with typewriting in flight — an INDEX over <see cref="_componentState"/>, not
+        /// a second source of truth.
+        ///
+        /// ⚠ Kept as its own set on purpose: the stabilizer runs every frame, and walking every
+        /// known component to find the two that are mid-reveal would turn a constant cost into one
+        /// proportional to the whole scene. Any id in here without `HasTypewriting` is dropped by
+        /// the stabilizer, so it cannot drift into a source of truth.
+        /// </summary>
+        private static readonly HashSet<int> _typewritingPending = new HashSet<int>();
+
+        /// <summary>The record for this component, created on first need.</summary>
+        private static ComponentTextState StateFor(int compId)
+        {
+            ComponentTextState state;
+            if (!_componentState.TryGetValue(compId, out state))
+            {
+                state = new ComponentTextState();
+                _componentState[compId] = state;
+            }
+            return state;
+        }
+
+        /// <summary>The record for this component, or null. For readers that must not create one.</summary>
+        private static ComponentTextState PeekState(int compId)
+        {
+            if (compId == -1) return null;
+            ComponentTextState state;
+            return _componentState.TryGetValue(compId, out state) ? state : null;
+        }
+
         // Runtime cache for concat-assembled texts (not saved to JSON).
-        // Key = full raw CN text, Value = full assembled FR text.
+        // Key = full raw source text, Value = full assembled translated text.
         // Prevents re-queuing of assembled texts on scanner refresh.
         private static readonly Dictionary<string, string> _concatAssembledCache = new Dictionary<string, string>();
-        // Fast lookup for translated values (to skip FR text that comes back)
+        // Fast lookup for translated values (to skip target-language text that comes back)
         private static readonly HashSet<string> _concatTranslatedValues = new HashSet<string>();
-        // Stored deltas per concat component (for re-assembly when AI translations arrive)
-        // Key = compId, Value = ordered list of (rawDelta, includesLeadingNL, includesTrailingNL)
-        private static readonly Dictionary<int, List<string>> _concatDeltas = new Dictionary<int, List<string>>();
-
-        // Components flagged as concat (2+ set_text in same frame seen at least once)
-        private static readonly HashSet<int> _concatComponents = new HashSet<int>();
 
         /// <summary>Check if a component is in concat mode.</summary>
         public static bool IsConcatComponent(int compId)
         {
-            return compId != -1 && _concatComponents.Contains(compId);
+            var state = PeekState(compId);
+            return state != null && state.IsConcat;
         }
 
         /// <summary>Look up a text in the concat assembled cache. Returns FR translation or null.</summary>
@@ -1837,8 +1900,9 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static string ReassembleConcat(int compId, object component)
         {
-            List<string> deltas;
-            if (!_concatDeltas.TryGetValue(compId, out deltas) || deltas.Count == 0)
+            var state = PeekState(compId);
+            List<string> deltas = state?.Deltas;
+            if (deltas == null || deltas.Count == 0)
                 return null;
 
             var result = new System.Text.StringBuilder();
@@ -1903,17 +1967,10 @@ namespace UnityGameTranslator.Core
             _altTMPFontReplacedIds.Clear();
             _fontNameCache.Clear();
             _patchedComponentRefs.Clear();
-            _typewritingState.Clear();
-            _activeTypewriting.Clear();
-            _lastTranslatedText.Clear();
-            _lastRawText.Clear();
-            _compLastFrame.Clear();
-            _compFrameCallCount.Clear();
-            _concatComponents.Clear();
+            _componentState.Clear();
+            _typewritingPending.Clear();
             _concatAssembledCache.Clear();
             _concatTranslatedValues.Clear();
-            _concatDeltas.Clear();
-            _lastTranslation.Clear();
         }
 
         /// <summary>
@@ -1937,12 +1994,13 @@ namespace UnityGameTranslator.Core
                 _originalAutoSizeMax.Remove(id);
                 _originalAutoSizeMin.Remove(id);
                 _inheritedCloneComponents.Remove(id);
-                _lastTranslatedText.Remove(id);
-                _lastRawText.Remove(id);
-                _concatComponents.Remove(id);
-                // Read-back only matters between "we translated this component" and "the game
-                // reads it back and appends" — a destroyed component never reads back.
-                _lastTranslation.Remove(id);
+                // Everything followed per component goes at once. ⚠ This drops a little more than
+                // the separate maps used to: the frame counters, the concat deltas and the
+                // typewriting state used to survive here. Dropping them is a no-op in fact — the
+                // component is destroyed, so its id is never presented again and no reader can
+                // reach those entries.
+                _componentState.Remove(id);
+                _typewritingPending.Remove(id);
                 // Safe HERE and only here: the entry is the anti-cumulation reference, so it must
                 // survive a live component (see its declaration).
                 _originalMaxFontSizes.Remove(id);
@@ -1968,7 +2026,11 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static void ClearLastTranslatedCache()
         {
-            _lastTranslatedText.Clear();
+            // Only that one field: the rest of a component's record (concat mode, deltas,
+            // typewriting) is not what this method is about, and dropping it here would silently
+            // reset the detection every time a font override changes.
+            foreach (var state in _componentState.Values)
+                state.LastTranslated = null;
         }
 
         /// <summary>
@@ -2612,22 +2674,16 @@ namespace UnityGameTranslator.Core
         public static Dictionary<int, object> PatchedComponentRefs => _patchedComponentRefs;
 
         // === READ-BACK DETECTION ===
-        // Track the last translation applied to each component. When the game reads back
-        // translated text and appends untranslated content, we detect it and reconstruct
-        // the source-language text for proper cache lookup.
-        // Key: instanceId, Value: (original source text, translated text)
-        // ⚠ Lifetime: an entry is only useful between "we translated this component" and "the game
-        // reads it back". Cleared in ClearCache, dropped per dead id in CleanDeadRefs — it used to
-        // be cleared by nothing at all, which kept two strings per component alive for the session.
-        private static readonly Dictionary<int, KeyValuePair<string, string>> _lastTranslation = new Dictionary<int, KeyValuePair<string, string>>();
-
         /// <summary>
         /// Record the translation applied to a component (called after successful translation).
+        /// Read back by <see cref="DetectReadBack"/> when the game appends to what we wrote.
         /// </summary>
         public static void TrackTranslation(int compId, string original, string translated)
         {
             if (compId == -1 || string.IsNullOrEmpty(original) || string.IsNullOrEmpty(translated)) return;
-            _lastTranslation[compId] = new KeyValuePair<string, string>(original, translated);
+            var state = StateFor(compId);
+            state.ReadBackSource = original;
+            state.ReadBackTranslated = translated;
         }
 
         /// <summary>
@@ -2638,10 +2694,11 @@ namespace UnityGameTranslator.Core
         public static string DetectReadBack(int compId, string incomingText)
         {
             if (compId == -1 || string.IsNullOrEmpty(incomingText)) return null;
-            if (!_lastTranslation.TryGetValue(compId, out var pair)) return null;
+            var state = PeekState(compId);
+            if (state == null || state.ReadBackSource == null || state.ReadBackTranslated == null) return null;
 
-            string original = pair.Key;
-            string translated = pair.Value;
+            string original = state.ReadBackSource;
+            string translated = state.ReadBackTranslated;
 
             // The incoming text must START WITH the translated text but be LONGER
             // (the game appended something to the read-back)
@@ -2673,40 +2730,21 @@ namespace UnityGameTranslator.Core
         }
 
         // === TYPEWRITING DETECTION ===
-        // Per-component tracking to detect typewriting effects (text growing char by char).
-        // When detected, skip translation until the text stabilizes.
-        private struct TypewritingState
-        {
-            public string Text;
-            public float Timestamp;
-            public bool Queued; // true = already queued for translation, don't re-queue
-        }
-        private static readonly Dictionary<int, TypewritingState> _typewritingState = new Dictionary<int, TypewritingState>();
+        //
+        // Text growing a few characters at a time on one component. While a reveal is in progress
+        // the text is held back, so a half-written line is never sent for translation: every
+        // cache-miss text waits TYPEWRITING_STABILIZE_MS without changing before being handed over.
+        // Cache hits bypass all of this.
+        //
+        // The state lives in ComponentTextState (the Typewriting* fields); _typewritingPending is
+        // the index of the components that have one in flight.
         private const float TYPEWRITING_STABILIZE_MS = 500f; // ms without change = text is final
 
-        /// <summary>
-        /// Check if a set_text call looks like a typewriting effect (text growing on same component).
-        /// Returns true if we should skip translation for this call.
-        /// </summary>
-        /// <summary>
-        /// Debounce cache-miss translations. ALL new texts (cache miss) are held for
-        /// TYPEWRITING_STABILIZE_MS before being queued for AI. This catches typewriting
-        /// effects where the text grows char by char. Cache hits bypass this entirely.
-        /// Returns true if the text should be skipped (still stabilizing).
-        /// </summary>
-        // If text grows AND is within this time window, it's typewriting (regardless of chars added)
-        // The key indicator is RAPID growth on the same component, not the size of each addition
-
-        /// <summary>
-        /// Detect typewriting effects: text growing by a few chars at a time on the same component.
-        /// Only defers if the text grows by 1-5 chars (typewriting). Larger additions (dialogue
-        /// accumulation, paragraph appends) are allowed through immediately.
-        /// Returns true if the text should NOT be queued yet (typewriting in progress).
-        /// </summary>
         /// <summary>Check if a component is currently being tracked for typewriting.</summary>
         public static bool IsInTypewritingState(int compId)
         {
-            return compId != -1 && _typewritingState.ContainsKey(compId);
+            var state = PeekState(compId);
+            return state != null && state.HasTypewriting;
         }
 
         /// <summary>
@@ -2717,18 +2755,19 @@ namespace UnityGameTranslator.Core
         public static void TouchTypewritingTimestamp(int compId, string currentText)
         {
             if (compId == -1 || string.IsNullOrEmpty(currentText)) return;
-            if (_concatComponents.Contains(compId)) return; // concat handled separately
-            if (!_typewritingState.TryGetValue(compId, out var state)) return;
+            var state = PeekState(compId);
+            if (state == null || state.IsConcat) return; // concat handled separately
+            if (!state.HasTypewriting) return;
 
-            bool isGrowing = TextRelations.Grows(state.Text, currentText);
-            bool isSame = currentText == state.Text;
+            bool isGrowing = TextRelations.Grows(state.TypewritingText, currentText);
+            bool isSame = currentText == state.TypewritingText;
 
-            if (state.Queued)
+            if (state.TypewritingQueued)
             {
                 if (_dbgTouchLog < 10 && (isGrowing || isSame))
                 {
                     _dbgTouchLog++;
-                    TranslatorCore.LogInfo($"[TW-TOUCH] comp={compId} BLOCKED by Queued=true, isGrowing={isGrowing} isSame={isSame} stateText='{(state.Text.Length > 30 ? state.Text.Substring(0,30) : state.Text)}' curText='{(currentText.Length > 30 ? currentText.Substring(0,30) : currentText)}'");
+                    TranslatorCore.LogInfo($"[TW-TOUCH] comp={compId} BLOCKED by Queued=true, isGrowing={isGrowing} isSame={isSame} stateText='{Head(state.TypewritingText)}' curText='{Head(currentText)}'");
                 }
                 return;
             }
@@ -2738,7 +2777,7 @@ namespace UnityGameTranslator.Core
                 if (_dbgTouchLog < 10)
                 {
                     _dbgTouchLog++;
-                    TranslatorCore.LogInfo($"[TW-TOUCH] comp={compId} SKIP unrelated stateText='{(state.Text.Length > 30 ? state.Text.Substring(0,30) : state.Text)}' curText='{(currentText.Length > 30 ? currentText.Substring(0,30) : currentText)}'");
+                    TranslatorCore.LogInfo($"[TW-TOUCH] comp={compId} SKIP unrelated stateText='{Head(state.TypewritingText)}' curText='{Head(currentText)}'");
                 }
                 return;
             }
@@ -2746,16 +2785,30 @@ namespace UnityGameTranslator.Core
             if (_dbgTouchLog < 10)
             {
                 _dbgTouchLog++;
-                TranslatorCore.LogInfo($"[TW-TOUCH] comp={compId} OK isGrowing={isGrowing} text='{(currentText.Length > 30 ? currentText.Substring(0,30) : currentText)}'");
+                TranslatorCore.LogInfo($"[TW-TOUCH] comp={compId} OK isGrowing={isGrowing} text='{Head(currentText)}'");
             }
 
-            _typewritingState[compId] = new TypewritingState
-            {
-                Text = isGrowing ? currentText : state.Text,
-                Timestamp = Time.realtimeSinceStartup,
-                Queued = false
-            };
-            _activeTypewriting.Add(compId);
+            HoldTypewriting(state, compId, isGrowing ? currentText : state.TypewritingText, Time.realtimeSinceStartup);
+        }
+
+        /// <summary>First 30 characters of a text, for a log line.</summary>
+        private static string Head(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return text;
+            return text.Length > 30 ? text.Substring(0, 30) : text;
+        }
+
+        /// <summary>
+        /// Hold this component's text back: a reveal is in progress, or has just restarted.
+        /// Puts it on the work list so the stabilizer will look at it.
+        /// </summary>
+        private static void HoldTypewriting(ComponentTextState state, int compId, string text, float now)
+        {
+            state.HasTypewriting = true;
+            state.TypewritingText = text;
+            state.TypewritingSince = now;
+            state.TypewritingQueued = false;
+            _typewritingPending.Add(compId);
         }
 
         private static int _dbgTwProgress = 0;
@@ -2766,57 +2819,57 @@ namespace UnityGameTranslator.Core
             if (compId == -1 || string.IsNullOrEmpty(newText)) return false;
             if (!TranslatorCore.TypewritingDetection) return false;
 
+            var state = StateFor(compId);
+
             // Concat components are handled by the concat system, not TW
-            if (_concatComponents.Contains(compId)) return false;
+            if (state.IsConcat) return false;
 
             float now = Time.realtimeSinceStartup;
 
-            if (_typewritingState.TryGetValue(compId, out var state))
+            if (state.HasTypewriting)
             {
-                if (state.Text == newText)
+                if (state.TypewritingText == newText)
                 {
                     // Same text, still pending
                     return true;
                 }
 
-                float elapsed = (now - state.Timestamp) * 1000f;
-                bool isGrowing = TextRelations.Grows(state.Text, newText);
+                float elapsed = (now - state.TypewritingSince) * 1000f;
+                bool isGrowing = TextRelations.Grows(state.TypewritingText, newText);
 
                 // Log every call for typewriting components
                 if (TranslatorCore.DebugMode)
                 {
-                    TranslatorCore.LogDebug($"[TW-CHECK] comp={compId} prev={state.Text.Length}c new={newText.Length}c growing={isGrowing} elapsed={elapsed:F0}ms queued={state.Queued}\n  prevText='{state.Text}'\n  newText='{newText}'");
+                    TranslatorCore.LogDebug($"[TW-CHECK] comp={compId} prev={state.TypewritingText.Length}c new={newText.Length}c growing={isGrowing} elapsed={elapsed:F0}ms queued={state.TypewritingQueued}\n  prevText='{state.TypewritingText}'\n  newText='{newText}'");
                 }
 
                 if (isGrowing && elapsed < TYPEWRITING_STABILIZE_MS)
                 {
-                    _typewritingState[compId] = new TypewritingState { Text = newText, Timestamp = now, Queued = false };
-                    _activeTypewriting.Add(compId);
+                    HoldTypewriting(state, compId, newText, now);
                     return true;
                 }
 
                 // Detect TW overwrite: game is writing new text OVER our translation.
                 // Pattern: text shrinks or changes while previous state was already queued/translated.
-                // Each intermediate state is a mix CN/FR → DO NOT finalize, just keep deferring.
-                bool isShrinkingOverwrite = !isGrowing && state.Queued && newText.Length < state.Text.Length;
+                // Each intermediate state mixes source and target → DO NOT finalize, keep deferring.
+                bool isShrinkingOverwrite = !isGrowing && state.TypewritingQueued
+                                            && newText.Length < state.TypewritingText.Length;
                 if (isShrinkingOverwrite)
                 {
                     // Don't finalize the mixed state. Just update tracking and keep deferring.
-                    _typewritingState[compId] = new TypewritingState { Text = newText, Timestamp = now, Queued = false };
-                    _activeTypewriting.Add(compId);
+                    HoldTypewriting(state, compId, newText, now);
                     return true;
                 }
 
                 // Text changed completely (not StartsWith) or grew after long pause.
-                if (!state.Queued)
+                if (!state.TypewritingQueued)
                 {
-                    TranslatorCore.LogDebug($"[TW-FINAL] comp={compId} isGrowing={isGrowing} elapsed={elapsed:F0}ms\n  prev({state.Text.Length}c)='{state.Text}'\n  new({newText.Length}c)='{newText}'");
-                    ProcessFinalizedText(compId, state.Text);
+                    TranslatorCore.LogDebug($"[TW-FINAL] comp={compId} isGrowing={isGrowing} elapsed={elapsed:F0}ms\n  prev({state.TypewritingText.Length}c)='{state.TypewritingText}'\n  new({newText.Length}c)='{newText}'");
+                    ProcessFinalizedText(compId, state.TypewritingText);
                 }
 
                 // Store new text as new start, defer it
-                _typewritingState[compId] = new TypewritingState { Text = newText, Timestamp = now, Queued = false };
-                _activeTypewriting.Add(compId);
+                HoldTypewriting(state, compId, newText, now);
                 return true;
             }
 
@@ -2825,8 +2878,7 @@ namespace UnityGameTranslator.Core
             {
                 TranslatorCore.LogDebug($"[TW-NEW] comp={compId} FIRST text({newText.Length}c)='{newText}'");
             }
-            _typewritingState[compId] = new TypewritingState { Text = newText, Timestamp = now };
-            _activeTypewriting.Add(compId);
+            HoldTypewriting(state, compId, newText, now);
             return true;
         }
 
@@ -2879,17 +2931,14 @@ namespace UnityGameTranslator.Core
         /// Check for stabilized typewriting texts and queue them for translation.
         /// Called from ProcessPendingUpdates (main thread, periodic).
         /// </summary>
-        // Track which compIds are actually in a typewriting sequence (had a skip)
-        private static readonly HashSet<int> _activeTypewriting = new HashSet<int>();
-
         public static void ProcessStabilizedTypewriting()
         {
-            if (_activeTypewriting.Count == 0) return;
+            if (_typewritingPending.Count == 0) return;
 
             float now = Time.realtimeSinceStartup;
             var toDrop = new List<int>();
 
-            foreach (int compId in _activeTypewriting)
+            foreach (int compId in _typewritingPending)
             {
                 // 🔴 An id with no state left can never do anything again, so it is dropped rather
                 // than skipped. Skipping it kept it in the set for good, and one such id is enough
@@ -2897,51 +2946,65 @@ namespace UnityGameTranslator.Core
                 // never fires and this allocates a List every frame for the rest of the session.
                 // Self-healing on purpose: the state can vanish through ClearTypewritingState (scene
                 // unload) or through the concat/mirror paths, and this covers all of them at once.
-                if (!_typewritingState.TryGetValue(compId, out var state)) { toDrop.Add(compId); continue; }
-                float elapsed = (now - state.Timestamp) * 1000f;
+                var state = PeekState(compId);
+                if (state == null || !state.HasTypewriting) { toDrop.Add(compId); continue; }
+                float elapsed = (now - state.TypewritingSince) * 1000f;
                 if (elapsed >= TYPEWRITING_STABILIZE_MS)
                     toDrop.Add(compId);
             }
 
             // Carries both the stabilized ids and the stateless ones; the latter fall out at the
-            // TryGetValue below, after having been removed from the set.
+            // HasTypewriting test below, after having been removed from the set.
             foreach (int compId in toDrop)
             {
-                _activeTypewriting.Remove(compId);
+                _typewritingPending.Remove(compId);
+
+                var state = PeekState(compId);
+                if (state == null) continue;
 
                 // Skip concat components — their text is handled by the concat system, not TW
-                if (_concatComponents.Contains(compId))
+                if (state.IsConcat)
                 {
-                    _typewritingState.Remove(compId);
+                    ForgetTypewriting(state);
                     continue;
                 }
 
-                if (!_typewritingState.TryGetValue(compId, out var state)) continue;
-                if (state.Queued) continue; // Already processed this stabilized text
+                if (!state.HasTypewriting) continue;
+                if (state.TypewritingQueued) continue; // Already processed this stabilized text
 
-                // Mark as queued but keep in state — if more chars are added,
+                // Mark as queued but keep the state — if more chars are added,
                 // IsTypewritingInProgress will detect it and reset.
-                _typewritingState[compId] = new TypewritingState
-                {
-                    Text = state.Text,
-                    Timestamp = state.Timestamp,
-                    Queued = true
-                };
+                state.TypewritingQueued = true;
 
-                TranslatorCore.LogDebug($"[TW-STAB] comp={compId} stabilized after {(now - state.Timestamp)*1000:F0}ms text='{(state.Text.Length > 40 ? state.Text.Substring(0,40) : state.Text)}'");
-                ProcessFinalizedText(compId, state.Text);
+                TranslatorCore.LogDebug($"[TW-STAB] comp={compId} stabilized after {(now - state.TypewritingSince)*1000:F0}ms text='{(state.TypewritingText.Length > 40 ? state.TypewritingText.Substring(0,40) : state.TypewritingText)}'");
+                ProcessFinalizedText(compId, state.TypewritingText);
             }
+        }
+
+        /// <summary>Drop the reveal being followed on this component, keeping everything else.</summary>
+        private static void ForgetTypewriting(ComponentTextState state)
+        {
+            state.HasTypewriting = false;
+            state.TypewritingText = null;
+            state.TypewritingSince = 0f;
+            state.TypewritingQueued = false;
         }
 
         /// <summary>
         /// Clear typewriting state (on scene change, settings change, etc.)
-        /// ⚠ Deliberately does NOT touch _activeTypewriting: that set is the work list, and
-        /// ProcessStabilizedTypewriting drops any id it finds without a state. Emptying it here as
-        /// well would work too, but only for this one cause — the self-healing covers every cause.
+        ///
+        /// ⚠ Only the reveal, not the whole record: concat mode, the deltas and the read-back
+        /// tracking are not what this method is about, and dropping them here would silently reset
+        /// the detection on every scene unload.
+        ///
+        /// ⚠ Deliberately does NOT touch _typewritingPending: that set is the work list, and
+        /// ProcessStabilizedTypewriting drops any id whose reveal is gone. Emptying it here would
+        /// work too, but only for this one cause — the self-healing covers every cause.
         /// </summary>
         public static void ClearTypewritingState()
         {
-            _typewritingState.Clear();
+            foreach (var state in _componentState.Values)
+                ForgetTypewriting(state);
         }
 
         // === PROFILING (activate via debug file in plugin folder) ===
@@ -3144,13 +3207,14 @@ namespace UnityGameTranslator.Core
                 // must not leave a stale prefix behind for the stabilizer to queue.
                 if (IsUserInputMirror(__instance, textValue))
                 {
-                    if (compId != -1)
+                    var typedState = PeekState(compId);
+                    if (typedState != null)
                     {
-                        _typewritingState.Remove(compId);
-                        _activeTypewriting.Remove(compId);
-                        _concatComponents.Remove(compId);
-                        _concatDeltas.Remove(compId);
-                        _lastRawText.Remove(compId);
+                        ForgetTypewriting(typedState);
+                        _typewritingPending.Remove(compId);
+                        typedState.IsConcat = false;
+                        typedState.Deltas = null;
+                        typedState.LastRaw = null;
                     }
                     return;
                 }
@@ -3177,12 +3241,14 @@ namespace UnityGameTranslator.Core
 
               if (!concatCacheHit)
               {
+                // Everything below follows this one component. Created here rather than looked up
+                // five times: from this point on every branch either reads or writes it.
+                ComponentTextState state = compId != -1 ? StateFor(compId) : null;
+
                 // Skip if text is exactly our last translated output (scanner refresh, etc.)
-                if (compId != -1)
+                if (state != null)
                 {
-                    string lastTransCheck;
-                    if (_lastTranslatedText.TryGetValue(compId, out lastTransCheck)
-                        && textValue == lastTransCheck)
+                    if (state.LastTranslated != null && textValue == state.LastTranslated)
                     {
                         // Nothing to translate, but the font work above already ran on this
                         // component — leaving without the scale left it at the unscaled size
@@ -3197,32 +3263,28 @@ namespace UnityGameTranslator.Core
                 // === Frame tracking for concat detection ===
                 // Count set_text calls per component per frame.
                 // 2+ calls in same frame → concat mode (procedural text building).
-                if (compId != -1)
+                if (state != null)
                 {
                     int currentFrame = Time.frameCount;
-                    int lastFrame;
-                    if (_compLastFrame.TryGetValue(compId, out lastFrame) && lastFrame == currentFrame)
+                    if (state.LastFrame == currentFrame)
                     {
-                        int count;
-                        _compFrameCallCount.TryGetValue(compId, out count);
-                        _compFrameCallCount[compId] = count + 1;
+                        state.FrameCallCount++;
 
                         // Flag as concat ONLY if the text is GROWING (prefix match).
                         // Without this, game init (default→real value = 2 set_text) false-positives.
-                        if (count + 1 >= 2 && TranslatorCore.ConcatDetection && !_concatComponents.Contains(compId))
+                        if (state.FrameCallCount >= 2 && TranslatorCore.ConcatDetection && !state.IsConcat)
                         {
-                            string prevRaw;
+                            string prevRaw = state.LastRaw;
                             // The delta must carry more than layout whitespace: a lone appended
                             // "\n" at start-up is not procedural assembly (see LooksLikeConcatGrowth).
-                            if (_lastRawText.TryGetValue(compId, out prevRaw)
-                                && !string.IsNullOrEmpty(prevRaw)
+                            if (!string.IsNullOrEmpty(prevRaw)
                                 && TextRelations.LooksLikeConcatGrowth(prevRaw, textValue))
                             {
-                                _concatComponents.Add(compId);
+                                state.IsConcat = true;
 
                                 // Cancel any pending TW for this component.
-                                _typewritingState.Remove(compId);
-                                _activeTypewriting.Remove(compId);
+                                ForgetTypewriting(state);
+                                _typewritingPending.Remove(compId);
 
                                 TranslatorCore.LogDebug($"[CONCAT-DETECT] comp={compId} flagged (text grew {prevRaw.Length}c→{textValue.Length}c in frame {currentFrame})");
                             }
@@ -3230,21 +3292,20 @@ namespace UnityGameTranslator.Core
                     }
                     else
                     {
-                        _compLastFrame[compId] = currentFrame;
-                        _compFrameCallCount[compId] = 1;
+                        state.LastFrame = currentFrame;
+                        state.FrameCallCount = 1;
 
                         // Detect TW pattern on a concat-flagged component:
                         // single set_text per frame with text growing by 1-3 chars = typewriting.
                         // Unflag concat and let TW handle it.
-                        if (_concatComponents.Contains(compId))
+                        if (state.IsConcat)
                         {
-                            string prevRaw2;
-                            if (_lastRawText.TryGetValue(compId, out prevRaw2)
-                                && !string.IsNullOrEmpty(prevRaw2)
+                            string prevRaw2 = state.LastRaw;
+                            if (!string.IsNullOrEmpty(prevRaw2)
                                 && TextRelations.LooksLikeTypewriterGrowth(prevRaw2, textValue))
                             {
-                                _concatComponents.Remove(compId);
-                                _concatDeltas.Remove(compId);
+                                state.IsConcat = false;
+                                state.Deltas = null;
                                 TranslatorCore.LogDebug($"[CONCAT-UNFLAG] comp={compId} reverted to TW (grew by {textValue.Length - prevRaw2.Length} chars in separate frame)");
                             }
                         }
@@ -3258,12 +3319,11 @@ namespace UnityGameTranslator.Core
                 // For concat components: track raw text, extract deltas, translate each separately.
                 // For non-concat: use existing flow (TranslateTextWithTracking with TW detection).
                 bool handledAsConcat = false;
-                bool isConcatComp = compId != -1 && _concatComponents.Contains(compId);
+                bool isConcatComp = state != null && state.IsConcat;
 
-                if (isConcatComp && compId != -1)
+                if (isConcatComp)
                 {
-                    string lastRaw;
-                    _lastRawText.TryGetValue(compId, out lastRaw);
+                    string lastRaw = state.LastRaw;
 
                     if (!string.IsNullOrEmpty(lastRaw)
                         && TextRelations.Grows(lastRaw, textValue))
@@ -3272,13 +3332,13 @@ namespace UnityGameTranslator.Core
                         string delta = textValue.Substring(lastRaw.Length);
 
                         // Store delta for re-assembly later (when AI translations arrive)
-                        List<string> deltas;
-                        if (!_concatDeltas.TryGetValue(compId, out deltas))
+                        List<string> deltas = state.Deltas;
+                        if (deltas == null)
                         {
                             deltas = new List<string>();
                             // First delta: also store the base text
                             deltas.Add(lastRaw);
-                            _concatDeltas[compId] = deltas;
+                            state.Deltas = deltas;
                         }
                         deltas.Add(delta);
 
@@ -3294,8 +3354,7 @@ namespace UnityGameTranslator.Core
                         string translatedDelta = leadingNL + translatedCore + trailingNL;
 
                         // Build display: previous translated + translated delta
-                        string lastTrans;
-                        _lastTranslatedText.TryGetValue(compId, out lastTrans);
+                        string lastTrans = state.LastTranslated;
                         if (string.IsNullOrEmpty(lastTrans))
                         {
                             // First part wasn't translated yet (TW was capturing it before concat was detected).
@@ -3305,9 +3364,9 @@ namespace UnityGameTranslator.Core
                         }
 
                         textValue = lastTrans + translatedDelta;
-                        _lastRawText[compId] = preTranslateText; // full raw text so far
-                        _lastTranslatedText[compId] = textValue;
-                        // Cache the assembled result: raw CN → assembled FR (runtime only, not JSON)
+                        state.LastRaw = preTranslateText; // full raw text so far
+                        state.LastTranslated = textValue;
+                        // Cache the assembled result: raw source → assembled target (runtime only)
                         _concatAssembledCache[preTranslateText] = textValue;
                         _concatTranslatedValues.Add(textValue);
                         handledAsConcat = true;
@@ -3321,9 +3380,9 @@ namespace UnityGameTranslator.Core
                         // Text shrunk or changed completely — component likely reused for different content.
                         // Unflag concat so the new text is treated normally (queued for AI if cache miss).
                         // If the game does concat again (2+ set_text same frame), it'll be re-flagged.
-                        _lastRawText.Remove(compId);
-                        _concatComponents.Remove(compId);
-                        _concatDeltas.Remove(compId);
+                        state.LastRaw = null;
+                        state.IsConcat = false;
+                        state.Deltas = null;
                         isConcatComp = false; // update local flag for rest of this prefix call
                         TranslatorCore.LogDebug($"[CONCAT-RESET] comp={compId} unflagged, text changed from {lastRaw.Length}c to {textValue.Length}c");
                     }
@@ -3331,14 +3390,15 @@ namespace UnityGameTranslator.Core
                     // Raw text tracking is done in the frame tracking block above
                 }
 
-                // Also detect concat for non-flagged components (FR+CN mix from text += on translated text)
-                if (!handledAsConcat && compId != -1
-                    && _lastTranslatedText.TryGetValue(compId, out string lastTranslatedFR)
-                    && !string.IsNullOrEmpty(lastTranslatedFR)
-                    && TextRelations.Grows(lastTranslatedFR, textValue))
+                // Also detect concat for non-flagged components (the game appending source text to
+                // the translation we already wrote)
+                string lastTranslatedTarget = state?.LastTranslated;
+                if (!handledAsConcat
+                    && !string.IsNullOrEmpty(lastTranslatedTarget)
+                    && TextRelations.Grows(lastTranslatedTarget, textValue))
                 {
-                    // Game did text += "CN" on our FR text → extract CN delta
-                    string delta = textValue.Substring(lastTranslatedFR.Length);
+                    // Game appended untranslated text to our translation → extract that delta
+                    string delta = textValue.Substring(lastTranslatedTarget.Length);
 
                     // Preserve leading/trailing newlines
                     string leadNL = "", trailNL = "";
@@ -3348,8 +3408,8 @@ namespace UnityGameTranslator.Core
 
                     string transCore = string.IsNullOrEmpty(dCore) ? "" : TranslatorCore.TranslateTextWithTracking(dCore, comp, isOwnUI, skipTypewriting: true, skipQueueing: true);
                     string translatedDelta = leadNL + transCore + trailNL;
-                    textValue = lastTranslatedFR + translatedDelta;
-                    _lastTranslatedText[compId] = textValue;
+                    textValue = lastTranslatedTarget + translatedDelta;
+                    state.LastTranslated = textValue;
                     // Also cache with the raw text as key (for scanner refresh lookups)
                     _concatAssembledCache[preTranslateText] = textValue;
                     _concatTranslatedValues.Add(textValue);
@@ -3367,18 +3427,18 @@ namespace UnityGameTranslator.Core
                     textValue = TranslatorCore.TranslateTextWithTracking(textValue, comp, isOwnUI,
                         skipQueueing: isConcatComp);
 
-                    // Track translated text for concat detection (FR prefix matching)
-                    if (compId != -1 && textValue != preTranslateText)
+                    // Track translated text for concat detection (target-language prefix matching)
+                    if (state != null && textValue != preTranslateText)
                     {
-                        _lastTranslatedText[compId] = textValue;
-                        // For concat components: also remember the translated text so
-                        // different FR versions (AI vs concat-assembled) are all recognized.
+                        state.LastTranslated = textValue;
+                        // For concat components: also remember the translated text so the
+                        // different target versions (AI vs concat-assembled) are all recognized.
                         if (isConcatComp)
                             _concatTranslatedValues.Add(textValue);
                     }
-                    else if (compId != -1 && textValue == preTranslateText)
+                    else if (state != null && textValue == preTranslateText)
                     {
-                        _lastTranslatedText.Remove(compId);
+                        state.LastTranslated = null;
                         // For concat components: the unchanged text might be an AI translation
                         // (from Apply OK) that we don't recognize. Remember it to prevent re-queue.
                         if (isConcatComp && textValue.Length > 20)
@@ -3388,8 +3448,8 @@ namespace UnityGameTranslator.Core
 
                 // Update raw text tracking AFTER concat/translate blocks
                 // (so next set_text can compare against this value)
-                if (compId != -1)
-                    _lastRawText[compId] = preTranslateText;
+                if (state != null)
+                    state.LastRaw = preTranslateText;
               } // end if (!concatCacheHit)
 
                 // Detect missed SetFont: text was translated but HasCachedTranslation said no

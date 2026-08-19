@@ -95,6 +95,25 @@ namespace UnityGameTranslator.Core
         private static readonly List<RegisteredTextType> _genericTextTypes = new List<RegisteredTextType>();
 
         /// <summary>
+        /// Text types that are PATCHED but not registered for scanning.
+        ///
+        /// 🔴 Kept because the discovery used to be thrown away. Not scanning them is a deliberate
+        /// and still-correct decision — Harmony covers them, and a FindAllObjectsOfType per type per
+        /// cycle would buy nothing. But "not scanned continuously" was read as "cannot be listed at
+        /// all", which is what left tk2d, TMProOld and TextMesh out of every screen that enumerates
+        /// text. Listing on demand, when somebody opens the inspector or searches for a value, is
+        /// not scanning.
+        /// </summary>
+        private static Type _tk2dType;
+        private static List<Type> _alternateTmpTypes = new List<Type>();
+
+        /// <summary>tk2dTextMesh, when this game has it.</summary>
+        public static Type Tk2dType => _tk2dType;
+
+        /// <summary>Alternate TMP implementations (TMProOld and friends) found in this game.</summary>
+        public static IReadOnlyList<Type> AlternateTmpTypes => _alternateTmpTypes;
+
+        /// <summary>
         /// Get the list of generically detected text types (for scanner integration).
         /// </summary>
         public static IReadOnlyList<RegisteredTextType> GenericTextTypes => _genericTextTypes;
@@ -234,12 +253,14 @@ namespace UnityGameTranslator.Core
                 Type tk2dTextMeshType = FindTk2dTextMeshType();
                 if (tk2dTextMeshType != null)
                 {
+                    _tk2dType = tk2dTextMeshType;
                     patchCount += PatchTk2dTextMesh(tk2dTextMeshType, patcher);
                 }
 
                 // Alternate TMP implementations (TMProOld, etc. - used by some games with bundled/older TMP)
                 // These are in different namespaces than the standard TMPro.TMP_Text we patch above
                 var alternateTMPTypes = FindAlternateTMPTypes();
+                _alternateTmpTypes = alternateTMPTypes;
                 foreach (var altTmpType in alternateTMPTypes)
                 {
                     patchCount += PatchAlternateTMPType(altTmpType, patcher);

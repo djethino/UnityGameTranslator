@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
@@ -682,52 +682,24 @@ namespace UnityGameTranslator.Core.UI.Panels
             for (int i = childCount - 1; i >= 0; i--)
                 UnityEngine.Object.Destroy(_findResultsContainer.transform.GetChild(i).gameObject);
 
-            // Scan all text components from the scanner cache
+            // 🔴 One enumeration for every framework, not a list of type names written here.
+            // This used to name UI.Text and TMP_Text in its own code, so a player on an NGUI, tk2d,
+            // TMProOld, TextMesh or UI Toolkit game could see their text translated and never find
+            // it from this screen — while the scanner knew about it all along.
+            // See analyse/text-targets-audit.md.
             var found = new List<KeyValuePair<string, string>>();
             var seenPaths = new HashSet<string>();
 
-            try
+            foreach (var target in TextTargets.All(text => text.Contains(searchValue)))
             {
-                // Search ALL text components in the scene (not just scanner cache)
-                // This finds hidden/buffer components that the scanner doesn't track
-                var textTypes = new List<Type>();
-                if (TypeHelper.UI_TextType != null) textTypes.Add(TypeHelper.UI_TextType);
-                if (TypeHelper.TMP_TextType != null) textTypes.Add(TypeHelper.TMP_TextType);
+                string path = target.Path;
+                if (string.IsNullOrEmpty(path) || !seenPaths.Add(path)) continue;
 
-                foreach (var textType in textTypes)
-                {
-                    var allComponents = TypeHelper.FindAllObjectsOfType(textType);
-                    if (allComponents == null) continue;
-
-                    foreach (var obj in allComponents)
-                    {
-                        if (obj == null) continue;
-                        try
-                        {
-                            string text = TypeHelper.GetText(obj);
-                            if (string.IsNullOrEmpty(text)) continue;
-                            if (!text.Contains(searchValue)) continue;
-
-                            Component comp = obj as Component;
-                            if (comp == null)
-                                comp = TypeHelper.Il2CppCast(obj, typeof(Component)) as Component;
-                            if (comp == null || comp.gameObject == null) continue;
-
-                            // Skip our own mod UI
-                            if (TranslatorCore.ShouldSkipTranslation(comp)) continue;
-
-                            string path = TranslatorCore.GetGameObjectPath(comp.gameObject);
-                            if (seenPaths.Contains(path)) continue;
-                            seenPaths.Add(path);
-
-                            string snippet = text.Length > 50 ? text.Substring(0, 50) + "..." : text;
-                            found.Add(new KeyValuePair<string, string>(path, snippet));
-                        }
-                        catch { }
-                    }
-                }
+                // The framework, not a snippet of the text: the text is what was searched for, so
+                // showing it back says nothing. What the reader cannot guess is why one path looks
+                // like a GameObject hierarchy and the next like a list of USS classes.
+                found.Add(new KeyValuePair<string, string>(path, target.Engine));
             }
-            catch { }
 
             if (found.Count == 0)
             {
@@ -751,6 +723,15 @@ namespace UnityGameTranslator.Core.UI.Panels
                 var label = UIFactory.CreateLabel(row, "Path", kvp.Key, TextAnchor.MiddleLeft);
                 label.fontSize = UIStyles.FontSizeSmall;
                 UIFactory.SetLayoutElement(label.gameObject, flexibleWidth: 9999);
+
+                // Which framework drew it. A UI Toolkit path is a list of USS classes and reads
+                // nothing like a GameObject hierarchy — without this, one of the two looks broken.
+                var engine = UIFactory.CreateLabel(row, "Engine", kvp.Value, TextAnchor.MiddleRight);
+                engine.fontSize = UIStyles.FontSizeHint;
+                engine.color = UIStyles.TextMuted;
+                engine.horizontalOverflow = HorizontalWrapMode.Overflow;
+                UIFactory.SetLayoutElement(engine.gameObject, minWidth: 60, flexibleWidth: 0);
+                RegisterExcluded(engine);
 
                 var capturedPath = kvp.Key;
                 var excludeBtn = CreateSecondaryButton(row, "Exclude", "+");

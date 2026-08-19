@@ -748,6 +748,72 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Every element carrying text, for the screens that list what is on screen.
+        ///
+        /// ⚠ Walks the documents, like the scan does — an element is not in Unity's object graph,
+        /// so there is no FindAllObjectsOfType that could return one. Bounded by the same ceiling
+        /// as the scan, for the same reason.
+        /// </summary>
+        public static List<TextTarget> Targets(Func<string, bool> keep)
+        {
+            var found = new List<TextTarget>();
+            if (!Available || _textProp == null) return found;
+
+            try
+            {
+                var documents = TypeHelper.FindAllObjectsOfType(UIDocumentType);
+                if (documents == null) return found;
+
+                int visited = 0;
+                foreach (var document in documents)
+                {
+                    if (document == null) continue;
+                    object root = null;
+                    try { root = _rootProp.GetValue(document, null); } catch { }
+                    if (root != null) CollectFrom(root, found, keep, ref visited);
+                    if (visited >= MaxElementsPerPass) break;
+                }
+            }
+            catch { }
+
+            return found;
+        }
+
+        private static void CollectFrom(object element, List<TextTarget> found,
+                                        Func<string, bool> keep, ref int visited)
+        {
+            if (element == null || visited >= MaxElementsPerPass) return;
+            visited++;
+
+            try
+            {
+                if (!IsInsideTextInput(element))
+                {
+                    string text = _textProp.GetValue(element, null) as string;
+                    if (!string.IsNullOrEmpty(text) && (keep == null || keep(text)))
+                    {
+                        found.Add(new TextTarget
+                        {
+                            Owner = element,
+                            Id = IdFor(element),
+                            Engine = "UI Toolkit",
+                            Path = PathOf(element),
+                            Text = text,
+                        });
+                    }
+                }
+            }
+            catch { }
+
+            int count = ChildCount(element);
+            for (int i = 0; i < count; i++)
+            {
+                var child = ChildAt(element, i);
+                if (child != null) CollectFrom(child, found, keep, ref visited);
+            }
+        }
+
+        /// <summary>
         /// Put every element back the way the game had it: its own text, and its own font.
         ///
         /// 🔴 Called when translation is switched off. Every other framework is put back by

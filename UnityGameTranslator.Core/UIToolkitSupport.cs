@@ -48,6 +48,9 @@ namespace UnityGameTranslator.Core
         private static PropertyInfo _hierCountProp;   // VisualElement.Hierarchy.childCount
         private static MethodInfo _hierElementAt;     // VisualElement.Hierarchy.ElementAt(int)
 
+        private static PropertyInfo _parentProp;      // VisualElement.parent -> VisualElement
+        private static PropertyInfo _nameProp;        // VisualElement.name   -> string
+
         private static PropertyInfo _styleProp;       // VisualElement.style  -> IStyle
         private static PropertyInfo _styleFontProp;   // IStyle.unityFontDefinition
         private static MethodInfo _fromFontMethod;    // FontDefinition.FromFont(Font)
@@ -121,6 +124,10 @@ namespace UnityGameTranslator.Core
                     _hierElementAt = hierType.GetMethod(
                         "ElementAt", pubInst, null, new[] { typeof(int) }, null);
                 }
+
+                // Walking UPWARDS, to tell a label from the editable part of a text field.
+                _parentProp = VisualElementType.GetProperty("parent", pubInst);
+                _nameProp = VisualElementType.GetProperty("name", pubInst);
 
                 Available = _textProp != null && _rootProp != null
                             && (_elementAtMethod != null || _hierElementAt != null);
@@ -349,6 +356,46 @@ namespace UnityGameTranslator.Core
         /// </summary>
         [ThreadStatic] private static bool _writingBack;
 
+        /// <summary>
+        /// The UI Toolkit name of the editable part of a text field. Unity puts it there itself
+        /// (<c>TextInputBaseField&lt;T&gt;.textInputUssName</c>).
+        /// </summary>
+        private const string TextInputName = "unity-text-input";
+
+        /// <summary>
+        /// True when this element IS the editable part of a text field, or sits inside one.
+        ///
+        /// 🔴 **Without this, what the player types is translated.** Everything visible in UI
+        /// Toolkit descends from TextElement — the box you type into included — so the single
+        /// setter patch that covers the whole framework covers the input as well. A name or a seed
+        /// being typed would be sent to the AI, paid for, written into translations.json, and could
+        /// come back replaced on screen mid-word.
+        ///
+        /// uGUI has the same trap and answers it structurally — IsInputFieldTextComponentCached
+        /// walks up to an InputField ancestor. This is that answer in the idiom UI Toolkit offers.
+        ///
+        /// ⚠ Matched on the element's NAME rather than on a type: Unity sets that name itself, it
+        /// has been stable across UI Toolkit versions, and it costs no type resolution on a path
+        /// that runs at every set_text. Bounded walk — a malformed tree must not turn this into a
+        /// climb of the whole panel.
+        /// </summary>
+        private static bool IsInsideTextInput(object element)
+        {
+            if (_parentProp == null || _nameProp == null) return false;
+
+            object current = element;
+            for (int depth = 0; current != null && depth < 8; depth++)
+            {
+                try
+                {
+                    if ((_nameProp.GetValue(current, null) as string) == TextInputName) return true;
+                    current = _parentProp.GetValue(current, null);
+                }
+                catch { return false; }
+            }
+            return false;
+        }
+
         public static void TextElement_SetText_Prefix(object __instance, ref string value)
         {
             if (_writingBack) return;
@@ -358,6 +405,9 @@ namespace UnityGameTranslator.Core
             // Unity APIs below are main-thread only; on IL2CPP the wrong thread crashes natively
             // rather than throwing, which is not a failure anyone can diagnose from a log.
             if (!TranslatorCore.IsMainThread) return;
+
+            // Never the player's own typing.
+            if (IsInsideTextInput(__instance)) return;
 
             try
             {
@@ -524,6 +574,10 @@ namespace UnityGameTranslator.Core
         {
             try
             {
+                // The scan reaches the editable part of a text field like anything else — the
+                // setter is not the only way in. See IsInsideTextInput.
+                if (IsInsideTextInput(element)) return;
+
                 var current = _textProp.GetValue(element, null) as string;
                 if (string.IsNullOrEmpty(current)) return;
 

@@ -1242,7 +1242,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                         standing,
                         entryCount,
                         targetLang,
-                        serverState?.MainUsername ?? serverState?.Uploader);
+                        serverState?.MainUsername ?? serverState?.Uploader,
+                        localChanges);
                     break;
 
                 case LayoutState.HoldingAnothersLineage:
@@ -1596,6 +1597,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 if (canCompare)
                 {
                     _compareWithServerBtn.Component.interactable = isLoggedIn;
+                    // How many lines the comparison is about, on the button that opens it.
+                    SetDynamicText(_compareWithServerBtn.ButtonText,
+                                   $"Compare ({TranslatorCore.LocalChangesCount})");
                 }
 
                 // Edit details — for owners of a published translation, whatever the sync state.

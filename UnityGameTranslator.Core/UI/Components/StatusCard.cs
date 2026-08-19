@@ -561,14 +561,28 @@ namespace UnityGameTranslator.Core.UI.Components
         /// The one thing this mode has to say — branches waiting for a Main, whose lineage this is
         /// for a Branch, "not shared yet" for a local file. Information only: what to DO about it
         /// belongs to "Actions", which is the one place that knows whether it is possible.
+        ///
+        /// 🔴 **A username goes in <paramref name="mention"/>, never inside <paramref name="info"/>.**
+        /// The pipeline turns NUMBERS into placeholders, so every count shares one cache entry — but
+        /// nothing else. A name written into the sentence fills the cache with one entry per person
+        /// and sends each of them off to be translated. Two of these calls did exactly that until
+        /// 2026-08-20.
+        ///
+        /// ⚠ And when a mention is appended, the label is NOT handed to the translator: on a cache
+        /// miss the worker writes its result straight into the component it was given, which would
+        /// replace the whole line with the translated fragment alone — dropping the name.
         /// </summary>
-        public void SetSecondaryInfo(string info)
+        public void SetSecondaryInfo(string info, string mention = null)
         {
             if (_modeRow == null) return;
 
             bool hasInfo = !string.IsNullOrEmpty(info);
             if (hasInfo)
-                _secondaryLabel.text = TranslatorCore.TranslateOwnUIDynamic(info, _secondaryLabel);
+            {
+                _secondaryLabel.text = string.IsNullOrEmpty(mention)
+                    ? TranslatorCore.TranslateOwnUIDynamic(info, _secondaryLabel)
+                    : TranslatorCore.TranslateOwnUIDynamic(info) + " " + mention;
+            }
 
             _secondaryLabel.gameObject.SetActive(hasInfo);
             _modeRow.SetActive(hasInfo);
@@ -880,15 +894,31 @@ namespace UnityGameTranslator.Core.UI.Components
 
         /// <summary>
         /// Configure card for Branch owner state.
+        ///
+        /// ⚠ Says what is waiting before saying where it goes: a contributor opening this panel is
+        /// answering "have I got work nobody has seen yet". The count is on the Compare button too,
+        /// and that is deliberate — the card is what the eye reads first to know where things
+        /// stand, the button is where the decision is taken. Repeating an INFORMATION where it is
+        /// needed is not the same fault as offering an action twice.
         /// </summary>
-        public void ConfigureAsBranchOwner(Standing standing, int entryCount, string language, string mainOwner)
+        public void ConfigureAsBranchOwner(Standing standing, int entryCount, string language,
+                                           string mainOwner, int localChanges)
         {
             SetStanding(standing);
             SetDetails(entryCount, language);
             SetQualityStats(CalculateLocalStats());
-            SetSecondaryInfo(!string.IsNullOrEmpty(mainOwner)
-                ? $"Your changes are sent to @{mainOwner} for review"
-                : null);
+
+            // One translatable sentence per variant, ending just before the name: the number becomes
+            // a placeholder, so every count shares one cache entry, and the name is appended after.
+            string state = localChanges > 0
+                ? $"{localChanges} changes not sent yet"
+                : "Everything sent";
+
+            bool named = !string.IsNullOrEmpty(mainOwner);
+
+            SetSecondaryInfo(named ? state + " · your branch of" : state,
+                             named ? People.MentionOf(mainOwner, TranslatorCore.Config?.api_user)
+                                   : null);
         }
 
         /// <summary>
@@ -900,10 +930,15 @@ namespace UnityGameTranslator.Core.UI.Components
             SetStanding(standing);
             SetDetails(entryCount, language);
             SetQualityStats(CalculateLocalStats());
-            // Show whose translation this is based on, prompting user to make a choice
-            SetSecondaryInfo(!string.IsNullOrEmpty(mainOwner)
-                ? $"Based on @{mainOwner}'s translation — contribute your changes (Branch) or go independent (Fork)"
-                : "Contribute your changes (Branch) or go independent (Fork)");
+
+            // Whose work this is. ⚠ It no longer spells out "contribute (Branch) or go independent
+            // (Fork)": the three buttons offering exactly that sit immediately below, in the same
+            // glance, each with its own label. Naming the ways out here made the sentence long
+            // enough to be skipped, and said nothing the buttons were not already saying.
+            SetSecondaryInfo(!string.IsNullOrEmpty(mainOwner) ? "Based on the translation of" : null,
+                             !string.IsNullOrEmpty(mainOwner)
+                                 ? People.MentionOf(mainOwner, TranslatorCore.Config?.api_user)
+                                 : null);
         }
 
         /// <summary>

@@ -79,6 +79,20 @@ namespace UnityGameTranslator.Core
         private static PropertyInfo _resolvedColorProp;   // IResolvedStyle.color -> Color
         private static Type _styleColorType;              // UnityEngine.UIElements.StyleColor
 
+        // Pictures. Same shape as the font members: a value type built by a factory, wrapped in a
+        // Style* struct, written to the inline style.
+        private static Type _backgroundType;              // UnityEngine.UIElements.Background
+        private static Type _styleBackgroundType;         // UnityEngine.UIElements.StyleBackground
+        private static PropertyInfo _styleBackgroundProp; // IStyle.backgroundImage
+        private static PropertyInfo _resolvedBackgroundProp; // IResolvedStyle.backgroundImage
+        private static MethodInfo _backgroundFromSprite;  // Background.FromSprite(Sprite)
+        private static MethodInfo _backgroundFromTexture; // Background.FromTexture2D(Texture2D)
+        private static PropertyInfo _backgroundSpriteProp;  // Background.sprite
+        private static PropertyInfo _backgroundTextureProp; // Background.texture
+
+        /// <summary>True when a picture can be read AND written on this build.</summary>
+        public static bool CanSetImage { get; private set; }
+
         private static PropertyInfo _styleFontSizeProp;   // IStyle.fontSize         -> StyleLength
         private static PropertyInfo _resolvedFontSizeProp;// IResolvedStyle.fontSize -> float
         private static Type _styleLengthType;             // UnityEngine.UIElements.StyleLength
@@ -164,9 +178,11 @@ namespace UnityGameTranslator.Core
                             && (_elementAtMethod != null || _hierElementAt != null);
 
                 ResolveFontMembers(pubInst);
+                ResolveImageMembers(pubInst);
 
                 TranslatorCore.LogInfo(
-                    $"[UIToolkit] Available={Available}, font replacement={CanSetFont}");
+                    $"[UIToolkit] Available={Available}, font replacement={CanSetFont}, "
+                    + $"image replacement={CanSetImage}");
             }
             catch (Exception ex)
             {
@@ -758,6 +774,175 @@ namespace UnityGameTranslator.Core
             foreach (long id in dead) Forget(id);
         }
 
+        #region Pictures
+
+        /// <summary>
+        /// What is needed to read and replace a picture.
+        ///
+        /// ⚠ Its own step and its own flag, exactly like the fonts: a build that does not expose
+        /// these must still have its text translated. Losing image replacement is a degraded
+        /// result; refusing to load is no result.
+        /// </summary>
+        private static void ResolveImageMembers(BindingFlags pubInst)
+        {
+            try
+            {
+                _backgroundType = FindType("UnityEngine.UIElements.Background");
+                _styleBackgroundType = FindType("UnityEngine.UIElements.StyleBackground");
+                if (_backgroundType == null || _styleBackgroundType == null) return;
+
+                _styleBackgroundProp = _styleProp?.PropertyType.GetProperty("backgroundImage", pubInst);
+                _resolvedBackgroundProp = _resolvedStyleProp?.PropertyType
+                    .GetProperty("backgroundImage", pubInst);
+
+                _backgroundSpriteProp = _backgroundType.GetProperty("sprite", pubInst);
+                _backgroundTextureProp = _backgroundType.GetProperty("texture", pubInst);
+
+                var statics = BindingFlags.Public | BindingFlags.Static;
+                _backgroundFromSprite = _backgroundType.GetMethod("FromSprite", statics);
+                _backgroundFromTexture = _backgroundType.GetMethod("FromTexture2D", statics);
+
+                CanSetImage = _styleBackgroundProp != null
+                              && _resolvedBackgroundProp != null
+                              && (_backgroundFromSprite != null || _backgroundFromTexture != null);
+            }
+            catch { CanSetImage = false; }
+        }
+
+        /// <summary>What the game had as this element's picture, so it can be put back.</summary>
+        private static readonly ConditionalWeakTable<object, object> _originalBackground =
+            new ConditionalWeakTable<object, object>();
+
+        /// <summary>
+        /// Swap an element's picture for the one the player provided, by NAME.
+        ///
+        /// 🔴 UI Toolkit holds its pictures in a style, not in a component — which is why
+        /// ImageReplacer, built on Image/RawImage/SpriteRenderer setters, could never reach them.
+        /// The name is the contract in both cases, so the same PNG a player dropped in for a uGUI
+        /// game works here without them having to know what drew it.
+        ///
+        /// ⚠ Reads the RESOLVED style and writes the INLINE one, exactly like the font path: the
+        /// resolved value is what USS actually produced, and the inline value is the only one we
+        /// may own.
+        /// </summary>
+        private static void HandleImage(object element)
+        {
+            if (!CanSetImage || !TranslatorCore.ImageReplacementActive) return;
+
+            try
+            {
+                var resolved = _resolvedStyleProp?.GetValue(element, null);
+                if (resolved == null) return;
+
+                object current = _resolvedBackgroundProp.GetValue(resolved, null);
+                string name = NameOfBackground(current);
+                if (string.IsNullOrEmpty(name)) return;
+
+                if (!_originalBackground.TryGetValue(element, out _))
+                    _originalBackground.Add(element, current);
+
+                var replacement = ImageReplacer.GetReplacement(name);
+                if (replacement == null) return;
+
+                // Already wearing it: writing every pass would be a style assignment per element
+                // per scan, for nothing.
+                if (string.Equals(NameOfBackground(current), replacement.name, StringComparison.Ordinal))
+                    return;
+
+                WriteBackground(element, BuildBackground(replacement));
+            }
+            catch { }
+        }
+
+        /// <summary>The name of whatever a background is made of, or null.</summary>
+        private static string NameOfBackground(object background)
+        {
+            if (background == null) return null;
+
+            try
+            {
+                if (_backgroundSpriteProp?.GetValue(background, null) is UnityEngine.Object sprite
+                    && sprite != null)
+                    return sprite.name;
+
+                if (_backgroundTextureProp?.GetValue(background, null) is UnityEngine.Object texture
+                    && texture != null)
+                    return texture.name;
+            }
+            catch { }
+
+            return null;
+        }
+
+        /// <summary>
+        /// A Background carrying this sprite.
+        ///
+        /// ⚠ FromSprite when the build has it, its texture otherwise — a sprite carries slicing
+        /// and a pivot that a bare texture loses, so the poorer road is the fallback and not the
+        /// first choice.
+        /// </summary>
+        private static object BuildBackground(Sprite sprite)
+        {
+            try
+            {
+                if (_backgroundFromSprite != null)
+                    return _backgroundFromSprite.Invoke(null, new object[] { sprite });
+
+                if (_backgroundFromTexture != null && sprite.texture != null)
+                    return _backgroundFromTexture.Invoke(null, new object[] { sprite.texture });
+            }
+            catch { }
+
+            return null;
+        }
+
+        private static void WriteBackground(object element, object background)
+        {
+            if (background == null) return;
+
+            try
+            {
+                var styleValue = Activator.CreateInstance(_styleBackgroundType, background);
+                var style = _styleProp.GetValue(element, null);
+                if (style != null) _styleBackgroundProp.SetValue(style, styleValue, null);
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// The sprite an element currently shows, or null when it shows a bare texture or nothing.
+        ///
+        /// For the inspector, which names and exports a picture through ImageReplacer's own
+        /// helpers — they take the sprite object, so this hands over the same thing a uGUI
+        /// component would have.
+        /// </summary>
+        public static Sprite SpriteOf(object element)
+        {
+            if (!CanSetImage || element == null) return null;
+
+            try
+            {
+                var resolved = _resolvedStyleProp?.GetValue(element, null);
+                if (resolved == null) return null;
+
+                object background = _resolvedBackgroundProp.GetValue(resolved, null);
+                return _backgroundSpriteProp?.GetValue(background, null) as Sprite;
+            }
+            catch { return null; }
+        }
+
+        /// <summary>Give an element its own picture back, if we ever replaced it.</summary>
+        private static void RestoreImageOf(object element)
+        {
+            if (!CanSetImage) return;
+            if (!_originalBackground.TryGetValue(element, out var original) || original == null) return;
+
+            WriteBackground(element, original);
+            _originalBackground.Remove(element);
+        }
+
+        #endregion
+
         #region Picking
 
         /// <summary>
@@ -999,6 +1184,7 @@ namespace UnityGameTranslator.Core
                     }
 
                     RestoreFontOf(element);
+                    RestoreImageOf(element);
                 }
                 catch { }
             }
@@ -1190,6 +1376,10 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static void ProcessElement(object element)
         {
+            // Pictures are not text and do not depend on the font gate: an element can carry a
+            // picture and no text at all, which is most of them.
+            HandleImage(element);
+
             // Also the switch for "translate this font or not", so it is asked every pass.
             if (!HandleFont(element)) return;
 

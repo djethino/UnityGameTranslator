@@ -1588,10 +1588,25 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
             else if (_currentMode == InspectorMode.BitmapReplace)
             {
-                // Said rather than left blank: this framework holds its pictures in styles, not in
-                // the components this mode replaces, so there is nothing here to swap — yet.
-                _spriteInfoLabel.text = "UI Toolkit draws its images in styles — not replaceable yet.";
-                _spriteInfoLabel.color = UIStyles.TextMuted;
+                // The sprite comes from the element's style rather than from a component, but it is
+                // the same object afterwards — so naming, sizing and exporting go through
+                // ImageReplacer exactly as they do for uGUI.
+                _lastSelectedSpriteObj = UIToolkitSupport.SpriteOf(element);
+
+                if (_lastSelectedSpriteObj == null)
+                {
+                    // Said rather than left blank: an element can draw a bare texture, or a shape
+                    // with no picture at all, and neither has a name to match a replacement to.
+                    _spriteInfoLabel.text = "No named image on this element.";
+                    _spriteInfoLabel.color = UIStyles.TextMuted;
+                }
+                else
+                {
+                    var spriteName = ImageReplacer.GetSpriteName(_lastSelectedSpriteObj) ?? "(unnamed)";
+                    var size = ImageReplacer.GetSpriteSize(_lastSelectedSpriteObj);
+                    _spriteInfoLabel.text = $"UI Toolkit: \"{spriteName}\" ({size.x}x{size.y})";
+                    _spriteInfoLabel.color = UIStyles.TextPrimary;
+                }
             }
 
             return true;

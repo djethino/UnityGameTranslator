@@ -1415,7 +1415,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             realtimeLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(realtimeObj, minHeight: UIStyles.RowHeightNormal);
             RegisterUIText(realtimeLabel);
-            UIHelpers.AddToggleListener(_realtimeOwnToggle, (_) => { UpdateApplyButtonText(); });
+            UIHelpers.AddToggleListener(_realtimeOwnToggle,
+                                        _ => { if (!_isLoadingSettings) UpdateApplyButtonText(); });
             _helpZone?.Describe(realtimeObj,
                 "Keeps a connection open so that what you publish from the website, or from another "
                 + "computer, comes back to the game as it happens. Only ever about your own line: "

@@ -1913,6 +1913,16 @@ namespace UnityGameTranslator.Core.UI
 
             _streamDecided = true;
 
+            // ⚠ **"Never" means never, once this question is settled.** With no rhythm, the only
+            // timer running is the retry that got us this far — and leaving it alive would poll
+            // every two minutes for somebody who asked to be left alone.
+            if (UpdateCheckFrequency.Normalize(TranslatorCore.Config.sync.update_check_frequency)
+                == UpdateCheckFrequency.Never)
+            {
+                _syncCheckIntervalSeconds = 0f;
+                _nextSyncCheckTime = 0f;
+            }
+
             if (!ours)
             {
                 TranslatorCore.LogInfo("[Sync] Nothing published of our own — no stream to open");
@@ -2093,7 +2103,7 @@ namespace UnityGameTranslator.Core.UI
                 RunOnMainThread(() =>
                 {
                     _syncCheckInFlight = false;
-                    if (string.IsNullOrEmpty(json)) return;
+                    if (string.IsNullOrEmpty(json)) { RetryIfStreamStillUndecided(); return; }
                     HandleSyncStateEvent(json);
                 });
             }
@@ -2104,8 +2114,34 @@ namespace UnityGameTranslator.Core.UI
                 {
                     _syncCheckInFlight = false;
                     TranslatorCore.LogWarning($"[Sync] Update check failed: {errorMsg}");
+                    RetryIfStreamStillUndecided();
                 });
             }
+        }
+
+        /// <summary>
+        /// The stream now depends on ONE answer, so a first call that fails must be tried again.
+        ///
+        /// 🔴 Opening it needs the role, and only the site knows it — so nothing opens until a call
+        /// succeeds. With a rhythm, the next tick brings the answer along. With "Never", there is
+        /// no next tick: a game launched a second before the network was ready would then spend the
+        /// whole session without the connection its player asked for, silently.
+        ///
+        /// ⚠ Only while undecided, and only when nothing else is going to ask: a retry that piles
+        /// onto a running rhythm would double every check.
+        /// </summary>
+        private static void RetryIfStreamStillUndecided()
+        {
+            if (_streamDecided) return;
+            if (!TranslatorCore.Config.sync.realtime_own_translation) return;
+            if (_nextSyncCheckTime > 0f) return;
+
+            const float RetrySeconds = 120f;
+            _syncCheckIntervalSeconds = RetrySeconds;
+            _nextSyncCheckTime = Time.realtimeSinceStartup + RetrySeconds;
+
+            TranslatorCore.LogInfo("[Sync] Could not reach the website — trying again in 2 min "
+                                   + "to see whether to stay connected");
         }
 
         /// <summary>
@@ -2236,7 +2272,23 @@ namespace UnityGameTranslator.Core.UI
 
                 bool exists = data["exists"]?.Value<bool>() ?? false;
                 string roleStr = data["role"]?.Value<string>() ?? "none";
-                int branchesCount = data["branches_count"]?.Value<int>() ?? 0;
+
+                // 🔴 **A partial answer must not erase what a full one established.**
+                //
+                // This payload is rebuilt from scratch on every event, which was safe while every
+                // caller asked for everything. Since the stream asks for one's own line alone
+                // (lineage=0), the lineage half arrives ABSENT — and absent read as zero wiped the
+                // contribution count, the overlay's notice, and the Main a branch derives from,
+                // one second after the startup call had filled them in correctly.
+                //
+                // ⚠ So each lineage field is taken from THIS payload only when the payload carries
+                // it, and kept otherwise. Same rule as everywhere else in this file: absent means
+                // unknown, never none.
+                var previous = TranslatorCore.ServerState;
+
+                int branchesCount = data["branches_count"] != null
+                    ? data["branches_count"].Value<int>()
+                    : (previous?.BranchesCount ?? 0);
 
                 TranslationRole role;
                 switch (roleStr)
@@ -2273,9 +2325,18 @@ namespace UnityGameTranslator.Core.UI
                     // "nothing is waiting", which is a claim; not knowing is not the same answer,
                     // and the screens show the raw branch count in that case rather than inventing
                     // a reassuring one.
-                    BranchesWithWork = data["branches_with_work"]?.ToObject<int?>(),
-                    LinesAvailable = data["lines_available"]?.ToObject<int?>(),
-                    LinesOffered = data["lines_offered"]?.ToObject<int?>(),
+                    //
+                    // ⚠ And kept from the previous state when THIS payload does not carry them —
+                    // see the note above: a stream leaves them out by design.
+                    BranchesWithWork = data["branches_with_work"] != null
+                        ? data["branches_with_work"].ToObject<int?>()
+                        : previous?.BranchesWithWork,
+                    LinesAvailable = data["lines_available"] != null
+                        ? data["lines_available"].ToObject<int?>()
+                        : previous?.LinesAvailable,
+                    LinesOffered = data["lines_offered"] != null
+                        ? data["lines_offered"].ToObject<int?>()
+                        : previous?.LinesOffered,
                 };
 
                 if (translation != null && translation.Type != JTokenType.Null)
@@ -2306,15 +2367,32 @@ namespace UnityGameTranslator.Core.UI
                     // A branch now also hears about the Main it derives from. Absent
                     // from an older site: stays null, which reads as "unknown" and
                     // never as "the Main is gone".
-                    if (role == TranslationRole.Branch && main != null && main.Type != JTokenType.Null)
+                    //
+                    // ⚠ **Kept when this payload does not carry it.** The Main belongs to the
+                    // lineage, so a stream leaves it out — and dropping it here would take
+                    // "Update from Main" and the owner's name off the screen a second after the
+                    // startup call had put them there.
+                    if (role == TranslationRole.Branch)
                     {
-                        serverState.MainSiteId = main["id"]?.Value<int>();
-                        serverState.MainHash = main["file_hash"]?.Value<string>();
-                        serverState.MainLineCount = main["line_count"]?.Value<int>() ?? 0;
-                        serverState.MainUsername = main["uploader"]?.Value<string>();
+                        if (main != null && main.Type != JTokenType.Null)
+                        {
+                            serverState.MainSiteId = main["id"]?.Value<int>();
+                            serverState.MainHash = main["file_hash"]?.Value<string>();
+                            serverState.MainLineCount = main["line_count"]?.Value<int>() ?? 0;
+                            serverState.MainUsername = main["uploader"]?.Value<string>();
+                        }
+                        else if (previous != null)
+                        {
+                            serverState.MainSiteId = previous.MainSiteId;
+                            serverState.MainHash = previous.MainHash;
+                            serverState.MainLineCount = previous.MainLineCount;
+                            serverState.MainUsername = previous.MainUsername;
+                        }
                     }
 
-                    serverState.BranchesPendingReview = data["branches_pending_review"]?.Value<int>() ?? 0;
+                    serverState.BranchesPendingReview = data["branches_pending_review"] != null
+                        ? data["branches_pending_review"].Value<int>()
+                        : (previous?.BranchesPendingReview ?? 0);
                 }
                 else if (main != null && main.Type != JTokenType.Null)
                 {

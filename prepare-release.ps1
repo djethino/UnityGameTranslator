@@ -10,6 +10,57 @@ $Version = ($props.Project.PropertyGroup | Where-Object { $_.Version }).Version
 
 Write-Host "=== UnityGameTranslator Release $Version ===" -ForegroundColor Cyan
 
+# 🔴 **Never ship a build that talks to a development site.**
+#
+# The three URLs are compiled into the DLL (PluginInfo.g.cs), so a release made while they point at
+# a local address produces a mod that reaches nothing on a player's machine — and says so only in a
+# log nobody reads. The mistake is easy: pointing the build at Herd is a normal thing to do while
+# testing, and putting the file back afterwards is a thing to remember.
+#
+# ⚠ It refuses DEVELOPMENT addresses, not "addresses that are not ours". Self-hosting is a
+# supported case: somebody building this mod for their own instance must be able to, and their
+# domain is none of this script's business.
+function Assert-NotADevelopmentUrl {
+    param([string] $Name, [string] $Url)
+
+    if ([string]::IsNullOrWhiteSpace($Url)) {
+        Write-Host "  $Name is empty" -ForegroundColor Red
+        exit 1
+    }
+
+    $uri = $null
+    if (-not [Uri]::TryCreate($Url, [UriKind]::Absolute, [ref]$uri)) {
+        Write-Host "  $Name is not an absolute URL: $Url" -ForegroundColor Red
+        exit 1
+    }
+
+    # ⚠ NOT $host: PowerShell reserves it for the shell itself, and assigning to it throws
+    # "Cannot overwrite variable Host because it is read-only" — a failure that reads as a script
+    # bug rather than the check doing its job.
+    $urlHost = $uri.Host
+    $isLocal = $uri.IsLoopback `
+        -or $urlHost -eq 'localhost' `
+        -or $urlHost -like '*.test' `
+        -or $urlHost -like '*.local' `
+        -or $urlHost -like '*.localhost' `
+        -or $uri.Scheme -ne 'https'
+
+    if ($isLocal) {
+        Write-Host "  $Name points at a development address: $Url" -ForegroundColor Red
+        Write-Host "  Put Directory.Build.props back before releasing." -ForegroundColor Yellow
+        Write-Host "  (To build against a local site, use ./build-and-deploy.ps1 -Local," -ForegroundColor DarkGray
+        Write-Host "   which passes the addresses per build and leaves this file alone.)" -ForegroundColor DarkGray
+        exit 1
+    }
+}
+
+Write-Host "`nChecking the addresses this build will carry..." -ForegroundColor Yellow
+foreach ($urlName in @('ApiBaseUrl', 'WebsiteBaseUrl', 'SseBaseUrl')) {
+    $value = ($props.Project.PropertyGroup | Where-Object { $_.$urlName }).$urlName
+    Assert-NotADevelopmentUrl -Name $urlName -Url $value
+    Write-Host "  $urlName -> $value" -ForegroundColor DarkGray
+}
+
 # Refuse to ship code that works on Mono and dies on IL2CPP. Cheap, and the only barrier that
 # catches it: the compiler cannot, and neither can a Mono-only test round.
 & "$PSScriptRoot/check-il2cpp-safety.ps1"

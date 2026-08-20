@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
+using System.Net;
 using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
@@ -174,13 +175,35 @@ namespace UnityGameTranslator.Core
             // Disable automatic redirects to prevent token leakage via malicious redirects
             var handler = new HttpClientHandler
             {
-                AllowAutoRedirect = false
+                AllowAutoRedirect = false,
+
+                // 🔴 **Asking for gzip and decompressing it are two different things, and only the
+                // first was being done.** The header was set by hand while the handler was left on
+                // its default (no decompression), so a server that took the offer sent 0x1F 0x8B
+                // and every single call died in the JSON parser with "Unexpected character
+                // encountered while parsing value" — the character being unprintable, the message
+                // named nothing and read as a corrupt server.
+                //
+                // ⚠ It had never fired because the production site does not compress these
+                // responses. Nothing in the mod protected it: the day that server turns
+                // compression on — a config line, a CDN put in front — every installed copy would
+                // have lost the site at once, with no release able to reach them any more.
+                // Found on 2026-08-20 against a local site whose stack compresses by default.
+                //
+                // ⚠ AutomaticDecompression sends `Accept-Encoding` itself. Adding it by hand as
+                // well is what created the gap, so it must NOT be set below.
+                AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
             };
             client = new HttpClient(new AuthRejectionHandler(handler));
             client.Timeout = TimeSpan.FromSeconds(30);
+
+            // ⚠ Every other call in this file reads its body straight into a string. Now that the
+            // handler inflates, a hostile server could answer a few kilobytes that become
+            // gigabytes, so the buffer carries the same ceiling the download reads under.
+            client.MaxResponseContentBufferSize = MaxTranslationJsonBytes;
+
             client.DefaultRequestHeaders.Add("User-Agent", "UnityGameTranslator/1.0");
             client.DefaultRequestHeaders.Add("Accept", "application/json");
-            client.DefaultRequestHeaders.Add("Accept-Encoding", "gzip");
 
             // Dedicated SSE client: no timeout (long-lived streams), no gzip (breaks streaming)
             var sseHandler = new HttpClientHandler
@@ -694,38 +717,37 @@ namespace UnityGameTranslator.Core
                     return new TranslationDownloadResult { Success = false, Error = $"HTTP {response.StatusCode}" };
                 }
 
-                // Handle gzip encoding
-                byte[] rawContent = await response.Content.ReadAsByteArrayAsync();
+                // Read under a ceiling, whatever the transport did.
+                //
+                // 🔴 **The bound is what matters here, not the gzip.** This used to inflate the
+                // body itself, because the handler did not — and it counted the bytes as they came
+                // out, so a gzip bomb (a few KB claiming gigabytes) was refused DURING inflation
+                // rather than after filling memory with it. The handler now decompresses, which
+                // fixes every other call in this file, and would have quietly taken that ceiling
+                // away with it: `Content-Encoding` is removed once decompressed, so the branch
+                // holding the check could never run again.
+                //
+                // So the ceiling moves to where it no longer depends on an encoding at all — the
+                // decompressed stream, which is the only thing whose size was ever the danger.
                 string jsonContent;
-
-                if (response.Content.Headers.ContentEncoding.Contains("gzip"))
+                using (var body = await response.Content.ReadAsStreamAsync())
+                using (var output = new MemoryStream())
                 {
-                    // Bounded decompression: a gzip bomb (tiny compressed, huge decompressed)
-                    // must be rejected during inflation, not after materializing the result
-                    using (var stream = new MemoryStream(rawContent))
-                    using (var gzip = new GZipStream(stream, CompressionMode.Decompress))
-                    using (var output = new MemoryStream())
+                    var buffer = new byte[81920];
+                    int read;
+                    while ((read = await body.ReadAsync(buffer, 0, buffer.Length)) > 0)
                     {
-                        var buffer = new byte[81920];
-                        int read;
-                        while ((read = await gzip.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                        if (output.Length + read > MaxTranslationJsonBytes)
                         {
-                            if (output.Length + read > MaxTranslationJsonBytes)
+                            return new TranslationDownloadResult
                             {
-                                return new TranslationDownloadResult
-                                {
-                                    Success = false,
-                                    Error = $"Decompressed content exceeds {MaxTranslationJsonBytes} bytes"
-                                };
-                            }
-                            output.Write(buffer, 0, read);
+                                Success = false,
+                                Error = $"Decompressed content exceeds {MaxTranslationJsonBytes} bytes"
+                            };
                         }
-                        jsonContent = Encoding.UTF8.GetString(output.GetBuffer(), 0, (int)output.Length);
+                        output.Write(buffer, 0, read);
                     }
-                }
-                else
-                {
-                    jsonContent = Encoding.UTF8.GetString(rawContent);
+                    jsonContent = Encoding.UTF8.GetString(output.GetBuffer(), 0, (int)output.Length);
                 }
 
                 // Validate JSON structure before accepting

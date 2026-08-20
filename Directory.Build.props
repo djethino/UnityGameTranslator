@@ -16,8 +16,19 @@
     <ManagerReleaseUrl>https://github.com/djethino/unitygametranslator-manager/releases/latest</ManagerReleaseUrl>
   </PropertyGroup>
 
-  <!-- Generate PluginInfo.g.cs with version and API constants before build -->
-  <Target Name="GenerateVersionFile" BeforeTargets="CoreCompile">
+  <!-- Generate PluginInfo.g.cs with version and API constants before build.
+
+       🔴 **BeforeTargets="PrepareForBuild", not "CoreCompile".** CoreCompile is SKIPPED when the
+       sources are older than the assembly — so on an up-to-date tree this target never ran, the
+       generated file kept what the previous build had put in it, and a build asked to point
+       elsewhere (-p:ApiBaseUrl=…, as build-and-deploy.ps1 -Local does) silently produced a DLL
+       carrying the OLD addresses. It worked whenever something happened to force a recompilation,
+       which is the worst kind of failure: intermittent, and invisible in the log.
+
+       PrepareForBuild runs on every build. WriteOnlyWhenDifferent keeps the incremental build:
+       the file is rewritten only when its content actually changes, and that change is what makes
+       the compiler consider the assembly out of date. -->
+  <Target Name="GenerateVersionFile" BeforeTargets="PrepareForBuild">
     <PropertyGroup>
       <VersionFileContent>
 namespace UnityGameTranslator {
@@ -37,7 +48,8 @@ namespace UnityGameTranslator {
     </PropertyGroup>
     <WriteLinesToFile File="$(IntermediateOutputPath)PluginVersion.g.cs"
                       Lines="$(VersionFileContent)"
-                      Overwrite="true" />
+                      Overwrite="true"
+                      WriteOnlyWhenDifferent="true" />
     <ItemGroup>
       <Compile Include="$(IntermediateOutputPath)PluginVersion.g.cs" />
     </ItemGroup>

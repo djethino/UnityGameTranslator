@@ -4,6 +4,8 @@ using UnityEngine;
 using UnityEngine.UI;
 using UniverseLib.UI;
 using UniverseLib.UI.Models;
+using UnityGameTranslator.Common;
+using UnityGameTranslator.Core.UI.Components;
 
 namespace UnityGameTranslator.Core.UI.Panels
 {
@@ -132,6 +134,14 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             _compareBtn = CreateSecondaryButton(buttonRow, "CompareBtn", "Compare");
             _compareBtn.OnClick += OnCompareClicked;
+            // 🔴 **The same word as the main panel's Compare, opening the same page the OTHER way
+            // round.** This one is `toLocal: true` — what is validated there comes back into the
+            // file on this machine and publishes nothing. Two buttons that read identically and
+            // write to opposite sides: the marks are the only thing separating them, which is
+            // precisely their job (see name-things-in-ui: the scope tells where it writes, the
+            // label carries the verb).
+            ScopeMarks.Adorn(_compareBtn,
+                EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: false));
             RegisterUIText(_compareBtn.ButtonText);
 
             _applyBtn = CreatePrimaryButton(buttonRow, "ApplyBtn", "Apply");

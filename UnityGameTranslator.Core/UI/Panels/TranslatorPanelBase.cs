@@ -1469,7 +1469,16 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (sizeRestored)
             {
                 // User manually resized - apply saved size and skip dynamic sizing
-                Rect.sizeDelta = new Vector2(pref.width, pref.height);
+                //
+                // 🔴 **Clamped to the panel's own minimum, and this is not a formality.** A size
+                // saved once is restored for ever, so a panel that later needs more room — a
+                // widened minimum, a longer label, a control added — would keep coming back too
+                // small for everybody who had ever dragged its edge, with no way to find out
+                // except by resizing it again by hand. The minimum is what the content requires;
+                // a remembered preference cannot be allowed to go under it.
+                Rect.sizeDelta = new Vector2(
+                    Math.Max(pref.width, MinWidth),
+                    Math.Max(pref.height, MinPanelHeight));
                 _userChoseSize = true;
                 _needsFirstShowSizing = false;
                 _initialSizingComplete = true;

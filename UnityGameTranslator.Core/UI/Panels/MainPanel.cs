@@ -40,9 +40,15 @@ namespace UnityGameTranslator.Core.UI.Panels
     public class MainPanel : TranslatorPanelBase
     {
         public override string Name => "Unity Game Translator";
-        public override int MinWidth => 450;
+
+        // ⚠ **480, and the extra 30 is the scrollbar's.** The cards inside are sized from
+        // PanelWidth once, at construction; the viewport is NOT, because DynamicScrollbar takes 28
+        // pixels off it the moment the content is long enough to scroll. At 450 the two figures
+        // crossed and labels lost their last characters — only on the screens long enough to
+        // scroll, which is why it looked intermittent.
+        public override int MinWidth => 480;
         public override int MinHeight => 350;
-        public override int PanelWidth => 450;
+        public override int PanelWidth => 480;
         public override int PanelHeight => 600;
 
         protected override int MinPanelHeight => 350;
@@ -565,9 +571,17 @@ namespace UnityGameTranslator.Core.UI.Panels
             _compareWithServerBtn = CreateSecondaryButton(syncRow, "CompareBtn", "Compare", 100);
             UIStyles.SetBackground(_compareWithServerBtn.Component.gameObject, UIStyles.ButtonSecondary);
             _compareWithServerBtn.OnClick += OnCompareWithServerClicked;
+            // 🔴 **The same word opens this page in both directions, and only the marks say which.**
+            // This one is the publishing direction (toLocal: false): what is validated there
+            // updates the online version. The Compare in the settings window opens the same screen
+            // towards the local file. Nothing else on the button distinguishes them — which is
+            // exactly what the scope marks are for, rather than a longer label repeating it.
+            ScopeMarks.Adorn(_compareWithServerBtn,
+                EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: true));
             RegisterExcluded(_compareWithServerBtn.ButtonText);
+            // ⚠ It used to say "See the differences", promising a read. Validating there writes.
             _helpZone?.Describe(_compareWithServerBtn.Component.gameObject,
-                "See the differences between your local file and the version on the website");
+                "Compare your local file with the published version and choose line by line what to publish");
 
             _uploadHintLabel = UIStyles.CreateHint(actionsBox, "UploadHintLabel", "");
             RegisterExcluded(_uploadHintLabel);
@@ -587,6 +601,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             _reviewOnWebsiteBtn = CreateSecondaryButton(roleActionsRow, "ReviewBtn", "Review Branches", 130);
             UIStyles.SetBackground(_reviewOnWebsiteBtn.Component.gameObject, UIStyles.ButtonLink);
             _reviewOnWebsiteBtn.OnClick += OnReviewOnWebsiteClicked;
+            // ⚠ Taking in a contribution rewrites the PUBLISHED Main and leaves this machine's file
+            // untouched — the one action here whose result never comes back to the game on its own.
+            // Marked accordingly: published alone, not both.
+            ScopeMarks.Adorn(_reviewOnWebsiteBtn,
+                EditScope.SideAfter(onThisMachine: false, yourPublishedCopy: true));
             RegisterExcluded(_reviewOnWebsiteBtn.ButtonText);
             _helpZone?.Describe(_reviewOnWebsiteBtn.Component.gameObject,
                 "Open the website to accept or reject changes proposed by other players");
@@ -597,6 +616,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             _editDetailsBtn = CreateSecondaryButton(roleActionsRow, "EditDetailsBtn", "Edit details", 110);
             UIStyles.SetBackground(_editDetailsBtn.Component.gameObject, UIStyles.ButtonSecondary);
             _editDetailsBtn.OnClick += OnEditDetailsClicked;
+            // ⚠ Opens a panel in the game, where a second confirmation actually sends — the mark
+            // says where this ends up, not that it happens on click. Same as Start Text Editor,
+            // which is adorned for the file it will eventually write.
+            ScopeMarks.Adorn(_editDetailsBtn,
+                EditScope.SideAfter(onThisMachine: false, yourPublishedCopy: true));
             RegisterUIText(_editDetailsBtn.ButtonText);
             _helpZone?.Describe(_editDetailsBtn.Component.gameObject,
                 "Change the description and the resources link of your published translation, without waiting for new translated lines");

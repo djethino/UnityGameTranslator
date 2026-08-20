@@ -1666,6 +1666,10 @@ namespace UnityGameTranslator.Core
             Instance = new TranslatorCore();
             Adapter = adapter;
 
+            // The adapter is what names the loader, so the User-Agent can only be complete from
+            // here — see ApiClient.RefreshUserAgent. Done before anything can make a call.
+            ApiClient.RefreshUserAgent();
+
             // Catch-all for exceptions that escape from async void methods, raw
             // threads, or anything else that bypasses our explicit try/catch
             // blocks. Without this the host (Unity, BepInEx, MelonLoader) may

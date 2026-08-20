@@ -202,7 +202,7 @@ namespace UnityGameTranslator.Core
             // gigabytes, so the buffer carries the same ceiling the download reads under.
             client.MaxResponseContentBufferSize = MaxTranslationJsonBytes;
 
-            client.DefaultRequestHeaders.Add("User-Agent", "UnityGameTranslator/1.0");
+            client.DefaultRequestHeaders.Add("User-Agent", UserAgent());
             client.DefaultRequestHeaders.Add("Accept", "application/json");
 
             // Dedicated SSE client: no timeout (long-lived streams), no gzip (breaks streaming)
@@ -212,7 +212,54 @@ namespace UnityGameTranslator.Core
             };
             sseClient = new HttpClient(sseHandler);
             sseClient.Timeout = System.Threading.Timeout.InfiniteTimeSpan;
-            sseClient.DefaultRequestHeaders.Add("User-Agent", "UnityGameTranslator/1.0");
+            sseClient.DefaultRequestHeaders.Add("User-Agent", UserAgent());
+        }
+
+        /// <summary>
+        /// How this mod names itself to a server.
+        /// </summary>
+        /// <remarks>
+        /// 🔴 **It used to be the literal "UnityGameTranslator/1.0", on every build ever shipped.**
+        /// So a server could see that a mod was talking to it and nothing else: not which version,
+        /// not which loader. That matters for two decisions nobody could otherwise make —
+        /// whether an old release is still out there in numbers, and whether a loader adapter is
+        /// still worth maintaining. The Manager has always sent its real version
+        /// (<c>UnityGameTranslatorManager/{version}</c>); the mod simply never did.
+        ///
+        /// ⚠ **It is also what a server needs to protect the versions that cannot read gzip.**
+        /// Excluding a broken client from compression means naming it, and every version named
+        /// itself the same thing — so the exclusion could only ever be "all of them, forever".
+        ///
+        /// ⚠ Deliberately coarse: a version and a loader, both of which take a handful of values
+        /// across the whole population. Nothing here distinguishes one installation from another.
+        /// </remarks>
+        private static string UserAgent()
+        {
+            string loader = TranslatorCore.Adapter?.ModLoaderType;
+
+            return string.IsNullOrEmpty(loader)
+                ? $"UnityGameTranslator/{PluginInfo.Version}"
+                : $"UnityGameTranslator/{PluginInfo.Version} ({loader})";
+        }
+
+        /// <summary>
+        /// Re-read the User-Agent once the adapter is known.
+        /// </summary>
+        /// <remarks>
+        /// ⚠ The static constructor runs on first use, which may be before or after the adapter is
+        /// set — an order nothing here controls. So the loader is filled in from
+        /// <see cref="TranslatorCore.Initialize"/>, and until then the version alone is sent
+        /// rather than an empty pair of brackets.
+        /// </remarks>
+        internal static void RefreshUserAgent()
+        {
+            string agent = UserAgent();
+
+            foreach (var http in new[] { client, sseClient })
+            {
+                http.DefaultRequestHeaders.Remove("User-Agent");
+                http.DefaultRequestHeaders.Add("User-Agent", agent);
+            }
         }
 
         /// <summary>

@@ -39,7 +39,10 @@ namespace UnityGameTranslator.Core
         static GitHubUpdateChecker()
         {
             httpClient = new HttpClient();
-            httpClient.DefaultRequestHeaders.Add("User-Agent", "UnityGameTranslator-Mod");
+            // Versioned like every other call this mod makes: a support report that quotes an
+            // update failure should say which build was asking. (No loader here — this client is
+            // built before the adapter exists, and GitHub is not where population is counted.)
+            httpClient.DefaultRequestHeaders.Add("User-Agent", $"UnityGameTranslator-Mod/{PluginInfo.Version}");
             httpClient.DefaultRequestHeaders.Add("Accept", "application/vnd.github.v3+json");
             httpClient.Timeout = TimeSpan.FromSeconds(10);
         }

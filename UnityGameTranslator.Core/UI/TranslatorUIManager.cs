@@ -2368,6 +2368,19 @@ namespace UnityGameTranslator.Core.UI
                     LinesAvailable = data["lines_available"] != null
                         ? data["lines_available"].ToObject<int?>()
                         : previous?.LinesAvailable,
+
+                    // What those lines are. Carried the same way as the total above, and kept from
+                    // the previous state for the same reason: a stream leaves them out by design.
+                    LinesNew = data["lines_new"] != null
+                        ? data["lines_new"].ToObject<int?>()
+                        : previous?.LinesNew,
+                    LinesReworded = data["lines_reworded"] != null
+                        ? data["lines_reworded"].ToObject<int?>()
+                        : previous?.LinesReworded,
+                    LinesValidated = data["lines_validated"] != null
+                        ? data["lines_validated"].ToObject<int?>()
+                        : previous?.LinesValidated,
+
                     LinesOffered = data["lines_offered"] != null
                         ? data["lines_offered"].ToObject<int?>()
                         : previous?.LinesOffered,

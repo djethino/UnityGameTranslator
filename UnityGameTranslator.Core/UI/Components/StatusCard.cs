@@ -919,19 +919,33 @@ namespace UnityGameTranslator.Core.UI.Components
         /// to review emptiness is how a counter stops being read.
         /// </summary>
         public void ConfigureAsMainOwner(Standing standing, int entryCount, string language,
-                                         int waiting, int? linesAvailable = null)
+                                         int waiting, int? linesAvailable = null,
+                                         int? linesNew = null, int? linesReworded = null,
+                                         int? linesValidated = null)
         {
             SetStanding(standing);
             SetDetails(entryCount, language);
             SetQualityStats(CalculateLocalStats());
 
+            if (waiting <= 0)
+            {
+                SetSecondaryInfo("You own this translation", needsAttention: false);
+                return;
+            }
+
             // The socle's words, so this line and the Manager's signal row say one thing.
             // ⚠ And the same weight: contributions waiting is the one thing on this card that
             // asks the owner to do something, so it is not written in the colour of a footnote.
-            SetSecondaryInfo(waiting > 0
-                ? Contributions.WhatIsWaiting(waiting, linesAvailable)
-                : "You own this translation",
-                needsAttention: waiting > 0);
+            var said = Contributions.WhatIsWaiting(waiting, linesAvailable);
+
+            // ⚠ What KIND of work, appended rather than folded in. "38 lines" and "21 new · 17
+            // validated" answer two questions, and the second is the one that decides whether to
+            // open the review at all — lines somebody read and stood behind change no words, and a
+            // total cannot tell them apart from 38 new sentences.
+            var kinds = Contributions.WhatKindOfWork(linesNew, linesReworded, linesValidated);
+            if (kinds.Length > 0) said += " — " + kinds + ".";
+
+            SetSecondaryInfo(said, needsAttention: true);
         }
 
         /// <summary>

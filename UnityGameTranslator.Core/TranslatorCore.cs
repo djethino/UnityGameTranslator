@@ -7449,6 +7449,26 @@ namespace UnityGameTranslator.Core
         public int? LinesAvailable { get; set; }
 
         /// <summary>
+        /// What those lines are: text the Main does not have, text somebody retranslated, and lines
+        /// it already held that somebody read and stood behind. They sum to
+        /// <see cref="LinesAvailable"/>.
+        ///
+        /// 🔴 **The third is the one a total hides.** Reading a machine line and marking it
+        /// validated changes no words at all — it is exactly the work this site asks for, and
+        /// "38 lines" cannot tell it apart from 38 new sentences. Which kind is waiting is what
+        /// decides whether a review is worth sitting down for.
+        ///
+        /// ⚠ Null on a server too old to break the total down. Unknown is not zero.
+        /// </summary>
+        public int? LinesNew { get; set; }
+
+        /// <inheritdoc cref="LinesNew"/>
+        public int? LinesReworded { get; set; }
+
+        /// <inheritdoc cref="LinesNew"/>
+        public int? LinesValidated { get; set; }
+
+        /// <summary>
         /// On a branch: how many lines THIS contribution is still holding for its Main — what was
         /// sent and not taken in. Its author's own business, and nobody else's.
         /// </summary>

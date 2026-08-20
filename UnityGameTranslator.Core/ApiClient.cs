@@ -897,6 +897,12 @@ namespace UnityGameTranslator.Core
                     // ⚠ Null on an older site, and null is "unknown" — never "nothing is waiting".
                     BranchesWithWork = data["branches_with_work"]?.ToObject<int?>(),
                     LinesAvailable = data["lines_available"]?.ToObject<int?>(),
+
+                    // What those lines ARE — the three sum to lines_available. Null on a server
+                    // that predates them, and the card then shows the total alone, as before.
+                    LinesNew = data["lines_new"]?.ToObject<int?>(),
+                    LinesReworded = data["lines_reworded"]?.ToObject<int?>(),
+                    LinesValidated = data["lines_validated"]?.ToObject<int?>(),
                     LinesOffered = data["lines_offered"]?.ToObject<int?>()
                 };
 
@@ -2286,6 +2292,18 @@ namespace UnityGameTranslator.Core
 
         /// <summary>How many lines those hold, counted once each. Null if unknown.</summary>
         public int? LinesAvailable { get; set; }
+
+        /// <summary>
+        /// What those lines are — see <see cref="ServerTranslationState.LinesNew"/>. Null on a
+        /// server that predates the breakdown, which is "unknown", never zero.
+        /// </summary>
+        public int? LinesNew { get; set; }
+
+        /// <inheritdoc cref="LinesNew"/>
+        public int? LinesReworded { get; set; }
+
+        /// <inheritdoc cref="LinesNew"/>
+        public int? LinesValidated { get; set; }
 
         /// <summary>On a branch: what this contribution still holds for its Main. Null if unknown.</summary>
         public int? LinesOffered { get; set; }

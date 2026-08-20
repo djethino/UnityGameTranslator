@@ -434,6 +434,7 @@ namespace UnityGameTranslator.Core.UI.Components
                                      : standing.Role == LineageRole.Branch ? (bool?)false : null,
                                  standing.BranchesWaiting, standing.MainMissing, standing.Sync,
                                  null, null, 0, 0,
+                                 linesAvailable: standing.LinesAvailable,
 
                                  // ⚠ The author's own word, which nothing else on this card says.
                                  // Without it somebody cannot tell whether they still have to open
@@ -881,14 +882,21 @@ namespace UnityGameTranslator.Core.UI.Components
 
         /// <summary>
         /// Configure card for Main owner state.
+        ///
+        /// ⚠ <paramref name="waiting"/> is what is actually WAITING — contributions not been
+        /// through that are holding something — never how many people contribute. Sending somebody
+        /// to review emptiness is how a counter stops being read.
         /// </summary>
-        public void ConfigureAsMainOwner(Standing standing, int entryCount, string language, int branchCount)
+        public void ConfigureAsMainOwner(Standing standing, int entryCount, string language,
+                                         int waiting, int? linesAvailable = null)
         {
             SetStanding(standing);
             SetDetails(entryCount, language);
             SetQualityStats(CalculateLocalStats());
-            SetSecondaryInfo(branchCount > 0
-                ? $"{branchCount} contribution(s) from other players to review"
+
+            // The socle's words, so this line and the Manager's signal row say one thing.
+            SetSecondaryInfo(waiting > 0
+                ? Contributions.WhatIsWaiting(waiting, linesAvailable)
                 : "You own this translation");
         }
 

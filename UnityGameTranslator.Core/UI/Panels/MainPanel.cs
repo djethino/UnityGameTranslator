@@ -1215,8 +1215,15 @@ namespace UnityGameTranslator.Core.UI.Panels
                      : _currentLayoutState == LayoutState.OwnerBranch ? LineageRole.Branch
                      : LineageRole.None,
 
+                // ⚠ What is actually WAITING, not how many people contribute. Falls back to the raw
+                // count only when the site could not answer: unknown is not zero, and showing
+                // nothing there would tell a Main their contributions are settled when nobody knows.
                 BranchesWaiting = _currentLayoutState == LayoutState.OwnerMain
-                    ? serverState?.BranchesCount
+                    ? (serverState?.BranchesWithWork ?? serverState?.BranchesCount)
+                    : null,
+
+                LinesAvailable = _currentLayoutState == LayoutState.OwnerMain
+                    ? serverState?.LinesAvailable
                     : null,
             };
 
@@ -1233,8 +1240,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             switch (_currentLayoutState)
             {
                 case LayoutState.OwnerMain:
-                    int branches = serverState?.BranchesCount ?? 0;
-                    _statusCard.ConfigureAsMainOwner(standing, entryCount, targetLang, branches);
+                    _statusCard.ConfigureAsMainOwner(standing, entryCount, targetLang,
+                                                     standing.BranchesWaiting ?? 0,
+                                                     serverState?.LinesAvailable);
                     break;
 
                 case LayoutState.OwnerBranch:
@@ -1585,9 +1593,24 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _reviewOnWebsiteBtn.Component.gameObject.SetActive(isMain && hasBranches);
                 if (isMain && hasBranches)
                 {
-                    // How many, on the button that acts on them.
+                    // 🔴 The count is what is WAITING — not been through, and holding something —
+                    // never how many people contribute. A number that includes work already
+                    // arbitrated never falls to zero, and a number that never falls to zero stops
+                    // being read, which hides the times there IS something to do.
+                    //
+                    // ⚠ The button stays whenever contributions exist: somebody may want to look
+                    // at what they refused, or at who is contributing. It simply carries no number
+                    // when nothing is waiting — the convention this project uses everywhere.
+                    int? waiting = state.BranchesWithWork;
+
                     SetDynamicText(_reviewOnWebsiteBtn.ButtonText,
-                                   $"Review Branches ({state.BranchesCount})");
+                                   waiting.HasValue
+                                       ? (waiting.Value > 0
+                                           ? $"Review Branches ({waiting.Value})"
+                                           : "Review Branches")
+                                       // An older site could not say: the raw count is all there
+                                       // is, and it is better than a silence that reads as zero.
+                                       : $"Review Branches ({state.BranchesCount})");
                 }
 
                 // Compare with Server - only for owners (Main or Branch) who have uploaded

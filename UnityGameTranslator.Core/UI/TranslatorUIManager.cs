@@ -2271,6 +2271,14 @@ namespace UnityGameTranslator.Core.UI
                     // the person deciding whether to send their corrections back.
                     AcceptsBranches = data["accepts_branches"]?.ToObject<bool?>(),
                     MergedLinesTotal = data["merged_lines_total"]?.ToObject<int?>() ?? 0,
+
+                    // ⚠ **Null on an older site, and null means unknown.** A zero here would say
+                    // "nothing is waiting", which is a claim; not knowing is not the same answer,
+                    // and the screens show the raw branch count in that case rather than inventing
+                    // a reassuring one.
+                    BranchesWithWork = data["branches_with_work"]?.ToObject<int?>(),
+                    LinesAvailable = data["lines_available"]?.ToObject<int?>(),
+                    LinesOffered = data["lines_offered"]?.ToObject<int?>(),
                 };
 
                 if (translation != null && translation.Type != JTokenType.Null)

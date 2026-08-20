@@ -7372,6 +7372,29 @@ namespace UnityGameTranslator.Core
         public int BranchesCount { get; set; }
 
         /// <summary>
+        /// Of those branches, how many are actually waiting on their Main: not been through in
+        /// their current state, AND holding something a merge would offer.
+        ///
+        /// 🔴 **This is what a screen shows, not <see cref="BranchesCount"/>.** That one answers
+        /// "how many people contribute" — true, and not the question somebody asks when deciding
+        /// whether to open the merge screen. Counting a contributor who took the file months ago
+        /// and never came back sends their Main to review emptiness.
+        ///
+        /// ⚠ Null on a server too old to say. Unknown is not zero: a screen falls back to the raw
+        /// count rather than announcing that nothing is waiting.
+        /// </summary>
+        public int? BranchesWithWork { get; set; }
+
+        /// <summary>How many lines those contributions hold, counted once each. Null if unknown.</summary>
+        public int? LinesAvailable { get; set; }
+
+        /// <summary>
+        /// On a branch: how many lines THIS contribution is still holding for its Main — what was
+        /// sent and not taken in. Its author's own business, and nobody else's.
+        /// </summary>
+        public int? LinesOffered { get; set; }
+
+        /// <summary>
         /// Votes on the PUBLISHED translation of this lineage — count, this player's own vote,
         /// and whether they may vote at all. The server decides that last one: no self-votes,
         /// public only. Null when nothing is published, and on any server too old to report it —

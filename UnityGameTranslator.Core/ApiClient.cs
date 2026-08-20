@@ -817,7 +817,12 @@ namespace UnityGameTranslator.Core
                     // ⚠ ToObject<bool?> rather than Value<bool>: a missing field must stay null
                     // and not become false. See the properties.
                     AcceptsBranches = data["accepts_branches"]?.ToObject<bool?>(),
-                    BranchFrozen = data["branch_frozen"]?.ToObject<bool?>()
+                    BranchFrozen = data["branch_frozen"]?.ToObject<bool?>(),
+
+                    // ⚠ Null on an older site, and null is "unknown" — never "nothing is waiting".
+                    BranchesWithWork = data["branches_with_work"]?.ToObject<int?>(),
+                    LinesAvailable = data["lines_available"]?.ToObject<int?>(),
+                    LinesOffered = data["lines_offered"]?.ToObject<int?>()
                 };
 
                 // Votes on the published translation of this lineage. Absent on older servers,
@@ -2196,6 +2201,20 @@ namespace UnityGameTranslator.Core
         /// The way on is to publish it as a translation of its own.
         /// </summary>
         public bool? BranchFrozen { get; set; }
+
+        /// <summary>
+        /// Of the branches above, how many are actually waiting: not been through in their current
+        /// state, AND holding something. Null on a server too old to say — which is "unknown",
+        /// never "none". See <see cref="ServerTranslationState.BranchesWithWork"/>.
+        /// </summary>
+        public int? BranchesWithWork { get; set; }
+
+        /// <summary>How many lines those hold, counted once each. Null if unknown.</summary>
+        public int? LinesAvailable { get; set; }
+
+        /// <summary>On a branch: what this contribution still holds for its Main. Null if unknown.</summary>
+        public int? LinesOffered { get; set; }
+
         public UuidCheckTranslationInfo ExistingTranslation { get; set; } // For UPDATE
         public UuidCheckTranslationInfo OriginalTranslation { get; set; } // For FORK
 

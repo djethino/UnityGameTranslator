@@ -838,6 +838,16 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 RefreshUI();
 
+                // 🔴 **Opening this panel IS the moment to ask about the lineage.** What other
+                // people did — a contribution arriving, a Main deleted or gone silent — follows the
+                // rhythm the player chose, which can be six hours; and a stream deliberately does
+                // not carry it. So the one screen where those facts are read asks for them itself.
+                //
+                // ⚠ It matters most where a wrong answer costs the most: a contributor whose Main
+                // has been deleted must be told here, not when they finally try to publish. Cheap
+                // when nothing changed — the site answers from a cache keyed on the files' hashes.
+                TranslatorUIManager.RefreshLineageNow();
+
                 // Reserve the height of the TALLEST tab, like the other tabbed panels do.
                 // Without it the panel was sized for whichever tab happened to be open, so
                 // switching to Community resized the whole window under the user.

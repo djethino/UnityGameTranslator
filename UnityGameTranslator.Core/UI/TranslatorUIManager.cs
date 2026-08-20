@@ -2120,6 +2120,27 @@ namespace UnityGameTranslator.Core.UI
         }
 
         /// <summary>
+        /// Ask about the lineage now, because somebody is about to read it.
+        ///
+        /// 🔴 The periodic channel can be six hours apart, and the stream carries none of this by
+        /// design — so the screen that shows what other people did (contributions waiting, a Main
+        /// deleted or gone silent) asks when it opens rather than showing whatever last arrived.
+        ///
+        /// ⚠ Cheap by construction: the site answers these from a cache keyed on the files' own
+        /// hashes, so an unchanged lineage costs a query and no reading at all.
+        ///
+        /// Silent when there is nothing to ask about — no account, offline, or no translation of
+        /// one's own — and never while a call is already out.
+        /// </summary>
+        public static void RefreshLineageNow()
+        {
+            if (!CanWatchSync(logReason: false)) return;
+            if (_syncCheckInFlight) return;
+
+            CheckSyncStateNow();
+        }
+
+        /// <summary>
         /// The stream now depends on ONE answer, so a first call that fails must be tried again.
         ///
         /// 🔴 Opening it needs the role, and only the site knows it — so nothing opens until a call
@@ -2311,15 +2332,28 @@ namespace UnityGameTranslator.Core.UI
                     BranchesCount = branchesCount,
                     // Absent from an older site: stays null, which reads as "unknown" and never
                     // as "the Main is fine".
-                    MainMissing = data["main_missing"]?.ToObject<bool?>(),
-                    MainIgnoring = data["main_ignoring"]?.ToObject<bool?>(),
+                    //
+                    // ⚠ And kept from the previous state when this payload leaves them out — they
+                    // describe what became of the MAIN, so they belong to the lineage and a stream
+                    // does not carry them. Dropping them would take the red notice off the card a
+                    // second after it appeared, on the one screen that says the road is closed.
+                    MainMissing = data["main_missing"] != null
+                        ? data["main_missing"].ToObject<bool?>()
+                        : previous?.MainMissing,
+                    MainIgnoring = data["main_ignoring"] != null
+                        ? data["main_ignoring"].ToObject<bool?>()
+                        : previous?.MainIgnoring,
 
                     // 🔴 Read at the TOP level, because it is a fact about the lineage. Taken from
                     // the caller's own row alone, it reached only somebody who had published into
                     // it — never the player running somebody else's translation, who is precisely
                     // the person deciding whether to send their corrections back.
                     AcceptsBranches = data["accepts_branches"]?.ToObject<bool?>(),
-                    MergedLinesTotal = data["merged_lines_total"]?.ToObject<int?>() ?? 0,
+
+                    // The contributor's apport over time — a lineage fact, kept when left out.
+                    MergedLinesTotal = data["merged_lines_total"] != null
+                        ? (data["merged_lines_total"].ToObject<int?>() ?? 0)
+                        : (previous?.MergedLinesTotal ?? 0),
 
                     // ⚠ **Null on an older site, and null means unknown.** A zero here would say
                     // "nothing is waiting", which is a claim; not knowing is not the same answer,

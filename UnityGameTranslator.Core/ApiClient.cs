@@ -281,10 +281,16 @@ namespace UnityGameTranslator.Core
         /// <summary>
         /// Build the SSE URL for translation sync stream.
         /// Points to the Node.js SSE micro-server.
+        ///
+        /// ⚠ **The stream carries one's OWN line and nothing else** (<c>lineage=0</c>). What other
+        /// people do — a contribution arriving, a Main moving on — rides the periodic check
+        /// instead: weighing contributions reads their files, and a lineage where somebody
+        /// publishes every ten minutes would do that on every push, for every contributor
+        /// connected. An older SSE server ignores the parameter and behaves as before.
         /// </summary>
         public static string GetSyncSseUrl(string uuid, string localHash)
         {
-            var url = $"{SseBaseUrl}/sync/stream?uuid={Uri.EscapeDataString(uuid)}";
+            var url = $"{SseBaseUrl}/sync/stream?uuid={Uri.EscapeDataString(uuid)}&lineage=0";
             if (!string.IsNullOrEmpty(localHash))
             {
                 url += $"&hash={Uri.EscapeDataString(localHash)}";

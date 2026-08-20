@@ -1678,9 +1678,10 @@ namespace UnityGameTranslator.Core.UI
         private static float _syncCheckIntervalSeconds;
         private static bool _syncCheckInFlight;
 
-        // Auto resolves against the role, which only the site can tell us. Set
-        // once per watch so a later state event does not restart the stream.
-        private static bool _autoRegimeApplied;
+        // The stream is opened only when there is something of one's OWN to watch, and the role
+        // only the site can tell us. Set once per watch so a later state event does not restart
+        // the very stream it arrived on.
+        private static bool _streamDecided;
 
         // The periodic tick serves two different calls: the authenticated sync
         // state, or the public check for someone with no account
@@ -1698,60 +1699,58 @@ namespace UnityGameTranslator.Core.UI
         private static string _publicCheckETagBase;
 
         /// <summary>
-        /// Ask the site about the translation, the way the player chose to.
+        /// Ask the site what changed — on two channels that do not mix.
         ///
-        /// Only "realtime" opens a stream. Every other frequency does a plain HTTP
-        /// call — at startup and then on a timer — because a permanent connection
-        /// costs one for the whole session, and knowing within two seconds that a
-        /// new version exists is worth that price to almost nobody. The one case
-        /// where it is: editing on the website while the game runs.
+        /// 🔴 **What is mine can be immediate; what is other people's follows the rhythm.** They
+        /// used to be one setting, so a Main was woken by every contribution anybody sent, and
+        /// since the site began weighing those contributions each wake-up read their files. Worse,
+        /// somebody publishing every ten minutes woke every contributor of their lineage each time.
         ///
-        /// Called at startup, after a successful login, and whenever the setting
-        /// changes (Apply in the options).
+        /// So: the stream carries one's OWN line only (<c>lineage=0</c>), and everything coming
+        /// from other people — contributions received, a Main that moved, a newer published
+        /// version — rides the periodic check, which always asks for the lineage.
+        ///
+        /// ⚠ The stream is a permission, not an order: it is opened only for somebody who has a
+        /// published line to watch. A player merely using another person's translation has nothing
+        /// of their own in flight, and opens nothing.
+        ///
+        /// Called at startup, after a successful login, and whenever the setting changes
+        /// (Apply in the options).
         /// </summary>
         public static void StartSyncWatch()
         {
             StopSyncStream();
             _nextSyncCheckTime = 0f;
-            _autoRegimeApplied = false;
+            _streamDecided = false;
             _publicWatchActive = false;
 
             string frequency = UpdateCheckFrequency.Normalize(
                 TranslatorCore.Config.sync.update_check_frequency);
 
-            if (frequency == UpdateCheckFrequency.Never)
+            bool wantsStream = TranslatorCore.Config.sync.realtime_own_translation;
+
+            // ⚠ "Never" silences the periodic channel, not the immediate one: they are two
+            // questions now. Somebody who wants no interruptions at all turns the stream off too,
+            // and that combination leaves the mod entirely quiet.
+            if (frequency == UpdateCheckFrequency.Never && !wantsStream)
             {
                 TranslatorCore.LogInfo("[Sync] Update checks disabled by the player");
                 return;
             }
 
-            // No account, but a translation downloaded from the site: the public
-            // check is the only signal they can receive, and until now they got
-            // none at all. Periodic too, at the same rhythm — the endpoint is
-            // ETag'd, so an unchanged translation costs a 304.
+            // No account, but a translation downloaded from the site: the public check is the only
+            // signal they can receive. Nothing of their own is in flight, so no stream either way —
+            // the endpoint is ETag'd, so an unchanged translation costs a 304.
             if (!CanWatchSync(logReason: false))
             {
+                if (frequency == UpdateCheckFrequency.Never) return;
                 StartPublicWatch(frequency);
                 return;
             }
 
-            // Auto cannot decide yet: the role comes from the site. Ask once, and
-            // ApplyAutoRegime settles the rhythm when the answer arrives.
-            if (frequency == UpdateCheckFrequency.Auto)
-            {
-                TranslatorCore.LogInfo("[Sync] Automatic rhythm — asking the site who we are");
-                CheckSyncStateNow();
-                return;
-            }
-
-            if (frequency == UpdateCheckFrequency.Realtime)
-            {
-                StartSyncStream();
-                return;
-            }
-
-            // Look once now — before play starts is when an update can be applied
-            // without interrupting anything — then let the timer take over.
+            // One call now, lineage included: it is the moment an update can be applied without
+            // interrupting play, and it is also what tells us whether there is a line of our own
+            // to keep a stream open for. OpenStreamIfOurs settles that when the answer arrives.
             CheckSyncStateNow();
 
             float interval = UpdateCheckFrequency.IntervalSeconds(frequency);
@@ -1759,8 +1758,8 @@ namespace UnityGameTranslator.Core.UI
             _nextSyncCheckTime = interval > 0f ? Time.realtimeSinceStartup + interval : 0f;
 
             TranslatorCore.LogInfo(interval > 0f
-                ? $"[Sync] Checking for updates every {interval / 60f:0} min"
-                : "[Sync] Checking for updates at startup only");
+                ? $"[Sync] Asking the website every {interval / 60f:0} min"
+                : "[Sync] Asking the website at startup only");
         }
 
         /// <summary>
@@ -1774,11 +1773,9 @@ namespace UnityGameTranslator.Core.UI
             if (!TranslatorCore.Config.online_mode) return;
             if (!TranslatorCore.SourceSiteId.HasValue) return;
 
-            // Automatic means hourly here: with no account there is nothing of
-            // one's own to keep in sync, only a new version to hear about.
-            float interval = frequency == UpdateCheckFrequency.Auto
-                ? UpdateCheckFrequency.IntervalSeconds(UpdateCheckFrequency.Hourly)
-                : UpdateCheckFrequency.IntervalSeconds(frequency);
+            // The chosen rhythm, plainly: with no account there is nothing of one's own to keep in
+            // step, only a new version to hear about — and that is exactly what this channel is.
+            float interval = UpdateCheckFrequency.IntervalSeconds(frequency);
 
             CheckPublicUpdateNow();
 
@@ -1893,37 +1890,37 @@ namespace UnityGameTranslator.Core.UI
         }
 
         /// <summary>
-        /// Settle the automatic rhythm now that the site has told us the role.
+        /// Open the stream, now that the site has said whether there is a line of our own to watch.
         ///
-        /// Owning a translation means having work in flight — corrections made on
-        /// the website or on another machine must come back on their own, and an
-        /// open connection is both the fastest and, measured, the cheapest way to
-        /// do that. Everyone else is told at a calm pace.
+        /// 🔴 **A published line of one's own is the whole condition.** Owning one means having
+        /// work in flight — corrections made on the website or on another machine must come back
+        /// without anybody thinking about it — and measured, an open connection costs the server
+        /// LESS than polling fast (one descriptor out of 32768 and no CPU, against a PHP request
+        /// every couple of minutes). Somebody merely using another person's translation has
+        /// nothing of theirs to hear about, so the permission stays unused rather than spending a
+        /// connection on nothing. See analyse/edit-session-lifecycle-scale.md.
         ///
-        /// Runs once per watch: a later state event must not tear down the very
-        /// stream it arrived on.
+        /// Runs once per watch: a later state event must not tear down the very stream it arrived
+        /// on.
         /// </summary>
-        private static void ApplyAutoRegime()
+        private static void OpenStreamIfOurs()
         {
-            if (_autoRegimeApplied) return;
-            if (UpdateCheckFrequency.Normalize(TranslatorCore.Config.sync.update_check_frequency)
-                != UpdateCheckFrequency.Auto) return;
+            if (_streamDecided) return;
+            if (!TranslatorCore.Config.sync.realtime_own_translation) return;
 
             var role = TranslatorCore.ServerState?.Role ?? TranslationRole.None;
-            string resolved = UpdateCheckFrequency.ResolveAuto(role);
-            _autoRegimeApplied = true;
+            bool ours = role == TranslationRole.Main || role == TranslationRole.Branch;
 
-            if (resolved == UpdateCheckFrequency.Realtime)
+            _streamDecided = true;
+
+            if (!ours)
             {
-                TranslatorCore.LogInfo($"[Sync] Automatic: {role} owns a translation — staying connected");
-                StartSyncStream();
+                TranslatorCore.LogInfo("[Sync] Nothing published of our own — no stream to open");
                 return;
             }
 
-            float interval = UpdateCheckFrequency.IntervalSeconds(resolved);
-            _syncCheckIntervalSeconds = interval;
-            _nextSyncCheckTime = interval > 0f ? Time.realtimeSinceStartup + interval : 0f;
-            TranslatorCore.LogInfo($"[Sync] Automatic: no translation of our own — checking every {interval / 60f:0} min");
+            TranslatorCore.LogInfo($"[Sync] {role}: staying connected for our own translation");
+            StartSyncStream();
         }
 
         /// <summary>
@@ -2346,9 +2343,9 @@ namespace UnityGameTranslator.Core.UI
 
                 TranslatorCore.LogDebug($"[SyncSSE] State: exists={exists}, role={role}, siteId={serverState.SiteId}");
 
-                // The role is only knowable here, so this is where "automatic"
-                // stops being a promise and becomes a rhythm
-                ApplyAutoRegime();
+                // The role is only knowable here, so this is where the permission to stay
+                // connected turns into a stream — or stays unused, for want of anything of ours.
+                OpenStreamIfOurs();
 
                 // Client-side update detection (URL hash may be stale after reconnection)
                 string serverHash = serverState.Hash;

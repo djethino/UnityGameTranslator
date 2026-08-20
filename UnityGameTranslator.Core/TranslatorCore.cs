@@ -2131,10 +2131,38 @@ namespace UnityGameTranslator.Core
                 if (Config.sync != null && Config.sync.check_update_on_start.HasValue)
                 {
                     Config.sync.update_check_frequency = Config.sync.check_update_on_start.Value
-                        ? UpdateCheckFrequency.Auto
+                        ? UpdateCheckFrequency.Hourly
                         : UpdateCheckFrequency.Never;
                     Config.sync.check_update_on_start = null;
                     LogDebug($"[Config] Migrated check_update_on_start -> update_check_frequency={Config.sync.update_check_frequency}");
+                    needsResave = true;
+                }
+
+                // 🔴 **One setting became two** (2026-08-20). The frequency decided BOTH the rhythm
+                // and whether to keep a stream open, so the contributions a Main receives arrived
+                // in real time — waking the game to recount its branches every time anybody sent
+                // one. The stream is now its own switch, about one's OWN line only.
+                //
+                // ⚠ Read from the value as stored, before Normalize() folds "auto" and "realtime"
+                // into a rhythm: those two are precisely the ones that asked for a connection, and
+                // once folded there is no way left to tell they did. Every other value never
+                // opened one, so it answers no — handing somebody a permanent connection they had
+                // declined is the one outcome this migration must not produce.
+                //
+                // ⚠ The RAW json decides, not the property: it defaults to true for a new install
+                // (which never reaches this code — LoadConfig returns after writing the file), so
+                // the property alone cannot tell an absent field from a deliberate yes.
+                if (Config.sync != null && rawJson["sync"]?["realtime_own_translation"] == null)
+                {
+                    string stored = Config.sync.update_check_frequency;
+
+                    Config.sync.realtime_own_translation =
+                        UpdateCheckFrequency.AskedForRealtime(stored);
+                    Config.sync.update_check_frequency = UpdateCheckFrequency.Normalize(stored);
+
+                    LogDebug($"[Config] Split update_check_frequency={stored} -> "
+                             + $"{Config.sync.update_check_frequency} + realtime_own_translation="
+                             + $"{Config.sync.realtime_own_translation}");
                     needsResave = true;
                 }
 
@@ -7112,88 +7140,116 @@ namespace UnityGameTranslator.Core
     /// </summary>
     public static class UpdateCheckFrequency
     {
-        /// <summary>
-        /// Let the mod pick, from the role the site reports.
-        ///
-        /// The right rhythm is not the same for everyone, and the measurements
-        /// settled which way round: for someone who OWNS a translation, an open
-        /// connection costs the server LESS than polling fast (one descriptor out
-        /// of 32768 and no CPU, against a PHP request every couple of minutes),
-        /// and they are the few. Someone who merely uses a translation has
-        /// nothing to synchronise and only needs to hear that a newer version
-        /// exists. See analyse/edit-session-lifecycle-scale.md.
-        /// </summary>
-        public const string Auto = "auto";
-
         public const string Never = "never";
         public const string Startup = "startup";
-        public const string HalfHourly = "30m";
         public const string Hourly = "1h";
         public const string ThreeHourly = "3h";
-        public const string Realtime = "realtime";
+        public const string SixHourly = "6h";
 
         /// <summary>Ordered as shown in the options dropdown.</summary>
         public static readonly string[] All =
         {
-            Auto, Never, Startup, HalfHourly, Hourly, ThreeHourly, Realtime
+            Never, Startup, Hourly, ThreeHourly, SixHourly
         };
+
+        // ── What this setting used to also carry (2026-08-20) ─────────────────
+        //
+        // 🔴 It answered two questions at once: the rhythm of the checks, AND whether to keep a
+        // stream open. That is what made contributions arrive in real time — a Main was woken up
+        // by every branch anybody sent, and each wake-up now costs a read of their files. The two
+        // questions are separate controls, and these three values only survive to be migrated.
+        //
+        // ⚠ Never deleted outright: they sit in config.json on every machine the mod runs on, and
+        // an unrecognised value would be silently read as the default, undoing somebody's choice.
+        private const string LegacyAuto = "auto";
+        private const string LegacyRealtime = "realtime";
+        private const string LegacyHalfHourly = "30m";
 
         /// <summary>
         /// Seconds between two checks, or 0 when this frequency never repeats
-        /// ("never", "startup" and "realtime" — the last one is pushed, not polled).
+        /// ("never" and "startup").
         /// </summary>
         public static float IntervalSeconds(string frequency)
         {
             switch (frequency)
             {
-                case HalfHourly:  return 30f * 60f;
                 case Hourly:      return 60f * 60f;
                 case ThreeHourly: return 3f * 60f * 60f;
+                case SixHourly:   return 6f * 60f * 60f;
                 default:          return 0f;
             }
         }
 
         /// <summary>
-        /// Anything unknown on disk falls back to Auto rather than being read as
-        /// "never": a typo must not silently stop someone from ever hearing about
-        /// an update.
+        /// The stored value, read as one of the choices that still exist.
+        ///
+        /// ⚠ Anything unknown falls back to hourly rather than being read as "never": a typo, or a
+        /// value written by a newer version, must not silently stop somebody from ever hearing
+        /// about an update.
         /// </summary>
         public static string Normalize(string frequency)
         {
-            return Array.IndexOf(All, frequency) >= 0 ? frequency : Auto;
+            if (Array.IndexOf(All, frequency) >= 0) return frequency;
+
+            // The three retired values. "auto" and "realtime" also asked for a stream, which is
+            // now its own setting — see WantsRealtimeFor, which reads the same stored string.
+            switch (frequency)
+            {
+                case LegacyHalfHourly: return Hourly;
+                case LegacyAuto:       return Hourly;
+                case LegacyRealtime:   return Hourly;
+                default:               return Hourly;
+            }
         }
 
         /// <summary>
-        /// What Auto resolves to, once the site has told us who we are.
+        /// Did this stored value ask for a permanent connection?
         ///
-        /// Owning a translation means having work in flight — corrections made on
-        /// the website or on another machine must come back without the player
-        /// having to think about it. Everyone else is told at a calm pace.
+        /// Used ONCE, to fill the new setting from an existing config.json: "auto" opened a stream
+        /// for anybody owning a translation, and "realtime" for everybody. Every other value never
+        /// opened one, and reading it as a yes would hand somebody a connection they had declined.
+        ///
+        /// ⚠ "never" answers no, so somebody who asked for silence keeps it whole.
         /// </summary>
-        public static string ResolveAuto(TranslationRole role)
+        public static bool AskedForRealtime(string storedFrequency)
         {
-            return role == TranslationRole.Main || role == TranslationRole.Branch
-                ? Realtime
-                : Hourly;
+            return storedFrequency == LegacyAuto || storedFrequency == LegacyRealtime;
         }
     }
 
     public class SyncConfig
     {
         /// <summary>
-        /// How often the mod asks the site whether the translation changed.
-        /// Values: "never", "startup", "30m", "1h", "3h", "realtime".
+        /// How often the mod asks the site what changed. Values: "never", "startup", "1h", "3h",
+        /// "6h". Every rhythm also checks once at startup — that is the moment an update can be
+        /// applied without interrupting play.
         ///
-        /// Every value but "realtime" is a plain HTTP call. "realtime" keeps a
-        /// stream open for the whole session, which is only worth its cost to
-        /// someone editing on the website while the game runs — a player just
-        /// wanting to know that a new version exists does not need to learn it
-        /// within two seconds. See analyse/edit-session-lifecycle-scale.md.
-        ///
-        /// Every value except "never" and "realtime" also checks once at startup:
-        /// that is the moment an update can be applied without interrupting play.
+        /// 🔴 **The rhythm, and nothing else.** It used to decide whether to keep a stream open as
+        /// well, which put the contributions a Main receives on that stream: they arrived within
+        /// seconds, and every one of them woke the game up to recount. Whether to stay connected is
+        /// now <see cref="realtime_own_translation"/>, and the two read together — this one is the
+        /// pace, that one says what does not wait for it.
         /// </summary>
-        public string update_check_frequency { get; set; } = UpdateCheckFrequency.Auto;
+        public string update_check_frequency { get; set; } = UpdateCheckFrequency.Hourly;
+
+        /// <summary>
+        /// Keep a connection open so what THIS account publishes elsewhere — the website, another
+        /// machine — comes back to the game as it happens.
+        ///
+        /// ⚠ **Only ever about one's own line.** What other people do (a contribution arriving, a
+        /// Main moving on, a newer version published) follows
+        /// <see cref="update_check_frequency"/>, whatever this says. Somebody publishing every ten
+        /// minutes would otherwise wake every contributor of their lineage each time.
+        ///
+        /// ⚠ A permission, not an order: the mod opens the stream only when there is something of
+        /// one's own to watch — a published line in this lineage. A player merely using somebody
+        /// else's translation opens nothing either way.
+        ///
+        /// ⚠ On by default for a NEW config only. An existing one is filled from what its owner had
+        /// already chosen — see the migration in LoadConfig, which reads the raw JSON to tell an
+        /// absent property from a stored false.
+        /// </summary>
+        public bool realtime_own_translation { get; set; } = true;
 
         /// <summary>
         /// Superseded by <see cref="update_check_frequency"/>. Read ONCE to migrate

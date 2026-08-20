@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
@@ -147,16 +147,18 @@ namespace UnityGameTranslator.Core.UI.Panels
         private SearchableDropdown _checkFrequencyDropdown;
 
         /// <summary>
-        /// Frequency labels, in the same order as UpdateCheckFrequency.All so the
-        /// two conversions below stay a simple index lookup. "Real-time" sits last
-        /// because it is the costly one, not the natural choice.
+        /// Frequency labels, in the same order as UpdateCheckFrequency.All so the two conversions
+        /// below stay a simple index lookup.
+        ///
+        /// ⚠ "Automatic" and "Real-time" are gone from here (2026-08-20) — not removed as features
+        /// but moved: they described whether to keep a connection open, which is now its own
+        /// checkbox. This list is the RHYTHM, and a rhythm has no "stay connected" in it.
         /// </summary>
         private static readonly string[] UpdateFrequencyDisplayOptions =
         {
-            // Reads as a sentence after "Ask the website every:" — except the ends,
+            // Reads as a sentence after "Ask the website every:" — except the first two,
             // which are states rather than rhythms
-            "Automatic (recommended)", "Never", "Startup only", "30 minutes", "hour",
-            "3 hours", "Real-time (stay connected)"
+            "Never", "Startup only", "hour", "3 hours", "6 hours"
         };
 
         private static string FrequencyConfigToDisplay(string value)
@@ -170,6 +172,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             int index = System.Array.IndexOf(UpdateFrequencyDisplayOptions, display);
             return index >= 0 ? UpdateCheckFrequency.All[index] : UpdateCheckFrequency.Hourly;
         }
+        private Toggle _realtimeOwnToggle;
         private Toggle _notifyUpdatesToggle;
         private Toggle _autoDownloadToggle;
         private Toggle _notificationsEnabledToggle;
@@ -234,6 +237,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             public string ai_seed_retranslate;
             public bool online_mode;
             public string update_check_frequency;
+        public bool realtime_own_translation;
             public bool notify_updates;
             public bool notifications_enabled;
             public string notification_position;
@@ -302,6 +306,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     ai_seed_retranslate = SeedToText(TranslatorCore.Config.ai_seed_retranslate),
                     online_mode = TranslatorCore.Config.online_mode,
                     update_check_frequency = UpdateCheckFrequency.Normalize(TranslatorCore.Config.sync.update_check_frequency),
+            realtime_own_translation = TranslatorCore.Config.sync.realtime_own_translation,
                     notify_updates = TranslatorCore.Config.sync.notify_updates,
                     notifications_enabled = TranslatorCore.Config.sync.notifications_enabled,
                     notification_position = TranslatorCore.Config.sync.notification_position ?? "top-right",
@@ -1399,6 +1404,29 @@ namespace UnityGameTranslator.Core.UI.Panels
             var syncSectionTitle = UIStyles.CreateSectionTitle(card, "SyncLabel", "Translation Sync");
             RegisterUIText(syncSectionTitle);
 
+            // 🔴 **Before the rhythm, because it says what does not follow it.** The two used to be
+            // one list, so choosing "real-time" also put other people's work on that connection: a
+            // Main was woken by every contribution anybody sent, and somebody publishing every ten
+            // minutes woke each of their contributors just as often. One question each now — what
+            // is mine can be immediate, what is other people's has a pace.
+            var realtimeObj = UIFactory.CreateToggle(card, "RealtimeOwnToggle",
+                                                     out _realtimeOwnToggle, out var realtimeLabel);
+            realtimeLabel.text = " Real-time check for your own translation";
+            realtimeLabel.color = UIStyles.TextSecondary;
+            UIFactory.SetLayoutElement(realtimeObj, minHeight: UIStyles.RowHeightNormal);
+            RegisterUIText(realtimeLabel);
+            UIHelpers.AddToggleListener(_realtimeOwnToggle, (_) => { UpdateApplyButtonText(); });
+            _helpZone?.Describe(realtimeObj,
+                "Keeps a connection open so that what you publish from the website, or from another "
+                + "computer, comes back to the game as it happens. Only ever about your own line: "
+                + "contributions you receive and the original you contribute to follow the rhythm "
+                + "below. Nothing is opened when you have published nothing of your own.");
+
+            var realtimeHint = UIStyles.CreateHint(card, "RealtimeOwnHint",
+                "Changes you publish from the website or another machine come back straight away, "
+                + "rather than waiting for the next check.");
+            RegisterUIText(realtimeHint);
+
             var freqRow = UIStyles.CreateFormRow(card, "CheckFreqRow", UIStyles.RowHeightMedium, 5);
             // Not just "Check for updates": the word alone left people guessing what
             // was being checked, and for which role
@@ -1410,17 +1438,22 @@ namespace UnityGameTranslator.Core.UI.Panels
             _checkFrequencyDropdown = new SearchableDropdown(
                 "CheckFrequency",
                 UpdateFrequencyDisplayOptions,
-                FrequencyConfigToDisplay(UpdateCheckFrequency.Auto),
-                popupHeight: 190,
+                FrequencyConfigToDisplay(UpdateCheckFrequency.Hourly),
+                popupHeight: 150,
                 showSearch: false
             );
             var freqDropdownObj = _checkFrequencyDropdown.CreateUI(freqRow, (_) => { UpdateApplyButtonText(); });
             UIFactory.SetLayoutElement(freqDropdownObj, minWidth: 200, minHeight: UIStyles.InputHeight);
             _helpZone?.Describe(freqDropdownObj,
-                "How often the mod asks the website what changed: your own translation updated elsewhere (another computer, the website editor), contributions waiting for your review if you own it, and the original translation if you contribute to someone else's. Automatic picks for you: while you own a translation it stays connected, so corrections made on your other machine appear without waiting; otherwise it asks once an hour. Editing in the browser is a separate, instant channel and is never affected by this setting.");
+                "How often the mod asks the website what changed: contributions waiting for your "
+                + "review if you own a translation, the original translation if you contribute to "
+                + "someone else's, and a newer version of the translation you use. Your own line is "
+                + "in here too, unless Real-time check is on. Editing in the browser is a separate, "
+                + "instant channel and is never affected by this setting.");
 
             var freqHint = UIStyles.CreateHint(card, "CheckFreqHint",
-                "Automatic stays connected while you own a translation, so your own edits made elsewhere come back at once, and asks hourly otherwise.");
+                "Contributions you received, a Main that moved, a newer version published — and "
+                + "your own translation when Real-time check is off.");
             RegisterUIText(freqHint);
 
             var freqStartupHint = UIStyles.CreateHint(card, "CheckFreqStartupHint",
@@ -1754,6 +1787,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Online mode (must be loaded BEFORE translation backend — UpdateBackendSections checks online state)
             _onlineModeToggle.isOn = TranslatorCore.Config.online_mode;
             _checkFrequencyDropdown.SelectedValue = FrequencyConfigToDisplay(TranslatorCore.Config.sync.update_check_frequency);
+            _realtimeOwnToggle.isOn = TranslatorCore.Config.sync.realtime_own_translation;
             _notifyUpdatesToggle.isOn = TranslatorCore.Config.sync.notify_updates;
             _autoDownloadToggle.isOn = TranslatorCore.Config.sync.auto_download;
             _checkModUpdatesToggle.isOn = TranslatorCore.Config.sync.check_mod_updates;
@@ -2386,12 +2420,19 @@ namespace UnityGameTranslator.Core.UI.Panels
                 bool nowOnline = _onlineModeToggle.isOn;
                 TranslatorCore.Config.online_mode = nowOnline;
 
-                // Applied in place, not "next launch": switching to Real-time must
-                // open the stream now, and leaving it must close it now
+                // Applied in place, not "next launch": turning the stream on must open it now, and
+                // turning it off must close it now. Same for the rhythm.
                 string previousFrequency = UpdateCheckFrequency.Normalize(TranslatorCore.Config.sync.update_check_frequency);
                 string newFrequency = FrequencyDisplayToConfig(_checkFrequencyDropdown.SelectedValue);
-                bool frequencyChanged = previousFrequency != newFrequency;
+
+                bool previousRealtime = TranslatorCore.Config.sync.realtime_own_translation;
+                bool newRealtime = _realtimeOwnToggle.isOn;
+
+                bool frequencyChanged = previousFrequency != newFrequency
+                                        || previousRealtime != newRealtime;
+
                 TranslatorCore.Config.sync.update_check_frequency = newFrequency;
+                TranslatorCore.Config.sync.realtime_own_translation = newRealtime;
                 TranslatorCore.Config.sync.notify_updates = _notifyUpdatesToggle.isOn;
                 TranslatorCore.Config.sync.auto_download = _autoDownloadToggle.isOn;
                 TranslatorCore.Config.sync.check_mod_updates = _checkModUpdatesToggle.isOn;
@@ -2684,6 +2725,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Online
             if (_onlineModeToggle.isOn != _initialSnapshot.online_mode) count++;
             if (FrequencyDisplayToConfig(_checkFrequencyDropdown.SelectedValue) != _initialSnapshot.update_check_frequency) count++;
+            if (_realtimeOwnToggle.isOn != _initialSnapshot.realtime_own_translation) count++;
             if (_notifyUpdatesToggle.isOn != _initialSnapshot.notify_updates) count++;
             if (_autoDownloadToggle.isOn != _initialSnapshot.auto_download) count++;
             if (_checkModUpdatesToggle.isOn != _initialSnapshot.check_mod_updates) count++;

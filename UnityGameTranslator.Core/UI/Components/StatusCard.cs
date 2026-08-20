@@ -592,7 +592,17 @@ namespace UnityGameTranslator.Core.UI.Components
         /// miss the worker writes its result straight into the component it was given, which would
         /// replace the whole line with the translated fragment alone — dropping the name.
         /// </summary>
-        public void SetSecondaryInfo(string info, string mention = null)
+        /// <param name="needsAttention">
+        /// 🔴 **Whether this line is work waiting, or merely a fact.** It was always muted grey —
+        /// the colour this card uses for "nothing to do here" — so "2 contributions you have not
+        /// been through, holding 38 lines to take" read like a footnote and slid past the eye. It
+        /// is the only sentence on the card asking for something.
+        ///
+        /// ⚠ Warning, not success: the Manager showed the same sentence in green, which reads as
+        /// "all good, nothing to do" — the opposite of what it says. Green is where this ends up
+        /// once the contributions have been gone through, not while they wait.
+        /// </param>
+        public void SetSecondaryInfo(string info, string mention = null, bool needsAttention = false)
         {
             if (_modeRow == null) return;
 
@@ -602,6 +612,8 @@ namespace UnityGameTranslator.Core.UI.Components
                 _secondaryLabel.text = string.IsNullOrEmpty(mention)
                     ? TranslatorCore.TranslateOwnUIDynamic(info, _secondaryLabel)
                     : TranslatorCore.TranslateOwnUIDynamic(info) + " " + mention;
+
+                _secondaryLabel.color = needsAttention ? UIStyles.StatusWarning : UIStyles.TextMuted;
             }
 
             _secondaryLabel.gameObject.SetActive(hasInfo);
@@ -914,9 +926,12 @@ namespace UnityGameTranslator.Core.UI.Components
             SetQualityStats(CalculateLocalStats());
 
             // The socle's words, so this line and the Manager's signal row say one thing.
+            // ⚠ And the same weight: contributions waiting is the one thing on this card that
+            // asks the owner to do something, so it is not written in the colour of a footnote.
             SetSecondaryInfo(waiting > 0
                 ? Contributions.WhatIsWaiting(waiting, linesAvailable)
-                : "You own this translation");
+                : "You own this translation",
+                needsAttention: waiting > 0);
         }
 
         /// <summary>

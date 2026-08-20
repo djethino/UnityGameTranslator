@@ -318,6 +318,22 @@ namespace UnityGameTranslator.Core.UI.Components
             var voteLayout = _voteRow.GetComponent<HorizontalLayoutGroup>();
             if (voteLayout != null) voteLayout.childAlignment = TextAnchor.MiddleLeft;
 
+            // 🔴 **The row says what it is.** It showed a bare "+1" beside a sentence, and a lone
+            // signed number names nothing: it could be a score, a difference, lines added. Every
+            // other row of this card carries the word for its subject, and this one did not.
+            //
+            // ⚠ "Votes", the website's word (games.sort.votes, admin.votes), not "rating": the
+            // same fact must read the same way in the mod and on the site, and the site counts
+            // votes. See CLAUDE.md — it is one ecosystem.
+            var voteTitle = UIFactory.CreateLabel(_voteRow, "VoteTitle", "Votes", TextAnchor.MiddleLeft);
+            voteTitle.fontSize = UIStyles.FontSizeHint;
+            voteTitle.color = UIStyles.TextSecondary;
+            UIFactory.SetLayoutElement(voteTitle.gameObject, minWidth: 40, flexibleWidth: 0);
+            // Written once and never rewritten by the code, so it goes through the translation
+            // pipeline like the card's other fixed words — unlike the labels above, whose text the
+            // code replaces on every refresh and which are therefore excluded from it.
+            TranslatorCore.RegisterUIText(voteTitle);
+
             // The widget is rebuilt into this host whenever the mode changes (signed in, seen
             // enough of it, someone else's work) — arrows exist or they don't, they are never
             // shown greyed out.
@@ -376,15 +392,18 @@ namespace UnityGameTranslator.Core.UI.Components
                 _voteButtons.UpdateVoteCount(vote.Count, vote.UserVote);
             }
 
+            // ⚠ **"Vote", not "rate" — the website's verb.** It counts votes, its buttons say
+            // Upvote and Downvote, and it refuses with "You cannot vote on your own translation".
+            // The mod said "rate" for the same act on the same object: one ecosystem, one word.
             string hint;
             if (interactive)
-                hint = "Rate this translation";
+                hint = "Vote on this translation";
             else if (!signedIn)
-                hint = "Sign in to rate this translation";
+                hint = "Sign in to vote on this translation";
             else if (role == LineageRole.Main)
-                hint = "You cannot rate your own translation";
+                hint = "You cannot vote on your own translation";
             else if (!playedEnough)
-                hint = "Play with it a little, then rate it";
+                hint = "Play with it a little, then vote";
             else
                 hint = null;
 

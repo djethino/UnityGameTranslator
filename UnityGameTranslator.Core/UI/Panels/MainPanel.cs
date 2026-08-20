@@ -556,7 +556,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             // description, forking) is a different subject and lives on the row below.
             var syncRow = UIStyles.CreateFormRow(actionsBox, "SyncActionsRow", UIStyles.RowHeightLarge, UIStyles.SmallSpacing);
 
-            _uploadBtn = CreatePrimaryButton(syncRow, "UploadBtn", "Upload Translation", 200);
+            // 🔴 **150, not 200 — the marks are worth 45 pixels and the old figures predate them.**
+            // ScopeMarks.Adorn raises a fixed minWidth by exactly what it inserts, which is right;
+            // but a row of two adorned buttons then asked for 418 pixels inside a card of 420, and
+            // the scrollbar takes 28 more from the viewport as soon as the tab scrolls. The row
+            // overflowed on both sides and clipped its labels. The minimums are what a button needs
+            // WITHOUT its marks, so they are the figures to give back.
+            _uploadBtn = CreatePrimaryButton(syncRow, "UploadBtn", "Upload Translation", 150);
             UIFactory.SetLayoutElement(_uploadBtn.Component.gameObject, flexibleWidth: 9999);
             _uploadBtn.OnClick += OnUploadClicked;
             // Publier laisse les deux côtés porteurs du même fichier : c'est Both, pas Server.
@@ -568,7 +574,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 "Send your local translation to the website so others can use it");
 
             // Compare with Server — belongs next to the push it qualifies
-            _compareWithServerBtn = CreateSecondaryButton(syncRow, "CompareBtn", "Compare", 100);
+            _compareWithServerBtn = CreateSecondaryButton(syncRow, "CompareBtn", "Compare", 85);
             UIStyles.SetBackground(_compareWithServerBtn.Component.gameObject, UIStyles.ButtonSecondary);
             _compareWithServerBtn.OnClick += OnCompareWithServerClicked;
             // 🔴 **The same word opens this page in both directions, and only the marks say which.**
@@ -598,7 +604,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // the code on every refresh, and letting the async pipeline write it too would put two
             // writers on one Text. The pipeline turns the number into a placeholder, so every count
             // shares one cache entry.
-            _reviewOnWebsiteBtn = CreateSecondaryButton(roleActionsRow, "ReviewBtn", "Review Branches", 130);
+            _reviewOnWebsiteBtn = CreateSecondaryButton(roleActionsRow, "ReviewBtn", "Review Branches", 105);
             UIStyles.SetBackground(_reviewOnWebsiteBtn.Component.gameObject, UIStyles.ButtonLink);
             _reviewOnWebsiteBtn.OnClick += OnReviewOnWebsiteClicked;
             // ⚠ Taking in a contribution rewrites the PUBLISHED Main and leaves this machine's file
@@ -613,7 +619,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Edit details (owners) — the description and the resources link were only reachable
             // through the upload screen, which is closed once everything is in sync. Fixing a dead
             // link or rewording a description then had no path at all.
-            _editDetailsBtn = CreateSecondaryButton(roleActionsRow, "EditDetailsBtn", "Edit details", 110);
+            _editDetailsBtn = CreateSecondaryButton(roleActionsRow, "EditDetailsBtn", "Edit details", 90);
             UIStyles.SetBackground(_editDetailsBtn.Component.gameObject, UIStyles.ButtonSecondary);
             _editDetailsBtn.OnClick += OnEditDetailsClicked;
             // ⚠ Opens a panel in the game, where a second confirmation actually sends — the mark
@@ -629,9 +635,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             // A branch could publish its work but never take in what the Main had
             // published since: it drifted further apart with every update, without
             // anything ever saying so.
-            _updateFromMainBtn = CreateSecondaryButton(roleActionsRow, "UpdateFromMainBtn", "Update from Main", 150);
+            _updateFromMainBtn = CreateSecondaryButton(roleActionsRow, "UpdateFromMainBtn", "Update from Main", 120);
             UIStyles.SetBackground(_updateFromMainBtn.Component.gameObject, UIStyles.ButtonSuccess);
             _updateFromMainBtn.OnClick += OnUpdateFromMainClicked;
+            // ⚠ Brings the Main INTO this machine's file and publishes nothing — the opposite side
+            // from its two neighbours on this row. It sat between two adorned buttons saying
+            // nothing, which is the one arrangement that makes a mark look decorative.
+            ScopeMarks.Adorn(_updateFromMainBtn,
+                EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: false));
             RegisterUIText(_updateFromMainBtn.ButtonText);
             _helpZone?.Describe(_updateFromMainBtn.Component.gameObject,
                 "Bring in what the original translation added or corrected since your last update. Your own lines are kept, and you review everything before it applies.");

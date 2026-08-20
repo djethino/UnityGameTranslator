@@ -198,7 +198,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             _backBtn.Component.gameObject.SetActive(false); // Hidden by default
             RegisterUIText(_backBtn.ButtonText);
 
+            // 🔴 **This is the button that actually publishes.** The main panel's Upload
+            // Translation and Edit details only lead here, and both were adorned while the act
+            // itself said nothing — the destination announced along the way and dropped at the
+            // moment it happens.
             _uploadBtn = CreatePrimaryButton(buttonRow, "UploadBtn", "Upload");
+            ScopeMarks.Adorn(_uploadBtn, EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: true));
             _uploadBtn.OnClick += () =>
             {
                 try

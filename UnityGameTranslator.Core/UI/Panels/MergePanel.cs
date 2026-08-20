@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using UnityEngine;
@@ -6,6 +6,7 @@ using UnityEngine.UI;
 using UniverseLib.UI;
 using UniverseLib.UI.Models;
 using UnityGameTranslator.Common;
+using UnityGameTranslator.Core.UI.Components;
 
 namespace UnityGameTranslator.Core.UI.Panels
 {
@@ -166,6 +167,9 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Apply Merge - starts disabled until user makes a choice
             _applyBtn = CreatePrimaryButton(bulkRow, "ApplyBtn", "Apply Merge");
+            // ⚠ Writes this machine's translation and publishes nothing — the whole merge panel
+            // settles a local file. Marked so the three buttons of this row say the same thing.
+            ScopeMarks.Adorn(_applyBtn, EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: false));
             _applyBtn.OnClick += () => TranslatorUIManager.MergePanel?.ApplyMerge();
             RegisterUIText(_applyBtn.ButtonText);
             SetApplyButtonEnabled(false);
@@ -179,17 +183,23 @@ namespace UnityGameTranslator.Core.UI.Panels
             _helpZone?.Describe(cancelBtn.Component.gameObject,
                 "Close without changing anything — you can merge later");
 
-            var replaceBtn = CreateSecondaryButton(buttonRow, "ReplaceBtn", "Replace with Server", 155);
+            var replaceBtn = CreateSecondaryButton(buttonRow, "ReplaceBtn", "Replace with Server", 130);
             UIStyles.SetBackground(replaceBtn.Component.gameObject, UIStyles.ButtonDanger);
+            // ⚠ Overwrites the local file with the online one. The most destructive act on this
+            // row, and it was the one saying nothing about where it lands.
+            ScopeMarks.Adorn(replaceBtn, EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: false));
             replaceBtn.OnClick += () => TranslatorUIManager.MergePanel?.ReplaceWithRemote();
             RegisterUIText(replaceBtn.ButtonText);
             _helpZone?.Describe(replaceBtn.Component.gameObject,
                 "Throw away ALL your local changes and take the website's version as-is");
 
             // Review on Website in the footer (secondary action)
-            _reviewBtn = CreateSecondaryButton(buttonRow, "ReviewBtn", "Review on Website", 140);
+            _reviewBtn = CreateSecondaryButton(buttonRow, "ReviewBtn", "Review on Website", 115);
             var reviewBtn = _reviewBtn;
             UIStyles.SetBackground(reviewBtn.Component.gameObject, UIStyles.ButtonLink);
+            // ⚠ The same act as the main panel's Review Branches: it rewrites the PUBLISHED Main
+            // and never comes back here on its own.
+            ScopeMarks.Adorn(reviewBtn, EditScope.SideAfter(onThisMachine: false, yourPublishedCopy: true));
             reviewBtn.OnClick += () => TranslatorUIManager.MergePanel?.OpenReviewPage();
             RegisterUIText(reviewBtn.ButtonText);
             _helpZone?.Describe(reviewBtn.Component.gameObject,

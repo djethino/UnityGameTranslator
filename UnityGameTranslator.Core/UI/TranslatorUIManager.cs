@@ -2369,17 +2369,17 @@ namespace UnityGameTranslator.Core.UI
                         ? data["lines_available"].ToObject<int?>()
                         : previous?.LinesAvailable,
 
-                    // What those lines are. Carried the same way as the total above, and kept from
-                    // the previous state for the same reason: a stream leaves them out by design.
-                    LinesNew = data["lines_new"] != null
-                        ? data["lines_new"].ToObject<int?>()
-                        : previous?.LinesNew,
-                    LinesReworded = data["lines_reworded"] != null
-                        ? data["lines_reworded"].ToObject<int?>()
-                        : previous?.LinesReworded,
-                    LinesValidated = data["lines_validated"] != null
-                        ? data["lines_validated"].ToObject<int?>()
-                        : previous?.LinesValidated,
+                    // The other axis, carried the same way as the total above and kept from the
+                    // previous state for the same reason: a stream leaves it out by design.
+                    LinesToReview = data["lines_waiting"] != null
+                        ? data["lines_waiting"]["review"].ToObject<int?>()
+                        : previous?.LinesToReview,
+                    LinesNew = data["lines_waiting"] != null
+                        ? ApiClient.TallyOf(data["lines_waiting"],"new")
+                        : (previous?.LinesNew ?? default(TagTally)),
+                    LinesDiffering = data["lines_waiting"] != null
+                        ? ApiClient.TallyOf(data["lines_waiting"],"differing")
+                        : (previous?.LinesDiffering ?? default(TagTally)),
 
                     LinesOffered = data["lines_offered"] != null
                         ? data["lines_offered"].ToObject<int?>()

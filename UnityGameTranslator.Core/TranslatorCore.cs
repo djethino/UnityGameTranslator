@@ -7449,24 +7449,26 @@ namespace UnityGameTranslator.Core
         public int? LinesAvailable { get; set; }
 
         /// <summary>
-        /// What those lines are: text the Main does not have, text somebody retranslated, and lines
-        /// it already held that somebody read and stood behind. They sum to
-        /// <see cref="LinesAvailable"/>.
+        /// How many rows need a DECISION — lines the Main does not hold, plus lines both sides hold
+        /// differently, the ones it will keep its own on included.
         ///
-        /// 🔴 **The third is the one a total hides.** Reading a machine line and marking it
-        /// validated changes no words at all — it is exactly the work this site asks for, and
-        /// "38 lines" cannot tell it apart from 38 new sentences. Which kind is waiting is what
-        /// decides whether a review is worth sitting down for.
+        /// 🔴 **Not <see cref="LinesAvailable"/>, and neither follows from the other.** That one is
+        /// what would be taken; this is what has to be looked at. Measured on a real lineage: 56 and
+        /// 38, the 18 in between being two machine translations that differ. One answers "how long
+        /// will this take", the other "is there anything here for me".
         ///
-        /// ⚠ Null on a server too old to break the total down. Unknown is not zero.
+        /// ⚠ Null on a server too old to say. Unknown is not zero.
         /// </summary>
-        public int? LinesNew { get; set; }
+        public int? LinesToReview { get; set; }
 
-        /// <inheritdoc cref="LinesNew"/>
-        public int? LinesReworded { get; set; }
+        /// <summary>
+        /// Of those rows, the ones the Main does not hold at all, by the contribution's tag —
+        /// because 21 new lines written by hand is not the proposition 21 machine lines are.
+        /// </summary>
+        public TagTally LinesNew { get; set; }
 
-        /// <inheritdoc cref="LinesNew"/>
-        public int? LinesValidated { get; set; }
+        /// <summary>Of those rows, the ones both sides hold differently, by the contribution's tag.</summary>
+        public TagTally LinesDiffering { get; set; }
 
         /// <summary>
         /// On a branch: how many lines THIS contribution is still holding for its Main — what was

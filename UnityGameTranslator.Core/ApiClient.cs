@@ -692,6 +692,28 @@ namespace UnityGameTranslator.Core
             }
         }
 
+        /// <summary>
+        /// One side of a review — "new" or "differing" — read into the socle's own shape.
+        ///
+        /// ⚠ A missing letter is zero, unlike a missing figure elsewhere: the server sends only the
+        /// tags it counted, so an absent "S" means no refusals rather than an unknown number. What
+        /// stands for "we do not know" is the whole `lines_waiting` block being absent, which an
+        /// older server does not send at all.
+        /// </summary>
+        internal static TagTally TallyOf(JToken waiting, string side)
+        {
+            var tags = waiting?[side];
+            if (tags == null || tags.Type != JTokenType.Object) return default(TagTally);
+
+            return new TagTally
+            {
+                Human = tags["H"]?.Value<int>() ?? 0,
+                Validated = tags["V"]?.Value<int>() ?? 0,
+                Machine = tags["A"]?.Value<int>() ?? 0,
+                Skipped = tags["S"]?.Value<int>() ?? 0,
+            };
+        }
+
         private static TranslationInfo ParseTranslationInfo(JToken t)
         {
             var game = t["game"];
@@ -898,11 +920,12 @@ namespace UnityGameTranslator.Core
                     BranchesWithWork = data["branches_with_work"]?.ToObject<int?>(),
                     LinesAvailable = data["lines_available"]?.ToObject<int?>(),
 
-                    // What those lines ARE — the three sum to lines_available. Null on a server
-                    // that predates them, and the card then shows the total alone, as before.
-                    LinesNew = data["lines_new"]?.ToObject<int?>(),
-                    LinesReworded = data["lines_reworded"]?.ToObject<int?>(),
-                    LinesValidated = data["lines_validated"]?.ToObject<int?>(),
+                    // The other axis: how many rows need a decision, and what they are made of.
+                    // Absent on a server that predates it, and the card then shows the total
+                    // alone, as before.
+                    LinesToReview = data["lines_waiting"]?["review"]?.ToObject<int?>(),
+                    LinesNew = TallyOf(data["lines_waiting"], "new"),
+                    LinesDiffering = TallyOf(data["lines_waiting"], "differing"),
                     LinesOffered = data["lines_offered"]?.ToObject<int?>()
                 };
 
@@ -2294,16 +2317,16 @@ namespace UnityGameTranslator.Core
         public int? LinesAvailable { get; set; }
 
         /// <summary>
-        /// What those lines are — see <see cref="ServerTranslationState.LinesNew"/>. Null on a
-        /// server that predates the breakdown, which is "unknown", never zero.
+        /// How many rows need a decision — see <see cref="ServerTranslationState.LinesToReview"/>.
+        /// Null on a server that predates it, which is "unknown", never zero.
         /// </summary>
-        public int? LinesNew { get; set; }
+        public int? LinesToReview { get; set; }
 
-        /// <inheritdoc cref="LinesNew"/>
-        public int? LinesReworded { get; set; }
+        /// <summary>Of those, the ones the Main does not hold, by the contribution's tag.</summary>
+        public TagTally LinesNew { get; set; }
 
-        /// <inheritdoc cref="LinesNew"/>
-        public int? LinesValidated { get; set; }
+        /// <summary>Of those, the ones both sides hold differently, by the contribution's tag.</summary>
+        public TagTally LinesDiffering { get; set; }
 
         /// <summary>On a branch: what this contribution still holds for its Main. Null if unknown.</summary>
         public int? LinesOffered { get; set; }

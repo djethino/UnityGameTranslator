@@ -1285,15 +1285,15 @@ namespace UnityGameTranslator.Core.UI.Panels
             switch (_currentLayoutState)
             {
                 case LayoutState.OwnerMain:
-                    // ⚠ The breakdown travels with the total. Which kind of work is waiting — text
-                    // nobody has, a retranslation, or lines somebody read and stood behind — is what
-                    // decides whether opening the review is worth it, and the total cannot say.
+                    // ⚠ Both axes travel together. How many rows need a decision is not how many are
+                    // worth taking, and what they are made of is what decides whether opening the
+                    // review is worth it — none of which a single total can say.
                     _statusCard.ConfigureAsMainOwner(standing, entryCount, targetLang,
                                                      standing.BranchesWaiting ?? 0,
                                                      serverState?.LinesAvailable,
-                                                     serverState?.LinesNew,
-                                                     serverState?.LinesReworded,
-                                                     serverState?.LinesValidated);
+                                                     serverState?.LinesToReview,
+                                                     serverState?.LinesNew ?? default(TagTally),
+                                                     serverState?.LinesDiffering ?? default(TagTally));
                     break;
 
                 case LayoutState.OwnerBranch:

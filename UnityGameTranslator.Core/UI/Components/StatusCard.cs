@@ -920,8 +920,9 @@ namespace UnityGameTranslator.Core.UI.Components
         /// </summary>
         public void ConfigureAsMainOwner(Standing standing, int entryCount, string language,
                                          int waiting, int? linesAvailable = null,
-                                         int? linesNew = null, int? linesReworded = null,
-                                         int? linesValidated = null)
+                                         int? linesToReview = null,
+                                         TagTally linesNew = default(TagTally),
+                                         TagTally linesDiffering = default(TagTally))
         {
             SetStanding(standing);
             SetDetails(entryCount, language);
@@ -938,11 +939,10 @@ namespace UnityGameTranslator.Core.UI.Components
             // asks the owner to do something, so it is not written in the colour of a footnote.
             var said = Contributions.WhatIsWaiting(waiting, linesAvailable);
 
-            // ⚠ What KIND of work, appended rather than folded in. "38 lines" and "21 new · 17
-            // validated" answer two questions, and the second is the one that decides whether to
-            // open the review at all — lines somebody read and stood behind change no words, and a
-            // total cannot tell them apart from 38 new sentences.
-            var kinds = Contributions.WhatKindOfWork(linesNew, linesReworded, linesValidated);
+            // ⚠ The other axis, appended rather than folded in. "38 lines to take" and "56 to
+            // review" answer two questions and neither follows from the other; the tags answer a
+            // third — 21 new lines written by hand is not the proposition 21 machine lines are.
+            var kinds = Contributions.WhatKindOfWork(linesToReview, linesNew, linesDiffering);
             if (kinds.Length > 0) said += " — " + kinds + ".";
 
             SetSecondaryInfo(said, needsAttention: true);

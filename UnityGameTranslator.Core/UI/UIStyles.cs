@@ -208,6 +208,23 @@ namespace UnityGameTranslator.Core.UI
         public static readonly Color QualityKept = Of(Theme.QualityKept);
         public static readonly Color QualityCapture = Of(Theme.QualityCapture);
 
+        /// <summary>
+        /// The letter on its coloured square, the way the website draws it.
+        ///
+        /// 🔴 **The same five letters are named in three products and only one of them drew them.**
+        /// Here they were `[H] some key` — the tag as plain grey text between brackets, indistinct
+        /// from the key beside it, and carrying none of the colour a reader has already learnt on
+        /// the site's tables. The colours come from <see cref="Theme"/>, so changing how a tag
+        /// looks is one edit in the shared library rather than a hunt through three code bases.
+        ///
+        /// ⚠ The chip ramp (600) and not the band ramp (500): six pixels of white type need the
+        /// darker one behind them. The library holds both and says why.
+        /// </summary>
+        public static Color TagChip(string tag)
+        {
+            return Of(Theme.ChipBackground(string.IsNullOrEmpty(tag) ? null : tag.ToUpperInvariant()));
+        }
+
         // Item/List backgrounds
         public static readonly Color ItemBackground = Of(Theme.SurfaceRaised);
         public static readonly Color ItemBackgroundHover = Of(Theme.SurfaceHover);

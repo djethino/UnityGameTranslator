@@ -173,7 +173,28 @@ namespace UnityGameTranslator.Core.UI
         public static readonly Color ButtonSuccess = Of(Theme.Accent);                             // the main CTA is an accent, not a green
         public static readonly Color ButtonWarning = Of(Theme.StatusWarning);
         public static readonly Color ButtonDanger = Of(Theme.StatusError);
-        public static readonly Color ButtonLink = Of(Theme.AccentSoft);
+        /// <summary>
+        /// A button that leads somewhere else — the website. purple-900.
+        ///
+        /// 🔴 **It was AccentSoft, and AccentSoft is a colour for WRITING, not for filling.** The
+        /// library says so on the field itself ("carries text and links on a dark surface"), and
+        /// this file uses it correctly nineteen lines above, as <see cref="TextAccent"/>. Filled
+        /// with it, the button became a pale purple carrying pale content:
+        ///
+        /// | on the old fill (purple-400) | contrast |
+        /// |---|---|
+        /// | the label | 2.54 |
+        /// | a dimmed scope mark | **1.07** — 1.00 is invisible |
+        /// | the lit scope mark | 2.24 |
+        ///
+        /// On purple-900 those become 9.98, 4.22 and 8.80. Measured, not judged — the same method
+        /// the library used when it took AccentSoft away from the lit mark for the same reason.
+        ///
+        /// ⚠ Dark rather than simply different: every other control in these rows is dark, so the
+        /// marks and the label are legible here for the same reason they are legible there. The
+        /// purple is what keeps "this leaves the game" distinct from a plain secondary button.
+        /// </summary>
+        public static readonly Color ButtonLink = Of(Theme.AccentDim);
         public static readonly Color ButtonHover = Of(Theme.AccentEdge);
         public static readonly Color ButtonDisabled = new Color(0.20f, 0.22f, 0.27f, 1f);          // Dim slate for disabled controls (visible, never black)
 
@@ -220,6 +241,26 @@ namespace UnityGameTranslator.Core.UI
         /// ⚠ The chip ramp (600) and not the band ramp (500): six pixels of white type need the
         /// darker one behind them. The library holds both and says why.
         /// </summary>
+        /// <summary>
+        /// The colour a dimmed scope mark takes on a given fill — the socle's rule, in Unity's type.
+        ///
+        /// ⚠ The decision is <see cref="Theme.MarkDim"/> and stays there: the Manager draws the same
+        /// three marks on its own buttons, and "which grey a dimmed mark takes" is exactly the kind
+        /// of answer the two products must not reach separately.
+        /// </summary>
+        public static Color MarkDimOn(Color fill)
+        {
+            return Of(Theme.MarkDim(ToRgb(fill)));
+        }
+
+        /// <summary>Unity's colour back into the library's, for a rule that needs to weigh it.</summary>
+        private static Rgb ToRgb(Color c)
+        {
+            return new Rgb((byte)Mathf.Round(Mathf.Clamp01(c.r) * 255f),
+                           (byte)Mathf.Round(Mathf.Clamp01(c.g) * 255f),
+                           (byte)Mathf.Round(Mathf.Clamp01(c.b) * 255f));
+        }
+
         public static Color TagChip(string tag)
         {
             return Of(Theme.ChipBackground(string.IsNullOrEmpty(tag) ? null : tag.ToUpperInvariant()));
@@ -232,7 +273,20 @@ namespace UnityGameTranslator.Core.UI
         public static GameObject CreateTagChip(GameObject parent, string tag, out Text letter)
         {
             GameObject chip = UIFactory.CreateUIObject("TagChip", parent);
+
+            // 🔴 **The square has to EXIST before anything can paint it.** SetBackground writes into
+            // an Image and never adds one — every other coloured surface in this product is built by
+            // a factory that fits one (see QualityBar's segments, the same two lines). This one was
+            // a bare object, so the colour went nowhere and five letters shipped as grey type on
+            // nothing: the one thing the chips were introduced to stop.
+            //
+            // ⚠ Never a raycast target: a mark that swallows a click puts a dead spot exactly where
+            // the eye is drawn. Same rule as the scope marks.
+            Image square = chip.AddComponent<Image>();
+            square.raycastTarget = false;
+
             UIFactory.SetLayoutElement(chip, minWidth: TagChipWidth, minHeight: TagChipHeight,
+                                       preferredWidth: TagChipWidth, preferredHeight: TagChipHeight,
                                        flexibleWidth: 0, flexibleHeight: 0);
 
             letter = UIFactory.CreateLabel(chip, "Letter", TagLetterOf(tag), TextAnchor.MiddleCenter,

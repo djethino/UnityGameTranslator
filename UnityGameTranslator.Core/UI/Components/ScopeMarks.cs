@@ -87,6 +87,22 @@ namespace UnityGameTranslator.Core.UI.Components
             return false;
         }
 
+        /// <summary>
+        /// What this button is actually filled with, so a mark can be chosen against it.
+        ///
+        /// ⚠ Read from the ColorBlock, not from the Image: <see cref="UIStyles.SetBackground"/>
+        /// keeps a Selectable's Image white and drives its colours through the block, so the Image
+        /// would report white on every button in the product.
+        ///
+        /// Falls back to the card, which is what an unthemed control sits on.
+        /// </summary>
+        private static Color FillOf(GameObject buttonObj)
+        {
+            var selectable = buttonObj.GetComponent<Selectable>();
+
+            return selectable != null ? selectable.colors.normalColor : UIStyles.CardBackground;
+        }
+
         /// <summary>Between the last mark and the first letter.</summary>
         private const int LabelGap = 7;
 
@@ -157,7 +173,9 @@ namespace UnityGameTranslator.Core.UI.Components
                 var holder = UIFactory.CreateUIObject("ScopeMark" + index, buttonObj);
                 var image = holder.AddComponent<Image>();
                 image.sprite = sprite;
-                image.color = lit ? UIStyles.MarkLit : UIStyles.TextMuted;
+                // Same source as Tint, which runs at the end of this method: two places deciding one
+                // colour is how they end up disagreeing.
+                image.color = lit ? UIStyles.MarkLit : UIStyles.MarkDimOn(FillOf(buttonObj));
                 image.preserveAspect = true;
 
                 // ⚠ Never a raycast target. A mark that swallows a click is a button with a dead
@@ -190,7 +208,16 @@ namespace UnityGameTranslator.Core.UI.Components
 
             var rule = UIFactory.CreateUIObject("ScopeMarkRule", bar);
             var barImage = rule.AddComponent<Image>();
-            barImage.color = UIStyles.BorderSubtle;
+
+            // 🔴 **BorderStrong, and the library says why in the field's own words**: BorderSubtle is
+            // "a card's edge" — gray-700, meant to part a card from the page behind it — while
+            // BorderStrong is "a field's edge, which has to read against the field's own fill".
+            // This rule sits INSIDE a filled button, so it is the second case; taking the first made
+            // it gray-700 on gray-700 on every secondary button, which is contrast 1.00 — not faint,
+            // absent. Measured across the three fills a button can take, BorderStrong reads 1.36 /
+            // 1.36 / 1.45: present everywhere, and still quieter than the marks it separates (2.13
+            // to 4.22), which is what a separator should be.
+            barImage.color = UIStyles.BorderStrong;
             barImage.raycastTarget = false;
 
             var ruleRect = rule.GetComponent<RectTransform>();
@@ -239,8 +266,17 @@ namespace UnityGameTranslator.Core.UI.Components
             //
             // ⚠ It only recomputes when the text changes, and adorning changes the row without
             // touching the text. Refresh() is what makes it look again.
+            // ⚠ **Refresh then Apply, not Refresh alone.** Refresh only marks the measurement stale;
+            // it used to be the whole call, and the recomputation was left to a Unity callback that
+            // an injected component does not always receive — so on some runtimes the button kept
+            // whatever width its layout group had worked out for itself, and adorning it changed
+            // nothing at all. Asking for the answer here makes it arrive.
             var fitter = buttonObj.GetComponent<UniverseLib.UI.Widgets.ButtonLabelFitter>();
-            if (fitter != null) fitter.Refresh();
+            if (fitter != null)
+            {
+                fitter.Refresh();
+                fitter.Apply();
+            }
 
             // The side is already recorded above, so this reads it back like every other caller.
             var selectable = buttonObj.GetComponent<Button>();
@@ -294,12 +330,14 @@ namespace UnityGameTranslator.Core.UI.Components
                 // you read why you cannot take it.
                 image.color = lit
                     ? (interactable ? UIStyles.MarkLit : UIStyles.TextSecondary)
-                    : UIStyles.TextMuted;
+                    : UIStyles.MarkDimOn(FillOf(buttonObj));
             }
 
             var rule = buttonObj.transform.Find("ScopeMarkBar/ScopeMarkRule");
             var ruleImage = rule == null ? null : rule.GetComponent<Image>();
-            if (ruleImage != null) ruleImage.color = UIStyles.BorderSubtle;
+            // ⚠ The same colour Adorn builds it with — and this line is why setting it there alone
+            // changed nothing: every Tint put the old one straight back.
+            if (ruleImage != null) ruleImage.color = UIStyles.BorderStrong;
 
             // ⚠ The label is NOT touched here any more. It used to be, back when a disabled button
             // kept white text and only the seven marked buttons had been fixed; that now happens

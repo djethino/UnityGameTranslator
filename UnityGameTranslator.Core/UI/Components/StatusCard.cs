@@ -310,6 +310,8 @@ namespace UnityGameTranslator.Core.UI.Components
             UIFactory.SetLayoutElement(_secondaryLabel.gameObject, flexibleWidth: 0);
             TranslatorCore.RegisterExcluded(_secondaryLabel);
 
+            _modeRow.SetActive(false);
+
             // 🔴 What a contribution is HOLDING, in the marks the website uses for it.
             //
             // The socle composes "21 to review: 12 new (H 9, A 3)"; the letters arrived here as
@@ -317,17 +319,23 @@ namespace UnityGameTranslator.Core.UI.Components
             // site. They are what says whether the evening is worth it — nine lines written by
             // hand is not the proposition nine machine lines are — so they are drawn, not spelt.
             //
-            // Beside the sentence rather than under it: the group and its letters belong together,
-            // and a row of chips detached from "new" or "differing" would name a quality without
-            // saying of what.
-            _contributionRow = UIFactory.CreateHorizontalGroup(_modeRow, "Contributions", false, false, true, true, 4);
-            UIFactory.SetLayoutElement(_contributionRow, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999);
+            // 🔴 **UNDER the sentence, and one line per kind — it was beside it, and unreadable.**
+            // A horizontal group hands out its width to everything it holds, so a long sentence and
+            // six chips shared one row of 350 pixels: every child was crushed to whatever was left,
+            // words broke mid-syllable ("24 ne w", "35 diffe ring") and the counts stacked one digit
+            // per line. What made it certain rather than unlucky is that this row grows with the
+            // work — more qualities, more chips — so the one arrangement that cannot hold them is
+            // the one that puts them all on a single line beside a sentence.
+            //
+            // ⚠ A kind and its letters still belong together: that is what the per-kind row keeps,
+            // and it is why this is a COLUMN of rows rather than one row that wraps.
+            _contributionRow = UIFactory.CreateVerticalGroup(_root, "Contributions", false, false, true, true, 2);
+            UIFactory.SetLayoutElement(_contributionRow, minHeight: UIStyles.RowHeightSmall,
+                                       flexibleWidth: 9999, flexibleHeight: 0);
             UIStyles.ClearRowBackground(_contributionRow);
-            var contribLayout = _contributionRow.GetComponent<HorizontalLayoutGroup>();
-            if (contribLayout != null) contribLayout.childAlignment = TextAnchor.MiddleLeft;
+            var contribLayout = _contributionRow.GetComponent<VerticalLayoutGroup>();
+            if (contribLayout != null) contribLayout.childAlignment = TextAnchor.UpperLeft;
             _contributionRow.SetActive(false);
-
-            _modeRow.SetActive(false);
 
             // Row 6 — giving something back. Last, because it is not status: it is the one thing
             // the player can do FOR the translation rather than with it.
@@ -637,6 +645,14 @@ namespace UnityGameTranslator.Core.UI.Components
 
             _secondaryLabel.gameObject.SetActive(hasInfo);
             _modeRow.SetActive(hasInfo);
+
+            // 🔴 **The kinds belong to THIS sentence, so they go when it is rewritten.** They used
+            // to be a child of the row above and vanished with it; on their own they would outlive
+            // the sentence that gives them their subject — a card switched from Main to Branch would
+            // still show what somebody else's contributions were holding. Every caller that has
+            // kinds to draw calls SetContributionKinds straight after this, so clearing here costs
+            // nothing and makes the stale case impossible rather than unlikely.
+            if (_contributionRow != null) _contributionRow.SetActive(false);
         }
 
         /// <summary>
@@ -663,24 +679,37 @@ namespace UnityGameTranslator.Core.UI.Components
 
             for (int k = 0; k < kinds.Length; k++)
             {
-                // The separator the sentence uses between groups, so the two read alike.
-                string head = (k > 0 ? "· " : "") + kinds[k].Total + " " + kinds[k].Label;
+                // One row per kind. No "·" any more: the separator existed to tell two groups apart
+                // on a shared line, and a line of their own does that better than a character does.
+                var row = UIFactory.CreateHorizontalGroup(_contributionRow, "Kind" + k,
+                                                          false, false, true, true, 4);
+                UIFactory.SetLayoutElement(row, minHeight: UIStyles.RowHeightSmall,
+                                           flexibleWidth: 9999, flexibleHeight: 0);
+                UIStyles.ClearRowBackground(row);
+                var rowLayout = row.GetComponent<HorizontalLayoutGroup>();
+                if (rowLayout != null) rowLayout.childAlignment = TextAnchor.MiddleLeft;
 
-                var label = UIFactory.CreateLabel(_contributionRow, "Kind" + k, head, TextAnchor.MiddleLeft);
+                var label = UIFactory.CreateLabel(row, "KindLabel", kinds[k].Total + " " + kinds[k].Label,
+                                                  TextAnchor.MiddleLeft);
                 label.fontSize = UIStyles.FontSizeSmall;
                 label.color = UIStyles.TextMuted;
-                UIFactory.SetLayoutElement(label.gameObject, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 0);
+                // ⚠ **A minimum, not just a maximum.** Without one the group is free to crush the
+                // label to nothing when the row is tight, and a Text given no width does not clip —
+                // it wraps, one syllable per line. Its own preferred width is the floor to hold.
+                UIFactory.SetLayoutElement(label.gameObject, minWidth: Mathf.CeilToInt(label.preferredWidth),
+                                           minHeight: UIStyles.RowHeightSmall, flexibleWidth: 0);
                 TranslatorCore.RegisterExcluded(label);
 
                 foreach (TagCount piece in kinds[k].Tally.Counted())
                 {
-                    UIStyles.CreateTagChip(_contributionRow, piece.Letter, out _);
+                    UIStyles.CreateTagChip(row, piece.Letter, out _);
 
-                    var count = UIFactory.CreateLabel(_contributionRow, "Count" + piece.Letter,
+                    var count = UIFactory.CreateLabel(row, "Count" + piece.Letter,
                                                       piece.Count.ToString(), TextAnchor.MiddleLeft);
                     count.fontSize = UIStyles.FontSizeSmall;
                     count.color = UIStyles.TextMuted;
-                    UIFactory.SetLayoutElement(count.gameObject, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 0);
+                    UIFactory.SetLayoutElement(count.gameObject, minWidth: Mathf.CeilToInt(count.preferredWidth),
+                                               minHeight: UIStyles.RowHeightSmall, flexibleWidth: 0);
                     TranslatorCore.RegisterExcluded(count);
                 }
             }

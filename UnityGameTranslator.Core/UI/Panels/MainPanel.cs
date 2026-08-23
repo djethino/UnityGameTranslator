@@ -41,14 +41,21 @@ namespace UnityGameTranslator.Core.UI.Panels
     {
         public override string Name => "Unity Game Translator";
 
-        // ⚠ **480, and the extra 30 is the scrollbar's.** The cards inside are sized from
-        // PanelWidth once, at construction; the viewport is NOT, because DynamicScrollbar takes 28
-        // pixels off it the moment the content is long enough to scroll. At 450 the two figures
-        // crossed and labels lost their last characters — only on the screens long enough to
-        // scroll, which is why it looked intermittent.
-        public override int MinWidth => 480;
+        // ⚠ **The extra 30 is the scrollbar's.** The cards inside are sized from PanelWidth once,
+        // at construction; the viewport is NOT, because DynamicScrollbar takes 28 pixels off it the
+        // moment the content is long enough to scroll. At 450 the two figures crossed and labels
+        // lost their last characters — only on the screens long enough to scroll, which is why it
+        // looked intermittent.
+        //
+        // 🔴 **520, because two adorned buttons do not fit in 480 — measured, not estimated.**
+        // "Update Translation" and "Compare (2)" ask for about 187 and 160 pixels once their scope
+        // marks are counted, and the card at the old minimum offered 352. The row therefore fitted
+        // by one pixel on this machine's font and not at all on the next: exactly the kind of margin
+        // that reads as an intermittent bug. A button whose label runs outside it is the thing being
+        // prevented here, and 40 pixels of window is the cheaper side of that trade.
+        public override int MinWidth => 520;
         public override int MinHeight => 350;
-        public override int PanelWidth => 480;
+        public override int PanelWidth => 520;
         public override int PanelHeight => 600;
 
         protected override int MinPanelHeight => 350;
@@ -556,12 +563,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             // description, forking) is a different subject and lives on the row below.
             var syncRow = UIStyles.CreateFormRow(actionsBox, "SyncActionsRow", UIStyles.RowHeightLarge, UIStyles.SmallSpacing);
 
-            // 🔴 **150, not 200 — the marks are worth 45 pixels and the old figures predate them.**
-            // ScopeMarks.Adorn raises a fixed minWidth by exactly what it inserts, which is right;
-            // but a row of two adorned buttons then asked for 418 pixels inside a card of 420, and
-            // the scrollbar takes 28 more from the viewport as soon as the tab scrolls. The row
-            // overflowed on both sides and clipped its labels. The minimums are what a button needs
-            // WITHOUT its marks, so they are the figures to give back.
+            // 🔴 **These are FLOORS for a button with no label yet, nothing more.** What a button
+            // ends up wide is measured by ButtonLabelFitter from its label plus whatever shares its
+            // row — the marks included. An earlier note here said Adorn raised the minimum by what
+            // it inserts; that stopped being true when the fitter took the job over, and a figure
+            // computed by hand would now be overwritten on the first label change anyway.
             _uploadBtn = CreatePrimaryButton(syncRow, "UploadBtn", "Upload Translation", 150);
             UIFactory.SetLayoutElement(_uploadBtn.Component.gameObject, flexibleWidth: 9999);
             _uploadBtn.OnClick += OnUploadClicked;

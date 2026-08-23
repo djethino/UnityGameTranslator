@@ -108,6 +108,14 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             public InputFieldRef Input;
             public Text KeyLabel;
+            /// <summary>
+            /// The tag's coloured square and the letter on it — what the website has always drawn
+            /// and this panel wrote as `[H] ` in front of the key, in the same grey as the key.
+            /// Kept on the row because four different gestures rewrite it: saving, retranslating,
+            /// reverting, and the periodic refresh.
+            /// </summary>
+            public GameObject TagChip;
+            public Text TagLetter;
             public Text PreviewLabel;
             public ButtonRef SaveBtn;
             public ButtonRef RetranslateBtn;
@@ -1738,7 +1746,22 @@ namespace UnityGameTranslator.Core.UI.Panels
             // decorated line appeared coloured with its markup invisible, and there was no way to
             // see what had to be preserved while editing. What is edited here is the file's exact
             // text; that is what has to be on screen. The rendering is shown separately below.
-            var keyLabel = UIFactory.CreateLabel(row, "Key", $"[{entry.tag}] {entry.originalKey}", TextAnchor.UpperLeft,
+            // 🔴 The tag as a CHIP, not as `[H] ` in front of the key.
+            //
+            // Written into the key's own label, it was grey text among grey text — the one thing
+            // on the row that carries a colour everyone has already learnt on the site's tables,
+            // and it carried none. It cannot be rich text either: this label deliberately renders
+            // markup literally (see below), so `<color=…>` would show as characters.
+            //
+            // Hence a row: the chip, then the key. The colours come from the shared library, so
+            // changing how a tag looks is one edit there rather than three across the products.
+            var keyRow = UIFactory.CreateHorizontalGroup(row, "KeyRow", false, false, true, true, 6,
+                                                         default, default, TextAnchor.UpperLeft);
+            UIFactory.SetLayoutElement(keyRow, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999);
+
+            var tagChip = UIStyles.CreateTagChip(keyRow, entry.tag, out var tagLetter);
+
+            var keyLabel = UIFactory.CreateLabel(keyRow, "Key", entry.originalKey, TextAnchor.UpperLeft,
                                                  supportRichText: false);
             keyLabel.fontSize = UIStyles.FontSizeSmall;
             keyLabel.color = UIStyles.TextMuted;
@@ -1793,6 +1816,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 LiveNumbers = entry.liveNumbers,
                 Input = input,
                 KeyLabel = keyLabel,
+                TagChip = tagChip,
+                TagLetter = tagLetter,
                 PreviewLabel = previewLabel
             };
             string capturedKey = entry.originalKey;
@@ -1860,7 +1885,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 SetDynamicText(_statusLabel, tag == "A" ? "AI translation applied" : "Saved!");
                 _statusLabel.color = UIStyles.StatusSuccess;
-                keyLabel.text = $"[{tag}] {capturedKey}";
+                UIStyles.SetTagChip(rowState.TagChip, rowState.TagLetter, tag);
                 RefreshRow(rowState);
             };
 
@@ -1885,7 +1910,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // Back to what the file holds — the AI's proposal and anything typed both go.
                 input.Text = TranslatorCore.GetTranslationValue(capturedKey) ?? capturedKey;
                 rowState.AiProposal = null;
-                keyLabel.text = $"[{TranslatorCore.GetTranslationTag(capturedKey) ?? "—"}] {capturedKey}";
+                UIStyles.SetTagChip(rowState.TagChip, rowState.TagLetter,
+                                    TranslatorCore.GetTranslationTag(capturedKey));
                 SetDynamicText(_statusLabel, "Back to the saved translation");
                 _statusLabel.color = UIStyles.TextSecondary;
                 RefreshRow(rowState);
@@ -1966,14 +1992,16 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _pendingRetranslateRows.Remove(row);
                 SetDynamicText(_statusLabel, "Could not ask the AI — check the backend in Options");
                 _statusLabel.color = UIStyles.StatusError;
-                row.KeyLabel.text = $"[{TranslatorCore.GetTranslationTag(row.Key) ?? "—"}] {row.Key}";
+                UIStyles.SetTagChip(row.TagChip, row.TagLetter, TranslatorCore.GetTranslationTag(row.Key));
                 RefreshRow(row);
                 return;
             }
 
             SetDynamicText(_statusLabel, "Asking the AI for another translation...");
             _statusLabel.color = UIStyles.TextAccent;
-            row.KeyLabel.text = $"[AI...] {row.Key}";
+            // ⚠ The chip keeps the tag the line still HAS while the AI is asked. It used to read
+            // `[AI...]`, which announced a provenance the line had not been given yet — and if the
+            // request failed, that was simply false. The status line above says what is happening.
             RefreshRow(row);
         }
 
@@ -2016,7 +2044,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     row.Input.Text = value;
                 }
 
-                row.KeyLabel.text = $"[{TranslatorCore.GetTranslationTag(key) ?? "—"}] {key}";
+                UIStyles.SetTagChip(row.TagChip, row.TagLetter, TranslatorCore.GetTranslationTag(key));
                 RefreshRow(row);
             }
 

@@ -241,38 +241,16 @@ namespace UnityGameTranslator.Core.UI.Panels
             CreateConflictRowInternal(conflict.Key, localValue, localTag, remoteValue, remoteTag);
         }
 
-        private string GetTagDisplayName(string tag)
-        {
-            switch (tag)
-            {
-                case "A": return "[AI]";
-                case "H": return "[Human]";
-                case "V": return "[Validated]";
-                default: return "";
-            }
-        }
-
-        /// <summary>
-        /// The colour of a tag, and the same one everywhere it is drawn.
-        ///
-        /// These used to disagree with the quality bar three lines away: V was TextAccent, which
-        /// is PURPLE despite the comment claiming blue — and purple is what the bar gives to
-        /// "kept as is". S and M both fell through to grey, the colour the bar reserves for lines
-        /// nobody has translated yet. The website said the same as the bar, so this method was
-        /// alone against everything else.
-        /// </summary>
-        private Color GetTagColor(string tag)
-        {
-            switch (tag)
-            {
-                case "H": return UIStyles.StatusSuccess;  // Green — written by a human
-                case "V": return UIStyles.StatusInfo;     // Blue — machine wording a human accepted
-                case "A": return UIStyles.StatusWarning;  // Amber — machine wording nobody has read
-                case "S": return UIStyles.StatusKept;     // Purple — kept as is, a decision
-                case "M": return UIStyles.StatusModUi;    // Teal — the mod's own interface
-                default: return UIStyles.TextMuted;
-            }
-        }
+        // ⚠ GetTagDisplayName and GetTagColor lived here and are gone.
+        //
+        // The first turned a letter into this panel's own word — "H" became "[Human]" here, stayed
+        // "H" on the website's tables, and was a green band in the quality bar three inches away:
+        // one fact, three vocabularies. The second painted tags with the STATUS colours
+        // (StatusSuccess, StatusWarning), which the shared library forbids by a check of its own:
+        // "a measurement and a verdict are two registers". Its own comment recorded that they had
+        // already drifted once, V having been purple while purple means "kept as is" everywhere.
+        //
+        // Both are replaced by UIStyles.CreateTagChip, whose colours come from Common.Theme.
 
         private void CreateConflictRowInternal(string key, string localValue, string localTag, string remoteValue, string remoteTag)
         {
@@ -292,11 +270,21 @@ namespace UnityGameTranslator.Core.UI.Panels
             var localGroup = UIFactory.CreateVerticalGroup(valuesRow, "Local", false, false, true, true, 2);
             UIFactory.SetLayoutElement(localGroup, flexibleWidth: 9999);
 
-            // Local label with tag if available
-            string localLabelText = localTag != null ? $"Local {GetTagDisplayName(localTag)}:" : "Local:";
-            var localLbl = UIFactory.CreateLabel(localGroup, "LocalLabel", localLabelText, TextAnchor.MiddleLeft);
+            // 🔴 The tag as the CHIP the website draws, not as "[AI]" in coloured words.
+            //
+            // Naming it in prose meant translating the letter into a word — and the words were
+            // this panel's own, so H read "Human" here, "H" on the site's tables and a green band
+            // in the bar three inches away. The chip is the same square in all three, from the
+            // same library. Side and tag also stop competing for one label's colour: the side is
+            // told in plain text, the tag by its own mark.
+            var localHead = UIFactory.CreateHorizontalGroup(localGroup, "LocalHead", false, false, true, true, 6,
+                                                            default, default, TextAnchor.MiddleLeft);
+            UIFactory.SetLayoutElement(localHead, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999);
+
+            var localLbl = UIFactory.CreateLabel(localHead, "LocalLabel", "Local:", TextAnchor.MiddleLeft);
             localLbl.fontSize = UIStyles.FontSizeSmall;
-            if (localTag != null) localLbl.color = GetTagColor(localTag);
+            localLbl.color = UIStyles.TextSecondary;
+            if (localTag != null) UIStyles.CreateTagChip(localHead, localTag, out _);
 
             var localValueLbl = UIFactory.CreateLabel(localGroup, "LocalValue", localValue, TextAnchor.MiddleLeft);
             localValueLbl.fontSize = UIStyles.FontSizeSmall;
@@ -306,11 +294,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             var remoteGroup = UIFactory.CreateVerticalGroup(valuesRow, "Remote", false, false, true, true, 2);
             UIFactory.SetLayoutElement(remoteGroup, flexibleWidth: 9999);
 
-            // Remote label with tag if available
-            string remoteLabelText = remoteTag != null ? $"Server {GetTagDisplayName(remoteTag)}:" : "Server:";
-            var remoteLbl = UIFactory.CreateLabel(remoteGroup, "RemoteLabel", remoteLabelText, TextAnchor.MiddleLeft);
+            var remoteHead = UIFactory.CreateHorizontalGroup(remoteGroup, "RemoteHead", false, false, true, true, 6,
+                                                             default, default, TextAnchor.MiddleLeft);
+            UIFactory.SetLayoutElement(remoteHead, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999);
+
+            var remoteLbl = UIFactory.CreateLabel(remoteHead, "RemoteLabel", "Server:", TextAnchor.MiddleLeft);
             remoteLbl.fontSize = UIStyles.FontSizeSmall;
-            if (remoteTag != null) remoteLbl.color = GetTagColor(remoteTag);
+            remoteLbl.color = UIStyles.TextSecondary;
+            if (remoteTag != null) UIStyles.CreateTagChip(remoteHead, remoteTag, out _);
 
             var remoteValueLbl = UIFactory.CreateLabel(remoteGroup, "RemoteValue", remoteValue, TextAnchor.MiddleLeft);
             remoteValueLbl.fontSize = UIStyles.FontSizeSmall;

@@ -225,6 +225,54 @@ namespace UnityGameTranslator.Core.UI
             return Of(Theme.ChipBackground(string.IsNullOrEmpty(tag) ? null : tag.ToUpperInvariant()));
         }
 
+        /// <summary>
+        /// Build one: the letter on its square, sized to sit on a row of small text.
+        /// </summary>
+        /// <param name="letter">The label, handed back so the caller can retag the row later.</param>
+        public static GameObject CreateTagChip(GameObject parent, string tag, out Text letter)
+        {
+            GameObject chip = UIFactory.CreateUIObject("TagChip", parent);
+            UIFactory.SetLayoutElement(chip, minWidth: TagChipWidth, minHeight: TagChipHeight,
+                                       flexibleWidth: 0, flexibleHeight: 0);
+
+            letter = UIFactory.CreateLabel(chip, "Letter", TagLetterOf(tag), TextAnchor.MiddleCenter,
+                                           supportRichText: false);
+            // The website's chip is 12px bold; the hint size is this product's nearest, and a chip
+            // that used the row's own size would be a word rather than a mark.
+            letter.fontSize = FontSizeHint;
+            letter.fontStyle = FontStyle.Bold;
+            letter.color = Of(Theme.ChipLetter);
+
+            RectTransform rect = letter.GetComponent<RectTransform>();
+            rect.anchorMin = Vector2.zero;
+            rect.anchorMax = Vector2.one;
+            rect.offsetMin = Vector2.zero;
+            rect.offsetMax = Vector2.zero;
+
+            SetTagChip(chip, letter, tag);
+            return chip;
+        }
+
+        /// <summary>Retag one that already exists — colour and letter together, never one alone.</summary>
+        public static void SetTagChip(GameObject chip, Text letter, string tag)
+        {
+            if (chip != null) SetBackground(chip, TagChip(tag), UIFactory.Shapes.Small);
+            if (letter != null) letter.text = TagLetterOf(tag);
+        }
+
+        /// <summary>
+        /// ⚠ An em dash for a line that has no tag yet, and the capture grey behind it: a blank
+        /// square would read as a colour nobody can name.
+        /// </summary>
+        private static string TagLetterOf(string tag)
+        {
+            return string.IsNullOrEmpty(tag) ? "—" : tag.ToUpperInvariant();
+        }
+
+        /// <summary>Wide enough for one bold letter with the website's padding on each side.</summary>
+        public const int TagChipWidth = 20;
+        public const int TagChipHeight = 18;
+
         // Item/List backgrounds
         public static readonly Color ItemBackground = Of(Theme.SurfaceRaised);
         public static readonly Color ItemBackgroundHover = Of(Theme.SurfaceHover);

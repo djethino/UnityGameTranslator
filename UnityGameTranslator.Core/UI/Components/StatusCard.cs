@@ -84,6 +84,8 @@ namespace UnityGameTranslator.Core.UI.Components
         private UniverseLib.UI.Models.ButtonRef _emptyBtn;
         private UniverseLib.UI.Models.ButtonRef _dismissBtn;
         private GameObject _modeRow;
+        /// <summary>Where the tag chips of what a contribution holds are drawn.</summary>
+        private GameObject _contributionRow;
         private GameObject _voteRow;
         private GameObject _voteHost;
         private Text _voteHint;
@@ -305,8 +307,25 @@ namespace UnityGameTranslator.Core.UI.Components
             _secondaryLabel = UIFactory.CreateLabel(_modeRow, "SecondaryLabel", "", TextAnchor.MiddleLeft);
             _secondaryLabel.fontSize = UIStyles.FontSizeSmall;
             _secondaryLabel.color = UIStyles.TextMuted;
-            UIFactory.SetLayoutElement(_secondaryLabel.gameObject, flexibleWidth: 9999);
+            UIFactory.SetLayoutElement(_secondaryLabel.gameObject, flexibleWidth: 0);
             TranslatorCore.RegisterExcluded(_secondaryLabel);
+
+            // 🔴 What a contribution is HOLDING, in the marks the website uses for it.
+            //
+            // The socle composes "21 to review: 12 new (H 9, A 3)"; the letters arrived here as
+            // grey prose while the same four letters are coloured squares on every table of the
+            // site. They are what says whether the evening is worth it — nine lines written by
+            // hand is not the proposition nine machine lines are — so they are drawn, not spelt.
+            //
+            // Beside the sentence rather than under it: the group and its letters belong together,
+            // and a row of chips detached from "new" or "differing" would name a quality without
+            // saying of what.
+            _contributionRow = UIFactory.CreateHorizontalGroup(_modeRow, "Contributions", false, false, true, true, 4);
+            UIFactory.SetLayoutElement(_contributionRow, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999);
+            UIStyles.ClearRowBackground(_contributionRow);
+            var contribLayout = _contributionRow.GetComponent<HorizontalLayoutGroup>();
+            if (contribLayout != null) contribLayout.childAlignment = TextAnchor.MiddleLeft;
+            _contributionRow.SetActive(false);
 
             _modeRow.SetActive(false);
 
@@ -618,6 +637,53 @@ namespace UnityGameTranslator.Core.UI.Components
 
             _secondaryLabel.gameObject.SetActive(hasInfo);
             _modeRow.SetActive(hasInfo);
+        }
+
+        /// <summary>
+        /// Draw what the contributions are holding: the group, then a chip per quality.
+        ///
+        /// ⚠ The pieces come from the socle (<see cref="Contributions.KindsOfWork"/>), which also
+        /// composes the printed sentence from them. Neither the order nor which zeros are left out
+        /// is decided here — this only chooses how a piece looks.
+        ///
+        /// ⚠ Rebuilt whole on each call rather than patched: the set of qualities changes with the
+        /// contributions, and a row that kept a chip nobody counted any more would report work
+        /// that is no longer offered.
+        /// </summary>
+        public void SetContributionKinds(WorkKind[] kinds)
+        {
+            if (_contributionRow == null) return;
+
+            for (int i = _contributionRow.transform.childCount - 1; i >= 0; i--)
+                UnityEngine.Object.Destroy(_contributionRow.transform.GetChild(i).gameObject);
+
+            bool any = kinds != null && kinds.Length > 0;
+            _contributionRow.SetActive(any);
+            if (!any) return;
+
+            for (int k = 0; k < kinds.Length; k++)
+            {
+                // The separator the sentence uses between groups, so the two read alike.
+                string head = (k > 0 ? "· " : "") + kinds[k].Total + " " + kinds[k].Label;
+
+                var label = UIFactory.CreateLabel(_contributionRow, "Kind" + k, head, TextAnchor.MiddleLeft);
+                label.fontSize = UIStyles.FontSizeSmall;
+                label.color = UIStyles.TextMuted;
+                UIFactory.SetLayoutElement(label.gameObject, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 0);
+                TranslatorCore.RegisterExcluded(label);
+
+                foreach (TagCount piece in kinds[k].Tally.Counted())
+                {
+                    UIStyles.CreateTagChip(_contributionRow, piece.Letter, out _);
+
+                    var count = UIFactory.CreateLabel(_contributionRow, "Count" + piece.Letter,
+                                                      piece.Count.ToString(), TextAnchor.MiddleLeft);
+                    count.fontSize = UIStyles.FontSizeSmall;
+                    count.color = UIStyles.TextMuted;
+                    UIFactory.SetLayoutElement(count.gameObject, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 0);
+                    TranslatorCore.RegisterExcluded(count);
+                }
+            }
         }
 
         /// <summary>
@@ -942,10 +1008,14 @@ namespace UnityGameTranslator.Core.UI.Components
             // ⚠ The other axis, appended rather than folded in. "38 lines to take" and "56 to
             // review" answer two questions and neither follows from the other; the tags answer a
             // third — 21 new lines written by hand is not the proposition 21 machine lines are.
-            var kinds = Contributions.WhatKindOfWork(linesToReview, linesNew, linesDiffering);
-            if (kinds.Length > 0) said += " — " + kinds + ".";
+            // ⚠ The head is printed, the qualities are DRAWN. The socle still composes the whole
+            // sentence for anything that can only print (a log, a tooltip); here the four letters
+            // become the chips they are on the website — see SetContributionKinds.
+            var head = Contributions.ToReview(linesToReview);
+            if (head.Length > 0) said += " — " + head + ":";
 
             SetSecondaryInfo(said, needsAttention: true);
+            SetContributionKinds(Contributions.KindsOfWork(linesNew, linesDiffering));
         }
 
         /// <summary>

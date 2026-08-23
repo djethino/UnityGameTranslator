@@ -408,27 +408,20 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private void CreateStatusSection(GameObject parent)
         {
+            // 🔴 **The title goes OUTSIDE the frame, as "Actions" does.** It used to sit inside the
+            // section, which carries a background — so one heading was written on the box it names
+            // and the other above it, and the two sections of this tab read as different kinds of
+            // thing. A heading names what follows; it is not part of it.
+            //
+            // ⚠ Written exactly the way Actions writes it — CreateSectionTitle straight into the
+            // parent, no row of its own. The row existed to give the title the left margin of the
+            // content BELOW it, which is a problem that only arises inside the frame.
+            var sectionTitle = UIStyles.CreateSectionTitle(parent, "StatusSectionLabel", "Current Translation");
+            RegisterUIText(sectionTitle);
+
             // Status section - shows sync status using StatusCard widget
             _statusSection = UIFactory.CreateVerticalGroup(parent, "StatusSection", false, false, true, true, 0);
             UIFactory.SetLayoutElement(_statusSection, flexibleWidth: 9999);
-
-            // ⚠ The title sat directly in the section: flush against the left edge while the box
-            // below it is inset by SectionPadding, and squashed to the exact height of its own text
-            // so it read as stuck to the bottom-left corner. Its own row gives it the same left
-            // margin as the content it introduces, and the height to sit in the middle of.
-            var titleRow = UIFactory.CreateHorizontalGroup(_statusSection, "StatusSectionTitleRow",
-                                                           false, false, true, true, 0,
-                                                           new Vector4(UIStyles.SectionPadding,
-                                                                       UIStyles.SectionPadding, 2, 4),
-                                                           default, TextAnchor.MiddleLeft);
-            UIFactory.SetLayoutElement(titleRow, minHeight: UIStyles.RowHeightMedium,
-                                       flexibleWidth: 9999, flexibleHeight: 0);
-            UIStyles.ClearRowBackground(titleRow);
-
-            var sectionTitle = UIStyles.CreateSectionTitle(titleRow, "StatusSectionLabel", "Current Translation");
-            UIFactory.SetLayoutElement(sectionTitle.gameObject, minHeight: UIStyles.RowHeightMedium,
-                                       flexibleWidth: 9999, flexibleHeight: 0);
-            RegisterUIText(sectionTitle);
 
             // Create StatusCard widget
             _statusCard = new StatusCard();
@@ -567,7 +560,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Pushing your content and inspecting what you are about to push are the same
             // question, so they share a row. Everything else (reviewing others' work, editing the
             // description, forking) is a different subject and lives on the row below.
+            // 🔴 **The buttons are centred, the sentences under them are not.** A row of controls
+            // sized by their own labels leaves whatever room is left over, and pushing that room to
+            // one side makes the row look pinned to an edge. The hints below are prose: prose starts
+            // where the eye expects to find its first word, which is the left margin — the same
+            // reason a paragraph is not centred on a page.
             var syncRow = UIStyles.CreateFormRow(actionsBox, "SyncActionsRow", UIStyles.RowHeightLarge, UIStyles.SmallSpacing);
+            var syncLayout = syncRow.GetComponent<HorizontalLayoutGroup>();
+            if (syncLayout != null) syncLayout.childAlignment = TextAnchor.MiddleCenter;
 
             // 🔴 **These are FLOORS for a button with no label yet, nothing more.** What a button
             // ends up wide is measured by ButtonLabelFitter from its label plus whatever shares its
@@ -613,12 +613,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             RegisterExcluded(_uploadHintLabel);
 
             // Role-specific action buttons row
-            // ⚠ Left, like the row above it — CreateFormRow's own default, which this used to
-            // override. Centring made sense while the first row filled the card and this one had to
-            // sit under something wider than itself; now that both rows are made of buttons sized by
-            // their own labels, two rows of the same thing starting at two different places is a
-            // defect whichever alignment one prefers.
+            // Centred, like the row above it — see there.
             var roleActionsRow = UIStyles.CreateFormRow(actionsBox, "RoleActionsRow", UIStyles.RowHeightLarge);
+            var rowLayout = roleActionsRow.GetComponent<HorizontalLayoutGroup>();
+            if (rowLayout != null) rowLayout.childAlignment = TextAnchor.MiddleCenter;
 
             // Review on Website button (Main only) - opens page to review branches
             //
@@ -824,12 +822,14 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private void CreateCommunitySection(GameObject parent)
         {
+            // The heading names the frame, so it sits outside it — same as "Current Translation"
+            // and "Actions". See CreateStatusSection for why.
+            var sectionTitle = UIStyles.CreateSectionTitle(parent, "CommunitySectionLabel", "Community Translations");
+            RegisterUIText(sectionTitle);
+
             // Community section - now a full tab, no longer collapsible
             _communitySection = UIFactory.CreateVerticalGroup(parent, "CommunitySection", false, false, true, true, 5);
             UIFactory.SetLayoutElement(_communitySection, flexibleWidth: 9999, flexibleHeight: 9999);
-
-            var sectionTitle = UIStyles.CreateSectionTitle(_communitySection, "CommunitySectionLabel", "Community Translations");
-            RegisterUIText(sectionTitle);
 
             // Game info and search row
             var searchRow = UIStyles.CreateFormRow(_communitySection, "SearchRow", UIStyles.RowHeightLarge);

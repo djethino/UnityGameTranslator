@@ -1691,6 +1691,18 @@ namespace UnityGameTranslator.Core.UI
         private static int _syncFailures;
 
         /// <summary>
+        /// Whether a watch is actually running — set by the two Start methods, cleared by Stop.
+        ///
+        /// 🔴 **What tells a missed appointment from a one-off question.** Checks are also made
+        /// outside any watch: opening a panel asks through EnsureServerStateKnown, and the player
+        /// may have chosen "never". Catching up on THOSE would install a rhythm nobody asked for —
+        /// worse, on the one setting whose entire meaning is "do not ask" — because a panel happened
+        /// to be opened while the network was down. There is nothing to repair there: the answer is
+        /// missing from one screen, and opening it again asks again.
+        /// </summary>
+        private static bool _syncWatchActive;
+
+        /// <summary>
         /// How long to wait before each catch-up attempt, in seconds.
         ///
         /// 🔴 **A check that fails used to cost the whole interval — up to six hours, and with
@@ -1756,6 +1768,11 @@ namespace UnityGameTranslator.Core.UI
             _streamDecided = false;
             _publicWatchActive = false;
 
+            // Starting over: the failures of the watch being replaced are not this one's, and the
+            // branches below may well decide not to watch at all.
+            _syncWatchActive = false;
+            _syncFailures = 0;
+
             string frequency = UpdateCheckFrequency.Normalize(
                 TranslatorCore.Config.sync.update_check_frequency);
 
@@ -1788,6 +1805,11 @@ namespace UnityGameTranslator.Core.UI
             _syncCheckIntervalSeconds = interval;
             _nextSyncCheckTime = interval > 0f ? Time.realtimeSinceStartup + interval : 0f;
 
+            // ⚠ True even when the interval is 0. "At startup only" is still a watch — one
+            // appointment rather than none — and with "never" we only get here because the player
+            // asked for the live stream, which cannot open until this call succeeds.
+            _syncWatchActive = true;
+
             // ⚠ After the timer is set, not before: a check that fails moves the timer to a catch-up
             // delay, and setting the rhythm afterwards would wipe that out — leaving the very case
             // this is here for as broken as it was.
@@ -1814,6 +1836,7 @@ namespace UnityGameTranslator.Core.UI
             float interval = UpdateCheckFrequency.IntervalSeconds(frequency);
 
             _publicWatchActive = true;
+            _syncWatchActive = true;
             _syncNormalInterval = interval;
             _syncCheckIntervalSeconds = interval;
             _nextSyncCheckTime = interval > 0f ? Time.realtimeSinceStartup + interval : 0f;
@@ -2229,6 +2252,10 @@ namespace UnityGameTranslator.Core.UI
         /// </summary>
         private static void SyncCheckFailed()
         {
+            // ⚠ Only a watch is caught up with. See _syncWatchActive: a question asked by a panel
+            // must not turn into a rhythm, least of all for somebody who chose "never".
+            if (!_syncWatchActive) return;
+
             if (_syncFailures >= SyncRetryDelays.Length)
             {
                 _syncFailures = 0;
@@ -2335,6 +2362,8 @@ namespace UnityGameTranslator.Core.UI
             StopSyncStream();
             _nextSyncCheckTime = 0f;
             _publicWatchActive = false;
+            _syncWatchActive = false;
+            _syncFailures = 0;
         }
 
         /// <summary>

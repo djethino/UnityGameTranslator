@@ -892,23 +892,19 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// <summary>
         /// Tell the button holding this label that its width may have changed.
         ///
-        /// 🔴 **Because the label of a button is what decides that button's width**, and the thing
-        /// that works it out is an injected component whose Unity callbacks are not guaranteed on
-        /// every IL2CPP runtime. Counting on the callback is what left "Compare (2)" in a rectangle
-        /// measured for "Compare": the count is added at refresh time, long after the button was
-        /// built, and nothing asked for the width to be reconsidered.
+        /// 🔴 **Because the label of a button is what decides that button's width**, and a count
+        /// added at refresh time — "Compare" becoming "Compare (2)" — arrives long after the button
+        /// was built. Nothing else asks for the width to be reconsidered.
         ///
-        /// ⚠ The parent, not a search: a button's label is its direct child (ScopeMarks relies on
-        /// the same thing to find it). Silent on anything that is not a button — most labels are
-        /// not, and a label with no fitter above it simply has no width to revise.
+        /// ⚠ The parent, not a search: a button's label is its direct child, which is how ScopeMarks
+        /// finds it too. Silent on anything that is not an adorned button.
         /// </summary>
         private static void RemeasureHolder(Text label)
         {
             var parent = label.transform.parent;
             if (parent == null) return;
 
-            var fitter = parent.GetComponent<UniverseLib.UI.Widgets.ButtonLabelFitter>();
-            if (fitter != null) fitter.Apply();
+            Components.ScopeMarks.Fit(parent.gameObject);
         }
 
         /// <summary>

@@ -103,6 +103,60 @@ namespace UnityGameTranslator.Core.UI.Components
             return selectable != null ? selectable.colors.normalColor : UIStyles.CardBackground;
         }
 
+        /// <summary>
+        /// Give an adorned button the width its label needs — measured HERE, by the Core.
+        ///
+        /// 🔴 **Because the component that used to do it cannot be relied on.** UniverseLib's
+        /// ButtonLabelFitter is a MonoBehaviour injected into IL2CPP, and on 2026-08-23 it failed
+        /// three different ways on one game: a `child as RectTransform` that returns null there, a
+        /// `LateUpdate` an injected type is not guaranteed to receive, and a `GetComponent` for an
+        /// injected type from the panel. Each fix uncovered the next, and none of them could be
+        /// seen — the button simply kept a width computed for a shorter label while its text ran
+        /// outside the fill.
+        ///
+        /// ⚠ This is the shape that already works in this product: <see cref="ScopeStrip"/> is
+        /// arbitrated by the panel, in the Core, from measurements taken when something changes.
+        /// No injected type, no polling, nothing that can quietly not run.
+        ///
+        /// ⚠ The marks cost a FIXED width — they are three squares, a rule and the gaps around
+        /// them, all constants of this file — so the caller never has to know about them, and
+        /// nothing has to walk the children to add them up.
+        /// </summary>
+        public static void Fit(GameObject buttonObj)
+        {
+            if (buttonObj == null) return;
+
+            var label = buttonObj.transform.Find("Text");
+            if (label == null) return;
+
+            var text = label.GetComponent<Text>();
+            var layout = buttonObj.GetComponent<LayoutElement>();
+            if (text == null || layout == null) return;
+
+            // ⚠ Only what this file built. An ordinary button keeps whatever its caller asked for.
+            EditSide ignored;
+            if (!TryReadSide(buttonObj, out ignored)) return;
+
+            float needed = text.preferredWidth;
+            if (needed <= 1f) return; // nothing generated yet: a reading now would be a wrong one
+
+            float wanted = needed + MarksWidth;
+
+            // Never below what the caller asked for, and never smaller than it already is by our
+            // doing: this only ever ensures the label fits.
+            if (layout.minWidth < wanted) layout.minWidth = wanted;
+            if (layout.preferredWidth < wanted) layout.preferredWidth = wanted;
+        }
+
+        /// <summary>
+        /// What the marks take from a button: two edges, three squares, the rule and its gaps.
+        ///
+        /// ⚠ Counted, not measured. Every piece here is fixed by a LayoutElement built in this same
+        /// file, so walking the children to add them up is work that can only go wrong — and did,
+        /// when a cast that fails on IL2CPP made that walk return "no neighbours at all".
+        /// </summary>
+        public const int MarksWidth = 2 * EdgePad + 3 * MarkSize + (1 + 2 * LabelGap) + 4 * MarkGap;
+
         /// <summary>Between the last mark and the first letter.</summary>
         private const int LabelGap = 7;
 
@@ -266,17 +320,8 @@ namespace UnityGameTranslator.Core.UI.Components
             //
             // ⚠ It only recomputes when the text changes, and adorning changes the row without
             // touching the text. Refresh() is what makes it look again.
-            // ⚠ **Refresh then Apply, not Refresh alone.** Refresh only marks the measurement stale;
-            // it used to be the whole call, and the recomputation was left to a Unity callback that
-            // an injected component does not always receive — so on some runtimes the button kept
-            // whatever width its layout group had worked out for itself, and adorning it changed
-            // nothing at all. Asking for the answer here makes it arrive.
-            var fitter = buttonObj.GetComponent<UniverseLib.UI.Widgets.ButtonLabelFitter>();
-            if (fitter != null)
-            {
-                fitter.Refresh();
-                fitter.Apply();
-            }
+            // The width, worked out here rather than by the injected component — see Fit.
+            Fit(buttonObj);
 
             // The side is already recorded above, so this reads it back like every other caller.
             var selectable = buttonObj.GetComponent<Button>();

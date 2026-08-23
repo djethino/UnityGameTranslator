@@ -1678,6 +1678,38 @@ namespace UnityGameTranslator.Core.UI
         private static float _syncCheckIntervalSeconds;
         private static bool _syncCheckInFlight;
 
+        /// <summary>
+        /// The rhythm the player asked for, kept apart from the one the timer is currently using.
+        ///
+        /// 🔴 **Because a failed check borrows the timer for a moment.** Without somewhere to put
+        /// the chosen rhythm, catching up would have to overwrite it, and the mod would keep asking
+        /// every thirty seconds for the rest of the session.
+        /// </summary>
+        private static float _syncNormalInterval;
+
+        /// <summary>How many checks have failed in a row. Reset by the first one that works.</summary>
+        private static int _syncFailures;
+
+        /// <summary>
+        /// How long to wait before each catch-up attempt, in seconds.
+        ///
+        /// 🔴 **A check that fails used to cost the whole interval — up to six hours, and with
+        /// "at startup only" the entire session.** The first request goes out three seconds after
+        /// the game starts, which is exactly when a machine is least likely to have a working
+        /// connection: wifi still associating, VPN still coming up, a laptop just woken. Losing the
+        /// one notification a player actually wants to that is not a rare case.
+        ///
+        /// ⚠ **Spaced out rather than three times in a row.** The two failures worth surviving have
+        /// very different lengths: a connection that is not up yet comes back in seconds, a server
+        /// being restarted takes minutes. Three attempts at a fixed delay either miss the second
+        /// case or hammer the first. Growing delays cover both and cost four requests at worst.
+        ///
+        /// ⚠ **And then it stops.** After the last one the mod goes back to the chosen rhythm — or
+        /// to silence, if the choice was "at startup only". A server that is down must not be
+        /// retried forever by every copy of the mod running.
+        /// </summary>
+        private static readonly float[] SyncRetryDelays = { 30f, 120f, 300f };
+
         // The stream is opened only when there is something of one's OWN to watch, and the role
         // only the site can tell us. Set once per watch so a later state event does not restart
         // the very stream it arrived on.
@@ -1751,11 +1783,15 @@ namespace UnityGameTranslator.Core.UI
             // One call now, lineage included: it is the moment an update can be applied without
             // interrupting play, and it is also what tells us whether there is a line of our own
             // to keep a stream open for. OpenStreamIfOurs settles that when the answer arrives.
-            CheckSyncStateNow();
-
             float interval = UpdateCheckFrequency.IntervalSeconds(frequency);
+            _syncNormalInterval = interval;
             _syncCheckIntervalSeconds = interval;
             _nextSyncCheckTime = interval > 0f ? Time.realtimeSinceStartup + interval : 0f;
+
+            // ⚠ After the timer is set, not before: a check that fails moves the timer to a catch-up
+            // delay, and setting the rhythm afterwards would wipe that out — leaving the very case
+            // this is here for as broken as it was.
+            CheckSyncStateNow();
 
             TranslatorCore.LogInfo(interval > 0f
                 ? $"[Sync] Asking the website every {interval / 60f:0} min"
@@ -1777,11 +1813,13 @@ namespace UnityGameTranslator.Core.UI
             // step, only a new version to hear about — and that is exactly what this channel is.
             float interval = UpdateCheckFrequency.IntervalSeconds(frequency);
 
-            CheckPublicUpdateNow();
-
             _publicWatchActive = true;
+            _syncNormalInterval = interval;
             _syncCheckIntervalSeconds = interval;
             _nextSyncCheckTime = interval > 0f ? Time.realtimeSinceStartup + interval : 0f;
+
+            // After the timer, for the reason given in StartSyncWatch.
+            CheckPublicUpdateNow();
 
             TranslatorCore.LogInfo(interval > 0f
                 ? $"[Sync] No account — checking the published translation every {interval / 60f:0} min"
@@ -1826,7 +1864,12 @@ namespace UnityGameTranslator.Core.UI
                 RunOnMainThread(() =>
                 {
                     _syncCheckInFlight = false;
-                    if (!success) return;
+                    // ⚠ NotModified is a success: a 304 is the server answering "nothing moved",
+                    // which is exactly what asking cheaply is for. Only Success says whether the
+                    // question reached it at all.
+                    if (!success) { SyncCheckFailed(); return; }
+
+                    SyncCheckSucceeded();
 
                     _publicCheckETag = etag;
                     _publicCheckETagSiteId = siteId;
@@ -1885,6 +1928,7 @@ namespace UnityGameTranslator.Core.UI
                 {
                     _syncCheckInFlight = false;
                     TranslatorCore.LogWarning($"[Sync] Public update check failed: {errorMsg}");
+                    SyncCheckFailed();
                 });
             }
         }
@@ -2103,7 +2147,9 @@ namespace UnityGameTranslator.Core.UI
                 RunOnMainThread(() =>
                 {
                     _syncCheckInFlight = false;
-                    if (string.IsNullOrEmpty(json)) { RetryIfStreamStillUndecided(); return; }
+                    if (string.IsNullOrEmpty(json)) { SyncCheckFailed(); return; }
+
+                    SyncCheckSucceeded();
                     HandleSyncStateEvent(json);
                 });
             }
@@ -2114,7 +2160,7 @@ namespace UnityGameTranslator.Core.UI
                 {
                     _syncCheckInFlight = false;
                     TranslatorCore.LogWarning($"[Sync] Update check failed: {errorMsg}");
-                    RetryIfStreamStillUndecided();
+                    SyncCheckFailed();
                 });
             }
         }
@@ -2141,31 +2187,6 @@ namespace UnityGameTranslator.Core.UI
         }
 
         /// <summary>
-        /// The stream now depends on ONE answer, so a first call that fails must be tried again.
-        ///
-        /// 🔴 Opening it needs the role, and only the site knows it — so nothing opens until a call
-        /// succeeds. With a rhythm, the next tick brings the answer along. With "Never", there is
-        /// no next tick: a game launched a second before the network was ready would then spend the
-        /// whole session without the connection its player asked for, silently.
-        ///
-        /// ⚠ Only while undecided, and only when nothing else is going to ask: a retry that piles
-        /// onto a running rhythm would double every check.
-        /// </summary>
-        private static void RetryIfStreamStillUndecided()
-        {
-            if (_streamDecided) return;
-            if (!TranslatorCore.Config.sync.realtime_own_translation) return;
-            if (_nextSyncCheckTime > 0f) return;
-
-            const float RetrySeconds = 120f;
-            _syncCheckIntervalSeconds = RetrySeconds;
-            _nextSyncCheckTime = Time.realtimeSinceStartup + RetrySeconds;
-
-            TranslatorCore.LogInfo("[Sync] Could not reach the website — trying again in 2 min "
-                                   + "to see whether to stay connected");
-        }
-
-        /// <summary>
         /// Per-frame housekeeping for the polled update check (called from
         /// DrainMainThreadQueue, next to the edit-session tick).
         /// </summary>
@@ -2180,6 +2201,56 @@ namespace UnityGameTranslator.Core.UI
 
             if (_publicWatchActive) CheckPublicUpdateNow();
             else CheckSyncStateNow();
+        }
+
+        /// <summary>
+        /// A check came back. Whatever the timer was doing to catch up, the chosen rhythm resumes.
+        /// </summary>
+        private static void SyncCheckSucceeded()
+        {
+            if (_syncFailures == 0) return;
+
+            _syncFailures = 0;
+            _syncCheckIntervalSeconds = _syncNormalInterval;
+            _nextSyncCheckTime = _syncNormalInterval > 0f
+                ? Time.realtimeSinceStartup + _syncNormalInterval
+                : 0f;
+
+            TranslatorCore.LogInfo("[Sync] The website answered again");
+        }
+
+        /// <summary>
+        /// A check could not be made. Try again shortly, a few times, then let it go.
+        ///
+        /// ⚠ This replaced RetryIfStreamStillUndecided, which retried for one reason only — to find
+        /// out whether to keep a stream open — and therefore did nothing at all for the player who
+        /// had not turned the stream on. The question it answered is still answered, because the
+        /// retry it wanted is now the retry everybody gets. See <see cref="SyncRetryDelays"/>.
+        /// </summary>
+        private static void SyncCheckFailed()
+        {
+            if (_syncFailures >= SyncRetryDelays.Length)
+            {
+                _syncFailures = 0;
+                _syncCheckIntervalSeconds = _syncNormalInterval;
+                _nextSyncCheckTime = _syncNormalInterval > 0f
+                    ? Time.realtimeSinceStartup + _syncNormalInterval
+                    : 0f;
+
+                TranslatorCore.LogInfo(_syncNormalInterval > 0f
+                    ? "[Sync] Still no answer — back to the usual rhythm"
+                    : "[Sync] Still no answer — nothing more will be asked this session");
+                return;
+            }
+
+            float delay = SyncRetryDelays[_syncFailures];
+            _syncFailures++;
+
+            _syncCheckIntervalSeconds = delay;
+            _nextSyncCheckTime = Time.realtimeSinceStartup + delay;
+
+            TranslatorCore.LogInfo($"[Sync] No answer from the website — trying again in {delay / 60f:0.#} min "
+                                   + $"({_syncFailures} of {SyncRetryDelays.Length})");
         }
 
         /// <summary>

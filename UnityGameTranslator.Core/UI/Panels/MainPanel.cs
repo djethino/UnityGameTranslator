@@ -574,8 +574,16 @@ namespace UnityGameTranslator.Core.UI.Panels
             // row — the marks included. An earlier note here said Adorn raised the minimum by what
             // it inserts; that stopped being true when the fitter took the job over, and a figure
             // computed by hand would now be overwritten on the first label change anyway.
+            // 🔴 **No flexibleWidth: an action button is as wide as what it says.** This one had it
+            // and its neighbours did not, so it alone stretched as the window grew — and, while the
+            // measurement below was wrong, it alone looked right, because a button handed the room
+            // that is left never has to ask how much it needs. That is what made a fault shared by
+            // the whole row read as "these buttons are not built the same way".
+            //
+            // ⚠ Stretching IS right elsewhere and stays: a lone button under a description
+            // (Contribute as Branch, Open in Browser) fills the card because it answers for the
+            // whole block. Two actions side by side do not.
             _uploadBtn = CreatePrimaryButton(syncRow, "UploadBtn", "Upload Translation", 150);
-            UIFactory.SetLayoutElement(_uploadBtn.Component.gameObject, flexibleWidth: 9999);
             _uploadBtn.OnClick += OnUploadClicked;
             // Publier laisse les deux côtés porteurs du même fichier : c'est Both, pas Server.
             // ⚠ Server voudrait dire « le publié a le résultat, pas cette machine » — ce qui ne
@@ -605,9 +613,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             RegisterExcluded(_uploadHintLabel);
 
             // Role-specific action buttons row
+            // ⚠ Left, like the row above it — CreateFormRow's own default, which this used to
+            // override. Centring made sense while the first row filled the card and this one had to
+            // sit under something wider than itself; now that both rows are made of buttons sized by
+            // their own labels, two rows of the same thing starting at two different places is a
+            // defect whichever alignment one prefers.
             var roleActionsRow = UIStyles.CreateFormRow(actionsBox, "RoleActionsRow", UIStyles.RowHeightLarge);
-            var rowLayout = roleActionsRow.GetComponent<HorizontalLayoutGroup>();
-            if (rowLayout != null) rowLayout.childAlignment = TextAnchor.MiddleCenter;
 
             // Review on Website button (Main only) - opens page to review branches
             //

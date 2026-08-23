@@ -666,7 +666,7 @@ namespace UnityGameTranslator.Core.UI.Components
         /// contributions, and a row that kept a chip nobody counted any more would report work
         /// that is no longer offered.
         /// </summary>
-        public void SetContributionKinds(WorkKind[] kinds)
+        public void SetContributionKinds(string head, WorkKind[] kinds)
         {
             if (_contributionRow == null) return;
 
@@ -677,42 +677,52 @@ namespace UnityGameTranslator.Core.UI.Components
             _contributionRow.SetActive(any);
             if (!any) return;
 
+            // 🔴 **One line, opening with "N to review:" — the shape the Manager already has.** It
+            // was appended to the sentence above with an em dash ("…lines to take. — 59 to review:")
+            // and the dash joined two facts that answer different questions: how much work is
+            // waiting, and what that work is made of. The second belongs with the pieces that detail
+            // it, which is where the eye goes when deciding whether the evening is worth it.
+            var row = UIFactory.CreateHorizontalGroup(_contributionRow, "Kinds", false, false, true, true, 4);
+            UIFactory.SetLayoutElement(row, minHeight: UIStyles.RowHeightSmall,
+                                       flexibleWidth: 9999, flexibleHeight: 0);
+            UIStyles.ClearRowBackground(row);
+            var rowLayout = row.GetComponent<HorizontalLayoutGroup>();
+            if (rowLayout != null) rowLayout.childAlignment = TextAnchor.MiddleLeft;
+
+            if (!string.IsNullOrEmpty(head)) Piece(row, "Head", head + ":");
+
             for (int k = 0; k < kinds.Length; k++)
             {
-                // One row per kind. No "·" any more: the separator existed to tell two groups apart
-                // on a shared line, and a line of their own does that better than a character does.
-                var row = UIFactory.CreateHorizontalGroup(_contributionRow, "Kind" + k,
-                                                          false, false, true, true, 4);
-                UIFactory.SetLayoutElement(row, minHeight: UIStyles.RowHeightSmall,
-                                           flexibleWidth: 9999, flexibleHeight: 0);
-                UIStyles.ClearRowBackground(row);
-                var rowLayout = row.GetComponent<HorizontalLayoutGroup>();
-                if (rowLayout != null) rowLayout.childAlignment = TextAnchor.MiddleLeft;
-
-                var label = UIFactory.CreateLabel(row, "KindLabel", kinds[k].Total + " " + kinds[k].Label,
-                                                  TextAnchor.MiddleLeft);
-                label.fontSize = UIStyles.FontSizeSmall;
-                label.color = UIStyles.TextMuted;
-                // ⚠ **A minimum, not just a maximum.** Without one the group is free to crush the
-                // label to nothing when the row is tight, and a Text given no width does not clip —
-                // it wraps, one syllable per line. Its own preferred width is the floor to hold.
-                UIFactory.SetLayoutElement(label.gameObject, minWidth: Mathf.CeilToInt(label.preferredWidth),
-                                           minHeight: UIStyles.RowHeightSmall, flexibleWidth: 0);
-                TranslatorCore.RegisterExcluded(label);
+                // The separator the socle's sentence uses between groups, so the two read alike.
+                Piece(row, "Kind" + k, (k > 0 ? "· " : "") + kinds[k].Total + " " + kinds[k].Label);
 
                 foreach (TagCount piece in kinds[k].Tally.Counted())
                 {
                     UIStyles.CreateTagChip(row, piece.Letter, out _);
-
-                    var count = UIFactory.CreateLabel(row, "Count" + piece.Letter,
-                                                      piece.Count.ToString(), TextAnchor.MiddleLeft);
-                    count.fontSize = UIStyles.FontSizeSmall;
-                    count.color = UIStyles.TextMuted;
-                    UIFactory.SetLayoutElement(count.gameObject, minWidth: Mathf.CeilToInt(count.preferredWidth),
-                                               minHeight: UIStyles.RowHeightSmall, flexibleWidth: 0);
-                    TranslatorCore.RegisterExcluded(count);
+                    Piece(row, "Count" + piece.Letter, piece.Count.ToString());
                 }
             }
+        }
+
+        /// <summary>
+        /// One word of that line.
+        ///
+        /// ⚠ **White, not the muted grey and not the warning amber.** The sentence above is the one
+        /// asking for something and keeps the amber; this line ANSWERS "what is in it", and a fact
+        /// read next to a call to action must not compete with it — nor look like a footnote.
+        ///
+        /// ⚠ A minimum width from the label's own measurement: without one the group is free to
+        /// crush a label to nothing when the row is tight, and a Text given no width does not clip,
+        /// it wraps — one syllable per line, which is exactly what this row used to do.
+        /// </summary>
+        private static void Piece(GameObject row, string name, string text)
+        {
+            var label = UIFactory.CreateLabel(row, name, text, TextAnchor.MiddleLeft);
+            label.fontSize = UIStyles.FontSizeSmall;
+            label.color = UIStyles.TextPrimary;
+            UIFactory.SetLayoutElement(label.gameObject, minWidth: Mathf.CeilToInt(label.preferredWidth),
+                                       minHeight: UIStyles.RowHeightSmall, flexibleWidth: 0);
+            TranslatorCore.RegisterExcluded(label);
         }
 
         /// <summary>
@@ -1034,17 +1044,16 @@ namespace UnityGameTranslator.Core.UI.Components
             // asks the owner to do something, so it is not written in the colour of a footnote.
             var said = Contributions.WhatIsWaiting(waiting, linesAvailable);
 
-            // ⚠ The other axis, appended rather than folded in. "38 lines to take" and "56 to
-            // review" answer two questions and neither follows from the other; the tags answer a
-            // third — 21 new lines written by hand is not the proposition 21 machine lines are.
+            // ⚠ The other axis, on its OWN line rather than appended with a dash. "41 lines to take"
+            // and "59 to review" answer two questions and neither follows from the other; the tags
+            // answer a third — 21 new lines written by hand is not the proposition 21 machine lines
+            // are. The dash joined the first to the second and left the third orphaned underneath.
             // ⚠ The head is printed, the qualities are DRAWN. The socle still composes the whole
             // sentence for anything that can only print (a log, a tooltip); here the four letters
             // become the chips they are on the website — see SetContributionKinds.
-            var head = Contributions.ToReview(linesToReview);
-            if (head.Length > 0) said += " — " + head + ":";
-
             SetSecondaryInfo(said, needsAttention: true);
-            SetContributionKinds(Contributions.KindsOfWork(linesNew, linesDiffering));
+            SetContributionKinds(Contributions.ToReview(linesToReview),
+                                 Contributions.KindsOfWork(linesNew, linesDiffering));
         }
 
         /// <summary>

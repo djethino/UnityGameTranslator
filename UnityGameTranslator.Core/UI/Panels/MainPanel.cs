@@ -47,15 +47,21 @@ namespace UnityGameTranslator.Core.UI.Panels
         // lost their last characters — only on the screens long enough to scroll, which is why it
         // looked intermittent.
         //
-        // 🔴 **520, because two adorned buttons do not fit in 480 — measured, not estimated.**
-        // "Update Translation" and "Compare (2)" ask for about 187 and 160 pixels once their scope
-        // marks are counted, and the card at the old minimum offered 352. The row therefore fitted
-        // by one pixel on this machine's font and not at all on the next: exactly the kind of margin
-        // that reads as an intermittent bug. A button whose label runs outside it is the thing being
-        // prevented here, and 40 pixels of window is the cheaper side of that trade.
-        public override int MinWidth => 520;
+        // 🔴 **580, and both raises were measured rather than guessed.**
+        //
+        // 480 -> 520: two adorned buttons do not fit in 480. The fitter's own trace reports
+        // "Upload Translation" at 199 and "Review on Website" at 200 once their scope marks are
+        // counted, and the card at that minimum offered 352 — the row fitted by about a pixel on
+        // this machine's font and not at all on the next, which is exactly the kind of margin that
+        // reads as an intermittent bug.
+        //
+        // 520 -> 580: the contributions line is one line by design — "59 to review: 24 new (H 21,
+        // A 3) · 35 differing (V 17, A 18)" — and it grows with the work: a quality more on either
+        // side adds a chip and its count. At 520 it fitted only while both groups held two
+        // qualities. A row that is one line ON PURPOSE has to be given the width that keeps it one.
+        public override int MinWidth => 580;
         public override int MinHeight => 350;
-        public override int PanelWidth => 520;
+        public override int PanelWidth => 580;
         public override int PanelHeight => 600;
 
         protected override int MinPanelHeight => 350;

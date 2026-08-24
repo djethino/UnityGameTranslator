@@ -218,15 +218,15 @@ namespace UnityGameTranslator.Core.UI.Components
             // depending on which window it was in.
             var entries = new List<string>
             {
-                Entry(UIStyles.QualityHuman, Composition.Name(TagBand.Human), humanPct),
-                Entry(UIStyles.QualityValidated, Composition.Name(TagBand.Validated), validatedPct),
-                Entry(UIStyles.QualityAi, Composition.Name(TagBand.Machine), aiPct),
+                Entry(UIStyles.QualityHuman, TagBand.Human, human, humanPct),
+                Entry(UIStyles.QualityValidated, TagBand.Validated, validated, validatedPct),
+                Entry(UIStyles.QualityAi, TagBand.Machine, ai, aiPct),
             };
 
             // The last two are mentioned only when there are some: a permanent "Captured 0%" is
             // noise, and each absence is itself the information.
-            if (kept > 0) entries.Add(Entry(UIStyles.QualityKept, Composition.Name(TagBand.Skipped), keptPct));
-            if (capture > 0) entries.Add(Entry(UIStyles.QualityCapture, Composition.Name(TagBand.Captured), capturePct));
+            if (kept > 0) entries.Add(Entry(UIStyles.QualityKept, TagBand.Skipped, kept, keptPct));
+            if (capture > 0) entries.Add(Entry(UIStyles.QualityCapture, TagBand.Captured, capture, capturePct));
 
             // Three ordinary spaces: enough to separate two entries, and the only place in the
             // string where a line is allowed to break.
@@ -234,13 +234,21 @@ namespace UnityGameTranslator.Core.UI.Components
         }
 
         /// <summary>
-        /// One colour key entry: its swatch, its name, its share — held together by non-breaking
-        /// spaces so the three can never end up on different lines. The name is translated first:
-        /// a language whose word for "Kept as is" is three words long must be protected too.
+        /// One colour key entry: its swatch, its name, how many lines and what share — held
+        /// together by non-breaking spaces so they can never end up on different lines.
+        ///
+        /// ⚠ Only the NAME goes through the translator. The count and the share are composed by the
+        /// socle, so that "1,068 (20%)" is grouped and punctuated the same way in the mod, in the
+        /// Manager and on the website — and a number handed to an AI comes back as a number nobody
+        /// can predict.
         /// </summary>
-        private static string Entry(Color color, string label, int percent)
+        private static string Entry(Color color, TagBand band, int count, int percent)
         {
-            string entry = Swatch(color) + " " + TranslatorCore.TranslateOwnUIDynamic(label) + $" {percent}%";
+            // The name is translated, the figures are not — a number handed to an AI comes back as
+            // a number nobody can predict. Composed by the socle either way, so the punctuation and
+            // the grouping are the website's.
+            string named = TranslatorCore.TranslateOwnUIDynamic(Composition.Name(band));
+            string entry = Swatch(color) + " " + Composition.EntryNamed(named, count, percent);
 
             // Escaped, never the literal character: a non-breaking space is invisible in
             // an editor, and the first well-meaning cleanup would quietly turn it back
@@ -267,7 +275,11 @@ namespace UnityGameTranslator.Core.UI.Components
         public static string KeptLabel(int kept)
         {
             if (kept <= 0) return null;
-            return TranslatorCore.TranslateOwnUIDynamic(Composition.Name(TagBand.Skipped)) + $": {kept}";
+
+            // Grouped like every other count on screen: a four-digit figure written bare beside one
+            // written 1,068 reads as two different measurements.
+            return TranslatorCore.TranslateOwnUIDynamic(Composition.Name(TagBand.Skipped))
+                 + ": " + Composition.Amount(kept);
         }
     }
 }

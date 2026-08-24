@@ -53,6 +53,18 @@ namespace UnityGameTranslator.Core.UI.Panels
             _sourceDropdown = new SearchableDropdown("Source", languages, "English", popupHeight: 250, showSearch: true);
             _targetDropdown = new SearchableDropdown("Target", languages, "", popupHeight: 250, showSearch: true);
 
+            // The flag beside each name, as OptionsPanel already does for its own two.
+            //
+            // ⚠ Every row here IS a language — the list comes straight from the catalogue, with no
+            // "auto …" entry to skip — so the row is its own answer. OptionsPanel needs a helper
+            // only because its lists begin with a row that stands for no language.
+            //
+            // 🔴 These two were left out when the flag was taught to SearchableDropdown, so the mod
+            // drew flags in Options and none here: the same list of languages, twice, looking like
+            // two different controls.
+            _sourceDropdown.MarkProvider = row => row;
+            _targetDropdown.MarkProvider = row => row;
+
             // Use scrollable layout for the content
             CreateScrollablePanelLayout(out var scrollContent, out var buttonRow, PanelWidth - 40);
 

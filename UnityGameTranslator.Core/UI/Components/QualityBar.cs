@@ -2,6 +2,7 @@
 using UnityEngine;
 using UnityEngine.UI;
 using UniverseLib.UI;
+using UnityGameTranslator.Common;
 using UnityGameTranslator.Core.UI;
 
 namespace UnityGameTranslator.Core.UI.Components
@@ -210,17 +211,22 @@ namespace UnityGameTranslator.Core.UI.Components
             int capturePct = 100 - humanPct - validatedPct - aiPct - keptPct;
 
             // Same keys as the bar itself, or the key would name colours the bar does not show.
+            //
+            // ⚠ The WORDS come from the socle. They were written out here, again in the Manager and
+            // again in the website's lang files; the Manager's copy had already drifted — it called
+            // Validated "reviewed" and Captured "not done yet" — so one bar was read two ways
+            // depending on which window it was in.
             var entries = new List<string>
             {
-                Entry(UIStyles.QualityHuman, "Human", humanPct),
-                Entry(UIStyles.QualityValidated, "Validated", validatedPct),
-                Entry(UIStyles.QualityAi, "AI", aiPct),
+                Entry(UIStyles.QualityHuman, Composition.Name(TagBand.Human), humanPct),
+                Entry(UIStyles.QualityValidated, Composition.Name(TagBand.Validated), validatedPct),
+                Entry(UIStyles.QualityAi, Composition.Name(TagBand.Machine), aiPct),
             };
 
             // The last two are mentioned only when there are some: a permanent "Captured 0%" is
             // noise, and each absence is itself the information.
-            if (kept > 0) entries.Add(Entry(UIStyles.QualityKept, "Kept as is", keptPct));
-            if (capture > 0) entries.Add(Entry(UIStyles.QualityCapture, "Captured", capturePct));
+            if (kept > 0) entries.Add(Entry(UIStyles.QualityKept, Composition.Name(TagBand.Skipped), keptPct));
+            if (capture > 0) entries.Add(Entry(UIStyles.QualityCapture, Composition.Name(TagBand.Captured), capturePct));
 
             // Three ordinary spaces: enough to separate two entries, and the only place in the
             // string where a line is allowed to break.
@@ -261,7 +267,7 @@ namespace UnityGameTranslator.Core.UI.Components
         public static string KeptLabel(int kept)
         {
             if (kept <= 0) return null;
-            return TranslatorCore.TranslateOwnUIDynamic("Kept as is") + $": {kept}";
+            return TranslatorCore.TranslateOwnUIDynamic(Composition.Name(TagBand.Skipped)) + $": {kept}";
         }
     }
 }

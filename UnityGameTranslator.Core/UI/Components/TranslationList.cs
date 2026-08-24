@@ -41,6 +41,16 @@ namespace UnityGameTranslator.Core.UI.Components
         private Func<string> _getCurrentUser;
 
         /// <summary>
+        /// The panel's help bar, where a row's composition bar spells its own figures out.
+        ///
+        /// ⚠ The bar itself carries no key on these rows on purpose — five rows each repeating
+        /// "Human 12% Validated 3% AI 85%" would be three lines of text per candidate on the one
+        /// screen where somebody is comparing candidates. The numbers are one hover away instead,
+        /// which is the form this project settled on for the narrow case.
+        /// </summary>
+        private HelpZone _help;
+
+        /// <summary>
         /// Currently selected translation.
         /// </summary>
         public TranslationInfo SelectedTranslation => _selectedTranslation;
@@ -76,9 +86,15 @@ namespace UnityGameTranslator.Core.UI.Components
         /// <param name="parent">Parent GameObject to add UI to</param>
         /// <param name="listHeight">Height of the scrollable list</param>
         /// <param name="onSelectionChanged">Callback when selection changes</param>
-        public void CreateUI(GameObject parent, int listHeight, Action<TranslationInfo> onSelectionChanged = null)
+        /// <param name="help">
+        /// The panel's help bar, so each row's composition bar can say its own figures on hover.
+        /// Optional: without one the bar simply stays silent, as it did before.
+        /// </param>
+        public void CreateUI(GameObject parent, int listHeight, Action<TranslationInfo> onSelectionChanged = null,
+            HelpZone help = null)
         {
             _onSelectionChanged = onSelectionChanged;
+            _help = help;
 
             // Status label
             _statusLabel = UIFactory.CreateLabel(parent, "TranslationStatus", "", TextAnchor.MiddleLeft);
@@ -298,6 +314,12 @@ namespace UnityGameTranslator.Core.UI.Components
             var facts = BuildFactsLine(translation);
             string note = BuildNoteLine(translation);
 
+            // Where this one came from, when it came from somebody. Composed in the socle, so a
+            // fork credits its source in the same words in the mod, the Manager and the browser.
+            string origin = translation.Origin.HasValue
+                ? Origins.Name(translation.Origin.Value)
+                : null;
+
             // The bar is only drawn when the server gave us something to draw; an empty container
             // under every row would read as "nothing translated" instead of "nothing known".
             bool hasComposition = translation.HumanCount + translation.ValidatedCount +
@@ -312,7 +334,8 @@ namespace UnityGameTranslator.Core.UI.Components
             // the content. A row that lies about its height makes the list lie about its own, and
             // the panel lies about how much space it needs — which is how a whole tab ends up
             // overflowing a window that had room for it.
-            int textRows = 3 + (facts != null ? 1 : 0) + (note != null ? 1 : 0); // languages, author, details, [facts], [note]
+            // languages, author, details, [origin], [facts], [note]
+            int textRows = 3 + (origin != null ? 1 : 0) + (facts != null ? 1 : 0) + (note != null ? 1 : 0);
             int blocks = textRows + (hasComposition ? 1 : 0);
             int rowHeight = textRows * UIStyles.RowHeightSmall
                 + (hasComposition ? QualityBar.CompactHeight : 0)
@@ -444,6 +467,27 @@ namespace UnityGameTranslator.Core.UI.Components
             byLabel.color = UIStyles.TextSecondary;
             UIFactory.SetLayoutElement(byLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
 
+            // Right under the author, because it answers the same question — whose work is this —
+            // and a fork is otherwise indistinguishable from a translation written from scratch.
+            //
+            // ⚠ Its own line rather than appended to the author's: that line already carries the
+            // row's own marks (new, goes furthest, installed), and a fifth item would push the
+            // whole thing past the width on any name of ordinary length.
+            if (origin != null)
+            {
+                // ⚠ NOT welded together, unlike the facts line. An account name has no length
+                // limit worth relying on, and a single unbreakable block runs out of the row and
+                // into the vote column; allowed to break, "Forked from" stays put and the name is
+                // what gives — with the whole sentence one hover away either way.
+                var originLabel = UIFactory.CreateLabel(infoCol, "Origin", origin,
+                    TextAnchor.MiddleLeft);
+                originLabel.fontSize = UIStyles.FontSizeHint;
+                originLabel.color = UIStyles.TextMuted;
+                UIFactory.SetLayoutElement(originLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+
+                _help?.Describe(originLabel.gameObject, Origins.Effect(translation.Origin.Value));
+            }
+
             // The verdict leads, the size follows: "has anyone read this" decides between two
             // translations, the line count only qualifies it.
             string detailsText = Unbreakable(FormatQualityStats(translation))
@@ -461,6 +505,18 @@ namespace UnityGameTranslator.Core.UI.Components
                 bar.CreateUI(infoCol, QualityBar.CompactHeight);
                 bar.SetCounts(translation.HumanCount, translation.ValidatedCount,
                     translation.AiCount, translation.SkippedCount, translation.CaptureCount);
+
+                // The figures the bar draws, in words, on hover — the narrow form of the same
+                // composition the card spells out under itself. Without this the coloured band is
+                // a decoration: five bands side by side rank the candidates and name none of them.
+                //
+                // ⚠ composed: BuildLegend already translated each word and welded colour tags
+                // around them. The card showing the identical string is RegisterExcluded for the
+                // same reason — translating it again would hand markup to the AI.
+                _help?.Describe(bar.Root, QualityBar.BuildLegend(
+                    translation.HumanCount, translation.ValidatedCount,
+                    translation.AiCount, translation.SkippedCount, translation.CaptureCount),
+                    composed: true);
             }
 
             // Second details row: is it alive, is it finished, is it used, does
@@ -502,8 +558,12 @@ namespace UnityGameTranslator.Core.UI.Components
 
             string dateLabel = translation.ContentDateLabel;
             if (!string.IsNullOrEmpty(dateLabel)) facts.Add(dateLabel);
+            // 🔴 **"finished", never "complete".** The server's own value is the string `complete`,
+            // and printing it put a fourth word on screen for a fact the strip already calls
+            // Finished — beside a coverage figure that is about completeness, a different question
+            // entirely. What the author declared is said in the ecosystem's word.
             if (string.Equals(translation.Status, "complete", StringComparison.OrdinalIgnoreCase))
-                facts.Add("complete");
+                facts.Add("finished");
 
             // ⚠ Said only when it is TRUE, unlike the badge strip on the current translation,
             // which shows both states. Two different jobs: the strip describes the one file you

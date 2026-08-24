@@ -714,6 +714,21 @@ namespace UnityGameTranslator.Core
             };
         }
 
+        /// <summary>
+        /// Where a fork came from, or null when it came from nowhere.
+        ///
+        /// ⚠ An author of null inside a present block is NOT the same as an absent block: the
+        /// first is a fork whose source account has gone, which is still a credit worth showing;
+        /// the second is a translation somebody started themselves.
+        /// </summary>
+        private static Origin? ParseOrigin(JToken origin)
+        {
+            if (origin == null || origin.Type != JTokenType.Object) return null;
+
+            return new Origin(origin["author"]?.Value<string>(),
+                              origin["lines"]?.Value<int?>());
+        }
+
         private static TranslationInfo ParseTranslationInfo(JToken t)
         {
             var game = t["game"];
@@ -735,6 +750,10 @@ namespace UnityGameTranslator.Core
                 // Whether its Main takes contributions. Null on a server that predates the
                 // field, and null shows nothing — silence is not "solo work".
                 AcceptsBranches = t["accepts_branches"]?.ToObject<bool?>(),
+                // Where a fork came from. Absent on a server that predates the field and on
+                // anything nobody forked — both read as "started from nothing", which is what the
+                // row then says by saying nothing.
+                Origin = ParseOrigin(t["origin"]),
                 VoteCount = t["vote_count"]?.Value<int>() ?? 0,
                 // Null for anonymous callers and for servers older than this field.
                 UserVote = t["user_vote"]?.Value<int?>(),
@@ -2077,6 +2096,16 @@ namespace UnityGameTranslator.Core
         /// <summary>Whether this lineage takes contributions. Null on an older server, and null
         /// is not "no" — nothing is said rather than inventing somebody's decision.</summary>
         public bool? AcceptsBranches { get; set; }
+
+        /// <summary>
+        /// Which translation this one was forked from. Null when it was forked from none — and on
+        /// a server that predates the field, where nothing is said rather than a claim made.
+        ///
+        /// ⚠ Not derivable from anything else here: a fork leads its own lineage and looks exactly
+        /// like a translation somebody wrote from scratch. See <see cref="Origins"/>.
+        /// </summary>
+        public Origin? Origin { get; set; }
+
         public int VoteCount { get; set; }
         /// <summary>This user's own vote (+1 / -1), null when they haven't voted, aren't
         /// signed in, or the server predates the field.</summary>

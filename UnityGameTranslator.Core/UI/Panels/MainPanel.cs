@@ -858,7 +858,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     _downloadBtn.Component.interactable = t != null;
                     SetCommunityDownloadState(t != null);
                 }
-            });
+            }, help: _helpZone);
 
             UIStyles.CreateSpacer(_communitySection, 5);
 

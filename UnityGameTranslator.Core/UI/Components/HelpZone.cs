@@ -31,12 +31,26 @@ namespace UnityGameTranslator.Core.UI.Components
             public Canvas Canvas;
             public HelpZone Zone;
             public string Text;
+
+            /// <summary>
+            /// The text was assembled from pieces that are ALREADY translated — the composition
+            /// key, whose colour swatches and words come out of QualityBar.BuildLegend. Sending
+            /// that back through the pipeline would hand markup to the AI and translate the same
+            /// words twice; the card that shows the identical string is RegisterExcluded for the
+            /// very same reason.
+            /// </summary>
+            public bool Composed;
         }
 
         // Static registry: panels live for the whole session (SetActive toggling, never destroyed),
         // so entries persist. Keyed by the control's instance ID.
         private static readonly Dictionary<int, Entry> entries = new Dictionary<int, Entry>();
         private static int _currentId;
+
+        /// <summary>Keys whose control has been destroyed, gathered during a poll and removed after
+        /// it — a dictionary cannot be written to while it is being walked. Reused, never
+        /// reallocated: this runs every frame a panel is open.</summary>
+        private static readonly List<int> _dead = new List<int>();
 
         // One zone per panel, alive for the whole session — walked by ApplyPendingTranslations.
         private static readonly List<HelpZone> zones = new List<HelpZone>();
@@ -87,7 +101,11 @@ namespace UnityGameTranslator.Core.UI.Components
         /// Attach a help text to a control: hovering the control shows the text in this zone.
         /// The control needs a RectTransform (every uGUI element has one).
         /// </summary>
-        public void Describe(GameObject control, string helpText)
+        /// <param name="composed">
+        /// True when the text was built from pieces that are already translated — see
+        /// <see cref="Entry.Composed"/>. Leave false for anything written as a plain sentence here.
+        /// </param>
+        public void Describe(GameObject control, string helpText, bool composed = false)
         {
             if (control == null || string.IsNullOrEmpty(helpText)) return;
 
@@ -104,6 +122,7 @@ namespace UnityGameTranslator.Core.UI.Components
                 Canvas = canvas,
                 Zone = this,
                 Text = helpText,
+                Composed = composed,
             };
         }
 
@@ -126,10 +145,19 @@ namespace UnityGameTranslator.Core.UI.Components
             int bestDepth = -1;
             Entry best = null;
 
+            _dead.Clear();
+
             foreach (var kv in entries)
             {
                 Entry e = kv.Value;
-                if (e.Rect == null || !e.Rect.gameObject.activeInHierarchy) continue;
+
+                // ⚠ Swept, not merely skipped. Panels live for the whole session, so this registry
+                // was write-only by design — until the community list started describing rows it
+                // destroys and rebuilds on every search. Leaving the dead ones in would grow the
+                // dictionary for as long as the game runs, and the poll walks all of it per frame.
+                if (e.Rect == null) { _dead.Add(kv.Key); continue; }
+
+                if (!e.Rect.gameObject.activeInHierarchy) continue;
 
                 if (!ContainsScreenPoint(e.Rect, e.Canvas, screen)) continue;
 
@@ -143,6 +171,8 @@ namespace UnityGameTranslator.Core.UI.Components
                 }
             }
 
+            for (int i = 0; i < _dead.Count; i++) entries.Remove(_dead[i]);
+
             if (bestId == _currentId) return;
 
             // Leaving the previous control: restore its zone's default text.
@@ -152,7 +182,7 @@ namespace UnityGameTranslator.Core.UI.Components
             _currentId = bestId;
 
             if (best != null && best.Zone != null)
-                best.Zone.SetText(best.Text);
+                best.Zone.SetText(best.Text, translate: !best.Composed);
         }
 
         /// <summary>
@@ -204,9 +234,17 @@ namespace UnityGameTranslator.Core.UI.Components
         /// summary). On a cache miss the source text is shown as-is and remembered, so
         /// ApplyPendingTranslations can swap it in as soon as the translation lands.
         /// </summary>
-        private void SetText(string text)
+        private void SetText(string text, bool translate = true)
         {
             if (_label == null) return;
+
+            // Already worded: written as-is, and nothing left pending. See Entry.Composed.
+            if (!translate)
+            {
+                _label.text = text;
+                _pendingSource = null;
+                return;
+            }
 
             string shown = TranslatorCore.TranslateOwnUIDynamic(text);
             _label.text = shown;

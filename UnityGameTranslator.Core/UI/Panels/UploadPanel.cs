@@ -784,6 +784,15 @@ namespace UnityGameTranslator.Core.UI.Panels
                             : (_acceptBranchesToggle != null && _acceptBranchesToggle.isOn)
                     };
                     TranslatorCore.LastSyncedHash = result.FileHash;
+
+                    // 🔴 **Where this file now lives on the site, written into the file itself.**
+                    // Both places that recorded it were DOWNLOAD paths, so a translation somebody
+                    // wrote and published themselves never carried its id — and that id is the only
+                    // thing an anonymous session has: check-uuid needs a token, so signed out the
+                    // mod could learn nothing and called a published translation "Never published".
+                    // The person it fails for is the one who made it.
+                    if (result.TranslationId > 0) TranslatorCore.SourceSiteId = result.TranslationId;
+
                     // Keep the local file in step with what was just published
                     TranslatorCore.TranslationUIFont = TranslatorCore.EffectiveInterfaceFont;
 

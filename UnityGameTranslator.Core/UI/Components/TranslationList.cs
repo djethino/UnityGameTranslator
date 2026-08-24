@@ -308,6 +308,22 @@ namespace UnityGameTranslator.Core.UI.Components
             // Check if this translation is from the same lineage (UUID match)
             bool isLineageMatch = TranslatorCore.IsUuidMatch(translation.FileUuid);
 
+            // 🔴 **The one public way to learn where our own file lives on the site.** `site_id` is
+            // written when a translation is downloaded and, until now, nowhere else — so a file
+            // somebody wrote and published themselves carried none, and signed out the mod had no
+            // id to ask about: check-uuid needs a token, and a published translation was reported
+            // as never published to the very person who made it.
+            //
+            // This row IS that translation — same lineage, answered by a public search — so its id
+            // is ours. Recorded once, then saved with the file, and everything downstream (the
+            // public update check, the badge strip) works without an account.
+            if (isLineageMatch && !TranslatorCore.SourceSiteId.HasValue && translation.Id > 0)
+            {
+                TranslatorCore.SourceSiteId = translation.Id;
+                TranslatorCore.SaveCache();
+                TranslatorCore.LogInfo($"[TranslationList] Learned this file is site #{translation.Id}");
+            }
+
             // What the info column will hold, decided BEFORE the row exists:
             // its height was calibrated for two lines, and the extra ones would
             // simply have been cut off.

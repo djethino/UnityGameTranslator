@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
@@ -41,6 +41,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         // Language section containers for conditional display
         private GameObject _languagesEditableSection;
         private GameObject _languagesLockedSection;
+        private Text _lockedHeader;
         private Text _lockedSourceLangValue;
         private Text _lockedTargetLangValue;
 
@@ -588,7 +589,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             _languagesLockedSection = UIFactory.CreateVerticalGroup(card, "LanguagesLockedSection", false, false, true, true, 0);
             UIFactory.SetLayoutElement(_languagesLockedSection, flexibleWidth: 9999);
 
-            var lockedHeader = UIFactory.CreateLabel(_languagesLockedSection, "LockedHeader", "Languages (locked - translation uploaded):", TextAnchor.MiddleLeft);
+            // ⚠ Filled in UpdateLanguagesLocked: there are two reasons the languages are settled,
+            // and this said only one of them. "Translation uploaded" on a file nobody has published
+            // is simply false, and the reader is then left with a locked control and a wrong
+            // explanation — worse than a locked control with none.
+            _lockedHeader = UIFactory.CreateLabel(_languagesLockedSection, "LockedHeader", "", TextAnchor.MiddleLeft);
+            var lockedHeader = _lockedHeader;
             lockedHeader.color = UIStyles.StatusWarning;
             lockedHeader.fontSize = UIStyles.FontSizeSmall;
             UIFactory.SetLayoutElement(lockedHeader.gameObject, minHeight: UIStyles.RowHeightSmall);
@@ -1887,6 +1893,16 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_languagesLockedSection != null)
             {
                 _languagesLockedSection.SetActive(locked);
+
+                // ⚠ The reason, and it is not always the same one. A file being written here can
+                // still be re-targeted — by clearing it — where a published one never can.
+                if (locked && _lockedHeader != null)
+                {
+                    _lockedHeader.text = TranslatorCore.LanguagesLockedByPublishing
+                        ? "Languages are settled: this translation is published."
+                        : "Languages are settled: this file already holds lines. Clear the "
+                          + "translation to change them.";
+                }
 
                 if (locked && _lockedSourceLangValue != null && _lockedTargetLangValue != null)
                 {

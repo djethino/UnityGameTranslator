@@ -295,10 +295,27 @@ namespace UnityGameTranslator.Core
             _negotiation.ForgetIfChanged($"{Config?.ai_url}|{Config?.ai_model}");
 
         /// <summary>
-        /// Returns true if source/target languages are locked (translation exists on server).
-        /// Once a translation is uploaded, languages cannot be changed to maintain consistency.
+        /// Whether the source and target languages may still be changed.
+        ///
+        /// Two reasons they may not, and the second was missing:
+        ///
+        /// · **published** — the server keeps the languages a translation was published with and
+        ///   ignores any sent with an update, so nothing here could move them anyway;
+        ///
+        /// · 🔴 **this file already holds lines.** A target language is not a preference, it is
+        ///   what the file IS: retargeting a file that already carries lines leaves every one of
+        ///   them written in a language the game is no longer asking for, and the next captures
+        ///   arrive in the new one. One file, two languages, and nothing said so. Captured lines
+        ///   count — they are the ones that would be orphaned.
+        ///
+        /// The way to change it is to clear the translation first, which is what the panel says.
+        /// The manager applies the same rule on its own screens.
         /// </summary>
-        public static bool AreLanguagesLocked => ServerState != null && ServerState.Exists;
+        public static bool AreLanguagesLocked =>
+            (ServerState != null && ServerState.Exists) || TranslationCache.Count > 0;
+
+        /// <summary>Which of the two reasons applies, so the panel can say the right one.</summary>
+        public static bool LanguagesLockedByPublishing => ServerState != null && ServerState.Exists;
 
         /// <summary>
         /// Returns true if a remote translation's UUID matches our local FileUuid.

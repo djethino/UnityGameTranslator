@@ -30,6 +30,9 @@ namespace UnityGameTranslator.Core.UI.Components
         private GameObject _rootObject;
         private GameObject _buttonObject;
         private Text _buttonText;
+
+        /// <summary>The flag drawn on the closed field, when this list is about languages.</summary>
+        private GameObject _buttonMark;
         private EllipsisLabel _buttonEllipsis;
         private GameObject _popupRoot;
         private InputFieldRef _searchInputRef;
@@ -702,6 +705,55 @@ namespace UnityGameTranslator.Core.UI.Components
                 _buttonEllipsis.FullText = value; // the component owns Text.text (trims to fit)
             else
                 _buttonText.text = value;
+
+            UpdateButtonMark();
+        }
+
+        /// <summary>
+        /// The flag on the CLOSED field — the same one the open list draws beside each row.
+        ///
+        /// 🔴 **Drawing it in the list only is worse than not drawing it at all.** The list is
+        /// where one chooses; the field is what one reads afterwards, and for far longer. A flag
+        /// that appears while picking and vanishes once picked reads as something that was lost.
+        ///
+        /// ⚠ Rebuilt rather than repainted: <see cref="LanguageMark"/> offers Create and nothing
+        /// else, so the mark is destroyed and made again whenever the selection moves — the same
+        /// treatment StatusCard gives its chips, and for the same reason.
+        ///
+        /// ⚠ The text is pushed right by exactly what the mark reserves, and pulled back when
+        /// there is none: this dropdown also holds fonts and hotkeys, which must not be indented
+        /// for a flag they will never have.
+        /// </summary>
+        private void UpdateButtonMark()
+        {
+            if (_buttonObject == null || _buttonText == null) return;
+
+            if (_buttonMark != null)
+            {
+                UnityEngine.Object.Destroy(_buttonMark);
+                _buttonMark = null;
+            }
+
+            int textLeft = 8;
+            string markLanguage = MarkProvider != null ? MarkProvider(_selectedValue) : null;
+
+            if (!string.IsNullOrEmpty(markLanguage))
+            {
+                _buttonMark = LanguageMark.Create(_buttonObject, "Mark", markLanguage, nameElsewhere: true);
+                if (_buttonMark != null)
+                {
+                    var markRect = _buttonMark.GetComponent<RectTransform>();
+                    markRect.anchorMin = new Vector2(0f, 0.5f);
+                    markRect.anchorMax = new Vector2(0f, 0.5f);
+                    markRect.pivot = new Vector2(0f, 0.5f);
+                    markRect.anchoredPosition = new Vector2(8f, 0f);
+                    markRect.sizeDelta = new Vector2(LanguageMark.FlagWidth, LanguageMark.FlagHeight);
+                    textLeft = 8 + LanguageMark.FlagWidth + 6;
+                }
+            }
+
+            var textRect = _buttonText.GetComponent<RectTransform>();
+            textRect.offsetMin = new Vector2(textLeft, 2f);
         }
 
         /// <summary>

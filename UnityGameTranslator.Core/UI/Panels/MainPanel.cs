@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEngine.UI;
 using UniverseLib.UI;
 using UniverseLib.UI.Models;
@@ -207,7 +207,6 @@ namespace UnityGameTranslator.Core.UI.Panels
             CreateActionsSection(myTransCard);
 
             // The three choices offered when holding another lineage (GAP 8: HoldingAnothersLineage state)
-            CreateLineageChoiceSection(myTransCard);
 
             // Guidance Section (GAP 9: contextual messages)
             CreateGuidanceSection(myTransCard);
@@ -609,6 +608,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             _helpZone?.Describe(_compareWithServerBtn.Component.gameObject,
                 "Compare your local file with the published version and choose line by line what to publish");
 
+            // 🔴 **The three lineage choices live HERE, in Actions.** They had a section of their
+            // own titled "What would you like to do?", directly under a row already offering
+            // "Contribute" — the same act, three inches apart, one of them without the guards. Two
+            // headings for one question, and the second one full-width where every other action
+            // button on this card is the size of its own label.
+            CreateLineageChoices(actionsBox);
+
             _uploadHintLabel = UIStyles.CreateHint(actionsBox, "UploadHintLabel", "");
             RegisterExcluded(_uploadHintLabel);
 
@@ -685,26 +691,32 @@ namespace UnityGameTranslator.Core.UI.Panels
         }
 
         /// <summary>
-        /// The three choices offered to somebody holding a lineage that is not theirs (GAP 8):
-        /// Shown only for HoldingAnothersLineage state.
+        /// The three answers open to somebody holding a lineage that is not theirs, inside Actions.
+        ///
+        /// 🔴 **No heading of their own.** They had one — "What would you like to do?" — directly
+        /// under a row already offering "Contribute", which is the first of these three. One
+        /// question asked twice, and the copy with the heading was the one without the guards.
+        ///
+        /// ⚠ **Each button is the size of its label, and centred**, like every other action on this
+        /// card. They stretched the full width, which made them read as a different kind of control
+        /// on a different screen. Their sentences stay under them: prose starts at the left margin,
+        /// buttons sit in the middle — the rule the sync row above already states at length.
         /// </summary>
-        private void CreateLineageChoiceSection(GameObject parent)
+        private void CreateLineageChoices(GameObject parent)
         {
-            _lineageChoiceSection = UIFactory.CreateVerticalGroup(parent, "LineageChoiceSection", false, false, true, true, UIStyles.SmallSpacing);
+            _lineageChoiceSection = UIFactory.CreateVerticalGroup(parent, "LineageChoiceSection",
+                                                                  false, false, true, true,
+                                                                  UIStyles.SmallSpacing);
             UIFactory.SetLayoutElement(_lineageChoiceSection, flexibleWidth: 9999);
 
-            var sectionTitle = UIStyles.CreateSectionTitle(_lineageChoiceSection, "ChoiceSectionLabel", "What would you like to do?");
-            RegisterUIText(sectionTitle);
+            // Contribute as Branch
+            var branchRow = UIStyles.CreateFormRow(_lineageChoiceSection, "BranchRow",
+                                                   UIStyles.RowHeightLarge, UIStyles.SmallSpacing);
+            var branchLayout = branchRow.GetComponent<HorizontalLayoutGroup>();
+            if (branchLayout != null) branchLayout.childAlignment = TextAnchor.MiddleCenter;
 
-            var choiceBox = CreateSection(_lineageChoiceSection, "ChoiceBox");
-
-            // Button 1: Contribute as Branch
-            var branchRow = UIFactory.CreateVerticalGroup(choiceBox, "BranchRow", false, false, true, true, 2);
-            UIFactory.SetLayoutElement(branchRow, flexibleWidth: 9999, minHeight: UIStyles.RowHeightLarge + UIStyles.RowHeightNormal);
-
-            _contributeAsBranchBtn = CreatePrimaryButton(branchRow, "ContributeBtn", "Contribute as Branch", 250);
+            _contributeAsBranchBtn = CreatePrimaryButton(branchRow, "ContributeBtn", "Contribute as Branch", 180);
             UIStyles.SetBackground(_contributeAsBranchBtn.Component.gameObject, UIStyles.ButtonSuccess);
-            UIFactory.SetLayoutElement(_contributeAsBranchBtn.Component.gameObject, flexibleWidth: 9999);
             _contributeAsBranchBtn.OnClick += OnContributeAsBranchClicked;
             // La branche créée porte le fichier d'ici — les deux côtés en step.
             ScopeMarks.Adorn(_contributeAsBranchBtn,
@@ -713,58 +725,52 @@ namespace UnityGameTranslator.Core.UI.Panels
             _helpZone?.Describe(_contributeAsBranchBtn.Component.gameObject,
                 "Your changes are sent to the owner, who can merge them into the main translation");
 
-            var branchDesc = UIFactory.CreateLabel(branchRow, "BranchDesc", "Your changes will help improve the main translation", TextAnchor.MiddleCenter);
-            branchDesc.fontSize = UIStyles.FontSizeSmall;
-            branchDesc.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(branchDesc.gameObject, flexibleWidth: 9999, minHeight: UIStyles.RowHeightNormal);
+            var branchDesc = UIStyles.CreateHint(_lineageChoiceSection, "BranchDesc",
+                "Your changes will help improve the main translation");
             RegisterUIText(branchDesc);
 
-            UIStyles.CreateSpacer(choiceBox, 8);
+            // Download Latest
+            var downloadRow = UIStyles.CreateFormRow(_lineageChoiceSection, "DownloadRow",
+                                                     UIStyles.RowHeightLarge, UIStyles.SmallSpacing);
+            var downloadLayout = downloadRow.GetComponent<HorizontalLayoutGroup>();
+            if (downloadLayout != null) downloadLayout.childAlignment = TextAnchor.MiddleCenter;
 
-            // Button 2: Download Latest
-            var downloadRow = UIFactory.CreateVerticalGroup(choiceBox, "DownloadRow", false, false, true, true, 2);
-            UIFactory.SetLayoutElement(downloadRow, flexibleWidth: 9999, minHeight: UIStyles.RowHeightLarge + UIStyles.RowHeightNormal);
-
-            _downloadLatestBtn = CreateSecondaryButton(downloadRow, "DownloadLatestBtn", "Download Latest", 250);
+            _downloadLatestBtn = CreateSecondaryButton(downloadRow, "DownloadLatestBtn", "Download Latest", 150);
             UIStyles.SetBackground(_downloadLatestBtn.Component.gameObject, UIStyles.ButtonPrimary);
-            UIFactory.SetLayoutElement(_downloadLatestBtn.Component.gameObject, flexibleWidth: 9999);
             _downloadLatestBtn.OnClick += OnDownloadLatestClicked;
             // ⚠ Le côté DÉPEND du rôle, il est donc corrigé à chaque rafraîchissement par
-            // RetargetDownloadButtons. Construit au plus prudent : tant qu'on ne sait pas si cette
-            // lignée est la nôtre, annoncer « les deux en step » rassurerait à tort.
+            // SetDownloadLatestState. Construit au plus prudent.
             ScopeMarks.Adorn(_downloadLatestBtn,
                              EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: false));
             RegisterExcluded(_downloadLatestBtn.ButtonText);
             _helpZone?.Describe(_downloadLatestBtn.Component.gameObject,
                 "Replace your local file with the owner's latest version from the website");
 
-            var downloadDesc = UIFactory.CreateLabel(downloadRow, "DownloadDesc", "Get the owner's latest version (replaces your local)", TextAnchor.MiddleCenter);
-            downloadDesc.fontSize = UIStyles.FontSizeSmall;
-            downloadDesc.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(downloadDesc.gameObject, flexibleWidth: 9999, minHeight: UIStyles.RowHeightNormal);
+            var downloadDesc = UIStyles.CreateHint(_lineageChoiceSection, "DownloadDesc",
+                "Get the owner's latest version (replaces your local)");
             RegisterUIText(downloadDesc);
 
-            UIStyles.CreateSpacer(choiceBox, 8);
+            // Create Independent (Fork)
+            var forkRow = UIStyles.CreateFormRow(_lineageChoiceSection, "ForkRow",
+                                                 UIStyles.RowHeightLarge, UIStyles.SmallSpacing);
+            var forkLayout = forkRow.GetComponent<HorizontalLayoutGroup>();
+            if (forkLayout != null) forkLayout.childAlignment = TextAnchor.MiddleCenter;
 
-            // Button 3: Create Independent (Fork)
-            var forkRow = UIFactory.CreateVerticalGroup(choiceBox, "ForkRow", false, false, true, true, 2);
-            UIFactory.SetLayoutElement(forkRow, flexibleWidth: 9999, minHeight: UIStyles.RowHeightLarge + UIStyles.RowHeightNormal);
-
-            _createIndependentBtn = CreateSecondaryButton(forkRow, "CreateIndependentBtn", "Create Independent", 250);
+            _createIndependentBtn = CreateSecondaryButton(forkRow, "CreateIndependentBtn", "Create Independent", 170);
             UIStyles.SetBackground(_createIndependentBtn.Component.gameObject, UIStyles.ButtonDanger);
-            UIFactory.SetLayoutElement(_createIndependentBtn.Component.gameObject, flexibleWidth: 9999);
             _createIndependentBtn.OnClick += OnCreateIndependentClicked;
             // Une lignée neuve, faite du fichier d'ici — les deux côtés en step.
             ScopeMarks.Adorn(_createIndependentBtn,
                              EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: true));
             RegisterUIText(_createIndependentBtn.ButtonText);
             _helpZone?.Describe(_createIndependentBtn.Component.gameObject,
-                "Start your own independent translation from your current file — asks for confirmation first");
+                "Start your own translation from the file in this game — asks for confirmation first");
 
-            var forkDesc = UIFactory.CreateLabel(forkRow, "ForkDesc", "Start your own independent translation, no longer linked to the original", TextAnchor.MiddleCenter);
-            forkDesc.fontSize = UIStyles.FontSizeSmall;
-            forkDesc.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(forkDesc.gameObject, flexibleWidth: 9999, minHeight: UIStyles.RowHeightNormal);
+            // ⚠ **Says what it starts FROM.** "Start your own independent translation" left the
+            // reader to guess whether it began from nothing or from the lines they have: the
+            // difference between losing an afternoon's work and keeping it.
+            var forkDesc = UIStyles.CreateHint(_lineageChoiceSection, "ForkDesc",
+                "A copy of this translation as it is now, yours, no longer linked to the original");
             RegisterUIText(forkDesc);
         }
 
@@ -1106,7 +1112,15 @@ namespace UnityGameTranslator.Core.UI.Panels
             // The three choices offered to somebody holding a lineage that is not theirs.
             if (_lineageChoiceSection != null)
             {
-                _lineageChoiceSection.SetActive(_currentLayoutState == LayoutState.HoldingAnothersLineage);
+                bool choosing = _currentLayoutState == LayoutState.HoldingAnothersLineage;
+                _lineageChoiceSection.SetActive(choosing);
+
+                // 🔴 **The upload button steps aside for them.** In this state it reads
+                // "Contribute" and does the same thing as the first of the three below it — two
+                // doors to one act, three inches apart, and the hint under it ("Login required")
+                // answered for a button nobody should have been looking at.
+                if (_uploadBtn != null) _uploadBtn.Component.gameObject.SetActive(!choosing);
+                if (_uploadHintLabel != null) _uploadHintLabel.gameObject.SetActive(!choosing);
 
                 // ⚠ Two of the three need a name, one does not. Taking the main's version again
                 // writes only the local file, so it stays live without an account — that is the
@@ -2104,8 +2118,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             // may do it, and publish the day they have one — or never. What IS given up happens
             // immediately, so that is what this says.
             TranslatorUIManager.ConfirmationPanel?.Show(
-                "Start your own translation?",
-                "This file stops being part of @" + ownerName + "'s translation and becomes its own."
+                "Make an independent copy?",
+                "A copy of @" + ownerName + "'s translation, starting from the file in this game as "
+                + "it is now. It becomes yours."
                 + "\n\nNothing is sent to the site. Publish it when you want to, or never."
                 + "\n\nYou will no longer be told when @" + ownerName + "'s version changes, and "
                 + "you can no longer merge with it. That part cannot be undone.",

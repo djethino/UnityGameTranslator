@@ -494,7 +494,12 @@ namespace UnityGameTranslator.Core.UI.Components
                                  // The Main's other declaration, and the one a would-be
                                  // contributor needs before writing anything. Null on a server
                                  // that never sent it — unknown is not "solo work".
-                                 acceptsContributions: TranslatorCore.ServerState?.AcceptsBranches);
+                                 acceptsContributions: TranslatorCore.ServerState?.AcceptsBranches,
+
+                                 // Named in the "Not yours" sentence, so somebody holding a
+                                 // community translation is told WHOSE it is and that publishing
+                                 // sends them a contribution rather than creating anything.
+                                 mainOwner: standing.MainOwner);
 
             var shown = new List<Badge>();
             foreach (var badge in all)

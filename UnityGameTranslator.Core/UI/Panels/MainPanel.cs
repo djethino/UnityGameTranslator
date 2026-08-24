@@ -1269,8 +1269,15 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             standing = new Standing
             {
+                // ⚠ `yours` decides between two sentences that describe opposite acts: publishing
+                // your own updates it, publishing into somebody else's lineage contributes to it.
+                // Without it the card said "Published" over a community translation the player had
+                // merely downloaded, and offered to update a file that is not theirs to update.
                 Publication = Publications.Of(hereOnDisk: entryCount > 0,
-                                              onTheSite: serverState != null && serverState.Exists),
+                                              onTheSite: serverState != null && serverState.Exists,
+                                              yours: serverState != null && serverState.Exists
+                                                  ? serverState.IsOwner
+                                                  : (bool?)null),
                 Sync = sync,
 
                 // ⚠ From the point of view of the game itself, which holds its own credential: the
@@ -1292,6 +1299,13 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 LinesAvailable = _currentLayoutState == LayoutState.OwnerMain
                     ? serverState?.LinesAvailable
+                    : null,
+
+                // ⚠ Whoever leads the lineage, and ONLY when it is not this account — the same two
+                // fields the card below already reads to say "Based on the translation of @x".
+                // Null when it is ours: there is then nobody else to name.
+                MainOwner = serverState != null && !serverState.IsOwner
+                    ? serverState.MainUsername ?? serverState.Uploader
                     : null,
             };
 

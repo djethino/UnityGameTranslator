@@ -206,6 +206,10 @@ namespace UnityGameTranslator.Core
                 Id = id,
                 Reason = saved ? BackupReason.Saved : BackupReason.Unknown,
                 WithAssets = saved,
+
+                // ⚠ The folder name is the first answer and a reliable one: only Keep and the
+                // Backup button ever produce a `saved-` folder.
+                Kept = saved,
             };
 
             // ⚠ The folder name is the fallback for the date, and it is a good one: it was written
@@ -232,6 +236,10 @@ namespace UnityGameTranslator.Core
                 {
                     entry.Reason = known;
                 }
+
+                // ⚠ Read, and never un-set: the reason above has just overwritten what the folder
+                // name said, and rebuilding "is it kept" from it is the defect this line answers.
+                if (json["kept"]?.Value<bool>() == true) entry.Kept = true;
 
                 entry.By = json["by"]?.Value<string>();
                 entry.Label = json["label"]?.Value<string>();
@@ -369,6 +377,23 @@ namespace UnityGameTranslator.Core
             }
 
             return id;
+        }
+
+        /// <summary>
+        /// Duplicate one backup folder, assets included.
+        ///
+        /// ⚠ Recursive because a copy can carry `fonts/` and `images/`. A flat copy would produce a
+        /// saved backup that restores the lines and silently drops the fonts they were written for.
+        /// </summary>
+        private static void CopyFolder(string source, string destination)
+        {
+            Directory.CreateDirectory(destination);
+
+            foreach (var file in Directory.GetFiles(source))
+                File.Copy(file, Path.Combine(destination, Path.GetFileName(file)), overwrite: true);
+
+            foreach (var folder in Directory.GetDirectories(source))
+                CopyFolder(folder, Path.Combine(destination, new DirectoryInfo(folder).Name));
         }
 
         private static void CopyAssets(string directory)
@@ -691,7 +716,11 @@ namespace UnityGameTranslator.Core
                 var moved = Path.Combine(root, Backups.NewId(BackupReason.Saved, StampOf(id)));
                 if (Directory.Exists(moved)) return false;
 
-                Directory.Move(directory, moved);
+                // 🔴 **A COPY, never a move.** Keeping one is a decision about a copy of your own;
+                // the automatic rotation is a separate mechanism that has to go on rotating.
+                // Moving the folder took the row out of the automatic list, so deciding to keep a
+                // copy made that list shorter — which reads as having lost one.
+                CopyFolder(directory, moved);
 
                 // ⚠ The reason it was taken is KEPT, not overwritten with "Saved by you". "Before
                 // installing @Seniorito's translation" is why this copy is worth keeping; losing

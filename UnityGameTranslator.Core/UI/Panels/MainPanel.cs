@@ -1144,15 +1144,18 @@ namespace UnityGameTranslator.Core.UI.Panels
                     SetDownloadLatestState(serverMoved);
                 }
 
-                // ⚠ Live whenever there is a name to publish under, and that is the whole rule:
-                // forking has no precondition on divergence — it is the answer to "I want to go my
-                // own way", which somebody may decide at any moment. It writes nothing to the site
-                // by itself either; it renames this lineage locally and opens the upload panel,
-                // which can still be closed.
+                // 🔴 **No account, no network, no divergence — forking asks for none of them.**
+                // CreateFork is local from end to end: a new uuid, the server state cleared, the
+                // origin recorded. Nothing is sent. Publishing is a separate act the owner of a
+                // fork takes when they want to, which is exactly what distinguishes it from a
+                // branch — a branch does not exist until it is sent, and its Main learns of it then.
+                //
+                // Gating it on being signed in made this file's identity depend on an account,
+                // which nothing about it does.
                 if (_createIndependentBtn != null)
                 {
-                    _createIndependentBtn.Component.interactable = canReachServer;
-                    ScopeMarks.Tint(_createIndependentBtn, canReachServer);
+                    _createIndependentBtn.Component.interactable = true;
+                    ScopeMarks.Tint(_createIndependentBtn, true);
                 }
             }
 
@@ -2096,13 +2099,16 @@ namespace UnityGameTranslator.Core.UI.Panels
             var serverState = TranslatorCore.ServerState;
             string ownerName = serverState?.Uploader ?? "the original owner";
 
-            // GAP 10: Warning for creating independent fork
+            // ⚠ **It said "You will become the Main owner", which presumed the publishing.** Forking
+            // sends nothing: it is this file leaving a lineage, here, now. Somebody with no account
+            // may do it, and publish the day they have one — or never. What IS given up happens
+            // immediately, so that is what this says.
             TranslatorUIManager.ConfirmationPanel?.Show(
-                "Create Independent Translation?",
-                $"This will create a new independent translation, no longer linked to the original.\n\n" +
-                $"You will become the Main owner of this new translation.\n\n" +
-                $"You will no longer be able to merge changes with @{ownerName}'s translation.\n\n" +
-                "This action cannot be undone.",
+                "Start your own translation?",
+                "This file stops being part of @" + ownerName + "'s translation and becomes its own."
+                + "\n\nNothing is sent to the site. Publish it when you want to, or never."
+                + "\n\nYou will no longer be told when @" + ownerName + "'s version changes, and "
+                + "you can no longer merge with it. That part cannot be undone.",
                 "Create Independent",
                 () =>
                 {
@@ -2110,8 +2116,15 @@ namespace UnityGameTranslator.Core.UI.Panels
                     TranslatorCore.CreateFork();
                     RefreshUI();
 
-                    // Open upload panel to push the new independent translation
-                    TranslatorUIManager.UploadPanel?.SetActive(true);
+                    // ⚠ Offered, not imposed — and only where it can work. Opening the upload panel
+                    // for somebody signed out is a door onto a refusal; the card behind now shows
+                    // an unpublished translation of their own, with its own publish action waiting
+                    // for whenever they want it.
+                    if (!string.IsNullOrEmpty(TranslatorCore.Config.api_token)
+                        && TranslatorCore.Config.online_mode)
+                    {
+                        TranslatorUIManager.UploadPanel?.SetActive(true);
+                    }
                 },
                 isDanger: true
             );

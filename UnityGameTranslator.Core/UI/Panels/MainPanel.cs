@@ -627,7 +627,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // button on this card is the size of its own label.
             CreateLineageChoices(actionsBox);
 
-            _uploadHintLabel = UIStyles.CreateHint(actionsBox, "UploadHintLabel", "", TextAnchor.MiddleCenter);
+            _uploadHintLabel = UIStyles.CreateHint(actionsBox, "UploadHintLabel", "", centred: true);
             RegisterExcluded(_uploadHintLabel);
 
             // Role-specific action buttons row
@@ -699,7 +699,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 "Leave the owner's translation and continue on your own — asks for confirmation first");
 
             // One-line explanation for whichever role buttons are visible
-            _roleActionsHint = UIStyles.CreateHint(actionsBox, "RoleActionsHint", "", TextAnchor.MiddleCenter);
+            _roleActionsHint = UIStyles.CreateHint(actionsBox, "RoleActionsHint", "", centred: true);
             RegisterExcluded(_roleActionsHint);
         }
 
@@ -761,7 +761,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 "Your changes are sent to the owner, who can merge them into the main translation");
 
             var branchDesc = UIStyles.CreateHint(_lineageChoiceSection, "BranchDesc",
-                "Your changes will help improve the main translation", TextAnchor.MiddleCenter);
+                "Your changes will help improve the main translation", centred: true);
             RegisterUIText(branchDesc);
 
             // Download Latest
@@ -782,7 +782,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 "Replace your local file with the owner's latest version from the website");
 
             var downloadDesc = UIStyles.CreateHint(_lineageChoiceSection, "DownloadDesc",
-                "Get the owner's latest version (replaces your local)", TextAnchor.MiddleCenter);
+                "Get the owner's latest version (replaces your local)", centred: true);
             RegisterUIText(downloadDesc);
 
             // Create Independent (Fork)
@@ -810,7 +810,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // difference between losing an afternoon's work and keeping it.
             var forkDesc = UIStyles.CreateHint(_lineageChoiceSection, "ForkDesc",
                 "A copy of this translation as it is now, yours. It keeps the credit to its author, and stops following their updates",
-                TextAnchor.MiddleCenter);
+                centred: true);
             RegisterUIText(forkDesc);
         }
 

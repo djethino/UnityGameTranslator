@@ -799,7 +799,7 @@ namespace UnityGameTranslator.Core.UI
         /// <summary>
         /// Creates a styled hint/caption label
         /// </summary>
-        /// <param name="align">
+        /// <param name="centred">
         /// Left by default, because a hint is prose and prose starts where the eye looks for its
         /// first word.
         ///
@@ -807,11 +807,18 @@ namespace UnityGameTranslator.Core.UI
         /// as a column of buttons each with its sentence; left-aligning those sentences pulled them
         /// away from the control they describe and left the block looking pinned to one edge. The
         /// rule above still holds for a hint under a form row, which is most of them.
+        ///
+        /// 🔴 **A bool, not a TextAnchor, and that is not a style choice.** That enum lives in
+        /// UnityEngine.TextRenderingModule, which the IL2CPP adapter's assembly rewriter cannot
+        /// resolve: naming it in a PUBLIC signature writes a metadata reference that using it
+        /// inside a method body never does, and the whole IL2CPP build fails at the rewrite step
+        /// with nothing pointing at this file.
         /// </param>
         public static Text CreateHint(GameObject parent, string name, string text,
-                                      TextAnchor align = TextAnchor.MiddleLeft)
+                                      bool centred = false)
         {
-            var label = UIFactory.CreateLabel(parent, name, text, align);
+            var label = UIFactory.CreateLabel(parent, name, text,
+                                              centred ? TextAnchor.MiddleCenter : TextAnchor.MiddleLeft);
             label.fontSize = FontSizeHint;
             label.fontStyle = FontStyle.Italic;
             label.color = TextMuted;

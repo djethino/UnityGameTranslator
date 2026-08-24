@@ -570,11 +570,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Pushing your content and inspecting what you are about to push are the same
             // question, so they share a row. Everything else (reviewing others' work, editing the
             // description, forking) is a different subject and lives on the row below.
-            // 🔴 **The buttons are centred, the sentences under them are not.** A row of controls
-            // sized by their own labels leaves whatever room is left over, and pushing that room to
-            // one side makes the row look pinned to an edge. The hints below are prose: prose starts
-            // where the eye expects to find its first word, which is the left margin — the same
-            // reason a paragraph is not centred on a page.
+            // 🔴 **Buttons and their sentences are centred together.** The sentences were left
+            // aligned on the reasoning that prose starts where the eye looks for its first word —
+            // true on a page, wrong here: each sentence belongs to the button above it, and pulling
+            // it to the far left left the block looking pinned to one edge with its captions
+            // adrift. Judged on the screen rather than from the rule, which is where it was wrong.
             _syncActionsRow = UIStyles.CreateFormRow(actionsBox, "SyncActionsRow", UIStyles.RowHeightLarge, UIStyles.SmallSpacing);
             var syncRow = _syncActionsRow;
             var syncLayout = syncRow.GetComponent<HorizontalLayoutGroup>();
@@ -627,7 +627,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // button on this card is the size of its own label.
             CreateLineageChoices(actionsBox);
 
-            _uploadHintLabel = UIStyles.CreateHint(actionsBox, "UploadHintLabel", "");
+            _uploadHintLabel = UIStyles.CreateHint(actionsBox, "UploadHintLabel", "", TextAnchor.MiddleCenter);
             RegisterExcluded(_uploadHintLabel);
 
             // Role-specific action buttons row
@@ -699,7 +699,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 "Leave the owner's translation and continue on your own — asks for confirmation first");
 
             // One-line explanation for whichever role buttons are visible
-            _roleActionsHint = UIStyles.CreateHint(actionsBox, "RoleActionsHint", "");
+            _roleActionsHint = UIStyles.CreateHint(actionsBox, "RoleActionsHint", "", TextAnchor.MiddleCenter);
             RegisterExcluded(_roleActionsHint);
         }
 
@@ -761,7 +761,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 "Your changes are sent to the owner, who can merge them into the main translation");
 
             var branchDesc = UIStyles.CreateHint(_lineageChoiceSection, "BranchDesc",
-                "Your changes will help improve the main translation");
+                "Your changes will help improve the main translation", TextAnchor.MiddleCenter);
             RegisterUIText(branchDesc);
 
             // Download Latest
@@ -782,7 +782,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 "Replace your local file with the owner's latest version from the website");
 
             var downloadDesc = UIStyles.CreateHint(_lineageChoiceSection, "DownloadDesc",
-                "Get the owner's latest version (replaces your local)");
+                "Get the owner's latest version (replaces your local)", TextAnchor.MiddleCenter);
             RegisterUIText(downloadDesc);
 
             // Create Independent (Fork)
@@ -809,7 +809,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             // reader to guess whether it began from nothing or from the lines they have: the
             // difference between losing an afternoon's work and keeping it.
             var forkDesc = UIStyles.CreateHint(_lineageChoiceSection, "ForkDesc",
-                "A copy of this translation as it is now, yours. It keeps the credit to its author, and stops following their updates");
+                "A copy of this translation as it is now, yours. It keeps the credit to its author, and stops following their updates",
+                TextAnchor.MiddleCenter);
             RegisterUIText(forkDesc);
         }
 

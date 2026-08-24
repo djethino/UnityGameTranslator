@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
@@ -799,9 +799,19 @@ namespace UnityGameTranslator.Core.UI
         /// <summary>
         /// Creates a styled hint/caption label
         /// </summary>
-        public static Text CreateHint(GameObject parent, string name, string text)
+        /// <param name="align">
+        /// Left by default, because a hint is prose and prose starts where the eye looks for its
+        /// first word.
+        ///
+        /// ⚠ Centred where the hint sits UNDER a centred button and belongs to it. Actions reads
+        /// as a column of buttons each with its sentence; left-aligning those sentences pulled them
+        /// away from the control they describe and left the block looking pinned to one edge. The
+        /// rule above still holds for a hint under a form row, which is most of them.
+        /// </param>
+        public static Text CreateHint(GameObject parent, string name, string text,
+                                      TextAnchor align = TextAnchor.MiddleLeft)
         {
-            var label = UIFactory.CreateLabel(parent, name, text, TextAnchor.MiddleLeft);
+            var label = UIFactory.CreateLabel(parent, name, text, align);
             label.fontSize = FontSizeHint;
             label.fontStyle = FontStyle.Italic;
             label.color = TextMuted;

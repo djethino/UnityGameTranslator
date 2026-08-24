@@ -1115,16 +1115,44 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // ⚠ Tint alongside interactable, every time. Unity greys a button's own image and
                 // leaves its children alone, so the marks and the label keep whatever colour they
                 // were built with — which left an accent-purple mark on a dead button.
+                // 🔴 **Each of the three answers its own question, and two of them were answering
+                // none.** Signed in was the whole test, so "Contribute as Branch" invited somebody
+                // to send a file identical to the Main — a contribution holding nothing — and
+                // "Download Latest" offered to fetch a version that had not moved. Same guards as
+                // the Actions row, which had them right all along: this section is the same acts,
+                // laid out as a choice.
+                bool canReachServer = isLoggedIn && TranslatorCore.Config.online_mode;
+                bool haveSomethingToOffer = TranslatorCore.LocalChangesCount > 0
+                                            || TranslatorCore.MetadataDirty;
+
                 if (_contributeAsBranchBtn != null)
                 {
-                    _contributeAsBranchBtn.Component.interactable = isLoggedIn;
-                    ScopeMarks.Tint(_contributeAsBranchBtn, isLoggedIn);
+                    bool canContribute = canReachServer && haveSomethingToOffer;
+                    _contributeAsBranchBtn.Component.interactable = canContribute;
+                    ScopeMarks.Tint(_contributeAsBranchBtn, canContribute);
                 }
 
+                // ⚠ Only when the published one actually moved. It writes the local file, so it
+                // needs no account — but fetching a version identical to the one already here is
+                // an act with no effect, and a button that promises one is worse than none.
+                if (_downloadLatestBtn != null)
+                {
+                    bool serverMoved = TranslatorUIManager.HasPendingUpdate
+                        && TranslatorUIManager.PendingUpdateDirection != UpdateDirection.Upload;
+
+                    _downloadLatestBtn.Component.interactable = serverMoved;
+                    SetDownloadLatestState(serverMoved);
+                }
+
+                // ⚠ Live whenever there is a name to publish under, and that is the whole rule:
+                // forking has no precondition on divergence — it is the answer to "I want to go my
+                // own way", which somebody may decide at any moment. It writes nothing to the site
+                // by itself either; it renames this lineage locally and opens the upload panel,
+                // which can still be closed.
                 if (_createIndependentBtn != null)
                 {
-                    _createIndependentBtn.Component.interactable = isLoggedIn;
-                    ScopeMarks.Tint(_createIndependentBtn, isLoggedIn);
+                    _createIndependentBtn.Component.interactable = canReachServer;
+                    ScopeMarks.Tint(_createIndependentBtn, canReachServer);
                 }
             }
 

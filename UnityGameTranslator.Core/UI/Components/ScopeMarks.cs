@@ -160,8 +160,16 @@ namespace UnityGameTranslator.Core.UI.Components
         /// <summary>Between the last mark and the first letter.</summary>
         private const int LabelGap = 7;
 
-        /// <summary>Room between the button's edge and what it holds.</summary>
-        private const int EdgePad = 8;
+        /// <summary>
+        /// Room between the button's edge and what it holds.
+        ///
+        /// ⚠ **The only padding these buttons have.** Adorn undoes the label's own anchoring so a
+        /// layout group can drive it — see below — and that throws away the ±10 px UIFactory had
+        /// set on it. Eight left the last letter almost touching the edge; the fitter reads this
+        /// value back through the group's padding, so widening it widens the button with it rather
+        /// than squeezing the text.
+        /// </summary>
+        private const int EdgePad = 12;
 
         /// <summary>
         /// Puts the three marks on a button that already exists.

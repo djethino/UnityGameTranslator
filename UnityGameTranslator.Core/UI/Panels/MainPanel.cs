@@ -117,6 +117,17 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         // UI references - the three choices when holding another lineage (GAP 8)
         private GameObject _lineageChoiceSection;
+        /// <summary>
+        /// The two rows of Actions, held so they can be hidden when nothing in them is showing.
+        ///
+        /// 🔴 **A row keeps its height with every child hidden.** Each is built at RowHeightLarge,
+        /// so a state that switches all of their buttons off left two empty bands inside the card —
+        /// one above the visible controls and one below. Turning off a button is not turning off
+        /// the space it was standing in.
+        /// </summary>
+        private GameObject _syncActionsRow;
+        private GameObject _roleActionsRow;
+
         private ButtonRef _contributeAsBranchBtn;
         private ButtonRef _downloadLatestBtn;
         private ButtonRef _createIndependentBtn;
@@ -564,7 +575,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             // one side makes the row look pinned to an edge. The hints below are prose: prose starts
             // where the eye expects to find its first word, which is the left margin — the same
             // reason a paragraph is not centred on a page.
-            var syncRow = UIStyles.CreateFormRow(actionsBox, "SyncActionsRow", UIStyles.RowHeightLarge, UIStyles.SmallSpacing);
+            _syncActionsRow = UIStyles.CreateFormRow(actionsBox, "SyncActionsRow", UIStyles.RowHeightLarge, UIStyles.SmallSpacing);
+            var syncRow = _syncActionsRow;
             var syncLayout = syncRow.GetComponent<HorizontalLayoutGroup>();
             if (syncLayout != null) syncLayout.childAlignment = TextAnchor.MiddleCenter;
 
@@ -620,7 +632,8 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Role-specific action buttons row
             // Centred, like the row above it — see there.
-            var roleActionsRow = UIStyles.CreateFormRow(actionsBox, "RoleActionsRow", UIStyles.RowHeightLarge);
+            _roleActionsRow = UIStyles.CreateFormRow(actionsBox, "RoleActionsRow", UIStyles.RowHeightLarge);
+            var roleActionsRow = _roleActionsRow;
             var rowLayout = roleActionsRow.GetComponent<HorizontalLayoutGroup>();
             if (rowLayout != null) rowLayout.childAlignment = TextAnchor.MiddleCenter;
 
@@ -702,6 +715,28 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// on a different screen. Their sentences stay under them: prose starts at the left margin,
         /// buttons sit in the middle — the rule the sync row above already states at length.
         /// </summary>
+        /// <summary>
+        /// Switches a row off when nothing inside it is showing, and back on when something is.
+        ///
+        /// ⚠ Both directions, always. Hiding only would leave the row gone for the rest of the
+        /// session the first time a state emptied it — including the states that fill it again.
+        ///
+        /// ⚠ Manual loop rather than LINQ over the children: this runs on every panel refresh, and
+        /// `foreach` over a Transform does not work on IL2CPP.
+        /// </summary>
+        private static void HideIfEmpty(GameObject row)
+        {
+            if (row == null) return;
+
+            bool anything = false;
+            for (int i = 0; i < row.transform.childCount; i++)
+            {
+                if (row.transform.GetChild(i).gameObject.activeSelf) { anything = true; break; }
+            }
+
+            if (row.activeSelf != anything) row.SetActive(anything);
+        }
+
         private void CreateLineageChoices(GameObject parent)
         {
             _lineageChoiceSection = UIFactory.CreateVerticalGroup(parent, "LineageChoiceSection",
@@ -757,7 +792,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (forkLayout != null) forkLayout.childAlignment = TextAnchor.MiddleCenter;
 
             _createIndependentBtn = CreateSecondaryButton(forkRow, "CreateIndependentBtn", "Create Independent", 170);
-            UIStyles.SetBackground(_createIndependentBtn.Component.gameObject, UIStyles.ButtonDanger);
+            // ⚠ **Not red.** Red is what this product uses for something wrong or refused, and
+            // making a copy of a translation is neither — it is the third of three legitimate
+            // answers. It also sat as the loudest thing on the card while being the least common
+            // choice, with white text on a bright fill nobody could read comfortably.
+            UIStyles.SetBackground(_createIndependentBtn.Component.gameObject, UIStyles.ButtonSecondary);
             _createIndependentBtn.OnClick += OnCreateIndependentClicked;
             // Une lignée neuve, faite du fichier d'ici — les deux côtés en step.
             ScopeMarks.Adorn(_createIndependentBtn,
@@ -770,7 +809,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // reader to guess whether it began from nothing or from the lines they have: the
             // difference between losing an afternoon's work and keeping it.
             var forkDesc = UIStyles.CreateHint(_lineageChoiceSection, "ForkDesc",
-                "A copy of this translation as it is now, yours, no longer linked to the original");
+                "A copy of this translation as it is now, yours. It keeps the credit to its author, and stops following their updates");
             RegisterUIText(forkDesc);
         }
 
@@ -1121,6 +1160,11 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // answered for a button nobody should have been looking at.
                 if (_uploadBtn != null) _uploadBtn.Component.gameObject.SetActive(!choosing);
                 if (_uploadHintLabel != null) _uploadHintLabel.gameObject.SetActive(!choosing);
+
+                // ⚠ **And the rows they were standing in.** Hiding every button in a row leaves the
+                // row, which keeps its RowHeightLarge and shows as an empty band inside the card.
+                HideIfEmpty(_syncActionsRow);
+                HideIfEmpty(_roleActionsRow);
 
                 // ⚠ Two of the three need a name, one does not. Taking the main's version again
                 // writes only the local file, so it stays live without an account — that is the

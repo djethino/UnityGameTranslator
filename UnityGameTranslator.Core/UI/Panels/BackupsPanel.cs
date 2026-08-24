@@ -359,7 +359,15 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 // ⚠ The gesture that closes the loop between the two lists: recognise the one you
                 // want before it ages out, and it stops ageing.
+                //
+                // ⚠ Keeping COPIES, so this row stays here and goes on rotating — and its button
+                // can then only fail on a copy already kept. Refused before the click rather than
+                // after it, which is the one thing a disabled control is for.
+                var all = TranslationBackups.List();
+                bool already = Backups.AlreadyKept(all, entry);
+
                 var keep = CreateSecondaryButton(buttons, "Keep", "Keep");
+                keep.Component.interactable = !already && Backups.CanSaveAnother(all);
                 keep.OnClick += () =>
                 {
                     if (!TranslationBackups.Keep(entry.Id))
@@ -372,8 +380,10 @@ namespace UnityGameTranslator.Core.UI.Panels
                     Refresh();
                 };
                 RegisterUIText(keep.ButtonText);
-                _helpZone?.Describe(keep.Component.gameObject,
-                    "Moves it into " + Backups.SavedHeading + ", so it stops ageing out.");
+                _helpZone?.Describe(keep.Component.gameObject, already
+                    ? Backups.AlreadyKeptHint
+                    : "Copies it into " + Backups.SavedHeading + ", so it stops ageing out. This "
+                      + "one stays where it is.");
             }
         }
 

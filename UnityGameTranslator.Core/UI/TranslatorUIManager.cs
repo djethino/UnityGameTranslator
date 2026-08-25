@@ -4398,53 +4398,26 @@ namespace UnityGameTranslator.Core.UI
 
                 if (result.Success && result.HasUpdate)
                 {
-                    // Format published_at for comparison (ISO 8601 string)
-                    string publishedAt = result.PublishedAt?.ToString("o");
-
-                    // Only skip notification if we've already seen this EXACT release
-                    // Check: same version + same current version + same published_at (handles re-releases)
-                    bool alreadyNotified = TranslatorCore.Config.sync.last_seen_mod_version == result.LatestVersion &&
-                                           TranslatorCore.Config.sync.last_seen_from_version == currentVersion &&
-                                           TranslatorCore.Config.sync.last_seen_published_at == publishedAt;
-
-                    if (alreadyNotified)
-                    {
-                        TranslatorCore.LogInfo($"[ModUpdate] Already notified about v{result.LatestVersion} from v{currentVersion}");
-                        return;
-                    }
-
+                    // 🔴 **A pending update is a STATE, not an event.** This used to compare the
+                    // release against three fields kept in config.json and return early when they
+                    // matched — so the notice appeared on the launch that discovered the release
+                    // and NEVER again, on any later launch, for as long as it stayed uninstalled.
+                    // Nothing was told to skip that version: the mod decided it on its own, and
+                    // HasModUpdate stayed false, which also took away the main panel's banner. It
+                    // is the recurring root cause of this project — coding the transition instead
+                    // of reconciling from what is true right now.
+                    //
+                    // ⚠ **ModUpdateDismissed is deliberately NOT reset here.** That is the closing
+                    // cross, and it must hold for the rest of the session even though this method
+                    // runs again on the chosen rhythm. Options → "Check now" does reset it, and
+                    // rightly: asking is asking to be shown.
                     HasModUpdate = true;
                     ModUpdateInfo = result;
-
-                    // Log re-release detection if same version but different published_at
-                    if (TranslatorCore.Config.sync.last_seen_mod_version == result.LatestVersion &&
-                        TranslatorCore.Config.sync.last_seen_published_at != publishedAt)
-                    {
-                        TranslatorCore.LogInfo($"[ModUpdate] Re-release detected for v{result.LatestVersion} (new publish date)");
-                    }
-                    else
-                    {
-                        TranslatorCore.LogInfo($"[ModUpdate] New version available: v{result.LatestVersion} (current: v{currentVersion})");
-                    }
-
-                    // Save the seen version, current version, and published timestamp
-                    TranslatorCore.Config.sync.last_seen_mod_version = result.LatestVersion;
-                    TranslatorCore.Config.sync.last_seen_from_version = currentVersion;
-                    TranslatorCore.Config.sync.last_seen_published_at = publishedAt;
-                    TranslatorCore.SaveConfig();
+                    TranslatorCore.LogInfo($"[ModUpdate] Update available: v{result.LatestVersion} (current: v{currentVersion})");
                 }
                 else if (result.Success)
                 {
                     TranslatorCore.LogInfo($"[ModUpdate] Mod is up to date (v{currentVersion})");
-
-                    // Clear old notification tracking since we're up to date
-                    if (TranslatorCore.Config.sync.last_seen_mod_version != null)
-                    {
-                        TranslatorCore.Config.sync.last_seen_mod_version = null;
-                        TranslatorCore.Config.sync.last_seen_from_version = null;
-                        TranslatorCore.Config.sync.last_seen_published_at = null;
-                        TranslatorCore.SaveConfig();
-                    }
                 }
                 else
                 {

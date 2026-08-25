@@ -7459,22 +7459,15 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public bool notify_prereleases { get; set; } = false;
 
-        /// <summary>
-        /// Last known mod version (to avoid notifying about same version again)
-        /// </summary>
-        public string last_seen_mod_version { get; set; } = null;
-
-        /// <summary>
-        /// The mod version we were running when we saw last_seen_mod_version.
-        /// Used to re-notify if user upgrades from an old version.
-        /// </summary>
-        public string last_seen_from_version { get; set; } = null;
-
-        /// <summary>
-        /// The published_at timestamp of the last seen release.
-        /// Used to detect re-releases with the same version number.
-        /// </summary>
-        public string last_seen_published_at { get; set; } = null;
+        // ⚠ `last_seen_mod_version`, `last_seen_from_version` and `last_seen_published_at` were
+        // removed here: they were read in exactly one place, to decide that a release already
+        // shown once must never be shown again. That is a "skip this version" nobody asked for,
+        // and it silenced the main panel's banner along with the notice. Whether an update is
+        // offered is now read from the release itself every time, and hiding it is what the
+        // closing cross does — for the session, as a dismissal should.
+        //
+        // A config.json written by an older build still carries the three keys; Newtonsoft
+        // ignores what the class no longer declares, and the next save drops them.
     }
 
     /// <summary>

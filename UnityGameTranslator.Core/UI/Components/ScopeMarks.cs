@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEngine.UI;
 using UniverseLib.UI;
 using UniverseLib.UI.Models;
@@ -381,8 +381,13 @@ namespace UnityGameTranslator.Core.UI.Components
                 // Disabled, the lit one keeps its rank by being LIGHTER than the other two rather
                 // than a different hue: which side the action aims at is still worth knowing while
                 // you read why you cannot take it.
+                // ⚠ **The dead button's marks were the brightest thing on it.** TextSecondary
+                // scores 7.95 against the disabled fill, where the label sits at 3.24 — so the one
+                // control nobody could press shouted louder than the ones they could. Same dim as
+                // the label it stands beside: still recognisable as the lit one, by being lighter
+                // than the other two rather than a different hue.
                 image.color = lit
-                    ? (interactable ? UIStyles.MarkLit : UIStyles.TextSecondary)
+                    ? (interactable ? UIStyles.MarkLit : UIStyles.ButtonLabelDead)
                     : UIStyles.MarkDimOn(FillOf(buttonObj));
             }
 

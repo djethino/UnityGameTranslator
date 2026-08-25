@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -106,7 +106,10 @@ namespace UnityGameTranslator.Core.UI
                 if (live == _wasInteractable[i]) continue;
 
                 _wasInteractable[i] = live;
-                label.color = live ? UIStyles.TextPrimary : UIStyles.TextMuted;
+                // ⚠ ButtonLabelDead, not TextMuted. Measured against the disabled fill, TextMuted
+                // scores 4.50 — comfortable reading, which is what made a dead button look like a
+                // live one on another surface. See UIStyles.ButtonLabelDead.
+                label.color = live ? UIStyles.TextPrimary : UIStyles.ButtonLabelDead;
             }
         }
 

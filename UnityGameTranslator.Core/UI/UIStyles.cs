@@ -198,6 +198,24 @@ namespace UnityGameTranslator.Core.UI
         public static readonly Color ButtonHover = Of(Theme.AccentEdge);
         public static readonly Color ButtonDisabled = new Color(0.20f, 0.22f, 0.27f, 1f);          // Dim slate for disabled controls (visible, never black)
 
+        /// <summary>
+        /// What a dead button's label and marks are painted with.
+        ///
+        /// 🔴 **The state is carried by the TEXT, because the fill cannot carry it.** Measured: the
+        /// disabled fill scores 1.14 against the live one — the two are the same colour to the eye
+        /// — and darkening it does not help, because it then scores 1.07 against the card behind
+        /// and the button dissolves into it. On a dark theme there is no room between "same as the
+        /// live button" and "invisible".
+        ///
+        /// ⚠ 3.24 against that fill: weaker than TextMuted's 4.50, which still read as ordinary
+        /// prose, and well clear of the 2.4 where it stops being readable. A disabled control has
+        /// to stay legible — somebody is reading it to find out why they cannot press it.
+        ///
+        /// ⚠ Mod-local on purpose. TextMuted is the shared palette the website renders too, and it
+        /// means "a quiet fact", not "a dead control".
+        /// </summary>
+        public static readonly Color ButtonLabelDead = new Color(0.494f, 0.529f, 0.596f, 1f);      // #7E8798
+
         // Status colors — the shared 400 ramp, which is what the site uses on dark surfaces.
         public static readonly Color StatusSuccess = Of(Theme.StatusSuccess);
         public static readonly Color StatusWarning = Of(Theme.StatusWarning);

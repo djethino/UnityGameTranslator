@@ -182,6 +182,36 @@ namespace UnityGameTranslator.Core
         public static int? ForkedFromResolvedLines { get; set; } = null;
 
         /// <summary>
+        /// The forked file's LINES as they stood at the fork, fingerprinted — so that "have I
+        /// written anything of my own yet" has an answer.
+        ///
+        /// 🔴 **ForkedFromHash cannot answer it.** That is the server's hash of the source, and
+        /// ContentHash hashes the uuid alongside the lines — a fork gets a new uuid, so the two
+        /// differ from the first instant whatever the content. Comparing them would report work
+        /// nobody did.
+        ///
+        /// ⚠ So the fingerprint deliberately hashes the lines with the uuid held CONSTANT. It is
+        /// not a file_hash and must never be sent as one: it answers one question, here.
+        /// </summary>
+        public static string ForkedFromLinesHash { get; set; } = null;
+
+        /// <summary>
+        /// A fork that is still, line for line, the copy it was made from.
+        ///
+        /// 🔴 **Publishing that is publishing somebody else's file under one's own name.** A fork
+        /// is free to publish whenever it likes — no account gate, no waiting — but not before it
+        /// holds something of its own, and the site would otherwise carry two identical entries
+        /// competing for the same readers.
+        ///
+        /// ⚠ False when the fingerprint is absent: a file forked before this existed, or one that
+        /// never was a fork. Unknown is not "identical", and refusing on a question nobody answered
+        /// would take publishing away from people who have every right to it.
+        /// </summary>
+        public static bool ForkIsStillTheCopy =>
+            !string.IsNullOrEmpty(ForkedFromLinesHash)
+            && string.Equals(ComputeLinesFingerprint(), ForkedFromLinesHash, StringComparison.Ordinal);
+
+        /// <summary>
         /// If true, UniverseLib won't override the game's EventSystem.
         /// Enable this if the game's UI animations or navigation don't work with the mod.
         /// Stored in translations.json as _settings.disable_eventsystem_override
@@ -2355,6 +2385,9 @@ namespace UnityGameTranslator.Core
                         ForkedFromSiteId = origin?["site_id"]?.Value<int?>();
                         ForkedFromHash = origin?["hash"]?.Value<string>();
                         ForkedFromResolvedLines = origin?["resolved_lines"]?.Value<int?>();
+                        // ⚠ Absent from a file forked before this key existed. Left null, which
+                        // reads as "we cannot tell" — see ForkIsStillTheCopy.
+                        ForkedFromLinesHash = origin?["lines_hash"]?.Value<string>();
                     }
                     else if (prop.Name == "_game" && prop.Value.Type == JTokenType.Object)
                     {
@@ -3161,6 +3194,35 @@ namespace UnityGameTranslator.Core
             catch (Exception e)
             {
                 Adapter?.LogWarning($"[Hash] Failed to compute content hash: {e.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// The same content, fingerprinted WITHOUT the lineage identifier.
+        ///
+        /// 🔴 **Not a file_hash, and never to be sent as one.** ComputeContentHash above hashes the
+        /// uuid alongside the lines, which is right: it answers "is this the same translation as
+        /// the server's". This one answers a different question — "are these the same LINES" —
+        /// across a change of uuid, which is exactly what a fork is. Holding the uuid constant is
+        /// what makes the two comparable either side of one.
+        /// </summary>
+        private static string ComputeLinesFingerprint()
+        {
+            try
+            {
+                var lines = new List<KeyValuePair<string, TranslationLine>>(TranslationCache.Count);
+                foreach (var kvp in TranslationCache)
+                {
+                    lines.Add(new KeyValuePair<string, TranslationLine>(
+                        kvp.Key, new TranslationLine(kvp.Value.Value, kvp.Value.Tag ?? "A")));
+                }
+
+                return ContentHash.Of(lines, string.Empty);
+            }
+            catch (Exception e)
+            {
+                Adapter?.LogWarning($"[Hash] Failed to fingerprint lines: {e.Message}");
                 return null;
             }
         }
@@ -6606,6 +6668,10 @@ namespace UnityGameTranslator.Core
                         {
                             origin["resolved_lines"] = ForkedFromResolvedLines.Value;
                         }
+                        if (!string.IsNullOrEmpty(ForkedFromLinesHash))
+                        {
+                            origin["lines_hash"] = ForkedFromLinesHash;
+                        }
                         output["_forked_from"] = origin;
                     }
 
@@ -6698,6 +6764,10 @@ namespace UnityGameTranslator.Core
             ForkedFromSiteId = SourceSiteId;
             ForkedFromHash = LastSyncedHash;
             ForkedFromResolvedLines = CountResolvedEntries();
+            // ⚠ Taken BEFORE the new uuid is generated is not why it works — the fingerprint
+            // ignores the uuid, which is the whole point. It is taken here because this is the last
+            // instant the cache holds exactly what was copied.
+            ForkedFromLinesHash = ComputeLinesFingerprint();
 
             // Generate new UUID for the fork
             FileUuid = Guid.NewGuid().ToString();

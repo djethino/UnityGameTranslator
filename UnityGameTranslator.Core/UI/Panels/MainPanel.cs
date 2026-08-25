@@ -696,7 +696,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Fork button (Branch only) - creates independent fork
             _forkBtn = CreateSecondaryButton(roleActionsRow, "ForkBtn", "Fork", 80);
             UIStyles.SetBackground(_forkBtn.Component.gameObject, UIStyles.ButtonDanger);
-            _forkBtn.OnClick += OnForkClicked;
+            // 🔴 **The same handler as "Create Independent" below, because it is the same act.**
+            // There were two, and only one of them ever got a correction: this one still said "You
+            // will become the Main owner" — which forking does not do, it sends nothing — and
+            // opened the upload screen for people who could not use it.
+            _forkBtn.OnClick += OnCreateIndependentClicked;
             // Forker crée une lignée à soi sur le site, à partir du fichier d'ici : après, les deux
             // portent la même chose.
             ScopeMarks.Adorn(_forkBtn, EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: true));
@@ -1779,8 +1783,23 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Enable/disable based on conditions
             // Disable if in sync (nothing to upload) or other conditions not met
+            // 🔴 **A fork that has not been touched holds somebody else's file, line for line.**
+            // Publishing it puts a second identical entry on the site under a new name — the two
+            // then compete for the same readers, and the work is one person's. CreateFork counts
+            // every entry as a local change (from the new lineage's point of view nothing has ever
+            // been published, which is true), so nothing else here could tell the difference.
+            //
+            // ⚠ This is a CONTENT condition, and the only one: a fork publishes whenever it wants,
+            // signed in or not, the same day or a year later. What it may not do is publish a copy.
+            //
+            // ⚠ **Only while it has never been published.** The marker travels inside the file, so
+            // whoever downloads a fork carries it too — and they are in a lineage, where "nothing
+            // to contribute" is the question and other rules answer it. Reading it there would put
+            // a sentence about publishing a copy in front of somebody offering a correction.
+            bool stillTheCopy = !existsOnServer && TranslatorCore.ForkIsStillTheCopy;
+
             bool canUpload = isLoggedIn && TranslatorCore.Config.online_mode &&
-                            TranslatorCore.TranslationCache.Count > 0 && !isInSync;
+                            TranslatorCore.TranslationCache.Count > 0 && !isInSync && !stillTheCopy;
             _uploadBtn.Component.interactable = canUpload;
             ScopeMarks.Tint(_uploadBtn, canUpload);
 
@@ -1796,6 +1815,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             else if (TranslatorCore.TranslationCache.Count == 0)
             {
                 SetDynamicText(_uploadHintLabel, "No translations to upload");
+            }
+            else if (stillTheCopy)
+            {
+                // The fact, then the way out. Naming the author would need a lookup the mod does
+                // not have after a fork — the lineage is gone — and the sentence works without it.
+                SetDynamicText(_uploadHintLabel,
+                    "This copy is unchanged. Translate or correct a line to publish it as yours.");
             }
             else
             {
@@ -2015,28 +2041,6 @@ namespace UnityGameTranslator.Core.UI.Panels
                 SetDynamicText(_updateFromMainBtn.ButtonText, busy ? "Fetching..." : "Update from Main");
         }
 
-        private void OnForkClicked()
-        {
-            // Show confirmation dialog before forking
-            TranslatorUIManager.ConfirmationPanel?.Show(
-                "Fork Translation",
-                "This will create an independent copy of your translation with a new UUID.\n\n" +
-                "You will become the Main owner of this new translation.\n\n" +
-                "This action cannot be undone. The link to the original Main will be lost.",
-                "Fork",
-                () =>
-                {
-                    // Create fork: generate new UUID and reset server state
-                    TranslatorCore.CreateFork();
-                    RefreshUI();
-
-                    // Open upload panel to push the forked translation
-                    TranslatorUIManager.UploadPanel?.SetActive(true);
-                },
-                isDanger: true
-            );
-        }
-
         /// <summary>
         /// Handler for "Contribute as Branch" button (GAP 8).
         /// Opens the upload panel to contribute changes as a branch.
@@ -2198,7 +2202,14 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void OnCreateIndependentClicked()
         {
             var serverState = TranslatorCore.ServerState;
-            string ownerName = serverState?.Uploader ?? "the original owner";
+
+            // 🔴 **The person being left, not the person signed in.** Uploader is the row this file
+            // matches — which IS the Main's owner for somebody holding another's lineage, and is
+            // ONESELF for a branch author, whose own row is their branch. Reading it alone made the
+            // Fork button on that screen say "a copy of @you's translation".
+            string ownerName = !string.IsNullOrEmpty(serverState?.MainUsername)
+                ? serverState.MainUsername
+                : (serverState?.Uploader ?? "the original owner");
 
             // ⚠ **It said "You will become the Main owner", which presumed the publishing.** Forking
             // sends nothing: it is this file leaving a lineage, here, now. Somebody with no account
@@ -2218,12 +2229,15 @@ namespace UnityGameTranslator.Core.UI.Panels
                     TranslatorCore.CreateFork();
                     RefreshUI();
 
-                    // ⚠ Offered, not imposed — and only where it can work. Opening the upload panel
-                    // for somebody signed out is a door onto a refusal; the card behind now shows
-                    // an unpublished translation of their own, with its own publish action waiting
-                    // for whenever they want it.
-                    if (!string.IsNullOrEmpty(TranslatorCore.Config.api_token)
-                        && TranslatorCore.Config.online_mode)
+                    // 🔴 **Offered only when there is something of one's own to publish.** A fork
+                    // made from a file one has not touched is, line for line, somebody else's
+                    // work: sending it puts a second identical entry on the site under a new name,
+                    // and that is not sharing. It is the CONTENT that decides, never the account —
+                    // a fork publishes whenever it wants to, signed in or not, now or in a year.
+                    //
+                    // ⚠ The card behind carries the publish action either way, so nothing is taken
+                    // away: this only decides whether the screen opens by itself.
+                    if (!TranslatorCore.ForkIsStillTheCopy)
                     {
                         TranslatorUIManager.UploadPanel?.SetActive(true);
                     }

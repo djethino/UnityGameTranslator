@@ -2074,6 +2074,29 @@ namespace UnityGameTranslator.Core.UI
                 var mainContent = TranslatorCore.ParseTranslationsFromJson(content);
                 var upstreamAncestor = TranslatorCore.LoadMainAncestor();
 
+                // 🔴 **Without an ancestor, every line the player corrected themselves becomes a
+                // conflict PRE-SET TO THE MAIN'S TEXT** (MergePanel seeds each one to TakeRemote).
+                // So a first merge would not merely ask a lot of questions: applying it without
+                // going through them one by one replaces that person's own work. The default has
+                // to be wrong for the answer to be wrong, and here it is.
+                //
+                // ⚠ **A Branch keeps .mainancestor and nothing else.** Its ordinary ancestor is its
+                // OWN published row, not the Main — feeding that in would make every line the
+                // branch owns look like a remote deletion (analyse/main-to-branch-sync.md §2).
+                //
+                // ⚠ Whoever holds the lineage WITHOUT having published into it is the opposite
+                // case: their source IS the Main, so .ancestor is the Main as it stood when they
+                // took it — exactly the baseline this merge wants. It is used only while
+                // .mainancestor is empty, which is the first merge and only that one.
+                if (upstreamAncestor.Count == 0
+                    && TranslatorCore.ServerState?.Role != TranslationRole.Branch
+                    && TranslatorCore.AncestorCache.Count > 0)
+                {
+                    upstreamAncestor = TranslatorCore.AncestorCache;
+                    TranslatorCore.LogInfo(
+                        $"[MainMerge] First merge: using the download baseline ({upstreamAncestor.Count} entries)");
+                }
+
                 var mergeResult = TranslationMerger.MergeWithTags(
                     TranslatorCore.TranslationCache, mainContent, upstreamAncestor);
 

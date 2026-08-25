@@ -279,6 +279,21 @@ UnityGameTranslator/
 └── Directory.Build.props               # Version + API URLs
 ```
 
+## Related
+
+Five repositories, one product — [see it live][live].
+
+- [unitygametranslator-manager][manager] — the desktop tool that finds your games and sets this mod up
+- [UnityGameTranslator-website][website] — where translations are shared, reviewed and merged
+- [unitygametranslator-common][common] — the rules the mod and the Manager both answer to, written once
+- [unitygametranslator-catalogs][catalogs] — reference data: languages, AI models, mod loaders
+
+[manager]: https://github.com/djethino/unitygametranslator-manager
+[website]: https://github.com/djethino/UnityGameTranslator-website
+[common]: https://github.com/djethino/unitygametranslator-common
+[catalogs]: https://github.com/djethino/unitygametranslator-catalogs
+[live]: https://unitygametranslator.asymptomatikgames.com
+
 ## Acknowledgments
 
 - **[UniverseLib](https://github.com/yukieiji/UniverseLib)** by sinai-dev & yukieiji — UI framework for Unity mods

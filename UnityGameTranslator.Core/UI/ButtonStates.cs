@@ -74,9 +74,26 @@ namespace UnityGameTranslator.Core.UI
             _watched.Add(selectable);
             _labels.Add(label);
 
-            // Deliberately the opposite of the current state, so the first tick paints it rather
-            // than deciding nothing has changed.
-            _wasInteractable.Add(!selectable.interactable);
+            // 🔴 **Painted here, on the spot, and the state recorded as it really is.** This used to
+            // record the OPPOSITE, so that the first tick would find a difference and paint. It
+            // works for a button that is still live at that first tick — and fails silently for one
+            // that has already been switched off, which is the ordinary case: a panel is built, then
+            // refreshed in the same breath. Stored `false`, disabled `false`, the tick reads "nothing
+            // changed" and the label keeps its full-strength white FOR EVER. Every button born
+            // greyed — the three lineage choices, Upload with nothing to send — was in that state.
+            //
+            // ⚠ A tick that only repaints on a change still needs its first value to be true, not a
+            // trick that assumes what the next frame will hold.
+            Paint(label, selectable.interactable);
+            _wasInteractable.Add(selectable.interactable);
+        }
+
+        // ⚠ ButtonLabelDead, not TextMuted. Measured against the disabled fill, TextMuted scores
+        // 4.50 — comfortable reading, which is what made a dead button look like a live one on
+        // another surface. See UIStyles.ButtonLabelDead.
+        private static void Paint(Text label, bool live)
+        {
+            label.color = live ? UIStyles.TextPrimary : UIStyles.ButtonLabelDead;
         }
 
         /// <summary>
@@ -106,10 +123,7 @@ namespace UnityGameTranslator.Core.UI
                 if (live == _wasInteractable[i]) continue;
 
                 _wasInteractable[i] = live;
-                // ⚠ ButtonLabelDead, not TextMuted. Measured against the disabled fill, TextMuted
-                // scores 4.50 — comfortable reading, which is what made a dead button look like a
-                // live one on another surface. See UIStyles.ButtonLabelDead.
-                label.color = live ? UIStyles.TextPrimary : UIStyles.ButtonLabelDead;
+                Paint(label, live);
             }
         }
 

@@ -840,7 +840,18 @@ namespace UnityGameTranslator.Core.UI
             label.fontSize = FontSizeHint;
             label.fontStyle = FontStyle.Italic;
             label.color = TextMuted;
-            UIFactory.SetLayoutElement(label.gameObject, minHeight: 18);
+            // 🔴 **Centring a label centres its text INSIDE the label, and a label is only as wide
+            // as what it says.** In a vertical group that does not force its children to expand,
+            // that leaves a short sentence sitting at the left edge with its own text neatly
+            // centred inside it — no visible difference at all, while a long one wraps to the full
+            // width and does look centred. Which is exactly how a card ends up with one centred
+            // sentence at the bottom and every shorter one still pinned left.
+            //
+            // ⚠ Null, not 0, when it is not centred: SetLayoutElement's parameters are nullable and
+            // null means "leave it alone". Writing 0 would turn a field nobody had set into an
+            // override, on every hint in the mod, to fix a case that is not this one.
+            UIFactory.SetLayoutElement(label.gameObject, minHeight: 18,
+                                       flexibleWidth: centred ? (int?)9999 : null);
             return label;
         }
 

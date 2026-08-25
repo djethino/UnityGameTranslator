@@ -182,8 +182,8 @@ namespace UnityGameTranslator.Core
         public static int? ForkedFromResolvedLines { get; set; } = null;
 
         /// <summary>
-        /// The forked file's LINES as they stood at the fork, fingerprinted — so that "have I
-        /// written anything of my own yet" has an answer.
+        /// The forked file as it stood at the fork — lines, tags and the settings that travel
+        /// with them — fingerprinted, so that "have I made anything of my own yet" has an answer.
         ///
         /// 🔴 **ForkedFromHash cannot answer it.** That is the server's hash of the source, and
         /// ContentHash hashes the uuid alongside the lines — a fork gets a new uuid, so the two
@@ -193,7 +193,7 @@ namespace UnityGameTranslator.Core
         /// ⚠ So the fingerprint deliberately hashes the lines with the uuid held CONSTANT. It is
         /// not a file_hash and must never be sent as one: it answers one question, here.
         /// </summary>
-        public static string ForkedFromLinesHash { get; set; } = null;
+        public static string ForkedFromContentHash { get; set; } = null;
 
         /// <summary>
         /// A fork that is still, line for line, the copy it was made from.
@@ -208,8 +208,8 @@ namespace UnityGameTranslator.Core
         /// would take publishing away from people who have every right to it.
         /// </summary>
         public static bool ForkIsStillTheCopy =>
-            !string.IsNullOrEmpty(ForkedFromLinesHash)
-            && string.Equals(ComputeLinesFingerprint(), ForkedFromLinesHash, StringComparison.Ordinal);
+            !string.IsNullOrEmpty(ForkedFromContentHash)
+            && string.Equals(ComputeContentFingerprint(), ForkedFromContentHash, StringComparison.Ordinal);
 
         /// <summary>
         /// If true, UniverseLib won't override the game's EventSystem.
@@ -2387,7 +2387,7 @@ namespace UnityGameTranslator.Core
                         ForkedFromResolvedLines = origin?["resolved_lines"]?.Value<int?>();
                         // ⚠ Absent from a file forked before this key existed. Left null, which
                         // reads as "we cannot tell" — see ForkIsStillTheCopy.
-                        ForkedFromLinesHash = origin?["lines_hash"]?.Value<string>();
+                        ForkedFromContentHash = origin?["content_hash"]?.Value<string>();
                     }
                     else if (prop.Name == "_game" && prop.Value.Type == JTokenType.Object)
                     {
@@ -3199,15 +3199,29 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// The same content, fingerprinted WITHOUT the lineage identifier.
+        /// Everything this translation IS, fingerprinted without the lineage identifier — the whole
+        /// of what somebody made, so that "have I written anything of my own yet" has an answer.
         ///
         /// 🔴 **Not a file_hash, and never to be sent as one.** ComputeContentHash above hashes the
         /// uuid alongside the lines, which is right: it answers "is this the same translation as
-        /// the server's". This one answers a different question — "are these the same LINES" —
-        /// across a change of uuid, which is exactly what a fork is. Holding the uuid constant is
-        /// what makes the two comparable either side of one.
+        /// the server's". This one answers a different question — "is this still the file I
+        /// copied" — across a change of uuid, which is exactly what a fork is.
+        ///
+        /// ⚠ **The settings sections take part.** Somebody who is not a translator can take a
+        /// translation and rework its fonts and its images; that is work, and a file carrying
+        /// replacements the original never had is not the same file. The lines alone would call
+        /// that person's fork a copy and grey the one button they came for.
+        ///
+        /// ⚠ **Never compared to the server's content_hash**, which answers the same question its
+        /// own way. Each side only ever compares its values to its own — which is what lets this
+        /// one serialise floats and unicode however Newtonsoft does, with no cross-language byte
+        /// agreement to maintain (a size multiplier of 1.0 alone would break one).
+        ///
+        /// ⚠ Property names sorted, list order kept. A section is rebuilt from dictionaries whose
+        /// order is not promised across insertions, while a font-rule list is applied in sequence —
+        /// so order is noise in one and content in the other.
         /// </summary>
-        private static string ComputeLinesFingerprint()
+        private static string ComputeContentFingerprint()
         {
             try
             {
@@ -3218,13 +3232,69 @@ namespace UnityGameTranslator.Core
                         kvp.Key, new TranslationLine(kvp.Value.Value, kvp.Value.Tag ?? "A")));
                 }
 
-                return ContentHash.Of(lines, string.Empty);
+                var document = new StringBuilder(ContentHash.Of(lines, string.Empty));
+
+                foreach (var section in SettingsSection.All)
+                {
+                    // Null when the section is empty — which is what SaveCache writes, so an
+                    // emptied section and one that never existed fingerprint alike.
+                    var token = BuildSettingsSection(section);
+                    var container = token as JContainer;
+                    if (container == null || !container.HasValues) continue;
+
+                    document.Append('|').Append(section).Append(':').Append(Canonical(token));
+                }
+
+                using (var sha = SHA256.Create())
+                {
+                    var digest = sha.ComputeHash(Encoding.UTF8.GetBytes(document.ToString()));
+                    var hex = new StringBuilder(digest.Length * 2);
+                    foreach (var b in digest) hex.Append(b.ToString("x2"));
+                    return hex.ToString();
+                }
             }
             catch (Exception e)
             {
-                Adapter?.LogWarning($"[Hash] Failed to fingerprint lines: {e.Message}");
+                Adapter?.LogWarning($"[Hash] Failed to fingerprint content: {e.Message}");
                 return null;
             }
+        }
+
+        /// <summary>One JSON token, written the same way every time. See ComputeContentFingerprint.</summary>
+        private static string Canonical(JToken token)
+        {
+            if (token == null || token.Type == JTokenType.Null) return "null";
+
+            var obj = token as JObject;
+            if (obj != null)
+            {
+                var names = new List<string>();
+                foreach (var property in obj.Properties()) names.Add(property.Name);
+                names.Sort(StringComparer.Ordinal);
+
+                var sb = new StringBuilder("{");
+                for (int i = 0; i < names.Count; i++)
+                {
+                    if (i > 0) sb.Append(',');
+                    sb.Append(JsonConvert.ToString(names[i])).Append(':').Append(Canonical(obj[names[i]]));
+                }
+                return sb.Append('}').ToString();
+            }
+
+            var array = token as JArray;
+            if (array != null)
+            {
+                var sb = new StringBuilder("[");
+                for (int i = 0; i < array.Count; i++)
+                {
+                    if (i > 0) sb.Append(',');
+                    sb.Append(Canonical(array[i]));
+                }
+                return sb.Append(']').ToString();
+            }
+
+            var value = token as JValue;
+            return value == null ? "null" : JsonConvert.ToString(value.Value);
         }
 
         public static void BuildPatternEntries()
@@ -6668,9 +6738,9 @@ namespace UnityGameTranslator.Core
                         {
                             origin["resolved_lines"] = ForkedFromResolvedLines.Value;
                         }
-                        if (!string.IsNullOrEmpty(ForkedFromLinesHash))
+                        if (!string.IsNullOrEmpty(ForkedFromContentHash))
                         {
-                            origin["lines_hash"] = ForkedFromLinesHash;
+                            origin["content_hash"] = ForkedFromContentHash;
                         }
                         output["_forked_from"] = origin;
                     }
@@ -6767,7 +6837,7 @@ namespace UnityGameTranslator.Core
             // ⚠ Taken BEFORE the new uuid is generated is not why it works — the fingerprint
             // ignores the uuid, which is the whole point. It is taken here because this is the last
             // instant the cache holds exactly what was copied.
-            ForkedFromLinesHash = ComputeLinesFingerprint();
+            ForkedFromContentHash = ComputeContentFingerprint();
 
             // Generate new UUID for the fork
             FileUuid = Guid.NewGuid().ToString();

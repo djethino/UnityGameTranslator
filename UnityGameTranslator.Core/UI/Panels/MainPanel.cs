@@ -125,6 +125,12 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// one above the visible controls and one below. Turning off a button is not turning off
         /// the space it was standing in.
         /// </summary>
+        /// <summary>The three rows and their sentences, so each can say why it is closed.</summary>
+        private GameObject _branchRow;
+        private GameObject _downloadRow;
+        private Text _branchDesc;
+        private Text _downloadDesc;
+
         private GameObject _syncActionsRow;
         private GameObject _roleActionsRow;
 
@@ -745,8 +751,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             UIFactory.SetLayoutElement(_lineageChoiceSection, flexibleWidth: 9999);
 
             // Contribute as Branch
-            var branchRow = UIStyles.CreateFormRow(_lineageChoiceSection, "BranchRow",
+            _branchRow = UIStyles.CreateFormRow(_lineageChoiceSection, "BranchRow",
                                                    UIStyles.RowHeightLarge, UIStyles.SmallSpacing);
+            var branchRow = _branchRow;
             var branchLayout = branchRow.GetComponent<HorizontalLayoutGroup>();
             if (branchLayout != null) branchLayout.childAlignment = TextAnchor.MiddleCenter;
 
@@ -760,13 +767,15 @@ namespace UnityGameTranslator.Core.UI.Panels
             _helpZone?.Describe(_contributeAsBranchBtn.Component.gameObject,
                 "Your changes are sent to the owner, who can merge them into the main translation");
 
-            var branchDesc = UIStyles.CreateHint(_lineageChoiceSection, "BranchDesc",
+            _branchDesc = UIStyles.CreateHint(_lineageChoiceSection, "BranchDesc",
                 "Your changes will help improve the main translation", centred: true);
+            var branchDesc = _branchDesc;
             RegisterUIText(branchDesc);
 
             // Download Latest
-            var downloadRow = UIStyles.CreateFormRow(_lineageChoiceSection, "DownloadRow",
+            _downloadRow = UIStyles.CreateFormRow(_lineageChoiceSection, "DownloadRow",
                                                      UIStyles.RowHeightLarge, UIStyles.SmallSpacing);
+            var downloadRow = _downloadRow;
             var downloadLayout = downloadRow.GetComponent<HorizontalLayoutGroup>();
             if (downloadLayout != null) downloadLayout.childAlignment = TextAnchor.MiddleCenter;
 
@@ -781,8 +790,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             _helpZone?.Describe(_downloadLatestBtn.Component.gameObject,
                 "Replace your local file with the owner's latest version from the website");
 
-            var downloadDesc = UIStyles.CreateHint(_lineageChoiceSection, "DownloadDesc",
+            _downloadDesc = UIStyles.CreateHint(_lineageChoiceSection, "DownloadDesc",
                 "Get the owner's latest version (replaces your local)", centred: true);
+            var downloadDesc = _downloadDesc;
             RegisterUIText(downloadDesc);
 
             // Create Independent (Fork)
@@ -1184,11 +1194,36 @@ namespace UnityGameTranslator.Core.UI.Panels
                 bool haveSomethingToOffer = TranslatorCore.LocalChangesCount > 0
                                             || TranslatorCore.MetadataDirty;
 
-                if (_contributeAsBranchBtn != null)
+                // 🔴 **Not shown at all when the Main refuses contributions.** That is its owner's
+                // declaration, and the server enforces it — an upload into a lineage that does not
+                // take branches is refused outright. Offering the act anyway is a door onto a no
+                // somebody else already said.
+                //
+                // ⚠ Only on a stated refusal. AcceptsBranches is null on a server too old to send
+                // it, and unknown is not "no": hiding the button there would take the act away over
+                // a question nobody answered.
+                bool refusesBranches = TranslatorCore.ServerState?.AcceptsBranches == false;
+                if (_branchRow != null) _branchRow.SetActive(!refusesBranches);
+                if (_branchDesc != null) _branchDesc.gameObject.SetActive(!refusesBranches);
+
+                if (_contributeAsBranchBtn != null && !refusesBranches)
                 {
                     bool canContribute = canReachServer && haveSomethingToOffer;
                     _contributeAsBranchBtn.Component.interactable = canContribute;
                     ScopeMarks.Tint(_contributeAsBranchBtn, canContribute);
+
+                    // ⚠ **The sentence says why it is closed, or what it does.** Hiding the Actions
+                    // row took its "Login required" with it, so a greyed button was left with a
+                    // sentence describing an act nobody could take and no reason anywhere.
+                    if (_branchDesc != null)
+                    {
+                        SetDynamicText(_branchDesc,
+                            !TranslatorCore.Config.online_mode ? "Offline mode — nothing is sent"
+                            : !isLoggedIn ? "Login required"
+                            : !haveSomethingToOffer
+                                ? "Nothing to send yet: this file matches the main translation"
+                                : "Your changes will help improve the main translation");
+                    }
                 }
 
                 // ⚠ Only when the published one actually moved. It writes the local file, so it
@@ -1201,6 +1236,13 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                     _downloadLatestBtn.Component.interactable = serverMoved;
                     SetDownloadLatestState(serverMoved);
+
+                    if (_downloadDesc != null)
+                    {
+                        SetDynamicText(_downloadDesc, serverMoved
+                            ? "Get the owner's latest version (replaces your local)"
+                            : "You already have the owner's latest version");
+                    }
                 }
 
                 // 🔴 **No account, no network, no divergence — forking asks for none of them.**

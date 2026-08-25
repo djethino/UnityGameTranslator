@@ -127,7 +127,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         /// <summary>The three rows and their sentences, so each can say why it is closed.</summary>
         private GameObject _branchRow;
+        private GameObject _mergeRow;
         private GameObject _downloadRow;
+        private ButtonRef _mergeWithMainBtn;
+        private Text _mergeDesc;
         private Text _branchDesc;
         private Text _downloadDesc;
 
@@ -677,11 +680,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             _helpZone?.Describe(_editDetailsBtn.Component.gameObject,
                 "Change the description and the resources link of your published translation, without waiting for new translated lines");
 
-            // Update from Main (Branch only) — the other direction of the exchange.
+            // Merge with Main (Branch only) — the other direction of the exchange.
             // A branch could publish its work but never take in what the Main had
             // published since: it drifted further apart with every update, without
             // anything ever saying so.
-            _updateFromMainBtn = CreateSecondaryButton(roleActionsRow, "UpdateFromMainBtn", "Update from Main", 120);
+            _updateFromMainBtn = CreateSecondaryButton(roleActionsRow, "UpdateFromMainBtn", "Merge with Main", 120);
             UIStyles.SetBackground(_updateFromMainBtn.Component.gameObject, UIStyles.ButtonSuccess);
             _updateFromMainBtn.OnClick += OnUpdateFromMainClicked;
             // ⚠ Brings the Main INTO this machine's file and publishes nothing — the opposite side
@@ -776,14 +779,43 @@ namespace UnityGameTranslator.Core.UI.Panels
             var branchDesc = _branchDesc;
             RegisterUIText(branchDesc);
 
-            // Download Latest
+            // Merge with Main — the safe way to take in what the Main added.
+            //
+            // 🔴 **Above Take, and that order is the Manager's.** Its two buttons sit the same way
+            // round, with the same reasoning written beside them: "Merge, above, keeps both sides;
+            // this one does not pretend to." The safe act is met first; the one that drops work is
+            // read second, next to the sentence saying what it drops.
+            //
+            // ⚠ **Same handler as the Branch's button**, never a second copy of the act: the two
+            // are never on screen at once (a Branch has its own row) and one guard helper drives
+            // both, so they cannot drift the way the two fork buttons did.
+            _mergeRow = UIStyles.CreateFormRow(_lineageChoiceSection, "MergeRow",
+                                               UIStyles.RowHeightLarge, UIStyles.SmallSpacing);
+            var mergeLayout = _mergeRow.GetComponent<HorizontalLayoutGroup>();
+            if (mergeLayout != null) mergeLayout.childAlignment = TextAnchor.MiddleCenter;
+
+            _mergeWithMainBtn = CreateSecondaryButton(_mergeRow, "MergeWithMainBtn", "Merge with Main", 150);
+            UIStyles.SetBackground(_mergeWithMainBtn.Component.gameObject, UIStyles.ButtonSuccess);
+            _mergeWithMainBtn.OnClick += OnUpdateFromMainClicked;
+            // Brings the Main INTO this machine's file and publishes nothing.
+            ScopeMarks.Adorn(_mergeWithMainBtn,
+                             EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: false));
+            RegisterUIText(_mergeWithMainBtn.ButtonText);
+            _helpZone?.Describe(_mergeWithMainBtn.Component.gameObject,
+                "Bring in what the Main added or corrected. Your own lines are kept, and you review everything before it applies.");
+
+            _mergeDesc = UIStyles.CreateHint(_lineageChoiceSection, "MergeDesc",
+                "Take in what the Main added — your own lines are kept", centred: true);
+            RegisterUIText(_mergeDesc);
+
+            // Take Main's version
             _downloadRow = UIStyles.CreateFormRow(_lineageChoiceSection, "DownloadRow",
                                                      UIStyles.RowHeightLarge, UIStyles.SmallSpacing);
             var downloadRow = _downloadRow;
             var downloadLayout = downloadRow.GetComponent<HorizontalLayoutGroup>();
             if (downloadLayout != null) downloadLayout.childAlignment = TextAnchor.MiddleCenter;
 
-            _downloadLatestBtn = CreateSecondaryButton(downloadRow, "DownloadLatestBtn", "Download Latest", 150);
+            _downloadLatestBtn = CreateSecondaryButton(downloadRow, "DownloadLatestBtn", "Take Main's version", 150);
             UIStyles.SetBackground(_downloadLatestBtn.Component.gameObject, UIStyles.ButtonPrimary);
             _downloadLatestBtn.OnClick += OnDownloadLatestClicked;
             // ⚠ Le côté DÉPEND du rôle, il est donc corrigé à chaque rafraîchissement par
@@ -1191,7 +1223,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // 🔴 **Each of the three answers its own question, and two of them were answering
                 // none.** Signed in was the whole test, so "Contribute as Branch" invited somebody
                 // to send a file identical to the Main — a contribution holding nothing — and
-                // "Download Latest" offered to fetch a version that had not moved. Same guards as
+                // "Take Main's version" offered to fetch a version that had not moved. Same guards as
                 // the Actions row, which had them right all along: this section is the same acts,
                 // laid out as a choice.
                 bool canReachServer = isLoggedIn && TranslatorCore.Config.online_mode;
@@ -1230,13 +1262,35 @@ namespace UnityGameTranslator.Core.UI.Panels
                     }
                 }
 
+                // 🔴 **The safe way to take the Main in, and it needs no account either.** It reads
+                // a public file and writes local ones — nothing is sent. Offered on the same
+                // condition as the row below it, because it answers the same question: something
+                // upstream is worth taking. What separates them is what happens to YOUR lines.
+                //
+                // ⚠ Kept in step with the Branch's own Merge with Main by sharing its handler AND
+                // its busy state, never by repeating the rule here.
+                bool upstreamWorthTaking = TranslatorUIManager.HasPendingUpdate
+                    && TranslatorUIManager.PendingUpdateDirection != UpdateDirection.Upload;
+
+                if (_mergeWithMainBtn != null && !_updateFromMainInFlight)
+                {
+                    _mergeWithMainBtn.Component.interactable = upstreamWorthTaking;
+                    ScopeMarks.Tint(_mergeWithMainBtn, upstreamWorthTaking);
+
+                    if (_mergeDesc != null)
+                    {
+                        SetDynamicText(_mergeDesc, upstreamWorthTaking
+                            ? "Take in what the Main added — your own lines are kept"
+                            : "Nothing new in the Main to take in");
+                    }
+                }
+
                 // ⚠ Only when the published one actually moved. It writes the local file, so it
                 // needs no account — but fetching a version identical to the one already here is
                 // an act with no effect, and a button that promises one is worse than none.
                 if (_downloadLatestBtn != null)
                 {
-                    bool serverMoved = TranslatorUIManager.HasPendingUpdate
-                        && TranslatorUIManager.PendingUpdateDirection != UpdateDirection.Upload;
+                    bool serverMoved = upstreamWorthTaking;
 
                     _downloadLatestBtn.Component.interactable = serverMoved;
                     SetDownloadLatestState(serverMoved);
@@ -1244,8 +1298,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                     if (_downloadDesc != null)
                     {
                         SetDynamicText(_downloadDesc, serverMoved
-                            ? "Get the owner's latest version (replaces your local)"
-                            : "You already have the owner's latest version");
+                            ? "Replaces this file with the Main's — your own lines are dropped"
+                            : "You already have the Main's version");
                     }
                 }
 
@@ -1881,7 +1935,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                         _editDetailsBtn.Component.interactable = isLoggedIn && TranslatorCore.Config.online_mode;
                 }
 
-                // Update from Main — a branch only. Shown even when nothing new is
+                // Merge with Main — a branch only. Shown even when nothing new is
                 // known upstream: the very first merge is what teaches the mod where
                 // the Main stood, so it must be reachable before any notice exists.
                 if (_updateFromMainBtn != null)
@@ -1909,7 +1963,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 {
                     string hint = "";
                     if (isBranch && TranslatorUIManager.HasMainUpdate())
-                        hint = Tr("The original translation has changed — Update from Main brings it in");
+                        hint = Tr("The original translation has changed — Merge with Main brings it in");
                     else if (isBranch)
                         hint = Tr("Fork = continue on your own, leaving the translation of")
                                + " " + People.MentionOf(state.MainUsername ?? state.Uploader,
@@ -2030,15 +2084,27 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
         }
 
+        /// <summary>
+        /// One act, one busy state — whichever of the two buttons carries it.
+        ///
+        /// ⚠ The Branch has its own row and the lineage block has another; they are never on
+        /// screen together, but they share this method and OnUpdateFromMainClicked so that the
+        /// pair cannot drift the way the two fork buttons did.
+        /// </summary>
         private void SetUpdateFromMainBusy(bool busy)
         {
             _updateFromMainInFlight = busy;
 
-            if (_updateFromMainBtn?.Component != null)
-                _updateFromMainBtn.Component.interactable = !busy;
+            foreach (var button in new[] { _updateFromMainBtn, _mergeWithMainBtn })
+            {
+                if (button?.Component == null) continue;
 
-            if (_updateFromMainBtn?.ButtonText != null)
-                SetDynamicText(_updateFromMainBtn.ButtonText, busy ? "Fetching..." : "Update from Main");
+                button.Component.interactable = !busy;
+                ScopeMarks.Tint(button, !busy);
+
+                if (button.ButtonText != null)
+                    SetDynamicText(button.ButtonText, busy ? "Fetching..." : "Merge with Main");
+            }
         }
 
         /// <summary>
@@ -2052,8 +2118,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         }
 
         /// <summary>
-        /// Handler for "Download Latest" button (GAP 8).
-        /// Downloads the owner's latest version, replacing local changes.
+        /// Handler for "Take Main's version". Its safe sibling is Merge with Main, one row above.
+        /// Replaces the local file with the Main's, dropping whatever was not published.
         /// </summary>
         private async void OnDownloadLatestClicked()
         {
@@ -2070,7 +2136,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (localChanges > 0)
             {
                 TranslatorUIManager.ConfirmationPanel?.Show(
-                    "Download Latest Version?",
+                    "Take the Main's version?",
                     $"This will replace your {localChanges} local change(s) with the latest version from "
                     + $"{People.MentionOf(serverState.Uploader, TranslatorCore.Config.api_user)}.\n\n" +
                     "Your local changes will be lost. This cannot be undone.",
@@ -2086,7 +2152,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         }
 
         /// <summary>
-        /// Colour the "Download Latest" marks for the state it is really in.
+        /// Colour the "Take Main's version" marks for the state it is really in.
         ///
         /// 🔴 **The side of a download depends on WHOSE translation it is**, which is why this
         /// exists instead of a constant written when the button was built. Taking the latest of a
@@ -2179,7 +2245,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     {
                         _downloadLatestBtn.Component.interactable = true;
                         SetDownloadLatestState(true);
-                        SetDynamicText(_downloadLatestBtn.ButtonText, "Download Latest");
+                        SetDynamicText(_downloadLatestBtn.ButtonText, "Take Main's version");
                     }
                 });
             }
@@ -2190,7 +2256,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 {
                     _downloadLatestBtn.Component.interactable = true;
                     SetDownloadLatestState(true);
-                    SetDynamicText(_downloadLatestBtn.ButtonText, "Download Latest");
+                    SetDynamicText(_downloadLatestBtn.ButtonText, "Take Main's version");
                 }
             }
         }

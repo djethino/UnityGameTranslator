@@ -1917,6 +1917,14 @@ namespace UnityGameTranslator.Core.UI
 
                     if (!string.IsNullOrEmpty(fileHash)) state.Hash = fileHash;
 
+                    // Same as the signed-in path above: with no account, the translation this file
+                    // came from IS the Main, so the upstream merge has everything it needs. It is
+                    // the one path that writes only local files, which is exactly what somebody
+                    // with no account is allowed to do.
+                    state.MainSiteId = siteId;
+                    state.MainHash = state.Hash;
+                    state.MainLineCount = lineCount;
+
                     // Whose work this is. Without an account this endpoint is the ONLY place that
                     // name can come from — a download leaves behind the site id and nothing else —
                     // and the panel falls back to "Website" when it is missing.
@@ -2548,6 +2556,20 @@ namespace UnityGameTranslator.Core.UI
                     serverState.MainUsername = main["uploader"]?.Value<string>();
                     serverState.Hash = main["file_hash"]?.Value<string>();
                     serverState.ResourcesUrl = main["resources_url"]?.Value<string>();
+
+                    // 🔴 **Holding somebody's lineage without having published into it is a
+                    // first-class case, and the Main IS this row.** These three were filled for a
+                    // Branch alone, so that person had no MainSiteId — and MergeFromMain refuses
+                    // without one. Their only way to take in what the Main added was Download
+                    // Latest, which REPLACES: the mod knew the safe path and offered the
+                    // destructive one. CLAUDE.md says they must have both.
+                    //
+                    // ⚠ Nothing new crosses the wire: the block is already in this payload and its
+                    // id is already read into SiteId above. The gate was ours, and what it shut was
+                    // a local act — see analyse/merge-from-main-without-branch.md.
+                    serverState.MainSiteId = serverState.SiteId;
+                    serverState.MainHash = serverState.Hash;
+                    serverState.MainLineCount = main["line_count"]?.Value<int>() ?? 0;
                 }
 
                 // Votes on the published translation of this lineage. Left null on a server that

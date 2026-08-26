@@ -1852,8 +1852,24 @@ namespace UnityGameTranslator.Core.UI.Panels
             // a sentence about publishing a copy in front of somebody offering a correction.
             bool stillTheCopy = !existsOnServer && TranslatorCore.ForkIsStillTheCopy;
 
+            // 🔴 **A lineage nobody can answer for, refused here rather than by the server.**
+            // The status card has said so in red for a while; this button stayed lit all the same,
+            // so somebody could read the warning, work on regardless, press publish and be told no
+            // after the upload had run. A warning is worth nothing while the door it describes
+            // stays open.
+            //
+            // ⚠ `== true` on each: null is what an older site sends, and it means "not asked".
+            // Treating silence as a refusal would lock people out of a site that never spoke.
+            //
+            // ⚠ The server still refuses these on its own, and must keep doing so: this stops the
+            // people running today's build, not the ones running last year's.
+            var lineage = TranslatorCore.ServerState;
+            bool lineageIsDead = lineage != null
+                                 && (lineage.MainMissing == true || lineage.MainAbandoned == true);
+
             bool canUpload = isLoggedIn && TranslatorCore.Config.online_mode &&
-                            TranslatorCore.TranslationCache.Count > 0 && !isInSync && !stillTheCopy;
+                            TranslatorCore.TranslationCache.Count > 0 && !isInSync && !stillTheCopy
+                            && !lineageIsDead;
             _uploadBtn.Component.interactable = canUpload;
             ScopeMarks.Tint(_uploadBtn, canUpload);
 
@@ -1876,6 +1892,22 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // not have after a fork — the lineage is gone — and the sentence works without it.
                 SetDynamicText(_uploadHintLabel,
                     "This copy is unchanged. Translate or correct a line to publish it as yours.");
+            }
+            // ⚠ Under the button that is now grey, because a control that cannot act must say why
+            // right there. The status card says the same thing at more length; this is the one line
+            // somebody reads while wondering what happened to the button.
+            //
+            // The two are kept apart: whether the translation they built on is still published is
+            // the next thing anybody asks.
+            else if (lineage?.MainMissing == true)
+            {
+                SetDynamicText(_uploadHintLabel,
+                    "The translation you contribute to is gone. Fork to carry on.");
+            }
+            else if (lineage?.MainAbandoned == true)
+            {
+                SetDynamicText(_uploadHintLabel,
+                    "Its owner deleted their account, so nobody can take this in. Fork to carry on.");
             }
             else
             {

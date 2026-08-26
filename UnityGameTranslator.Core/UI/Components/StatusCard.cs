@@ -482,6 +482,11 @@ namespace UnityGameTranslator.Core.UI.Components
                                  null, null, 0, 0,
                                  linesAvailable: standing.LinesAvailable,
 
+                                 // The other way a lineage loses its head: the Main is still there
+                                 // and its owner is not. Ignored by Badges when MainMissing is set
+                                 // — a Main that is gone is the whole story.
+                                 mainAbandoned: TranslatorCore.ServerState?.MainAbandoned == true,
+
                                  // ⚠ The author's own word, which nothing else on this card says.
                                  // Without it somebody cannot tell whether they still have to open
                                  // Edit details and declare it — the measurements beside it answer
@@ -886,6 +891,30 @@ namespace UnityGameTranslator.Core.UI.Components
                     _emptyLabel.color = UIStyles.StatusError;
                     _emptyLabel.text = TranslatorCore.TranslateOwnUIDynamic(
                         "The translation you contribute to is gone: nobody can merge this work any more.");
+                }
+
+                if (_emptyBtn?.ButtonText != null)
+                {
+                    _emptyBtn.ButtonText.text = TranslatorCore.TranslateOwnUIDynamic("Manage online");
+                }
+
+                _emptyRow.SetActive(true);
+                return;
+            }
+
+            // Then the Main whose owner is gone. Placed between the two on purpose: it ends like
+            // the orphan above — nobody will ever merge this — and reads like the closure below,
+            // since the translation is still there. What separates it from both is worth the
+            // extra notice: nothing was withdrawn and nothing was refused, so the file in this
+            // game stays perfectly good to play with.
+            if (state.MainAbandoned == true)
+            {
+                if (_emptyLabel != null)
+                {
+                    _emptyLabel.color = UIStyles.StatusError;
+                    _emptyLabel.text = TranslatorCore.TranslateOwnUIDynamic(
+                        "The account behind the translation you contribute to is gone: nobody can "
+                        + "merge this work any more. The translation itself still works.");
                 }
 
                 if (_emptyBtn?.ButtonText != null)

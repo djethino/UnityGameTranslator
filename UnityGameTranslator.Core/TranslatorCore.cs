@@ -7569,6 +7569,20 @@ namespace UnityGameTranslator.Core
         public bool? MainMissing { get; set; }
 
         /// <summary>
+        /// The Main is still published and the account that owned it has been erased.
+        ///
+        /// Ends the same way as MainMissing — a branch needs somebody to be merged by, and there is
+        /// nobody — but it is the harder of the two to notice: the Main is still listed, still
+        /// downloadable, and still says it accepts contributions. Nothing ever fails; the work
+        /// simply waits for a reader who does not exist.
+        ///
+        /// ⚠ Kept apart from MainMissing rather than folded into it, because what somebody has to
+        /// understand is not the same: here the translation is still there and still safe to use.
+        /// Null on servers too old to report it.
+        /// </summary>
+        public bool? MainAbandoned { get; set; }
+
+        /// <summary>
         /// The Main was told about this branch, has edited their own file since, and has taken
         /// nothing in. Not the same as silence — that is dormancy — and said once only.
         /// Null on servers too old to report it.

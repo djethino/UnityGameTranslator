@@ -2471,6 +2471,9 @@ namespace UnityGameTranslator.Core.UI
                     MainMissing = data["main_missing"] != null
                         ? data["main_missing"].ToObject<bool?>()
                         : previous?.MainMissing,
+                    MainAbandoned = data["main_abandoned"] != null
+                        ? data["main_abandoned"].ToObject<bool?>()
+                        : previous?.MainAbandoned,
                     MainIgnoring = data["main_ignoring"] != null
                         ? data["main_ignoring"].ToObject<bool?>()
                         : previous?.MainIgnoring,

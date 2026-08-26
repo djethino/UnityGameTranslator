@@ -927,6 +927,7 @@ namespace UnityGameTranslator.Core
                     MainUsername = data["main"]?["uploader"]?.Value<string>(),
                     // Null on older servers: "unknown", never "the Main is fine"
                     MainMissing = data["main_missing"]?.ToObject<bool?>(),
+                    MainAbandoned = data["main_abandoned"]?.ToObject<bool?>(),
                     // Use ToObject<int?>() to handle explicit JSON null values
                     BranchesCount = data["branches_count"]?.ToObject<int?>() ?? 0,
 
@@ -2317,6 +2318,15 @@ namespace UnityGameTranslator.Core
 
         /// <summary>Branch whose Main is gone. Null on servers that do not report it.</summary>
         public bool? MainMissing { get; set; }
+
+        /// <summary>
+        /// The Main is still there and the account behind it is not.
+        ///
+        /// Same consequence as MainMissing — nobody will ever merge this — reached another way, and
+        /// the difference matters to whoever reads it: the translation is still published and still
+        /// safe to keep using. Null on servers that do not report it.
+        /// </summary>
+        public bool? MainAbandoned { get; set; }
         /// <summary>Number of branches contributing to this UUID (if this is Main)</summary>
         public int BranchesCount { get; set; }
 

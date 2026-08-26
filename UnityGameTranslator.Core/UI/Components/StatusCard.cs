@@ -478,7 +478,21 @@ namespace UnityGameTranslator.Core.UI.Components
 
             var all = Badges.For(standing.Publication, standing.Role == LineageRole.Main ? true
                                      : standing.Role == LineageRole.Branch ? (bool?)false : null,
-                                 standing.BranchesWaiting, standing.MainMissing, standing.Sync,
+                                 standing.BranchesWaiting,
+
+                                 // 🔴 **Read from ServerState, not from `standing` — and that was a
+                                 // bug.** MainPanel builds this Standing and never fills its
+                                 // MainMissing, so the chip read a field that is false for
+                                 // everybody: the badge saying a Main is gone has never once
+                                 // appeared in a game. The notice further down did work, because it
+                                 // reads ServerState directly, which is why nothing looked wrong.
+                                 //
+                                 // ⚠ The Manager reaches for its own row the same way rather than
+                                 // through Standing. One source per fact, and this is the one the
+                                 // site fills.
+                                 TranslatorCore.ServerState?.MainMissing == true,
+
+                                 standing.Sync,
                                  null, null, 0, 0,
                                  linesAvailable: standing.LinesAvailable,
 

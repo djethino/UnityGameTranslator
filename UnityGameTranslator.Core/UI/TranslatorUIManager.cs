@@ -2354,6 +2354,22 @@ namespace UnityGameTranslator.Core.UI
                         case "translation_updated":
                             HandleTranslationUpdatedEvent(data);
                             break;
+
+                        // The access was cut from the website while this stream was open.
+                        //
+                        // 🔴 **Without this the mod stayed "signed in" until something else spoke
+                        // to the site.** The stream simply stopped, which reads as a network blip,
+                        // so the account row went on naming somebody whose every action would now
+                        // fail — and the person had no idea why. The relay says which it is
+                        // (`code: revoked`), and this hands it to the SAME path an HTTP 401 takes:
+                        // sign out locally, say so, refresh. One place decides what a refusal does.
+                        case "error":
+                            if (data != null && data.Contains("\"revoked\""))
+                            {
+                                HandleAuthenticationRejected(
+                                    "this access was revoked from your account.");
+                            }
+                            break;
                     }
                 });
             };

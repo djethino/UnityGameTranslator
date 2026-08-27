@@ -501,6 +501,13 @@ namespace UnityGameTranslator.Core.UI.Components
                                  // — a Main that is gone is the whole story.
                                  mainAbandoned: TranslatorCore.ServerState?.MainAbandoned == true,
 
+                                 // The third way this road ends, and the only one of the three that
+                                 // had no chip. The notice below carries all three; the strip
+                                 // carried two, so the same fact read differently depending on
+                                 // where the eye landed — and differently again from the site and
+                                 // the Manager, which both show it.
+                                 branchFrozen: TranslatorCore.ServerState?.BranchFrozen == true,
+
                                  // ⚠ The author's own word, which nothing else on this card says.
                                  // Without it somebody cannot tell whether they still have to open
                                  // Edit details and declare it — the measurements beside it answer

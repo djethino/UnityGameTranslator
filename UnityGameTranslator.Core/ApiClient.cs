@@ -124,7 +124,25 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private class AuthRejectionHandler : DelegatingHandler
         {
-            public AuthRejectionHandler(HttpMessageHandler inner) : base(inner) { }
+            /// <summary>
+            /// Whether the client this handler sits on carries a token by default, or null when it
+            /// never does.
+            /// </summary>
+            /// <remarks>
+            /// 🔴 Per client, not global. It used to read <c>client.DefaultRequestHeaders</c>
+            /// outright, which was harmless while only that one client was watched — and became a
+            /// trap the moment the streaming client was too: every stream would have counted as
+            /// authenticated merely because the player was signed in somewhere else, and a 401 from
+            /// the sign-in, merge-preview or editing streams — none of which carry the account's
+            /// token — would have signed them out.
+            /// </remarks>
+            private readonly Func<bool> _carriesTokenByDefault;
+
+            public AuthRejectionHandler(HttpMessageHandler inner, Func<bool> carriesTokenByDefault = null)
+                : base(inner)
+            {
+                _carriesTokenByDefault = carriesTokenByDefault;
+            }
 
             protected override async Task<HttpResponseMessage> SendAsync(
                 HttpRequestMessage request, System.Threading.CancellationToken cancellationToken)
@@ -135,7 +153,8 @@ namespace UnityGameTranslator.Core
                 // handler concluded the token had been revoked — signing the player
                 // out on startup because of a call that never carried a token.
                 bool sentToken = request.Headers.Authorization != null
-                    || client.DefaultRequestHeaders.Contains("Authorization");
+                    || request.Headers.Contains("Authorization")
+                    || (_carriesTokenByDefault != null && _carriesTokenByDefault());
 
                 var response = await base.SendAsync(request, cancellationToken);
                 bool unauthorized = response.StatusCode == System.Net.HttpStatusCode.Unauthorized;
@@ -194,7 +213,10 @@ namespace UnityGameTranslator.Core
                 // well is what created the gap, so it must NOT be set below.
                 AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
             };
-            client = new HttpClient(new AuthRejectionHandler(handler));
+            // SetAuthToken puts the account's token in this client's default headers, so every call
+            // it makes is authenticated whether or not the request says so itself.
+            client = new HttpClient(new AuthRejectionHandler(
+                handler, () => client.DefaultRequestHeaders.Contains("Authorization")));
             client.Timeout = TimeSpan.FromSeconds(30);
 
             // ⚠ Every other call in this file reads its body straight into a string. Now that the
@@ -210,7 +232,24 @@ namespace UnityGameTranslator.Core
             {
                 AllowAutoRedirect = false
             };
-            sseClient = new HttpClient(sseHandler);
+
+            // 🔴 Wrapped like the other one, and it was not.
+            //
+            // The sync stream carries `Authorization: Bearer …` (TranslatorUIManager opens it that
+            // way), so it is an authenticated call like any other — it simply happened to be made
+            // through the one client nothing was watching. An access revoked from the account was
+            // therefore refused here in silence, and the mod went on showing a signed-in account
+            // until something else spoke to the site.
+            //
+            // ⚠ This catches the refusal when a stream is OPENED or reopened, which is what an
+            // HTTP handler can see. A stream already open is not re-authenticated by anybody: to
+            // cut one live the relay would have to be told, and that lives in the SSE server.
+            //
+            // ⚠ No default-token check passed: this client never holds one. Only the streams that
+            // put the header on the request themselves count — the sync stream does, the sign-in,
+            // merge-preview and editing streams do not, and a refusal from those says nothing
+            // about the account.
+            sseClient = new HttpClient(new AuthRejectionHandler(sseHandler));
             sseClient.Timeout = System.Threading.Timeout.InfiniteTimeSpan;
             sseClient.DefaultRequestHeaders.Add("User-Agent", UserAgent());
         }

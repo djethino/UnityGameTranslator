@@ -1530,6 +1530,15 @@ namespace UnityGameTranslator.Core.UI
             // Interface font + mod-UI translation are applied lazily on first show
             // (BootstrapInterfaceFontOnce): at this point custom fonts and the worker aren't ready yet.
 
+            // 🔴 **Declared before any token, and that is the point.** These headers used to be set
+            // from SetAuthToken, so they existed only once somebody was already signed in — and the
+            // one call where the machine matters most is `POST /auth/device`, made at the FIRST
+            // link, when there is no token by definition. Without it the site cannot tell which
+            // machine is linking, so its one-access-per-game cap never fires and every re-link of a
+            // game leaves the previous access behind: that is how thirty-six of them accumulated on
+            // one account.
+            ApiClient.DeclareGame();
+
             // Restore API token if saved
             if (!string.IsNullOrEmpty(TranslatorCore.Config.api_token))
             {

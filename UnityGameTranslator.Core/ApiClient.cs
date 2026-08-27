@@ -572,6 +572,105 @@ namespace UnityGameTranslator.Core
             {
                 client.DefaultRequestHeaders.Add("Authorization", $"Bearer {token}");
             }
+
+            DeclareGame();
+        }
+
+        /// <summary>The header carrying which game this mod speaks for.</summary>
+        private const string GameHeader = "X-UGT-Game";
+
+        /// <summary>
+        /// The short code the site names THIS access by, or null until the site has said.
+        ///
+        /// 🔴 **Why it has to be shown here.** "Linked devices" names every line "#QKADJN" and offers
+        /// to rename the machine it belongs to — while that code appeared in no program at all. So
+        /// somebody was asked to name a machine nothing let them identify, and to cut accesses they
+        /// could not tell apart. Reported from production on 2026-08-27.
+        ///
+        /// ⚠ Held in memory, never written to the config. It belongs to the token, the site is the
+        /// one that knows it, and a copy on disk would be one more thing able to go stale — for a
+        /// value worth one round trip.
+        ///
+        /// ⚠ Not a secret and not a credential: no endpoint accepts it, and whoever can read it
+        /// already holds the token itself.
+        /// </summary>
+        public static string AccessCode { get; private set; }
+
+        /// <summary>
+        /// Ask the site which line this access is, so the mod can show it.
+        ///
+        /// Retroactive by construction: the code has been stored against this token since it was
+        /// issued, so an access linked months ago becomes identifiable the moment this runs.
+        /// </summary>
+        public static async Task RefreshAccessCodeAsync()
+        {
+            if (!HasAuthToken)
+            {
+                AccessCode = null;
+                return;
+            }
+
+            try
+            {
+                var response = await client.GetAsync($"{DefaultBaseUrl}/me");
+
+                if (!response.IsSuccessStatusCode) return;
+
+                var body = ParseJsonSafe(await response.Content.ReadAsStringAsync());
+                AccessCode = body?["access_code"]?.Value<string>();
+            }
+            catch (Exception e)
+            {
+                // An unreachable site is an ordinary answer here — the label simply says nothing
+                // rather than showing a code that may be wrong.
+                TranslatorCore.LogInfo($"[ApiClient] Could not read this access's code: {e.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Say which game this access belongs to, on every call rather than only when linking.
+        ///
+        /// 🔴 **The game used to be declared at the link and NOWHERE else.** So an access created
+        /// before the mod declared anything stayed nameless for ever, while this same mod called the
+        /// site several times an hour with the game right in front of it. Reported from production
+        /// on 2026-08-27: every line of "Linked devices" read "Mod", with no way to tell one game
+        /// from another. The link was the one moment we spoke up — which is the one moment we had
+        /// nothing more to say than the site already knew.
+        ///
+        /// ⚠ **The same payload the device flow sends**, so one shape of declaration is decided in
+        /// one place. Base64 because an HTTP header value is latin-1 by specification and a game is
+        /// called 龙胤立志传 as readily as LoneStar — sent raw, the .NET client throws on the way out.
+        ///
+        /// ⚠ The site fills an EMPTY line and never corrects a filled one, so repeating this on
+        /// every call costs nothing and cannot relabel an access. Nothing here is a proof either:
+        /// a declaration only ever describes the caller's own line, under its own account.
+        /// </summary>
+        public static void DeclareGame()
+        {
+            if (client.DefaultRequestHeaders.Contains(GameHeader))
+            {
+                client.DefaultRequestHeaders.Remove(GameHeader);
+            }
+
+            var declaration = DeviceFlowPayload();
+
+            if (declaration == null)
+            {
+                return;
+            }
+
+            try
+            {
+                var bytes = Encoding.UTF8.GetBytes(declaration.ToString(Newtonsoft.Json.Formatting.None));
+                client.DefaultRequestHeaders.Add(GameHeader, Convert.ToBase64String(bytes));
+            }
+            catch (Exception e)
+            {
+                // A header we could not build is a line that stays unnamed — never a call that
+                // fails. Logged rather than swallowed: silence here would hide the one reason the
+                // screen keeps saying "Game not recorded" after an update meant to fix it.
+                TranslatorCore.LogWarning($"[ApiClient] Could not declare the game: {e.Message}");
+            }
         }
 
         #region Notifications
@@ -1406,6 +1505,22 @@ namespace UnityGameTranslator.Core
         /// </remarks>
         private static HttpContent DeviceFlowDeclaration()
         {
+            var payload = DeviceFlowPayload();
+
+            return payload == null
+                ? null
+                : new StringContent(payload.ToString(), Encoding.UTF8, "application/json");
+        }
+
+        /// <summary>
+        /// What we say about this game, in one place.
+        ///
+        /// ⚠ Shared by the link and by the header on ordinary calls (see <see cref="DeclareGame"/>).
+        /// Two builders would be two answers to one question, free to drift — and the drift would
+        /// show up as a game named one way when linking and another way afterwards.
+        /// </summary>
+        private static JObject DeviceFlowPayload()
+        {
             var game = TranslatorCore.CurrentGame;
 
             if (game == null)
@@ -1433,7 +1548,7 @@ namespace UnityGameTranslator.Core
                 return null;
             }
 
-            return new StringContent(payload.ToString(), Encoding.UTF8, "application/json");
+            return payload;
         }
 
         private static bool IsAllDigits(string value)

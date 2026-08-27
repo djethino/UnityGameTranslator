@@ -1615,8 +1615,21 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (isLoggedIn)
             {
                 // Username concatenated, never sent for translation (one cache entry per user otherwise)
+                //
+                // 🔴 The code is what makes this access findable on the account's "Linked devices"
+                // page. That page names every line "#QKADJN" and offers to rename the machine it
+                // belongs to — while the code appeared in no program, so it asked somebody to name
+                // a machine nothing let them identify. Reported from production on 2026-08-27.
+                //
+                // ⚠ Concatenated for the same reason as the name: it must never reach the
+                // translator, which would return a different string for each account and fill the
+                // cache with one entry per person.
+                //
+                // ⚠ Absent until the site answers, and absent for good when it cannot be reached.
+                // Nothing here waits, and a code that might be wrong is worse than none.
                 _accountLabel.text = Tr("Connected as")
-                    + $" @{currentUser ?? "Unknown"}";
+                    + $" @{currentUser ?? "Unknown"}"
+                    + (string.IsNullOrEmpty(ApiClient.AccessCode) ? "" : $" · #{ApiClient.AccessCode}");
                 _accountLabel.fontStyle = FontStyle.Normal;
                 SetDynamicText(_loginLogoutBtn.ButtonText, "Logout");
             }

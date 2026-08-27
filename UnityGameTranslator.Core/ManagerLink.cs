@@ -23,11 +23,13 @@ namespace UnityGameTranslator.Core
         private const string ProcessName = "UnityGameTranslatorManager";
 
         /// <summary>
-        /// Where the Manager records having installed itself: its own settings folder, which is a
-        /// fixed path both programs compose the same way.
+        /// Where the Manager records having installed itself: its own settings folder.
         ///
         /// ⚠ The record holds the ABSOLUTE path of the executable, so this never guesses at a
         /// "default directory" — the Manager can be installed anywhere and says where.
+        ///
+        /// ⚠ The folder is NOT one path but the few the Manager may use — see <see cref="DataFolders"/>,
+        /// which exists because assuming one was wrong on Linux for months.
         /// </summary>
         private const string InstallationFile = "installation.json";
 
@@ -121,11 +123,15 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static string FromInstallationRecord()
         {
-            var record = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "UnityGameTranslator", "Manager", InstallationFile);
+            string record = null;
 
-            if (!File.Exists(record)) return null;
+            foreach (var folder in DataFolders())
+            {
+                var candidate = Path.Combine(folder, InstallationFile);
+                if (File.Exists(candidate)) { record = candidate; break; }
+            }
+
+            if (record == null) return null;
 
             try
             {
@@ -147,8 +153,41 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Every folder the Manager may keep its data in, most likely first.
+        ///
+        /// 🔴 **The comment above used to claim both programs composed this path "the same way", and
+        /// on Linux they did not.** The mod looked in `~/.local/share/UnityGameTranslator/Manager/`
+        /// while `LinuxPlatform.UserDataDirectory` writes `~/.local/share/unitygametranslator-manager/`.
+        /// So an installed Manager was NEVER found there: the button offered the download page to
+        /// somebody who already had it, and the only thing that ever worked was the running-process
+        /// fallback — which needs the Manager to be open.
+        ///
+        /// ⚠ Invisible for months because the fallback hides it the moment the tool is running, and
+        /// because development happens on Windows, where the two names happen to agree. Found on
+        /// 2026-08-27 while checking where a shared machine identifier could live.
+        ///
+        /// ⚠ Both spellings are tried rather than one being picked: this file cannot reference the
+        /// Manager's `IPlatform`, so agreement here is a convention, not a compiler check. Trying
+        /// both is what keeps a rename on either side from silently breaking the link again.
+        /// </summary>
+        private static string[] DataFolders()
+        {
+            var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+
+            // $XDG_DATA_HOME wins on Linux when it is set, and SpecialFolder does not read it.
+            var xdg = Environment.GetEnvironmentVariable("XDG_DATA_HOME");
+            var shareRoot = !string.IsNullOrEmpty(xdg) ? xdg : local;
+
+            return new[]
+            {
+                Path.Combine(local, "UnityGameTranslator", "Manager"),
+                Path.Combine(shareRoot, "unitygametranslator-manager"),
+            };
+        }
+
+        /// <summary>
         /// A Manager already running, which is the only way a PORTABLE copy can be found: it
-        /// installs nothing and records nothing, by definition.
+        /// records no INSTALLATION, by definition — it still keeps its settings beside one.
         ///
         /// Its own path is then enough — launching it raises the window it already has.
         /// </summary>

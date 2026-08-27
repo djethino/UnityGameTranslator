@@ -1535,6 +1535,11 @@ namespace UnityGameTranslator.Core.UI
             {
                 ApiClient.SetAuthToken(TranslatorCore.Config.api_token);
                 TranslatorCore.LogInfo($"[UIManager] Restored API token for user: {Sanitize.UserName(TranslatorCore.Config.api_user ?? "unknown")}");
+
+                // Which line this access is on the account's "Linked devices" page. Fired and
+                // forgotten: the label shows it when the answer lands, and shows nothing until
+                // then — nothing here waits on the site to finish starting up.
+                _ = ApiClient.RefreshAccessCodeAsync();
             }
 
             if (!TranslatorCore.Config.first_run_completed)

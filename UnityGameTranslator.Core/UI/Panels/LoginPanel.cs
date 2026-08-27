@@ -261,6 +261,11 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TranslatorCore.SaveConfig();
                 ApiClient.SetAuthToken(token);
 
+                // The line this access will appear as on the account's "Linked devices" page, so
+                // it can be recognised there. Asked for once the token is on the client, and shown
+                // by the account row when it lands.
+                _ = ApiClient.RefreshAccessCodeAsync();
+
                 _statusLabel.text = Tr("Logged in as") + $" {userName}!";
                 _statusLabel.color = UIStyles.StatusSuccess;
 

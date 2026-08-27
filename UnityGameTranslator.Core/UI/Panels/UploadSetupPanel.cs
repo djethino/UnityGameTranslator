@@ -605,6 +605,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Update CurrentGame with user's confirmed selection
             TranslatorCore.CurrentGame = _selectedGame;
 
+            // ⚠ The declaration carried on every call names the game, so it has to follow when the
+            // game changes here — this is the one place it can. Detection had already run when the
+            // token was set, so without this a game somebody names by hand would never reach the
+            // access it belongs to. The site fills an empty line and never corrects a filled one,
+            // so re-declaring is free and cannot relabel anything.
+            ApiClient.DeclareGame();
+
             _onSetupComplete?.Invoke(_selectedGame, _sourceDropdown.SelectedValue, _targetDropdown.SelectedValue);
             SetActive(false);
         }

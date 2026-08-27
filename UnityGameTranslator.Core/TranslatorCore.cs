@@ -8,6 +8,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
+using System.Threading.Tasks;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
@@ -2270,6 +2271,11 @@ namespace UnityGameTranslator.Core
         /// case keeping a "signed in" account would only produce actions that silently fail.
         /// The caller refreshes the UI; translations and local work are untouched.
         /// </summary>
+        /// <summary>
+        /// Forget this account locally. The server is not told, and for a good reason at each of
+        /// the two call sites: one has just been refused by it, the other calls
+        /// <see cref="SignOut"/> instead.
+        /// </summary>
         public static void ClearApiSession()
         {
             Config.api_token = null;
@@ -2278,6 +2284,40 @@ namespace UnityGameTranslator.Core
             SaveConfig();
             ApiClient.SetAuthToken(null);
             ServerState = null;
+        }
+
+        /// <summary>
+        /// Signing out on purpose: hand the access back to the server, and forget it here.
+        /// </summary>
+        /// <remarks>
+        /// 🔴 Local first, always. Signing out cannot be made to wait on a network call, or a site
+        /// that is down would leave somebody signed in on a machine they are trying to leave.
+        ///
+        /// ⚠ Without this the access simply stays in the account's list for ever: nothing else ever
+        /// removes it, since the site cannot tell a forgotten token from a quiet one. That is why
+        /// the failure is reported rather than swallowed — the way out is to cut it from the
+        /// account's own "Linked devices" screen.
+        /// </remarks>
+        /// <param name="serverAnswered">
+        /// Called off the main thread with whether the server took the revocation.
+        /// </param>
+        public static void SignOut(Action<bool> serverAnswered = null)
+        {
+            string token = Config.api_token;
+
+            ClearApiSession();
+
+            if (string.IsNullOrEmpty(token))
+            {
+                serverAnswered?.Invoke(true);
+                return;
+            }
+
+            Task.Run(async () =>
+            {
+                bool revoked = await ApiClient.RevokeToken(token);
+                serverAnswered?.Invoke(revoked);
+            });
         }
 
         public static void SaveConfig()

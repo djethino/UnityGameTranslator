@@ -1351,6 +1351,103 @@ namespace UnityGameTranslator.Core
         #region Device Flow Authentication
 
         /// <summary>
+        /// What this game says about itself when asking to be linked, or null when it has nothing
+        /// to say. Read on the "Linked devices" screen, where a line otherwise reads "Mod, linked
+        /// on 12 March" and looks exactly like the eleven above it.
+        /// </summary>
+        /// <remarks>
+        /// ⚠ Optional at both ends. The site accepts a request with no body — every mod already
+        /// installed sends one, and none of them will ever be updated — so nothing here may become
+        /// a condition of signing in.
+        ///
+        /// ⚠ The Steam id is sent apart from the name because the two do different jobs: the id is
+        /// what lets one game hold one access, and it only works because it identifies a game
+        /// exactly. `product_name` does not — two different games can carry the same one — which is
+        /// why it travels as a label and never as an identity.
+        /// </remarks>
+        private static HttpContent DeviceFlowDeclaration()
+        {
+            var game = TranslatorCore.CurrentGame;
+
+            if (game == null)
+            {
+                return null;
+            }
+
+            var payload = new JObject();
+
+            // Digits only: the site refuses anything else, and an id that is not one is not an id.
+            if (!string.IsNullOrEmpty(game.steam_id) && IsAllDigits(game.steam_id))
+            {
+                payload["game_id"] = game.steam_id;
+            }
+
+            // What the game calls itself, never the folder it sits in — see GameInfo.product_name.
+            string label = !string.IsNullOrEmpty(game.product_name) ? game.product_name : game.name;
+            if (!string.IsNullOrEmpty(label))
+            {
+                payload["game_name"] = label.Length > 120 ? label.Substring(0, 120) : label;
+            }
+
+            if (!payload.HasValues)
+            {
+                return null;
+            }
+
+            return new StringContent(payload.ToString(), Encoding.UTF8, "application/json");
+        }
+
+        private static bool IsAllDigits(string value)
+        {
+            for (int i = 0; i < value.Length; i++)
+            {
+                if (value[i] < '0' || value[i] > '9')
+                {
+                    return false;
+                }
+            }
+
+            return value.Length > 0;
+        }
+
+        /// <summary>
+        /// Hand this access back to the server, so it stops existing rather than sitting in the
+        /// account's list for anybody to wonder about. Returns false when the site could not be
+        /// reached — the caller signs out locally either way and says so.
+        /// </summary>
+        /// <remarks>
+        /// ⚠ The token is passed in rather than read from the client, because signing out clears
+        /// the client's own credentials first: the local state must never depend on a network call
+        /// succeeding.
+        ///
+        /// ⚠ Never called when the server has just refused the token (a 401): there is nothing left
+        /// to revoke, and asking would only tell somebody who already knows.
+        /// </remarks>
+        public static async Task<bool> RevokeToken(string plainToken)
+        {
+            if (string.IsNullOrEmpty(plainToken))
+            {
+                return true;
+            }
+
+            try
+            {
+                var request = new HttpRequestMessage(HttpMethod.Delete, $"{DefaultBaseUrl}/auth/token");
+                request.Headers.TryAddWithoutValidation("Authorization", "Bearer " + plainToken);
+
+                var response = await client.SendAsync(request);
+
+                // Already gone is the outcome we wanted, not a failure.
+                return response.IsSuccessStatusCode || response.StatusCode == HttpStatusCode.NotFound;
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogWarning($"[ApiClient] Could not revoke the access: {e.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
         /// Initiate Device Flow authentication.
         /// Returns a device code and user code to display.
         /// </summary>
@@ -1358,7 +1455,7 @@ namespace UnityGameTranslator.Core
         {
             try
             {
-                var response = await client.PostAsync($"{DefaultBaseUrl}/auth/device", null);
+                var response = await client.PostAsync($"{DefaultBaseUrl}/auth/device", DeviceFlowDeclaration());
 
                 if (!response.IsSuccessStatusCode)
                 {

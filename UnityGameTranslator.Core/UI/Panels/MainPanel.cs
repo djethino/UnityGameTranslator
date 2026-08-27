@@ -2023,7 +2023,20 @@ namespace UnityGameTranslator.Core.UI.Panels
                     "Logout",
                     () =>
                     {
-                        TranslatorCore.ClearApiSession();
+                        // ⚠ SignOut, not ClearApiSession: forgetting the token here leaves it alive
+                        // on the account, and nothing on the site can tell a forgotten access from
+                        // a quiet one. The screen fills up with lines nobody can identify.
+                        TranslatorCore.SignOut(revoked =>
+                        {
+                            if (revoked) return;
+
+                            // Said, not swallowed. The access is still live on the account and the
+                            // only way to cut it now is from the site.
+                            TranslatorUIManager.RunOnMainThread(() =>
+                                TranslatorUIManager.StatusOverlay?.ShowToast(
+                                    "Signed out here, but the site could not be reached. Cut this access from Linked devices on your account.",
+                                    Panels.StatusOverlay.ToastTone.Off));
+                        });
 
                         // Refresh all UI components
                         RefreshUI();

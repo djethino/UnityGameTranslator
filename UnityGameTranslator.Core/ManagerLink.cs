@@ -153,6 +153,65 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// The number the Manager drew for this machine, or null when there is none to read.
+        ///
+        /// 🔴 **The mod READS this and never writes it**, and that is the whole arrangement. Sent to
+        /// the site, it puts every game on one machine into one group — which is what the account's
+        /// "Linked devices" page could not do: thirty-six accesses were measured there on
+        /// 2026-08-27, thirty-five of them in one heap nobody could sort, because the only grouping
+        /// key was a name somebody has to type.
+        ///
+        /// ⚠ Writing it here would take from the mod the one property worth keeping — that it
+        /// touches nothing outside the game's own folder. "Several games on one machine" is the
+        /// Manager's business; one game is the mod's.
+        ///
+        /// ⚠ No Manager, no value, no automatic grouping — and no hole either: the account row now
+        /// shows the code naming this access, so a machine can be recognised and named once by hand.
+        ///
+        /// ⚠ Not looked up once and cached like the executable: the Manager may be installed while
+        /// the game is open, and this is read from disk far too rarely to be worth remembering.
+        /// </summary>
+        public static string DeviceId()
+        {
+            foreach (var folder in DataFolders())
+            {
+                try
+                {
+                    var path = Path.Combine(folder, "device.id");
+                    if (!File.Exists(path)) continue;
+
+                    var value = File.ReadAllText(path).Trim();
+
+                    // Shape-checked here as well as where it was written: a half-written file or one
+                    // somebody edited must not become a group of its own on the account, for ever.
+                    if (IsMachineId(value)) return value;
+                }
+                catch (Exception ex)
+                {
+                    // The boundary with another program's data. Reported rather than swallowed:
+                    // silence here would show up as "my games are not grouped" with no cause.
+                    TranslatorCore.LogInfo(
+                        "[Manager] Could not read the machine identifier: " + ex.Message);
+                }
+            }
+
+            return null;
+        }
+
+        private static bool IsMachineId(string value)
+        {
+            if (string.IsNullOrEmpty(value) || value.Length != 32) return false;
+
+            foreach (var c in value)
+            {
+                bool hex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+                if (!hex) return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
         /// Every folder the Manager may keep its data in, most likely first.
         ///
         /// 🔴 **The comment above used to claim both programs composed this path "the same way", and

@@ -671,6 +671,37 @@ namespace UnityGameTranslator.Core
                 // screen keeps saying "Game not recorded" after an update meant to fix it.
                 TranslatorCore.LogWarning($"[ApiClient] Could not declare the game: {e.Message}");
             }
+
+            DeclareMachine();
+        }
+
+        /// <summary>The header carrying which machine this game sits on.</summary>
+        private const string DeviceHeader = "X-UGT-Device";
+
+        /// <summary>
+        /// Say which machine this is, so the account can put its games in one group.
+        ///
+        /// ⚠ **Read from the Manager, never invented here.** The value is the Manager's, the mod
+        /// only carries it — see <see cref="ManagerLink.DeviceId"/> for why that division holds and
+        /// why nothing is measured about the machine.
+        ///
+        /// ⚠ Silent when there is no Manager: the account row shows this access's own code instead,
+        /// and grouping stays something somebody does by hand. An absent header is a fact, not a
+        /// failure.
+        /// </summary>
+        private static void DeclareMachine()
+        {
+            if (client.DefaultRequestHeaders.Contains(DeviceHeader))
+            {
+                client.DefaultRequestHeaders.Remove(DeviceHeader);
+            }
+
+            var machine = ManagerLink.DeviceId();
+
+            if (!string.IsNullOrEmpty(machine))
+            {
+                client.DefaultRequestHeaders.Add(DeviceHeader, machine);
+            }
         }
 
         #region Notifications

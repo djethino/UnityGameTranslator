@@ -647,32 +647,49 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static void DeclareGame()
         {
-            if (client.DefaultRequestHeaders.Contains(GameHeader))
-            {
-                client.DefaultRequestHeaders.Remove(GameHeader);
-            }
+            client.DefaultRequestHeaders.Remove(GameHeader);
+            client.DefaultRequestHeaders.Remove(DeviceHeader);
 
-            var declaration = DeviceFlowPayload();
-
-            if (declaration == null)
+            // 🔴 **Only once a token is on the client.** The site reads these two headers in
+            // exactly two places: beside a bearer token, where they name this account's access,
+            // and on `POST /auth/device` — which carries them itself (InitiateDeviceFlow). On an
+            // anonymous call nothing reads them, so nothing should receive them: a search or a
+            // download made without an account used to travel with the name of the game and a
+            // stable machine identifier, which is a description of somebody who chose not to be
+            // described. Found by the audit of 2026-08-27.
+            if (!HasAuthToken)
             {
                 return;
             }
 
-            try
+            Declare(client.DefaultRequestHeaders);
+        }
+
+        /// <summary>
+        /// Put what this game says about itself, and which machine it sits on, on one set of
+        /// headers — the client's defaults once signed in, or a single request when linking.
+        /// </summary>
+        private static void Declare(System.Net.Http.Headers.HttpHeaders headers)
+        {
+            var declaration = DeviceFlowPayload();
+
+            if (declaration != null)
             {
-                var bytes = Encoding.UTF8.GetBytes(declaration.ToString(Newtonsoft.Json.Formatting.None));
-                client.DefaultRequestHeaders.Add(GameHeader, Convert.ToBase64String(bytes));
-            }
-            catch (Exception e)
-            {
-                // A header we could not build is a line that stays unnamed — never a call that
-                // fails. Logged rather than swallowed: silence here would hide the one reason the
-                // screen keeps saying "Game not recorded" after an update meant to fix it.
-                TranslatorCore.LogWarning($"[ApiClient] Could not declare the game: {e.Message}");
+                try
+                {
+                    var bytes = Encoding.UTF8.GetBytes(declaration.ToString(Newtonsoft.Json.Formatting.None));
+                    headers.Add(GameHeader, Convert.ToBase64String(bytes));
+                }
+                catch (Exception e)
+                {
+                    // A header we could not build is a line that stays unnamed — never a call that
+                    // fails. Logged rather than swallowed: silence here would hide the one reason
+                    // the screen keeps saying "Game not recorded" after an update meant to fix it.
+                    TranslatorCore.LogWarning($"[ApiClient] Could not declare the game: {e.Message}");
+                }
             }
 
-            DeclareMachine();
+            DeclareMachine(headers);
         }
 
         /// <summary>The header carrying which machine this game sits on.</summary>
@@ -689,18 +706,13 @@ namespace UnityGameTranslator.Core
         /// and grouping stays something somebody does by hand. An absent header is a fact, not a
         /// failure.
         /// </summary>
-        private static void DeclareMachine()
+        private static void DeclareMachine(System.Net.Http.Headers.HttpHeaders headers)
         {
-            if (client.DefaultRequestHeaders.Contains(DeviceHeader))
-            {
-                client.DefaultRequestHeaders.Remove(DeviceHeader);
-            }
-
             var machine = ManagerLink.DeviceId();
 
             if (!string.IsNullOrEmpty(machine))
             {
-                client.DefaultRequestHeaders.Add(DeviceHeader, machine);
+                headers.Add(DeviceHeader, machine);
             }
         }
 
@@ -1640,25 +1652,36 @@ namespace UnityGameTranslator.Core
         {
             try
             {
-                var response = await client.PostAsync($"{DefaultBaseUrl}/auth/device", DeviceFlowDeclaration());
-
-                if (!response.IsSuccessStatusCode)
+                using (var request = new HttpRequestMessage(HttpMethod.Post, $"{DefaultBaseUrl}/auth/device"))
                 {
-                    return new DeviceFlowInitResult { Success = false, Error = $"HTTP {response.StatusCode}" };
+                    request.Content = DeviceFlowDeclaration();
+
+                    // The one anonymous call that has to name the game and the machine: there is
+                    // no token yet by definition, and without these the site cannot tell which
+                    // machine is linking, so its one-access-per-game cap never fires. Put on this
+                    // request alone — see DeclareGame for why not on every call.
+                    Declare(request.Headers);
+
+                    var response = await client.SendAsync(request);
+
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        return new DeviceFlowInitResult { Success = false, Error = $"HTTP {response.StatusCode}" };
+                    }
+
+                    string json = await response.Content.ReadAsStringAsync();
+                    var data = ParseJsonSafe(json);
+
+                    return new DeviceFlowInitResult
+                    {
+                        Success = true,
+                        DeviceCode = data["device_code"]?.Value<string>(),
+                        UserCode = data["user_code"]?.Value<string>(),
+                        VerificationUri = data["verification_uri"]?.Value<string>(),
+                        ExpiresIn = data["expires_in"]?.Value<int>() ?? 900,
+                        Interval = data["interval"]?.Value<int>() ?? 5
+                    };
                 }
-
-                string json = await response.Content.ReadAsStringAsync();
-                var data = ParseJsonSafe(json);
-
-                return new DeviceFlowInitResult
-                {
-                    Success = true,
-                    DeviceCode = data["device_code"]?.Value<string>(),
-                    UserCode = data["user_code"]?.Value<string>(),
-                    VerificationUri = data["verification_uri"]?.Value<string>(),
-                    ExpiresIn = data["expires_in"]?.Value<int>() ?? 900,
-                    Interval = data["interval"]?.Value<int>() ?? 5
-                };
             }
             catch (Exception e)
             {

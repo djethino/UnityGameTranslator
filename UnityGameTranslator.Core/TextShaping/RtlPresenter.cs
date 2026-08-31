@@ -183,12 +183,26 @@ namespace UnityGameTranslator.Core.TextShaping
                     // The game moved on to another text — this reflow is stale.
                     if (TypeHelper.GetText(comp) != entry.Assigned) { _reflows.Remove(id); continue; }
 
-                    string final = BuildPerLineVisual(comp, entry.Assigned);
+                    // An INACTIVE component has no line data and never will until it shows: games
+                    // preload hidden panes (a guide fills every page up front), and burning the
+                    // attempts there left the fallback's reversed line stack as the final display
+                    // once the pane opened (bios/biot bench). Wait, without spending attempts —
+                    // staleness is already covered by the text check above.
+                    if (comp is UnityEngine.Component c && c.gameObject != null && !c.gameObject.activeInHierarchy)
+                        continue;
+
+                    string final = BuildPerLineVisual(comp, entry.Assigned, out string whyNot);
                     if (final == null)
                     {
-                        // Generator not ready (or unreadable). One more frame, then fall back to
-                        // whole-string visual: correct single-line, no worse than before lot 3.
+                        // Generator not ready (or unreadable). A few frames, then fall back to
+                        // whole-string visual — and SAY so: a silent fallback made the reversed
+                        // line stack undiagnosable from a screenshot.
                         if (++entry.Attempts < 3) continue;
+                        if (_fallbackLogBudget > 0)
+                        {
+                            _fallbackLogBudget--;
+                            TranslatorCore.LogWarning($"[RtlPresenter] reflow gave up ({whyNot}) — whole-string visual order, line stack may read bottom-up: comp={id}");
+                        }
                         final = RtlComposer.Compose(entry.Logical, RtlOutput.VisualOrder);
                     }
 
@@ -213,11 +227,14 @@ namespace UnityGameTranslator.Core.TextShaping
         /// visual order. Null when the generator cannot be read (not populated yet, IL2CPP
         /// marshaling, rich-text indices — see below).
         /// </summary>
-        private static string BuildPerLineVisual(object comp, string assigned)
+        private static int _fallbackLogBudget = 5;
+
+        private static string BuildPerLineVisual(object comp, string assigned, out string whyNot)
         {
+            whyNot = null;
             // ⚠ Rich text: the generator's char indices refer to the TAG-STRIPPED text, ours to
             // the raw string — slicing would tear a tag apart. Whole-string visual instead.
-            if (assigned.IndexOf('<') >= 0) return null;
+            if (assigned.IndexOf('<') >= 0) { whyNot = "rich text tags present"; return null; }
 
             if (!_genResolved)
             {
@@ -246,12 +263,13 @@ namespace UnityGameTranslator.Core.TextShaping
                 catch { }
             }
             if (_cachedGeneratorProp == null || _generatorLinesProp == null
-                || (_lineStartCharField == null && _lineStartCharProp == null)) return null;
+                || (_lineStartCharField == null && _lineStartCharProp == null))
+            { whyNot = "text generator API not resolvable on this runtime"; return null; }
 
             var generator = _cachedGeneratorProp.GetValue(comp, null);
-            if (generator == null) return null;
+            if (generator == null) { whyNot = "no cached generator"; return null; }
             var lines = _generatorLinesProp.GetValue(generator, null) as System.Collections.IList;
-            if (lines == null || lines.Count == 0) return null;
+            if (lines == null || lines.Count == 0) { whyNot = "generator has no lines yet"; return null; }
 
             var starts = new List<int>(lines.Count);
             foreach (var line in lines)
@@ -260,9 +278,10 @@ namespace UnityGameTranslator.Core.TextShaping
                                                        : _lineStartCharProp.GetValue(line, null);
                 starts.Add(Convert.ToInt32(v));
             }
-            if (starts[0] != 0) return null;
+            if (starts[0] != 0) { whyNot = "line data does not start at 0"; return null; }
             // The generator described a different (older) string — lengths must agree.
-            foreach (int s in starts) if (s < 0 || s > assigned.Length) return null;
+            foreach (int s in starts) if (s < 0 || s > assigned.Length)
+            { whyNot = "generator line data belongs to another text"; return null; }
 
             var outLines = new List<string>(starts.Count);
             for (int i = 0; i < starts.Count; i++)

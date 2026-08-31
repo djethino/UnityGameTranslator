@@ -3623,6 +3623,17 @@ namespace UnityGameTranslator.Core
             if (string.IsNullOrEmpty(key) || string.IsNullOrEmpty(newValue)) return;
             if (string.IsNullOrEmpty(tag)) tag = "H";
 
+            // 🔴 D8 at the last door: a key in Arabic presentation forms is the RTL pipeline's
+            // DISPLAY output read back — it can never match any source text again and pollutes
+            // the shared file irreversibly. It happened once (an editor row resolved to a shaped
+            // key before the presented→logical map existed, and a save filed it); the editor now
+            // refuses it upstream too, but this is the door every writer goes through.
+            if (TextShaping.RtlText.ContainsPresentationForms(key))
+            {
+                LogWarning($"[Editor] REFUSED to save: the key is in presentation forms (display output, not a source text): '{(key.Length > 40 ? key.Substring(0, 40) + "…" : key)}'");
+                return;
+            }
+
             if (TranslationCache.TryGetValue(key, out var existing))
             {
                 existing.Value = newValue;

@@ -1870,6 +1870,16 @@ namespace UnityGameTranslator.Core.UI.Panels
                     return;
                 }
 
+                // A key in presentation forms is the RTL pipeline's display output read back —
+                // saving it would file a key no source text can ever match (D8). The write door
+                // in TranslatorCore refuses it too; this one says WHY on screen.
+                if (TextShaping.RtlText.ContainsPresentationForms(capturedKey))
+                {
+                    _statusLabel.text = "Not saved — this row's key is display-shaped text, not a source text";
+                    _statusLabel.color = UIStyles.StatusError;
+                    return;
+                }
+
                 // Who wrote what is being saved. Accepting an AI proposal untouched files it as A:
                 // stamping H would claim a review nobody performed, and that tag drives the
                 // quality score, the A → V gesture and what the community sees.

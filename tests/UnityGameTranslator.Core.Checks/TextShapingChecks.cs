@@ -132,10 +132,34 @@ namespace UnityGameTranslator.Core.Checks
                 "a placeholder survives composing, verbatim",
                 "decision D7: this layer exists because it knows our placeholders");
 
-            string withTag = RtlComposer.Compose("<color=red>مرحبا</color>", RtlOutput.RtlFlagged);
-            check(withTag.Contains("<color=red>") && withTag.Contains("</color>"),
-                "rich-text tags survive composing, verbatim",
-                "a reordered tag would render as literal text");
+            // Tags are STRUCTURE: whatever the display direction does to the text, the markup
+            // must stay parse-valid in string order — opening first, wrapping the same glyphs.
+            // The bench (biopb) showed the sentinel approach mangling exactly this.
+            foreach (var mode in new[] { RtlOutput.RtlFlagged, RtlOutput.VisualOrder })
+            {
+                string wrapped = RtlComposer.Compose("<color=red>مرحبا بكم</color>", mode);
+                check(wrapped.StartsWith("<color=red>") && wrapped.EndsWith("</color>"),
+                    $"a whole-string tag pair stays wrapping it all ({mode})",
+                    "opening first, closing last, in STRING order");
+
+                string mid = RtlComposer.Compose("مرحبا <b>بكم</b> في عالم", mode);
+                int o = mid.IndexOf("<b>", StringComparison.Ordinal);
+                int c = mid.IndexOf("</b>", StringComparison.Ordinal);
+                check(o >= 0 && c > o,
+                    $"a mid-sentence pair stays ordered and adjacent to its word ({mode})",
+                    "the pair re-wraps the final positions of the glyphs it styled");
+
+                string two = RtlComposer.Compose("<b>مرحبا</b> <i>بكم</i>", mode);
+                check(two.IndexOf("<b>", StringComparison.Ordinal) < two.IndexOf("</b>", StringComparison.Ordinal)
+                      && two.IndexOf("<i>", StringComparison.Ordinal) < two.IndexOf("</i>", StringComparison.Ordinal),
+                    $"two sibling pairs each stay valid ({mode})",
+                    "adjacent L-classed tags used to swap during reordering");
+
+                string lone = RtlComposer.Compose("مرحبا <sprite=3> بكم", mode);
+                check(lone.Contains("<sprite=3>"),
+                    $"an unpaired tag survives verbatim ({mode})",
+                    "sprite/br tags have no closing half to pair with");
+            }
 
             check(RtlComposer.Compose("مرحبا (بكم)", RtlOutput.VisualOrder).Contains(")"),
                 "brackets mirror at RTL levels",

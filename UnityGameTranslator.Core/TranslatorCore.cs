@@ -508,19 +508,39 @@ namespace UnityGameTranslator.Core
         /// refuse genuine source text — measured on the bench, that single guard took one game from
         /// 42 wrong matches down to zero.
         /// </summary>
+        // Presented (shaped) form → the LOGICAL string it was composed from. The refuse-to-learn
+        // set says "this is ours"; only this map can say "and HERE is its truth" — without it the
+        // in-game editor resolved a shaped display back to a shaped KEY and offered to save it
+        // (found by the user: an Arabic key in the text editor).
+        private static readonly ConcurrentDictionary<string, string> presentedToLogical =
+            new ConcurrentDictionary<string, string>();
+
         /// <summary>
         /// Register a PRESENTED string — one the RTL pipeline composed for display — as our own
-        /// output. Every gate (<see cref="IsAlreadyTargetText"/>: the scanner, the getters, the
-        /// setter prefixes) then refuses to learn from it: a shaped form must never be queued to
-        /// the AI, cached as a source text, or written to translations.json (decision D8 — the
-        /// codepoints AND the order differ from the logical truth, nothing downstream could ever
-        /// map it back). Also used by the temporary RtlProbe bench for its fixed strings.
+        /// output, together with the logical string it came from. Every gate
+        /// (<see cref="IsAlreadyTargetText"/>: the scanner, the getters, the setter prefixes)
+        /// then refuses to learn from it, and everything that resolves a DISPLAYED text back to
+        /// the cache (<see cref="ResolveDisplayedText"/>) recovers the logical truth first —
+        /// a shaped form must never be queued to the AI, cached as a source text, or written to
+        /// translations.json (decision D8). Also used by the temporary RtlProbe bench.
         /// </summary>
-        internal static void RegisterPresentedText(string text)
+        internal static void RegisterPresentedText(string presented, string logical)
         {
-            if (string.IsNullOrEmpty(text)) return;
-            string n = NormalizeForReadbackMatch(text);
-            if (n != null) readbackTranslations.TryAdd(n, 0);
+            if (string.IsNullOrEmpty(presented)) return;
+            string n = NormalizeForReadbackMatch(presented);
+            if (n == null) return;
+            readbackTranslations.TryAdd(n, 0);
+            if (!string.IsNullOrEmpty(logical) && !string.Equals(presented, logical, StringComparison.Ordinal))
+                presentedToLogical[n] = logical;
+        }
+
+        /// <summary>The logical string behind a presented one, or null when the text is not ours.</summary>
+        internal static string TryGetPresentedLogical(string displayed)
+        {
+            if (string.IsNullOrEmpty(displayed) || presentedToLogical.IsEmpty) return null;
+            string n = NormalizeForReadbackMatch(displayed);
+            if (n == null) return null;
+            return presentedToLogical.TryGetValue(n, out var logical) ? logical : null;
         }
 
         private static void IndexReadbackTranslation(string key, string value)
@@ -2649,6 +2669,7 @@ namespace UnityGameTranslator.Core
                 // ALSO trim trailing whitespace/newlines because TMP often strips them when displaying
                 translatedTexts.Clear();
                 readbackTranslations.Clear();
+                presentedToLogical.Clear();
                 _readbackSkipLogCount = 0;
                 foreach (var kv in TranslationCache)
                 {
@@ -3453,6 +3474,13 @@ namespace UnityGameTranslator.Core
         public static DisplayedTextResolution ResolveDisplayedText(string displayedText)
         {
             if (string.IsNullOrEmpty(displayedText)) return null;
+
+            // A component may be showing the RTL pipeline's PRESENTED form — shaped codepoints,
+            // reordered runs. Nothing below could ever match it (and the fallback key would be
+            // the shaped text itself, one Save away from a D8 breach): recover the logical truth
+            // first and resolve THAT.
+            string presentedLogical = TryGetPresentedLogical(displayedText);
+            if (presentedLogical != null) displayedText = presentedLogical;
 
             var result = new DisplayedTextResolution();
 

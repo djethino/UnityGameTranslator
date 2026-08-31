@@ -72,7 +72,7 @@ namespace UnityGameTranslator.Core.TextShaping
                     try { prop.SetValue(instance, true, null); } catch { }
                 }
 
-                TranslatorCore.RegisterPresentedText(composed);
+                TranslatorCore.RegisterPresentedText(composed, value);
 
                 if (_logBudget > 0)
                 {

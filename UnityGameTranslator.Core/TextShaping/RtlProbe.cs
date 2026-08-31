@@ -41,6 +41,7 @@ namespace UnityGameTranslator.Core.TextShaping
         private const string ShortTmpMode = "ﻣﺮﺣﺒﺎ ﺑﻜﻢ ﻓﻲ ﻋﺎﻟﻢ ﺍﻟﺘﺮﺟﻤﺔ";
 
         // "الإصدار 123 من ABC جاهز الآن" — digits and Latin must read forward on screen.
+        private const string MixedLogicalRef = "الإصدار 123 من ABC جاهز الآن";
         private const string MixedTmpMode = "ﺍﻹﺻﺪﺍﺭ 321 ﻣﻦ CBA ﺟﺎﻫﺰ ﺍﻵﻥ";
         private const string MixedVisual = "ﻥﻵﺍ ﺰﻫﺎﺟ ABC ﻦﻣ 123 ﺭﺍﺪﺻﻹﺍ";
 
@@ -240,9 +241,13 @@ namespace UnityGameTranslator.Core.TextShaping
         {
             if (_registered) return;
             _registered = true;
-            foreach (var s in new[] { ShortLogical, ShortVisual, ShortTmpMode, MixedTmpMode,
-                                      MixedVisual, LongTmpMode, LongVisual, LongLogical })
-                TranslatorCore.RegisterPresentedText(s);
+            foreach (var (presented, logical) in new[]
+            {
+                (ShortLogical, ShortLogical), (ShortVisual, ShortLogical), (ShortTmpMode, ShortLogical),
+                (MixedTmpMode, MixedLogicalRef), (MixedVisual, MixedLogicalRef),
+                (LongTmpMode, LongLogical), (LongVisual, LongLogical), (LongLogical, LongLogical),
+            })
+                TranslatorCore.RegisterPresentedText(presented, logical);
         }
 
         /// <summary>

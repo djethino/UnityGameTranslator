@@ -259,16 +259,41 @@ namespace UnityGameTranslator.Core.TextShaping
             preview = null;
             if (!TypeHelper.UseAlternateTMP) return null;
             TextTarget best = null;
+            bool bestVisible = false;
             foreach (var t in TextTargets.All())
             {
                 if (t?.Text == null || t.Engine == null) continue;
                 if (!t.Engine.StartsWith("TMP", StringComparison.Ordinal)) continue;
-                if (!(t.Owner is Component)) continue;
+                var comp = t.Owner as Component;
+                if (comp == null) continue;
                 if (t.Text.Length < 2) continue;
-                if (best == null || t.Text.Length > best.Text.Length) best = t;
+
+                // A renderer some camera actually draws beats any longer text that nothing shows:
+                // the first pick landed on a quest description pane that no reachable screen
+                // displays, and the tester rightly saw nothing change. activeInHierarchy alone
+                // proved insufficient — alive is not shown.
+                bool active = false, visible = false;
+                try
+                {
+                    active = comp.gameObject.activeInHierarchy;
+                    // Generic single-parameter form: safe on IL2CPP (same reasoning as the
+                    // GetComponentInParent<Canvas>() precedent), and the build check enforces it.
+                    var r = comp.GetComponent<Renderer>();
+                    visible = r != null && r.enabled && r.isVisible;
+                }
+                catch { }
+                if (!active) continue;
+
+                if (best == null
+                    || (visible && !bestVisible)
+                    || (visible == bestVisible && t.Text.Length > best.Text.Length))
+                {
+                    best = t;
+                    bestVisible = visible;
+                }
             }
             if (best == null) return null;
-            path = best.Path;
+            path = best.Path + (bestVisible ? "  [renderer visible]" : "  [⚠ no visible renderer found — may be off-screen]");
             preview = Preview(best.Text);
             return best.Owner as Component;
         }

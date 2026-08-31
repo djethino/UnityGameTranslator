@@ -36,6 +36,7 @@ namespace UnityGameTranslator.Core.TextShaping
         // component that moves on to non-RTL text gets its own state back, not our leftovers.
         private static readonly Dictionary<long, bool> _flaggedOriginal = new Dictionary<long, bool>();
         private static readonly Dictionary<long, object> _alignedOriginal = new Dictionary<long, object>();
+        private static readonly Dictionary<long, object> _wrapOriginal = new Dictionary<long, object>();
 
         private static int _logBudget = 8;
 
@@ -210,6 +211,13 @@ namespace UnityGameTranslator.Core.TextShaping
                     TranslatorCore.RegisterPresentedText(final, entry.Logical);
                     MirrorAlignment(comp, id, entry.Mirror);
 
+                    // 🔴 WE computed the line breaks — the engine must not wrap again. A
+                    // recomposed line is exactly as wide as the rect it was cut against, and the
+                    // rendering rounding re-wrapped it: the overflowing visual chunk is the
+                    // sentence's FIRST word, shoved onto its own row (bioc bench, «تحوّل»).
+                    // Original wrap mode remembered and restored like the alignment.
+                    DisableRewrap(comp, id);
+
                     TranslatorPatches.BypassTextPrefix = true;
                     try { TypeHelper.SetText(comp, final); }
                     finally { TranslatorPatches.BypassTextPrefix = false; }
@@ -304,7 +312,9 @@ namespace UnityGameTranslator.Core.TextShaping
                 int start = starts[i];
                 int end = i + 1 < starts.Count ? starts[i + 1] : assigned.Length;
                 if (end <= start) continue;
-                string slice = assigned.Substring(start, end - start).TrimEnd('\n', '\r');
+                // Trailing spaces too: the wrap point's space rides at the slice end and pushes
+                // the recomposed line to the exact rect width.
+                string slice = assigned.Substring(start, end - start).TrimEnd('\n', '\r', ' ');
                 outLines.Add(slice.Length == 0 ? "" : RtlComposer.Compose(slice, RtlOutput.VisualOrder));
             }
             return string.Join("\n", outLines.ToArray());
@@ -366,6 +376,23 @@ namespace UnityGameTranslator.Core.TextShaping
 
         #endregion
 
+        /// <summary>horizontalOverflow = Overflow while OUR line breaks are displayed.</summary>
+        private static void DisableRewrap(object comp, long compId)
+        {
+            try
+            {
+                var prop = comp.GetType().GetProperty("horizontalOverflow", BindingFlags.Public | BindingFlags.Instance);
+                if (prop?.SetMethod == null) return;
+                object current = prop.GetValue(comp, null);
+                object overflow = Enum.ToObject(prop.PropertyType, 1);   // HorizontalWrapMode.Overflow
+                if (Equals(current, overflow)) return;
+                if (compId != -1 && !_wrapOriginal.ContainsKey(compId))
+                    _wrapOriginal[compId] = current;
+                prop.SetValue(comp, overflow, null);
+            }
+            catch { }
+        }
+
         /// <summary>Each explicit line to visual order — the whole story for TextMesh.</summary>
         private static string ComposeVisualPerLine(string logical)
         {
@@ -393,6 +420,16 @@ namespace UnityGameTranslator.Core.TextShaping
                 {
                     var alignProp = instance.GetType().GetProperty("alignment", BindingFlags.Public | BindingFlags.Instance);
                     alignProp?.SetValue(instance, anchor, null);
+                }
+                catch { }
+            }
+            if (_wrapOriginal.TryGetValue(compId, out object wrap))
+            {
+                _wrapOriginal.Remove(compId);
+                try
+                {
+                    var wrapProp = instance.GetType().GetProperty("horizontalOverflow", BindingFlags.Public | BindingFlags.Instance);
+                    wrapProp?.SetValue(instance, wrap, null);
                 }
                 catch { }
             }

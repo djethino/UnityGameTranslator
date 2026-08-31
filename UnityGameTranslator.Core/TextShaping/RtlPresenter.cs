@@ -57,8 +57,18 @@ namespace UnityGameTranslator.Core.TextShaping
 
                 if (!RtlText.NeedsPresentation(value))
                 {
-                    RestoreIfFlagged(instance, compId, prop);
-                    _reflows.Remove(compId);
+                    // ⚠ "No presentation needed" covers TWO opposite cases. A text ALREADY in
+                    // presentation forms is OUR OWN output echoing back (the game re-setting what
+                    // it read from the component, a scanner refresh) — it still NEEDS the flag
+                    // and the pending reflow it came with; restoring here flipped the flag off
+                    // under a shaped string and the whole screen read backwards (found by the
+                    // user's full Arabic playthrough, avia13). Only a genuinely LTR text is a
+                    // transition worth restoring for.
+                    if (!RtlText.ContainsPresentationForms(value))
+                    {
+                        RestoreIfFlagged(instance, compId, prop);
+                        _reflows.Remove(compId);
+                    }
                     return;
                 }
 

@@ -5333,6 +5333,19 @@ namespace UnityGameTranslator.Core.UI
                 ForceScanHotkey();
                 return;
             }
+
+            // TEMPORARY (feature/text-shaping): RTL bench probes, hardcoded on purpose — they must
+            // never become configurable or ship. See TextShaping/RtlProbe.cs.
+            if (IsHotkeyPressed("Ctrl+Shift+F9"))
+            {
+                TextShaping.RtlProbe.CycleUIToolkit();
+                return;
+            }
+            if (IsHotkeyPressed("Ctrl+F9"))
+            {
+                TextShaping.RtlProbe.Cycle();
+                return;
+            }
         }
 
         /// <summary>

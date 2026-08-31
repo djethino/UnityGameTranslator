@@ -2199,5 +2199,272 @@ namespace UnityGameTranslator.Core
 
 
         #endregion
+
+        #region RTL emission (stage D) — the line source and style adjustments RtlPresenter calls
+
+        // The standard UI Toolkit generator exposes NO line data (unlike UI.Text's
+        // cachedTextGenerator) — but it measures on demand: MeasureTextSize is the engine's own
+        // ruler, so re-deriving the break points word by word is still the ENGINE deciding where
+        // text fits, not a home-grown metric. Resolved lazily; every member may be null on an
+        // exotic runtime and every caller must survive that.
+        private static bool _rtlPlumbingResolved;
+        private static MethodInfo _measureTextSize;          // TextElement.MeasureTextSize(string, float, MeasureMode, float, MeasureMode)
+        private static object _measureUndefined;             // MeasureMode.Undefined, boxed once
+        private static PropertyInfo _contentRectProp;        // VisualElement.contentRect -> Rect
+        private static PropertyInfo _styleWhiteSpaceProp;    // IStyle.whiteSpace        (inline)
+        private static PropertyInfo _resolvedWhiteSpaceProp; // resolvedStyle.whiteSpace (computed)
+        private static PropertyInfo _styleTextAlignProp;     // IStyle.unityTextAlign    (inline)
+        private static PropertyInfo _resolvedTextAlignProp;  // resolvedStyle.unityTextAlign
+        private static PropertyInfo _resolvedTextGenProp;    // resolvedStyle.unityTextGenerator (Unity 6+, else null)
+
+        // The INLINE style values an element wore before our adjustments — restored verbatim
+        // when its text goes back to LTR, so an element that never had an inline value gets its
+        // "unset" keyword back, not a frozen copy of what the stylesheet computed that day.
+        // [0] = inline unityTextAlign, [1] = the RESOLVED original the mirror is computed from.
+        private static readonly ConditionalWeakTable<object, object[]> _rtlAlignOriginal =
+            new ConditionalWeakTable<object, object[]>();
+        // [0] = inline whiteSpace.
+        private static readonly ConditionalWeakTable<object, object[]> _rtlWrapOriginal =
+            new ConditionalWeakTable<object, object[]>();
+
+        private static void EnsureRtlPlumbing()
+        {
+            if (_rtlPlumbingResolved || !Available) return;
+            _rtlPlumbingResolved = true;
+            var pubInst = BindingFlags.Public | BindingFlags.Instance;
+            try
+            {
+                _measureTextSize = TextElementType.GetMethod("MeasureTextSize", pubInst);
+                if (_measureTextSize != null)
+                {
+                    var ps = _measureTextSize.GetParameters();
+                    // The MeasureMode enum is NESTED in VisualElement and its namespace moved
+                    // across versions — the parameter always knows its own type (the same lesson
+                    // as the ATG probe's StyleEnum<T> trick).
+                    if (ps.Length == 5) _measureUndefined = Enum.ToObject(ps[2].ParameterType, 0);
+                    else _measureTextSize = null;
+                }
+                _contentRectProp = VisualElementType.GetProperty("contentRect", pubInst);
+
+                var styleType = _styleProp?.PropertyType;
+                _styleWhiteSpaceProp = styleType?.GetProperty("whiteSpace", pubInst);
+                _styleTextAlignProp = styleType?.GetProperty("unityTextAlign", pubInst);
+
+                var resolvedType = _resolvedStyleProp?.PropertyType;
+                _resolvedWhiteSpaceProp = resolvedType?.GetProperty("whiteSpace", pubInst);
+                _resolvedTextAlignProp = resolvedType?.GetProperty("unityTextAlign", pubInst);
+                _resolvedTextGenProp = resolvedType?.GetProperty("unityTextGenerator", pubInst);
+            }
+            catch { }
+        }
+
+        internal static bool IsTextElementInstance(object o)
+            => Available && o != null && TextElementType.IsInstanceOfType(o);
+
+        internal static string GetElementText(object element)
+        {
+            try { return _textProp?.GetValue(element, null) as string; }
+            catch { return null; }
+        }
+
+        /// <summary>
+        /// Write without re-entering our own setter prefix, AND keep <c>_written</c> honest: the
+        /// scan compares an element's text against what we last wrote, and a reflow that bypassed
+        /// that table would make our own final form look like fresh game text one frame later.
+        /// </summary>
+        internal static void SetElementTextSilently(object element, string text)
+        {
+            if (_textProp == null) return;
+            _writingBack = true;
+            try { _textProp.SetValue(element, text, null); }
+            finally { _writingBack = false; }
+            _written.Remove(element);
+            _written.Add(element, text);
+        }
+
+        internal static bool IsElementAttached(object element)
+        {
+            try { return _panelProp != null && _panelProp.GetValue(element, null) != null; }
+            catch { return false; }
+        }
+
+        /// <summary>
+        /// True when this element renders through the Advanced Text Generator, which does bidi
+        /// and shaping natively — presenting on top of it would double-process. The property only
+        /// exists on Unity 6+; anywhere it cannot be read, the answer is "standard generator".
+        /// </summary>
+        internal static bool IsAtgActive(object element)
+        {
+            EnsureRtlPlumbing();
+            if (_resolvedTextGenProp == null) return false;
+            try
+            {
+                var resolved = _resolvedStyleProp.GetValue(element, null);
+                if (resolved == null) return false;
+                object gen = _resolvedTextGenProp.GetValue(resolved, null);
+                return gen != null && Enum.GetName(gen.GetType(), gen) == "Advanced";
+            }
+            catch { return false; }
+        }
+
+        /// <summary>
+        /// The assigned (shaped logical) string cut into lines the way THIS element would wrap
+        /// it: greedy word fitting measured by the engine itself. Null = not answerable yet (no
+        /// layout) or not at all (no measure API) — whyNot says which, the caller decides how
+        /// long to wait.
+        /// </summary>
+        internal static List<string> TryBreakLines(object element, string assigned, out string whyNot)
+        {
+            whyNot = null;
+            EnsureRtlPlumbing();
+            if (_measureTextSize == null || _contentRectProp == null)
+            { whyNot = "MeasureTextSize not available on this runtime"; return null; }
+
+            // No soft wrap on this element → every break is an explicit '\n' already.
+            try
+            {
+                var resolved = _resolvedStyleProp?.GetValue(element, null);
+                object ws = resolved == null || _resolvedWhiteSpaceProp == null
+                    ? null : _resolvedWhiteSpaceProp.GetValue(resolved, null);
+                string wsName = ws == null ? null : Enum.GetName(ws.GetType(), ws);
+                if (wsName == "NoWrap" || wsName == "Pre")
+                    return new List<string>(assigned.Split('\n'));
+            }
+            catch { }
+
+            float width;
+            try
+            {
+                object rect = _contentRectProp.GetValue(element, null);
+                width = rect is Rect r ? r.width : float.NaN;
+            }
+            catch { width = float.NaN; }
+            if (float.IsNaN(width) || width < 1f) { whyNot = "no layout yet (element has no width)"; return null; }
+
+            // A pathological wall of text would mean thousands of reflection round-trips into the
+            // engine — the whole-string fallback is the lesser harm there.
+            if (assigned.Length > 4000) { whyNot = "too long to measure word by word"; return null; }
+
+            try
+            {
+                var lines = new List<string>();
+                foreach (string paragraph in assigned.Split('\n'))
+                {
+                    if (paragraph.Length == 0) { lines.Add(""); continue; }
+                    string current = "";
+                    foreach (string word in paragraph.Split(' '))
+                    {
+                        string candidate = current.Length == 0 ? word : current + " " + word;
+                        if (current.Length == 0 || MeasureWidth(element, candidate) <= width + 0.5f)
+                        {
+                            current = candidate;
+                            continue;
+                        }
+                        lines.Add(current);
+                        current = word;
+                    }
+                    lines.Add(current);
+                }
+                return lines;
+            }
+            catch (Exception ex)
+            {
+                whyNot = $"measure failed: {ex.Message}";
+                return null;
+            }
+        }
+
+        private static float MeasureWidth(object element, string s)
+        {
+            object r = _measureTextSize.Invoke(element,
+                new object[] { s, 0f, _measureUndefined, 0f, _measureUndefined });
+            if (r is Vector2 v) return v.x;
+            var xf = r?.GetType().GetField("x");
+            return xf != null ? Convert.ToSingle(xf.GetValue(r)) : float.NaN;
+        }
+
+        /// <summary>
+        /// The UI Toolkit face of RtlPresenter.MirrorAlignment — same decision, same idempotence
+        /// (computed from the stored ORIGINAL, never the current state), different plumbing:
+        /// alignment here is a STYLE (unityTextAlign), read resolved, written inline.
+        /// </summary>
+        internal static void MirrorAlign(object element, bool mirror)
+        {
+            if (!mirror) return;
+            EnsureRtlPlumbing();
+            if (_styleTextAlignProp == null || _resolvedTextAlignProp == null) return;
+            try
+            {
+                object[] stored;
+                if (!_rtlAlignOriginal.TryGetValue(element, out stored))
+                {
+                    var style = _styleProp.GetValue(element, null);
+                    var resolved = _resolvedStyleProp.GetValue(element, null);
+                    if (style == null || resolved == null) return;
+                    stored = new object[]
+                    {
+                        _styleTextAlignProp.GetValue(style, null),
+                        _resolvedTextAlignProp.GetValue(resolved, null),
+                    };
+                    _rtlAlignOriginal.Add(element, stored);
+                }
+
+                object originalEnum = stored[1];
+                if (originalEnum == null) return;
+                object mirrored = TextShaping.RtlPresenter.MirroredAlignmentValue(originalEnum.GetType(), originalEnum);
+                if (mirrored == null) return;
+
+                var styleNow = _styleProp.GetValue(element, null);
+                if (styleNow == null) return;
+                var styleValue = Activator.CreateInstance(_styleTextAlignProp.PropertyType, mirrored);
+                _styleTextAlignProp.SetValue(styleNow, styleValue, null);
+            }
+            catch { }
+        }
+
+        /// <summary>whiteSpace = NoWrap while OUR line breaks are displayed ('\n' stays honored).</summary>
+        internal static void DisableWrap(object element)
+        {
+            EnsureRtlPlumbing();
+            if (_styleWhiteSpaceProp == null) return;
+            try
+            {
+                var style = _styleProp.GetValue(element, null);
+                if (style == null) return;
+
+                if (!_rtlWrapOriginal.TryGetValue(element, out _))
+                    _rtlWrapOriginal.Add(element, new object[] { _styleWhiteSpaceProp.GetValue(style, null) });
+
+                var styleEnumType = _styleWhiteSpaceProp.PropertyType;
+                var wsType = styleEnumType.IsGenericType ? styleEnumType.GetGenericArguments()[0] : null;
+                if (wsType == null) return;
+                var styleValue = Activator.CreateInstance(styleEnumType, Enum.Parse(wsType, "NoWrap"));
+                _styleWhiteSpaceProp.SetValue(style, styleValue, null);
+            }
+            catch { }
+        }
+
+        /// <summary>Put back the inline styles an element wore before our RTL adjustments.</summary>
+        internal static void RestoreRtlAdjustments(object element)
+        {
+            try
+            {
+                var style = _styleProp?.GetValue(element, null);
+                if (style == null) return;
+                if (_rtlAlignOriginal.TryGetValue(element, out var align))
+                {
+                    _rtlAlignOriginal.Remove(element);
+                    if (align[0] != null) _styleTextAlignProp?.SetValue(style, align[0], null);
+                }
+                if (_rtlWrapOriginal.TryGetValue(element, out var wrap))
+                {
+                    _rtlWrapOriginal.Remove(element);
+                    if (wrap[0] != null) _styleWhiteSpaceProp?.SetValue(style, wrap[0], null);
+                }
+            }
+            catch { }
+        }
+
+        #endregion
     }
 }

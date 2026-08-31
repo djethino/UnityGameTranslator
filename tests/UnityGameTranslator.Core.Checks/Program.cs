@@ -65,6 +65,9 @@ namespace UnityGameTranslator.Core.Checks
             Section("Text shaping");
             TextShapingChecks.Run(Check);
 
+            Section("Rich text index map (UI.Text line slicing)");
+            RichTextIndexMapChecks.Run(Check);
+
             Section("Bidi conformance (Unicode suite)");
             BidiConformanceChecks.Run(Check);
         }

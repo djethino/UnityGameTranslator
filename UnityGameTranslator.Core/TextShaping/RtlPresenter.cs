@@ -10,17 +10,32 @@ namespace UnityGameTranslator.Core.TextShaping
     /// turn an outgoing logical string into what the component must display. Getters are
     /// deliberately not covered: they hand text back to the GAME'S code, not to a screen.
     ///
-    /// Engine decision, probed per type and cached:
+    /// Engine decision, probed per type and cached — ONE mechanism, one LINE SOURCE per engine
+    /// (user-arbitrated 2026-08-31: every engine gets its multi-line answer, none is left as
+    /// "the documented remainder"):
     /// - <c>isRightToLeftText</c> present (TMP, TMProOld — bench-proven): flagged form + the
-    ///   flag, original value restored when the text leaves RTL;
-    /// - TextMesh (never auto-wraps): visual order per explicit line, immediately;
+    ///   flag, original value restored when the text leaves RTL. The engine owns wrapping AND
+    ///   rich-text tags natively — nothing more to do;
+    /// - TextMesh (never auto-wraps): every break is an explicit '\n' — per-line visual,
+    ///   immediately;
+    /// - tk2d: <c>FormatText(string)</c> is PUBLIC and synchronous (read in the bench game's own
+    ///   assembly) — ask the engine where it would cut the shaped logical string, then emit each
+    ///   cut line in visual order, immediately. Its overflow test is a running sum of glyph
+    ///   advances, so a reordered line that fitted still fits: no re-wrap guard needed;
     /// - UI.Text: the two-pass emission — the SHAPED LOGICAL string is assigned so the engine
     ///   cuts the paragraph at the correct text-flow points (one frame in logical order), then
-    ///   the generator's line breaks are read back and each line is converted to visual order
-    ///   with explicit newlines and a right alignment (bench avia2/silk: the one-pass visual
-    ///   string stacks its lines in reverse reading order);
-    /// - anything else (UI Toolkit, tk2d, unknown): visual order — correct single-line, the
-    ///   documented remainder.
+    ///   the generator's line breaks are read back and each line is converted to visual order.
+    ///   With rich text, the generator's indices count the TAG-STRIPPED text: RichTextIndexMap
+    ///   bridges them back to the raw string (the legacy tag set is closed, so the map can be
+    ///   exact, and the characterCount cross-check proves it per call);
+    /// - NGUI (<c>processedText</c> present): same two-pass shape — the engine wraps the assigned
+    ///   string itself and processedText hands the result back with '\n' at its own break points;
+    /// - UI Toolkit (standard generator): the engine exposes no line data, but it MEASURES on
+    ///   demand — line breaks are recomputed by asking MeasureTextSize word by word (the
+    ///   engine's own ruler, not ours), once the layout has given the element a width. An
+    ///   element already rendering through ATG does bidi natively: presentation is skipped;
+    /// - anything else: visual order — correct single-line, and now the loudly-logged exception
+    ///   rather than the silent rule.
     ///
     /// 🔴 Every composed string is registered as our own output before it leaves
     /// (<see cref="TranslatorCore.RegisterPresentedText"/>): the scanner and every gate then
@@ -74,6 +89,8 @@ namespace UnityGameTranslator.Core.TextShaping
                     return;
                 }
 
+                bool mirror = TranslatorCore.ShouldMirrorRtlAlignment(settingsFontName, overrideRule);
+
                 if (prop != null)
                 {
                     string flagged = RtlComposer.Compose(value, RtlOutput.RtlFlagged);
@@ -84,8 +101,7 @@ namespace UnityGameTranslator.Core.TextShaping
                         _flaggedOriginal[compId] = original;
                     }
                     try { prop.SetValue(instance, true, null); } catch { }
-                    MirrorAlignment(instance, compId,
-                        TranslatorCore.ShouldMirrorRtlAlignment(settingsFontName, overrideRule));
+                    MirrorAlignment(instance, compId, mirror);
                     TranslatorCore.RegisterPresentedText(flagged, value);
                     Log(compId, "flagged", value, flagged);
                     value = flagged;
@@ -100,8 +116,21 @@ namespace UnityGameTranslator.Core.TextShaping
                 {
                     string perLine = ComposeVisualPerLine(value);
                     TranslatorCore.RegisterPresentedText(perLine, value);
+                    MirrorAlignment(instance, compId, mirror);
                     Log(compId, "visual/lines", value, perLine);
                     value = perLine;
+                    return;
+                }
+
+                // tk2d: its own FormatText(string) says synchronously where it would cut — the
+                // one engine that answers the wrapping question without waiting a frame.
+                if (TranslatorPatches.Tk2dType != null && TranslatorPatches.Tk2dType.IsAssignableFrom(type))
+                {
+                    string final = ComposeTk2dPerLine(instance, value);
+                    TranslatorCore.RegisterPresentedText(final, value);
+                    MirrorAlignment(instance, compId, mirror);
+                    Log(compId, "visual/tk2d", value, final);
+                    value = final;
                     return;
                 }
 
@@ -110,25 +139,43 @@ namespace UnityGameTranslator.Core.TextShaping
                 // break points; ProcessPendingReflows converts each cut line next frame.
                 if (TypeHelper.UI_TextType != null && TypeHelper.UI_TextType.IsAssignableFrom(type))
                 {
-                    string shapedLogical = RtlComposer.ShapeLogicalOnly(value);
-                    TranslatorCore.RegisterPresentedText(shapedLogical, value);
-                    if (compId != -1)
-                        _reflows[compId] = new Reflow
-                        {
-                            Comp = new WeakReference(instance),
-                            Logical = value,
-                            Assigned = shapedLogical,
-                            Mirror = TranslatorCore.ShouldMirrorRtlAlignment(settingsFontName, overrideRule),
-                        };
-                    Log(compId, "logical+reflow", value, shapedLogical);
-                    value = shapedLogical;
+                    QueueReflow(instance, compId, ref value, ReflowKind.UGuiText, mirror, "logical+reflow");
                     return;
                 }
 
-                // Everything else: visual order, correct single-line (multi-line on these engines
-                // is the documented remainder — no generator to read).
+                // NGUI (or a lookalike carrying processedText): same two-pass shape — the engine
+                // wraps the assigned string itself, processedText hands back the result with the
+                // '\n' it inserted.
+                if (ProcessedTextProp(type) != null)
+                {
+                    QueueReflow(instance, compId, ref value, ReflowKind.Ngui, mirror, "logical+reflow/ngui");
+                    return;
+                }
+
+                // UI Toolkit: an ATG element does bidi natively — presenting on top of it would
+                // double-process. The standard generator gets the measured two-pass.
+                if (UIToolkitSupport.IsTextElementInstance(instance))
+                {
+                    if (UIToolkitSupport.IsAtgActive(instance))
+                    {
+                        UIToolkitSupport.RestoreRtlAdjustments(instance);
+                        Log(compId, "native/atg", value, value);
+                        return;
+                    }
+                    QueueReflow(instance, compId, ref value, ReflowKind.UiToolkit, mirror, "logical+reflow/uitk");
+                    return;
+                }
+
+                // Everything else: visual order — correct single-line. This branch is now the
+                // documented EXCEPTION (unknown frameworks), not the rule, and it says so.
                 string composed = RtlComposer.Compose(value, RtlOutput.VisualOrder);
                 TranslatorCore.RegisterPresentedText(composed, value);
+                MirrorAlignment(instance, compId, mirror);
+                if (_fallbackLogBudget > 0)
+                {
+                    _fallbackLogBudget--;
+                    TranslatorCore.LogWarning($"[RtlPresenter] no line source for {type.Name} — whole-string visual order, multi-line may stack bottom-up");
+                }
                 Log(compId, "visual", value, composed);
                 value = composed;
             }
@@ -140,7 +187,9 @@ namespace UnityGameTranslator.Core.TextShaping
             }
         }
 
-        #region UI.Text reflow (pass 2)
+        #region Deferred reflow (pass 2) — UI.Text, NGUI, UI Toolkit
+
+        private enum ReflowKind { UGuiText, Ngui, UiToolkit }
 
         private sealed class Reflow
         {
@@ -149,21 +198,49 @@ namespace UnityGameTranslator.Core.TextShaping
             public string Assigned;
             public int Attempts;
             public bool Mirror;
+            public ReflowKind Kind;
         }
 
         private static readonly Dictionary<long, Reflow> _reflows = new Dictionary<long, Reflow>();
         private static readonly List<long> _reflowScratch = new List<long>();
+
+        private static void QueueReflow(object instance, long compId, ref string value,
+                                        ReflowKind kind, bool mirror, string logMode)
+        {
+            string shapedLogical = RtlComposer.ShapeLogicalOnly(value);
+            TranslatorCore.RegisterPresentedText(shapedLogical, value);
+            if (compId != -1)
+                _reflows[compId] = new Reflow
+                {
+                    Comp = new WeakReference(instance),
+                    Logical = value,
+                    Assigned = shapedLogical,
+                    Mirror = mirror,
+                    Kind = kind,
+                };
+            Log(compId, logMode, value, shapedLogical);
+            value = shapedLogical;
+        }
 
         // cachedTextGenerator plumbing, resolved once per process.
         private static bool _genResolved;
         private static PropertyInfo _cachedGeneratorProp;   // Text.cachedTextGenerator
         private static PropertyInfo _generatorLinesProp;    // TextGenerator.lines -> IList<UILineInfo>
         private static PropertyInfo _generatorCharCountProp; // TextGenerator.characterCount
+        private static PropertyInfo _supportRichTextProp;   // Text.supportRichText
         private static FieldInfo _lineStartCharField;       // UILineInfo.startCharIdx
         private static PropertyInfo _lineStartCharProp;
 
+        // processedText per concrete type (NGUI UILabel and lookalikes).
+        private static readonly Dictionary<Type, PropertyInfo> _processedTextProps = new Dictionary<Type, PropertyInfo>();
+
+        // tk2d FormatText(string), resolved once (one tk2d type per game).
+        private static bool _tk2dResolved;
+        private static MethodInfo _tk2dFormatText;
+        private static PropertyInfo _tk2dInlineStyling;
+
         /// <summary>
-        /// Convert every pending UI.Text from its measuring form (shaped logical) to the final
+        /// Convert every pending component from its measuring form (shaped logical) to the final
         /// per-line visual form, using the break points the engine just computed. Called once per
         /// frame from the scanner's update pass, main thread.
         /// </summary>
@@ -183,20 +260,26 @@ namespace UnityGameTranslator.Core.TextShaping
                 try
                 {
                     // The game moved on to another text — this reflow is stale.
-                    if (TypeHelper.GetText(comp) != entry.Assigned) { _reflows.Remove(id); continue; }
+                    string currentText = entry.Kind == ReflowKind.UiToolkit
+                        ? UIToolkitSupport.GetElementText(comp)
+                        : TypeHelper.GetText(comp);
+                    if (currentText != entry.Assigned) { _reflows.Remove(id); continue; }
 
                     // An INACTIVE component has no line data and never will until it shows: games
                     // preload hidden panes (a guide fills every page up front), and burning the
                     // attempts there left the fallback's reversed line stack as the final display
                     // once the pane opened (bios/biot bench). Wait, without spending attempts —
-                    // staleness is already covered by the text check above.
+                    // staleness is already covered by the text check above. Same story for a
+                    // UI Toolkit element not (yet) attached to a panel.
                     if (comp is UnityEngine.Component c && c.gameObject != null && !c.gameObject.activeInHierarchy)
                         continue;
+                    if (entry.Kind == ReflowKind.UiToolkit && !UIToolkitSupport.IsElementAttached(comp))
+                        continue;
 
-                    string final = BuildPerLineVisual(comp, entry.Assigned, out string whyNot);
+                    string final = BuildLines(entry.Kind, comp, entry.Assigned, out string whyNot);
                     if (final == null)
                     {
-                        // Generator not ready (or unreadable). A few frames, then fall back to
+                        // Line source not ready (or unreadable). A few frames, then fall back to
                         // whole-string visual — and SAY so: a silent fallback made the reversed
                         // line stack undiagnosable from a screenshot.
                         if (++entry.Attempts < 3) continue;
@@ -209,18 +292,34 @@ namespace UnityGameTranslator.Core.TextShaping
                     }
 
                     TranslatorCore.RegisterPresentedText(final, entry.Logical);
-                    MirrorAlignment(comp, id, entry.Mirror);
 
-                    // 🔴 WE computed the line breaks — the engine must not wrap again. A
-                    // recomposed line is exactly as wide as the rect it was cut against, and the
-                    // rendering rounding re-wrapped it: the overflowing visual chunk is the
-                    // sentence's FIRST word, shoved onto its own row (bioc bench, «تحوّل»).
-                    // Original wrap mode remembered and restored like the alignment.
-                    DisableRewrap(comp, id);
+                    if (entry.Kind == ReflowKind.UiToolkit)
+                    {
+                        UIToolkitSupport.MirrorAlign(comp, entry.Mirror);
+                        // 🔴 WE computed the line breaks — the engine must not wrap again (see
+                        // DisableRewrap below for the uGUI account of why). UI Toolkit's knob is
+                        // the whiteSpace style; explicit '\n' stay honored under NoWrap.
+                        UIToolkitSupport.DisableWrap(comp);
+                        UIToolkitSupport.SetElementTextSilently(comp, final);
+                    }
+                    else
+                    {
+                        MirrorAlignment(comp, id, entry.Mirror);
+                        // 🔴 WE computed the line breaks — the engine must not wrap again. A
+                        // recomposed line is exactly as wide as the rect it was cut against, and
+                        // the rendering rounding re-wrapped it: the overflowing visual chunk is
+                        // the sentence's FIRST word, shoved onto its own row (bioc bench,
+                        // «تحوّل»). Original wrap mode remembered and restored like the
+                        // alignment. NGUI has no such knob; its wrap re-measures the same glyph
+                        // advances deterministically (no rendering rounding), so a trimmed line
+                        // that fitted keeps fitting — bench holds the proof burden there.
+                        if (entry.Kind == ReflowKind.UGuiText)
+                            DisableRewrap(comp, id);
 
-                    TranslatorPatches.BypassTextPrefix = true;
-                    try { TypeHelper.SetText(comp, final); }
-                    finally { TranslatorPatches.BypassTextPrefix = false; }
+                        TranslatorPatches.BypassTextPrefix = true;
+                        try { TypeHelper.SetText(comp, final); }
+                        finally { TranslatorPatches.BypassTextPrefix = false; }
+                    }
                     _reflows.Remove(id);
                 }
                 catch (Exception ex)
@@ -231,19 +330,31 @@ namespace UnityGameTranslator.Core.TextShaping
             }
         }
 
+        private static int _fallbackLogBudget = 5;
+
+        /// <summary>One line source per engine; everything after the cut is shared.</summary>
+        private static string BuildLines(ReflowKind kind, object comp, string assigned, out string whyNot)
+        {
+            switch (kind)
+            {
+                case ReflowKind.UGuiText:
+                    return BuildPerLineVisual(comp, assigned, out whyNot);
+                case ReflowKind.Ngui:
+                    return BuildNguiLines(comp, assigned, out whyNot);
+                default:
+                    var lines = UIToolkitSupport.TryBreakLines(comp, assigned, out whyNot);
+                    return lines == null ? null : ComposeLines(lines);
+            }
+        }
+
         /// <summary>
         /// The assigned string re-cut at the engine's own break points, each line converted to
         /// visual order. Null when the generator cannot be read (not populated yet, IL2CPP
-        /// marshaling, rich-text indices — see below).
+        /// marshaling — see below).
         /// </summary>
-        private static int _fallbackLogBudget = 5;
-
         private static string BuildPerLineVisual(object comp, string assigned, out string whyNot)
         {
             whyNot = null;
-            // ⚠ Rich text: the generator's char indices refer to the TAG-STRIPPED text, ours to
-            // the raw string — slicing would tear a tag apart. Whole-string visual instead.
-            if (assigned.IndexOf('<') >= 0) { whyNot = "rich text tags present"; return null; }
 
             if (!_genResolved)
             {
@@ -251,6 +362,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 try
                 {
                     _cachedGeneratorProp = TypeHelper.UI_TextType.GetProperty("cachedTextGenerator", BindingFlags.Public | BindingFlags.Instance);
+                    _supportRichTextProp = TypeHelper.UI_TextType.GetProperty("supportRichText", BindingFlags.Public | BindingFlags.Instance);
                     var genType = _cachedGeneratorProp?.PropertyType;
                     _generatorLinesProp = genType?.GetProperty("lines", BindingFlags.Public | BindingFlags.Instance);
                     _generatorCharCountProp = genType?.GetProperty("characterCount", BindingFlags.Public | BindingFlags.Instance);
@@ -276,6 +388,27 @@ namespace UnityGameTranslator.Core.TextShaping
                 || (_lineStartCharField == null && _lineStartCharProp == null))
             { whyNot = "text generator API not resolvable on this runtime"; return null; }
 
+            // ⚠ Rich text: the generator's char indices count the TAG-STRIPPED text, our slices
+            // cut the raw string — RichTextIndexMap bridges the two. Only when the component
+            // actually parses tags: with supportRichText off, a '<' is an ordinary character.
+            int[] tagMap = null;
+            int referenceLength = assigned.Length;
+            if (assigned.IndexOf('<') >= 0)
+            {
+                bool richText = true;
+                try
+                {
+                    if (_supportRichTextProp != null)
+                        richText = (bool)_supportRichTextProp.GetValue(comp, null);
+                }
+                catch { }
+                if (richText)
+                {
+                    tagMap = RichTextIndexMap.Build(assigned, out int strippedLength);
+                    if (tagMap != null) referenceLength = strippedLength;
+                }
+            }
+
             var generator = _cachedGeneratorProp.GetValue(comp, null);
             if (generator == null) { whyNot = "no cached generator"; return null; }
 
@@ -283,12 +416,14 @@ namespace UnityGameTranslator.Core.TextShaping
             // and for a frame or two the generator still describes the PREVIOUS text — its line
             // starts fall inside our bounds and the slices cut words in half (biob bench: نفسك
             // sawn across two distant lines). The generated character count must match the
-            // assigned string (±1: Unity generates a trailing terminator glyph).
+            // reference length (±1: Unity generates a trailing terminator glyph). With a tag map
+            // in play this same check is also the PROOF of the map: if the native parser stripped
+            // differently than RichTextIndexMap claims, the counts diverge and we fall back.
             if (_generatorCharCountProp != null)
             {
                 int genChars = Convert.ToInt32(_generatorCharCountProp.GetValue(generator, null));
-                if (Math.Abs(genChars - assigned.Length) > 1)
-                { whyNot = $"generator describes another text ({genChars} chars vs {assigned.Length})"; return null; }
+                if (Math.Abs(genChars - referenceLength) > 1)
+                { whyNot = $"generator describes another text ({genChars} chars vs {referenceLength})"; return null; }
             }
 
             var lines = _generatorLinesProp.GetValue(generator, null) as System.Collections.IList;
@@ -303,19 +438,138 @@ namespace UnityGameTranslator.Core.TextShaping
             }
             if (starts[0] != 0) { whyNot = "line data does not start at 0"; return null; }
             // The generator described a different (older) string — lengths must agree.
-            foreach (int s in starts) if (s < 0 || s > assigned.Length)
+            foreach (int s in starts) if (s < 0 || s > referenceLength)
             { whyNot = "generator line data belongs to another text"; return null; }
 
-            var outLines = new List<string>(starts.Count);
+            var slices = new List<string>(starts.Count);
             for (int i = 0; i < starts.Count; i++)
             {
                 int start = starts[i];
-                int end = i + 1 < starts.Count ? starts[i + 1] : assigned.Length;
+                int end = i + 1 < starts.Count ? starts[i + 1] : referenceLength;
                 if (end <= start) continue;
-                // Trailing spaces too: the wrap point's space rides at the slice end and pushes
-                // the recomposed line to the exact rect width.
-                string slice = assigned.Substring(start, end - start).TrimEnd('\n', '\r', ' ');
-                outLines.Add(slice.Length == 0 ? "" : RtlComposer.Compose(slice, RtlOutput.VisualOrder));
+                int rawStart = tagMap == null ? start : tagMap[start];
+                int rawEnd = tagMap == null ? end : tagMap[end];
+                slices.Add(assigned.Substring(rawStart, rawEnd - rawStart));
+            }
+            return ComposeLines(slices);
+        }
+
+        /// <summary>
+        /// NGUI's line source: the label wrapped the assigned string itself and processedText
+        /// hands it back with '\n' at its break points. The equality check (both strings modulo
+        /// whitespace) is what keeps this honest: encoding markup, ellipsis or shrink produce a
+        /// DIFFERENT text, and cutting the assigned string with someone else's breaks would saw
+        /// words — divergence falls back to whole-string visual instead.
+        /// </summary>
+        private static string BuildNguiLines(object comp, string assigned, out string whyNot)
+        {
+            whyNot = null;
+            var prop = ProcessedTextProp(comp.GetType());
+            if (prop == null) { whyNot = "processedText disappeared"; return null; }
+
+            string processed = null;
+            try { processed = prop.GetValue(comp, null) as string; } catch { }
+            if (string.IsNullOrEmpty(processed)) { whyNot = "processedText not ready"; return null; }
+
+            if (!EqualsIgnoringWhitespace(processed, assigned))
+            { whyNot = "processedText diverges from the assigned text (markup, ellipsis or shrink)"; return null; }
+
+            return ComposeLines(processed.Split('\n'));
+        }
+
+        private static PropertyInfo ProcessedTextProp(Type type)
+        {
+            if (_processedTextProps.TryGetValue(type, out var cached)) return cached;
+            PropertyInfo prop = null;
+            try
+            {
+                prop = type.GetProperty("processedText", BindingFlags.Public | BindingFlags.Instance);
+                if (prop != null && (prop.PropertyType != typeof(string) || prop.GetMethod == null))
+                    prop = null;
+            }
+            catch { }
+            _processedTextProps[type] = prop;
+            return prop;
+        }
+
+        private static bool EqualsIgnoringWhitespace(string a, string b)
+        {
+            int i = 0, j = 0;
+            while (true)
+            {
+                while (i < a.Length && (a[i] == ' ' || a[i] == '\n' || a[i] == '\r' || a[i] == '\t')) i++;
+                while (j < b.Length && (b[j] == ' ' || b[j] == '\n' || b[j] == '\r' || b[j] == '\t')) j++;
+                if (i >= a.Length || j >= b.Length) return i >= a.Length && j >= b.Length;
+                if (a[i] != b[j]) return false;
+                i++; j++;
+            }
+        }
+
+        #endregion
+
+        #region tk2d (synchronous line source)
+
+        /// <summary>
+        /// Ask tk2d where it would cut, then emit per cut line — all inside the setter prefix.
+        /// FormatText keeps explicit '\n', replaces the wrap-point handling around spaces, and
+        /// its inline styling commands use '^', which our composer does not protect: a text that
+        /// both carries '^' and runs through a component with inlineStyling on falls back to the
+        /// per-explicit-line form rather than risk tearing a command apart.
+        /// </summary>
+        private static string ComposeTk2dPerLine(object instance, string logical)
+        {
+            if (!_tk2dResolved)
+            {
+                _tk2dResolved = true;
+                try
+                {
+                    _tk2dFormatText = TranslatorPatches.Tk2dType.GetMethod("FormatText",
+                        BindingFlags.Public | BindingFlags.Instance, null, new[] { typeof(string) }, null);
+                    _tk2dInlineStyling = TranslatorPatches.Tk2dType.GetProperty("inlineStyling",
+                        BindingFlags.Public | BindingFlags.Instance);
+                }
+                catch { }
+            }
+
+            string shaped = RtlComposer.ShapeLogicalOnly(logical);
+
+            if (shaped.IndexOf('^') >= 0)
+            {
+                bool styling = false;
+                try { styling = _tk2dInlineStyling != null && (bool)_tk2dInlineStyling.GetValue(instance, null); }
+                catch { }
+                if (styling) return ComposeVisualPerLine(logical);
+            }
+
+            string wrapped = shaped;
+            if (_tk2dFormatText != null)
+            {
+                try { wrapped = (string)_tk2dFormatText.Invoke(instance, new object[] { shaped }) ?? shaped; }
+                catch { wrapped = shaped; }
+            }
+            else if (_fallbackLogBudget > 0)
+            {
+                _fallbackLogBudget--;
+                TranslatorCore.LogWarning("[RtlPresenter] tk2dTextMesh.FormatText not resolvable — per-explicit-line only, engine wrap points unknown");
+            }
+
+            return ComposeLines(wrapped.Split('\n'));
+        }
+
+        #endregion
+
+        /// <summary>
+        /// The shared tail of every line source: trim each cut line (the wrap point's space rides
+        /// at the slice end and pushes the recomposed line to the exact rect width — bioc bench),
+        /// convert it to visual order, join with explicit newlines.
+        /// </summary>
+        private static string ComposeLines(IList<string> slices)
+        {
+            var outLines = new List<string>(slices.Count);
+            for (int i = 0; i < slices.Count; i++)
+            {
+                string line = slices[i].TrimEnd('\n', '\r', ' ');
+                outLines.Add(line.Length == 0 ? "" : RtlComposer.Compose(line, RtlOutput.VisualOrder));
             }
             return string.Join("\n", outLines.ToArray());
         }
@@ -327,9 +581,14 @@ namespace UnityGameTranslator.Core.TextShaping
         /// value is restored when the component goes back to LTR. The DECISION is per font and
         /// per override rule (<see cref="TranslatorCore.ShouldMirrorRtlAlignment"/> —
         /// user-arbitrated: one game mixes components that need the mirror with boxes built for
-        /// one side, so a global switch cannot be right). Handles both alignment vocabularies:
-        /// UI.Text/TextMesh TextAnchor (triples, column 0/1/2) and TMP's TextAlignmentOptions
-        /// (bit field, horizontal Left=1 / Right=4 in the low byte).
+        /// one side, so a global switch cannot be right).
+        ///
+        /// The swap works by NAME first — "Left"→"Right" inside the enum member's own name —
+        /// which covers every alignment vocabulary met so far with one rule: TextAnchor
+        /// (UpperLeft→UpperRight), NGUIText.Alignment (Left→Right, Automatic untouched), TMP's
+        /// named combos (TopLeft→TopRight). Two arithmetic fallbacks remain for enums whose
+        /// value has no name, GUARDED BY TYPE NAME: the old "any int ≤ 8 is a TextAnchor triple"
+        /// guess would corrupt NGUI's enum (Right=3 → 5, undefined).
         /// </summary>
         private static void MirrorAlignment(object comp, long compId, bool mirror)
         {
@@ -337,7 +596,7 @@ namespace UnityGameTranslator.Core.TextShaping
             try
             {
                 var alignProp = comp.GetType().GetProperty("alignment", BindingFlags.Public | BindingFlags.Instance);
-                if (alignProp?.SetMethod == null) return;
+                if (alignProp?.SetMethod == null || !alignProp.PropertyType.IsEnum) return;
                 object current = alignProp.GetValue(comp, null);
 
                 // 🔴 IDEMPOTENT, computed from the ORIGINAL — never from the current state. The
@@ -351,30 +610,48 @@ namespace UnityGameTranslator.Core.TextShaping
                     if (compId != -1) _alignedOriginal[compId] = original;
                 }
 
-                int v = Convert.ToInt32(original);
-                int mirrored = v;
-
-                if (Enum.GetUnderlyingType(alignProp.PropertyType) == typeof(int) && v <= 8)
-                {
-                    // TextAnchor-style: 3 rows of Left/Center/Right.
-                    int column = v % 3;
-                    if (column == 0) mirrored = v + 2;
-                    else if (column == 2) mirrored = v - 2;
-                }
-                else
-                {
-                    // TMP TextAlignmentOptions-style bit field: horizontal flags in the low byte.
-                    if ((v & 0x1) != 0) mirrored = (v & ~0x1) | 0x4;
-                    else if ((v & 0x4) != 0) mirrored = (v & ~0x4) | 0x1;
-                }
-
-                if (mirrored == Convert.ToInt32(current)) return;
-                alignProp.SetValue(comp, Enum.ToObject(alignProp.PropertyType, mirrored), null);
+                object mirroredObj = MirroredAlignmentValue(alignProp.PropertyType, original);
+                if (mirroredObj == null || Equals(mirroredObj, current)) return;
+                alignProp.SetValue(comp, mirroredObj, null);
             }
             catch { }
         }
 
-        #endregion
+        /// <summary>The mirrored value of one alignment enum, or null when there is nothing to swap.</summary>
+        internal static object MirroredAlignmentValue(Type enumType, object original)
+        {
+            string name = null;
+            try { name = Enum.GetName(enumType, original); } catch { }
+            if (name != null)
+            {
+                string swapped =
+                    name.IndexOf("Left", StringComparison.Ordinal) >= 0 ? name.Replace("Left", "Right") :
+                    name.IndexOf("Right", StringComparison.Ordinal) >= 0 ? name.Replace("Right", "Left") : null;
+                if (swapped != null)
+                {
+                    try { return Enum.Parse(enumType, swapped); }
+                    catch { }
+                }
+                return null;   // named value with no Left/Right — Center, Justified, Automatic…
+            }
+
+            int v = Convert.ToInt32(original);
+            int mirrored = v;
+            if (enumType.Name == "TextAnchor" && v <= 8)
+            {
+                // TextAnchor-style: 3 rows of Left/Center/Right.
+                int column = v % 3;
+                if (column == 0) mirrored = v + 2;
+                else if (column == 2) mirrored = v - 2;
+            }
+            else if (enumType.Name == "TextAlignmentOptions")
+            {
+                // TMP bit field: horizontal flags in the low byte.
+                if ((v & 0x1) != 0) mirrored = (v & ~0x1) | 0x4;
+                else if ((v & 0x4) != 0) mirrored = (v & ~0x4) | 0x1;
+            }
+            return mirrored == v ? null : Enum.ToObject(enumType, mirrored);
+        }
 
         /// <summary>horizontalOverflow = Overflow while OUR line breaks are displayed.</summary>
         private static void DisableRewrap(object comp, long compId)
@@ -396,17 +673,14 @@ namespace UnityGameTranslator.Core.TextShaping
         /// <summary>Each explicit line to visual order — the whole story for TextMesh.</summary>
         private static string ComposeVisualPerLine(string logical)
         {
-            var lines = logical.Split('\n');
-            for (int i = 0; i < lines.Length; i++)
-            {
-                string line = lines[i].TrimEnd('\r');
-                lines[i] = line.Length == 0 ? line : RtlComposer.Compose(line, RtlOutput.VisualOrder);
-            }
-            return string.Join("\n", lines);
+            return ComposeLines(logical.Split('\n'));
         }
 
         private static void RestoreIfFlagged(object instance, long compId, PropertyInfo prop)
         {
+            if (UIToolkitSupport.IsTextElementInstance(instance))
+                UIToolkitSupport.RestoreRtlAdjustments(instance);
+
             if (compId == -1) return;
             if (prop != null && _flaggedOriginal.TryGetValue(compId, out bool original))
             {

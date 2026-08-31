@@ -130,6 +130,23 @@ namespace UnityGameTranslator.Core.TextShaping
         }
 
         /// <summary>
+        /// Shaping and token protection ONLY — logical order in, logical order out. This is what
+        /// gets ASSIGNED to a no-flag engine so its own wrapping cuts the paragraph at the
+        /// correct logical points (the same text flow TMP computes with the flag); the per-line
+        /// visual conversion then happens on each cut line via <see cref="Compose"/>.
+        /// </summary>
+        internal static string ShapeLogicalOnly(string logical)
+        {
+            if (string.IsNullOrEmpty(logical)) return logical;
+            var tokens = new List<string>();
+            string sentinelized = Tokenize(logical, tokens);
+            string shaped = _shaper.Shape(sentinelized);
+            var cps = ToCodePoints(shaped);
+            var list = new List<int>(cps);
+            return Detokenize(list, tokens);
+        }
+
+        /// <summary>
         /// Swap every protected span for one sentinel codepoint. Two kinds, both bounded:
         /// placeholders <c>[!…]</c> (the pipeline's own <c>[!v*0]</c>, <c>[!t*1]</c>,
         /// <c>[!STR*2]</c>) and rich-text tags <c>&lt;…&gt;</c> under the same validity rule the

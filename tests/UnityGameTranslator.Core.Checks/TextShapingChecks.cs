@@ -140,6 +140,15 @@ namespace UnityGameTranslator.Core.Checks
             check(RtlComposer.Compose("مرحبا (بكم)", RtlOutput.VisualOrder).Contains(")"),
                 "brackets mirror at RTL levels",
                 "UAX#9 L4 via the trie's paired-bracket data");
+
+            check(RtlComposer.ShapeLogicalOnly(MixedLogical) == MixedShaped,
+                "shape-only output equals the shaper's reference",
+                "the measuring form for no-flag engines: shaped, logical, nothing moved");
+
+            string measuring = RtlComposer.ShapeLogicalOnly("مرحبا [!v*0] بكم");
+            check(measuring.Contains("[!v*0]"),
+                "shape-only keeps placeholders verbatim",
+                "pass 2 slices this string; a mangled token would slice wrong");
         }
     }
 }

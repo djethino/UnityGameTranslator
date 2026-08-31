@@ -2221,6 +2221,10 @@ namespace UnityGameTranslator.Core
             // detection runs in willRenderCanvases; set_text is safer here).
             ApplyPendingNudges();
 
+            // RTL pass 2 for UI.Text: the engine has laid out the measuring form by now — read
+            // its break points and write the final per-line visual text (see RtlPresenter).
+            TextShaping.RtlPresenter.ProcessPendingReflows();
+
             // NOTE: TickRenderWatch runs from FontManager.OnWillRenderCanvases (after the
             // game's per-frame vertex modification), so it reads the ACTUAL rendered state —
             // reading here in Update saw only TMP's un-modified base mesh.

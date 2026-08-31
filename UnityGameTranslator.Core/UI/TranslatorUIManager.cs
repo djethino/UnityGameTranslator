@@ -3334,12 +3334,19 @@ namespace UnityGameTranslator.Core.UI
         // frozen/discarded by the browser (their heartbeat stops) and that
         // must never end a session — the player can stay in-game for hours
         // before coming back to save.
-        private const float BrowserGraceSeconds = 90f;
+        // ⚠ From the socle, not written here. This file carried its own 90 and its own 600, and
+        // the manager carried a 45 and a 300 — four numbers for two questions, none of them aware
+        // of the others nor of the fifteen minutes the site actually grants a fresh session.
+        private const float BrowserGraceSeconds = EditSessions.BrowserGraceSeconds;
         private static float _browserLeftSince = -1f;     // main thread only, -1 = present
 
         // Keepalive: extends the server-side TTL for the whole play session,
-        // so the session only ever ends on browser close or game shutdown
-        private const float KeepaliveIntervalSeconds = 600f;
+        // so the session only ever ends on browser close or game shutdown.
+        //
+        // 🔴 It was 600 here, against a session the site gives 900 to live: ONE lost keepalive sat
+        // between a player mid-edit and their session vanishing. The socle derives this from the
+        // server's own TTL so two can be lost, and its checks refuse anything else.
+        private const float KeepaliveIntervalSeconds = EditSessions.KeepAliveSeconds;
         private static float _nextKeepaliveTime;           // main thread only
         private static bool _keepaliveInFlight;            // main thread only
 
@@ -3781,7 +3788,8 @@ namespace UnityGameTranslator.Core.UI
                     [EditSessions.MarkerKeyField] = TokenProtection.EncryptToken(modKey),
                     // Who and when: the manager reads this file too, and "a session is already
                     // open" is not a question anybody can answer without those two facts.
-                    [EditSessions.MarkerHolderField] = EditSessions.EditSessionHolder.Game.ToString(),
+                    [EditSessions.MarkerHolderField] =
+                        EditSessions.Serialize(EditSessions.EditSessionHolder.Game),
                     [EditSessions.MarkerOpenedField] = DateTime.UtcNow.ToString("o")
                 };
                 System.IO.File.WriteAllText(EditSessionStatePath, state.ToString());
@@ -3861,13 +3869,11 @@ namespace UnityGameTranslator.Core.UI
                 var marker = new EditSessionMarker
                 {
                     ModKey = key,
-                    // Absent on a marker this mod wrote before the field existed. The game is the
-                    // only thing that wrote one back then, so that is the honest reading.
-                    Holder = string.Equals(state[EditSessions.MarkerHolderField]?.Value<string>(),
-                                           EditSessions.EditSessionHolder.Manager.ToString(),
-                                           StringComparison.OrdinalIgnoreCase)
-                        ? EditSessions.EditSessionHolder.Manager
-                        : EditSessions.EditSessionHolder.Game
+                    // ⚠ Read through the socle, not compared here. The manager had the same three
+                    // lines, and the request that opens a session would have made a third copy —
+                    // see ParseHolder for why absent, misspelt or planted all read as the game.
+                    Holder = EditSessions.ParseHolder(
+                        state[EditSessions.MarkerHolderField]?.Value<string>())
                 };
 
                 DateTime opened;

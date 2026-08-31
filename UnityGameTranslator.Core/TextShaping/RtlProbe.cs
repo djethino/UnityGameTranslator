@@ -40,6 +40,12 @@ namespace UnityGameTranslator.Core.TextShaping
 
         // "الإصدار 123 من ABC جاهز الآن" — digits and Latin must read forward on screen.
         private const string MixedTmpMode = "ﺍﻹﺻﺪﺍﺭ 321 ﻣﻦ CBA ﺟﺎﻫﺰ ﺍﻵﻥ";
+        private const string MixedVisual = "ﻥﻵﺍ ﺰﻫﺎﺟ ABC ﻦﻣ 123 ﺭﺍﺪﺻﻹﺍ";
+
+        // Long paragraph in VISUAL order — for engines with no RTL flag. On a multi-line component
+        // this is EXPECTED to break (wrong break points, lines stacked in reverse reading order):
+        // demonstrating that is the point, it is what the generator-readback emission must fix.
+        private const string LongVisual = ".ﺔﺒﻌﻠﻟﺍ ﻞﺧﺍﺩ ﺭﺎﺴﻴﻟﺍ ﻰﻟﺇ ﻦﻴﻤﻴﻟﺍ ﻦﻣ ﺽﺮﻌﻟﺍ ﺪﻨﻋ ﺮﻄﺳﻷﺍ ﺐﻴﺗﺮﺗﻭ ﻲﻟﺎﺘﻟﺍ ﺮﻄﺴﻟﺍ ﻰﻟﺇ ﻲﺋﺎﻘﻠﺘﻟﺍ ﻝﺎﻘﺘﻧﻻﺍ ﺭﺎﺒﺘﺧﻻ ﺖﺒﺘﻛ ﺔﻠﻳﻮﻃ ﺓﺮﻘﻓ ﻩﺬﻫ .ﺔﻤﺟﺮﺘﻟﺍ ﻢﻟﺎﻋ ﻲﻓ ﻢﻜﺑ ﺎﺒﺣﺮﻣ";
 
         // Long paragraph, TmpMode — forces automatic wrapping: line ORDER and BREAK POINTS are the
         // whole question (a naive pre-reversed string stacks its lines bottom-up).
@@ -53,6 +59,7 @@ namespace UnityGameTranslator.Core.TextShaping
         private static Component _target;
         private static string _originalText;
         private static bool? _originalRtl;
+        private static bool _rtlCapable;   // isRightToLeftText exists on the target
         private static bool _uitkCycle;
 
         /// <summary>Ctrl+F9 — probe the text under the mouse cursor; each press = one step.</summary>
@@ -108,6 +115,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 _target = comp;
                 _originalText = TypeHelper.GetText(comp);
                 _originalRtl = GetRtl(comp);
+                _rtlCapable = RtlProp(comp) != null;
                 TranslatorCore.LogInfo($"[RtlProbe] Target acquired under cursor: engine={enginePicked} " +
                     $"id={TypeHelper.GetInstanceID(comp)} type={comp.GetType().Name} " +
                     $"path='{TranslatorCore.GetGameObjectPath(comp.gameObject)}' " +
@@ -139,12 +147,23 @@ namespace UnityGameTranslator.Core.TextShaping
                         "3/6 SHAPED LOGICAL + isRightToLeftText — expected on TMP: joined, right-to-left, identical to step 2 on screen. On UI.Text the flag logs ABSENT and the text reads backwards — that is the answer, not a failure");
                     break;
                 case 3:
-                    Apply(MixedTmpMode, rtl: true,
-                        "4/6 MIXED + isRightToLeftText — expected on TMP: '123' and 'ABC' read FORWARD inside the RTL sentence");
+                    // Engine-aware: a component without the RTL flag has nothing to do with the
+                    // TMP-mode string (proved on the bench: it reads backwards) — it gets the
+                    // VISUAL form, which is what our emission would actually feed it.
+                    if (_rtlCapable)
+                        Apply(MixedTmpMode, rtl: true,
+                            "4/6 MIXED + isRightToLeftText — expected on TMP: '123' and 'ABC' read FORWARD inside the RTL sentence");
+                    else
+                        Apply(MixedVisual, rtl: false,
+                            "4/6 MIXED VISUAL (no RTL flag on this engine) — expected: '123' and 'ABC' read FORWARD inside the RTL sentence");
                     break;
                 case 4:
-                    Apply(LongTmpMode, rtl: true,
-                        "5/6 LONG + isRightToLeftText — expected on TMP: auto-wrap, FIRST words of the sentence on the TOP line, no reversed line stack");
+                    if (_rtlCapable)
+                        Apply(LongTmpMode, rtl: true,
+                            "5/6 LONG + isRightToLeftText — expected on TMP: auto-wrap, FIRST words of the sentence on the TOP line, no reversed line stack");
+                    else
+                        Apply(LongVisual, rtl: false,
+                            "5/6 LONG VISUAL (no RTL flag) — single line: correct. Multi-line: EXPECTED broken (wrong breaks, reversed line order) — that is what the generator-readback emission will fix. A best-fit component shrinks instead of wrapping: also worth noting");
                     break;
                 default:
                     Restore();

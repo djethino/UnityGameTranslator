@@ -157,6 +157,7 @@ namespace UnityGameTranslator.Core.TextShaping
         private static bool _genResolved;
         private static PropertyInfo _cachedGeneratorProp;   // Text.cachedTextGenerator
         private static PropertyInfo _generatorLinesProp;    // TextGenerator.lines -> IList<UILineInfo>
+        private static PropertyInfo _generatorCharCountProp; // TextGenerator.characterCount
         private static FieldInfo _lineStartCharField;       // UILineInfo.startCharIdx
         private static PropertyInfo _lineStartCharProp;
 
@@ -244,6 +245,7 @@ namespace UnityGameTranslator.Core.TextShaping
                     _cachedGeneratorProp = TypeHelper.UI_TextType.GetProperty("cachedTextGenerator", BindingFlags.Public | BindingFlags.Instance);
                     var genType = _cachedGeneratorProp?.PropertyType;
                     _generatorLinesProp = genType?.GetProperty("lines", BindingFlags.Public | BindingFlags.Instance);
+                    _generatorCharCountProp = genType?.GetProperty("characterCount", BindingFlags.Public | BindingFlags.Instance);
                     // UILineInfo lives in the text-rendering assembly, not necessarily UI's:
                     // the generic argument of TextGenerator.lines (IList<UILineInfo>) is the
                     // reliable way to it.
@@ -268,6 +270,19 @@ namespace UnityGameTranslator.Core.TextShaping
 
             var generator = _cachedGeneratorProp.GetValue(comp, null);
             if (generator == null) { whyNot = "no cached generator"; return null; }
+
+            // 🔴 IDENTITY, not just bounds: on a page switch the game refills the same component
+            // and for a frame or two the generator still describes the PREVIOUS text — its line
+            // starts fall inside our bounds and the slices cut words in half (biob bench: نفسك
+            // sawn across two distant lines). The generated character count must match the
+            // assigned string (±1: Unity generates a trailing terminator glyph).
+            if (_generatorCharCountProp != null)
+            {
+                int genChars = Convert.ToInt32(_generatorCharCountProp.GetValue(generator, null));
+                if (Math.Abs(genChars - assigned.Length) > 1)
+                { whyNot = $"generator describes another text ({genChars} chars vs {assigned.Length})"; return null; }
+            }
+
             var lines = _generatorLinesProp.GetValue(generator, null) as System.Collections.IList;
             if (lines == null || lines.Count == 0) { whyNot = "generator has no lines yet"; return null; }
 
@@ -314,7 +329,19 @@ namespace UnityGameTranslator.Core.TextShaping
                 var alignProp = comp.GetType().GetProperty("alignment", BindingFlags.Public | BindingFlags.Instance);
                 if (alignProp?.SetMethod == null) return;
                 object current = alignProp.GetValue(comp, null);
-                int v = Convert.ToInt32(current);
+
+                // 🔴 IDEMPOTENT, computed from the ORIGINAL — never from the current state. The
+                // first version swapped whatever it found, so every re-presentation of the same
+                // component (a guide page refilled) toggled the side: right, left, right — one
+                // screen out of two aligned wrong (bioa/biob bench, found by the user).
+                object original;
+                if (compId == -1 || !_alignedOriginal.TryGetValue(compId, out original))
+                {
+                    original = current;
+                    if (compId != -1) _alignedOriginal[compId] = original;
+                }
+
+                int v = Convert.ToInt32(original);
                 int mirrored = v;
 
                 if (Enum.GetUnderlyingType(alignProp.PropertyType) == typeof(int) && v <= 8)
@@ -331,11 +358,8 @@ namespace UnityGameTranslator.Core.TextShaping
                     else if ((v & 0x4) != 0) mirrored = (v & ~0x4) | 0x1;
                 }
 
-                if (mirrored == v) return;
-                object target = Enum.ToObject(alignProp.PropertyType, mirrored);
-                if (compId != -1 && !_alignedOriginal.ContainsKey(compId))
-                    _alignedOriginal[compId] = current;
-                alignProp.SetValue(comp, target, null);
+                if (mirrored == Convert.ToInt32(current)) return;
+                alignProp.SetValue(comp, Enum.ToObject(alignProp.PropertyType, mirrored), null);
             }
             catch { }
         }

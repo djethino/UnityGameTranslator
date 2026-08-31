@@ -508,6 +508,20 @@ namespace UnityGameTranslator.Core
         /// refuse genuine source text — measured on the bench, that single guard took one game from
         /// 42 wrong matches down to zero.
         /// </summary>
+        /// <summary>
+        /// TEMPORARY (feature/text-shaping): the RTL bench probe registers its fixed strings here
+        /// so every gate treats them as our own output — the probe can then run with translations
+        /// LEFT ON (font replacement needs the pipeline alive) without the scanner queuing its
+        /// text to the AI or writing it into translations.json (decision D8). Remove with
+        /// TextShaping/RtlProbe.cs.
+        /// </summary>
+        internal static void RegisterProbeReadbackText(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return;
+            string n = NormalizeForReadbackMatch(text);
+            if (n != null) readbackTranslations.TryAdd(n, 0);
+        }
+
         private static void IndexReadbackTranslation(string key, string value)
         {
             if (string.IsNullOrEmpty(key) || string.IsNullOrEmpty(value)) return;

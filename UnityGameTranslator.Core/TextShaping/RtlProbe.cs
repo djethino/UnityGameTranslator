@@ -24,9 +24,11 @@ namespace UnityGameTranslator.Core.TextShaping
     /// python-bidi, see the analyse doc) — the probe contains no shaping logic on purpose: it
     /// tests the ENGINE, not us.
     ///
-    /// 🔴 Refuses to run while translations are active: the scanner would read the probe text,
-    /// queue it to the AI and write it into translations.json — exactly what decision D8 forbids
-    /// (no shaped form may ever reach disk or server).
+    /// 🔴 D8 (no shaped form may ever reach disk or server) is held by REGISTRATION, not by a
+    /// ban: every probe string is registered in the read-back index up front, so the scanner and
+    /// every gate treat them as our own output and never queue them. Translations stay ON — they
+    /// must: font replacement lives inside the same pipeline, and a TMP game whose font lacks
+    /// Arabic needs its fallback active for the probe to show anything but squares.
     /// </summary>
     internal static class RtlProbe
     {
@@ -65,13 +67,7 @@ namespace UnityGameTranslator.Core.TextShaping
         /// <summary>Ctrl+F9 — probe the text under the mouse cursor; each press = one step.</summary>
         internal static void Cycle()
         {
-            if (TranslatorCore.TranslationsActive)
-            {
-                TranslatorCore.LogWarning("[RtlProbe] REFUSED: translations are enabled. Turn them off " +
-                    "(main panel switch) first — otherwise the scanner queues the probe text to the AI " +
-                    "and writes it into translations.json.");
-                return;
-            }
+            EnsureProbeTextsRegistered();
 
             try
             {
@@ -101,9 +97,23 @@ namespace UnityGameTranslator.Core.TextShaping
                 }
                 if (comp == null)
                 {
-                    TranslatorCore.LogWarning("[RtlProbe] No text under the cursor. Point the mouse at a " +
-                        "visible text (uGUI or UI Toolkit) and press Ctrl+F9 again. World-space TextMesh " +
-                        "cannot be picked this way.");
+                    // The one engine the cursor cannot reach on the bench: TMProOld lives in
+                    // gameplay screens whose text does not answer the raycast (tried and failed
+                    // with the panel cursor). Fall back to the longest TMProOld text on screen —
+                    // during a dialogue that IS the dialogue line — and NAME it in the log so the
+                    // tester can confirm which text changed.
+                    comp = PickAlternateTmpFallback(out string fbPath, out string fbPreview);
+                    if (comp != null)
+                    {
+                        enginePicked = "TMP (alt), fallback: longest on-screen text (no cursor hit)";
+                        TranslatorCore.LogInfo($"[RtlProbe] TMProOld fallback target: path='{fbPath}' text='{fbPreview}'");
+                    }
+                }
+                if (comp == null)
+                {
+                    TranslatorCore.LogWarning("[RtlProbe] No text under the cursor (and no TMProOld text " +
+                        "on screen). Point the mouse at a visible text (uGUI or UI Toolkit) and press " +
+                        "Ctrl+F9 again. World-space TextMesh cannot be picked this way.");
                     return;
                 }
                 if (TranslatorCore.IsOwnUI(comp))
@@ -217,6 +227,41 @@ namespace UnityGameTranslator.Core.TextShaping
             TranslatorCore.LogInfo($"[RtlProbe] Hit '{TranslatorCore.GetGameObjectPath(hit)}' but no text " +
                 $"component resolved around it ({targets.Count} text target(s) in scene).");
             return null;
+        }
+
+        private static bool _registered;
+
+        /// <summary>
+        /// Register every probe string in the read-back index BEFORE the first one is shown: the
+        /// gates then treat them as our own output — never queued to the AI, never written to
+        /// translations.json (D8) — while translations and font replacement stay on.
+        /// </summary>
+        private static void EnsureProbeTextsRegistered()
+        {
+            if (_registered) return;
+            _registered = true;
+            foreach (var s in new[] { ShortLogical, ShortVisual, ShortTmpMode, MixedTmpMode,
+                                      MixedVisual, LongTmpMode, LongVisual, LongLogical })
+                TranslatorCore.RegisterProbeReadbackText(s);
+        }
+
+        /// <summary>Longest live TMProOld text — the dialogue line, when one is on screen.</summary>
+        private static Component PickAlternateTmpFallback(out string path, out string preview)
+        {
+            path = null;
+            preview = null;
+            TextTarget best = null;
+            foreach (var t in TextTargets.All())
+            {
+                if (t?.Text == null || t.Engine != "TMP (alt)") continue;
+                if (!(t.Owner is Component)) continue;
+                if (t.Text.Length < 2) continue;
+                if (best == null || t.Text.Length > best.Text.Length) best = t;
+            }
+            if (best == null) return null;
+            path = best.Path;
+            preview = Preview(best.Text);
+            return best.Owner as Component;
         }
 
         private static void Apply(string text, bool rtl, string what)

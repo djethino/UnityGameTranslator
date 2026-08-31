@@ -34,6 +34,11 @@
     <Compile Include="../../UnityGameTranslator.Core/TextRelations.cs" />
     <Compile Include="../../UnityGameTranslator.Core/InputEcho.cs" />
     <Compile Include="../../UnityGameTranslator.Core/TargetPath.cs" />
+    <!-- The whole shaping pipeline is pure by contract — stages A/B/C are string work, and the
+         vendored RTLTMPro tables carry no Unity reference (their runtime never did). The glob is
+         deliberate: a stage added later is checked by default, and if it is not pure, this
+         project stops compiling — the alarm, as above. -->
+    <Compile Include="../../UnityGameTranslator.Core/TextShaping/**/*.cs" Exclude="../../UnityGameTranslator.Core/TextShaping/RtlProbe.cs" />
   </ItemGroup>
 
   <!--

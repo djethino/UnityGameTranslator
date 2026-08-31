@@ -25,6 +25,7 @@ namespace UnityGameTranslator.Core.Checks
             HowTextChanges();
             WhenTextMayBeTyping();
             HowATargetIsNamed();
+            HowAStringIsShaped();
 
             Console.WriteLine();
             if (_failures == 0)
@@ -56,6 +57,13 @@ namespace UnityGameTranslator.Core.Checks
         {
             Section("Target path");
             TargetPathChecks.Run(Check);
+        }
+
+        /// <summary>Which strings trigger the presentation pass, and what shaping makes of them.</summary>
+        private static void HowAStringIsShaped()
+        {
+            Section("Text shaping");
+            TextShapingChecks.Run(Check);
         }
 
         private static void Check(bool passed, string what, string why)

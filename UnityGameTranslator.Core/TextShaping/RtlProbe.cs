@@ -105,7 +105,7 @@ namespace UnityGameTranslator.Core.TextShaping
                     comp = PickAlternateTmpFallback(out string fbPath, out string fbPreview);
                     if (comp != null)
                     {
-                        enginePicked = "TMP (alt), fallback: longest on-screen text (no cursor hit)";
+                        enginePicked = "TMProOld, fallback: longest on-screen text (no cursor hit)";
                         TranslatorCore.LogInfo($"[RtlProbe] TMProOld fallback target: path='{fbPath}' text='{fbPreview}'");
                     }
                 }
@@ -245,15 +245,24 @@ namespace UnityGameTranslator.Core.TextShaping
                 TranslatorCore.RegisterProbeReadbackText(s);
         }
 
-        /// <summary>Longest live TMProOld text — the dialogue line, when one is on screen.</summary>
+        /// <summary>
+        /// Longest live TMProOld text — the dialogue line, when one is on screen.
+        ///
+        /// ⚠ Only in a TMProOld game (<see cref="TypeHelper.UseAlternateTMP"/>), and matched on
+        /// the "TMP" engine label: there, TMProOld IS the main TMP type the scanner registers —
+        /// the first version filtered on "TMP (alt)", a label such a game never produces, and
+        /// reported "no TMProOld text on screen" in front of a screen full of them.
+        /// </summary>
         private static Component PickAlternateTmpFallback(out string path, out string preview)
         {
             path = null;
             preview = null;
+            if (!TypeHelper.UseAlternateTMP) return null;
             TextTarget best = null;
             foreach (var t in TextTargets.All())
             {
-                if (t?.Text == null || t.Engine != "TMP (alt)") continue;
+                if (t?.Text == null || t.Engine == null) continue;
+                if (!t.Engine.StartsWith("TMP", StringComparison.Ordinal)) continue;
                 if (!(t.Owner is Component)) continue;
                 if (t.Text.Length < 2) continue;
                 if (best == null || t.Text.Length > best.Text.Length) best = t;

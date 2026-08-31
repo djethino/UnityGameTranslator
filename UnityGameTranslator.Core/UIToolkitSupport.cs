@@ -1329,32 +1329,30 @@ namespace UnityGameTranslator.Core
         private static string _probeOriginal;
 
         /// <summary>
-        /// Ctrl+Shift+F9 (from RtlProbe) — cycles one TextElement through: raw Arabic on the
-        /// current generator, then the SAME logical text after switching the element's style to
-        /// the Advanced Text Generator (Unity 6 — HarfBuzz shapes and orders by itself), then a
-        /// long paragraph for wrapping, then restore. If ATG renders the logical text correctly,
-        /// this whole engine needs NO shaping from us — the answer §7 of the analyse doc waits on.
+        /// From RtlProbe — cycles the TextElement the tester POINTED AT (passed on acquisition,
+        /// null on later presses) through: raw Arabic on the current generator, then the SAME
+        /// logical text after switching the element's style to the Advanced Text Generator
+        /// (Unity 6 — HarfBuzz shapes and orders by itself), then a long paragraph for wrapping,
+        /// then restore. If ATG renders the logical text correctly, this whole engine needs NO
+        /// shaping from us — the answer §7 of the analyse doc waits on.
+        /// Returns true while the cycle is still holding an element.
         /// </summary>
-        internal static void ProbeAtgCycle(string shortLogical, string longLogical)
+        internal static bool ProbeAtgCycle(object element, string shortLogical, string longLogical)
         {
             if (TextElementType == null || _textProp == null)
             {
                 TranslatorCore.LogWarning("[RtlProbe] UI Toolkit not present or not resolved in this game.");
-                return;
+                return false;
             }
             try
             {
-                if (_probeEl == null) _probeStep = -1;
                 if (_probeEl == null)
                 {
-                    _probeEl = ProbeFindTextElement();
-                    if (_probeEl == null)
-                    {
-                        TranslatorCore.LogWarning("[RtlProbe] No suitable UI Toolkit TextElement found (2-80 chars).");
-                        return;
-                    }
+                    _probeStep = -1;
+                    if (element == null) return false;
+                    _probeEl = element;
                     _probeOriginal = _textProp.GetValue(_probeEl, null) as string;
-                    TranslatorCore.LogInfo($"[RtlProbe] UITK target acquired, original='{(_probeOriginal != null && _probeOriginal.Length > 40 ? _probeOriginal.Substring(0, 40) + "..." : _probeOriginal)}'");
+                    TranslatorCore.LogInfo($"[RtlProbe] UITK target acquired under cursor, path='{PathOf(_probeEl)}' original='{(_probeOriginal != null && _probeOriginal.Length > 40 ? _probeOriginal.Substring(0, 40) + "..." : _probeOriginal)}'");
                 }
 
                 _probeStep++;
@@ -1362,59 +1360,37 @@ namespace UnityGameTranslator.Core
                 {
                     case 0:
                         ProbeSetText(_probeEl, shortLogical);
-                        TranslatorCore.LogInfo("[RtlProbe] UITK 0/3 raw logical Arabic, current generator — expected broken (isolated, LTR) unless the game already runs ATG.");
-                        break;
+                        TranslatorCore.LogInfo("[RtlProbe] UITK 1/4 raw logical Arabic, current generator — expected broken (isolated, LTR) unless the game already runs ATG.");
+                        return true;
                     case 1:
                         {
                             string detail;
                             bool ok = ProbeTrySetAdvancedGenerator(_probeEl, out detail);
                             ProbeSetText(_probeEl, shortLogical);
-                            TranslatorCore.LogInfo($"[RtlProbe] UITK 1/3 same logical text, generator→Advanced: {(ok ? "SET" : "FAILED")} ({detail}) — if rendered joined+RTL, ATG does the whole job on this engine.");
+                            TranslatorCore.LogInfo($"[RtlProbe] UITK 2/4 same logical text, generator→Advanced: {(ok ? "SET" : "FAILED")} ({detail}) — if rendered joined+RTL, ATG does the whole job on this engine.");
                         }
-                        break;
+                        return true;
                     case 2:
                         ProbeSetText(_probeEl, longLogical);
-                        TranslatorCore.LogInfo("[RtlProbe] UITK 2/3 long logical paragraph on Advanced — wrap and line order are ATG's to prove.");
-                        break;
+                        TranslatorCore.LogInfo("[RtlProbe] UITK 3/4 long logical paragraph on Advanced — wrap and line order are ATG's to prove.");
+                        return true;
                     default:
                         ProbeSetText(_probeEl, _probeOriginal ?? "");
-                        TranslatorCore.LogInfo("[RtlProbe] UITK 3/3 restored text. ⚠ Generator left on Advanced for this element until scene reload.");
+                        TranslatorCore.LogInfo("[RtlProbe] UITK 4/4 restored text. ⚠ Generator left on Advanced for this element until scene reload. Point at another text and press again to probe it.");
                         _probeEl = null;
                         _probeOriginal = null;
                         _probeStep = -1;
-                        break;
+                        return false;
                 }
             }
             catch (Exception ex)
             {
                 TranslatorCore.LogError($"[RtlProbe] UITK: {ex.Message}\n{ex.StackTrace}");
+                _probeEl = null;
+                _probeOriginal = null;
+                _probeStep = -1;
+                return false;
             }
-        }
-
-        private static object ProbeFindTextElement()
-        {
-            object found = null;
-            var docs = TypeHelper.FindAllObjectsOfType(UIDocumentType);
-            foreach (var doc in docs)
-            {
-                if (found != null) break;
-                object root = null;
-                try { root = _rootProp?.GetValue(doc, null); } catch { }
-                if (root == null) continue;
-                Walk(root, 3000, el =>
-                {
-                    if (found != null) return;
-                    try
-                    {
-                        var text = _textProp.GetValue(el, null) as string;
-                        if (string.IsNullOrEmpty(text) || text.Length < 2 || text.Length > 80) return;
-                        if (text.IndexOf('\n') >= 0) return;
-                        found = el;
-                    }
-                    catch { }
-                });
-            }
-            return found;
         }
 
         private static void ProbeSetText(object element, string text)

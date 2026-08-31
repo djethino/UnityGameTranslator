@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Reflection;
 using UnityEngine;
 
@@ -8,13 +9,20 @@ namespace UnityGameTranslator.Core.TextShaping
     /// ⚠ TEMPORARY bench probe — branch feature/text-shaping only, must NOT ship in a release.
     ///
     /// Answers the in-game unknowns listed in analyse/issue-24-rtl-second-look.md §7.3 before any
-    /// shaping code is written: what does this game's TMP/TMProOld actually do with
-    /// <c>isRightToLeftText</c> (joining is our job, but wrapping, line order and alignment are
-    /// TMP's), and does the game re-assert the text behind our back.
+    /// shaping code is written: what does each engine actually do with RTL text —
+    /// <c>isRightToLeftText</c> on TMP/TMProOld (joining is our job, but wrapping, line order and
+    /// alignment are the engine's), nothing at all on UI.Text, the Advanced Text Generator on
+    /// UI Toolkit.
     ///
-    /// Ctrl+F9 cycles one visible text component through fixed Arabic strings pre-shaped OUTSIDE
-    /// the mod (arabic_reshaper + python-bidi, see the analyse doc) — the probe contains no
-    /// shaping logic on purpose: it tests the ENGINE, not us.
+    /// 🔴 The TESTER chooses the target: Ctrl+F9 probes the text UNDER THE MOUSE CURSOR, through
+    /// the same picking the inspector uses (GraphicRaycaster for uGUI, panel Pick for UI Toolkit),
+    /// resolved to a text component via TextTargets — every engine, one enumeration. An auto-pick
+    /// was tried first and rejected: a component chosen by the probe can be off-screen or covered,
+    /// and then nobody can say what the screen should show.
+    ///
+    /// Each press advances one step; strings are pre-shaped OUTSIDE the mod (arabic_reshaper +
+    /// python-bidi, see the analyse doc) — the probe contains no shaping logic on purpose: it
+    /// tests the ENGINE, not us.
     ///
     /// 🔴 Refuses to run while translations are active: the scanner would read the probe text,
     /// queue it to the AI and write it into translations.json — exactly what decision D8 forbids
@@ -37,12 +45,17 @@ namespace UnityGameTranslator.Core.TextShaping
         // whole question (a naive pre-reversed string stacks its lines bottom-up).
         private const string LongTmpMode = "ﻣﺮﺣﺒﺎ ﺑﻜﻢ ﻓﻲ ﻋﺎﻟﻢ ﺍﻟﺘﺮﺟﻤﺔ. ﻫﺬﻩ ﻓﻘﺮﺓ ﻃﻮﻳﻠﺔ ﻛﺘﺒﺖ ﻻﺧﺘﺒﺎﺭ ﺍﻻﻧﺘﻘﺎﻝ ﺍﻟﺘﻠﻘﺎﺋﻲ ﺇﻟﻰ ﺍﻟﺴﻄﺮ ﺍﻟﺘﺎﻟﻲ ﻭﺗﺮﺗﻴﺐ ﺍﻷﺳﻄﺮ ﻋﻨﺪ ﺍﻟﻌﺮﺽ ﻣﻦ ﺍﻟﻴﻤﻴﻦ ﺇﻟﻰ ﺍﻟﻴﺴﺎﺭ ﺩﺍﺧﻞ ﺍﻟﻠﻌﺒﺔ.";
 
+        // The logical long paragraph — for ATG the LOGICAL text is what gets assigned (shaping is
+        // the engine's job there).
+        private const string LongLogical = "مرحبا بكم في عالم الترجمة. هذه فقرة طويلة كتبت لاختبار الانتقال التلقائي إلى السطر التالي وترتيب الأسطر عند العرض من اليمين إلى اليسار داخل اللعبة.";
+
         private static int _step = -1;
         private static Component _target;
         private static string _originalText;
         private static bool? _originalRtl;
+        private static bool _uitkCycle;
 
-        /// <summary>Ctrl+F9 — advance the TMP/TMProOld probe by one step.</summary>
+        /// <summary>Ctrl+F9 — probe the text under the mouse cursor; each press = one step.</summary>
         internal static void Cycle()
         {
             if (TranslatorCore.TranslationsActive)
@@ -55,54 +68,52 @@ namespace UnityGameTranslator.Core.TextShaping
 
             try
             {
-                if (_target == null || (_target is UnityEngine.Object uo && uo == null))
+                // A UI Toolkit cycle in flight — the element lives inside UIToolkitSupport.
+                if (_uitkCycle)
                 {
-                    _step = -1;
-                    _target = null;
+                    _uitkCycle = UIToolkitSupport.ProbeAtgCycle(null, ShortLogical, LongLogical);
+                    return;
                 }
 
-                if (_target == null)
+                // A component cycle in flight.
+                if (_target is UnityEngine.Object uo && uo == null) { _target = null; _step = -1; }
+                if (_target != null)
                 {
-                    _target = FindTarget();
-                    if (_target == null)
-                    {
-                        TranslatorCore.LogWarning("[RtlProbe] No suitable text component found in this scene (visible, 2-80 chars, single line).");
-                        return;
-                    }
-                    _originalText = TypeHelper.GetText(_target);
-                    _originalRtl = GetRtl(_target);
-                    TranslatorCore.LogInfo($"[RtlProbe] Target acquired: id={TypeHelper.GetInstanceID(_target)} type={_target.GetType().Name} " +
-                        $"path='{TranslatorCore.GetGameObjectPath(_target.gameObject)}' rtlProp={(_originalRtl.HasValue ? _originalRtl.Value.ToString() : "ABSENT")} " +
-                        $"original='{Preview(_originalText)}'");
+                    Advance();
+                    return;
                 }
 
-                _step = _step + 1;
-                switch (_step)
+                // No cycle — acquire whatever text is under the cursor.
+                Vector3 mousePos = UniverseLib.Input.InputManager.MousePosition;
+                var comp = PickComponentUnderCursor(mousePos, out string enginePicked, out object uitkElement);
+
+                if (uitkElement != null)
                 {
-                    case 0:
-                        Apply(ShortLogical, rtl: false,
-                            "0/5 RAW LOGICAL — expected BROKEN: isolated letters, left-to-right (today's bug, the control case)");
-                        break;
-                    case 1:
-                        Apply(ShortVisual, rtl: false,
-                            "1/5 SHAPED VISUAL, no RTL flag — expected: joined and readable on ONE line (what legacy engines would get)");
-                        break;
-                    case 2:
-                        Apply(ShortTmpMode, rtl: true,
-                            "2/5 SHAPED LOGICAL + isRightToLeftText — expected: joined, right-to-left, identical to step 1 on screen");
-                        break;
-                    case 3:
-                        Apply(MixedTmpMode, rtl: true,
-                            "3/5 MIXED + isRightToLeftText — expected: '123' and 'ABC' read FORWARD inside the RTL sentence");
-                        break;
-                    case 4:
-                        Apply(LongTmpMode, rtl: true,
-                            "4/5 LONG + isRightToLeftText — expected: auto-wrap, FIRST words of the sentence on the TOP line, no reversed line stack");
-                        break;
-                    default:
-                        Restore();
-                        break;
+                    _uitkCycle = UIToolkitSupport.ProbeAtgCycle(uitkElement, ShortLogical, LongLogical);
+                    return;
                 }
+                if (comp == null)
+                {
+                    TranslatorCore.LogWarning("[RtlProbe] No text under the cursor. Point the mouse at a " +
+                        "visible text (uGUI or UI Toolkit) and press Ctrl+F9 again. World-space TextMesh " +
+                        "cannot be picked this way.");
+                    return;
+                }
+                if (TranslatorCore.IsOwnUI(comp))
+                {
+                    TranslatorCore.LogWarning("[RtlProbe] That is the mod's own UI — point at a GAME text.");
+                    return;
+                }
+
+                _target = comp;
+                _originalText = TypeHelper.GetText(comp);
+                _originalRtl = GetRtl(comp);
+                TranslatorCore.LogInfo($"[RtlProbe] Target acquired under cursor: engine={enginePicked} " +
+                    $"id={TypeHelper.GetInstanceID(comp)} type={comp.GetType().Name} " +
+                    $"path='{TranslatorCore.GetGameObjectPath(comp.gameObject)}' " +
+                    $"rtlProp={(_originalRtl.HasValue ? _originalRtl.Value.ToString() : "ABSENT")} " +
+                    $"original='{Preview(_originalText)}'");
+                Advance();
             }
             catch (Exception ex)
             {
@@ -110,21 +121,84 @@ namespace UnityGameTranslator.Core.TextShaping
             }
         }
 
-        /// <summary>Ctrl+Shift+F9 — UI Toolkit / ATG probe (Unity 6 games).</summary>
-        internal static void CycleUIToolkit()
+        private static void Advance()
         {
-            if (TranslatorCore.TranslationsActive)
+            _step++;
+            switch (_step)
             {
-                TranslatorCore.LogWarning("[RtlProbe] REFUSED (UI Toolkit): turn translations off first — see Ctrl+F9 message.");
-                return;
+                case 0:
+                    Apply(ShortLogical, rtl: false,
+                        "1/6 RAW LOGICAL — expected BROKEN: isolated letters, left-to-right (today's bug, the control case)");
+                    break;
+                case 1:
+                    Apply(ShortVisual, rtl: false,
+                        "2/6 SHAPED VISUAL, no RTL flag — expected: joined and readable on ONE line (what legacy engines would get)");
+                    break;
+                case 2:
+                    Apply(ShortTmpMode, rtl: true,
+                        "3/6 SHAPED LOGICAL + isRightToLeftText — expected on TMP: joined, right-to-left, identical to step 2 on screen. On UI.Text the flag logs ABSENT and the text reads backwards — that is the answer, not a failure");
+                    break;
+                case 3:
+                    Apply(MixedTmpMode, rtl: true,
+                        "4/6 MIXED + isRightToLeftText — expected on TMP: '123' and 'ABC' read FORWARD inside the RTL sentence");
+                    break;
+                case 4:
+                    Apply(LongTmpMode, rtl: true,
+                        "5/6 LONG + isRightToLeftText — expected on TMP: auto-wrap, FIRST words of the sentence on the TOP line, no reversed line stack");
+                    break;
+                default:
+                    Restore();
+                    break;
             }
-            UIToolkitSupport.ProbeAtgCycle(ShortLogical, LongLogical());
         }
 
-        // The logical long string, built from the TmpMode constant's source sentence — kept in one
-        // place: for ATG the LOGICAL text is what gets assigned (shaping is the engine's job there).
-        private static string LongLogical() =>
-            "مرحبا بكم في عالم الترجمة. هذه فقرة طويلة كتبت لاختبار الانتقال التلقائي إلى السطر التالي وترتيب الأسطر عند العرض من اليمين إلى اليسار داخل اللعبة.";
+        /// <summary>
+        /// The text component under the cursor: the inspector's raycast gives the hit GameObject,
+        /// TextTargets resolves it (or a close parent) to a text component of whatever engine.
+        /// A UI Toolkit interface answers through PickAt instead — returned via uitkElement.
+        /// </summary>
+        private static Component PickComponentUnderCursor(Vector3 mousePos, out string engine, out object uitkElement)
+        {
+            engine = null;
+            uitkElement = null;
+
+            var inspector = UI.TranslatorUIManager.InspectorPanel;
+            GameObject hit = inspector != null ? inspector.ProbeRaycastAt(mousePos) : null;
+
+            if (hit == null)
+            {
+                uitkElement = UIToolkitSupport.PickAt(mousePos, out _);
+                return null;
+            }
+
+            var targets = TextTargets.All();
+            string path = TranslatorCore.GetGameObjectPath(hit);
+
+            // The hit is often a container or a background Image: try the hit's own subtree first,
+            // then climb — the label usually sits beside or above what the raycast returns.
+            for (int climb = 0; climb < 4 && !string.IsNullOrEmpty(path); climb++)
+            {
+                TextTarget best = null;
+                foreach (var t in targets)
+                {
+                    if (t?.Path == null || !(t.Owner is Component)) continue;
+                    if (t.Path != path && !t.Path.StartsWith(path + "/", StringComparison.Ordinal)) continue;
+                    if (string.IsNullOrEmpty(t.Text) || t.Text.Length < 2 || t.Text.Length > 200) continue;
+                    if (best == null || t.Path.Length < best.Path.Length) best = t;
+                }
+                if (best != null)
+                {
+                    engine = best.Engine;
+                    return best.Owner as Component;
+                }
+                int cut = path.LastIndexOf('/');
+                path = cut > 0 ? path.Substring(0, cut) : null;
+            }
+
+            TranslatorCore.LogInfo($"[RtlProbe] Hit '{TranslatorCore.GetGameObjectPath(hit)}' but no text " +
+                $"component resolved around it ({targets.Count} text target(s) in scene).");
+            return null;
+        }
 
         private static void Apply(string text, bool rtl, string what)
         {
@@ -150,54 +224,12 @@ namespace UnityGameTranslator.Core.TextShaping
                 try { TypeHelper.SetText(_target, _originalText ?? ""); }
                 finally { TranslatorPatches.BypassTextPrefix = false; }
                 try { TypeHelper.ForceMeshUpdate(_target); } catch { }
-                TranslatorCore.LogInfo("[RtlProbe] 5/5 restored original text and flag — press Ctrl+F9 again to probe another component.");
+                TranslatorCore.LogInfo("[RtlProbe] 6/6 restored original text and flag — point at another text and press Ctrl+F9 to probe it.");
             }
             _target = null;
             _originalText = null;
             _originalRtl = null;
             _step = -1;
-        }
-
-        /// <summary>
-        /// TMP first (the engine with the most to prove), then UI.Text, then TextMesh — a game
-        /// with no live TMP in the scene is still a bench for the legacy paths, where the probe's
-        /// step 2 (isRightToLeftText) simply logs the property as ABSENT. Logs how many
-        /// components each engine offered, so "nothing found" says why.
-        /// </summary>
-        private static Component FindTarget()
-        {
-            var candidates = new (string name, Type type)[]
-            {
-                ("TMP", TypeHelper.TMP_TextType),
-                ("UI.Text", TypeHelper.UI_TextType),
-                ("TextMesh", TypeHelper.TextMeshType),
-            };
-            foreach (var (name, type) in candidates)
-            {
-                if (type == null) { TranslatorCore.LogInfo($"[RtlProbe] {name}: type not present in this game"); continue; }
-                var all = TypeHelper.FindAllObjectsOfType(type);
-                int seen = 0;
-                foreach (var obj in all)
-                {
-                    var comp = obj as Component ?? TypeHelper.Il2CppCast(obj, typeof(Component)) as Component;
-                    if (comp == null) continue;
-                    try
-                    {
-                        if (!comp.gameObject.activeInHierarchy) continue;
-                        if (TranslatorCore.IsOwnUI(comp)) continue;
-                        string text = TypeHelper.GetText(comp);
-                        if (string.IsNullOrEmpty(text)) continue;
-                        seen++;
-                        if (text.Length < 2 || text.Length > 80) continue;
-                        if (text.IndexOf('\n') >= 0) continue;
-                        TranslatorCore.LogInfo($"[RtlProbe] Engine picked: {name} ({all.Length} object(s), {seen} with text)");
-                        return comp;
-                    }
-                    catch { }
-                }
-                TranslatorCore.LogInfo($"[RtlProbe] {name}: {all.Length} object(s), {seen} active with text, none eligible (2-80 chars, single line)");
-            }
-            return null;
         }
 
         private static PropertyInfo RtlProp(Component comp) =>

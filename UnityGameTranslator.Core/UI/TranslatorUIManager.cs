@@ -5334,13 +5334,9 @@ namespace UnityGameTranslator.Core.UI
                 return;
             }
 
-            // TEMPORARY (feature/text-shaping): RTL bench probes, hardcoded on purpose — they must
-            // never become configurable or ship. See TextShaping/RtlProbe.cs.
-            if (IsHotkeyPressed("Ctrl+Shift+F9"))
-            {
-                TextShaping.RtlProbe.CycleUIToolkit();
-                return;
-            }
+            // TEMPORARY (feature/text-shaping): RTL bench probe, hardcoded on purpose — it must
+            // never become configurable or ship. Probes the text under the mouse cursor, whatever
+            // its engine. See TextShaping/RtlProbe.cs.
             if (IsHotkeyPressed("Ctrl+F9"))
             {
                 TextShaping.RtlProbe.Cycle();

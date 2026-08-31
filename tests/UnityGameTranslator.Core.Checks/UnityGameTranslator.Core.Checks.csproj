@@ -38,7 +38,11 @@
          vendored RTLTMPro tables carry no Unity reference (their runtime never did). The glob is
          deliberate: a stage added later is checked by default, and if it is not pure, this
          project stops compiling — the alarm, as above. -->
-    <Compile Include="../../UnityGameTranslator.Core/TextShaping/**/*.cs" Exclude="../../UnityGameTranslator.Core/TextShaping/RtlProbe.cs" />
+    <Compile Include="../../UnityGameTranslator.Core/TextShaping/**/*.cs"
+             Exclude="../../UnityGameTranslator.Core/TextShaping/RtlProbe.cs;../../UnityGameTranslator.Core/TextShaping/RtlPresenter.cs" />
+    <!-- Excluded above: RtlProbe (temporary bench tool, Unity-bound) and RtlPresenter (stage D,
+         the engine-facing end — it talks to TranslatorCore and components, which is exactly what
+         the pure stages must never do). -->
     <!-- The vendored UnicodeClasses loads the bidi trie from ITS OWN assembly — which is this
          one when the files are linked, so the resource must be embedded here too, same logical
          name. -->

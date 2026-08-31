@@ -242,7 +242,7 @@ namespace UnityGameTranslator.Core.TextShaping
             _registered = true;
             foreach (var s in new[] { ShortLogical, ShortVisual, ShortTmpMode, MixedTmpMode,
                                       MixedVisual, LongTmpMode, LongVisual, LongLogical })
-                TranslatorCore.RegisterProbeReadbackText(s);
+                TranslatorCore.RegisterPresentedText(s);
         }
 
         /// <summary>

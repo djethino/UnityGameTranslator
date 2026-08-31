@@ -777,6 +777,9 @@ namespace UnityGameTranslator.Core
                                         isOwnUI, "Generic", ref value);
                 if (outcome == RouteOutcome.Stop) return;
 
+                // Stage D — after all routing, on the outgoing string only (see RtlPresenter).
+                TextShaping.RtlPresenter.Present(__instance, TypeHelper.GetInstanceID(__instance), ref value);
+
                 // Apply font scale. Also on StopButRescale — that outcome exists precisely because
                 // a component with nothing to translate still needs its size re-asserted.
                 if (typeInfo?.FontSizeProp != null && !string.IsNullOrEmpty(settingsFontName ?? fontName))
@@ -3612,9 +3615,19 @@ namespace UnityGameTranslator.Core
                         // component — leaving without the scale left it at the unscaled size while
                         // neighbours that took the full path were scaled. The size is idempotent
                         // (derived from the cached true original), so re-asserting it is free.
+                        // ⚠ Present anyway: this outcome also fires when a stored LOGICAL
+                        // translation is re-set (scanner refresh) — the bookkeeping matched, the
+                        // screen still needs the shaped form.
+                        TextShaping.RtlPresenter.Present(__instance, compId, ref textValue);
                         ApplyFontScaleGated(__instance, unityCloneFont, unityCloneName, settingsFontName ?? fontName);
                         return;
                 }
+
+                // Stage D of the RTL pipeline, LAST on purpose: everything above — routing,
+                // concat/typewriter bookkeeping, caches — works on the logical text; only the
+                // string leaving for the screen is composed. The font code below then sees the
+                // shaped characters, which is what the atlas must actually carry.
+                TextShaping.RtlPresenter.Present(__instance, compId, ref textValue);
 
                 // Detect missed SetFont: text was translated but HasCachedTranslation said no
                 if (unityCloneFont != null && textValue != preTranslateText && componentType == "Unity")
@@ -4506,9 +4519,12 @@ namespace UnityGameTranslator.Core
                 // Check if own UI (use UI-specific prompt)
                 bool isOwnUI = TranslatorCore.IsOwnUITranslatable(component);
                 // Same routing as the TMP/UI.Text/TextMesh setter — see RouteText. The font work
-                // above is already done by this point, so both stopping outcomes just leave.
-                if (RouteText(__instance, component, TypeHelper.GetInstanceID(__instance),
-                              isOwnUI, "TMP", ref __0) != RouteOutcome.Translated) return;
+                // above is already done by this point; stage D still runs on the non-Stop
+                // outcomes (a re-set logical translation needs its shaped form too).
+                var outcome = RouteText(__instance, component, TypeHelper.GetInstanceID(__instance),
+                                        isOwnUI, "TMP", ref __0);
+                if (outcome == RouteOutcome.Stop) return;
+                TextShaping.RtlPresenter.Present(__instance, TypeHelper.GetInstanceID(__instance), ref __0);
             }
             catch (Exception ex)
             {
@@ -4606,9 +4622,11 @@ namespace UnityGameTranslator.Core
                 // Check if own UI (use UI-specific prompt) - uses hierarchy check
                 bool isOwnUI = TranslatorCore.IsOwnUITranslatable(component);
                 // Same routing as the TMP/UI.Text/TextMesh setter — see RouteText. tk2d has no
-                // font scale of its own here, so both stopping outcomes just leave.
-                if (RouteText(__instance, component, TypeHelper.GetInstanceID(__instance),
-                              isOwnUI, "tk2d", ref value) != RouteOutcome.Translated) return;
+                // font scale of its own here; stage D still runs on the non-Stop outcomes.
+                var outcome = RouteText(__instance, component, TypeHelper.GetInstanceID(__instance),
+                                        isOwnUI, "tk2d", ref value);
+                if (outcome == RouteOutcome.Stop) return;
+                TextShaping.RtlPresenter.Present(__instance, TypeHelper.GetInstanceID(__instance), ref value);
             }
             catch { }
         }

@@ -509,13 +509,14 @@ namespace UnityGameTranslator.Core
         /// 42 wrong matches down to zero.
         /// </summary>
         /// <summary>
-        /// TEMPORARY (feature/text-shaping): the RTL bench probe registers its fixed strings here
-        /// so every gate treats them as our own output — the probe can then run with translations
-        /// LEFT ON (font replacement needs the pipeline alive) without the scanner queuing its
-        /// text to the AI or writing it into translations.json (decision D8). Remove with
-        /// TextShaping/RtlProbe.cs.
+        /// Register a PRESENTED string — one the RTL pipeline composed for display — as our own
+        /// output. Every gate (<see cref="IsAlreadyTargetText"/>: the scanner, the getters, the
+        /// setter prefixes) then refuses to learn from it: a shaped form must never be queued to
+        /// the AI, cached as a source text, or written to translations.json (decision D8 — the
+        /// codepoints AND the order differ from the logical truth, nothing downstream could ever
+        /// map it back). Also used by the temporary RtlProbe bench for its fixed strings.
         /// </summary>
-        internal static void RegisterProbeReadbackText(string text)
+        internal static void RegisterPresentedText(string text)
         {
             if (string.IsNullOrEmpty(text)) return;
             string n = NormalizeForReadbackMatch(text);

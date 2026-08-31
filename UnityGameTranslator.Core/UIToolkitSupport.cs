@@ -652,6 +652,9 @@ namespace UnityGameTranslator.Core
                 string before = value;
                 TranslatorPatches.RouteText(__instance, __instance, IdFor(__instance),
                                             isOwnUI: false, componentType: "UIToolkit", textValue: ref value);
+                // Stage D — a TextElement has no isRightToLeftText, so this yields the
+                // visual-order form (single-line correct; multi-line is the emission lot).
+                TextShaping.RtlPresenter.Present(__instance, IdFor(__instance), ref value);
                 if (!string.Equals(before, value, StringComparison.Ordinal))
                     RememberOriginal(__instance, before);
             }
@@ -1529,6 +1532,9 @@ namespace UnityGameTranslator.Core
                 string translated = current;
                 TranslatorPatches.RouteText(element, element, IdFor(element),
                                             isOwnUI: false, componentType: "UIToolkit", textValue: ref translated);
+                // Stage D, same as the setter path — the scan is the other way text reaches a
+                // UI Toolkit screen.
+                TextShaping.RtlPresenter.Present(element, IdFor(element), ref translated);
                 if (string.IsNullOrEmpty(translated) || translated == current) return;
 
                 RememberOriginal(element, current);

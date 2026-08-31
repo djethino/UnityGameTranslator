@@ -2344,7 +2344,11 @@ namespace UnityGameTranslator.Core
                             // render-health watchdog fixes it (space-nudge when it's the
                             // same-length quirk, else alpha repair). Self-gating: healthy /
                             // animated text never trips it (issue #21).
-                            RegisterRenderWatch(comp, originalText, translation);
+                            // ⚠ Watch the text as DISPLAYED, not as stored: the SetText above
+                            // went through the prefix, where the RTL pipeline may have composed
+                            // it — registering the logical form would make the line-change check
+                            // expire the watch on its first tick (pitfall n°2, 06/08 analysis).
+                            RegisterRenderWatch(comp, originalText, TypeHelper.GetText(comp) ?? translation);
                         }
                         else
                         {

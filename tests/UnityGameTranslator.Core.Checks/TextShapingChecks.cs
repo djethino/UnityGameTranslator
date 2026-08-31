@@ -31,10 +31,17 @@ namespace UnityGameTranslator.Core.Checks
         private const string LongLogical = "مرحبا بكم في عالم الترجمة. هذه فقرة طويلة كتبت لاختبار الانتقال التلقائي إلى السطر التالي وترتيب الأسطر عند العرض من اليمين إلى اليسار داخل اللعبة.";
         private const string LongShaped = "ﻣﺮﺣﺒﺎ ﺑﻜﻢ ﻓﻲ ﻋﺎﻟﻢ ﺍﻟﺘﺮﺟﻤﺔ. ﻫﺬﻩ ﻓﻘﺮﺓ ﻃﻮﻳﻠﺔ ﻛﺘﺒﺖ ﻻﺧﺘﺒﺎﺭ ﺍﻻﻧﺘﻘﺎﻝ ﺍﻟﺘﻠﻘﺎﺋﻲ ﺇﻟﻰ ﺍﻟﺴﻄﺮ ﺍﻟﺘﺎﻟﻲ ﻭﺗﺮﺗﻴﺐ ﺍﻷﺳﻄﺮ ﻋﻨﺪ ﺍﻟﻌﺮﺽ ﻣﻦ ﺍﻟﻴﻤﻴﻦ ﺇﻟﻰ ﺍﻟﻴﺴﺎﺭ ﺩﺍﺧﻞ ﺍﻟﻠﻌﺒﺔ.";
 
+        // The bench's other two reference forms (same provenance): fully visual order, and the
+        // isRightToLeftText form (visual reversed whole — LTR runs read forward again).
+        private const string ShortVisual = "ﺔﻤﺟﺮﺘﻟﺍ ﻢﻟﺎﻋ ﻲﻓ ﻢﻜﺑ ﺎﺒﺣﺮﻣ";
+        private const string MixedVisual = "ﻥﻵﺍ ﺰﻫﺎﺟ ABC ﻦﻣ 123 ﺭﺍﺪﺻﻹﺍ";
+        private const string MixedFlagged = "ﺍﻹﺻﺪﺍﺭ 321 ﻣﻦ CBA ﺟﺎﻫﺰ ﺍﻵﻥ";
+
         public static void Run(Action<bool, string, string> check)
         {
             WhatAStringContains(check);
             WhatShapingProduces(check);
+            WhatComposingProduces(check);
         }
 
         private static void WhatAStringContains(Action<bool, string, string> check)
@@ -91,6 +98,48 @@ namespace UnityGameTranslator.Core.Checks
             check(shaper.Shape("Hello") == "Hello",
                 "plain LTR passes through unchanged",
                 "the shaper itself must be harmless, not only gated");
+        }
+
+        /// <summary>
+        /// Stage C end to end: shaping + UAX#9 + reordering + mirroring + token protection.
+        /// The flagged references are what python-bidi's visual order gives once reversed — a
+        /// second independent implementation of UAX#9 agreeing character for character.
+        /// </summary>
+        private static void WhatComposingProduces(Action<bool, string, string> check)
+        {
+            check(Topten.RichTextKit.UnicodeClasses.Directionality(0xE000) == Topten.RichTextKit.Directionality.L,
+                "a PUA sentinel resolves as class L",
+                "the whole token-protection scheme rests on this UCD fact");
+
+            check(RtlComposer.Compose(ShortLogical, RtlOutput.RtlFlagged) == ShortShaped,
+                "pure Arabic, flagged form == shaped logical",
+                "no LTR run to move: composing must add nothing");
+
+            check(RtlComposer.Compose(ShortLogical, RtlOutput.VisualOrder) == ShortVisual,
+                "pure Arabic, visual form matches python-bidi",
+                "two unrelated UAX#9 implementations agree");
+
+            check(RtlComposer.Compose(MixedLogical, RtlOutput.VisualOrder) == MixedVisual,
+                "mixed sentence, visual form matches python-bidi",
+                "digits and Latin hold their forward order inside the reversal");
+
+            check(RtlComposer.Compose(MixedLogical, RtlOutput.RtlFlagged) == MixedFlagged,
+                "mixed sentence, flagged form matches the bench string",
+                "the exact string avia4/silk9 rendered correctly in game");
+
+            string withPlaceholder = RtlComposer.Compose("مرحبا [!v*0] بكم", RtlOutput.RtlFlagged);
+            check(withPlaceholder.Contains("[!v*0]"),
+                "a placeholder survives composing, verbatim",
+                "decision D7: this layer exists because it knows our placeholders");
+
+            string withTag = RtlComposer.Compose("<color=red>مرحبا</color>", RtlOutput.RtlFlagged);
+            check(withTag.Contains("<color=red>") && withTag.Contains("</color>"),
+                "rich-text tags survive composing, verbatim",
+                "a reordered tag would render as literal text");
+
+            check(RtlComposer.Compose("مرحبا (بكم)", RtlOutput.VisualOrder).Contains(")"),
+                "brackets mirror at RTL levels",
+                "UAX#9 L4 via the trie's paired-bracket data");
         }
     }
 }

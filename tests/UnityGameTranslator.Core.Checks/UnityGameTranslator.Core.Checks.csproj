@@ -39,6 +39,14 @@
          deliberate: a stage added later is checked by default, and if it is not pure, this
          project stops compiling — the alarm, as above. -->
     <Compile Include="../../UnityGameTranslator.Core/TextShaping/**/*.cs" Exclude="../../UnityGameTranslator.Core/TextShaping/RtlProbe.cs" />
+    <!-- The vendored UnicodeClasses loads the bidi trie from ITS OWN assembly — which is this
+         one when the files are linked, so the resource must be embedded here too, same logical
+         name. -->
+    <EmbeddedResource Include="../../UnityGameTranslator.Core/TextShaping/RichTextKit/Resources/BidiClasses.trie"
+                      LogicalName="Topten.RichTextKit.Resources.BidiClasses.trie" />
+    <!-- The Unicode conformance suite, gzipped (15 MB of text otherwise) — data from the
+         Unicode Consortium, not derived from the code under test. -->
+    <None Include="TestData/**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <!--

@@ -64,6 +64,9 @@ namespace UnityGameTranslator.Core.Checks
         {
             Section("Text shaping");
             TextShapingChecks.Run(Check);
+
+            Section("Bidi conformance (Unicode suite)");
+            BidiConformanceChecks.Run(Check);
         }
 
         private static void Check(bool passed, string what, string why)

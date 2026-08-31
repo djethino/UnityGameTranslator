@@ -13,6 +13,15 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Unicode bidi classes for the vendored UAX#9 (TextShaping/RichTextKit). The LogicalName
+         is the UPSTREAM resource name on purpose: the vendored loading code keeps working
+         unmodified, and ILRepack carries embedded resources into the merged DLL under the same
+         name. -->
+    <EmbeddedResource Include="TextShaping\RichTextKit\Resources\BidiClasses.trie"
+                      LogicalName="Topten.RichTextKit.Resources.BidiClasses.trie" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- The rules this mod shares with the installer, held in one place rather than in two
          copies that drift. ⚠ It must ALSO be listed in the ILRepack inputs
          (Directory.Build.props): what ships is a single merged DLL, and an assembly absent

@@ -158,28 +158,44 @@ namespace UnityGameTranslator.Core.TextShaping
             _step = -1;
         }
 
+        /// <summary>
+        /// TMP first (the engine with the most to prove), then UI.Text, then TextMesh — a game
+        /// with no live TMP in the scene is still a bench for the legacy paths, where the probe's
+        /// step 2 (isRightToLeftText) simply logs the property as ABSENT. Logs how many
+        /// components each engine offered, so "nothing found" says why.
+        /// </summary>
         private static Component FindTarget()
         {
-            if (TypeHelper.TMP_TextType == null)
+            var candidates = new (string name, Type type)[]
             {
-                TranslatorCore.LogWarning("[RtlProbe] No TMP type in this game — this probe covers TMP/TMProOld only.");
-                return null;
-            }
-            foreach (var obj in TypeHelper.FindAllObjectsOfType(TypeHelper.TMP_TextType))
+                ("TMP", TypeHelper.TMP_TextType),
+                ("UI.Text", TypeHelper.UI_TextType),
+                ("TextMesh", TypeHelper.TextMeshType),
+            };
+            foreach (var (name, type) in candidates)
             {
-                var comp = obj as Component ?? TypeHelper.Il2CppCast(obj, typeof(Component)) as Component;
-                if (comp == null) continue;
-                try
+                if (type == null) { TranslatorCore.LogInfo($"[RtlProbe] {name}: type not present in this game"); continue; }
+                var all = TypeHelper.FindAllObjectsOfType(type);
+                int seen = 0;
+                foreach (var obj in all)
                 {
-                    if (!comp.gameObject.activeInHierarchy) continue;
-                    if (TranslatorCore.IsOwnUI(comp)) continue;
-                    string text = TypeHelper.GetText(comp);
-                    if (string.IsNullOrEmpty(text)) continue;
-                    if (text.Length < 2 || text.Length > 80) continue;
-                    if (text.IndexOf('\n') >= 0) continue;
-                    return comp;
+                    var comp = obj as Component ?? TypeHelper.Il2CppCast(obj, typeof(Component)) as Component;
+                    if (comp == null) continue;
+                    try
+                    {
+                        if (!comp.gameObject.activeInHierarchy) continue;
+                        if (TranslatorCore.IsOwnUI(comp)) continue;
+                        string text = TypeHelper.GetText(comp);
+                        if (string.IsNullOrEmpty(text)) continue;
+                        seen++;
+                        if (text.Length < 2 || text.Length > 80) continue;
+                        if (text.IndexOf('\n') >= 0) continue;
+                        TranslatorCore.LogInfo($"[RtlProbe] Engine picked: {name} ({all.Length} object(s), {seen} with text)");
+                        return comp;
+                    }
+                    catch { }
                 }
-                catch { }
+                TranslatorCore.LogInfo($"[RtlProbe] {name}: {all.Length} object(s), {seen} active with text, none eligible (2-80 chars, single line)");
             }
             return null;
         }

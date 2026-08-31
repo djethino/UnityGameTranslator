@@ -1401,32 +1401,38 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// style.unityTextGenerator = TextGeneratorType.Advanced, all by reflection: the enum only
-        /// exists on Unity 6, and Core compiles against far older assemblies.
+        /// style.unityTextGenerator = TextGeneratorType.Advanced, all by reflection: the property
+        /// only exists on Unity 6, and Core compiles against far older assemblies.
+        ///
+        /// ⚠ The enum type is DERIVED from the property's own StyleEnum&lt;T&gt; generic argument,
+        /// never looked up by name: the first attempt did FindType("UnityEngine.UIElements.
+        /// TextGeneratorType") and reported "no ATG" on a Unity 6000.3 game of the bench — the
+        /// enum lives elsewhere (namespace varies), but the property always knows its own T.
         /// </summary>
         private static bool ProbeTrySetAdvancedGenerator(object element, out string detail)
         {
             try
             {
-                var tgType = FindType("UnityEngine.UIElements.TextGeneratorType");
-                if (tgType == null) { detail = "TextGeneratorType absent — pre-Unity 6, no ATG on this game"; return false; }
-
                 var style = _styleProp?.GetValue(element, null);
                 if (style == null) { detail = "style unreadable"; return false; }
 
                 var prop = style.GetType().GetProperty("unityTextGenerator", BindingFlags.Public | BindingFlags.Instance)
                            ?? _styleProp.PropertyType.GetProperty("unityTextGenerator", BindingFlags.Public | BindingFlags.Instance);
-                if (prop?.SetMethod == null) { detail = "unityTextGenerator property not settable"; return false; }
+                if (prop?.SetMethod == null) { detail = "unityTextGenerator property absent — no ATG on this Unity"; return false; }
 
-                var advanced = Enum.Parse(tgType, "Advanced");
-                object value = advanced;
-                if (!prop.PropertyType.IsAssignableFrom(tgType))
-                {
-                    // The property takes StyleEnum<TextGeneratorType>, not the raw enum.
-                    value = Activator.CreateInstance(prop.PropertyType, advanced);
-                }
+                // StyleEnum<TextGeneratorType> → TextGeneratorType, wherever it lives.
+                Type enumType = null;
+                var pt = prop.PropertyType;
+                if (pt.IsEnum) enumType = pt;
+                else if (pt.IsGenericType && pt.GetGenericArguments().Length == 1)
+                    enumType = pt.GetGenericArguments()[0];
+                if (enumType == null || !enumType.IsEnum)
+                { detail = $"cannot derive enum from {pt.Name}"; return false; }
+
+                var advanced = Enum.Parse(enumType, "Advanced");
+                object value = pt.IsEnum ? advanced : Activator.CreateInstance(pt, advanced);
                 prop.SetValue(style, value, null);
-                detail = "ok";
+                detail = $"ok ({enumType.FullName})";
                 return true;
             }
             catch (Exception ex)

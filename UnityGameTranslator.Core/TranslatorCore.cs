@@ -409,6 +409,7 @@ namespace UnityGameTranslator.Core
         private const int ReadbackMinLetterRun = 2;
         private const int ReadbackSkipLogBudget = 10;
         private static int _readbackSkipLogCount;
+        private static int _shapedQueueRefusals;
         private static int _readbackStoreLogged;
 
         /// <summary>
@@ -2697,6 +2698,27 @@ namespace UnityGameTranslator.Core
                     ServerState = previousServerState;
                 }
 
+                // Audit: NAME any entry carrying presentation forms. The write doors refuse them
+                // now, but a file polluted before those doors existed (it happened once) would
+                // otherwise sit silent — and its entries re-apply at every startup. This is how
+                // such lines are identified for cleaning.
+                int shapedKeys = 0, shapedValues = 0, shapedNamed = 0;
+                foreach (var kvp in TranslationCache)
+                {
+                    bool badKey = TextShaping.RtlText.ContainsPresentationForms(kvp.Key);
+                    bool badValue = kvp.Value?.Value != null && TextShaping.RtlText.ContainsPresentationForms(kvp.Value.Value);
+                    if (badKey) shapedKeys++;
+                    if (badValue) shapedValues++;
+                    if ((badKey || badValue) && shapedNamed < 5)
+                    {
+                        shapedNamed++;
+                        string k = kvp.Key.Length > 40 ? kvp.Key.Substring(0, 40) + "…" : kvp.Key;
+                        Adapter.LogWarning($"[Cache audit] Presentation forms in {(badKey ? "KEY" : "value")}: '{k}' — display output saved as data; remove or re-enter this line (see issue #24).");
+                    }
+                }
+                if (shapedKeys + shapedValues > 0)
+                    Adapter.LogWarning($"[Cache audit] {shapedKeys} shaped key(s), {shapedValues} shaped value(s) in translations.json — these should not exist and will not sync cleanly.");
+
                 Adapter.LogInfo($"Loaded {TranslationCache.Count} cached translations, {translatedTexts.Count} reverse entries, {readbackTranslations.Count} decoration-insensitive, UUID: {FileUuid}");
             }
             catch (Exception e)
@@ -3631,6 +3653,15 @@ namespace UnityGameTranslator.Core
             if (TextShaping.RtlText.ContainsPresentationForms(key))
             {
                 LogWarning($"[Editor] REFUSED to save: the key is in presentation forms (display output, not a source text): '{(key.Length > 40 ? key.Substring(0, 40) + "…" : key)}'");
+                return;
+            }
+            // Same door, VALUE side: shaped text in a value writes presentation forms into the
+            // shared file (D8) — it is almost always the RTL clipboard trap (a paste carrying the
+            // display order). The person must paste logical text; guessing an unshaping here
+            // would be wrong half the time.
+            if (TextShaping.RtlText.ContainsPresentationForms(newValue))
+            {
+                LogWarning("[Editor] REFUSED to save: the value is display-shaped text — paste the logical form (see the RTL clipboard trap).");
                 return;
             }
 
@@ -6019,6 +6050,21 @@ namespace UnityGameTranslator.Core
             // Capture-only mode needs the queue too: entries are stored as
             // H+empty by the worker without any backend call
             if (!Config.IsTranslationEnabled && !Config.capture_keys_only) return false;
+
+            // 🔴 Presentation forms never enter the queue — so they can never become a cache KEY.
+            // Two ways such text reaches a gate: our own composed output read back during the
+            // short window where a cache reload emptied the presented→logical table (the
+            // registration is gone, the screen still shows shaped text), and a game that ships
+            // its own RTL support (RTLTMPro hands the base setter shaped strings). The first is
+            // ours and must be dropped; the second is a real source this project cannot
+            // translate yet (unshaping is ambiguous — issue #24 scope, §6.4-4): logged so the
+            // limitation is visible instead of silent.
+            if (text != null && TextShaping.RtlText.ContainsPresentationForms(text))
+            {
+                if (_shapedQueueRefusals++ < 3)
+                    LogWarning($"[Queue] Refused presentation-form text as a source key (own composed output, or a game already shipping shaped RTL — not translatable yet): '{(text.Length > 40 ? text.Substring(0, 40) + "…" : text)}'");
+                return false;
+            }
             // Google/DeepL require online mode
             if (Config.ActiveBackendRequiresOnline && !Config.online_mode) return false;
             if (string.IsNullOrEmpty(text)) return false;

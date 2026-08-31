@@ -654,7 +654,14 @@ namespace UnityGameTranslator.Core
                                             isOwnUI: false, componentType: "UIToolkit", textValue: ref value);
                 // Stage D — a TextElement has no isRightToLeftText, so this yields the
                 // visual-order form (single-line correct; multi-line is the emission lot).
-                TextShaping.RtlPresenter.Present(__instance, IdFor(__instance), ref value);
+                // Catch-up (user-required): font override rules match this framework too now —
+                // their RTL alignment applies; fonts and sizes stay with this file's own
+                // mechanisms.
+                _originalFontName.TryGetValue(__instance, out string uitkFont);
+                FontOverrideRule uitkOverride = null;
+                if (TranslatorCore.FontOverrides.Count > 0)
+                    uitkOverride = TranslatorCore.FindFontOverride(IdFor(__instance), PathOf(__instance), uitkFont, value);
+                TextShaping.RtlPresenter.Present(__instance, IdFor(__instance), ref value, uitkFont, uitkOverride);
                 if (!string.Equals(before, value, StringComparison.Ordinal))
                     RememberOriginal(__instance, before);
             }
@@ -1533,8 +1540,12 @@ namespace UnityGameTranslator.Core
                 TranslatorPatches.RouteText(element, element, IdFor(element),
                                             isOwnUI: false, componentType: "UIToolkit", textValue: ref translated);
                 // Stage D, same as the setter path — the scan is the other way text reaches a
-                // UI Toolkit screen.
-                TextShaping.RtlPresenter.Present(element, IdFor(element), ref translated);
+                // UI Toolkit screen. Same catch-up: override rules match here too.
+                _originalFontName.TryGetValue(element, out string scanFont);
+                FontOverrideRule scanOverride = null;
+                if (TranslatorCore.FontOverrides.Count > 0)
+                    scanOverride = TranslatorCore.FindFontOverride(IdFor(element), PathOf(element), scanFont, translated);
+                TextShaping.RtlPresenter.Present(element, IdFor(element), ref translated, scanFont, scanOverride);
                 if (string.IsNullOrEmpty(translated) || translated == current) return;
 
                 RememberOriginal(element, current);

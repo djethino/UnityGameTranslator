@@ -43,7 +43,8 @@ namespace UnityGameTranslator.Core.TextShaping
         /// Present one outgoing string in place. Cheap for the overwhelming majority of texts:
         /// one range scan says "nothing to do".
         /// </summary>
-        internal static void Present(object instance, long compId, ref string value)
+        internal static void Present(object instance, long compId, ref string value,
+                                     string settingsFontName = null, FontOverrideRule overrideRule = null)
         {
             if (string.IsNullOrEmpty(value)) return;
 
@@ -82,6 +83,8 @@ namespace UnityGameTranslator.Core.TextShaping
                         _flaggedOriginal[compId] = original;
                     }
                     try { prop.SetValue(instance, true, null); } catch { }
+                    MirrorAlignment(instance, compId,
+                        TranslatorCore.ShouldMirrorRtlAlignment(settingsFontName, overrideRule));
                     TranslatorCore.RegisterPresentedText(flagged, value);
                     Log(compId, "flagged", value, flagged);
                     value = flagged;
@@ -109,7 +112,13 @@ namespace UnityGameTranslator.Core.TextShaping
                     string shapedLogical = RtlComposer.ShapeLogicalOnly(value);
                     TranslatorCore.RegisterPresentedText(shapedLogical, value);
                     if (compId != -1)
-                        _reflows[compId] = new Reflow { Comp = new WeakReference(instance), Logical = value, Assigned = shapedLogical };
+                        _reflows[compId] = new Reflow
+                        {
+                            Comp = new WeakReference(instance),
+                            Logical = value,
+                            Assigned = shapedLogical,
+                            Mirror = TranslatorCore.ShouldMirrorRtlAlignment(settingsFontName, overrideRule),
+                        };
                     Log(compId, "logical+reflow", value, shapedLogical);
                     value = shapedLogical;
                     return;
@@ -138,6 +147,7 @@ namespace UnityGameTranslator.Core.TextShaping
             public string Logical;
             public string Assigned;
             public int Attempts;
+            public bool Mirror;
         }
 
         private static readonly Dictionary<long, Reflow> _reflows = new Dictionary<long, Reflow>();
@@ -183,7 +193,7 @@ namespace UnityGameTranslator.Core.TextShaping
                     }
 
                     TranslatorCore.RegisterPresentedText(final, entry.Logical);
-                    ApplyRightAlignment(comp, id);
+                    MirrorAlignment(comp, id, entry.Mirror);
 
                     TranslatorPatches.BypassTextPrefix = true;
                     try { TypeHelper.SetText(comp, final); }
@@ -267,21 +277,43 @@ namespace UnityGameTranslator.Core.TextShaping
         }
 
         /// <summary>
-        /// Right-align a reflowed component, remembering its original anchor. Not the open
-        /// product question (forcing alignment on FLAG engines, where the game's layout still
-        /// decides): per-line visual text left-aligned reads as ragged nonsense, the alignment
-        /// IS part of this emission. TextAnchor rows are triples: Left/Center/Right.
+        /// MIRROR a component's horizontal alignment for RTL text: left becomes right and right
+        /// becomes left — alignment follows the reading direction, so a "start-aligned" label
+        /// stays start-aligned. Center, justified and the rest are untouched, and the original
+        /// value is restored when the component goes back to LTR. The DECISION is per font and
+        /// per override rule (<see cref="TranslatorCore.ShouldMirrorRtlAlignment"/> —
+        /// user-arbitrated: one game mixes components that need the mirror with boxes built for
+        /// one side, so a global switch cannot be right). Handles both alignment vocabularies:
+        /// UI.Text/TextMesh TextAnchor (triples, column 0/1/2) and TMP's TextAlignmentOptions
+        /// (bit field, horizontal Left=1 / Right=4 in the low byte).
         /// </summary>
-        private static void ApplyRightAlignment(object comp, long compId)
+        private static void MirrorAlignment(object comp, long compId, bool mirror)
         {
+            if (!mirror) return;
             try
             {
                 var alignProp = comp.GetType().GetProperty("alignment", BindingFlags.Public | BindingFlags.Instance);
                 if (alignProp?.SetMethod == null) return;
                 object current = alignProp.GetValue(comp, null);
-                int row = Convert.ToInt32(current) / 3;
-                object target = Enum.ToObject(alignProp.PropertyType, row * 3 + 2);
-                if (Equals(current, target)) return;
+                int v = Convert.ToInt32(current);
+                int mirrored = v;
+
+                if (Enum.GetUnderlyingType(alignProp.PropertyType) == typeof(int) && v <= 8)
+                {
+                    // TextAnchor-style: 3 rows of Left/Center/Right.
+                    int column = v % 3;
+                    if (column == 0) mirrored = v + 2;
+                    else if (column == 2) mirrored = v - 2;
+                }
+                else
+                {
+                    // TMP TextAlignmentOptions-style bit field: horizontal flags in the low byte.
+                    if ((v & 0x1) != 0) mirrored = (v & ~0x1) | 0x4;
+                    else if ((v & 0x4) != 0) mirrored = (v & ~0x4) | 0x1;
+                }
+
+                if (mirrored == v) return;
+                object target = Enum.ToObject(alignProp.PropertyType, mirrored);
                 if (compId != -1 && !_alignedOriginal.ContainsKey(compId))
                     _alignedOriginal[compId] = current;
                 alignProp.SetValue(comp, target, null);

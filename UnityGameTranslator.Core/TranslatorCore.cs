@@ -694,6 +694,44 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Whether RTL text on a component should MIRROR its horizontal alignment (left↔right)
+        /// or keep the game's own. Resolution order: the matched override rule, then the font's
+        /// shared setting, then mirror — the default an RTL reader expects (user-arbitrated).
+        /// Null/unknown font falls through to the default rather than guessing.
+        /// </summary>
+        public static bool ShouldMirrorRtlAlignment(string settingsFontName, FontOverrideRule overrideRule)
+        {
+            string choice = overrideRule?.rtl_alignment;
+            if (string.IsNullOrEmpty(choice) && !string.IsNullOrEmpty(settingsFontName)
+                && FontSettingsMap.TryGetValue(settingsFontName, out var settings))
+                choice = settings.rtl_alignment;
+            return !string.Equals(choice, "keep", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Whether this game's translation involves right-to-left text AT ALL, in either
+        /// direction: RTL values (an LTR game translated to Arabic) or RTL source keys (an RTL
+        /// game translated out). Gates the RTL controls in the Fonts tab — they are noise for
+        /// everyone else (user-arbitrated: "seulement quand utile"). Scanned on demand; callers
+        /// are screens, not hot paths.
+        /// </summary>
+        public static bool TranslationTouchesRtl()
+        {
+            try
+            {
+                foreach (var kvp in TranslationCache)
+                {
+                    if (TextShaping.RtlText.ContainsStrongRtl(kvp.Key)
+                        || TextShaping.RtlText.ContainsPresentationForms(kvp.Key)) return true;
+                    string v = kvp.Value?.Value;
+                    if (v != null && TextShaping.RtlText.ContainsStrongRtl(v)) return true;
+                }
+            }
+            catch { }
+            return false;
+        }
+
+        /// <summary>
         /// Test if a font override rule matches the given context.
         /// </summary>
         private static bool MatchesFontOverride(FontOverrideRule rule, string path, string fontName, string text)
@@ -7967,6 +8005,14 @@ namespace UnityGameTranslator.Core
         /// User comment for identifying the rule purpose.
         /// </summary>
         public string comment { get; set; }
+
+        /// <summary>
+        /// RTL alignment behaviour for the matched components: null = inherit the font's
+        /// setting, "mirror" or "keep". Exists because one game mixes both needs (a description
+        /// pane that mirrors fine next to buttons whose boxes were built for one side —
+        /// user-arbitrated on the bench).
+        /// </summary>
+        public string rtl_alignment { get; set; }
     }
 
     /// <summary>
@@ -7986,6 +8032,16 @@ namespace UnityGameTranslator.Core
         /// Only applies to TMP fonts that support fallback.
         /// </summary>
         public string fallback { get; set; }
+
+        /// <summary>
+        /// How right-to-left text aligns on components using this font: null or "mirror"
+        /// (default — left becomes right and vice versa, what an RTL reader expects) or "keep"
+        /// (the game's own alignment, for layouts built around one side). Per font and SHARED
+        /// with the translation, like every setting in this class: one player fixing a game's
+        /// RTL rendering fixes it for everyone who downloads the translation. Refinable per
+        /// component through a font override rule.
+        /// </summary>
+        public string rtl_alignment { get; set; }
 
         /// <summary>
         /// Font type detected: "TMP", "Unity", "TextMesh", "tk2d"

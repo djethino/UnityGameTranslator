@@ -2005,6 +2005,23 @@ namespace UnityGameTranslator.Core
         /// <summary>
         /// Update settings for a font.
         /// </summary>
+        /// <summary>
+        /// Set how RTL text aligns on components using this font: null/"mirror" (default) or
+        /// "keep". Same shared store as every font setting (travels with the translation);
+        /// nothing to re-apply live — the presenter reads the choice at each presentation and
+        /// restores originals when a component leaves RTL.
+        /// </summary>
+        public static void SetFontRtlAlignment(string fontName, string rtlAlignment)
+        {
+            if (string.IsNullOrEmpty(fontName)) return;
+            if (!TranslatorCore.FontSettingsMap.TryGetValue(fontName, out var settings))
+            {
+                settings = new FontSettings { type = "Unknown" };
+                TranslatorCore.FontSettingsMap[fontName] = settings;
+            }
+            settings.rtl_alignment = rtlAlignment;
+        }
+
         public static void UpdateFontSettings(string fontName, bool enabled, string fallbackFont)
         {
             if (string.IsNullOrEmpty(fontName))

@@ -61,14 +61,22 @@ namespace UnityGameTranslator.Core.UI.Panels
         private Toggle _enableFontReplacementToggle;
         private string[] _systemFonts;
         private List<SearchableDropdown> _fallbackDropdowns = new List<SearchableDropdown>();
+        // Same lifecycle rule as the fallback dropdowns: a SearchableDropdown owns a popup
+        // outside the row, so destroying the row is not enough.
+        private List<SearchableDropdown> _overrideRtlDropdowns = new List<SearchableDropdown>();
         private SearchableDropdown _fontAtlasSizeDropdown;
         private int _pendingAtlasSize;  // font sharpness selection, applied on Apply
 
-        // Pending font changes (fontName -> (enabled, fallback, sizePercent, scaleAuto)).
+        // Pending font changes (fontName -> (enabled, fallback, sizePercent, scaleAuto, mirrorRtl)).
         // sizePercent = the deliberate size slider (orthogonal to the auto design-scale baseline);
         // scaleAuto = whether the design-scale is folded in. The two combine multiplicatively.
-        private Dictionary<string, (bool enabled, string fallback, float sizePercent, bool scaleAuto)> _pendingFontSettings = new Dictionary<string, (bool, string, float, bool)>();
-        private Dictionary<string, (bool enabled, string fallback, float sizePercent, bool scaleAuto)> _initialFontSettings = new Dictionary<string, (bool, string, float, bool)>();
+        private Dictionary<string, (bool enabled, string fallback, float sizePercent, bool scaleAuto, bool mirrorRtl)> _pendingFontSettings = new Dictionary<string, (bool, string, float, bool, bool)>();
+        private Dictionary<string, (bool enabled, string fallback, float sizePercent, bool scaleAuto, bool mirrorRtl)> _initialFontSettings = new Dictionary<string, (bool, string, float, bool, bool)>();
+
+        // Whether the RTL controls (per-font mirror toggle, per-rule alignment) are shown at all:
+        // only when this game's translation involves right-to-left text in either direction —
+        // they are noise for everyone else (user-arbitrated). Recomputed at each list refresh.
+        private bool _rtlControlsVisible;
 
         // Images section
         private GameObject _imagesListContainer;
@@ -1268,6 +1276,12 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (_fontOverridesListContainer == null) return;
 
+            _rtlControlsVisible = TranslatorCore.TranslationTouchesRtl();
+
+            foreach (var dropdown in _overrideRtlDropdowns)
+                dropdown.Destroy();
+            _overrideRtlDropdowns.Clear();
+
             // Clear existing rows
             for (int i = _fontOverridesListContainer.transform.childCount - 1; i >= 0; i--)
             {
@@ -1363,12 +1377,41 @@ namespace UnityGameTranslator.Core.UI.Panels
                     UpdateApplyButtonText();
                 }
             });
+
+            // RTL alignment for the matched components (only when this translation involves
+            // right-to-left text): inherit the font's setting, or force mirror/keep here — the
+            // per-rule refinement the bench demanded (one game, mirroring pane next to
+            // one-side-built buttons).
+            if (_rtlControlsVisible)
+            {
+                var rtlRow = UIFactory.CreateHorizontalGroup(row, "RtlRow", false, false, true, true, 5);
+                UIFactory.SetLayoutElement(rtlRow, minHeight: UIStyles.RowHeightNormal, flexibleWidth: 9999);
+
+                var rtlLabel = UIFactory.CreateLabel(rtlRow, "RtlLabel", "RTL alignment:", TextAnchor.MiddleLeft);
+                rtlLabel.fontSize = UIStyles.FontSizeSmall;
+                UIFactory.SetLayoutElement(rtlLabel.gameObject, minWidth: 95);
+
+                string initialRtl = string.Equals(rule.rtl_alignment, "mirror", StringComparison.OrdinalIgnoreCase) ? "Mirror"
+                                  : string.Equals(rule.rtl_alignment, "keep", StringComparison.OrdinalIgnoreCase) ? "Keep game's"
+                                  : "Inherit from font";
+                var rtlDropdown = new Components.SearchableDropdown($"OverrideRtl_{index}",
+                    new[] { "Inherit from font", "Mirror", "Keep game's" }, initialRtl, showSearch: false);
+                rtlDropdown.CreateUI(rtlRow, (selected) =>
+                {
+                    if (capturedIndex >= _pendingFontOverrides.Count) return;
+                    _pendingFontOverrides[capturedIndex].rtl_alignment =
+                        selected == "Mirror" ? "mirror" : selected == "Keep game's" ? "keep" : null;
+                    UpdateApplyButtonText();
+                }, 150);
+                _overrideRtlDropdowns.Add(rtlDropdown);
+            }
         }
 
         private void RefreshFontsList()
         {
             if (_fontsListContainer == null) return;
 
+            _rtlControlsVisible = TranslatorCore.TranslationTouchesRtl();
             TranslatorCore.LogInfo($"[TranslationParametersPanel] RefreshFontsList called");
 
             // Clean up searchable dropdowns first
@@ -1544,6 +1587,23 @@ namespace UnityGameTranslator.Core.UI.Panels
             enableToggle.isOn = fontInfo.Enabled;
 
             UIHelpers.AddToggleListener(enableToggle, (isOn) => OnFontEnableChanged(capturedFontName, isOn));
+
+            // RTL alignment (only when this translation involves right-to-left text): mirror the
+            // component's alignment to follow the reading direction, or keep the game's own —
+            // per font and shared with the translation, refinable per rule below.
+            if (_rtlControlsVisible)
+            {
+                var rtlRow = UIStyles.CreateFormRow(row, "RtlRow", UIStyles.RowHeightNormal, 5);
+                var rtlToggleObj = UIFactory.CreateToggle(rtlRow, "RtlMirrorToggle", out var rtlToggle, out var rtlLabel);
+                rtlLabel.text = " Mirror alignment (RTL)";
+                rtlLabel.color = UIStyles.TextSecondary;
+                rtlLabel.fontSize = UIStyles.FontSizeSmall;
+                UIFactory.SetLayoutElement(rtlToggleObj, minHeight: UIStyles.RowHeightNormal);
+                rtlToggle.isOn = GetEffectiveFontSettings(capturedFontName).mirrorRtl;
+                UIHelpers.AddToggleListener(rtlToggle, (isOn) => OnFontRtlAlignChanged(capturedFontName, isOn));
+                _helpZone?.Describe(rtlToggleObj,
+                    "Right-to-left text flips left-aligned components to right-aligned, following the reading direction. Turn off to keep the game's own alignment when its layout was built around one side.");
+            }
 
             // Fallback row (only for fonts that support it)
             if (fontInfo.SupportsFallback)
@@ -1821,7 +1881,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// captured initial, else the live font state. Single source so each handler mutates one
         /// field and preserves the others (enabled, fallback, sizePercent, scaleAuto).
         /// </summary>
-        private (bool enabled, string fallback, float sizePercent, bool scaleAuto) GetEffectiveFontSettings(string fontName)
+        private (bool enabled, string fallback, float sizePercent, bool scaleAuto, bool mirrorRtl) GetEffectiveFontSettings(string fontName)
         {
             if (_pendingFontSettings.TryGetValue(fontName, out var pending))
                 return pending;
@@ -1830,13 +1890,21 @@ namespace UnityGameTranslator.Core.UI.Panels
             var settings = FontManager.GetFontSettings(fontName);
             return (settings?.enabled ?? true, settings?.fallback,
                     FontManager.GetFontSizePercent(fontName),  // deliberate percent (not the effective)
-                    settings?.scale_auto ?? false);
+                    settings?.scale_auto ?? false,
+                    !string.Equals(settings?.rtl_alignment, "keep", StringComparison.OrdinalIgnoreCase));
+        }
+
+        private void OnFontRtlAlignChanged(string fontName, bool mirror)
+        {
+            var cur = GetEffectiveFontSettings(fontName);
+            _pendingFontSettings[fontName] = (cur.enabled, cur.fallback, cur.sizePercent, cur.scaleAuto, mirror);
+            UpdateApplyButtonText();
         }
 
         private void OnFontEnableChanged(string fontName, bool enabled)
         {
             var cur = GetEffectiveFontSettings(fontName);
-            _pendingFontSettings[fontName] = (enabled, cur.fallback, cur.sizePercent, cur.scaleAuto);
+            _pendingFontSettings[fontName] = (enabled, cur.fallback, cur.sizePercent, cur.scaleAuto, cur.mirrorRtl);
 
             if (_fontsStatusLabel != null)
             {
@@ -1850,7 +1918,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void OnFontFallbackChanged(string fontName, string fallbackFont)
         {
             var cur = GetEffectiveFontSettings(fontName);
-            _pendingFontSettings[fontName] = (cur.enabled, fallbackFont, cur.sizePercent, cur.scaleAuto);
+            _pendingFontSettings[fontName] = (cur.enabled, fallbackFont, cur.sizePercent, cur.scaleAuto, cur.mirrorRtl);
 
             if (_fontsStatusLabel != null)
             {
@@ -1873,7 +1941,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             var cur = GetEffectiveFontSettings(fontName);
             // The slider is the deliberate size percent — orthogonal to the auto design-scale, so
             // scaleAuto is preserved (Model B: the two combine).
-            _pendingFontSettings[fontName] = (cur.enabled, cur.fallback, sizePercent, cur.scaleAuto);
+            _pendingFontSettings[fontName] = (cur.enabled, cur.fallback, sizePercent, cur.scaleAuto, cur.mirrorRtl);
 
             if (_fontsStatusLabel != null)
             {
@@ -1892,7 +1960,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void OnFontAutoScaleChanged(string fontName, bool scaleAuto)
         {
             var cur = GetEffectiveFontSettings(fontName);
-            _pendingFontSettings[fontName] = (cur.enabled, cur.fallback, cur.sizePercent, scaleAuto);
+            _pendingFontSettings[fontName] = (cur.enabled, cur.fallback, cur.sizePercent, scaleAuto, cur.mirrorRtl);
 
             if (_fontsStatusLabel != null)
             {
@@ -2403,7 +2471,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                     var fallback = settings?.fallback;
                     var sizePercent = FontManager.GetFontSizePercent(fontInfo.Name);  // deliberate percent
                     var scaleAuto = settings?.scale_auto ?? false;
-                    _initialFontSettings[fontInfo.Name] = (enabled, fallback, sizePercent, scaleAuto);
+                    var mirrorRtl = !string.Equals(settings?.rtl_alignment, "keep", StringComparison.OrdinalIgnoreCase);
+                    _initialFontSettings[fontInfo.Name] = (enabled, fallback, sizePercent, scaleAuto, mirrorRtl);
                 }
             }
             catch (Exception ex) { TranslatorCore.LogWarning($"[TranslationParametersPanel] Font settings capture failed: {ex.Message}"); }
@@ -2470,6 +2539,13 @@ namespace UnityGameTranslator.Core.UI.Panels
                     // the shadow in place.
                     if (Math.Abs(pending.sizePercent - FontManager.GetFontSizePercent(fontName)) > 0.001f)
                         FontManager.UpdateFontScale(fontName, pending.sizePercent);
+
+                    // RTL alignment choice — pushed only when it moved; null is the default
+                    // (mirror), "keep" the deliberate opt-out, both shared with the translation.
+                    bool initialMirror = !_initialFontSettings.TryGetValue(fontName, out var init1)
+                                         || init1.mirrorRtl;
+                    if (pending.mirrorRtl != initialMirror)
+                        FontManager.SetFontRtlAlignment(fontName, pending.mirrorRtl ? null : "keep");
                 }
 
                 // Apply pending exclusion changes
@@ -2557,7 +2633,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 foreach (var fontInfo in FontManager.GetDetectedFontsInfo())
                 {
                     var settings = FontManager.GetFontSettings(fontInfo.Name);
-                    _initialFontSettings[fontInfo.Name] = (settings?.enabled ?? true, settings?.fallback, FontManager.GetFontSizePercent(fontInfo.Name), settings?.scale_auto ?? false);
+                    _initialFontSettings[fontInfo.Name] = (settings?.enabled ?? true, settings?.fallback, FontManager.GetFontSizePercent(fontInfo.Name), settings?.scale_auto ?? false,
+                        !string.Equals(settings?.rtl_alignment, "keep", StringComparison.OrdinalIgnoreCase));
                 }
                 _pendingFontSettings.Clear();
 
@@ -2604,7 +2681,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                     bool fallbackDiff = kvp.Value.fallback != initial.fallback;
                     bool sizeDiff = Math.Abs(kvp.Value.sizePercent - initial.sizePercent) > 0.001f;
                     bool autoDiff = kvp.Value.scaleAuto != initial.scaleAuto;
-                    if (enabledDiff || fallbackDiff || sizeDiff || autoDiff)
+                    bool rtlDiff = kvp.Value.mirrorRtl != initial.mirrorRtl;
+                    if (enabledDiff || fallbackDiff || sizeDiff || autoDiff || rtlDiff)
                     {
                         count++;
                     }

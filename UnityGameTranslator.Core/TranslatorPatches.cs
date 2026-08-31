@@ -778,7 +778,21 @@ namespace UnityGameTranslator.Core
                 if (outcome == RouteOutcome.Stop) return;
 
                 // Stage D — after all routing, on the outgoing string only (see RtlPresenter).
-                TextShaping.RtlPresenter.Present(__instance, TypeHelper.GetInstanceID(__instance), ref value);
+                // Font override rules were historically consulted by the TMP/UI.Text/TextMesh
+                // prefix alone; this path matches them too now (catch-up, user-required): the
+                // rule's size and RTL alignment apply — font replacement stays with each
+                // engine's own mechanism.
+                FontOverrideRule genericOverride = null;
+                if (TranslatorCore.FontOverrides.Count > 0)
+                {
+                    long gid = TypeHelper.GetInstanceID(__instance);
+                    string goPath = component != null ? TranslatorCore.GetGameObjectPath(component.gameObject) : null;
+                    genericOverride = TranslatorCore.FindFontOverride(gid, goPath, settingsFontName ?? fontName, value);
+                    if (genericOverride != null && genericOverride.size_multiplier > 0.001f)
+                        FontManager.ApplyTemporaryScale((int)gid, genericOverride.size_multiplier);
+                }
+                TextShaping.RtlPresenter.Present(__instance, TypeHelper.GetInstanceID(__instance), ref value,
+                                                 settingsFontName ?? fontName, genericOverride);
 
                 // Apply font scale. Also on StopButRescale — that outcome exists precisely because
                 // a component with nothing to translate still needs its size re-asserted.
@@ -3482,6 +3496,7 @@ namespace UnityGameTranslator.Core
                 int compId = TypeHelper.GetInstanceID(__instance);
                 string fontName = null;
                 string settingsFontName = null;
+                FontOverrideRule fontOverrideMatched = null;   // carried to the RTL presenter
                 object fontObj = null;
                 Font unityCloneFont = null;  // Track the clone applied to this component
                 string unityCloneName = null;      // Clone's display name (e.g., "calibri") — for font NAME comparisons
@@ -3545,11 +3560,12 @@ namespace UnityGameTranslator.Core
                     if (!FontManager.IsTranslationEnabled(settingsFontName))
                         return;
 
-                    // Check font override rules (pattern-based font/size overrides)
+                    // Check font override rules (pattern-based font/size/alignment overrides)
                     if (TranslatorCore.FontOverrides.Count > 0)
                     {
                         string goPath = comp != null ? TranslatorCore.GetGameObjectPath(comp.gameObject) : null;
                         var fontOverride = TranslatorCore.FindFontOverride(compId, goPath, settingsFontName, textValue);
+                        fontOverrideMatched = fontOverride;
                         if (fontOverride != null)
                         {
                             // Override font replacement if specified
@@ -3618,7 +3634,8 @@ namespace UnityGameTranslator.Core
                         // ⚠ Present anyway: this outcome also fires when a stored LOGICAL
                         // translation is re-set (scanner refresh) — the bookkeeping matched, the
                         // screen still needs the shaped form.
-                        TextShaping.RtlPresenter.Present(__instance, compId, ref textValue);
+                        TextShaping.RtlPresenter.Present(__instance, compId, ref textValue,
+                                                         settingsFontName ?? fontName, fontOverrideMatched);
                         ApplyFontScaleGated(__instance, unityCloneFont, unityCloneName, settingsFontName ?? fontName);
                         return;
                 }
@@ -3627,7 +3644,8 @@ namespace UnityGameTranslator.Core
                 // concat/typewriter bookkeeping, caches — works on the logical text; only the
                 // string leaving for the screen is composed. The font code below then sees the
                 // shaped characters, which is what the atlas must actually carry.
-                TextShaping.RtlPresenter.Present(__instance, compId, ref textValue);
+                TextShaping.RtlPresenter.Present(__instance, compId, ref textValue,
+                                                 settingsFontName ?? fontName, fontOverrideMatched);
 
                 // Detect missed SetFont: text was translated but HasCachedTranslation said no
                 if (unityCloneFont != null && textValue != preTranslateText && componentType == "Unity")
@@ -4524,7 +4542,20 @@ namespace UnityGameTranslator.Core
                 var outcome = RouteText(__instance, component, TypeHelper.GetInstanceID(__instance),
                                         isOwnUI, "TMP", ref __0);
                 if (outcome == RouteOutcome.Stop) return;
-                TextShaping.RtlPresenter.Present(__instance, TypeHelper.GetInstanceID(__instance), ref __0);
+                // Catch-up (user-required): this path never consulted the font override rules.
+                // Size and RTL alignment apply here; font replacement stays with the fallback
+                // mechanism above, which is how this engine replaces fonts at all.
+                FontOverrideRule altOverride = null;
+                if (TranslatorCore.FontOverrides.Count > 0)
+                {
+                    long aid = TypeHelper.GetInstanceID(__instance);
+                    string goPath = TranslatorCore.GetGameObjectPath(component.gameObject);
+                    altOverride = TranslatorCore.FindFontOverride(aid, goPath, fontName, __0);
+                    if (altOverride != null && altOverride.size_multiplier > 0.001f)
+                        FontManager.ApplyTemporaryScale((int)aid, altOverride.size_multiplier);
+                }
+                TextShaping.RtlPresenter.Present(__instance, TypeHelper.GetInstanceID(__instance), ref __0,
+                                                 fontName, altOverride);
             }
             catch (Exception ex)
             {
@@ -4626,7 +4657,15 @@ namespace UnityGameTranslator.Core
                 var outcome = RouteText(__instance, component, TypeHelper.GetInstanceID(__instance),
                                         isOwnUI, "tk2d", ref value);
                 if (outcome == RouteOutcome.Stop) return;
-                TextShaping.RtlPresenter.Present(__instance, TypeHelper.GetInstanceID(__instance), ref value);
+                // Catch-up (user-required): override rules match here too. Only their RTL
+                // alignment can act on tk2d — fonts are baked atlases (documented ceiling) and
+                // this path has no scale mechanism.
+                FontOverrideRule tk2dOverride = null;
+                if (TranslatorCore.FontOverrides.Count > 0)
+                    tk2dOverride = TranslatorCore.FindFontOverride(TypeHelper.GetInstanceID(__instance),
+                        TranslatorCore.GetGameObjectPath(component.gameObject), fontName, value);
+                TextShaping.RtlPresenter.Present(__instance, TypeHelper.GetInstanceID(__instance), ref value,
+                                                 fontName, tk2dOverride);
             }
             catch { }
         }

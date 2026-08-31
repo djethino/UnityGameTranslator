@@ -2072,7 +2072,13 @@ namespace UnityGameTranslator.Core
                     // retranslation — no credential leaves this machine, the
                     // site only ever relays the request back over SSE
                     ["ai_available"] = TranslatorCore.Config?.enable_ai ?? false,
-                    ["ai_model"] = GetAiBackendLabel()
+                    ["ai_model"] = GetAiBackendLabel(),
+                    // Who the editor page is talking to. It decides what a human reads there —
+                    // the manager opens the same editor on a game that is CLOSED, where "restart
+                    // the game" is the one advice that would undo what it is doing. Spelled by
+                    // the socle, which is also what writes it in the marker beside the file.
+                    [EditSessions.HolderField] =
+                        EditSessions.Serialize(EditSessions.EditSessionHolder.Game)
                 };
 
                 var jsonPayload = payload.ToString(Newtonsoft.Json.Formatting.None);

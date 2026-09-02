@@ -217,10 +217,12 @@ namespace UnityGameTranslator.Core.TextShaping
                         }
                     }
 
-                    // The alignment does not depend on the lines: mirrored NOW, with the text
-                    // (it used to wait for the finish below — half a second of left-aligned
-                    // Arabic jumping right on every screen, user report).
-                    UIToolkitSupport.MirrorAlign(instance, mirror);
+                    // ⚠ The alignment is NOT mirrored here, unlike the other engines. UI Toolkit
+                    // resolves styles at the panel update, so at set_text time — a fresh element,
+                    // a first frame — resolvedStyle.unityTextAlign is the default (UpperLeft),
+                    // not what the stylesheet says: mirrored from that, every centred button
+                    // label landed top-right, outside its frame (bench, tim2). The mirror is
+                    // taken with the finish, one frame later, when the resolved style is real.
 
                     // 🔴 Two passes here too, and for the same reason as UI.Text (§7.10): the
                     // width to cut at is the one the layout gives THIS text, which does not
@@ -238,7 +240,7 @@ namespace UnityGameTranslator.Core.TextShaping
                     string shapedNow = RtlComposer.ShapeLogicalOnly(value);
                     string visualNow = RtlComposer.Compose(value, RtlOutput.VisualOrder);
                     TranslatorCore.RegisterPresentedText(visualNow, logicalSource);
-                    UIToolkitSupport.DeferUntilLaidOut(instance, logicalSource, value, shapedNow, visualNow);
+                    UIToolkitSupport.DeferUntilLaidOut(instance, logicalSource, value, shapedNow, visualNow, mirror);
                     Log(compId, "visual+walk/uitk", value, visualNow);
                     value = visualNow;
                     return;

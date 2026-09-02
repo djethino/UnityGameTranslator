@@ -1652,6 +1652,7 @@ namespace UnityGameTranslator.Core
         private sealed class PendingRtl
         {
             internal string LogicalSource, Logical, Measure, Assigned;
+            internal bool Mirror;
             internal int Frame;   // when the text was assigned — its layout comes at that frame's end
         }
 
@@ -1667,13 +1668,13 @@ namespace UnityGameTranslator.Core
         private static readonly List<object> _pendingLane = new List<object>();
 
         internal static void DeferUntilLaidOut(object element, string logicalSource, string logical,
-                                               string measure, string assigned)
+                                               string measure, string assigned, bool mirror)
         {
             _pendingRtl.Remove(element);
             _pendingRtl.Add(element, new PendingRtl
             {
                 LogicalSource = logicalSource, Logical = logical, Measure = measure,
-                Assigned = assigned, Frame = Time.frameCount,
+                Assigned = assigned, Mirror = mirror, Frame = Time.frameCount,
             });
             if (!_pendingLane.Contains(element)) _pendingLane.Add(element);
         }
@@ -1712,6 +1713,10 @@ namespace UnityGameTranslator.Core
         private static void TryFinishPending(object element, PendingRtl pending)
         {
             if (Time.frameCount <= pending.Frame || !WillBeLaidOut(element)) return;
+            // The alignment is mirrored HERE and not at set_text: it is computed from the
+            // RESOLVED style, which only exists once the panel has styled the element — read
+            // earlier it is the default UpperLeft, and every centred label ended top-right.
+            MirrorAlign(element, pending.Mirror);
             if (TextShaping.RtlPresenter.FinishUiToolkitPending(element, pending.LogicalSource,
                     pending.Logical, pending.Measure, pending.Assigned))
                 _pendingRtl.Remove(element);
@@ -2792,6 +2797,9 @@ namespace UnityGameTranslator.Core
         /// The UI Toolkit face of RtlPresenter.MirrorAlignment — same decision, same idempotence
         /// (computed from the stored ORIGINAL, never the current state), different plumbing:
         /// alignment here is a STYLE (unityTextAlign), read resolved, written inline.
+        /// 🔴 Only callable once the element has been styled by its panel (attached, and a frame
+        /// gone by): the resolved value read before that is the engine default, and it would be
+        /// stored as the original for the life of the element.
         /// </summary>
         internal static void MirrorAlign(object element, bool mirror)
         {

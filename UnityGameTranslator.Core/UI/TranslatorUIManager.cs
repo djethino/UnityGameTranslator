@@ -648,15 +648,54 @@ namespace UnityGameTranslator.Core.UI
                 _eventSystemTaken = false;
             }
 
-            bool wanted = _uiHoldsInput && !TranslatorCore.DisableEventSystemOverride;
+            // 🔴 "Let the game handle its own EventSystem" holds only while the game's EventSystem
+            // handles the pointer AT ALL. A game can switch pointer input off in play — its
+            // input module then raycasts nothing, frame after frame, and delivers no click to
+            // anyone, our windows included: every button of the mod dead once a level loaded,
+            // hovering and dragging (both polled) still fine, everything back at the menu, where
+            // its module raycasts again (measured: 3 raycasts a frame at the menu, 0 in play).
+            // Taking our EventSystem there costs the game nothing — it was serving nobody — and
+            // is the only way a window of ours can be clicked. Observed from the real state, no
+            // delay: two consecutive frames without a raycast while our window holds the input.
+            // Latched once taken, until the interface lets go: our own EventSystem raycasts, so
+            // re-reading the count would hand the pointer back and forth every other frame.
+            bool wanted;
+            if (!_uiHoldsInput)
+                wanted = false;
+            else if (!TranslatorCore.DisableEventSystemOverride || _eventSystemTaken)
+                wanted = true;
+            else
+                wanted = GamePointerDead();
+
             if (wanted == _eventSystemTaken)
                 return;
 
             _eventSystemTaken = wanted;
             if (wanted)
+            {
+                if (TranslatorCore.DisableEventSystemOverride)
+                    TranslatorCore.LogInfo("[Ownership] the game's EventSystem is not processing the pointer (no raycast for 2 frames) — taking ours while a window is open, despite the per-game override being off");
                 EventSystemHelper.EnableEventSystem();
+            }
             else
                 EventSystemHelper.ReleaseEventSystem();
+        }
+
+        private static int _framesWithoutRaycast;
+
+        /// <summary>
+        /// Has the EventSystem in charge stopped raycasting — for two frames running — while our
+        /// window holds the input? Counted here, once per tick; any raycast resets it.
+        /// </summary>
+        private static bool GamePointerDead()
+        {
+            if (UniverseLib.Input.InputCapture.RaycastsLastFrame > 0)
+            {
+                _framesWithoutRaycast = 0;
+                return false;
+            }
+            if (_framesWithoutRaycast < 2) _framesWithoutRaycast++;
+            return _framesWithoutRaycast >= 2;
         }
 
         /// <summary>Hand the keyboard to whichever side the click landed on.</summary>
@@ -905,9 +944,37 @@ namespace UnityGameTranslator.Core.UI
         /// never ran, so the "was visible" flag stayed set, so reopening saw no transition either
         /// and never undid anything.
         /// </remarks>
+        // Bench diagnostic (to remove with the other probes): the input-ownership state as this
+        // tick sees it, every two seconds while a panel shows. Added when a session's log held
+        // no click, no handover and no raycast after a scene change although the user was
+        // clicking our buttons — the state had to be read, not inferred.
+        private static float _ownershipStateLoggedAt;
+
+        private static void LogOwnershipState(bool panelsVisible)
+        {
+            if (!TranslatorCore.DebugMode || !panelsVisible) return;
+            if (Time.realtimeSinceStartup - _ownershipStateLoggedAt < 2f) return;
+            _ownershipStateLoggedAt = Time.realtimeSinceStartup;
+            string es = "none";
+            try
+            {
+                var current = UnityEngine.EventSystems.EventSystem.current;
+                if (current != null)
+                    es = $"{current.name} enabled={current.isActiveAndEnabled} module={(current.currentInputModule != null ? current.currentInputModule.GetType().Name : "none")}";
+            }
+            catch (Exception ex) { es = "unreadable: " + ex.GetType().Name; }
+            TranslatorCore.LogInfo($"[Ownership] scene={UnityEngine.SceneManagement.SceneManager.GetActiveScene().name} "
+                + $"visible={panelsVisible} wasVisible={_lastPanelVisibleState} holds={_uiHoldsInput} taken={_eventSystemTaken} "
+                + $"btn0={InputManager.GetMouseButton(0)} pointer={InputManager.MousePosition.x:F0},{InputManager.MousePosition.y:F0} "
+                + $"lock={Cursor.lockState} cursorVisible={Cursor.visible} raycastsLastFrame={UniverseLib.Input.InputCapture.RaycastsLastFrame} "
+                + $"screen={Screen.width}x{Screen.height} "
+                + $"absorber={(_clickAbsorber != null && _clickAbsorber.activeSelf)} eventSystem={es}");
+        }
+
         private static void TickInputOwnership()
         {
             bool panelsVisible = AnyPanelVisible();
+            LogOwnershipState(panelsVisible);
             // ONE state for "the interface holds the input", used by the EventSystem handover AND
             // by the capture. Two separate notions would drift, and the drift would show up as the
             // half-captured frame that let a click through.

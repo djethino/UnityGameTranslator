@@ -2355,6 +2355,77 @@ namespace UnityGameTranslator.Core
             catch { return false; }
         }
 
+        // Underline crash guard plumbing — see UnderlineIsSafe. The font definition property
+        // itself is the font path's _resolvedFontDefProp, resolved at init.
+        private static bool _underlineSafetyResolved;
+        private static bool _engineHasUnderlineFix;        // Unity >= 6000.5 (fix landed in 6000.5.0a5)
+        private static PropertyInfo _fontDefFontAssetProp; // FontDefinition.fontAsset
+        private static MethodInfo _hasCharacterMethod;     // FontAsset.HasCharacter(char, bool, bool)
+
+        /// <summary>
+        /// Can THIS element draw an underline/strikethrough over THIS text without dying?
+        ///
+        /// Unity's tracked defect (fixed in 6000.5.0a5, their repro is "&lt;u&gt;Hello 😁&lt;/u&gt;"):
+        /// DrawUnderlineMesh indexes meshInfo with the material of the '_' glyph, and when the
+        /// underlined glyphs come from a FALLBACK font asset that index is out of bounds. So the
+        /// underline is safe when the engine carries the fix, or when ONE font asset — the
+        /// element's own resolved one — can render both the RTL text and the '_': no fallback
+        /// mixing, no bad index. Asked with tryAddCharacter so a capable DYNAMIC asset (the
+        /// mod's replacement fonts) answers for what its font FILE covers, not for which glyphs
+        /// happen to be in its atlas already. Unanswerable (no font asset, no API) counts as
+        /// unsafe: this decides whether a tag is dropped, and the bench paid twice.
+        /// </summary>
+        internal static bool UnderlineIsSafe(object element, string text)
+        {
+            if (!_underlineSafetyResolved)
+            {
+                _underlineSafetyResolved = true;
+                try
+                {
+                    // "6000.3.6f1" → 6000 / 3. Anything at or past 6000.5 ships Unity's fix.
+                    var v = Application.unityVersion.Split('.');
+                    if (v.Length >= 2 && int.TryParse(v[0], out int major) && int.TryParse(v[1], out int minor))
+                        _engineHasUnderlineFix = major > 6000 || (major == 6000 && minor >= 5);
+                }
+                catch { }
+                try
+                {
+                    var pubInst = BindingFlags.Public | BindingFlags.Instance;
+                    _fontDefFontAssetProp = _resolvedFontDefProp?.PropertyType.GetProperty("fontAsset", pubInst);
+                    _hasCharacterMethod = _fontDefFontAssetProp?.PropertyType.GetMethod(
+                        "HasCharacter", new[] { typeof(char), typeof(bool), typeof(bool) });
+                }
+                catch { }
+            }
+
+            if (_engineHasUnderlineFix) return true;
+
+            try
+            {
+                if (_resolvedFontDefProp == null || _fontDefFontAssetProp == null || _hasCharacterMethod == null)
+                    return false;
+                var resolved = _resolvedStyleProp.GetValue(element, null);
+                if (resolved == null) return false;
+                object def = _resolvedFontDefProp.GetValue(resolved, null);
+                object fontAsset = def == null ? null : _fontDefFontAssetProp.GetValue(def, null);
+                if (fontAsset == null || (fontAsset is UnityEngine.Object uo && uo == null)) return false;
+
+                char rtl = '\0';
+                foreach (char c in text)
+                {
+                    if (TextShaping.RtlText.IsStrongRtl(c)) { rtl = c; break; }
+                }
+                // No strong RTL character: not the crash class this guard exists for.
+                if (rtl == '\0') return true;
+
+                // (character, searchFallbacks: false, tryAddCharacter: true) — the whole point
+                // is single-asset coverage, so fallbacks are excluded from the question.
+                if (!(bool)_hasCharacterMethod.Invoke(fontAsset, new object[] { rtl, false, true })) return false;
+                return (bool)_hasCharacterMethod.Invoke(fontAsset, new object[] { '_', false, true });
+            }
+            catch { return false; }
+        }
+
         /// <summary>
         /// The assigned (shaped logical) string cut into lines the way THIS element would wrap
         /// it: greedy word fitting measured by the engine itself. Null = not answerable — either

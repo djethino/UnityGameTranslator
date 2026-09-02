@@ -162,20 +162,23 @@ namespace UnityGameTranslator.Core.TextShaping
                         Log(compId, "native/atg", value, value);
                         return;
                     }
-                    // 🔴 Bench verdict 2026-09-02 (twice — timbug, §7.8): Unity 6's TextCore
-                    // DrawUnderlineMesh throws IndexOutOfRange on underlined Arabic, logical AND
-                    // shaped alike, and the game's own crash handler then tears its UI down
-                    // mid-render. Until Unity fixes that routine, an RTL text on this engine
-                    // loses its underline/strikethrough rather than the game losing everything.
-                    // TMP keeps its tags — its bench never crashed there.
-                    string safe = RtlComposer.StripUnderlineTags(value);
-                    if (!ReferenceEquals(safe, value))
+                    // 🔴 CONDITIONAL crash guard, not a ban (user-arbitrated 2026-09-02). Unity's
+                    // tracked bug: an underline spanning glyphs served by a FALLBACK font asset
+                    // dies in DrawUnderlineMesh (IndexOutOfRange, fixed only in 6000.5.0a5) — our
+                    // bench hit it twice with Arabic exactly as their repro hits it with an
+                    // emoji. Underlined Arabic links are perfectly normal typography, so the tag
+                    // is kept whenever this element CAN render it safely — engine carrying the
+                    // fix, or one font asset covering both the RTL text and the '_' glyph (a
+                    // game with a real Arabic font, or the mod's own replacement font) — and
+                    // dropped only in the configuration proven to kill the game.
+                    string stripped = RtlComposer.StripUnderlineTags(value);
+                    if (!ReferenceEquals(stripped, value) && !UIToolkitSupport.UnderlineIsSafe(instance, value))
                     {
-                        value = safe;
+                        value = stripped;
                         if (_underlineDropBudget > 0)
                         {
                             _underlineDropBudget--;
-                            TranslatorCore.LogWarning("[RtlPresenter] underline/strikethrough tag dropped on RTL text — Unity TextCore DrawUnderlineMesh crash guard (see issue #24 bench)");
+                            TranslatorCore.LogWarning("[RtlPresenter] underline/strikethrough tag dropped: this element's font cannot cover the RTL text itself, and this engine's DrawUnderlineMesh crashes on fallback-font underlines (Unity issue, fixed in 6000.5) — a replacement font covering the language brings the underline back");
                         }
                     }
                     QueueReflow(instance, compId, ref value, ReflowKind.UiToolkit, mirror, "logical+reflow/uitk");

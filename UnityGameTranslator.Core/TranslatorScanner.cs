@@ -328,7 +328,15 @@ namespace UnityGameTranslator.Core
         public static void Scan()
         {
             // Apply any pending translations from AI (main thread) - always do this
-            ProcessPendingUpdates();
+            // 🔴 ONE budget and ONE stopwatch for the whole tick, computed before any pass runs.
+            // Every periodic walk the mod does — the pending updates and their font passes, the
+            // UI Toolkit walk, the component refresh — spends from the same allowance, derived
+            // from this game's own frame-time noise. A pass that ignored it produced exactly the
+            // stutter this is meant to prevent (the UI Toolkit walk: 45 ms in one frame).
+            float tickBudgetMs = ComputeAdaptiveBudgetMs();
+            _scanFrameSw.Restart();
+
+            ProcessPendingUpdates(tickBudgetMs);
 
             // Register types on first invocation (after TypeHelper.Initialize() + InitializeIL2CPP())
             if (!_typesRegistered) RegisterBuiltInTypes();
@@ -345,11 +353,9 @@ namespace UnityGameTranslator.Core
             if (profiling) _scanProfSw.Restart();
             float currentTime = Time.realtimeSinceStartup;
 
-            // Per-frame budget derived from measured frame-time variance (no hardcoded ratio).
-            // The scanner is allowed to take up to "natural frame-time noise" of work each
-            // frame — anything below the noise floor is imperceptible to the player.
-            float budgetMs = ComputeAdaptiveBudgetMs();
-            _scanFrameSw.Restart();
+            // The tick's budget, computed at the top — not restarted here: what the passes above
+            // already spent counts against the same frame.
+            float budgetMs = tickBudgetMs;
 
             // ⚠ Computed BEFORE the UI Toolkit pass and handed to it, with the same stopwatch:
             // one budget for the frame, shared by both walks, so neither can spend it twice. That
@@ -2215,7 +2221,7 @@ namespace UnityGameTranslator.Core
         /// Process pending translation updates on the main thread.
         /// Call this from Update() or scan methods.
         /// </summary>
-        public static void ProcessPendingUpdates()
+        public static void ProcessPendingUpdates(float budgetMs = 0f)
         {
             // Protect clone atlases every frame — prevents character purging
             // when multiple cloned fonts share the native font rasterizer
@@ -2294,8 +2300,8 @@ namespace UnityGameTranslator.Core
                 // behind HasActiveReplacements, which only speaks for the TMP side.
                 bool tmpPass = FontManager.HasActiveReplacements;
                 _lastDirectFontApply = nowFonts;
-                if (tmpPass) FontManager.ApplyReplacementsToScene();
-                FontManager.ApplyUnityClonesToScene();
+                if (tmpPass) FontManager.ApplyReplacementsToScene(budgetMs, _scanFrameSw);
+                FontManager.ApplyUnityClonesToScene(budgetMs, _scanFrameSw);
             }
             else if (nudged)
             {

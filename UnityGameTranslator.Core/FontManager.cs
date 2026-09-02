@@ -2888,7 +2888,19 @@ namespace UnityGameTranslator.Core
         /// set_text prefix nor ForceRefreshAllText can cover (issue #21).
         /// Called periodically by the scan loop while replacements are active.
         /// </summary>
-        public static void ApplyReplacementsToScene()
+        /// <summary>
+        /// ⚠ Spread over frames on the tick's budget, like every other periodic walk. Measured
+        /// before that: 32 ms in one frame, every 5 s — a visible hitch on its own. The scene
+        /// lookup cannot be split (it is one engine call) so it is measured apart; the component
+        /// loop resumes where it stopped, and a cycle simply takes a few frames.
+        /// </summary>
+        // The scene walks in progress, kept between frames (see ApplyReplacementsToScene).
+        private static UnityEngine.Object[] _sceneTmp;
+        private static int _sceneTmpAt;
+        private static UnityEngine.Object[] _sceneUgui;
+        private static int _sceneUguiAt;
+
+        public static void ApplyReplacementsToScene(float budgetMs = 0f, System.Diagnostics.Stopwatch frameSw = null)
         {
             if (!HasActiveReplacements) return;
             if (TypeHelper.TMP_TextType == null) return;
@@ -2900,12 +2912,23 @@ namespace UnityGameTranslator.Core
                 // UnityEngine.Object.FindObjectsOfType(Type) call binds against an
                 // overload that stripped interop assemblies may not expose at all —
                 // MissingMethodException at JIT time, uncatchable from inside).
-                var comps = TypeHelper.FindAllObjectsOfType(TypeHelper.TMP_TextType);
+                if (_sceneTmp == null)
+                {
+                    long tFind = Perf.Start();
+                    _sceneTmp = TypeHelper.FindAllObjectsOfType(TypeHelper.TMP_TextType);
+                    Perf.Stop(Perf.FontFind, tFind);
+                    _sceneTmpAt = 0;
+                }
+                var comps = _sceneTmp;
                 if (comps == null) return;
 
                 int applied = 0;
-                foreach (var c in comps)
+                for (; _sceneTmpAt < comps.Length; _sceneTmpAt++)
                 {
+                    if (frameSw != null && budgetMs > 0f && frameSw.Elapsed.TotalMilliseconds > budgetMs)
+                        return;   // rest of the scene next frame — _sceneTmp holds our place
+
+                    var c = comps[_sceneTmpAt];
                     if (c == null) continue;
                     int id = c.GetInstanceID();
                     if (_fontReplacedComponentIds.Contains(id)) continue; // already ours
@@ -2933,6 +2956,8 @@ namespace UnityGameTranslator.Core
                     ApplyFontReplacement(c, fontObj, effectiveFontName);
                     if (_fontReplacedComponentIds.Contains(id)) applied++;
                 }
+
+                _sceneTmp = null;   // cycle complete — the next call looks the scene up again
 
                 if (applied > 0)
                     TranslatorCore.LogDebug($"[FontManager] Direct font pass: applied replacement to {applied} component(s)");
@@ -3015,7 +3040,8 @@ namespace UnityGameTranslator.Core
         /// net from the start; the UI.Text path had none.
         /// Runs off the same periodic tick as the TMP pass and applies no text, only the font.
         /// </summary>
-        public static void ApplyUnityClonesToScene()
+        /// <summary>⚠ Same budget, same resumable walk as ApplyReplacementsToScene above.</summary>
+        public static void ApplyUnityClonesToScene(float budgetMs = 0f, System.Diagnostics.Stopwatch frameSw = null)
         {
             if (!TranslatorCore.FontReplacementActive) return;
             if (_unityFallbackFonts.Count == 0) return;   // no clone built yet — nothing to spread
@@ -3024,12 +3050,23 @@ namespace UnityGameTranslator.Core
             long tPerf = Perf.Start();
             try
             {
-                var comps = TypeHelper.FindAllObjectsOfType(TypeHelper.UI_TextType);
+                if (_sceneUgui == null)
+                {
+                    long tFind = Perf.Start();
+                    _sceneUgui = TypeHelper.FindAllObjectsOfType(TypeHelper.UI_TextType);
+                    Perf.Stop(Perf.FontFind, tFind);
+                    _sceneUguiAt = 0;
+                }
+                var comps = _sceneUgui;
                 if (comps == null) return;
 
                 int applied = 0;
-                foreach (var c in comps)
+                for (; _sceneUguiAt < comps.Length; _sceneUguiAt++)
                 {
+                    if (frameSw != null && budgetMs > 0f && frameSw.Elapsed.TotalMilliseconds > budgetMs)
+                        return;   // resumed next frame — see ApplyReplacementsToScene
+
+                    var c = comps[_sceneUguiAt];
                     if (c == null) continue;
                     int id = c.GetInstanceID();
 
@@ -3055,6 +3092,8 @@ namespace UnityGameTranslator.Core
                     string nowName = (nowFont is UnityEngine.Object nfo) ? nfo.name : null;
                     if (!string.Equals(nowName, fontName, StringComparison.OrdinalIgnoreCase)) applied++;
                 }
+
+                _sceneUgui = null;   // cycle complete
 
                 if (applied > 0)
                     TranslatorCore.LogDebug($"[FontManager] Direct UI.Text pass: applied clone to {applied} component(s)");

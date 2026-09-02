@@ -30,12 +30,13 @@ namespace UnityGameTranslator.Core
         internal const int FontScene = 4;        // FontManager.ApplyReplacementsToScene
         internal const int FontClones = 5;       // FontManager.ApplyUnityClonesToScene
         internal const int UitkFont = 6;         // ...of which: the per-element font question
-        private const int SlotCount = 7;
+        internal const int FontFind = 7;         // ...of which: the scene lookup those two make
+        private const int SlotCount = 8;
 
         private static readonly string[] Names =
         {
             "UITK.Scan", "UITK.Element", "RTL.Present", "RTL.Reflow", "Font.Scene", "Font.Clones",
-            "UITK.Font",
+            "UITK.Font", "Font.Find",
         };
 
         private static readonly long[] _ticks = new long[SlotCount];

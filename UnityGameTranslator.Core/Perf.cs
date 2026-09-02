@@ -31,12 +31,14 @@ namespace UnityGameTranslator.Core
         internal const int FontClones = 5;       // FontManager.ApplyUnityClonesToScene
         internal const int UitkFont = 6;         // ...of which: the per-element font question
         internal const int FontFind = 7;         // ...of which: the scene lookup those two make
-        private const int SlotCount = 8;
+        internal const int UitkChildren = 8;     // ...of which: reading an element's children (reflection)
+        internal const int UitkImage = 9;        // ...of which: the per-element picture question
+        private const int SlotCount = 10;
 
         private static readonly string[] Names =
         {
             "UITK.Scan", "UITK.Element", "RTL.Present", "RTL.Reflow", "Font.Scene", "Font.Clones",
-            "UITK.Font", "Font.Find",
+            "UITK.Font", "Font.Find", "UITK.Children", "UITK.Image",
         };
 
         private static readonly long[] _ticks = new long[SlotCount];

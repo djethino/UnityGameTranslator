@@ -1354,12 +1354,14 @@ namespace UnityGameTranslator.Core
                     var asText = AsTextElement(element);
                     if (asText != null) ProcessElement(asText);
 
+                    long tChildren = Perf.Start();
                     int count = ChildCount(element);
                     for (int i = 0; i < count; i++)
                     {
                         var child = ChildAt(element, i);
                         if (child != null) _walk.Push(child);
                     }
+                    Perf.Stop(Perf.UitkChildren, tChildren);
                 }
             }
             catch (Exception ex)
@@ -1609,7 +1611,9 @@ namespace UnityGameTranslator.Core
 
             // Pictures are not text and do not depend on the font gate: an element can carry a
             // picture and no text at all, which is most of them.
+            long tImage = Perf.Start();
             HandleImage(element);
+            Perf.Stop(Perf.UitkImage, tImage);
 
             // Also the switch for "translate this font or not", so it is asked every pass.
             if (!HandleFont(element)) return;

@@ -181,7 +181,12 @@ namespace UnityGameTranslator.Core.TextShaping
                     // game with a real Arabic font, or the mod's own replacement font) — and
                     // dropped only in the configuration proven to kill the game.
                     string stripped = RtlComposer.StripUnderlineTags(value);
-                    if (!ReferenceEquals(stripped, value) && !UIToolkitSupport.UnderlineIsSafe(instance, value))
+                    // ⚠ The safety question is asked about the SHAPED form — the glyphs that will
+                    // be drawn — never about the logical text: a font carrying base Arabic but no
+                    // presentation forms answered "safe" and the game died anyway (3rd bench
+                    // crash). Shaping here is the same call QueueReflow makes just below.
+                    if (!ReferenceEquals(stripped, value)
+                        && !UIToolkitSupport.UnderlineIsSafe(instance, RtlComposer.ShapeLogicalOnly(value)))
                     {
                         value = stripped;
                         if (_underlineDropBudget > 0)

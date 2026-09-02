@@ -2360,7 +2360,10 @@ namespace UnityGameTranslator.Core
         private static bool _underlineSafetyResolved;
         private static bool _engineHasUnderlineFix;        // Unity >= 6000.5 (fix landed in 6000.5.0a5)
         private static PropertyInfo _fontDefFontAssetProp; // FontDefinition.fontAsset
-        private static MethodInfo _hasCharacterMethod;     // FontAsset.HasCharacter(char, bool, bool)
+        private static MethodInfo _hasCharactersMethod;    // FontAsset.HasCharacters(string, out uint[], bool, bool)
+        private static PropertyInfo _atlasPopulationProp;  // FontAsset.atlasPopulationMode
+        private static PropertyInfo _sourceFontFileProp;   // FontAsset.sourceFontFile -> Font
+        private static MethodInfo _fontHasCharacter;       // Font.HasCharacter(char)
 
         /// <summary>
         /// Can THIS element draw an underline/strikethrough over THIS text without dying?
@@ -2398,18 +2401,22 @@ namespace UnityGameTranslator.Core
                 {
                     var pubInst = BindingFlags.Public | BindingFlags.Instance;
                     _fontDefFontAssetProp = _resolvedFontDefProp?.PropertyType.GetProperty("fontAsset", pubInst);
-                    _hasCharacterMethod = _fontDefFontAssetProp?.PropertyType.GetMethod(
-                        "HasCharacter", new[] { typeof(char), typeof(bool), typeof(bool) });
+                    var assetType = _fontDefFontAssetProp?.PropertyType;
+                    _hasCharactersMethod = assetType?.GetMethod("HasCharacters",
+                        new[] { typeof(string), typeof(uint[]).MakeByRefType(), typeof(bool), typeof(bool) });
+                    _atlasPopulationProp = assetType?.GetProperty("atlasPopulationMode", pubInst);
+                    _sourceFontFileProp = assetType?.GetProperty("sourceFontFile", pubInst);
+                    _fontHasCharacter = _sourceFontFileProp?.PropertyType.GetMethod("HasCharacter", new[] { typeof(char) });
                 }
                 catch { }
             }
 
-            if (_engineHasUnderlineFix) { LogUnderlineVerdict(element, true, "engine >= 6000.5"); return true; }
+            if (_engineHasUnderlineFix) return true;
 
             try
             {
-                if (_resolvedFontDefProp == null || _fontDefFontAssetProp == null || _hasCharacterMethod == null)
-                { LogUnderlineVerdict(element, false, "font/HasCharacter API not resolvable"); return false; }
+                if (_resolvedFontDefProp == null || _fontDefFontAssetProp == null || _hasCharactersMethod == null)
+                { LogUnderlineVerdict(element, false, "font/HasCharacters API not resolvable"); return false; }
                 var resolved = _resolvedStyleProp.GetValue(element, null);
                 if (resolved == null) { LogUnderlineVerdict(element, false, "no resolved style"); return false; }
                 object def = _resolvedFontDefProp.GetValue(resolved, null);
@@ -2417,24 +2424,49 @@ namespace UnityGameTranslator.Core
                 if (fontAsset == null || (fontAsset is UnityEngine.Object uo && uo == null))
                 { LogUnderlineVerdict(element, false, "element resolves to no FontAsset (a legacy Font, or none)"); return false; }
 
-                char rtl = '\0';
-                foreach (char c in text)
-                {
-                    if (TextShaping.RtlText.IsStrongRtl(c)) { rtl = c; break; }
-                }
-                // No strong RTL character: not the crash class this guard exists for.
-                if (rtl == '\0') return true;
-
-                // (character, searchFallbacks: false, tryAddCharacter: false) — single-asset
-                // coverage is the whole question, and it must be asked without side effects.
                 string assetName = (fontAsset as UnityEngine.Object)?.name ?? "?";
-                bool hasRtl = (bool)_hasCharacterMethod.Invoke(fontAsset, new object[] { rtl, false, false });
-                if (!hasRtl)
-                { LogUnderlineVerdict(element, false, $"'{assetName}' does not carry U+{(int)rtl:X4}"); return false; }
-                bool hasUnderscore = (bool)_hasCharacterMethod.Invoke(fontAsset, new object[] { '_', false, false });
-                LogUnderlineVerdict(element, hasUnderscore,
-                    hasUnderscore ? $"'{assetName}' carries both the script and '_'" : $"'{assetName}' has the script but no '_'");
-                return hasUnderscore;
+
+                // 🔴 Ask about the glyphs that will actually be DRAWN, and about all of them.
+                // The first version asked "does this asset carry U+0627?" on the LOGICAL text —
+                // and Noto Sans Display does carry base Arabic letters, so it answered KEEP while
+                // what reaches the screen is the shaped form (U+FE8D…U+FEFC), which it does not
+                // carry: those glyphs went to a fallback, the underline mixed materials, and the
+                // game died (bench, 3rd crash — the verdict line in the log is what showed it).
+                // The '_' rides along because the underline needs it from the same asset.
+                var args = new object[] { text + "_", null, false, false };
+                if ((bool)_hasCharactersMethod.Invoke(fontAsset, args))
+                { LogUnderlineVerdict(element, true, $"'{assetName}' carries every glyph to draw"); return true; }
+
+                // A DYNAMIC asset rasterizes on demand from its own font file: if that file has
+                // the missing glyphs, the asset will serve them itself — still no fallback, still
+                // safe. Asked on the source Font, which answers without touching any atlas.
+                var missing = args[1] as uint[];
+                if (missing != null && missing.Length > 0 && _atlasPopulationProp != null
+                    && _sourceFontFileProp != null && _fontHasCharacter != null)
+                {
+                    string mode = Enum.GetName(_atlasPopulationProp.PropertyType, _atlasPopulationProp.GetValue(fontAsset, null));
+                    if (mode == "Dynamic" || mode == "DynamicOS")
+                    {
+                        var sourceFont = _sourceFontFileProp.GetValue(fontAsset, null);
+                        if (sourceFont != null && !(sourceFont is UnityEngine.Object so && so == null))
+                        {
+                            bool all = true;
+                            foreach (uint cp in missing)
+                            {
+                                // Outside the BMP a char cannot carry it; such a glyph is not
+                                // this guard's business and counts as not covered.
+                                if (cp > 0xFFFF || !(bool)_fontHasCharacter.Invoke(sourceFont, new object[] { (char)cp }))
+                                { all = false; break; }
+                            }
+                            if (all)
+                            { LogUnderlineVerdict(element, true, $"'{assetName}' is dynamic and its font file covers the {missing.Length} missing glyph(s)"); return true; }
+                        }
+                    }
+                }
+
+                LogUnderlineVerdict(element, false,
+                    $"'{assetName}' is missing {(missing == null ? "some" : missing.Length.ToString())} of the glyphs to draw (they would come from a fallback)");
+                return false;
             }
             catch (Exception ex) { LogUnderlineVerdict(element, false, "check threw: " + ex.Message); return false; }
         }

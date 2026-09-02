@@ -405,9 +405,18 @@ namespace UnityGameTranslator.Core.TextShaping
             for (int i = _verifies.Count - 1; i >= 0; i--)
             {
                 var v = _verifies[i];
-                _verifies.RemoveAt(i);
                 var comp = v.Comp.Target;
-                if (comp == null || (comp is UnityEngine.Object uo && uo == null)) continue;
+                if (comp == null || (comp is UnityEngine.Object uo && uo == null)) { _verifies.RemoveAt(i); continue; }
+
+                // 🔴 The one look must come AFTER the component's first real layout — and a panel
+                // filled while still inactive is not laid out until it shows. Looking while it is
+                // hidden sees the prefab's stale rect (the same one the cut saw), spends the only
+                // look, and the real width is never met: an organ's description stayed cut at
+                // half its panel. Wait like the reflow does — one cheap flag per frame, until shown.
+                if (comp is UnityEngine.Component c && c.gameObject != null && !c.gameObject.activeInHierarchy)
+                    continue;
+
+                _verifies.RemoveAt(i);
                 try
                 {
                     // Still ours? A game that already moved on has nothing to verify.
@@ -622,6 +631,34 @@ namespace UnityGameTranslator.Core.TextShaping
         private static string BuildUGuiLinesNow(object comp, string assigned, out string whyNot)
             => BuildUGuiLinesNow(comp, assigned, out whyNot, out _);
 
+        // Everything a cut rests on, for the first few of a session: the box as the engine sees
+        // it (rectTransform.rect — what Text.OnPopulateMesh cuts with) against the pixel-adjusted
+        // rect, the component's own wrapping and best-fit settings, and how many lines came out.
+        // Added when labels came out in three pieces with a "stable" width that could not be the
+        // engine's — the log has to say which of these differs.
+        private static int _cutDescribeBudget = 60;
+
+        private static void DescribeCut(object comp, string assigned, UnityEngine.Rect pixelRect, object settings, string cut)
+        {
+            if (_cutDescribeBudget <= 0 || !TranslatorCore.DebugMode) return;
+            _cutDescribeBudget--;
+            try
+            {
+                string rectSize = "?";
+                var rtProp = comp.GetType().GetProperty("rectTransform", BindingFlags.Public | BindingFlags.Instance);
+                if (rtProp?.GetValue(comp, null) is UnityEngine.RectTransform rt) rectSize = $"{rt.rect.width:F1}x{rt.rect.height:F1}";
+                var t = settings.GetType();
+                object F(string name) { try { return t.GetField(name)?.GetValue(settings); } catch { return "?"; } }
+                int lines = cut == null ? -1 : cut.Split('\n').Length;
+                string preview = assigned.Length > 24 ? assigned.Substring(0, 24) + "…" : assigned;
+                TranslatorCore.LogDebug($"[RtlPresenter] cut comp={TypeHelper.GetInstanceID(comp)} {(comp is UnityEngine.Component cc && cc.gameObject != null ? (cc.gameObject.activeInHierarchy ? "active" : "INACTIVE") : "?")} pixelRect={pixelRect.width:F1}x{pixelRect.height:F1} rect={rectSize} "
+                    + $"hOverflow={F("horizontalOverflow")} vOverflow={F("verticalOverflow")} bestFit={F("resizeTextForBestFit")} "
+                    + $"size={F("fontSize")} min={F("resizeTextMinSize")} max={F("resizeTextMaxSize")} scale={F("scaleFactor")} "
+                    + $"→ {lines} line(s) for {assigned.Length} chars '{preview}'");
+            }
+            catch (Exception ex) { TranslatorCore.LogDebug("[RtlPresenter] cut describe failed: " + ex.Message); }
+        }
+
         private static string BuildUGuiLinesNow(object comp, string assigned, out string whyNot, out float widthUsed)
         {
             whyNot = null;
@@ -666,7 +703,9 @@ namespace UnityGameTranslator.Core.TextShaping
                 if (!(bool)_generatorPopulate.Invoke(_ownGenerator, new object[] { assigned, settings }))
                 { whyNot = "generator refused to populate"; return null; }
 
-                return BuildPerLineVisual(comp, assigned, out whyNot, _ownGenerator);
+                string cut = BuildPerLineVisual(comp, assigned, out whyNot, _ownGenerator);
+                DescribeCut(comp, assigned, r, settings, cut);
+                return cut;
             }
             catch (Exception ex) { whyNot = "populate failed: " + ex.Message; return null; }
         }

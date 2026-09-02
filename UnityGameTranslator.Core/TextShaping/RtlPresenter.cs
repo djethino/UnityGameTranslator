@@ -51,7 +51,6 @@ namespace UnityGameTranslator.Core.TextShaping
         // component that moves on to non-RTL text gets its own state back, not our leftovers.
         private static readonly Dictionary<long, bool> _flaggedOriginal = new Dictionary<long, bool>();
         private static readonly Dictionary<long, object> _alignedOriginal = new Dictionary<long, object>();
-        private static readonly Dictionary<long, object> _wrapOriginal = new Dictionary<long, object>();
 
         private static int _logBudget = 8;
 
@@ -161,7 +160,6 @@ namespace UnityGameTranslator.Core.TextShaping
                     {
                         TranslatorCore.RegisterPresentedText(cutNow, value);
                         MirrorAlignment(instance, compId, mirror);
-                        DisableRewrap(instance, compId);
                         _reflows.Remove(compId);
                         RecordCut(instance, compId, value, mirror);
                         Log(compId, "visual/ugui", value, cutNow);
@@ -231,7 +229,6 @@ namespace UnityGameTranslator.Core.TextShaping
                         string finalNow = ComposeLines(linesNow);
                         TranslatorCore.RegisterPresentedText(finalNow, logicalSource);
                         UIToolkitSupport.MirrorAlign(instance, mirror);
-                        UIToolkitSupport.DisableWrap(instance);
                         UIToolkitSupport.ForgetPending(instance);
                         Log(compId, "visual/uitk", value, finalNow);
                         value = finalNow;
@@ -293,7 +290,6 @@ namespace UnityGameTranslator.Core.TextShaping
             string final = ComposeLines(lines);
             TranslatorCore.RegisterPresentedText(final, logicalSource);
             UIToolkitSupport.MirrorAlign(element, mirror);
-            UIToolkitSupport.DisableWrap(element);
             UIToolkitSupport.SetElementTextSilently(element, final);
             return true;
         }
@@ -425,16 +421,13 @@ namespace UnityGameTranslator.Core.TextShaping
 
                     {
                         MirrorAlignment(comp, id, entry.Mirror);
-                        // 🔴 WE computed the line breaks — the engine must not wrap again. A
-                        // recomposed line is exactly as wide as the rect it was cut against, and
-                        // the rendering rounding re-wrapped it: the overflowing visual chunk is
-                        // the sentence's FIRST word, shoved onto its own row (bioc bench,
-                        // «تحوّل»). Original wrap mode remembered and restored like the
-                        // alignment. NGUI has no such knob; its wrap re-measures the same glyph
-                        // advances deterministically (no rendering rounding), so a trimmed line
-                        // that fitted keeps fitting — bench holds the proof burden there.
-                        if (entry.Kind == ReflowKind.UGuiText)
-                            DisableRewrap(comp, id);
+                        // ⚠ The engine's own wrapping stays ON. It used to be switched off so a
+                        // recomposed line exactly as wide as its box could not be re-wrapped by
+                        // rounding (bioc bench) — but a cut made at a width that was not the box's
+                        // final one then had NOTHING to fold it back: a disclaimer ended as one line
+                        // as wide as its whole paragraph (bench, after the resize hook). The cut
+                        // is now made one pixel narrower than the box instead, which removes the
+                        // rounding case while the engine keeps the last word.
 
                         TranslatorPatches.BypassTextPrefix = true;
                         try { TypeHelper.SetText(comp, final); }
@@ -656,16 +649,29 @@ namespace UnityGameTranslator.Core.TextShaping
                 if (!(rect is UnityEngine.Rect r) || r.width < 1f)
                 { whyNot = "no layout yet (component has no width)"; return null; }
 
-                object settings = _getGenerationSettings.Invoke(comp, new object[] { r.size });
+                // One pixel narrower than the box: a recomposed line then always has room, so
+                // the engine's wrapping — kept on as the safety net — never folds it by rounding.
+                var extents = new UnityEngine.Vector2(Math.Max(1f, r.width - 1f), r.height);
+                object settings = _getGenerationSettings.Invoke(comp, new object[] { extents });
                 if (settings == null) { whyNot = "no generation settings"; return null; }
                 // Every line the paragraph has, wrapped at the box's width — never cut short by
-                // the box's HEIGHT. With the component's own vertical mode the generator stops at
+                // the box's HEIGHT: with the component's own vertical mode the generator stops at
                 // what fits ("0 chars vs 382", "13 vs 21" on the bench) and the tail is lost.
-                // VerticalWrapMode.Overflow = 1; a boxed struct field takes the write.
+                // 🔴 EXCEPT under Best Fit. There the height is part of the question: the engine
+                // searches the largest size at which the text fits width AND height, and ignoring
+                // the height made it answer "two lines at full size" where the game shows one
+                // line at a smaller size — the component then shrank our two lines into two
+                // specks (bench: "New game" empty at start-up).
                 try
                 {
-                    var vertical = settings.GetType().GetField("verticalOverflow", BindingFlags.Public | BindingFlags.Instance);
-                    if (vertical != null) vertical.SetValue(settings, Enum.ToObject(vertical.FieldType, 1));
+                    bool bestFit = false;
+                    var bestFitProp = comp.GetType().GetProperty("resizeTextForBestFit", BindingFlags.Public | BindingFlags.Instance);
+                    if (bestFitProp != null) bestFit = (bool)bestFitProp.GetValue(comp, null);
+                    if (!bestFit)
+                    {
+                        var vertical = settings.GetType().GetField("verticalOverflow", BindingFlags.Public | BindingFlags.Instance);
+                        if (vertical != null) vertical.SetValue(settings, Enum.ToObject(vertical.FieldType, 1));
+                    }
                 }
                 catch { }
                 if (!(bool)_generatorPopulate.Invoke(_ownGenerator, new object[] { assigned, settings }))
@@ -960,23 +966,6 @@ namespace UnityGameTranslator.Core.TextShaping
             return mirrored == v ? null : Enum.ToObject(enumType, mirrored);
         }
 
-        /// <summary>horizontalOverflow = Overflow while OUR line breaks are displayed.</summary>
-        private static void DisableRewrap(object comp, long compId)
-        {
-            try
-            {
-                var prop = comp.GetType().GetProperty("horizontalOverflow", BindingFlags.Public | BindingFlags.Instance);
-                if (prop?.SetMethod == null) return;
-                object current = prop.GetValue(comp, null);
-                object overflow = Enum.ToObject(prop.PropertyType, 1);   // HorizontalWrapMode.Overflow
-                if (Equals(current, overflow)) return;
-                if (compId != -1 && !_wrapOriginal.ContainsKey(compId))
-                    _wrapOriginal[compId] = current;
-                prop.SetValue(comp, overflow, null);
-            }
-            catch { }
-        }
-
         /// <summary>Each explicit line to visual order — the whole story for TextMesh.</summary>
         private static string ComposeVisualPerLine(string logical)
         {
@@ -1005,16 +994,6 @@ namespace UnityGameTranslator.Core.TextShaping
                 {
                     var alignProp = instance.GetType().GetProperty("alignment", BindingFlags.Public | BindingFlags.Instance);
                     alignProp?.SetValue(instance, anchor, null);
-                }
-                catch { }
-            }
-            if (_wrapOriginal.TryGetValue(compId, out object wrap))
-            {
-                _wrapOriginal.Remove(compId);
-                try
-                {
-                    var wrapProp = instance.GetType().GetProperty("horizontalOverflow", BindingFlags.Public | BindingFlags.Instance);
-                    wrapProp?.SetValue(instance, wrap, null);
                 }
                 catch { }
             }

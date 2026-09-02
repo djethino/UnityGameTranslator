@@ -2389,7 +2389,6 @@ namespace UnityGameTranslator.Core
         private static MethodInfo _measureTextSize;          // TextElement.MeasureTextSize(string, float, MeasureMode, float, MeasureMode)
         private static object _measureUndefined;             // MeasureMode.Undefined, boxed once
         private static PropertyInfo _contentRectProp;        // VisualElement.contentRect -> Rect
-        private static PropertyInfo _styleWhiteSpaceProp;    // IStyle.whiteSpace        (inline)
         private static PropertyInfo _resolvedWhiteSpaceProp; // resolvedStyle.whiteSpace (computed)
         private static PropertyInfo _styleTextAlignProp;     // IStyle.unityTextAlign    (inline)
         private static PropertyInfo _resolvedTextAlignProp;  // resolvedStyle.unityTextAlign
@@ -2400,9 +2399,6 @@ namespace UnityGameTranslator.Core
         // "unset" keyword back, not a frozen copy of what the stylesheet computed that day.
         // [0] = inline unityTextAlign, [1] = the RESOLVED original the mirror is computed from.
         private static readonly ConditionalWeakTable<object, object[]> _rtlAlignOriginal =
-            new ConditionalWeakTable<object, object[]>();
-        // [0] = inline whiteSpace.
-        private static readonly ConditionalWeakTable<object, object[]> _rtlWrapOriginal =
             new ConditionalWeakTable<object, object[]>();
 
         private static void EnsureRtlPlumbing()
@@ -2437,7 +2433,6 @@ namespace UnityGameTranslator.Core
             try
             {
                 var styleType = _styleProp?.PropertyType;
-                _styleWhiteSpaceProp = styleType?.GetProperty("whiteSpace", pubInst);
                 _styleTextAlignProp = styleType?.GetProperty("unityTextAlign", pubInst);
             }
             catch { }
@@ -2665,12 +2660,12 @@ namespace UnityGameTranslator.Core
                     // ⚠ One measure first: most game strings are a button label or a title and
                     // fit on their line. Going straight to the word-by-word loop cost one engine
                     // measure PER WORD on every one of them, on every set_text.
-                    if (MeasureWidth(element, paragraph) <= width + 0.5f) { lines.Add(paragraph); continue; }
+                    if (MeasureWidth(element, paragraph) <= width - 1f) { lines.Add(paragraph); continue; }
                     string current = "";
                     foreach (string word in paragraph.Split(' '))
                     {
                         string candidate = current.Length == 0 ? word : current + " " + word;
-                        if (current.Length == 0 || MeasureWidth(element, candidate) <= width + 0.5f)
+                        if (current.Length == 0 || MeasureWidth(element, candidate) <= width - 1f)
                         {
                             current = candidate;
                             continue;
@@ -2742,31 +2737,6 @@ namespace UnityGameTranslator.Core
             catch { }
         }
 
-        /// <summary>whiteSpace = NoWrap while OUR line breaks are displayed ('\n' stays honored).</summary>
-        internal static void DisableWrap(object element)
-        {
-            EnsureRtlPlumbing();
-            if (_styleWhiteSpaceProp == null) return;
-            try
-            {
-                var style = _styleProp.GetValue(element, null);
-                if (style == null) return;
-
-                if (!_rtlWrapOriginal.TryGetValue(element, out _))
-                    _rtlWrapOriginal.Add(element, new object[] { _styleWhiteSpaceProp.GetValue(style, null) });
-
-                var styleEnumType = _styleWhiteSpaceProp.PropertyType;
-                var wsType = styleEnumType.IsGenericType ? styleEnumType.GetGenericArguments()[0] : null;
-                if (wsType == null) return;
-                var styleValue = Activator.CreateInstance(styleEnumType, Enum.Parse(wsType, "NoWrap"));
-                // Same rule as MirrorAlign: writing an unchanged inline style still invalidates
-                // the layout, every single set_text.
-                if (Equals(_styleWhiteSpaceProp.GetValue(style, null), styleValue)) return;
-                _styleWhiteSpaceProp.SetValue(style, styleValue, null);
-            }
-            catch { }
-        }
-
         /// <summary>Put back the inline styles an element wore before our RTL adjustments.</summary>
         internal static void RestoreRtlAdjustments(object element)
         {
@@ -2778,11 +2748,6 @@ namespace UnityGameTranslator.Core
                 {
                     _rtlAlignOriginal.Remove(element);
                     if (align[0] != null) _styleTextAlignProp?.SetValue(style, align[0], null);
-                }
-                if (_rtlWrapOriginal.TryGetValue(element, out var wrap))
-                {
-                    _rtlWrapOriginal.Remove(element);
-                    if (wrap[0] != null) _styleWhiteSpaceProp?.SetValue(style, wrap[0], null);
                 }
             }
             catch { }

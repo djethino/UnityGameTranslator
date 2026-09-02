@@ -663,7 +663,17 @@ namespace UnityGameTranslator.Core
                     uitkOverride = TranslatorCore.FindFontOverride(IdFor(__instance), PathOf(__instance), uitkFont, value);
                 TextShaping.RtlPresenter.Present(__instance, IdFor(__instance), ref value, uitkFont, uitkOverride);
                 if (!string.Equals(before, value, StringComparison.Ordinal))
+                {
                     RememberOriginal(__instance, before);
+                    // 🔴 And record what we are about to put there. The scan recognises its own
+                    // work by this table alone: without the entry, every scan pass re-routes
+                    // every element we translated — the full path, on every element, several
+                    // times a second. That is the periodic stutter the user felt, and it appeared
+                    // when stage D started finishing the text here (single pass) instead of
+                    // through SetElementTextSilently, which had always filled this in.
+                    _written.Remove(__instance);
+                    _written.Add(__instance, value);
+                }
             }
             catch { }
         }

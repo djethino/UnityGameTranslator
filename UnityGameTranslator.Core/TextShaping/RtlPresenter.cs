@@ -149,6 +149,19 @@ namespace UnityGameTranslator.Core.TextShaping
                 // break points; ProcessPendingReflows converts each cut line next frame.
                 if (TypeHelper.UI_TextType != null && TypeHelper.UI_TextType.IsAssignableFrom(type))
                 {
+                    // One pass whenever the engine can answer now — same shape as UI Toolkit.
+                    string shapedUGui = RtlComposer.ShapeLogicalOnly(value);
+                    string cutNow = BuildUGuiLinesNow(instance, shapedUGui, out _);
+                    if (cutNow != null)
+                    {
+                        TranslatorCore.RegisterPresentedText(cutNow, value);
+                        MirrorAlignment(instance, compId, mirror);
+                        DisableRewrap(instance, compId);
+                        _reflows.Remove(compId);
+                        Log(compId, "visual/ugui", value, cutNow);
+                        value = cutNow;
+                        return;
+                    }
                     QueueReflow(instance, compId, ref value, ReflowKind.UGuiText, mirror, "logical+reflow");
                     return;
                 }
@@ -309,6 +322,12 @@ namespace UnityGameTranslator.Core.TextShaping
         private static PropertyInfo _generatorLinesProp;    // TextGenerator.lines -> IList<UILineInfo>
         private static PropertyInfo _generatorCharCountProp; // TextGenerator.characterCount
         private static PropertyInfo _supportRichTextProp;   // Text.supportRichText
+        // Asking the engine for the line breaks NOW, instead of reading what it drew last frame:
+        // Text.GetGenerationSettings(extents) + our own TextGenerator.Populate(text, settings).
+        private static MethodInfo _getGenerationSettings;   // Text.GetGenerationSettings(Vector2)
+        private static MethodInfo _getPixelAdjustedRect;    // Graphic.GetPixelAdjustedRect()
+        private static MethodInfo _generatorPopulate;       // TextGenerator.Populate(string, settings)
+        private static object _ownGenerator;                // ours, never the component's
         private static FieldInfo _lineStartCharField;       // UILineInfo.startCharIdx
         private static PropertyInfo _lineStartCharProp;
 
@@ -432,7 +451,8 @@ namespace UnityGameTranslator.Core.TextShaping
             switch (entry.Kind)
             {
                 case ReflowKind.UGuiText:
-                    return BuildPerLineVisual(comp, entry.Measure, out whyNot);
+                    return BuildUGuiLinesNow(comp, entry.Measure, out whyNot)
+                           ?? BuildPerLineVisual(comp, entry.Measure, out whyNot);
                 case ReflowKind.Ngui:
                     return BuildNguiLines(comp, entry.Measure, out whyNot);
                 default:
@@ -446,7 +466,43 @@ namespace UnityGameTranslator.Core.TextShaping
         /// visual order. Null when the generator cannot be read (not populated yet, IL2CPP
         /// marshaling — see below).
         /// </summary>
-        private static string BuildPerLineVisual(object comp, string assigned, out string whyNot)
+        /// <summary>
+        /// Ask the engine, RIGHT NOW, where it would cut this text in this component's box — the
+        /// UI.Text counterpart of UI Toolkit's MeasureTextSize, and for the same reason.
+        ///
+        /// 🔴 Reading cachedTextGenerator instead means reading what the component DREW last
+        /// frame: on a text swap it still describes the previous string, the identity guard
+        /// rejects the cut ("generator describes another text (173 chars vs 126)" — bench, the
+        /// guide panel), three frames later the reflow gives up and the whole-string fallback
+        /// stacks the lines bottom-up. That is the section title showing UNDER its own list.
+        /// Populating our own generator with our own text removes the wait, the guess and the
+        /// fallback in one go. Null when the API or the layout is not there yet.
+        /// </summary>
+        private static string BuildUGuiLinesNow(object comp, string assigned, out string whyNot)
+        {
+            whyNot = null;
+            if (_generatorPopulate == null || _getGenerationSettings == null
+                || _getPixelAdjustedRect == null || _ownGenerator == null)
+            { whyNot = "generator Populate API not resolvable on this runtime"; return null; }
+
+            try
+            {
+                object rect = _getPixelAdjustedRect.Invoke(comp, null);
+                if (!(rect is UnityEngine.Rect r) || r.width < 1f)
+                { whyNot = "no layout yet (component has no width)"; return null; }
+
+                object settings = _getGenerationSettings.Invoke(comp, new object[] { r.size });
+                if (settings == null) { whyNot = "no generation settings"; return null; }
+                if (!(bool)_generatorPopulate.Invoke(_ownGenerator, new object[] { assigned, settings }))
+                { whyNot = "generator refused to populate"; return null; }
+
+                return BuildPerLineVisual(comp, assigned, out whyNot, _ownGenerator);
+            }
+            catch (Exception ex) { whyNot = "populate failed: " + ex.Message; return null; }
+        }
+
+        private static string BuildPerLineVisual(object comp, string assigned, out string whyNot,
+                                                 object populated = null)
         {
             whyNot = null;
 
@@ -474,6 +530,24 @@ namespace UnityGameTranslator.Core.TextShaping
                     {
                         _lineStartCharField = lineType.GetField("startCharIdx", BindingFlags.Public | BindingFlags.Instance);
                         _lineStartCharProp = lineType.GetProperty("startCharIdx", BindingFlags.Public | BindingFlags.Instance);
+                    }
+
+                    // The synchronous path. Both are public API on this engine (verified in the
+                    // bench game's own assemblies), and a generator of OUR OWN keeps the
+                    // component's untouched — that one belongs to its rendering.
+                    _getGenerationSettings = TypeHelper.UI_TextType.GetMethod("GetGenerationSettings",
+                        BindingFlags.Public | BindingFlags.Instance);
+                    _getPixelAdjustedRect = TypeHelper.UI_TextType.GetMethod("GetPixelAdjustedRect",
+                        BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
+                    if (genType != null)
+                    {
+                        foreach (var m in genType.GetMethods(BindingFlags.Public | BindingFlags.Instance))
+                        {
+                            if (m.Name != "Populate") continue;
+                            var ps = m.GetParameters();
+                            if (ps.Length == 2 && ps[0].ParameterType == typeof(string)) { _generatorPopulate = m; break; }
+                        }
+                        try { _ownGenerator = Activator.CreateInstance(genType); } catch { }
                     }
                 }
                 catch { }
@@ -503,7 +577,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 }
             }
 
-            var generator = _cachedGeneratorProp.GetValue(comp, null);
+            object generator = populated ?? _cachedGeneratorProp.GetValue(comp, null);
             if (generator == null) { whyNot = "no cached generator"; return null; }
 
             // 🔴 IDENTITY, not just bounds: on a page switch the game refills the same component

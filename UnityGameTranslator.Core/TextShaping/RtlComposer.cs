@@ -165,6 +165,45 @@ namespace UnityGameTranslator.Core.TextShaping
         }
 
         /// <summary>
+        /// Drop underline and strikethrough tags — exactly &lt;u&gt; &lt;/u&gt; &lt;s&gt; &lt;/s&gt;,
+        /// case-insensitive, nothing else (&lt;ul&gt;, &lt;size…&gt; pass untouched). Unity 6's
+        /// TextCore DrawUnderlineMesh throws IndexOutOfRange generating the underline of Arabic
+        /// text — the '_' glyph resolves against another font asset than the RTL glyphs' fallback
+        /// and meshInfo[materialIndex] indexes out of bounds; one mesh routine draws both
+        /// features, hence both tags. Returns the SAME instance when there is nothing to drop.
+        /// </summary>
+        internal static string StripUnderlineTags(string text)
+        {
+            if (text == null || text.IndexOf('<') < 0) return text;
+            StringBuilder sb = null;
+            for (int i = 0; i < text.Length; i++)
+            {
+                char c = text[i];
+                if (c == '<')
+                {
+                    int rest = text.Length - i;
+                    if (rest >= 3 && text[i + 2] == '>' && IsUnderlineName(text[i + 1]))
+                    {
+                        if (sb == null) sb = new StringBuilder(text.Length).Append(text, 0, i);
+                        i += 2;
+                        continue;
+                    }
+                    if (rest >= 4 && text[i + 1] == '/' && text[i + 3] == '>' && IsUnderlineName(text[i + 2]))
+                    {
+                        if (sb == null) sb = new StringBuilder(text.Length).Append(text, 0, i);
+                        i += 3;
+                        continue;
+                    }
+                }
+                sb?.Append(c);
+            }
+            return sb == null ? text : sb.ToString();
+        }
+
+        private static bool IsUnderlineName(char c)
+            => c == 'u' || c == 'U' || c == 's' || c == 'S';
+
+        /// <summary>
         /// Shaping and token protection ONLY — logical order in, logical order out. This is what
         /// gets ASSIGNED to a no-flag engine so its own wrapping cuts the paragraph at the
         /// correct logical points; the per-line visual conversion then happens on each cut line

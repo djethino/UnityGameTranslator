@@ -162,6 +162,22 @@ namespace UnityGameTranslator.Core.TextShaping
                         Log(compId, "native/atg", value, value);
                         return;
                     }
+                    // 🔴 Bench verdict 2026-09-02 (twice — timbug, §7.8): Unity 6's TextCore
+                    // DrawUnderlineMesh throws IndexOutOfRange on underlined Arabic, logical AND
+                    // shaped alike, and the game's own crash handler then tears its UI down
+                    // mid-render. Until Unity fixes that routine, an RTL text on this engine
+                    // loses its underline/strikethrough rather than the game losing everything.
+                    // TMP keeps its tags — its bench never crashed there.
+                    string safe = RtlComposer.StripUnderlineTags(value);
+                    if (!ReferenceEquals(safe, value))
+                    {
+                        value = safe;
+                        if (_underlineDropBudget > 0)
+                        {
+                            _underlineDropBudget--;
+                            TranslatorCore.LogWarning("[RtlPresenter] underline/strikethrough tag dropped on RTL text — Unity TextCore DrawUnderlineMesh crash guard (see issue #24 bench)");
+                        }
+                    }
                     QueueReflow(instance, compId, ref value, ReflowKind.UiToolkit, mirror, "logical+reflow/uitk");
                     return;
                 }
@@ -276,9 +292,15 @@ namespace UnityGameTranslator.Core.TextShaping
                     if (entry.Kind == ReflowKind.UiToolkit && !UIToolkitSupport.IsElementAttached(comp))
                         continue;
 
-                    string final = BuildLines(entry.Kind, comp, entry.Assigned, out string whyNot);
+                    string final = BuildLines(entry.Kind, comp, entry.Assigned, out string whyNot, out bool waitQuietly);
                     if (final == null)
                     {
+                        // An element with NO LAYOUT yet (hidden pane, first frame) waits without
+                        // spending attempts, exactly like an inactive uGUI component above —
+                        // burning them left the fallback's reversed stack as the final display
+                        // once the pane opened (bios/biot lesson, seen again as "no layout yet"
+                        // fallbacks in the 2026-09-02 UITK bench log).
+                        if (waitQuietly) continue;
                         // Line source not ready (or unreadable). A few frames, then fall back to
                         // whole-string visual — and SAY so: a silent fallback made the reversed
                         // line stack undiagnosable from a screenshot.
@@ -331,10 +353,12 @@ namespace UnityGameTranslator.Core.TextShaping
         }
 
         private static int _fallbackLogBudget = 5;
+        private static int _underlineDropBudget = 3;
 
         /// <summary>One line source per engine; everything after the cut is shared.</summary>
-        private static string BuildLines(ReflowKind kind, object comp, string assigned, out string whyNot)
+        private static string BuildLines(ReflowKind kind, object comp, string assigned, out string whyNot, out bool waitQuietly)
         {
+            waitQuietly = false;
             switch (kind)
             {
                 case ReflowKind.UGuiText:
@@ -342,7 +366,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 case ReflowKind.Ngui:
                     return BuildNguiLines(comp, assigned, out whyNot);
                 default:
-                    var lines = UIToolkitSupport.TryBreakLines(comp, assigned, out whyNot);
+                    var lines = UIToolkitSupport.TryBreakLines(comp, assigned, out whyNot, out waitQuietly);
                     return lines == null ? null : ComposeLines(lines);
             }
         }

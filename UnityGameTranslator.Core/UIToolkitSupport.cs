@@ -2357,13 +2357,15 @@ namespace UnityGameTranslator.Core
 
         /// <summary>
         /// The assigned (shaped logical) string cut into lines the way THIS element would wrap
-        /// it: greedy word fitting measured by the engine itself. Null = not answerable yet (no
-        /// layout) or not at all (no measure API) — whyNot says which, the caller decides how
-        /// long to wait.
+        /// it: greedy word fitting measured by the engine itself. Null = not answerable — either
+        /// WAIT (waitForLayout: the element has no width yet, a hidden pane or a first frame; it
+        /// will get one when it shows, and the caller must not burn its fallback attempts on
+        /// that) or give up per whyNot (no measure API, wall of text, measure failure).
         /// </summary>
-        internal static List<string> TryBreakLines(object element, string assigned, out string whyNot)
+        internal static List<string> TryBreakLines(object element, string assigned, out string whyNot, out bool waitForLayout)
         {
             whyNot = null;
+            waitForLayout = false;
             EnsureRtlPlumbing();
             if (_measureTextSize == null || _contentRectProp == null)
             { whyNot = "MeasureTextSize not available on this runtime"; return null; }
@@ -2387,7 +2389,8 @@ namespace UnityGameTranslator.Core
                 width = rect is Rect r ? r.width : float.NaN;
             }
             catch { width = float.NaN; }
-            if (float.IsNaN(width) || width < 1f) { whyNot = "no layout yet (element has no width)"; return null; }
+            if (float.IsNaN(width) || width < 1f)
+            { whyNot = "no layout yet (element has no width)"; waitForLayout = true; return null; }
 
             // A pathological wall of text would mean thousands of reflection round-trips into the
             // engine — the whole-string fallback is the lesser harm there.

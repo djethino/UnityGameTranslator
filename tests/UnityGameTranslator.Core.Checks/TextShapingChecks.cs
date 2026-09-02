@@ -42,6 +42,33 @@ namespace UnityGameTranslator.Core.Checks
             WhatAStringContains(check);
             WhatShapingProduces(check);
             WhatComposingProduces(check);
+            WhatUnderlineStrippingDoes(check);
+        }
+
+        /// <summary>
+        /// The DrawUnderlineMesh crash guard (Timberborn bench, 2026-09-02): underline and
+        /// strikethrough tags — those two exactly, nothing that merely starts with the same
+        /// letter — are dropped from RTL text bound for the UI Toolkit standard generator.
+        /// </summary>
+        private static void WhatUnderlineStrippingDoes(Action<bool, string, string> check)
+        {
+            check(RtlComposer.StripUnderlineTags("<u>مرحبا</u>") == "مرحبا",
+                "an underline pair is dropped, its content kept",
+                "the crash guard: Unity's underline mesh dies on Arabic, the text must not");
+            check(RtlComposer.StripUnderlineTags("<S>a</S>") == "a",
+                "strikethrough too, either case",
+                "one TextCore routine draws both features — same crash, same guard");
+            check(RtlComposer.StripUnderlineTags("<u><color=red>نص</color></u>") == "<color=red>نص</color>",
+                "other tags pass through untouched",
+                "only the two dangerous tags leave; color/size/b/i are the composer's business");
+            string ul = "<ul>x</ul>";
+            check(ReferenceEquals(RtlComposer.StripUnderlineTags(ul), ul),
+                "<ul> is not <u> — same first letter, different tag",
+                "and the untouched case returns the SAME instance, so the caller can tell");
+            string cmp = "a < b";
+            check(ReferenceEquals(RtlComposer.StripUnderlineTags(cmp), cmp),
+                "a bare '<' is left alone",
+                "comparison text is not markup");
         }
 
         private static void WhatAStringContains(Action<bool, string, string> check)

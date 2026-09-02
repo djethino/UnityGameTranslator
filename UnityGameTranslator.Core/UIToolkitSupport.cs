@@ -1320,6 +1320,7 @@ namespace UnityGameTranslator.Core
             if (_lastScanTime != 0f && now - _lastScanTime < interval) return;
             _lastScanTime = now;
 
+            long tScan = Perf.Start();
             try
             {
                 // Elements recycled since the last pass: drop their ids and the routing state
@@ -1373,6 +1374,7 @@ namespace UnityGameTranslator.Core
             {
                 TranslatorCore.LogDebug($"[UIToolkit] Scan error: {ex.Message}");
             }
+            finally { Perf.Stop(Perf.UitkScan, tScan); }
         }
 
         #region RTL / ATG probe (TEMPORARY — feature/text-shaping bench, see TextShaping/RtlProbe.cs)
@@ -1563,6 +1565,7 @@ namespace UnityGameTranslator.Core
 
         private static void TranslateElement(object element)
         {
+            long tElement = Perf.Start();
             try
             {
                 // The scan reaches the editable part of a text field like anything else — the
@@ -1601,6 +1604,7 @@ namespace UnityGameTranslator.Core
                 _written.Add(element, translated);
             }
             catch { }
+            finally { Perf.Stop(Perf.UitkElement, tElement); }
         }
 
         private static bool _identityReported;

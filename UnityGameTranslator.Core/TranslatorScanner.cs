@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Reflection;
 using UnityEngine;
@@ -2223,7 +2223,12 @@ namespace UnityGameTranslator.Core
 
             // RTL pass 2 for UI.Text: the engine has laid out the measuring form by now — read
             // its break points and write the final per-line visual text (see RtlPresenter).
+            long tReflow = Perf.Start();
             TextShaping.RtlPresenter.ProcessPendingReflows();
+            Perf.Stop(Perf.RtlReflow, tReflow);
+
+            // The mod's pass-level profile, printed from the single tick like everything else.
+            Perf.ReportIfDue(Time.realtimeSinceStartup);
 
             // NOTE: TickRenderWatch runs from FontManager.OnWillRenderCanvases (after the
             // game's per-frame vertex modification), so it reads the ACTUAL rendered state —

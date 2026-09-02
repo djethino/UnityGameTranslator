@@ -2893,6 +2893,7 @@ namespace UnityGameTranslator.Core
             if (!HasActiveReplacements) return;
             if (TypeHelper.TMP_TextType == null) return;
 
+            long tPerf = Perf.Start();
             try
             {
                 // TypeHelper.FindAllObjectsOfType is the IL2CPP-safe finder (a direct
@@ -2940,6 +2941,7 @@ namespace UnityGameTranslator.Core
             {
                 TranslatorCore.LogDebug($"[FontManager] ApplyReplacementsToScene error: {ex.Message}");
             }
+            finally { Perf.Stop(Perf.FontScene, tPerf); }
         }
 
         /// <summary>
@@ -3019,6 +3021,7 @@ namespace UnityGameTranslator.Core
             if (_unityFallbackFonts.Count == 0) return;   // no clone built yet — nothing to spread
             if (TypeHelper.UI_TextType == null) return;
 
+            long tPerf = Perf.Start();
             try
             {
                 var comps = TypeHelper.FindAllObjectsOfType(TypeHelper.UI_TextType);
@@ -3060,6 +3063,7 @@ namespace UnityGameTranslator.Core
             {
                 TranslatorCore.LogDebug($"[FontManager] ApplyUnityClonesToScene error: {ex.Message}");
             }
+            finally { Perf.Stop(Perf.FontClones, tPerf); }
         }
 
         /// <summary>

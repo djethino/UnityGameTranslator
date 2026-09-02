@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Reflection;
 
@@ -68,6 +68,7 @@ namespace UnityGameTranslator.Core.TextShaping
             // logical text alone rather than corrupt another call's.
             if (!TranslatorCore.IsMainThread) return;
 
+            long tPerf = Perf.Start();
             try
             {
                 var prop = RtlProp(instance);
@@ -218,8 +219,11 @@ namespace UnityGameTranslator.Core.TextShaping
                         return;
                     }
 
+                    // No layout to measure against (a pane opening, a first frame): show the
+                    // VISUAL form rather than the measuring one — see QueueReflow's assignedForm.
                     QueueReflow(instance, compId, ref value, ReflowKind.UiToolkit, mirror,
-                                "logical+reflow/uitk", logicalSource);
+                                "visual+reflow/uitk", logicalSource,
+                                RtlComposer.Compose(value, RtlOutput.VisualOrder));
                     return;
                 }
 
@@ -242,6 +246,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 // broken (isolated letters) exactly as before this pipeline existed.
                 TranslatorCore.LogWarning($"[RtlPresenter] compose failed, showing logical text: {ex.Message}");
             }
+            finally { Perf.Stop(Perf.RtlPresent, tPerf); }
         }
 
         #region Deferred reflow (pass 2) — UI.Text, NGUI, UI Toolkit
@@ -252,7 +257,8 @@ namespace UnityGameTranslator.Core.TextShaping
         {
             public WeakReference Comp;
             public string Logical;
-            public string Assigned;
+            public string Assigned;   // what is on screen right now (freshness check)
+            public string Measure;    // the shaped LOGICAL form the line source must cut
             public int Attempts;
             public bool Mirror;
             public ReflowKind Kind;
@@ -268,23 +274,33 @@ namespace UnityGameTranslator.Core.TextShaping
         /// the recovered source must not, or an edit made from the in-game editor would silently
         /// save the amputated version.
         /// </param>
+        /// <param name="assignedForm">
+        /// What to put on screen while the line source is out of reach, when it must NOT be the
+        /// measuring form. UI.Text needs the shaped logical string assigned — that is how its
+        /// generator computes the break points — but UI Toolkit measures a string handed to it,
+        /// so assigning the logical order there only means one frame of text reading backwards.
+        /// The visual form is given instead: right the first time for everything that fits on a
+        /// line, which is most labels, and a paragraph is corrected on the next frame as before.
+        /// </param>
         private static void QueueReflow(object instance, long compId, ref string value,
                                         ReflowKind kind, bool mirror, string logMode,
-                                        string logicalForRecord = null)
+                                        string logicalForRecord = null, string assignedForm = null)
         {
             string shapedLogical = RtlComposer.ShapeLogicalOnly(value);
-            TranslatorCore.RegisterPresentedText(shapedLogical, logicalForRecord ?? value);
+            string assigned = assignedForm ?? shapedLogical;
+            TranslatorCore.RegisterPresentedText(assigned, logicalForRecord ?? value);
             if (compId != -1)
                 _reflows[compId] = new Reflow
                 {
                     Comp = new WeakReference(instance),
                     Logical = value,
-                    Assigned = shapedLogical,
+                    Assigned = assigned,
+                    Measure = shapedLogical,
                     Mirror = mirror,
                     Kind = kind,
                 };
-            Log(compId, logMode, value, shapedLogical);
-            value = shapedLogical;
+            Log(compId, logMode, value, assigned);
+            value = assigned;
         }
 
         // cachedTextGenerator plumbing, resolved once per process.
@@ -341,7 +357,7 @@ namespace UnityGameTranslator.Core.TextShaping
                     if (entry.Kind == ReflowKind.UiToolkit && !UIToolkitSupport.IsElementAttached(comp))
                         continue;
 
-                    string final = BuildLines(entry.Kind, comp, entry.Assigned, out string whyNot, out bool waitQuietly);
+                    string final = BuildLines(entry, comp, out string whyNot, out bool waitQuietly);
                     if (final == null)
                     {
                         // An element with NO LAYOUT yet (hidden pane, first frame) waits without
@@ -404,18 +420,23 @@ namespace UnityGameTranslator.Core.TextShaping
         private static int _fallbackLogBudget = 5;
         private static int _underlineDropBudget = 3;
 
-        /// <summary>One line source per engine; everything after the cut is shared.</summary>
-        private static string BuildLines(ReflowKind kind, object comp, string assigned, out string whyNot, out bool waitQuietly)
+        /// <summary>
+        /// One line source per engine; everything after the cut is shared. Cuts
+        /// <see cref="Reflow.Measure"/>, which is the shaped logical form — the only one whose
+        /// character order matches what a generator or a ruler reports. On UI.Text and NGUI that
+        /// is also what sits on screen; on UI Toolkit the screen holds the visual form instead.
+        /// </summary>
+        private static string BuildLines(Reflow entry, object comp, out string whyNot, out bool waitQuietly)
         {
             waitQuietly = false;
-            switch (kind)
+            switch (entry.Kind)
             {
                 case ReflowKind.UGuiText:
-                    return BuildPerLineVisual(comp, assigned, out whyNot);
+                    return BuildPerLineVisual(comp, entry.Measure, out whyNot);
                 case ReflowKind.Ngui:
-                    return BuildNguiLines(comp, assigned, out whyNot);
+                    return BuildNguiLines(comp, entry.Measure, out whyNot);
                 default:
-                    var lines = UIToolkitSupport.TryBreakLines(comp, assigned, out whyNot, out waitQuietly);
+                    var lines = UIToolkitSupport.TryBreakLines(comp, entry.Measure, out whyNot, out waitQuietly);
                     return lines == null ? null : ComposeLines(lines);
             }
         }

@@ -489,6 +489,15 @@ namespace UnityGameTranslator.Core
         private static bool _appearanceHooked;
         private static bool _componentAppeared;
         private static bool _cycleLooksUp;
+        private static Type _graphicType;
+
+        /// <summary>
+        /// Only a type that DESCENDS from Graphic is announced by Graphic.OnEnable. The generic
+        /// frameworks (NGUI's UILabel, SuperTextMesh…) do not, so gating their lookup on that
+        /// event would silently stop discovering them; they keep the per-cycle lookup.
+        /// </summary>
+        private static bool AnnouncedByGraphic(RegisteredTextType type)
+            => _graphicType != null && type.ComponentType != null && _graphicType.IsAssignableFrom(type.ComponentType);
 
         public static void Graphic_OnEnable_Postfix() { _componentAppeared = true; }
 
@@ -510,6 +519,7 @@ namespace UnityGameTranslator.Core
                 var postfix = typeof(TranslatorScanner).GetMethod(nameof(Graphic_OnEnable_Postfix),
                     BindingFlags.Static | BindingFlags.Public);
                 patcher(onEnable, null, postfix);
+                _graphicType = graphic;
                 _appearanceHooked = true;
                 _componentAppeared = true;   // whatever is already there is taken by the first cycle
                 TranslatorCore.LogInfo("[Scanner] Patched Graphic.OnEnable — components are discovered on arrival, not by lookup");
@@ -557,7 +567,7 @@ namespace UnityGameTranslator.Core
                 var type = _registeredTypes[_refreshTypeIndex];
                 // A known list stays valid until a component announces itself (or the scene
                 // changes, which nulls the cache) — see HookComponentAppearance.
-                if (type.CachedComponents == null || _cycleLooksUp)
+                if (type.CachedComponents == null || _cycleLooksUp || !AnnouncedByGraphic(type))
                     type.CachedComponents = RefreshTypeCacheDirect(type);
                 _refreshNewTotal += type.CachedComponents?.Length ?? 0;
 

@@ -219,24 +219,31 @@ namespace UnityGameTranslator.Core.TextShaping
                     // frame), where nothing can be measured at all. This is what removes the
                     // "text appears, then changes" flicker the user saw.
                     string shapedNow = RtlComposer.ShapeLogicalOnly(value);
-                    var linesNow = UIToolkitSupport.TryBreakLines(instance, shapedNow, out _, out _);
+                    var linesNow = UIToolkitSupport.TryBreakLines(instance, shapedNow, out _);
                     if (linesNow != null)
                     {
                         string finalNow = ComposeLines(linesNow);
                         TranslatorCore.RegisterPresentedText(finalNow, logicalSource);
                         UIToolkitSupport.MirrorAlign(instance, mirror);
                         UIToolkitSupport.DisableWrap(instance);
-                        _reflows.Remove(compId);
+                        UIToolkitSupport.ForgetPending(instance);
                         Log(compId, "visual/uitk", value, finalNow);
                         value = finalNow;
                         return;
                     }
 
-                    // No layout to measure against (a pane opening, a first frame): show the
-                    // VISUAL form rather than the measuring one — see QueueReflow's assignedForm.
-                    QueueReflow(instance, compId, ref value, ReflowKind.UiToolkit, mirror,
-                                "visual+reflow/uitk", logicalSource,
-                                RtlComposer.Compose(value, RtlOutput.VisualOrder));
+                    // No layout to measure against (a pane opening, a first frame). Show the
+                    // VISUAL form — right already for anything that fits on one line — and leave
+                    // the element to the UI Toolkit walk: that budgeted pass visits every
+                    // attached element on the detection cadence, so it reaches this one exactly
+                    // when it is on screen with a width, and finishes it then. No per-frame
+                    // queue polling a hidden pane sixty times a second (measured: RTL.Reflow
+                    // 0.6-1.0 ms EVERY frame, entries never leaving).
+                    string visualNow = RtlComposer.Compose(value, RtlOutput.VisualOrder);
+                    TranslatorCore.RegisterPresentedText(visualNow, logicalSource);
+                    UIToolkitSupport.DeferUntilLaidOut(instance, logicalSource, value, shapedNow, visualNow, mirror);
+                    Log(compId, "visual+walk/uitk", value, visualNow);
+                    value = visualNow;
                     return;
                 }
 
@@ -262,9 +269,32 @@ namespace UnityGameTranslator.Core.TextShaping
             finally { Perf.Stop(Perf.RtlPresent, tPerf); }
         }
 
-        #region Deferred reflow (pass 2) — UI.Text, NGUI, UI Toolkit
+        /// <summary>
+        /// Finish a UI Toolkit element the walk just reached: cut its measuring form now that
+        /// it has a width, and write the final per-line visual text. False when it still has no
+        /// layout — the element stays pending for a later pass. Called from
+        /// UIToolkitSupport.ProcessElement, inside the budgeted walk.
+        /// </summary>
+        internal static bool FinishUiToolkitPending(object element, string logicalSource, string logical,
+                                                    string measure, string assigned, bool mirror)
+        {
+            // The game moved on to another text — nothing left to finish.
+            if (UIToolkitSupport.GetElementText(element) != assigned) return true;
 
-        private enum ReflowKind { UGuiText, Ngui, UiToolkit }
+            var lines = UIToolkitSupport.TryBreakLines(element, measure, out _);
+            if (lines == null) return false;
+
+            string final = ComposeLines(lines);
+            TranslatorCore.RegisterPresentedText(final, logicalSource);
+            UIToolkitSupport.MirrorAlign(element, mirror);
+            UIToolkitSupport.DisableWrap(element);
+            UIToolkitSupport.SetElementTextSilently(element, final);
+            return true;
+        }
+
+        #region Deferred reflow (pass 2) — UI.Text, NGUI
+
+        private enum ReflowKind { UGuiText, Ngui }
 
         private sealed class Reflow
         {
@@ -360,31 +390,19 @@ namespace UnityGameTranslator.Core.TextShaping
                 try
                 {
                     // The game moved on to another text — this reflow is stale.
-                    string currentText = entry.Kind == ReflowKind.UiToolkit
-                        ? UIToolkitSupport.GetElementText(comp)
-                        : TypeHelper.GetText(comp);
-                    if (currentText != entry.Assigned) { _reflows.Remove(id); continue; }
+                    if (TypeHelper.GetText(comp) != entry.Assigned) { _reflows.Remove(id); continue; }
 
                     // An INACTIVE component has no line data and never will until it shows: games
                     // preload hidden panes (a guide fills every page up front), and burning the
                     // attempts there left the fallback's reversed line stack as the final display
                     // once the pane opened (bios/biot bench). Wait, without spending attempts —
-                    // staleness is already covered by the text check above. Same story for a
-                    // UI Toolkit element not (yet) attached to a panel.
+                    // staleness is already covered by the text check above.
                     if (comp is UnityEngine.Component c && c.gameObject != null && !c.gameObject.activeInHierarchy)
                         continue;
-                    if (entry.Kind == ReflowKind.UiToolkit && !UIToolkitSupport.IsElementAttached(comp))
-                        continue;
 
-                    string final = BuildLines(entry, comp, out string whyNot, out bool waitQuietly);
+                    string final = BuildLines(entry, comp, out string whyNot);
                     if (final == null)
                     {
-                        // An element with NO LAYOUT yet (hidden pane, first frame) waits without
-                        // spending attempts, exactly like an inactive uGUI component above —
-                        // burning them left the fallback's reversed stack as the final display
-                        // once the pane opened (bios/biot lesson, seen again as "no layout yet"
-                        // fallbacks in the 2026-09-02 UITK bench log).
-                        if (waitQuietly) continue;
                         // Line source not ready (or unreadable). A few frames, then fall back to
                         // whole-string visual — and SAY so: a silent fallback made the reversed
                         // line stack undiagnosable from a screenshot.
@@ -399,16 +417,6 @@ namespace UnityGameTranslator.Core.TextShaping
 
                     TranslatorCore.RegisterPresentedText(final, entry.Logical);
 
-                    if (entry.Kind == ReflowKind.UiToolkit)
-                    {
-                        UIToolkitSupport.MirrorAlign(comp, entry.Mirror);
-                        // 🔴 WE computed the line breaks — the engine must not wrap again (see
-                        // DisableRewrap below for the uGUI account of why). UI Toolkit's knob is
-                        // the whiteSpace style; explicit '\n' stay honored under NoWrap.
-                        UIToolkitSupport.DisableWrap(comp);
-                        UIToolkitSupport.SetElementTextSilently(comp, final);
-                    }
-                    else
                     {
                         MirrorAlignment(comp, id, entry.Mirror);
                         // 🔴 WE computed the line breaks — the engine must not wrap again. A
@@ -441,23 +449,19 @@ namespace UnityGameTranslator.Core.TextShaping
 
         /// <summary>
         /// One line source per engine; everything after the cut is shared. Cuts
-        /// <see cref="Reflow.Measure"/>, which is the shaped logical form — the only one whose
-        /// character order matches what a generator or a ruler reports. On UI.Text and NGUI that
-        /// is also what sits on screen; on UI Toolkit the screen holds the visual form instead.
+        /// <see cref="Reflow.Measure"/>, the shaped logical form — the only one whose character
+        /// order matches what a generator reports. (UI Toolkit no longer queues here: its walk
+        /// finishes its own elements, see FinishUiToolkitPending.)
         /// </summary>
-        private static string BuildLines(Reflow entry, object comp, out string whyNot, out bool waitQuietly)
+        private static string BuildLines(Reflow entry, object comp, out string whyNot)
         {
-            waitQuietly = false;
             switch (entry.Kind)
             {
                 case ReflowKind.UGuiText:
                     return BuildUGuiLinesNow(comp, entry.Measure, out whyNot)
                            ?? BuildPerLineVisual(comp, entry.Measure, out whyNot);
-                case ReflowKind.Ngui:
-                    return BuildNguiLines(comp, entry.Measure, out whyNot);
                 default:
-                    var lines = UIToolkitSupport.TryBreakLines(comp, entry.Measure, out whyNot, out waitQuietly);
-                    return lines == null ? null : ComposeLines(lines);
+                    return BuildNguiLines(comp, entry.Measure, out whyNot);
             }
         }
 
@@ -847,7 +851,10 @@ namespace UnityGameTranslator.Core.TextShaping
         private static void RestoreIfFlagged(object instance, long compId, PropertyInfo prop)
         {
             if (UIToolkitSupport.IsTextElementInstance(instance))
+            {
                 UIToolkitSupport.RestoreRtlAdjustments(instance);
+                UIToolkitSupport.ForgetPending(instance);
+            }
 
             if (compId == -1) return;
             if (prop != null && _flaggedOriginal.TryGetValue(compId, out bool original))

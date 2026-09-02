@@ -170,6 +170,7 @@ namespace UnityGameTranslator.Core
         // spike on big scenes. Now we split it across frames using the adaptive budget.
 
         private static bool _refreshInProgress = false;
+        private static readonly UnityEngine.Object[] _noComponents = new UnityEngine.Object[0];
         private static int _refreshTypeIndex = 0;
         private static int _refreshNewTotal = 0;
         private static List<RegisteredTextType> _refreshNeedsFilter;
@@ -508,9 +509,28 @@ namespace UnityGameTranslator.Core
                     type.LoggedOnce = true;
                 }
 
-                if ((type.CachedComponents == null || type.CachedComponents.Length == 0) && type.NeedsMonoBehaviourFilter)
+                if (type.CachedComponents == null || type.CachedComponents.Length == 0)
                 {
-                    _refreshNeedsFilter.Add(type);
+                    // 🔴 An EMPTY answer from the engine's own lookup on Mono IS the answer:
+                    // FindObjectsOfType/ByType return every instance, subclasses and inactive
+                    // objects included. The MonoBehaviourFilter exists for IL2CPP, where proxy
+                    // types can escape that lookup. Sending a Mono-empty type through it meant,
+                    // on a UI Toolkit game with no TMP or UI.Text at all, snapshotting EVERY
+                    // component of a whole city and name-walking each of them for types that
+                    // are not there — every detection cycle, without end. Measured: 2 s of every
+                    // 5, 40 % of a core, for nothing (Timberborn, PASS-PERF/SCAN-PERF).
+                    bool emptyIsFinal = TranslatorCore.Adapter?.IsIL2CPP != true
+                                        && type.TypeHelperState == StrategyState.Empty;
+                    if (emptyIsFinal)
+                    {
+                        // A real empty list, not null: consumers that share this cache (the
+                        // font passes) can trust it instead of looking the scene up themselves.
+                        type.CachedComponents = _noComponents;
+                    }
+                    else if (type.NeedsMonoBehaviourFilter)
+                    {
+                        _refreshNeedsFilter.Add(type);
+                    }
                 }
 
                 _refreshTypeIndex++;

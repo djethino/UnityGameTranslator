@@ -1572,8 +1572,41 @@ namespace UnityGameTranslator.Core
         /// screen, a text is written by the game — so tying one to the other's state was wrong in
         /// principle as well as in effect.
         /// </summary>
+        /// <summary>
+        /// An RTL text written before its element had a layout, waiting for the walk to reach
+        /// the element on screen. Weak, like every per-element table here.
+        /// </summary>
+        private sealed class PendingRtl
+        {
+            internal string LogicalSource, Logical, Measure, Assigned;
+            internal bool Mirror;
+        }
+
+        private static readonly ConditionalWeakTable<object, PendingRtl> _pendingRtl =
+            new ConditionalWeakTable<object, PendingRtl>();
+
+        internal static void DeferUntilLaidOut(object element, string logicalSource, string logical,
+                                               string measure, string assigned, bool mirror)
+        {
+            _pendingRtl.Remove(element);
+            _pendingRtl.Add(element, new PendingRtl
+            {
+                LogicalSource = logicalSource, Logical = logical, Measure = measure,
+                Assigned = assigned, Mirror = mirror,
+            });
+        }
+
+        internal static void ForgetPending(object element) => _pendingRtl.Remove(element);
+
         private static void ProcessElement(object element)
         {
+            // An RTL text left for this pass to finish (see RtlPresenter): the walk is here
+            // because the element is attached and, if it has a width now, that is the moment.
+            if (_pendingRtl.TryGetValue(element, out var pending)
+                && TextShaping.RtlPresenter.FinishUiToolkitPending(element, pending.LogicalSource,
+                       pending.Logical, pending.Measure, pending.Assigned, pending.Mirror))
+                _pendingRtl.Remove(element);
+
             // Pictures are not text and do not depend on the font gate: an element can carry a
             // picture and no text at all, which is most of them.
             HandleImage(element);
@@ -2511,15 +2544,13 @@ namespace UnityGameTranslator.Core
 
         /// <summary>
         /// The assigned (shaped logical) string cut into lines the way THIS element would wrap
-        /// it: greedy word fitting measured by the engine itself. Null = not answerable — either
-        /// WAIT (waitForLayout: the element has no width yet, a hidden pane or a first frame; it
-        /// will get one when it shows, and the caller must not burn its fallback attempts on
-        /// that) or give up per whyNot (no measure API, wall of text, measure failure).
+        /// it: greedy word fitting measured by the engine itself. Null = not answerable — no
+        /// width yet (a hidden pane, a first frame), or not at all (no measure API, wall of text,
+        /// measure failure); whyNot says which.
         /// </summary>
-        internal static List<string> TryBreakLines(object element, string assigned, out string whyNot, out bool waitForLayout)
+        internal static List<string> TryBreakLines(object element, string assigned, out string whyNot)
         {
             whyNot = null;
-            waitForLayout = false;
             EnsureRtlPlumbing();
             if (_measureTextSize == null || _contentRectProp == null)
             { whyNot = "MeasureTextSize not available on this runtime"; return null; }
@@ -2544,7 +2575,7 @@ namespace UnityGameTranslator.Core
             }
             catch { width = float.NaN; }
             if (float.IsNaN(width) || width < 1f)
-            { whyNot = "no layout yet (element has no width)"; waitForLayout = true; return null; }
+            { whyNot = "no layout yet (element has no width)"; return null; }
 
             // A pathological wall of text would mean thousands of reflection round-trips into the
             // engine — the whole-string fallback is the lesser harm there.

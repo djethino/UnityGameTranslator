@@ -1563,6 +1563,9 @@ namespace UnityGameTranslator.Core
                         null, new Type[] { typeof(Type), typeof(bool) }, null);
                 }
                 catch { }
+                TranslatorCore.LogDebug(_findByTypeUnsorted != null
+                    ? "[TypeHelper] scene lookup: FindObjectsByType (unsorted, inactive included)"
+                    : "[TypeHelper] scene lookup: FindObjectsOfType (sorted) — FindObjectsByType not on this engine");
             }
 
             if (_findByTypeUnsorted != null)

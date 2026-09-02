@@ -477,12 +477,60 @@ namespace UnityGameTranslator.Core
         /// across subsequent ContinueIncrementalRefresh() calls until the budget allows
         /// the cycle to complete.
         /// </summary>
+        // 🔴 Components announce their arrival, so the scene is not searched to find out whether
+        // any appeared. The per-type lookup is one atomic engine call whose cost follows the SCENE,
+        // not the type: 0.1 ms in a menu, ~30 ms in a large city — measured — and the refresh
+        // made two of them every detection cycle to re-confirm that TMP_Text and UI.Text were
+        // still absent from a UI Toolkit game. Felt as one hitch per second. Every uGUI text
+        // component descends from Graphic, whose OnEnable fires on creation and on activation of
+        // a hidden pane — the two ways a static-text component reaches the screen without a
+        // set_text. When it fires, the next cycle looks up again; when it never fires, no cycle
+        // does. A scene change already drops the caches, which forces a lookup on its own.
+        private static bool _appearanceHooked;
+        private static bool _componentAppeared;
+        private static bool _cycleLooksUp;
+
+        public static void Graphic_OnEnable_Postfix() { _componentAppeared = true; }
+
+        public static int HookComponentAppearance(Action<MethodInfo, MethodInfo, MethodInfo> patcher)
+        {
+            try
+            {
+                // Graphic is reached through the types we already hold: both uGUI text families
+                // derive from it (UI.Text directly, TMP through MaskableGraphic).
+                Type graphic = null;
+                for (var t = TypeHelper.UI_TextType ?? TypeHelper.TMP_TextType; t != null && graphic == null; t = t.BaseType)
+                    if (t.Name == "Graphic") graphic = t;
+                var onEnable = graphic?.GetMethod("OnEnable", BindingFlags.NonPublic | BindingFlags.Instance);
+                if (onEnable == null)
+                {
+                    TranslatorCore.LogInfo("[Scanner] Graphic.OnEnable not found — component lookups stay per cycle");
+                    return 0;
+                }
+                var postfix = typeof(TranslatorScanner).GetMethod(nameof(Graphic_OnEnable_Postfix),
+                    BindingFlags.Static | BindingFlags.Public);
+                patcher(onEnable, null, postfix);
+                _appearanceHooked = true;
+                _componentAppeared = true;   // whatever is already there is taken by the first cycle
+                TranslatorCore.LogInfo("[Scanner] Patched Graphic.OnEnable — components are discovered on arrival, not by lookup");
+                return 1;
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogWarning($"[Scanner] Graphic.OnEnable not patched ({ex.Message}) — component lookups stay per cycle");
+                return 0;
+            }
+        }
+
         private static void StartIncrementalRefresh()
         {
             _refreshInProgress = true;
             _refreshTypeIndex = 0;
             _refreshNewTotal = 0;
             _refreshNeedsFilter = new List<RegisteredTextType>();
+            // Without the hook every cycle looks up, as it always did.
+            _cycleLooksUp = !_appearanceHooked || _componentAppeared;
+            _componentAppeared = false;
             _lateUpdateCacheDirty = true;
         }
 
@@ -507,7 +555,10 @@ namespace UnityGameTranslator.Core
                 }
 
                 var type = _registeredTypes[_refreshTypeIndex];
-                type.CachedComponents = RefreshTypeCacheDirect(type);
+                // A known list stays valid until a component announces itself (or the scene
+                // changes, which nulls the cache) — see HookComponentAppearance.
+                if (type.CachedComponents == null || _cycleLooksUp)
+                    type.CachedComponents = RefreshTypeCacheDirect(type);
                 _refreshNewTotal += type.CachedComponents?.Length ?? 0;
 
                 if (!type.LoggedOnce && type.CachedComponents != null && type.CachedComponents.Length > 0)

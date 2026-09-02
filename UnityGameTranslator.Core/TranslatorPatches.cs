@@ -302,6 +302,9 @@ namespace UnityGameTranslator.Core
                 // the above can reach. One setter covers all of it; see UIToolkitSupport.
                 UIToolkitSupport.Initialize();
                 patchCount += UIToolkitSupport.ApplyPatches(patcher);
+
+                // uGUI components announce their arrival — see TranslatorScanner.HookComponentAppearance.
+                patchCount += TranslatorScanner.HookComponentAppearance(patcher);
             }
             catch (Exception e)
             {

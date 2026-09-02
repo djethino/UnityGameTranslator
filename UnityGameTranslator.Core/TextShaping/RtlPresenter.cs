@@ -148,26 +148,15 @@ namespace UnityGameTranslator.Core.TextShaping
                 // break points; ProcessPendingReflows converts each cut line next frame.
                 if (TypeHelper.UI_TextType != null && TypeHelper.UI_TextType.IsAssignableFrom(type))
                 {
-                    // One pass whenever the engine can answer now — same shape as UI Toolkit.
-                    string shapedUGui = RtlComposer.ShapeLogicalOnly(value);
-                    string cutNow = BuildUGuiLinesNow(instance, shapedUGui, out string whyNotNow, out float widthNow);
-                    if (cutNow == null && _immediateLogBudget > 0)
-                    {
-                        _immediateLogBudget--;
-                        TranslatorCore.LogDebug($"[RtlPresenter] UI.Text immediate cut unavailable ({whyNotNow}) — deferred: comp={compId}");
-                    }
-                    if (cutNow != null)
-                    {
-                        TranslatorCore.RegisterPresentedText(cutNow, value);
-                        MirrorAlignment(instance, compId, mirror);
-                        _reflows.Remove(compId);
-                        if (compId != -1)
-                            _verifies.Add(new Verify { Comp = new WeakReference(instance), Id = compId, Width = widthNow,
-                                                       Logical = value, Assigned = cutNow, Mirror = mirror });
-                        Log(compId, "visual/ugui", value, cutNow);
-                        value = cutNow;
-                        return;
-                    }
+                    // 🔴 Two passes, on purpose, and the engine's own lines. An immediate cut at
+                    // the box's current width was tried and it is wrong by construction on uGUI:
+                    // a box is routinely sized BY its text (ContentSizeFitter, layout groups on
+                    // preferred width — a label 18 units wide showing "Vessel Amount:" in full),
+                    // so the width seen before the text is laid out is the previous content's,
+                    // the cut shrinks the box to its own lines, and every later look sees a
+                    // width that is stable and false. Assigning the shaped LOGICAL string first
+                    // lets the layout size the box for the whole text exactly as it does for
+                    // the game's own; the reflow then reads the lines the engine produced there.
                     QueueReflow(instance, compId, ref value, ReflowKind.UGuiText, mirror, "logical+reflow");
                     return;
                 }
@@ -378,76 +367,8 @@ namespace UnityGameTranslator.Core.TextShaping
         /// per-line visual form, using the break points the engine just computed. Called once per
         /// frame from the scanner's update pass, main thread.
         /// </summary>
-        /// <summary>
-        /// An immediate UI.Text cut, checked ONCE against the box the layout finally gave it.
-        ///
-        /// 🔴 The cut is made when the game sets the text — often before its panel is laid out, on
-        /// a box that is not the final one (an organ description cut at half its panel's width,
-        /// bench). Reacting to resize events instead was circular with size fitters. So: one look,
-        /// on the next tick, once the frame's layout has run; a changed width re-cuts through the
-        /// ordinary deferred path, an unchanged one ends it. Never a second look — nothing here can
-        /// feed back into itself.
-        /// </summary>
-        private sealed class Verify
-        {
-            public WeakReference Comp;
-            public long Id;
-            public float Width;
-            public string Logical, Assigned;
-            public bool Mirror;
-        }
-
-        private static readonly List<Verify> _verifies = new List<Verify>();
-        private static int _verifyLogBudget = 6;
-
-        private static void VerifyImmediateCuts()
-        {
-            for (int i = _verifies.Count - 1; i >= 0; i--)
-            {
-                var v = _verifies[i];
-                var comp = v.Comp.Target;
-                if (comp == null || (comp is UnityEngine.Object uo && uo == null)) { _verifies.RemoveAt(i); continue; }
-
-                // 🔴 The one look must come AFTER the component's first real layout — and a panel
-                // filled while still inactive is not laid out until it shows. Looking while it is
-                // hidden sees the prefab's stale rect (the same one the cut saw), spends the only
-                // look, and the real width is never met: an organ's description stayed cut at
-                // half its panel. Wait like the reflow does — one cheap flag per frame, until shown.
-                if (comp is UnityEngine.Component c && c.gameObject != null && !c.gameObject.activeInHierarchy)
-                    continue;
-
-                _verifies.RemoveAt(i);
-                try
-                {
-                    // Still ours? A game that already moved on has nothing to verify.
-                    if (TypeHelper.GetText(comp) != v.Assigned) continue;
-                    float width = float.NaN;
-                    if (_getPixelAdjustedRect != null && _getPixelAdjustedRect.Invoke(comp, null) is UnityEngine.Rect r)
-                        width = r.width;
-                    if (float.IsNaN(width) || width < 1f || Math.Abs(width - v.Width) <= 1f) continue;
-
-                    if (_verifyLogBudget > 0)
-                    {
-                        _verifyLogBudget--;
-                        TranslatorCore.LogDebug($"[RtlPresenter] box changed after layout ({v.Width:F0} → {width:F0} px) — re-cutting once: comp={v.Id}");
-                    }
-                    _reflows[v.Id] = new Reflow
-                    {
-                        Comp = v.Comp,
-                        Logical = v.Logical,
-                        Assigned = v.Assigned,
-                        Measure = RtlComposer.ShapeLogicalOnly(v.Logical),
-                        Mirror = v.Mirror,
-                        Kind = ReflowKind.UGuiText,
-                    };
-                }
-                catch { }
-            }
-        }
-
         internal static void ProcessPendingReflows()
         {
-            if (_verifies.Count > 0) VerifyImmediateCuts();
             if (_reflows.Count == 0) return;
 
             _reflowScratch.Clear();
@@ -523,7 +444,6 @@ namespace UnityGameTranslator.Core.TextShaping
         }
 
         private static int _fallbackLogBudget = 5;
-        private static int _immediateLogBudget = 6;
 
         // ⚠ No re-cut on box resize. It was tried (a Graphic.OnRectTransformDimensionsChange
         // hook) and it is circular by construction: a ContentSizeFitter sizes the box from the
@@ -545,11 +465,14 @@ namespace UnityGameTranslator.Core.TextShaping
             {
                 case ReflowKind.UGuiText:
                 {
-                    string now = BuildUGuiLinesNow(comp, entry.Measure, out string whyNow);
-                    if (now != null) { whyNot = null; return now; }
-                    string later = BuildPerLineVisual(comp, entry.Measure, out whyNot);
-                    if (later == null) whyNot = $"immediate: {whyNow} | cached: {whyNot}";
-                    return later;
+                    // The engine's own layout of the assigned text is the truth: it was made in
+                    // the box the layout gave that text. Populate is the fallback for a generator
+                    // that still describes an older string after the wait.
+                    string engine = BuildPerLineVisual(comp, entry.Measure, out string whyEngine);
+                    if (engine != null) { whyNot = null; return engine; }
+                    string own = BuildUGuiLinesNow(comp, entry.Measure, out whyNot);
+                    if (own == null) whyNot = $"engine: {whyEngine} | populate: {whyNot}";
+                    return own;
                 }
                 default:
                     return BuildNguiLines(comp, entry.Measure, out whyNot);
@@ -628,8 +551,6 @@ namespace UnityGameTranslator.Core.TextShaping
         }
         }
 
-        private static string BuildUGuiLinesNow(object comp, string assigned, out string whyNot)
-            => BuildUGuiLinesNow(comp, assigned, out whyNot, out _);
 
         // Everything a cut rests on, for the first few of a session: the box as the engine sees
         // it (rectTransform.rect — what Text.OnPopulateMesh cuts with) against the pixel-adjusted
@@ -659,10 +580,9 @@ namespace UnityGameTranslator.Core.TextShaping
             catch (Exception ex) { TranslatorCore.LogDebug("[RtlPresenter] cut describe failed: " + ex.Message); }
         }
 
-        private static string BuildUGuiLinesNow(object comp, string assigned, out string whyNot, out float widthUsed)
+        private static string BuildUGuiLinesNow(object comp, string assigned, out string whyNot)
         {
             whyNot = null;
-            widthUsed = float.NaN;
             EnsureGeneratorPlumbing();
             if (_generatorPopulate == null || _getGenerationSettings == null
                 || _getPixelAdjustedRect == null || _ownGenerator == null)
@@ -673,7 +593,6 @@ namespace UnityGameTranslator.Core.TextShaping
                 object rect = _getPixelAdjustedRect.Invoke(comp, null);
                 if (!(rect is UnityEngine.Rect r) || r.width < 1f)
                 { whyNot = "no layout yet (component has no width)"; return null; }
-                widthUsed = r.width;
 
                 // One pixel narrower than the box: a recomposed line then always has room, so
                 // the engine's wrapping — kept on as the safety net — never folds it by rounding.

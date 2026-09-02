@@ -630,6 +630,9 @@ namespace UnityGameTranslator.Core
 
         public static void TextElement_SetText_Prefix(object __instance, ref string value)
         {
+            long tSet = Perf.Start();
+            try
+            {
             if (_writingBack) return;
             if (string.IsNullOrEmpty(value)) return;
             if (!TranslatorCore.TranslationsActive) return;
@@ -676,6 +679,8 @@ namespace UnityGameTranslator.Core
                 }
             }
             catch { }
+            }
+            finally { Perf.Stop(Perf.UitkSetter, tSet); }
         }
 
         #endregion
@@ -1338,7 +1343,10 @@ namespace UnityGameTranslator.Core
                     if (_lastScanTime != 0f && now - _lastScanTime < interval) return;
                     _lastScanTime = now;
 
-                    if (!StartWalkCycle()) return;
+                    long tCycle = Perf.Start();
+                    bool opened = StartWalkCycle();
+                    Perf.Stop(Perf.UitkCycle, tCycle);
+                    if (!opened) return;
                 }
 
                 // Walk until the frame's budget is spent; the stack holds the rest.

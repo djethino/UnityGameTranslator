@@ -799,7 +799,9 @@ namespace UnityGameTranslator.Core
             // FAST PATH: known-working strategy → direct assignment, zero allocations
             if (type.TypeHelperState == StrategyState.Works)
             {
+                long tFind = Perf.Start();
                 var found = TypeHelper.FindAllObjectsOfType(type.ComponentType);
+                Perf.Stop(Perf.ScanFind, tFind);
                 if (found != null && found.Length > 0) return found;
                 type.TypeHelperState = StrategyState.Empty;
             }
@@ -845,7 +847,9 @@ namespace UnityGameTranslator.Core
             {
                 try
                 {
+                    long tFind = Perf.Start();
                     var found = TypeHelper.FindAllObjectsOfType(type.ComponentType);
+                    Perf.Stop(Perf.ScanFind, tFind);
                     if (found != null && found.Length > 0)
                     {
                         type.TypeHelperState = StrategyState.Works;
@@ -2281,6 +2285,7 @@ namespace UnityGameTranslator.Core
             Perf.Stop(Perf.RtlReflow, tReflow);
 
             // The mod's pass-level profile, printed from the single tick like everything else.
+            Perf.Frame(Time.unscaledDeltaTime);
             Perf.ReportIfDue(Time.realtimeSinceStartup);
 
             // NOTE: TickRenderWatch runs from FontManager.OnWillRenderCanvases (after the

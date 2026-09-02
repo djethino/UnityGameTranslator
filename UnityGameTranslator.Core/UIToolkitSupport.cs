@@ -1225,8 +1225,41 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Put a text into an element from outside — the routing does this when a reveal settles
-        /// on something already translated.
+        /// Put a text into an element from outside, through the SAME pipeline the setter patch
+        /// gives every other write: routing (a stabilized original picks up its cached
+        /// translation), then stage D (an RTL text reaches the screen shaped, never logical).
+        ///
+        /// 🔴 This is the door the editor and the typewriting finalizer must use. They used
+        /// WriteBack directly, which skips the patch by design (anti-re-translation guard) — and
+        /// skipped stage D with it: a UI Toolkit element received LOGICAL Arabic under a &lt;u&gt;
+        /// tag and Unity 6's DrawUnderlineMesh died on it, taking the whole game down with its
+        /// own crash handler (Timberborn, §7.8 of the RTL analysis). The uGUI branch of
+        /// TextTargets.Write always had this pipeline for free, because TypeHelper.SetText goes
+        /// through the patched setter — this restores the symmetry.
+        /// </summary>
+        public static void WriteRouted(object element, string text)
+        {
+            if (_textProp == null || element == null || text == null) return;
+
+            string value = text;
+            try
+            {
+                TranslatorPatches.RouteText(element, element, IdFor(element),
+                                            isOwnUI: false, componentType: "UIToolkit", textValue: ref value);
+                _originalFontName.TryGetValue(element, out string font);
+                FontOverrideRule rule = null;
+                if (TranslatorCore.FontOverrides.Count > 0)
+                    rule = TranslatorCore.FindFontOverride(IdFor(element), PathOf(element), font, value);
+                TextShaping.RtlPresenter.Present(element, IdFor(element), ref value, font, rule);
+            }
+            catch { }
+            WriteBack(element, value);
+        }
+
+        /// <summary>
+        /// The RAW write — no routing, no stage D. Only for text that already went through the
+        /// pipeline (WriteRouted above, the reflow's SetElementTextSilently) or that restores the
+        /// game's own original.
         ///
         /// ⚠ Through the same write-back guard the scan uses, or the setter patch would read our
         /// own write as the game's and translate the translation.
@@ -2232,24 +2265,39 @@ namespace UnityGameTranslator.Core
             if (_rtlPlumbingResolved || !Available) return;
             _rtlPlumbingResolved = true;
             var pubInst = BindingFlags.Public | BindingFlags.Instance;
+
+            // 🔴 Never GetMethod(name, flags) here, and one try PER member: Unity 6 ships TWO
+            // public MeasureTextSize overloads, so the single-name lookup throws
+            // AmbiguousMatchException — and behind a shared try block that one throw read as
+            // "no measure API, no styles, no ATG detection" on a runtime that has all of them,
+            // with a log line blaming the runtime (Timberborn crash analysis, §7.8).
             try
             {
-                _measureTextSize = TextElementType.GetMethod("MeasureTextSize", pubInst);
-                if (_measureTextSize != null)
+                foreach (var m in TextElementType.GetMethods(pubInst))
                 {
-                    var ps = _measureTextSize.GetParameters();
+                    if (m.Name != "MeasureTextSize") continue;
+                    var ps = m.GetParameters();
+                    if (ps.Length != 5 || ps[0].ParameterType != typeof(string) || !ps[2].ParameterType.IsEnum)
+                        continue;
                     // The MeasureMode enum is NESTED in VisualElement and its namespace moved
                     // across versions — the parameter always knows its own type (the same lesson
                     // as the ATG probe's StyleEnum<T> trick).
-                    if (ps.Length == 5) _measureUndefined = Enum.ToObject(ps[2].ParameterType, 0);
-                    else _measureTextSize = null;
+                    _measureTextSize = m;
+                    _measureUndefined = Enum.ToObject(ps[2].ParameterType, 0);
+                    break;
                 }
-                _contentRectProp = VisualElementType.GetProperty("contentRect", pubInst);
-
+            }
+            catch { }
+            try { _contentRectProp = VisualElementType.GetProperty("contentRect", pubInst); } catch { }
+            try
+            {
                 var styleType = _styleProp?.PropertyType;
                 _styleWhiteSpaceProp = styleType?.GetProperty("whiteSpace", pubInst);
                 _styleTextAlignProp = styleType?.GetProperty("unityTextAlign", pubInst);
-
+            }
+            catch { }
+            try
+            {
                 var resolvedType = _resolvedStyleProp?.PropertyType;
                 _resolvedWhiteSpaceProp = resolvedType?.GetProperty("whiteSpace", pubInst);
                 _resolvedTextAlignProp = resolvedType?.GetProperty("unityTextAlign", pubInst);

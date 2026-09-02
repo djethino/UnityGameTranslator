@@ -6145,7 +6145,14 @@ namespace UnityGameTranslator.Core
                 {
                     if (!pendingComponents.ContainsKey(text))
                         pendingComponents[text] = new List<object>();
-                    pendingComponents[text].Add(component);
+                    // Same reference, one entry. Without this, a component whose text waits long
+                    // in the queue is re-added on every scan cycle — a UI Toolkit element (whose
+                    // GetInstanceID is -1) reached 137 strong references for ONE label, i.e. 136
+                    // useless apply iterations and that many elements pinned against collection.
+                    // (Reference equality: two IL2CPP proxies of one native object still slip
+                    // through — bounded by proxy caching, and harmless beyond a wasted slot.)
+                    var waiting = pendingComponents[text];
+                    if (!waiting.Contains(component)) waiting.Add(component);
                 }
 
                 // Record the own-UI intent: the worker also infers it from the components, but a

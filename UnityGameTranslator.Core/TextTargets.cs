@@ -63,8 +63,12 @@ namespace UnityGameTranslator.Core
 
             try
             {
+                // Both branches must land in the SAME pipeline. The uGUI one gets it for free
+                // (the patched setter routes and presents); the element one used the raw
+                // write-back and skipped stage D — logical Arabic under <u> on a UI Toolkit
+                // element killed a bench game through Unity's own DrawUnderlineMesh (§7.8).
                 if (owner is Component) TypeHelper.SetText(owner, text);
-                else UIToolkitSupport.WriteBack(owner, text);
+                else UIToolkitSupport.WriteRouted(owner, text);
             }
             catch { }
         }

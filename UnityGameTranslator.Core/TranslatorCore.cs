@@ -872,6 +872,10 @@ namespace UnityGameTranslator.Core
                     ruleObj["enabled"] = false;
                 if (!string.IsNullOrEmpty(rule.comment))
                     ruleObj["comment"] = rule.comment;
+                // Written and read like every other field — a rule field that only lives in
+                // memory is gone at the next launch (rtl_alignment was, for a day).
+                if (!string.IsNullOrEmpty(rule.rtl_alignment))
+                    ruleObj["rtl_alignment"] = rule.rtl_alignment;
                 overridesArray.Add(ruleObj);
             }
 
@@ -959,7 +963,8 @@ namespace UnityGameTranslator.Core
                     replacement = ruleObj["replacement"]?.Value<string>(),
                     size_multiplier = ruleObj["size_multiplier"]?.Value<float>() ?? 0f,
                     enabled = ruleObj["enabled"]?.Value<bool>() ?? true,
-                    comment = ruleObj["comment"]?.Value<string>()
+                    comment = ruleObj["comment"]?.Value<string>(),
+                    rtl_alignment = ruleObj["rtl_alignment"]?.Value<string>(),
                 };
                 if (!string.IsNullOrEmpty(rule.match))
                 {

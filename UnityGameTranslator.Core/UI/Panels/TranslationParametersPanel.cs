@@ -1116,6 +1116,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
         }
 
+        // ⚠ Every field of the rule, and HasFontOverrideChanges compares every one of them: a
+        // field left out here is dropped from every saved rule at the next Apply, and left out
+        // there is a change the Apply button never sees. rtl_alignment was both — "Keep game's"
+        // chosen in the dropdown, no Apply offered, and the rule's value lost on any other Apply.
         private static FontOverrideRule CloneRule(FontOverrideRule r)
         {
             return new FontOverrideRule
@@ -1124,7 +1128,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 replacement = r.replacement,
                 size_multiplier = r.size_multiplier,
                 enabled = r.enabled,
-                comment = r.comment
+                comment = r.comment,
+                rtl_alignment = r.rtl_alignment,
             };
         }
 
@@ -2731,7 +2736,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 if (p.match != o.match ||
                     p.replacement != o.replacement ||
                     Math.Abs(p.size_multiplier - o.size_multiplier) > 0.001f ||
-                    p.enabled != o.enabled)
+                    p.enabled != o.enabled ||
+                    !string.Equals(p.rtl_alignment, o.rtl_alignment, StringComparison.OrdinalIgnoreCase) ||
+                    p.comment != o.comment)
                     return true;
             }
             return false;

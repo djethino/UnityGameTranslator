@@ -161,7 +161,6 @@ namespace UnityGameTranslator.Core.TextShaping
                         TranslatorCore.RegisterPresentedText(cutNow, value);
                         MirrorAlignment(instance, compId, mirror);
                         _reflows.Remove(compId);
-                        RecordCut(instance, compId, value, mirror);
                         Log(compId, "visual/ugui", value, cutNow);
                         value = cutNow;
                         return;
@@ -441,7 +440,6 @@ namespace UnityGameTranslator.Core.TextShaping
                         // the label drew nothing (bench: "New game" empty at start-up, filled once
                         // the game re-set it through the prefix on the way back from a run).
                         FontManager.EnsureCharsInCloneAtlas(final, comp);
-                        if (entry.Kind == ReflowKind.UGuiText) RecordCut(comp, id, entry.Logical, entry.Mirror);
                     }
                     _reflows.Remove(id);
                 }
@@ -456,88 +454,12 @@ namespace UnityGameTranslator.Core.TextShaping
         private static int _fallbackLogBudget = 5;
         private static int _immediateLogBudget = 6;
 
-        #region Re-cut on resize (UI.Text)
-
-        // 🔴 A cut is right for the width it was made at — and the FIRST width a label has is
-        // often not its last: a menu still laying out gave "New game" a sliver of a box, the cut
-        // put its two words on two lines, and Best Fit then shrank the font to make two lines fit
-        // a one-line box. Two specks in an empty button (bench, bio1 zoomed). The engine signals
-        // exactly this moment — Graphic.OnRectTransformDimensionsChange — so a component that
-        // wears one of our cuts is re-cut when its box changes width. A trigger, not a poll; the
-        // width comparison keeps a fitter that resizes the box to OUR lines from looping.
-        private sealed class Cut { public string Logical; public bool Mirror; public float Width; }
-        private static readonly Dictionary<long, Cut> _cuts = new Dictionary<long, Cut>();
-
-        private static void RecordCut(object comp, long compId, string logical, bool mirror)
-        {
-            if (compId == -1) return;
-            _cuts[compId] = new Cut { Logical = logical, Mirror = mirror, Width = CurrentWidth(comp) };
-        }
-
-        private static float CurrentWidth(object comp)
-        {
-            EnsureGeneratorPlumbing();
-            try
-            {
-                if (_getPixelAdjustedRect != null && _getPixelAdjustedRect.Invoke(comp, null) is UnityEngine.Rect r)
-                    return r.width;
-            }
-            catch { }
-            return float.NaN;
-        }
-
-        internal static int HookResize(Action<MethodInfo, MethodInfo, MethodInfo> patcher)
-        {
-            try
-            {
-                Type graphic = null;
-                for (var t = TypeHelper.UI_TextType; t != null && graphic == null; t = t.BaseType)
-                    if (t.Name == "Graphic") graphic = t;
-                var resized = graphic?.GetMethod("OnRectTransformDimensionsChange", BindingFlags.NonPublic | BindingFlags.Instance);
-                if (resized == null) return 0;
-                var postfix = typeof(RtlPresenter).GetMethod(nameof(Graphic_Resized_Postfix), BindingFlags.Static | BindingFlags.Public);
-                patcher(resized, null, postfix);
-                TranslatorCore.LogInfo("[RtlPresenter] Patched Graphic.OnRectTransformDimensionsChange — RTL cuts follow the box");
-                return 1;
-            }
-            catch (Exception ex)
-            {
-                TranslatorCore.LogWarning($"[RtlPresenter] resize hook not applied ({ex.Message}) — a cut made at a transient width stays");
-                return 0;
-            }
-        }
-
-        public static void Graphic_Resized_Postfix(object __instance)
-        {
-            if (_cuts.Count == 0 || __instance == null) return;
-            try
-            {
-                if (TypeHelper.UI_TextType == null || !TypeHelper.UI_TextType.IsInstanceOfType(__instance)) return;
-                long id = TypeHelper.GetInstanceID(__instance);
-                if (!_cuts.TryGetValue(id, out var cut)) return;
-                if (!TranslatorCore.IsMainThread) return;
-
-                float width = CurrentWidth(__instance);
-                if (float.IsNaN(width) || Math.Abs(width - cut.Width) < 0.5f) return;
-
-                string current = TypeHelper.GetText(__instance);
-                if (string.IsNullOrEmpty(current)) return;
-
-                // Re-cut on the next tick, at the new width, through the ordinary deferred path.
-                _reflows[id] = new Reflow
-                {
-                    Comp = new WeakReference(__instance),
-                    Logical = cut.Logical,
-                    Assigned = current,
-                    Measure = RtlComposer.ShapeLogicalOnly(cut.Logical),
-                    Mirror = cut.Mirror,
-                    Kind = ReflowKind.UGuiText,
-                };
-            }
-            catch { }
-        }
-
-        #endregion
+        // ⚠ No re-cut on box resize. It was tried (a Graphic.OnRectTransformDimensionsChange
+        // hook) and it is circular by construction: a ContentSizeFitter sizes the box from the
+        // text, the re-cut sizes the text from the box — the description of an organ shrank to
+        // one character per line and locked there; a disclaimer grew to one line as wide as its
+        // paragraph. A cut is made once, at the width the game gave the box for its own text,
+        // and the engine's wrapping (kept on) folds what would not fit.
         private static int _underlineDropBudget = 3;
 
         /// <summary>
@@ -981,7 +903,6 @@ namespace UnityGameTranslator.Core.TextShaping
             }
 
             if (compId == -1) return;
-            _cuts.Remove(compId);
             if (prop != null && _flaggedOriginal.TryGetValue(compId, out bool original))
             {
                 _flaggedOriginal.Remove(compId);

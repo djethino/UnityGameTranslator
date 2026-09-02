@@ -305,9 +305,6 @@ namespace UnityGameTranslator.Core
 
                 // uGUI components announce their arrival — see TranslatorScanner.HookComponentAppearance.
                 patchCount += TranslatorScanner.HookComponentAppearance(patcher);
-
-                // A UI.Text box that changes width re-cuts its RTL lines — see RtlPresenter.HookResize.
-                patchCount += TextShaping.RtlPresenter.HookResize(patcher);
             }
             catch (Exception e)
             {

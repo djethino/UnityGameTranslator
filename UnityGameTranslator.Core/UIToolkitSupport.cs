@@ -2370,10 +2370,16 @@ namespace UnityGameTranslator.Core
         /// underlined glyphs come from a FALLBACK font asset that index is out of bounds. So the
         /// underline is safe when the engine carries the fix, or when ONE font asset — the
         /// element's own resolved one — can render both the RTL text and the '_': no fallback
-        /// mixing, no bad index. Asked with tryAddCharacter so a capable DYNAMIC asset (the
-        /// mod's replacement fonts) answers for what its font FILE covers, not for which glyphs
-        /// happen to be in its atlas already. Unanswerable (no font asset, no API) counts as
-        /// unsafe: this decides whether a tag is dropped, and the bench paid twice.
+        /// mixing, no bad index. Unanswerable (no font asset, no API) counts as unsafe: this
+        /// decides whether a tag is dropped, and the bench paid twice.
+        ///
+        /// 🔴 Asked with tryAddCharacter FALSE — a question must not change the engine. The first
+        /// version passed true so a dynamic asset would answer for its font FILE rather than its
+        /// current atlas; but that overload ADDS the glyph, i.e. mutates (and can resize) an atlas
+        /// texture, from a text setter that runs while UITKTextJobSystem generates meshes in
+        /// parallel jobs. That is a plausible way to produce the very IndexOutOfRange this guard
+        /// exists to avoid. The cost of the honest question: an asset that could cover the script
+        /// but has not rasterized it yet answers "no", so the tag is dropped — the safe side.
         /// </summary>
         internal static bool UnderlineIsSafe(object element, string text)
         {
@@ -2398,17 +2404,18 @@ namespace UnityGameTranslator.Core
                 catch { }
             }
 
-            if (_engineHasUnderlineFix) return true;
+            if (_engineHasUnderlineFix) { LogUnderlineVerdict(element, true, "engine >= 6000.5"); return true; }
 
             try
             {
                 if (_resolvedFontDefProp == null || _fontDefFontAssetProp == null || _hasCharacterMethod == null)
-                    return false;
+                { LogUnderlineVerdict(element, false, "font/HasCharacter API not resolvable"); return false; }
                 var resolved = _resolvedStyleProp.GetValue(element, null);
-                if (resolved == null) return false;
+                if (resolved == null) { LogUnderlineVerdict(element, false, "no resolved style"); return false; }
                 object def = _resolvedFontDefProp.GetValue(resolved, null);
                 object fontAsset = def == null ? null : _fontDefFontAssetProp.GetValue(def, null);
-                if (fontAsset == null || (fontAsset is UnityEngine.Object uo && uo == null)) return false;
+                if (fontAsset == null || (fontAsset is UnityEngine.Object uo && uo == null))
+                { LogUnderlineVerdict(element, false, "element resolves to no FontAsset (a legacy Font, or none)"); return false; }
 
                 char rtl = '\0';
                 foreach (char c in text)
@@ -2418,12 +2425,30 @@ namespace UnityGameTranslator.Core
                 // No strong RTL character: not the crash class this guard exists for.
                 if (rtl == '\0') return true;
 
-                // (character, searchFallbacks: false, tryAddCharacter: true) — the whole point
-                // is single-asset coverage, so fallbacks are excluded from the question.
-                if (!(bool)_hasCharacterMethod.Invoke(fontAsset, new object[] { rtl, false, true })) return false;
-                return (bool)_hasCharacterMethod.Invoke(fontAsset, new object[] { '_', false, true });
+                // (character, searchFallbacks: false, tryAddCharacter: false) — single-asset
+                // coverage is the whole question, and it must be asked without side effects.
+                string assetName = (fontAsset as UnityEngine.Object)?.name ?? "?";
+                bool hasRtl = (bool)_hasCharacterMethod.Invoke(fontAsset, new object[] { rtl, false, false });
+                if (!hasRtl)
+                { LogUnderlineVerdict(element, false, $"'{assetName}' does not carry U+{(int)rtl:X4}"); return false; }
+                bool hasUnderscore = (bool)_hasCharacterMethod.Invoke(fontAsset, new object[] { '_', false, false });
+                LogUnderlineVerdict(element, hasUnderscore,
+                    hasUnderscore ? $"'{assetName}' carries both the script and '_'" : $"'{assetName}' has the script but no '_'");
+                return hasUnderscore;
             }
-            catch { return false; }
+            catch (Exception ex) { LogUnderlineVerdict(element, false, "check threw: " + ex.Message); return false; }
+        }
+
+        // Every verdict is logged while this engine's underline defect is being characterised:
+        // the bench crashed a third time with the tag apparently absent, and the log could not
+        // say whether the guard had even been consulted for the element that died.
+        private static int _underlineVerdictBudget = 12;
+
+        private static void LogUnderlineVerdict(object element, bool safe, string why)
+        {
+            if (_underlineVerdictBudget <= 0) return;
+            _underlineVerdictBudget--;
+            TranslatorCore.LogInfo($"[RtlPresenter] underline verdict for '{PathOf(element)}': {(safe ? "KEEP" : "DROP")} — {why}");
         }
 
         /// <summary>

@@ -86,6 +86,15 @@ namespace UnityGameTranslator.Core.TextShaping
                         RestoreIfFlagged(instance, compId, prop);
                         _reflows.Remove(compId);
                     }
+                    else if (value.IndexOf("<u", StringComparison.OrdinalIgnoreCase) >= 0 && _underlineDropBudget > 0)
+                    {
+                        // Our own shaped output coming back — and still carrying an underline the
+                        // guard should have removed. Worth a line while this engine's underline
+                        // defect is being characterised: it would mean a write reached the element
+                        // without going through the guard at all.
+                        _underlineDropBudget--;
+                        TranslatorCore.LogWarning($"[RtlPresenter] shaped echo still carries an underline tag on comp={compId} — a write bypassed the guard");
+                    }
                     return;
                 }
 

@@ -68,6 +68,9 @@ namespace UnityGameTranslator.Core.Checks
             Section("Rich text index map (UI.Text line slicing)");
             RichTextIndexMapChecks.Run(Check);
 
+            Section("Indic reordering (pre-base vowel signs)");
+            IndicReorderChecks.Run(Check);
+
             Section("Bidi conformance (Unicode suite)");
             BidiConformanceChecks.Run(Check);
         }

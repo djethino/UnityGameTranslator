@@ -71,6 +71,29 @@ namespace UnityGameTranslator.Core.TextShaping
             long tPerf = Perf.Start();
             try
             {
+                // Brahmic scripts first: their pre-base vowel signs go where they are drawn (see
+                // IndicReorderer). A codepoint move and nothing else, so it precedes the RTL work
+                // and touches no engine — except one that shapes natively (UI Toolkit's Advanced
+                // Text Generator), where a sign already moved would be moved twice. Registered
+                // as presented text like every shaped form: the D8 gates then refuse to learn it,
+                // and the in-game editor recovers the logical string behind it.
+                // ⚠ And that registry is what tells our own output apart when it comes back
+                // (a scanner refresh, an Apply): the move is not idempotent — a moved sign sits
+                // after the previous syllable's consonant exactly like an unmoved one would —
+                // so an echo re-read would move it again. Asked here, before anything else.
+                if (IndicReorderer.NeedsReordering(value)
+                    && TranslatorCore.TryGetPresentedLogical(value) == null
+                    && !(UIToolkitSupport.IsTextElementInstance(instance) && UIToolkitSupport.IsAtgActive(instance)))
+                {
+                    string reordered = IndicReorderer.Reorder(value);
+                    if (!ReferenceEquals(reordered, value))
+                    {
+                        TranslatorCore.RegisterPresentedText(reordered, value);
+                        Log(compId, "indic", value, reordered);
+                        value = reordered;
+                    }
+                }
+
                 var prop = RtlProp(instance);
 
                 if (!RtlText.NeedsPresentation(value))

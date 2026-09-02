@@ -86,13 +86,28 @@ namespace UnityGameTranslator.Core.TextShaping
                     {
                         RestoreIfFlagged(instance, compId, prop);
                         _reflows.Remove(compId);
+                        return;
                     }
-                    else if (value.IndexOf("<u", StringComparison.OrdinalIgnoreCase) >= 0 && _underlineDropBudget > 0)
+
+                    // Our own shaped output coming back: a scanner refresh, or Apply in the
+                    // Fonts tab re-setting every text. The TEXT needs nothing — the ALIGNMENT
+                    // choice may have changed since it was presented (per font, per rule), and
+                    // this round-trip is the only way a new choice reaches a component the game
+                    // never re-sets on its own. Without it, "Keep game's" chosen on a screen of
+                    // static buttons changed nothing on that screen (user: "a dead option").
+                    // ⚠ UI Toolkit reads its alignment from the resolved style, which an element
+                    // showing our text has had for a while — safe here, unlike at first set.
+                    bool mirrorNow = TranslatorCore.ShouldMirrorRtlAlignment(settingsFontName, overrideRule);
+                    if (UIToolkitSupport.IsTextElementInstance(instance))
+                        UIToolkitSupport.MirrorAlign(instance, mirrorNow);
+                    else
+                        MirrorAlignment(instance, compId, mirrorNow);
+
+                    if (value.IndexOf("<u", StringComparison.OrdinalIgnoreCase) >= 0 && _underlineDropBudget > 0)
                     {
-                        // Our own shaped output coming back — and still carrying an underline the
-                        // guard should have removed. Worth a line while this engine's underline
-                        // defect is being characterised: it would mean a write reached the element
-                        // without going through the guard at all.
+                        // ...and still carrying an underline the guard should have removed. Worth
+                        // a line while this engine's underline defect is being characterised: it
+                        // would mean a write reached the element without going through the guard.
                         _underlineDropBudget--;
                         TranslatorCore.LogWarning($"[RtlPresenter] shaped echo still carries an underline tag on comp={compId} — a write bypassed the guard");
                     }
@@ -931,7 +946,9 @@ namespace UnityGameTranslator.Core.TextShaping
         /// </summary>
         private static void MirrorAlignment(object comp, long compId, bool mirror)
         {
-            if (!mirror) return;
+            // "Keep the game's": not merely nothing to do — a component mirrored under an
+            // earlier choice gets its own alignment back, or the choice is dead on screen.
+            if (!mirror) { RestoreAlignment(comp, compId); return; }
             try
             {
                 var alignProp = comp.GetType().GetProperty("alignment", BindingFlags.Public | BindingFlags.Instance);
@@ -1012,17 +1029,21 @@ namespace UnityGameTranslator.Core.TextShaping
                 _flaggedOriginal.Remove(compId);
                 try { prop.SetValue(instance, original, null); } catch { }
             }
-            if (_alignedOriginal.TryGetValue(compId, out object anchor))
-            {
-                _alignedOriginal.Remove(compId);
-                try
-                {
-                    var alignProp = instance.GetType().GetProperty("alignment", BindingFlags.Public | BindingFlags.Instance);
-                    alignProp?.SetValue(instance, anchor, null);
-                }
-                catch { }
-            }
+            RestoreAlignment(instance, compId);
             RestoreRewrap(instance, compId);
+        }
+
+        /// <summary>The alignment a component had before <see cref="MirrorAlignment"/>, put back.</summary>
+        private static void RestoreAlignment(object instance, long compId)
+        {
+            if (compId == -1 || !_alignedOriginal.TryGetValue(compId, out object anchor)) return;
+            _alignedOriginal.Remove(compId);
+            try
+            {
+                var alignProp = instance.GetType().GetProperty("alignment", BindingFlags.Public | BindingFlags.Instance);
+                alignProp?.SetValue(instance, anchor, null);
+            }
+            catch { }
         }
 
         /// <summary>The wrap mode a component had before <see cref="DisableRewrap"/>, put back.</summary>

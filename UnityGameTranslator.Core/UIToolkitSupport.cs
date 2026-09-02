@@ -2874,9 +2874,24 @@ namespace UnityGameTranslator.Core
         /// </summary>
         internal static void MirrorAlign(object element, bool mirror)
         {
-            if (!mirror) return;
             EnsureRtlPlumbing();
             if (_styleTextAlignProp == null || _resolvedTextAlignProp == null) return;
+            if (!mirror)
+            {
+                // "Keep the game's": an element mirrored under an earlier choice gets its inline
+                // value back (see RtlPresenter.MirrorAlignment — same rule, same reason).
+                try
+                {
+                    if (_rtlAlignOriginal.TryGetValue(element, out var align))
+                    {
+                        _rtlAlignOriginal.Remove(element);
+                        var styleBack = _styleProp.GetValue(element, null);
+                        if (styleBack != null && align[0] != null) _styleTextAlignProp.SetValue(styleBack, align[0], null);
+                    }
+                }
+                catch { }
+                return;
+            }
             try
             {
                 object[] stored;

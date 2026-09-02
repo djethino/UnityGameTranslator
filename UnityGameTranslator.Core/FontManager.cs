@@ -2007,9 +2007,11 @@ namespace UnityGameTranslator.Core
         /// </summary>
         /// <summary>
         /// Set how RTL text aligns on components using this font: null/"mirror" (default) or
-        /// "keep". Same shared store as every font setting (travels with the translation);
-        /// nothing to re-apply live — the presenter reads the choice at each presentation and
-        /// restores originals when a component leaves RTL.
+        /// "keep". Same shared store as every font setting (travels with the translation).
+        /// Reaches the screen through the Apply's ForceRefreshAllText: every component is
+        /// re-set, our own shaped text comes back through the setter prefix, and the presenter
+        /// re-decides the alignment on that echo (a component the game never re-sets — a screen
+        /// of static buttons — would otherwise keep the old choice for the whole session).
         /// </summary>
         public static void SetFontRtlAlignment(string fontName, string rtlAlignment)
         {

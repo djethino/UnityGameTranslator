@@ -254,7 +254,6 @@ namespace UnityGameTranslator.Core.TextShaping
             public string Logical;
             public string Assigned;
             public int Attempts;
-            public int Waits;      // frames spent waiting for a layout — see ProcessPendingReflows
             public bool Mirror;
             public ReflowKind Kind;
         }
@@ -323,21 +322,6 @@ namespace UnityGameTranslator.Core.TextShaping
                 bool dead = comp == null || (comp is UnityEngine.Object uo && uo == null);
                 if (dead) { _reflows.Remove(id); continue; }
 
-                // 🔴 An entry WAITING for a layout must not cost a full probe every frame, and
-                // must not wait for ever. A hidden pane that never opens would otherwise keep its
-                // entry alive and pay reflection — element text, attachment, resolved style,
-                // contentRect — sixty times a second, for as long as the game runs. That is the
-                // CPU load the user heard right after this path shipped. So: re-probe six times a
-                // second, and give up after ten seconds. Giving up is safe now that a laid-out
-                // element is served in one pass — the element simply keeps the measuring form
-                // until something writes to it again.
-                if (entry.Waits > 0)
-                {
-                    entry.Waits++;
-                    if (entry.Waits > 600) { _reflows.Remove(id); continue; }
-                    if (entry.Waits % 10 != 0) continue;
-                }
-
                 try
                 {
                     // The game moved on to another text — this reflow is stale.
@@ -353,9 +337,9 @@ namespace UnityGameTranslator.Core.TextShaping
                     // staleness is already covered by the text check above. Same story for a
                     // UI Toolkit element not (yet) attached to a panel.
                     if (comp is UnityEngine.Component c && c.gameObject != null && !c.gameObject.activeInHierarchy)
-                    { entry.Waits++; continue; }
+                        continue;
                     if (entry.Kind == ReflowKind.UiToolkit && !UIToolkitSupport.IsElementAttached(comp))
-                    { entry.Waits++; continue; }
+                        continue;
 
                     string final = BuildLines(entry.Kind, comp, entry.Assigned, out string whyNot, out bool waitQuietly);
                     if (final == null)
@@ -365,7 +349,7 @@ namespace UnityGameTranslator.Core.TextShaping
                         // burning them left the fallback's reversed stack as the final display
                         // once the pane opened (bios/biot lesson, seen again as "no layout yet"
                         // fallbacks in the 2026-09-02 UITK bench log).
-                        if (waitQuietly) { entry.Waits++; continue; }
+                        if (waitQuietly) continue;
                         // Line source not ready (or unreadable). A few frames, then fall back to
                         // whole-string visual — and SAY so: a silent fallback made the reversed
                         // line stack undiagnosable from a screenshot.

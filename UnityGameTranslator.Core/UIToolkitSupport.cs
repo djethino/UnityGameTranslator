@@ -1652,33 +1652,77 @@ namespace UnityGameTranslator.Core
         private sealed class PendingRtl
         {
             internal string LogicalSource, Logical, Measure, Assigned;
-            internal bool Mirror;
+            internal int Frame;   // when the text was assigned — its layout comes at that frame's end
         }
 
         private static readonly ConditionalWeakTable<object, PendingRtl> _pendingRtl =
             new ConditionalWeakTable<object, PendingRtl>();
 
+        // The fast lane: every element assigned since the last tick, looked at ONCE, the frame
+        // after its assignment — the first moment its layout can be read. Laid out by then, it
+        // is finished right there instead of waiting for the walk to come round (up to half a
+        // second on a large document, seen as "the paragraph settles later"). Not laid out (a
+        // hidden pane), it simply leaves the lane and the walk finishes it when it shows. Each
+        // element costs one check here, ever: no per-frame polling of anything.
+        private static readonly List<object> _pendingLane = new List<object>();
+
         internal static void DeferUntilLaidOut(object element, string logicalSource, string logical,
-                                               string measure, string assigned, bool mirror)
+                                               string measure, string assigned)
         {
             _pendingRtl.Remove(element);
             _pendingRtl.Add(element, new PendingRtl
             {
                 LogicalSource = logicalSource, Logical = logical, Measure = measure,
-                Assigned = assigned, Mirror = mirror,
+                Assigned = assigned, Frame = Time.frameCount,
             });
+            if (!_pendingLane.Contains(element)) _pendingLane.Add(element);
         }
 
-        internal static void ForgetPending(object element) => _pendingRtl.Remove(element);
+        internal static void ForgetPending(object element)
+        {
+            _pendingRtl.Remove(element);
+            _pendingLane.Remove(element);
+        }
+
+        /// <summary>
+        /// The fast lane, once per tick from the scanner's update pass (main thread).
+        /// </summary>
+        internal static void FinishRecentPending()
+        {
+            if (_pendingLane.Count == 0) return;
+            int frame = Time.frameCount;
+            for (int i = _pendingLane.Count - 1; i >= 0; i--)
+            {
+                object element = _pendingLane[i];
+                if (!_pendingRtl.TryGetValue(element, out var pending)) { _pendingLane.RemoveAt(i); continue; }
+                if (frame <= pending.Frame) continue;   // its layout has not run yet — next tick
+                _pendingLane.RemoveAt(i);
+                try { TryFinishPending(element, pending); }
+                catch (Exception ex) { TranslatorCore.LogWarning("[RtlPresenter] fast lane failed, left to the walk: " + ex.Message); }
+            }
+        }
+
+        /// <summary>
+        /// Finish a pending RTL text if its layout has run for it — see RtlPresenter. 🔴 Only
+        /// then: the layout runs at the end of the frame the text was assigned in, and only over
+        /// elements it will lay out. Read earlier, contentRect still holds the previous text's
+        /// width — on an element sized by its content, the one width that is wrong by
+        /// construction (the UI.Text lesson, §7.10).
+        /// </summary>
+        private static void TryFinishPending(object element, PendingRtl pending)
+        {
+            if (Time.frameCount <= pending.Frame || !WillBeLaidOut(element)) return;
+            if (TextShaping.RtlPresenter.FinishUiToolkitPending(element, pending.LogicalSource,
+                    pending.Logical, pending.Measure, pending.Assigned))
+                _pendingRtl.Remove(element);
+        }
 
         private static void ProcessElement(object element)
         {
-            // An RTL text left for this pass to finish (see RtlPresenter): the walk is here
-            // because the element is attached and, if it has a width now, that is the moment.
-            if (_pendingRtl.TryGetValue(element, out var pending)
-                && TextShaping.RtlPresenter.FinishUiToolkitPending(element, pending.LogicalSource,
-                       pending.Logical, pending.Measure, pending.Assigned, pending.Mirror))
-                _pendingRtl.Remove(element);
+            // An RTL text the fast lane could not finish (see above): the walk is here because
+            // the element is attached, and if its layout has run by now, that is the moment.
+            if (_pendingRtl.TryGetValue(element, out var pending))
+                TryFinishPending(element, pending);
 
             // Pictures are not text and do not depend on the font gate: an element can carry a
             // picture and no text at all, which is most of them.
@@ -2391,14 +2435,25 @@ namespace UnityGameTranslator.Core
         private static PropertyInfo _contentRectProp;        // VisualElement.contentRect -> Rect
         private static PropertyInfo _resolvedWhiteSpaceProp; // resolvedStyle.whiteSpace (computed)
         private static PropertyInfo _styleTextAlignProp;     // IStyle.unityTextAlign    (inline)
+        private static PropertyInfo _styleWhiteSpaceProp;    // IStyle.whiteSpace        (inline)
         private static PropertyInfo _resolvedTextAlignProp;  // resolvedStyle.unityTextAlign
         private static PropertyInfo _resolvedTextGenProp;    // resolvedStyle.unityTextGenerator (Unity 6+, else null)
+        private static PropertyInfo _resolvedDisplayProp;    // resolvedStyle.display
 
         // The INLINE style values an element wore before our adjustments — restored verbatim
         // when its text goes back to LTR, so an element that never had an inline value gets its
         // "unset" keyword back, not a frozen copy of what the stylesheet computed that day.
         // [0] = inline unityTextAlign, [1] = the RESOLVED original the mirror is computed from.
         private static readonly ConditionalWeakTable<object, object[]> _rtlAlignOriginal =
+            new ConditionalWeakTable<object, object[]>();
+        // [0] = inline whiteSpace, before OUR NoWrap (DisableWrap).
+        private static readonly ConditionalWeakTable<object, object[]> _rtlWrapOriginal =
+            new ConditionalWeakTable<object, object[]>();
+        // Same content, for an element whose wrap was just PUT BACK for a new measurement
+        // (RestoreWrap): until DisableWrap takes it again, its resolved style may still read our
+        // NoWrap — a resolved style is recomputed at the next layout, not at the write — so
+        // TryBreakLines must measure against the width rather than trust that shortcut.
+        private static readonly ConditionalWeakTable<object, object[]> _rtlWrapRestoring =
             new ConditionalWeakTable<object, object[]>();
 
         private static void EnsureRtlPlumbing()
@@ -2434,6 +2489,7 @@ namespace UnityGameTranslator.Core
             {
                 var styleType = _styleProp?.PropertyType;
                 _styleTextAlignProp = styleType?.GetProperty("unityTextAlign", pubInst);
+                _styleWhiteSpaceProp = styleType?.GetProperty("whiteSpace", pubInst);
             }
             catch { }
             try
@@ -2442,8 +2498,36 @@ namespace UnityGameTranslator.Core
                 _resolvedWhiteSpaceProp = resolvedType?.GetProperty("whiteSpace", pubInst);
                 _resolvedTextAlignProp = resolvedType?.GetProperty("unityTextAlign", pubInst);
                 _resolvedTextGenProp = resolvedType?.GetProperty("unityTextGenerator", pubInst);
+                _resolvedDisplayProp = resolvedType?.GetProperty("display", pubInst);
             }
             catch { }
+        }
+
+        /// <summary>
+        /// Will the next layout pass lay this element out — and so give contentRect the width
+        /// THIS text gets? Attached to a panel, and no <c>display: none</c> on it or any
+        /// ancestor (Yoga skips such a subtree entirely, leaving the previous layout in place).
+        /// The UI Toolkit face of RtlPresenter.WillBeRedrawn; unreadable answers true, the
+        /// frame gate in ProcessElement being the other half of the wait.
+        /// </summary>
+        internal static bool WillBeLaidOut(object element)
+        {
+            if (!IsElementAttached(element)) return false;
+            if (_resolvedDisplayProp == null || _resolvedStyleProp == null || _parentProp == null) return true;
+            try
+            {
+                object current = element;
+                int guard = 0;
+                while (current != null && guard++ < 64)
+                {
+                    var resolved = _resolvedStyleProp.GetValue(current, null);
+                    object display = resolved == null ? null : _resolvedDisplayProp.GetValue(resolved, null);
+                    if (display != null && Enum.GetName(display.GetType(), display) == "None") return false;
+                    current = _parentProp.GetValue(current, null);
+                }
+            }
+            catch { }
+            return true;
         }
 
         internal static bool IsTextElementInstance(object o)
@@ -2625,17 +2709,23 @@ namespace UnityGameTranslator.Core
             if (_measureTextSize == null || _contentRectProp == null)
             { whyNot = "MeasureTextSize not available on this runtime"; return null; }
 
-            // No soft wrap on this element → every break is an explicit '\n' already.
-            try
+            // No soft wrap on this element → every break is an explicit '\n' already. ⚠ Unless
+            // that NoWrap is OURS, just put back for this very measurement and not yet
+            // recomputed out of the resolved style (see _rtlWrapRestoring): then the element does
+            // wrap, and only the width can say where.
+            if (!_rtlWrapRestoring.TryGetValue(element, out _))
             {
-                var resolved = _resolvedStyleProp?.GetValue(element, null);
-                object ws = resolved == null || _resolvedWhiteSpaceProp == null
-                    ? null : _resolvedWhiteSpaceProp.GetValue(resolved, null);
-                string wsName = ws == null ? null : Enum.GetName(ws.GetType(), ws);
-                if (wsName == "NoWrap" || wsName == "Pre")
-                    return new List<string>(assigned.Split('\n'));
+                try
+                {
+                    var resolved = _resolvedStyleProp?.GetValue(element, null);
+                    object ws = resolved == null || _resolvedWhiteSpaceProp == null
+                        ? null : _resolvedWhiteSpaceProp.GetValue(resolved, null);
+                    string wsName = ws == null ? null : Enum.GetName(ws.GetType(), ws);
+                    if (wsName == "NoWrap" || wsName == "Pre")
+                        return new List<string>(assigned.Split('\n'));
+                }
+                catch { }
             }
-            catch { }
 
             float width;
             try
@@ -2660,12 +2750,17 @@ namespace UnityGameTranslator.Core
                     // ⚠ One measure first: most game strings are a button label or a title and
                     // fit on their line. Going straight to the word-by-word loop cost one engine
                     // measure PER WORD on every one of them, on every set_text.
-                    if (MeasureWidth(element, paragraph) <= width - 1f) { lines.Add(paragraph); continue; }
+                    // 🔴 Half a pixel of TOLERANCE, never a margin. An element sized by its
+                    // text is exactly as wide as that text, so "fits with a pixel to spare" is
+                    // never true of it and its last word went to a second row (bench: a
+                    // two-word link, a two-word title). What a line exactly as wide as its box
+                    // needs is not room but NO RE-WRAP — DisableWrap, once the lines are written.
+                    if (MeasureWidth(element, paragraph) <= width + 0.5f) { lines.Add(paragraph); continue; }
                     string current = "";
                     foreach (string word in paragraph.Split(' '))
                     {
                         string candidate = current.Length == 0 ? word : current + " " + word;
-                        if (current.Length == 0 || MeasureWidth(element, candidate) <= width - 1f)
+                        if (current.Length == 0 || MeasureWidth(element, candidate) <= width + 0.5f)
                         {
                             current = candidate;
                             continue;
@@ -2737,6 +2832,76 @@ namespace UnityGameTranslator.Core
             catch { }
         }
 
+        /// <summary>
+        /// whiteSpace = NoWrap while OUR line breaks are displayed ('\n' stays honored). A
+        /// recomposed line is exactly as wide as the box it was cut against, and rendering
+        /// rounding re-wrapped it — the overflowing chunk being, in visual order, the
+        /// sentence's FIRST word. An element natively NoWrap/Pre is left alone: nothing to take,
+        /// nothing to put back.
+        /// </summary>
+        internal static void DisableWrap(object element)
+        {
+            EnsureRtlPlumbing();
+            if (_styleWhiteSpaceProp == null) return;
+            try
+            {
+                var style = _styleProp.GetValue(element, null);
+                if (style == null) return;
+                var styleEnumType = _styleWhiteSpaceProp.PropertyType;
+                var wsType = styleEnumType.IsGenericType ? styleEnumType.GetGenericArguments()[0] : null;
+                if (wsType == null) return;
+                var noWrap = Activator.CreateInstance(styleEnumType, Enum.Parse(wsType, "NoWrap"));
+
+                if (_rtlWrapRestoring.TryGetValue(element, out var restoring))
+                {
+                    // Ours again: the original was kept across the restore.
+                    _rtlWrapRestoring.Remove(element);
+                    _rtlWrapOriginal.Remove(element);
+                    _rtlWrapOriginal.Add(element, restoring);
+                }
+                else if (_rtlWrapOriginal.TryGetValue(element, out _))
+                {
+                    // Already ours.
+                }
+                else
+                {
+                    // Natively wrap-free (stylesheet or inline): not ours to touch.
+                    var resolved = _resolvedStyleProp?.GetValue(element, null);
+                    object ws = resolved == null || _resolvedWhiteSpaceProp == null
+                        ? null : _resolvedWhiteSpaceProp.GetValue(resolved, null);
+                    string wsName = ws == null ? null : Enum.GetName(ws.GetType(), ws);
+                    if (wsName == "NoWrap" || wsName == "Pre") return;
+                    _rtlWrapOriginal.Add(element, new object[] { _styleWhiteSpaceProp.GetValue(style, null) });
+                }
+                // Same rule as MirrorAlign: writing an unchanged inline style still invalidates
+                // the layout, every single set_text.
+                if (Equals(_styleWhiteSpaceProp.GetValue(style, null), noWrap)) return;
+                _styleWhiteSpaceProp.SetValue(style, noWrap, null);
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// The element's own wrap mode back, BEFORE a new RTL text is measured on it: measured
+        /// under our NoWrap, the engine answers "one line" for any paragraph and the second text
+        /// shown in a box came out unwrapped. Remembered in _rtlWrapRestoring until DisableWrap
+        /// takes it again — see there and TryBreakLines for why the resolved style cannot be
+        /// trusted in between.
+        /// </summary>
+        internal static void RestoreWrap(object element)
+        {
+            if (!_rtlWrapOriginal.TryGetValue(element, out var wrap)) return;
+            _rtlWrapOriginal.Remove(element);
+            try
+            {
+                var style = _styleProp?.GetValue(element, null);
+                if (style != null && wrap[0] != null) _styleWhiteSpaceProp?.SetValue(style, wrap[0], null);
+            }
+            catch { }
+            _rtlWrapRestoring.Remove(element);
+            _rtlWrapRestoring.Add(element, wrap);
+        }
+
         /// <summary>Put back the inline styles an element wore before our RTL adjustments.</summary>
         internal static void RestoreRtlAdjustments(object element)
         {
@@ -2749,6 +2914,12 @@ namespace UnityGameTranslator.Core
                     _rtlAlignOriginal.Remove(element);
                     if (align[0] != null) _styleTextAlignProp?.SetValue(style, align[0], null);
                 }
+                if (_rtlWrapOriginal.TryGetValue(element, out var wrap))
+                {
+                    _rtlWrapOriginal.Remove(element);
+                    if (wrap[0] != null) _styleWhiteSpaceProp?.SetValue(style, wrap[0], null);
+                }
+                _rtlWrapRestoring.Remove(element);
             }
             catch { }
         }

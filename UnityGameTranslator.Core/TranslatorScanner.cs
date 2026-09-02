@@ -2357,6 +2357,9 @@ namespace UnityGameTranslator.Core
             // its break points and write the final per-line visual text (see RtlPresenter).
             long tReflow = Perf.Start();
             TextShaping.RtlPresenter.ProcessPendingReflows();
+            // Same pass 2 for UI Toolkit: the elements assigned last tick, once, now that the
+            // frame's layout has run for them (the walk keeps whatever is not laid out yet).
+            UIToolkitSupport.FinishRecentPending();
             Perf.Stop(Perf.RtlReflow, tReflow);
 
             // The mod's pass-level profile, printed from the single tick like everything else.

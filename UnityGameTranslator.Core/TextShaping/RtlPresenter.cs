@@ -164,6 +164,9 @@ namespace UnityGameTranslator.Core.TextShaping
                     // description box came out unwrapped. Restored here, taken again after the
                     // reflow (same remember-and-restore as the alignment).
                     RestoreRewrap(instance, compId);
+                    // The alignment does not depend on the lines: mirrored with the text, not
+                    // at the end of the reflow.
+                    MirrorAlignment(instance, compId, mirror);
                     QueueReflow(instance, compId, ref value, ReflowKind.UGuiText, mirror, "logical+reflow");
                     return;
                 }
@@ -173,6 +176,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 // '\n' it inserted.
                 if (ProcessedTextProp(type) != null)
                 {
+                    MirrorAlignment(instance, compId, mirror);
                     QueueReflow(instance, compId, ref value, ReflowKind.Ngui, mirror, "logical+reflow/ngui");
                     return;
                 }
@@ -213,36 +217,28 @@ namespace UnityGameTranslator.Core.TextShaping
                         }
                     }
 
-                    // ONE pass whenever the element already has a width. UI Toolkit measures a
-                    // string handed to it — MeasureTextSize takes the text as an argument — so
-                    // unlike UI.Text there is nothing to assign first: the line breaks can be
-                    // computed here and only the FINAL form ever reaches the screen. The two-pass
-                    // path below stays for an element with no layout yet (a hidden pane, a first
-                    // frame), where nothing can be measured at all. This is what removes the
-                    // "text appears, then changes" flicker the user saw.
-                    string shapedNow = RtlComposer.ShapeLogicalOnly(value);
-                    var linesNow = UIToolkitSupport.TryBreakLines(instance, shapedNow, out _);
-                    if (linesNow != null)
-                    {
-                        string finalNow = ComposeLines(linesNow);
-                        TranslatorCore.RegisterPresentedText(finalNow, logicalSource);
-                        UIToolkitSupport.MirrorAlign(instance, mirror);
-                        UIToolkitSupport.ForgetPending(instance);
-                        Log(compId, "visual/uitk", value, finalNow);
-                        value = finalNow;
-                        return;
-                    }
+                    // The alignment does not depend on the lines: mirrored NOW, with the text
+                    // (it used to wait for the finish below — half a second of left-aligned
+                    // Arabic jumping right on every screen, user report).
+                    UIToolkitSupport.MirrorAlign(instance, mirror);
 
-                    // No layout to measure against (a pane opening, a first frame). Show the
-                    // VISUAL form — right already for anything that fits on one line — and leave
-                    // the element to the UI Toolkit walk: that budgeted pass visits every
-                    // attached element on the detection cadence, so it reaches this one exactly
-                    // when it is on screen with a width, and finishes it then. No per-frame
-                    // queue polling a hidden pane sixty times a second (measured: RTL.Reflow
-                    // 0.6-1.0 ms EVERY frame, entries never leaving).
+                    // 🔴 Two passes here too, and for the same reason as UI.Text (§7.10): the
+                    // width to cut at is the one the layout gives THIS text, which does not
+                    // exist before the text is assigned — an element sized by its content still
+                    // wears the previous text's width. An immediate cut at contentRect was
+                    // right for a fixed box only, and nothing can tell the two apart from here.
+                    // So: the VISUAL form goes on screen — right already for anything that fits
+                    // on one line, which is most labels — with the element's own wrap mode put
+                    // back (a reused element still wears our NoWrap; measured under it the
+                    // engine says "one line" for any paragraph); the layout runs at the end of
+                    // this frame; the next tick's fast lane, or the budgeted walk for anything
+                    // not laid out by then, measures the shaped logical form against the width
+                    // the element actually got and writes the per-line visual form.
+                    UIToolkitSupport.RestoreWrap(instance);
+                    string shapedNow = RtlComposer.ShapeLogicalOnly(value);
                     string visualNow = RtlComposer.Compose(value, RtlOutput.VisualOrder);
                     TranslatorCore.RegisterPresentedText(visualNow, logicalSource);
-                    UIToolkitSupport.DeferUntilLaidOut(instance, logicalSource, value, shapedNow, visualNow, mirror);
+                    UIToolkitSupport.DeferUntilLaidOut(instance, logicalSource, value, shapedNow, visualNow);
                     Log(compId, "visual+walk/uitk", value, visualNow);
                     value = visualNow;
                     return;
@@ -271,13 +267,14 @@ namespace UnityGameTranslator.Core.TextShaping
         }
 
         /// <summary>
-        /// Finish a UI Toolkit element the walk just reached: cut its measuring form now that
-        /// it has a width, and write the final per-line visual text. False when it still has no
-        /// layout — the element stays pending for a later pass. Called from
-        /// UIToolkitSupport.ProcessElement, inside the budgeted walk.
+        /// Finish a UI Toolkit element once its layout has run: cut its measuring form at the
+        /// width it got, write the final per-line visual text, and hold the engine off from
+        /// wrapping those lines again. False when it still has no layout — the element stays
+        /// pending for a later pass. Called from UIToolkitSupport (the frame-after fast lane,
+        /// then the budgeted walk).
         /// </summary>
         internal static bool FinishUiToolkitPending(object element, string logicalSource, string logical,
-                                                    string measure, string assigned, bool mirror)
+                                                    string measure, string assigned)
         {
             // The game moved on to another text — nothing left to finish.
             if (UIToolkitSupport.GetElementText(element) != assigned) return true;
@@ -287,8 +284,9 @@ namespace UnityGameTranslator.Core.TextShaping
 
             string final = ComposeLines(lines);
             TranslatorCore.RegisterPresentedText(final, logicalSource);
-            UIToolkitSupport.MirrorAlign(element, mirror);
             UIToolkitSupport.SetElementTextSilently(element, final);
+            UIToolkitSupport.DisableWrap(element);
+            Log(-1, "walk/final/uitk", logical, final);
             return true;
         }
 
@@ -438,9 +436,9 @@ namespace UnityGameTranslator.Core.TextShaping
                     }
 
                     TranslatorCore.RegisterPresentedText(final, entry.Logical);
+                    Log(id, "reflow/final", entry.Logical, final);
 
                     {
-                        MirrorAlignment(comp, id, entry.Mirror);
                         // 🔴 WE computed the line breaks — the engine must not wrap again. A
                         // recomposed line is exactly as wide as the rect it was cut against, and
                         // the rendering rounding re-wrapped it: the overflowing visual chunk is
@@ -1040,10 +1038,33 @@ namespace UnityGameTranslator.Core.TextShaping
 
         private static void Log(long compId, string mode, string logical, string composed)
         {
+            // ⚠ Bench diagnostic (to remove with RtlProbe): the exact code-point order of what
+            // came in and what went out. A terminal renders Arabic with its own bidi, so the
+            // summary line below cannot tell "the composer reordered this" from "my viewer did".
+            if (TranslatorCore.DebugMode && _dumpBudget > 0)
+            {
+                _dumpBudget--;
+                TranslatorCore.LogDebug($"[RtlPresenter] comp={compId} mode={mode} in : {Escape(logical)}");
+                TranslatorCore.LogDebug($"[RtlPresenter] comp={compId} mode={mode} out: {Escape(composed)}");
+            }
             if (_logBudget <= 0) return;
             _logBudget--;
             TranslatorCore.LogDebug($"[RtlPresenter] comp={compId} mode={mode} " +
                 $"'{(logical.Length > 30 ? logical.Substring(0, 30) + "…" : logical)}' → shaped ({composed.Length} ch)");
+        }
+
+        private static int _dumpBudget = 300;
+
+        private static string Escape(string s)
+        {
+            var b = new System.Text.StringBuilder(s.Length * 2);
+            foreach (char c in s)
+            {
+                if (c < 128 && c != '\n') b.Append(c);
+                else if (c == '\n') b.Append("\\n");
+                else b.Append('<').Append(((int)c).ToString("x4")).Append('>');
+            }
+            return b.ToString();
         }
 
         private static PropertyInfo RtlProp(object instance)

@@ -93,6 +93,36 @@ namespace UnityGameTranslator.Core.Rasterizer
             return _unicodeToGlyph.ContainsKey(unicode);
         }
 
+        /// <summary>
+        /// A glyph by its index in the font, whether or not a codepoint maps to it. This is the
+        /// door to the glyphs OpenType shaping produces — conjuncts, half forms, ligatures —
+        /// which have no codepoint of their own: rasterized by index, they can be mapped to a
+        /// private-use codepoint and shown by an engine that only knows codepoints.
+        /// </summary>
+        public GlyphOutline GetGlyphOutlineByIndex(int glyphIndex)
+        {
+            if (glyphIndex <= 0 || glyphIndex >= _numGlyphs) return null;
+            return GetGlyphByIndex(glyphIndex);
+        }
+
+        /// <summary>
+        /// The first glyph no codepoint maps to and that draws something — the probe glyph of
+        /// the private-use experiment (analyse/issue-24-rtl-arabic.md §5 ter). -1 when every
+        /// glyph of the font is reachable through the cmap.
+        /// </summary>
+        public int FirstUnmappedDrawableGlyph()
+        {
+            var mapped = new HashSet<int>(_unicodeToGlyph.Values);
+            for (int index = 1; index < _numGlyphs; index++)
+            {
+                if (mapped.Contains(index)) continue;
+                var outline = GetGlyphByIndex(index);
+                if (outline != null && !outline.IsEmpty && outline.Contours != null && outline.Contours.Length > 0)
+                    return index;
+            }
+            return -1;
+        }
+
         #region Main Parse
 
         private void Parse()

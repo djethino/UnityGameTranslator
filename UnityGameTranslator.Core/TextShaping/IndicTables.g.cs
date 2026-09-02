@@ -28,6 +28,14 @@ namespace UnityGameTranslator.Core.TextShaping
             0x11F3F, 0x1612A, 0x1612B,
         };
 
+        /// <summary>Signs stored in visual order, BEFORE their consonant (Visual_Order_Left) — sorted code points. Never moved; a word never ends on one.</summary>
+        internal static readonly int[] VisualOrderLeft =
+        {
+            0x0E40, 0x0E41, 0x0E42, 0x0E43, 0x0E44, 0x0EC0, 0x0EC1, 0x0EC2,
+            0x0EC3, 0x0EC4, 0x19B5, 0x19B6, 0x19B7, 0x19BA, 0xAAB5, 0xAAB6,
+            0xAAB9, 0xAABB, 0xAABC,
+        };
+
         /// <summary>Base consonants: what a cluster is built on — inclusive ranges, sorted, as (first, last) pairs.</summary>
         internal static readonly int[] BaseRanges =
         {

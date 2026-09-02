@@ -31,8 +31,20 @@ namespace UnityGameTranslator.Core.Rasterizer
         /// re-rasterizing existing .gen caches (spacing, sampling size, SDF encoding…).
         /// v2: inter-glyph spacing = distanceRange (was 1px — underlay/shadow sampling
         /// bled the neighbouring glyph row into rendered text) + automatic sampling size.
+        /// v4: the private-use probe glyph (see PuaProbeCodepoint) — an atlas without it
+        /// cannot answer the question it exists for.
         /// </summary>
-        public const int PipelineVersion = 3;
+        public const int PipelineVersion = 4;
+
+        /// <summary>
+        /// ⚠ TEMPORARY bench experiment (analyse/issue-24-rtl-arabic.md §5 ter, lot 0): the
+        /// first glyph of the font that no codepoint maps to — a conjunct, a half form, a
+        /// ligature — is rasterized like any other and mapped to THIS private-use codepoint.
+        /// The whole question of the syllabic scripts hangs on one fact: does a text engine
+        /// that only knows codepoints draw a glyph we mapped to one ourselves? Show U+E000
+        /// through our font asset (RtlProbe, step 6) and look. Removed with the probe.
+        /// </summary>
+        public const int PuaProbeCodepoint = 0xE000;
 
         /// <summary>
         /// Target atlas budget for the automatic quality ladder. Deliberately below GPU
@@ -135,9 +147,29 @@ namespace UnityGameTranslator.Core.Rasterizer
                 int emptyCount = 0;
                 int failCount = 0;
 
+                // The private-use probe: one glyph reached by index, not by codepoint (see
+                // PuaProbeCodepoint). Appended to the list so it goes through every step the
+                // others do — SDF, packing, tables — with U+E000 as its codepoint.
+                int probeGlyph = parser.HasCodepoint(PuaProbeCodepoint) ? -1 : parser.FirstUnmappedDrawableGlyph();
+                if (probeGlyph > 0)
+                {
+                    var withProbe = new int[codepoints.Length + 1];
+                    Array.Copy(codepoints, withProbe, codepoints.Length);
+                    withProbe[codepoints.Length] = PuaProbeCodepoint;
+                    codepoints = withProbe;
+                    TranslatorCore.LogInfo($"[TtfPipeline] PUA probe: glyph #{probeGlyph} (no codepoint of its own) mapped to U+{PuaProbeCodepoint:X4}");
+                }
+
                 for (int i = 0; i < codepoints.Length; i++)
                 {
-                    var outline = parser.GetGlyphOutline(codepoints[i]);
+                    GlyphOutline outline;
+                    if (codepoints[i] == PuaProbeCodepoint && probeGlyph > 0)
+                    {
+                        outline = parser.GetGlyphOutlineByIndex(probeGlyph);
+                        if (outline != null) outline.Unicode = PuaProbeCodepoint;
+                    }
+                    else
+                        outline = parser.GetGlyphOutline(codepoints[i]);
                     if (outline == null)
                     {
                         failCount++;

@@ -48,6 +48,9 @@
          name. -->
     <EmbeddedResource Include="../../UnityGameTranslator.Core/TextShaping/RichTextKit/Resources/BidiClasses.trie"
                       LogicalName="Topten.RichTextKit.Resources.BidiClasses.trie" />
+    <!-- The word breaker's dictionaries, same reasoning: it reads them from its own assembly. -->
+    <EmbeddedResource Include="../../UnityGameTranslator.Core/TextShaping/Resources/Dictionaries/*.gz"
+                      LogicalName="UnityGameTranslator.Core.TextShaping.Dictionaries.%(Filename)%(Extension)" />
     <!-- The Unicode conformance suite, gzipped (15 MB of text otherwise) — data from the
          Unicode Consortium, not derived from the code under test. -->
     <None Include="TestData/**" CopyToOutputDirectory="PreserveNewest" />

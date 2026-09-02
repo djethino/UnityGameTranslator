@@ -19,6 +19,11 @@
          name. -->
     <EmbeddedResource Include="TextShaping\RichTextKit\Resources\BidiClasses.trie"
                       LogicalName="Topten.RichTextKit.Resources.BidiClasses.trie" />
+    <!-- ICU's word lists for the scripts written without spaces (TextShaping/WordBreaker):
+         gzip-compressed, inflated on first use, one script at a time. Unicode license, see
+         Resources/Dictionaries/LICENSE. Same remark as above about ILRepack. -->
+    <EmbeddedResource Include="TextShaping\Resources\Dictionaries\*.gz"
+                      LogicalName="UnityGameTranslator.Core.TextShaping.Dictionaries.%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>

@@ -123,3 +123,22 @@ Unity runtime libraries are used for compilation and compatibility.
 ---
 
 *This file is included in all release packages to comply with LGPL-2.1 and Apache-2.0 license requirements.*
+
+## ICU word-break dictionaries (Thai, Lao, Khmer, Myanmar)
+
+Word lists used to find word boundaries in scripts written without spaces
+(`UnityGameTranslator.Core/TextShaping/Resources/Dictionaries/`, embedded gzip-compressed).
+
+- **Source:** https://github.com/unicode-org/icu/tree/main/icu4c/source/data/brkitr/dictionaries
+- **License:** Unicode License v3 (https://www.unicode.org/copyright.html)
+- **Copyright:** 2016 and later: Unicode, Inc. and others; 2006-2015 International Business Machines Corporation, Apple Inc., and others.
+- **Modifications:** comments and blank lines removed, one word per line, gzip-compressed.
+
+## Unicode Character Database (Indic categories)
+
+`UnityGameTranslator.Core/TextShaping/IndicTables.g.cs` is generated from
+`IndicPositionalCategory.txt` and `IndicSyllabicCategory.txt` by `tools/generate-indic-tables.py`.
+
+- **Source:** https://www.unicode.org/Public/UCD/latest/ucd/
+- **License:** Unicode License v3 (https://www.unicode.org/copyright.html)
+- **Copyright:** Unicode, Inc.

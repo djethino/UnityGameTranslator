@@ -71,6 +71,9 @@ namespace UnityGameTranslator.Core.Checks
             Section("Indic reordering (pre-base vowel signs)");
             IndicReorderChecks.Run(Check);
 
+            Section("Word breaking (Thai, Lao, Khmer, Myanmar)");
+            WordBreakerChecks.Run(Check);
+
             Section("Bidi conformance (Unicode suite)");
             BidiConformanceChecks.Run(Check);
         }

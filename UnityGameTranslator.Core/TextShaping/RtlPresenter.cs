@@ -71,28 +71,7 @@ namespace UnityGameTranslator.Core.TextShaping
             long tPerf = Perf.Start();
             try
             {
-                // Brahmic scripts first: their pre-base vowel signs go where they are drawn (see
-                // IndicReorderer). A codepoint move and nothing else, so it precedes the RTL work
-                // and touches no engine — except one that shapes natively (UI Toolkit's Advanced
-                // Text Generator), where a sign already moved would be moved twice. Registered
-                // as presented text like every shaped form: the D8 gates then refuse to learn it,
-                // and the in-game editor recovers the logical string behind it.
-                // ⚠ And that registry is what tells our own output apart when it comes back
-                // (a scanner refresh, an Apply): the move is not idempotent — a moved sign sits
-                // after the previous syllable's consonant exactly like an unmoved one would —
-                // so an echo re-read would move it again. Asked here, before anything else.
-                if (IndicReorderer.NeedsReordering(value)
-                    && TranslatorCore.TryGetPresentedLogical(value) == null
-                    && !(UIToolkitSupport.IsTextElementInstance(instance) && UIToolkitSupport.IsAtgActive(instance)))
-                {
-                    string reordered = IndicReorderer.Reorder(value);
-                    if (!ReferenceEquals(reordered, value))
-                    {
-                        TranslatorCore.RegisterPresentedText(reordered, value);
-                        Log(compId, "indic", value, reordered);
-                        value = reordered;
-                    }
-                }
+                PresentSyllabic(instance, compId, ref value);
 
                 var prop = RtlProp(instance);
 
@@ -305,6 +284,52 @@ namespace UnityGameTranslator.Core.TextShaping
             }
             finally { Perf.Stop(Perf.RtlPresent, tPerf); }
         }
+
+        /// <summary>
+        /// The two presentation stages of the South and South-East Asian scripts, before the
+        /// RTL work: word boundaries for the scripts written without spaces (WordBreaker), then
+        /// the pre-base vowel signs put where they are drawn (IndicReorderer). Codepoint moves
+        /// and zero-width marks only, so they touch no engine — except one that shapes natively
+        /// (UI Toolkit's Advanced Text Generator), where a sign already moved would move twice.
+        ///
+        /// 🔴 Break BEFORE reorder: the dictionaries are spelt in storage order, a Myanmar text
+        /// reordered first matches nothing. And one registration for the whole result, as
+        /// presented text (D8): the gates then refuse to learn it, the in-game editor recovers
+        /// the logical string behind it — and it is how our own output is told apart when it
+        /// comes back through the setter (a scanner refresh, an Apply). The reorder is not
+        /// idempotent: a moved sign sits after the previous syllable's consonant exactly like
+        /// an unmoved one would, so an echo re-read would move it again. Asked once, first.
+        /// </summary>
+        private static void PresentSyllabic(object instance, long compId, ref string value)
+        {
+            bool needsBreak = WordBreaker.NeedsBreaking(value);
+            bool needsReorder = IndicReorderer.NeedsReordering(value);
+            if (!needsBreak && !needsReorder) return;
+            if (TranslatorCore.TryGetPresentedLogical(value) != null) return;
+            if (UIToolkitSupport.IsTextElementInstance(instance) && UIToolkitSupport.IsAtgActive(instance)) return;
+
+            string logical = value;
+            string working = value;
+            if (needsBreak)
+            {
+                working = WordBreaker.Break(working, out string whyNot);
+                if (whyNot != null && _dictionaryLogBudget > 0)
+                {
+                    // Said, never hidden: a text stays unwrappable, and the reason must be readable.
+                    _dictionaryLogBudget--;
+                    TranslatorCore.LogWarning($"[RtlPresenter] word breaking skipped — {whyNot}");
+                }
+            }
+            if (needsReorder)
+                working = IndicReorderer.Reorder(working);
+
+            if (ReferenceEquals(working, logical) || working == logical) return;
+            TranslatorCore.RegisterPresentedText(working, logical);
+            Log(compId, needsBreak && needsReorder ? "words+indic" : needsBreak ? "words" : "indic", logical, working);
+            value = working;
+        }
+
+        private static int _dictionaryLogBudget = 3;
 
         /// <summary>
         /// Finish a UI Toolkit element once its layout has run: cut its measuring form at the

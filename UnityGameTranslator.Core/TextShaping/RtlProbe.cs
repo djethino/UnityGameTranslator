@@ -147,15 +147,15 @@ namespace UnityGameTranslator.Core.TextShaping
             {
                 case 0:
                     Apply(ShortLogical, rtl: false,
-                        "1/6 RAW LOGICAL — expected BROKEN: isolated letters, left-to-right (today's bug, the control case)");
+                        "1/7 RAW LOGICAL — expected BROKEN: isolated letters, left-to-right (today's bug, the control case)");
                     break;
                 case 1:
                     Apply(ShortVisual, rtl: false,
-                        "2/6 SHAPED VISUAL, no RTL flag — expected: joined and readable on ONE line (what legacy engines would get)");
+                        "2/7 SHAPED VISUAL, no RTL flag — expected: joined and readable on ONE line (what legacy engines would get)");
                     break;
                 case 2:
                     Apply(ShortTmpMode, rtl: true,
-                        "3/6 SHAPED LOGICAL + isRightToLeftText — expected on TMP: joined, right-to-left, identical to step 2 on screen. On UI.Text the flag logs ABSENT and the text reads backwards — that is the answer, not a failure");
+                        "3/7 SHAPED LOGICAL + isRightToLeftText — expected on TMP: joined, right-to-left, identical to step 2 on screen. On UI.Text the flag logs ABSENT and the text reads backwards — that is the answer, not a failure");
                     break;
                 case 3:
                     // Engine-aware: a component without the RTL flag has nothing to do with the
@@ -163,18 +163,30 @@ namespace UnityGameTranslator.Core.TextShaping
                     // VISUAL form, which is what our emission would actually feed it.
                     if (_rtlCapable)
                         Apply(MixedTmpMode, rtl: true,
-                            "4/6 MIXED + isRightToLeftText — expected on TMP: '123' and 'ABC' read FORWARD inside the RTL sentence");
+                            "4/7 MIXED + isRightToLeftText — expected on TMP: '123' and 'ABC' read FORWARD inside the RTL sentence");
                     else
                         Apply(MixedVisual, rtl: false,
-                            "4/6 MIXED VISUAL (no RTL flag on this engine) — expected: '123' and 'ABC' read FORWARD inside the RTL sentence");
+                            "4/7 MIXED VISUAL (no RTL flag on this engine) — expected: '123' and 'ABC' read FORWARD inside the RTL sentence");
                     break;
                 case 4:
                     if (_rtlCapable)
                         Apply(LongTmpMode, rtl: true,
-                            "5/6 LONG + isRightToLeftText — expected on TMP: auto-wrap, FIRST words of the sentence on the TOP line, no reversed line stack");
+                            "5/7 LONG + isRightToLeftText — expected on TMP: auto-wrap, FIRST words of the sentence on the TOP line, no reversed line stack");
                     else
                         Apply(LongVisual, rtl: false,
-                            "5/6 LONG VISUAL (no RTL flag) — single line: correct. Multi-line: EXPECTED broken (wrong breaks, reversed line order) — that is what the generator-readback emission will fix. A best-fit component shrinks instead of wrapping: also worth noting");
+                            "5/7 LONG VISUAL (no RTL flag) — single line: correct. Multi-line: EXPECTED broken (wrong breaks, reversed line order) — that is what the generator-readback emission will fix. A best-fit component shrinks instead of wrapping: also worth noting");
+                    break;
+                case 5:
+                    // The private-use probe (analyse/issue-24-rtl-arabic.md §5 ter, lot 0): our
+                    // font assets carry a glyph reached by INDEX, mapped to U+E000
+                    // (TtfFontPipeline.PuaProbeCodepoint). If the engine draws it, a text engine
+                    // that only knows codepoints can show the glyphs OpenType shaping produces —
+                    // conjuncts, half forms — through codepoints we assign ourselves. Only
+                    // meaningful on a component whose font is one of ours (a custom or fallback
+                    // font built by the rasterizer): on the game's own font U+E000 is tofu, and
+                    // that is not an answer.
+                    Apply("क्ष   क्ष", rtl: false,
+                        "6/7 PUA PROBE — expected on OUR font asset: the two U+E000 show a REAL glyph of the font (whichever it is), not a square. A square means the asset in use is the game's, or the probe glyph did not make it into the atlas — check the [TtfPipeline] PUA probe line");
                     break;
                 default:
                     Restore();
@@ -246,6 +258,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 (ShortLogical, ShortLogical), (ShortVisual, ShortLogical), (ShortTmpMode, ShortLogical),
                 (MixedTmpMode, MixedLogicalRef), (MixedVisual, MixedLogicalRef),
                 (LongTmpMode, LongLogical), (LongVisual, LongLogical), (LongLogical, LongLogical),
+                ("क्ष   क्ष", "क्ष   क्ष"),
             })
                 TranslatorCore.RegisterPresentedText(presented, logical);
         }
@@ -327,7 +340,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 try { TypeHelper.SetText(_target, _originalText ?? ""); }
                 finally { TranslatorPatches.BypassTextPrefix = false; }
                 try { TypeHelper.ForceMeshUpdate(_target); } catch { }
-                TranslatorCore.LogInfo("[RtlProbe] 6/6 restored original text and flag — point at another text and press Ctrl+F9 to probe it.");
+                TranslatorCore.LogInfo("[RtlProbe] 7/7 restored original text and flag — point at another text and press Ctrl+F9 to probe it.");
             }
             _target = null;
             _originalText = null;

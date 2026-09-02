@@ -116,6 +116,9 @@ def main():
     syl, syl_version = parse(load(FILES[1], src_dir))
 
     left = sorted(cp for cp, cat in pos.items() if cat in LEFT_CATEGORIES)
+    # Stored before their consonant already (Thai, Lao, Tai Viet, New Tai Lue): never moved —
+    # and never the LAST thing before a word break, which the word breaker needs to know.
+    visual_left = sorted(cp for cp, cat in pos.items() if cat == "Visual_Order_Left")
     bases = ranges(cp for cp, cat in syl.items() if cat in BASE_CATEGORIES)
     binders = ranges(cp for cp, cat in syl.items() if cat in BINDER_CATEGORIES)
     attach = ranges(cp for cp, cat in syl.items() if cat in ATTACH_CATEGORIES)
@@ -160,6 +163,13 @@ def main():
         w("        };")
         w("")
 
+    w("        /// <summary>Signs stored in visual order, BEFORE their consonant (Visual_Order_Left) — sorted code points. Never moved; a word never ends on one.</summary>")
+    w("        internal static readonly int[] VisualOrderLeft =")
+    w("        {")
+    for i in range(0, len(visual_left), 8):
+        w("            " + ", ".join(f"0x{cp:04X}" for cp in visual_left[i:i + 8]) + ",")
+    w("        };")
+    w("")
     emit_ranges("BaseRanges", "Base consonants: what a cluster is built on", bases)
     emit_ranges("BinderRanges", "Binders: a virama or stacker joining two bases into one cluster", binders)
     emit_ranges("AttachRanges", "What attaches to a base (nukta, medials, killers, joiners...)", attach)

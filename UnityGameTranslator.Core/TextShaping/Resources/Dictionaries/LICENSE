@@ -1,0 +1,27 @@
+The word lists in this folder (thaidict, laodict, khmerdict, burmesedict — gzip-compressed,
+comments and blank lines removed, one word per line) come from the ICU project:
+
+    https://github.com/unicode-org/icu/tree/main/icu4c/source/data/brkitr/dictionaries
+
+Copyright © 2016 and later: Unicode, Inc. and others.
+Copyright (c) 2006-2015 International Business Machines Corporation, Apple Inc., and others.
+All Rights Reserved.
+
+License & terms of use: http://www.unicode.org/copyright.html (UNICODE LICENSE V3)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of data files and
+any associated documentation (the "Data Files") or software and any associated documentation
+(the "Software") to deal in the Data Files or Software without restriction, including without
+limitation the rights to use, copy, modify, merge, publish, distribute, and/or sell copies of
+the Data Files or Software, and to permit persons to whom the Data Files or Software are
+furnished to do so, provided that either (a) this copyright and permission notice appear with
+all copies of the Data Files or Software, or (b) this copyright and permission notice appear
+in associated Documentation.
+
+THE DATA FILES AND SOFTWARE ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT OF THIRD PARTY RIGHTS. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER OR HOLDERS INCLUDED IN THIS NOTICE BE LIABLE FOR ANY CLAIM, OR ANY SPECIAL INDIRECT OR
+CONSEQUENTIAL DAMAGES, OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS,
+WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
+CONNECTION WITH THE USE OR PERFORMANCE OF THE DATA FILES OR SOFTWARE.

@@ -180,11 +180,12 @@ namespace UnityGameTranslator.Core.TextShaping
                     // fix, or one font asset covering both the RTL text and the '_' glyph (a
                     // game with a real Arabic font, or the mod's own replacement font) — and
                     // dropped only in the configuration proven to kill the game.
+                    string logicalSource = value;
                     string stripped = RtlComposer.StripUnderlineTags(value);
                     // ⚠ The safety question is asked about the SHAPED form — the glyphs that will
                     // be drawn — never about the logical text: a font carrying base Arabic but no
                     // presentation forms answered "safe" and the game died anyway (3rd bench
-                    // crash). Shaping here is the same call QueueReflow makes just below.
+                    // crash). See UnderlineIsSafe for what the bench then made of that answer.
                     if (!ReferenceEquals(stripped, value)
                         && !UIToolkitSupport.UnderlineIsSafe(instance, RtlComposer.ShapeLogicalOnly(value)))
                     {
@@ -192,10 +193,33 @@ namespace UnityGameTranslator.Core.TextShaping
                         if (_underlineDropBudget > 0)
                         {
                             _underlineDropBudget--;
-                            TranslatorCore.LogWarning("[RtlPresenter] underline/strikethrough tag dropped: this element's font cannot cover the RTL text itself, and this engine's DrawUnderlineMesh crashes on fallback-font underlines (Unity issue, fixed in 6000.5) — a replacement font covering the language brings the underline back");
+                            TranslatorCore.LogWarning("[RtlPresenter] underline/strikethrough tag dropped on RTL text: this engine's DrawUnderlineMesh crashes laying out an underline over right-to-left glyphs (Unity issue, fixed in 6000.5). The text is unaffected, and translations.json keeps the tag.");
                         }
                     }
-                    QueueReflow(instance, compId, ref value, ReflowKind.UiToolkit, mirror, "logical+reflow/uitk");
+
+                    // ONE pass whenever the element already has a width. UI Toolkit measures a
+                    // string handed to it — MeasureTextSize takes the text as an argument — so
+                    // unlike UI.Text there is nothing to assign first: the line breaks can be
+                    // computed here and only the FINAL form ever reaches the screen. The two-pass
+                    // path below stays for an element with no layout yet (a hidden pane, a first
+                    // frame), where nothing can be measured at all. This is what removes the
+                    // "text appears, then changes" flicker the user saw.
+                    string shapedNow = RtlComposer.ShapeLogicalOnly(value);
+                    var linesNow = UIToolkitSupport.TryBreakLines(instance, shapedNow, out _, out _);
+                    if (linesNow != null)
+                    {
+                        string finalNow = ComposeLines(linesNow);
+                        TranslatorCore.RegisterPresentedText(finalNow, logicalSource);
+                        UIToolkitSupport.MirrorAlign(instance, mirror);
+                        UIToolkitSupport.DisableWrap(instance);
+                        _reflows.Remove(compId);
+                        Log(compId, "visual/uitk", value, finalNow);
+                        value = finalNow;
+                        return;
+                    }
+
+                    QueueReflow(instance, compId, ref value, ReflowKind.UiToolkit, mirror,
+                                "logical+reflow/uitk", logicalSource);
                     return;
                 }
 
@@ -237,11 +261,19 @@ namespace UnityGameTranslator.Core.TextShaping
         private static readonly Dictionary<long, Reflow> _reflows = new Dictionary<long, Reflow>();
         private static readonly List<long> _reflowScratch = new List<long>();
 
+        /// <param name="logicalForRecord">
+        /// What this display form CAME FROM, for the presented→logical map — the untouched
+        /// translation, tags included. Differs from <paramref name="value"/> when stage D had to
+        /// alter the text to render it at all (the underline guard): the screen loses the tag,
+        /// the recovered source must not, or an edit made from the in-game editor would silently
+        /// save the amputated version.
+        /// </param>
         private static void QueueReflow(object instance, long compId, ref string value,
-                                        ReflowKind kind, bool mirror, string logMode)
+                                        ReflowKind kind, bool mirror, string logMode,
+                                        string logicalForRecord = null)
         {
             string shapedLogical = RtlComposer.ShapeLogicalOnly(value);
-            TranslatorCore.RegisterPresentedText(shapedLogical, value);
+            TranslatorCore.RegisterPresentedText(shapedLogical, logicalForRecord ?? value);
             if (compId != -1)
                 _reflows[compId] = new Reflow
                 {

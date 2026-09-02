@@ -438,6 +438,15 @@ namespace UnityGameTranslator.Core.TextShaping
                         TranslatorPatches.BypassTextPrefix = true;
                         try { TypeHelper.SetText(comp, final); }
                         finally { TranslatorPatches.BypassTextPrefix = false; }
+
+                        // 🔴 A write that bypasses the prefix bypasses the clone-atlas step too.
+                        // UI.Text renders Arabic through a cloned font whose atlas is filled
+                        // EXPLICITLY with the characters of each text the prefix writes — after
+                        // Present, so it sees the presentation forms. This write is not a prefix
+                        // write: without this call the final text's glyphs were never added and
+                        // the label drew nothing (bench: "New game" empty at start-up, filled once
+                        // the game re-set it through the prefix on the way back from a run).
+                        FontManager.EnsureCharsInCloneAtlas(final, comp);
                     }
                     _reflows.Remove(id);
                 }

@@ -564,6 +564,16 @@ namespace UnityGameTranslator.Core.TextShaping
 
                 object settings = _getGenerationSettings.Invoke(comp, new object[] { r.size });
                 if (settings == null) { whyNot = "no generation settings"; return null; }
+                // Every line the paragraph has, wrapped at the box's width — never cut short by
+                // the box's HEIGHT. With the component's own vertical mode the generator stops at
+                // what fits ("0 chars vs 382", "13 vs 21" on the bench) and the tail is lost.
+                // VerticalWrapMode.Overflow = 1; a boxed struct field takes the write.
+                try
+                {
+                    var vertical = settings.GetType().GetField("verticalOverflow", BindingFlags.Public | BindingFlags.Instance);
+                    if (vertical != null) vertical.SetValue(settings, Enum.ToObject(vertical.FieldType, 1));
+                }
+                catch { }
                 if (!(bool)_generatorPopulate.Invoke(_ownGenerator, new object[] { assigned, settings }))
                 { whyNot = "generator refused to populate"; return null; }
 
@@ -582,11 +592,15 @@ namespace UnityGameTranslator.Core.TextShaping
                 || (_lineStartCharField == null && _lineStartCharProp == null))
             { whyNot = "text generator API not resolvable on this runtime"; return null; }
 
-            // ⚠ Rich text: the generator's char indices count the TAG-STRIPPED text, our slices
-            // cut the raw string — RichTextIndexMap bridges the two. Only when the component
-            // actually parses tags: with supportRichText off, a '<' is an ordinary character.
+            // ⚠ Rich text: which string do the generator's line indices count? The legacy
+            // generator seen on the bench keeps every tag character in its stream as an
+            // invisible glyph — it reported 173 characters for a 173-char tagged string — so
+            // its indices address the RAW string. RichTextIndexMap stays for a runtime that
+            // strips (indices then count the tagless text); the generator's own characterCount
+            // decides between the two below, and a count matching neither is a stale generator.
+            int rawLength = assigned.Length;
+            int strippedLength = rawLength;
             int[] tagMap = null;
-            int referenceLength = assigned.Length;
             if (assigned.IndexOf('<') >= 0)
             {
                 bool richText = true;
@@ -596,12 +610,9 @@ namespace UnityGameTranslator.Core.TextShaping
                         richText = (bool)_supportRichTextProp.GetValue(comp, null);
                 }
                 catch { }
-                if (richText)
-                {
-                    tagMap = RichTextIndexMap.Build(assigned, out int strippedLength);
-                    if (tagMap != null) referenceLength = strippedLength;
-                }
+                if (richText) tagMap = RichTextIndexMap.Build(assigned, out strippedLength);
             }
+            int referenceLength = rawLength;
 
             object generator = populated ?? _cachedGeneratorProp.GetValue(comp, null);
             if (generator == null) { whyNot = "no cached generator"; return null; }
@@ -616,8 +627,16 @@ namespace UnityGameTranslator.Core.TextShaping
             if (_generatorCharCountProp != null)
             {
                 int genChars = Convert.ToInt32(_generatorCharCountProp.GetValue(generator, null));
-                if (Math.Abs(genChars - referenceLength) > 1)
-                { whyNot = $"generator describes another text ({genChars} chars vs {referenceLength})"; return null; }
+                if (Math.Abs(genChars - rawLength) <= 1)
+                    tagMap = null;                       // raw indices — the bench engine
+                else if (tagMap != null && Math.Abs(genChars - strippedLength) <= 1)
+                    referenceLength = strippedLength;    // tag-stripped indices — the map applies
+                else
+                { whyNot = $"generator describes another text ({genChars} chars vs {rawLength} raw / {strippedLength} stripped)"; return null; }
+            }
+            else
+            {
+                tagMap = null;                           // no count to prove the map — raw it is
             }
 
             var lines = _generatorLinesProp.GetValue(generator, null) as System.Collections.IList;

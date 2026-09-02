@@ -1251,9 +1251,11 @@ namespace UnityGameTranslator.Core
                 current = current.parent;
             }
 
-            // Only cache positive results — negative can change when new panel roots are registered
-            if (result)
-                _ownUIHierarchyCache[id] = true;
+            // Both answers are cached. A NO can change when a panel root is registered — and
+            // RegisterPanelRoot clears this cache for exactly that reason — so caching only the
+            // YES meant every ordinary game component re-walked its whole parent chain on every
+            // scanner pass (measured with the batch loop at 25 % of a core on a uGUI game).
+            _ownUIHierarchyCache[id] = result;
             return result;
         }
 

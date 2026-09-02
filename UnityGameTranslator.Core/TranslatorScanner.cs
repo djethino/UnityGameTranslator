@@ -409,19 +409,26 @@ namespace UnityGameTranslator.Core
                 if (scanCycleComplete) _processedThisCycle.Clear();
 
                 bool allDone = true;
-                foreach (var type in _registeredTypes)
+                // ⚠ Rotating start: with a small budget the first type ate every frame and the
+                // last ones never advanced (their BatchIndex stayed put for the whole session).
+                int typeCount = _registeredTypes.Count;
+                if (_batchTypeStart >= typeCount) _batchTypeStart = 0;
+                for (int step = 0; step < typeCount; step++)
                 {
+                    var type = _registeredTypes[(_batchTypeStart + step) % typeCount];
                     if (type.CachedComponents == null || type.CachedComponents.Length == 0) continue;
                     if (_scanFrameSw.Elapsed.TotalMilliseconds > budgetMs)
                     {
                         // Budget exhausted — resume next frame from where we are
                         // (each type's BatchIndex remembers its progress).
                         allDone = false;
+                        _batchTypeStart = (_batchTypeStart + step) % typeCount;
                         break;
                     }
-                    bool typeDone = ProcessBatch(type);
-                    if (!typeDone) allDone = false;
+                    bool typeDone = ProcessBatch(type, budgetMs);
+                    if (!typeDone) { allDone = false; _batchTypeStart = (_batchTypeStart + step) % typeCount; break; }
                 }
+                if (allDone) _batchTypeStart = 0;
                 scanCycleComplete = allDone;
             }
             catch { }
@@ -578,7 +585,9 @@ namespace UnityGameTranslator.Core
         /// Process a batch of components for a registered type.
         /// Returns true when the full array has been processed (cycle complete for this type).
         /// </summary>
-        private static bool ProcessBatch(RegisteredTextType type)
+        private static int _batchTypeStart;
+
+        private static bool ProcessBatch(RegisteredTextType type, float budgetMs)
         {
             if (type.BatchIndex >= type.CachedComponents.Length)
                 type.BatchIndex = 0;
@@ -587,6 +596,17 @@ namespace UnityGameTranslator.Core
 
             for (int i = type.BatchIndex; i < endIndex; i++)
             {
+                // 🔴 The budget is the frame's, not the type's. Checked only between types, a
+                // 200-component lot ran to its end whatever the allowance: at 0.5 ms of budget it
+                // cost 1.7 ms every frame — the "Batch" the probes showed at a quarter of a core.
+                // Every 16 components is often enough to stay near the line and rare enough to
+                // cost nothing.
+                if ((i & 15) == 0 && i > type.BatchIndex && _scanFrameSw.Elapsed.TotalMilliseconds > budgetMs)
+                {
+                    type.BatchIndex = i;
+                    return false;
+                }
+
                 var obj = type.CachedComponents[i];
                 if (obj == null) continue;
 
@@ -1323,8 +1343,11 @@ namespace UnityGameTranslator.Core
                 if (inputFieldTextIds.Contains(instanceId))
                     return;
 
-                // First-time check: is this the textComponent of an InputField?
-                if (type.Category != "TextMesh" && TypeHelper.IsInputFieldTextComponent(component))
+                // First-time check: is this the textComponent of an InputField? The CACHED
+                // question the setter prefix asks — the uncached one walked the parent chain of
+                // every component on every pass, for an answer that is stable ("no InputField
+                // ancestor") for nearly all of them.
+                if (type.Category != "TextMesh" && TranslatorPatches.IsInputFieldTextComponentCached(component))
                 {
                     inputFieldTextIds.Add(instanceId);
                     TranslatorCore.LogDebug($"[Scanner] Excluded InputField textComponent: {comp.gameObject.name}");

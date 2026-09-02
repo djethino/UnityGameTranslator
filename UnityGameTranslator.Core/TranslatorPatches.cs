@@ -1712,7 +1712,7 @@ namespace UnityGameTranslator.Core
         /// Check if a text component is the textComponent of an InputField (should not be translated).
         /// Caches the result for performance. Works for both UI.InputField and TMP_InputField.
         /// </summary>
-        private static bool IsInputFieldTextComponentCached(object textComponent)
+        internal static bool IsInputFieldTextComponentCached(object textComponent)
         {
             int id = TypeHelper.GetInstanceID(textComponent);
             if (id == -1) return false;

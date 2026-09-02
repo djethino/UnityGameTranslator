@@ -381,6 +381,29 @@ namespace UnityGameTranslator.Core
 
                 patcher(setter, prefix, null);
                 TranslatorCore.LogInfo("[UIToolkit] Patched TextElement.set_text");
+
+                // 🔴 Documents announce themselves. Looking them up was one atomic engine call
+                // per detection cycle — ~31 ms on a large save, i.e. a dropped frame every
+                // second, measured (UITK.Cycle max 31-33 ms) — to find the same two or three
+                // documents each time. UIDocument.OnEnable fires for every document that comes
+                // to life after this patch; the ones alive before it are taken once, on the
+                // first cycle. If the patch cannot be applied, the lookup stays, per cycle.
+                try
+                {
+                    var onEnable = UIDocumentType.GetMethod("OnEnable", BindingFlags.NonPublic | BindingFlags.Instance);
+                    if (onEnable != null)
+                    {
+                        var postfix = typeof(UIToolkitSupport).GetMethod(
+                            nameof(UIDocument_OnEnable_Postfix), BindingFlags.Static | BindingFlags.Public);
+                        patcher(onEnable, null, postfix);
+                        _documentsFromEvents = true;
+                        TranslatorCore.LogInfo("[UIToolkit] Patched UIDocument.OnEnable — documents are discovered on arrival, not by lookup");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    TranslatorCore.LogWarning($"[UIToolkit] UIDocument.OnEnable not patched ({ex.Message}) — documents will be looked up every cycle");
+                }
                 return 1;
             }
             catch (Exception ex)
@@ -1390,12 +1413,23 @@ namespace UnityGameTranslator.Core
             // behind them. Here because this is the pass that knows a scroll has happened.
             Sweep();
 
-            var documents = TypeHelper.FindAllObjectsOfType(UIDocumentType);
-            if (documents == null || documents.Length == 0) return false;
-
-            foreach (var document in documents)
+            // Documents alive before our patch never fire OnEnable for us: taken once. Without
+            // the patch, the lookup remains the only source and runs every cycle, as before.
+            if (!_documentsPrimed || !_documentsFromEvents)
             {
-                if (document == null) continue;
+                _documentsPrimed = true;
+                PrimeDocumentsFromLookup();
+            }
+
+            for (int i = _documents.Count - 1; i >= 0; i--)
+            {
+                var document = _documents[i].Target;
+                bool dead = document == null || (document is UnityEngine.Object uo && uo == null);
+                if (dead) { _documents.RemoveAt(i); continue; }
+
+                // A disabled document has nothing on screen; its root would be walked for nothing.
+                if (document is UnityEngine.Behaviour b && !b.isActiveAndEnabled) continue;
+
                 object root = null;
                 try { root = _rootProp.GetValue(document, null); }
                 catch { }
@@ -1406,6 +1440,35 @@ namespace UnityGameTranslator.Core
 
         /// <summary>The walk in progress, kept between frames — see Scan.</summary>
         private static readonly Stack<object> _walk = new Stack<object>();
+
+        // The documents we know of. Weak: a document dies with its scene and must not be held.
+        private static readonly List<WeakReference> _documents = new List<WeakReference>();
+        private static bool _documentsFromEvents;   // OnEnable patched: no per-cycle lookup needed
+        private static bool _documentsPrimed;       // the one initial lookup has been done
+
+        public static void UIDocument_OnEnable_Postfix(object __instance)
+        {
+            if (__instance == null) return;
+            try
+            {
+                for (int i = 0; i < _documents.Count; i++)
+                    if (ReferenceEquals(_documents[i].Target, __instance)) return;
+                _documents.Add(new WeakReference(__instance));
+            }
+            catch { }
+        }
+
+        /// <summary>Add every document the engine currently has — the one lookup we still pay.</summary>
+        private static void PrimeDocumentsFromLookup()
+        {
+            var found = TypeHelper.FindAllObjectsOfType(UIDocumentType);
+            if (found == null) return;
+            foreach (var document in found)
+            {
+                if (document == null) continue;
+                UIDocument_OnEnable_Postfix(document);
+            }
+        }
 
 
         #region RTL / ATG probe (TEMPORARY — feature/text-shaping bench, see TextShaping/RtlProbe.cs)

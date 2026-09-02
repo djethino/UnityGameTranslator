@@ -794,6 +794,18 @@ namespace UnityGameTranslator.Core
         /// PERF: When a strategy is known-Works, assigns the FindAllObjectsOfType result directly
         /// without wrapper allocations (no HashSet, no List, no ToArray).
         /// </summary>
+        // Which types the refresh looks up, what it finds and what each lookup costs — the facts
+        // needed to make discovery event-driven where it pays. First cycles only.
+        private static int _lookupNoteBudget = 12;
+
+        private static void NoteLookup(RegisteredTextType type, UnityEngine.Object[] found, long started)
+        {
+            if (started == 0L || _lookupNoteBudget <= 0) return;
+            _lookupNoteBudget--;
+            double ms = (System.Diagnostics.Stopwatch.GetTimestamp() - started) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+            TranslatorCore.LogDebug($"[Scanner] lookup {type.Name}: {found?.Length ?? 0} found in {ms:F1} ms");
+        }
+
         private static UnityEngine.Object[] RefreshTypeCacheDirect(RegisteredTextType type)
         {
             // FAST PATH: known-working strategy → direct assignment, zero allocations
@@ -802,6 +814,7 @@ namespace UnityGameTranslator.Core
                 long tFind = Perf.Start();
                 var found = TypeHelper.FindAllObjectsOfType(type.ComponentType);
                 Perf.Stop(Perf.ScanFind, tFind);
+                NoteLookup(type, found, tFind);
                 if (found != null && found.Length > 0) return found;
                 type.TypeHelperState = StrategyState.Empty;
             }
@@ -850,6 +863,7 @@ namespace UnityGameTranslator.Core
                     long tFind = Perf.Start();
                     var found = TypeHelper.FindAllObjectsOfType(type.ComponentType);
                     Perf.Stop(Perf.ScanFind, tFind);
+                    NoteLookup(type, found, tFind);
                     if (found != null && found.Length > 0)
                     {
                         type.TypeHelperState = StrategyState.Works;

@@ -2894,6 +2894,20 @@ namespace UnityGameTranslator.Core
         /// lookup cannot be split (it is one engine call) so it is measured apart; the component
         /// loop resumes where it stopped, and a cycle simply takes a few frames.
         /// </summary>
+        /// <summary>
+        /// The component list the scanner already holds for this type, or null when it has none
+        /// yet. The scanner refreshes it every detection cycle — fresher than these 5 s passes —
+        /// so looking the scene up again here was the same atomic engine call, paid twice (Font.Find,
+        /// 31 ms each on a bench save). One lookup per type per cycle, owned by the scanner.
+        /// </summary>
+        private static UnityEngine.Object[] SceneListFromScanner(Type componentType)
+        {
+            var types = TranslatorScanner.RegisteredTypes;
+            for (int i = 0; i < types.Count; i++)
+                if (types[i].ComponentType == componentType) return types[i].CachedComponents;
+            return null;
+        }
+
         // The scene walks in progress, kept between frames (see ApplyReplacementsToScene).
         private static UnityEngine.Object[] _sceneTmp;
         private static int _sceneTmpAt;
@@ -2914,9 +2928,13 @@ namespace UnityGameTranslator.Core
                 // MissingMethodException at JIT time, uncatchable from inside).
                 if (_sceneTmp == null)
                 {
-                    long tFind = Perf.Start();
-                    _sceneTmp = TypeHelper.FindAllObjectsOfType(TypeHelper.TMP_TextType);
-                    Perf.Stop(Perf.FontFind, tFind);
+                    _sceneTmp = SceneListFromScanner(TypeHelper.TMP_TextType);
+                    if (_sceneTmp == null)
+                    {
+                        long tFind = Perf.Start();
+                        _sceneTmp = TypeHelper.FindAllObjectsOfType(TypeHelper.TMP_TextType);
+                        Perf.Stop(Perf.FontFind, tFind);
+                    }
                     _sceneTmpAt = 0;
                 }
                 var comps = _sceneTmp;
@@ -3052,9 +3070,13 @@ namespace UnityGameTranslator.Core
             {
                 if (_sceneUgui == null)
                 {
-                    long tFind = Perf.Start();
-                    _sceneUgui = TypeHelper.FindAllObjectsOfType(TypeHelper.UI_TextType);
-                    Perf.Stop(Perf.FontFind, tFind);
+                    _sceneUgui = SceneListFromScanner(TypeHelper.UI_TextType);
+                    if (_sceneUgui == null)
+                    {
+                        long tFind = Perf.Start();
+                        _sceneUgui = TypeHelper.FindAllObjectsOfType(TypeHelper.UI_TextType);
+                        Perf.Stop(Perf.FontFind, tFind);
+                    }
                     _sceneUguiAt = 0;
                 }
                 var comps = _sceneUgui;

@@ -51,6 +51,7 @@ namespace UnityGameTranslator.Core.TextShaping
         // component that moves on to non-RTL text gets its own state back, not our leftovers.
         private static readonly Dictionary<long, bool> _flaggedOriginal = new Dictionary<long, bool>();
         private static readonly Dictionary<long, object> _alignedOriginal = new Dictionary<long, object>();
+        private static readonly Dictionary<long, object> _wrapOriginal = new Dictionary<long, object>();
 
         private static int _logBudget = 8;
 
@@ -157,6 +158,12 @@ namespace UnityGameTranslator.Core.TextShaping
                     // width that is stable and false. Assigning the shaped LOGICAL string first
                     // lets the layout size the box for the whole text exactly as it does for
                     // the game's own; the reflow then reads the lines the engine produced there.
+                    // ⚠ Measured with the component's OWN wrap mode: a reused box still wears
+                    // the Overflow our previous lines needed, and measured under it the engine
+                    // answers "one line" for any paragraph — the second text shown in a
+                    // description box came out unwrapped. Restored here, taken again after the
+                    // reflow (same remember-and-restore as the alignment).
+                    RestoreRewrap(instance, compId);
                     QueueReflow(instance, compId, ref value, ReflowKind.UGuiText, mirror, "logical+reflow");
                     return;
                 }
@@ -345,7 +352,11 @@ namespace UnityGameTranslator.Core.TextShaping
         private static PropertyInfo _generatorLinesProp;    // TextGenerator.lines -> IList<UILineInfo>
         private static PropertyInfo _generatorCharCountProp; // TextGenerator.characterCount
         private static PropertyInfo _supportRichTextProp;   // Text.supportRichText
-        // Asking the engine for the line breaks NOW, instead of reading what it drew last frame:
+        // The redraw gate (WillBeRedrawn): Graphic.canvas, Graphic.canvasRenderer, CanvasRenderer.cull.
+        private static PropertyInfo _canvasProp;
+        private static PropertyInfo _canvasRendererProp;
+        private static PropertyInfo _cullProp;
+        // The last-resort cut, for a drawn component whose generator never catches up:
         // Text.GetGenerationSettings(extents) + our own TextGenerator.Populate(text, settings).
         private static MethodInfo _getGenerationSettings;   // Text.GetGenerationSettings(Vector2)
         private static MethodInfo _getPixelAdjustedRect;    // Graphic.GetPixelAdjustedRect()
@@ -385,40 +396,61 @@ namespace UnityGameTranslator.Core.TextShaping
                     // The game moved on to another text — this reflow is stale.
                     if (TypeHelper.GetText(comp) != entry.Assigned) { _reflows.Remove(id); continue; }
 
-                    // An INACTIVE component has no line data and never will until it shows: games
-                    // preload hidden panes (a guide fills every page up front), and burning the
-                    // attempts there left the fallback's reversed line stack as the final display
-                    // once the pane opened (bios/biot bench). Wait, without spending attempts —
-                    // staleness is already covered by the text check above.
-                    if (comp is UnityEngine.Component c && c.gameObject != null && !c.gameObject.activeInHierarchy)
+                    // 🔴 A component the engine will not REDRAW has no fresh line data and never
+                    // will until it shows — and "redraw" is wider than "active". Games preload
+                    // hidden panes (a guide fills every page up front): inactive ones, but also
+                    // pages under a disabled Canvas or clipped away by a RectMask2D, which stay
+                    // active in the hierarchy while Graphic.Rebuild skips them outright
+                    // (canvasRenderer.cull). Their generator kept describing the PREVIOUS text
+                    // for as long as they stayed out of view; spending the attempts there turned
+                    // every hidden page into the fallback's reversed line stack, or into a cut
+                    // made at a box width the layout had not recomputed yet (bench: a 3-letter
+                    // label on two rows, a section title under its own list). Wait, without
+                    // spending attempts — staleness is already covered by the text check above.
+                    if (!WillBeRedrawn(comp, entry.Kind))
                         continue;
 
                     string final = BuildLines(entry, comp, out string whyNot);
                     if (final == null)
                     {
-                        // Line source not ready (or unreadable). A few frames, then fall back to
-                        // whole-string visual — and SAY so: a silent fallback made the reversed
-                        // line stack undiagnosable from a screenshot.
+                        // Line source not ready (or unreadable). The engine rebuilds a drawn
+                        // component at the end of the frame its text changed, so two ticks is
+                        // what a stale generator legitimately needs; a third strike means this
+                        // component's rendering never feeds the generator we read (a Text
+                        // subclass drawing its own way). Then, and only then, the engine is asked
+                        // directly — a Populate of our own at the width the layout has by now
+                        // settled for THIS text — and whole-string visual order stays the last
+                        // resort. Either way SAY so: a silent fallback made the reversed line
+                        // stack undiagnosable from a screenshot.
                         if (++entry.Attempts < 3) continue;
+                        string whyOwn = null;
+                        if (entry.Kind == ReflowKind.UGuiText)
+                            final = BuildUGuiLinesNow(comp, entry.Measure, out whyOwn);
                         if (_fallbackLogBudget > 0)
                         {
                             _fallbackLogBudget--;
-                            TranslatorCore.LogWarning($"[RtlPresenter] reflow gave up ({whyNot}) — whole-string visual order, line stack may read bottom-up: comp={id}");
+                            if (final != null)
+                                TranslatorCore.LogWarning($"[RtlPresenter] engine lines never caught up ({whyNot}) — cut with our own generator at the box's settled width: comp={id}");
+                            else
+                                TranslatorCore.LogWarning($"[RtlPresenter] reflow gave up ({whyNot}{(whyOwn != null ? " | populate: " + whyOwn : "")}) — whole-string visual order, line stack may read bottom-up: comp={id}");
                         }
-                        final = RtlComposer.Compose(entry.Logical, RtlOutput.VisualOrder);
+                        if (final == null) final = RtlComposer.Compose(entry.Logical, RtlOutput.VisualOrder);
                     }
 
                     TranslatorCore.RegisterPresentedText(final, entry.Logical);
 
                     {
                         MirrorAlignment(comp, id, entry.Mirror);
-                        // ⚠ The engine's own wrapping stays ON. It used to be switched off so a
-                        // recomposed line exactly as wide as its box could not be re-wrapped by
-                        // rounding (bioc bench) — but a cut made at a width that was not the box's
-                        // final one then had NOTHING to fold it back: a disclaimer ended as one line
-                        // as wide as its whole paragraph (bench, after the resize hook). The cut
-                        // is now made one pixel narrower than the box instead, which removes the
-                        // rounding case while the engine keeps the last word.
+                        // 🔴 WE computed the line breaks — the engine must not wrap again. A
+                        // recomposed line is exactly as wide as the rect it was cut against, and
+                        // the rendering rounding re-wrapped it: the overflowing visual chunk is
+                        // the sentence's FIRST word, shoved onto its own row (bioc bench,
+                        // «تحوّل»). Original wrap mode remembered and restored like the
+                        // alignment. NGUI has no such knob; its wrap re-measures the same glyph
+                        // advances deterministically (no rendering rounding), so a trimmed line
+                        // that fitted keeps fitting — bench holds the proof burden there.
+                        if (entry.Kind == ReflowKind.UGuiText)
+                            DisableRewrap(comp, id);
 
                         TranslatorPatches.BypassTextPrefix = true;
                         try { TypeHelper.SetText(comp, final); }
@@ -464,42 +496,71 @@ namespace UnityGameTranslator.Core.TextShaping
             switch (entry.Kind)
             {
                 case ReflowKind.UGuiText:
-                {
-                    // The engine's own layout of the assigned text is the truth: it was made in
-                    // the box the layout gave that text. Populate is the fallback for a generator
-                    // that still describes an older string after the wait.
-                    string engine = BuildPerLineVisual(comp, entry.Measure, out string whyEngine);
-                    if (engine != null) { whyNot = null; return engine; }
-                    string own = BuildUGuiLinesNow(comp, entry.Measure, out whyNot);
-                    if (own == null) whyNot = $"engine: {whyEngine} | populate: {whyNot}";
-                    return own;
-                }
+                    // The engine's own layout of the assigned text, and nothing else here: it was
+                    // made in the box the layout gave THAT text. A generator still describing an
+                    // older string is a reason to wait, never to cut at the box's current width —
+                    // on uGUI a box is routinely sized by its text, so before the layout has run
+                    // for the new string that width is the previous content's (bench: a 3-letter
+                    // label on two rows, a paragraph re-cut at eight different widths). The
+                    // caller's give-up path is where our own Populate comes in, once the layout
+                    // has had its frames.
+                    return BuildPerLineVisual(comp, entry.Measure, out whyNot);
                 default:
                     return BuildNguiLines(comp, entry.Measure, out whyNot);
             }
         }
 
         /// <summary>
-        /// The assigned string re-cut at the engine's own break points, each line converted to
-        /// visual order. Null when the generator cannot be read (not populated yet, IL2CPP
-        /// marshaling — see below).
+        /// Will the engine rebuild this component's geometry at the end of the frame — and so
+        /// refresh the line data the reflow reads? For UI.Text that is Graphic.Rebuild's own
+        /// gate: a Behaviour that is active and enabled, under an active and enabled Canvas
+        /// (Graphic.canvas is null otherwise), and not culled by a clipping mask
+        /// (canvasRenderer.cull — Rebuild returns before UpdateGeometry on it). NGUI computes
+        /// processedText from its own state, so only the hierarchy matters there. Anything not
+        /// readable answers true: the attempt counter, not a silent wait, is the safety net.
         /// </summary>
+        private static bool WillBeRedrawn(object comp, ReflowKind kind)
+        {
+            if (!(comp is UnityEngine.Component c) || c.gameObject == null) return true;
+            if (!c.gameObject.activeInHierarchy) return false;
+            if (kind != ReflowKind.UGuiText) return true;
+            if (comp is UnityEngine.Behaviour b && !b.isActiveAndEnabled) return false;
+            EnsureGeneratorPlumbing();
+            try
+            {
+                if (_canvasProp != null && _canvasProp.GetValue(comp, null) == null) return false;
+                if (_cullProp != null && _canvasRendererProp != null)
+                {
+                    object renderer = _canvasRendererProp.GetValue(comp, null);
+                    if (renderer != null && (bool)_cullProp.GetValue(renderer, null)) return false;
+                }
+            }
+            catch { }
+            return true;
+        }
+
+        /// <summary>horizontalOverflow = Overflow while OUR line breaks are displayed.</summary>
+        private static void DisableRewrap(object comp, long compId)
+        {
+            try
+            {
+                var prop = comp.GetType().GetProperty("horizontalOverflow", BindingFlags.Public | BindingFlags.Instance);
+                if (prop?.SetMethod == null) return;
+                object current = prop.GetValue(comp, null);
+                object overflow = Enum.ToObject(prop.PropertyType, 1);   // HorizontalWrapMode.Overflow
+                if (Equals(current, overflow)) return;
+                if (compId != -1 && !_wrapOriginal.ContainsKey(compId))
+                    _wrapOriginal[compId] = current;
+                prop.SetValue(comp, overflow, null);
+            }
+            catch { }
+        }
+
         /// <summary>
-        /// Ask the engine, RIGHT NOW, where it would cut this text in this component's box — the
-        /// UI.Text counterpart of UI Toolkit's MeasureTextSize, and for the same reason.
-        ///
-        /// 🔴 Reading cachedTextGenerator instead means reading what the component DREW last
-        /// frame: on a text swap it still describes the previous string, the identity guard
-        /// rejects the cut ("generator describes another text (173 chars vs 126)" — bench, the
-        /// guide panel), three frames later the reflow gives up and the whole-string fallback
-        /// stacks the lines bottom-up. That is the section title showing UNDER its own list.
-        /// Populating our own generator with our own text removes the wait, the guess and the
-        /// fallback in one go. Null when the API or the layout is not there yet.
-        /// </summary>
-        /// <summary>
-        /// The generator API, resolved once — and from BOTH paths. It used to live inside the
-        /// cached-generator path only, so the immediate path saw "API not resolvable" until the
-        /// slow path had run first; on the bench the guide page never got its immediate cut.
+        /// The generator API and the redraw gate, resolved once. Shared by the cached-generator
+        /// read, our own Populate and <see cref="WillBeRedrawn"/>: it used to live inside the
+        /// cached-generator path only, so any other caller saw "API not resolvable" until that
+        /// path had run first.
         /// </summary>
         private static void EnsureGeneratorPlumbing()
         {
@@ -510,6 +571,9 @@ namespace UnityGameTranslator.Core.TextShaping
             {
                 _cachedGeneratorProp = TypeHelper.UI_TextType.GetProperty("cachedTextGenerator", BindingFlags.Public | BindingFlags.Instance);
                 _supportRichTextProp = TypeHelper.UI_TextType.GetProperty("supportRichText", BindingFlags.Public | BindingFlags.Instance);
+                _canvasProp = TypeHelper.UI_TextType.GetProperty("canvas", BindingFlags.Public | BindingFlags.Instance);
+                _canvasRendererProp = TypeHelper.UI_TextType.GetProperty("canvasRenderer", BindingFlags.Public | BindingFlags.Instance);
+                _cullProp = _canvasRendererProp?.PropertyType.GetProperty("cull", BindingFlags.Public | BindingFlags.Instance);
                 var genType = _cachedGeneratorProp?.PropertyType;
                 _generatorLinesProp = genType?.GetProperty("lines", BindingFlags.Public | BindingFlags.Instance);
                 _generatorCharCountProp = genType?.GetProperty("characterCount", BindingFlags.Public | BindingFlags.Instance);
@@ -552,11 +616,11 @@ namespace UnityGameTranslator.Core.TextShaping
         }
 
 
-        // Everything a cut rests on, for the first few of a session: the box as the engine sees
-        // it (rectTransform.rect — what Text.OnPopulateMesh cuts with) against the pixel-adjusted
-        // rect, the component's own wrapping and best-fit settings, and how many lines came out.
-        // Added when labels came out in three pieces with a "stable" width that could not be the
-        // engine's — the log has to say which of these differs.
+        // Everything a last-resort cut rests on, for the first few of a session: the box as the
+        // engine sees it (rectTransform.rect — what Text.OnPopulateMesh cuts with) against the
+        // pixel-adjusted rect, the component's own wrapping and best-fit settings, and how many
+        // lines came out. Added when labels came out in three pieces with a "stable" width that
+        // could not be the engine's — the log has to say which of these differs.
         private static int _cutDescribeBudget = 60;
 
         private static void DescribeCut(object comp, string assigned, UnityEngine.Rect pixelRect, object settings, string cut)
@@ -580,6 +644,15 @@ namespace UnityGameTranslator.Core.TextShaping
             catch (Exception ex) { TranslatorCore.LogDebug("[RtlPresenter] cut describe failed: " + ex.Message); }
         }
 
+        /// <summary>
+        /// Ask the engine where it would cut this text in this component's box, with a generator
+        /// of our own (the component's belongs to its rendering) — the UI.Text counterpart of
+        /// UI Toolkit's MeasureTextSize. ⚠ Only right once the layout has run for THIS text: the
+        /// width it cuts at is the box's current one, and a box sized by its content still wears
+        /// the previous text's width until then. Hence its place: the give-up branch of the
+        /// reflow, after a drawn component has had its frames. Null when the API or the layout
+        /// is not there.
+        /// </summary>
         private static string BuildUGuiLinesNow(object comp, string assigned, out string whyNot)
         {
             whyNot = null;
@@ -629,6 +702,12 @@ namespace UnityGameTranslator.Core.TextShaping
             catch (Exception ex) { whyNot = "populate failed: " + ex.Message; return null; }
         }
 
+        /// <summary>
+        /// The assigned string re-cut at a generator's break points, each line converted to
+        /// visual order — the component's own cachedTextGenerator unless <paramref name="populated"/>
+        /// hands over ours. Null, with the reason, when the generator cannot be read or does not
+        /// describe this text yet.
+        /// </summary>
         private static string BuildPerLineVisual(object comp, string assigned, out string whyNot,
                                                  object populated = null)
         {
@@ -943,6 +1022,20 @@ namespace UnityGameTranslator.Core.TextShaping
                 }
                 catch { }
             }
+            RestoreRewrap(instance, compId);
+        }
+
+        /// <summary>The wrap mode a component had before <see cref="DisableRewrap"/>, put back.</summary>
+        private static void RestoreRewrap(object instance, long compId)
+        {
+            if (compId == -1 || !_wrapOriginal.TryGetValue(compId, out object wrap)) return;
+            _wrapOriginal.Remove(compId);
+            try
+            {
+                var wrapProp = instance.GetType().GetProperty("horizontalOverflow", BindingFlags.Public | BindingFlags.Instance);
+                wrapProp?.SetValue(instance, wrap, null);
+            }
+            catch { }
         }
 
         private static void Log(long compId, string mode, string logical, string composed)

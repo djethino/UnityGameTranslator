@@ -1294,8 +1294,6 @@ namespace UnityGameTranslator.Core
 
         private static float _lastScanTime;
 
-        /// <summary>Which document the next pass starts from. See the note in Scan.</summary>
-        private static int _resumeAt;
 
         /// <summary>
         /// How many elements one pass may look at.
@@ -1307,75 +1305,98 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private const int MaxElementsPerPass = 6000;
 
-        public static void Scan()
+        /// <summary>
+        /// One UI Toolkit pass, SPREAD over frames like the component scan next door.
+        ///
+        /// 🔴 It used to walk every element of every document in one go, bounded only by a count
+        /// (6000). Measured on a real save: ~1300 elements, **45 ms in a single frame, once a
+        /// second** — three frames' worth of work at 60 fps, felt as a periodic stutter. Almost
+        /// none of it is the text: 6 ms for 6495 elements. It is the walk itself and the per-
+        /// element font/picture questions, each a handful of reflection calls.
+        ///
+        /// So the walk now takes the SAME per-frame budget the scanner computes from the game's
+        /// own frame-time noise, and keeps its stack between frames: nothing is skipped, each
+        /// element is simply reached a frame or two later. A cycle starts on the configured
+        /// interval; while one is still running, the interval is not consulted — finishing the
+        /// pass in hand comes first.
+        /// </summary>
+        public static void Scan(float budgetMs, System.Diagnostics.Stopwatch frameSw)
         {
             if (!Available) return;
-
-            // Same cadence as the rest of the scanner: how long a newly shown string may stay
-            // untranslated is one setting, not one per subsystem.
-            float interval = TranslatorCore.Config?.max_text_detection_latency_seconds ?? 1f;
-            if (interval < 0.1f) interval = 0.1f;
-
-            float now = Time.realtimeSinceStartup;
-            if (_lastScanTime != 0f && now - _lastScanTime < interval) return;
-            _lastScanTime = now;
 
             long tScan = Perf.Start();
             try
             {
-                // Elements recycled since the last pass: drop their ids and the routing state
-                // behind them. Here because this is the pass that knows a scroll has happened.
-                Sweep();
-
-                var documents = TypeHelper.FindAllObjectsOfType(UIDocumentType);
-                if (documents == null || documents.Length == 0) return;
-
-                int visited = 0;
-
-                // 🔴 **Resumed, not restarted.** The budget is shared across documents and the walk
-                // used to begin at the first one every pass — so whatever sat past the ceiling was
-                // never reached, always the same things, while the early documents were re-walked
-                // for nothing. On screen that is "some text translated and some not", and "the font
-                // finally applies to the rest" when something else happens to shift the order.
-                //
-                // Starting where the last pass stopped gives every document its turn. The list can
-                // change between passes, so this is a position rather than a promise — but a
-                // rotating position is what stops a tail from starving.
-                if (_resumeAt >= documents.Length) _resumeAt = 0;
-                int startedAt = _resumeAt;
-
-                for (int step = 0; step < documents.Length; step++)
+                if (_walk.Count == 0)
                 {
-                    int index = (startedAt + step) % documents.Length;
-                    var document = documents[index];
+                    // Same cadence as the rest of the scanner: how long a newly shown string may
+                    // stay untranslated is one setting, not one per subsystem.
+                    float interval = TranslatorCore.Config?.max_text_detection_latency_seconds ?? 1f;
+                    if (interval < 0.1f) interval = 0.1f;
 
-                    if (document == null) continue;
+                    float now = Time.realtimeSinceStartup;
+                    if (_lastScanTime != 0f && now - _lastScanTime < interval) return;
+                    _lastScanTime = now;
 
-                    object root = null;
-                    try { root = _rootProp.GetValue(document, null); }
-                    catch { }
+                    if (!StartWalkCycle()) return;
+                }
 
-                    if (root == null) continue;
+                // Walk until the frame's budget is spent; the stack holds the rest.
+                while (_walk.Count > 0)
+                {
+                    if (frameSw != null && frameSw.Elapsed.TotalMilliseconds > budgetMs) return;
 
-                    visited += Walk(root, MaxElementsPerPass - visited, ProcessElement);
+                    var element = _walk.Pop();
+                    if (element == null) continue;
 
-                    if (visited >= MaxElementsPerPass)
+                    ReportProxyIdentityOnce(element);
+
+                    var asText = AsTextElement(element);
+                    if (asText != null) ProcessElement(asText);
+
+                    int count = ChildCount(element);
+                    for (int i = 0; i < count; i++)
                     {
-                        // Next pass takes over from the document after this one.
-                        _resumeAt = (index + 1) % documents.Length;
-                        break;
+                        var child = ChildAt(element, i);
+                        if (child != null) _walk.Push(child);
                     }
-
-                    // Everything fitted: start again from the top next time.
-                    _resumeAt = 0;
                 }
             }
             catch (Exception ex)
             {
+                _walk.Clear();
                 TranslatorCore.LogDebug($"[UIToolkit] Scan error: {ex.Message}");
             }
             finally { Perf.Stop(Perf.UitkScan, tScan); }
         }
+
+        /// <summary>
+        /// Open a cycle: sweep recycled elements, then load every document's root onto the walk
+        /// stack. False when there is nothing to walk.
+        /// </summary>
+        private static bool StartWalkCycle()
+        {
+            // Elements recycled since the last pass: drop their ids and the routing state
+            // behind them. Here because this is the pass that knows a scroll has happened.
+            Sweep();
+
+            var documents = TypeHelper.FindAllObjectsOfType(UIDocumentType);
+            if (documents == null || documents.Length == 0) return false;
+
+            foreach (var document in documents)
+            {
+                if (document == null) continue;
+                object root = null;
+                try { root = _rootProp.GetValue(document, null); }
+                catch { }
+                if (root != null) _walk.Push(root);
+            }
+            return _walk.Count > 0;
+        }
+
+        /// <summary>The walk in progress, kept between frames — see Scan.</summary>
+        private static readonly Stack<object> _walk = new Stack<object>();
+
 
         #region RTL / ATG probe (TEMPORARY — feature/text-shaping bench, see TextShaping/RtlProbe.cs)
 
@@ -1771,6 +1792,7 @@ namespace UnityGameTranslator.Core
         {
             if (!CanSetFont) return true;
 
+            long tPerf = Perf.Start();
             try
             {
                 var resolved = _resolvedStyleProp?.GetValue(element, null);
@@ -1821,6 +1843,7 @@ namespace UnityGameTranslator.Core
             {
                 return true;
             }
+            finally { Perf.Stop(Perf.UitkFont, tPerf); }
         }
 
         /// <summary>

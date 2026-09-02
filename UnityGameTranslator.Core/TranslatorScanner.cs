@@ -341,8 +341,6 @@ namespace UnityGameTranslator.Core
             // a Component, so none of the machinery below — the registered types, the incremental
             // component cache, the per-component batch — can reach it. It has its own cadence and
             // its own budget inside UIToolkitSupport.
-            UIToolkitSupport.Scan();
-
             bool profiling = TranslatorCore.DebugMode;
             if (profiling) _scanProfSw.Restart();
             float currentTime = Time.realtimeSinceStartup;
@@ -352,6 +350,12 @@ namespace UnityGameTranslator.Core
             // frame — anything below the noise floor is imperceptible to the player.
             float budgetMs = ComputeAdaptiveBudgetMs();
             _scanFrameSw.Restart();
+
+            // ⚠ Computed BEFORE the UI Toolkit pass and handed to it, with the same stopwatch:
+            // one budget for the frame, shared by both walks, so neither can spend it twice. That
+            // pass used to run unbudgeted and cost 45 ms in one frame (measured) — the periodic
+            // stutter. Whatever it does not finish stays on its stack for the next frame.
+            UIToolkitSupport.Scan(budgetMs, _scanFrameSw);
 
             // Refresh interval is config-driven (UX choice: how long can a new component
             // stay untranslated). Floor at MIN_REFRESH_INTERVAL to avoid pathological values.

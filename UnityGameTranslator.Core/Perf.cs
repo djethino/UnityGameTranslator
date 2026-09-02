@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 
 namespace UnityGameTranslator.Core
 {
@@ -29,11 +29,13 @@ namespace UnityGameTranslator.Core
         internal const int RtlReflow = 3;        // RtlPresenter.ProcessPendingReflows
         internal const int FontScene = 4;        // FontManager.ApplyReplacementsToScene
         internal const int FontClones = 5;       // FontManager.ApplyUnityClonesToScene
-        private const int SlotCount = 6;
+        internal const int UitkFont = 6;         // ...of which: the per-element font question
+        private const int SlotCount = 7;
 
         private static readonly string[] Names =
         {
             "UITK.Scan", "UITK.Element", "RTL.Present", "RTL.Reflow", "Font.Scene", "Font.Clones",
+            "UITK.Font",
         };
 
         private static readonly long[] _ticks = new long[SlotCount];

@@ -669,6 +669,9 @@ namespace UnityGameTranslator.Core
             if (IsExcluded(__instance)) return;
             if (IsEchoOfTyping(__instance, value)) return;
 
+            // A fresh element gets its font the frame after, not when the walk comes round.
+            QueueForFont(__instance);
+
             try
             {
                 // The same routing every other text framework goes through: procedural text,
@@ -1685,20 +1688,49 @@ namespace UnityGameTranslator.Core
             _pendingLane.Remove(element);
         }
 
+        // The font lane: every element the setter prefix met for the FIRST time, looked at once
+        // the frame after, for its font and size. The walk used to be the only place a fallback
+        // font reached a fresh element — at its cadence, so every new panel showed in the game's
+        // font and then re-set itself in the fallback under a second later, its lines visibly
+        // moving (bench: the two lines of a description drawing closer). Only elements the font
+        // pass has never seen are queued: a known element already wears what it should.
+        private static readonly List<object> _fontLane = new List<object>();
+        private static readonly List<int> _fontLaneFrame = new List<int>();
+
+        private static void QueueForFont(object element)
+        {
+            if (_originalFontName.TryGetValue(element, out _)) return;
+            if (_fontLane.Contains(element)) return;
+            _fontLane.Add(element);
+            _fontLaneFrame.Add(Time.frameCount);
+        }
+
         /// <summary>
-        /// The fast lane, once per tick from the scanner's update pass (main thread).
+        /// The fast lanes, once per tick from the scanner's update pass (main thread).
         /// </summary>
         internal static void FinishRecentPending()
         {
-            if (_pendingLane.Count == 0) return;
             int frame = Time.frameCount;
+            for (int i = _fontLane.Count - 1; i >= 0; i--)
+            {
+                if (frame <= _fontLaneFrame[i]) continue;   // its style pass has not run yet
+                object element = _fontLane[i];
+                _fontLane.RemoveAt(i);
+                _fontLaneFrame.RemoveAt(i);
+                // Not laid out yet: the walk meets it when it shows, as before.
+                if (!WillBeLaidOut(element)) continue;
+                try { HandleFont(element); }
+                catch (Exception ex) { TranslatorCore.LogWarning("[UIToolkit] font lane failed, left to the walk: " + ex.Message); }
+            }
+
+            if (_pendingLane.Count == 0) return;
             for (int i = _pendingLane.Count - 1; i >= 0; i--)
             {
                 object element = _pendingLane[i];
                 if (!_pendingRtl.TryGetValue(element, out var pending)) { _pendingLane.RemoveAt(i); continue; }
                 if (frame <= pending.Frame) continue;   // its layout has not run yet — next tick
                 _pendingLane.RemoveAt(i);
-                try { TryFinishPending(element, pending); }
+                try { TryFinishPending(element, pending, "lane"); }
                 catch (Exception ex) { TranslatorCore.LogWarning("[RtlPresenter] fast lane failed, left to the walk: " + ex.Message); }
             }
         }
@@ -1710,16 +1742,47 @@ namespace UnityGameTranslator.Core
         /// width — on an element sized by its content, the one width that is wrong by
         /// construction (the UI.Text lesson, §7.10).
         /// </summary>
-        private static void TryFinishPending(object element, PendingRtl pending)
+        // Bench diagnostic (to remove with RtlProbe): which path finished each element and how
+        // many frames after its assignment — the user sees "a jump under a second" and the two
+        // paths differ by exactly that.
+        private static int _finishLogBudget = 80;
+
+        private static void TryFinishPending(object element, PendingRtl pending, string via)
         {
-            if (Time.frameCount <= pending.Frame || !WillBeLaidOut(element)) return;
+            if (Time.frameCount <= pending.Frame) return;
+            if (!WillBeLaidOut(element))
+            {
+                if (_finishLogBudget > 0 && TranslatorCore.DebugMode)
+                {
+                    _finishLogBudget--;
+                    TranslatorCore.LogDebug($"[RtlPresenter] uitk {via}: not laid out yet ({(IsElementAttached(element) ? "display:none somewhere above" : "not attached")}) frames={Time.frameCount - pending.Frame} '{PathOf(element)}'");
+                }
+                return;
+            }
+            // 🔴 The font FIRST, and the lines only once it shows. The lines are measured with
+            // the element's current metrics; a fallback font written now lands at the next
+            // panel update, and a line cut in the game's font but shown in the fallback would
+            // overflow its box under NoWrap. So a write here means: same element, next tick.
+            _fontStyleWritten = false;
+            HandleFont(element);
+            if (_fontStyleWritten)
+            {
+                pending.Frame = Time.frameCount;
+                if (!_pendingLane.Contains(element)) _pendingLane.Add(element);
+                return;
+            }
             // The alignment is mirrored HERE and not at set_text: it is computed from the
             // RESOLVED style, which only exists once the panel has styled the element — read
             // earlier it is the default UpperLeft, and every centred label ended top-right.
             MirrorAlign(element, pending.Mirror);
-            if (TextShaping.RtlPresenter.FinishUiToolkitPending(element, pending.LogicalSource,
-                    pending.Logical, pending.Measure, pending.Assigned))
-                _pendingRtl.Remove(element);
+            bool done = TextShaping.RtlPresenter.FinishUiToolkitPending(element, pending.LogicalSource,
+                            pending.Logical, pending.Measure, pending.Assigned);
+            if (_finishLogBudget > 0 && TranslatorCore.DebugMode)
+            {
+                _finishLogBudget--;
+                TranslatorCore.LogDebug($"[RtlPresenter] uitk {via}: {(done ? "finished" : "no width yet")} frames={Time.frameCount - pending.Frame} '{PathOf(element)}'");
+            }
+            if (done) _pendingRtl.Remove(element);
         }
 
         private static void ProcessElement(object element)
@@ -1727,7 +1790,7 @@ namespace UnityGameTranslator.Core
             // An RTL text the fast lane could not finish (see above): the walk is here because
             // the element is attached, and if its layout has run by now, that is the moment.
             if (_pendingRtl.TryGetValue(element, out var pending))
-                TryFinishPending(element, pending);
+                TryFinishPending(element, pending, "walk");
 
             // Pictures are not text and do not depend on the font gate: an element can carry a
             // picture and no text at all, which is most of them.
@@ -1945,6 +2008,11 @@ namespace UnityGameTranslator.Core
         ///
         /// Returns false when translation is switched off for this font.
         /// </summary>
+        // Set by every inline font/size write below, so a caller that measures text right after
+        // HandleFont can know the metrics it would measure with are not the ones about to show:
+        // an inline style lands in the resolved style at the next panel update, not at the write.
+        private static bool _fontStyleWritten;
+
         private static bool HandleFont(object element)
         {
             if (!CanSetFont) return true;
@@ -2054,6 +2122,7 @@ namespace UnityGameTranslator.Core
             if (style == null) return;
 
             _styleFontProp.SetValue(style, styleValue, null);
+            _fontStyleWritten = true;
 
             // ⚠ Said once PER FONT, not once ever: the one-shot flag hid every later change and
             // made a working replacement look like a dead one in the log.
@@ -2096,6 +2165,7 @@ namespace UnityGameTranslator.Core
                 if (style == null) return;
 
                 _styleFontProp.SetValue(style, styleValue, null);
+                _fontStyleWritten = true;
 
                 if (_restoreLogged.Add(settingsName))
                     TranslatorCore.LogInfo($"[UIToolkit] Font restored: back to {settingsName}");
@@ -2159,6 +2229,7 @@ namespace UnityGameTranslator.Core
 
                 _styleFontSizeProp.SetValue(
                     style, Activator.CreateInstance(_styleLengthType, wanted), null);
+                _fontStyleWritten = true;
 
                 if (!_scaleDiagnosed && Math.Abs(scale - 1f) > 0.001f)
                 {

@@ -151,7 +151,12 @@ namespace UnityGameTranslator.Core.TextShaping
                 {
                     // One pass whenever the engine can answer now — same shape as UI Toolkit.
                     string shapedUGui = RtlComposer.ShapeLogicalOnly(value);
-                    string cutNow = BuildUGuiLinesNow(instance, shapedUGui, out _);
+                    string cutNow = BuildUGuiLinesNow(instance, shapedUGui, out string whyNotNow);
+                    if (cutNow == null && _immediateLogBudget > 0)
+                    {
+                        _immediateLogBudget--;
+                        TranslatorCore.LogDebug($"[RtlPresenter] UI.Text immediate cut unavailable ({whyNotNow}) — deferred: comp={compId}");
+                    }
                     if (cutNow != null)
                     {
                         TranslatorCore.RegisterPresentedText(cutNow, value);
@@ -445,6 +450,7 @@ namespace UnityGameTranslator.Core.TextShaping
         }
 
         private static int _fallbackLogBudget = 5;
+        private static int _immediateLogBudget = 6;
         private static int _underlineDropBudget = 3;
 
         /// <summary>
@@ -458,8 +464,13 @@ namespace UnityGameTranslator.Core.TextShaping
             switch (entry.Kind)
             {
                 case ReflowKind.UGuiText:
-                    return BuildUGuiLinesNow(comp, entry.Measure, out whyNot)
-                           ?? BuildPerLineVisual(comp, entry.Measure, out whyNot);
+                {
+                    string now = BuildUGuiLinesNow(comp, entry.Measure, out string whyNow);
+                    if (now != null) { whyNot = null; return now; }
+                    string later = BuildPerLineVisual(comp, entry.Measure, out whyNot);
+                    if (later == null) whyNot = $"immediate: {whyNow} | cached: {whyNot}";
+                    return later;
+                }
                 default:
                     return BuildNguiLines(comp, entry.Measure, out whyNot);
             }
@@ -482,9 +493,65 @@ namespace UnityGameTranslator.Core.TextShaping
         /// Populating our own generator with our own text removes the wait, the guess and the
         /// fallback in one go. Null when the API or the layout is not there yet.
         /// </summary>
+        /// <summary>
+        /// The generator API, resolved once — and from BOTH paths. It used to live inside the
+        /// cached-generator path only, so the immediate path saw "API not resolvable" until the
+        /// slow path had run first; on the bench the guide page never got its immediate cut.
+        /// </summary>
+        private static void EnsureGeneratorPlumbing()
+        {
+        if (!_genResolved)
+        {
+            _genResolved = true;
+            try
+            {
+                _cachedGeneratorProp = TypeHelper.UI_TextType.GetProperty("cachedTextGenerator", BindingFlags.Public | BindingFlags.Instance);
+                _supportRichTextProp = TypeHelper.UI_TextType.GetProperty("supportRichText", BindingFlags.Public | BindingFlags.Instance);
+                var genType = _cachedGeneratorProp?.PropertyType;
+                _generatorLinesProp = genType?.GetProperty("lines", BindingFlags.Public | BindingFlags.Instance);
+                _generatorCharCountProp = genType?.GetProperty("characterCount", BindingFlags.Public | BindingFlags.Instance);
+                // UILineInfo lives in the text-rendering assembly, not necessarily UI's:
+                // the generic argument of TextGenerator.lines (IList<UILineInfo>) is the
+                // reliable way to it.
+                Type lineType = null;
+                if (_generatorLinesProp != null)
+                {
+                    var listType = _generatorLinesProp.PropertyType;
+                    if (listType.IsGenericType && listType.GetGenericArguments().Length == 1)
+                        lineType = listType.GetGenericArguments()[0];
+                }
+                if (lineType != null)
+                {
+                    _lineStartCharField = lineType.GetField("startCharIdx", BindingFlags.Public | BindingFlags.Instance);
+                    _lineStartCharProp = lineType.GetProperty("startCharIdx", BindingFlags.Public | BindingFlags.Instance);
+                }
+
+                // The synchronous path. Both are public API on this engine (verified in the
+                // bench game's own assemblies), and a generator of OUR OWN keeps the
+                // component's untouched — that one belongs to its rendering.
+                _getGenerationSettings = TypeHelper.UI_TextType.GetMethod("GetGenerationSettings",
+                    BindingFlags.Public | BindingFlags.Instance);
+                _getPixelAdjustedRect = TypeHelper.UI_TextType.GetMethod("GetPixelAdjustedRect",
+                    BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
+                if (genType != null)
+                {
+                    foreach (var m in genType.GetMethods(BindingFlags.Public | BindingFlags.Instance))
+                    {
+                        if (m.Name != "Populate") continue;
+                        var ps = m.GetParameters();
+                        if (ps.Length == 2 && ps[0].ParameterType == typeof(string)) { _generatorPopulate = m; break; }
+                    }
+                    try { _ownGenerator = Activator.CreateInstance(genType); } catch { }
+                }
+            }
+            catch { }
+        }
+        }
+
         private static string BuildUGuiLinesNow(object comp, string assigned, out string whyNot)
         {
             whyNot = null;
+            EnsureGeneratorPlumbing();
             if (_generatorPopulate == null || _getGenerationSettings == null
                 || _getPixelAdjustedRect == null || _ownGenerator == null)
             { whyNot = "generator Populate API not resolvable on this runtime"; return null; }
@@ -509,53 +576,8 @@ namespace UnityGameTranslator.Core.TextShaping
                                                  object populated = null)
         {
             whyNot = null;
+            EnsureGeneratorPlumbing();
 
-            if (!_genResolved)
-            {
-                _genResolved = true;
-                try
-                {
-                    _cachedGeneratorProp = TypeHelper.UI_TextType.GetProperty("cachedTextGenerator", BindingFlags.Public | BindingFlags.Instance);
-                    _supportRichTextProp = TypeHelper.UI_TextType.GetProperty("supportRichText", BindingFlags.Public | BindingFlags.Instance);
-                    var genType = _cachedGeneratorProp?.PropertyType;
-                    _generatorLinesProp = genType?.GetProperty("lines", BindingFlags.Public | BindingFlags.Instance);
-                    _generatorCharCountProp = genType?.GetProperty("characterCount", BindingFlags.Public | BindingFlags.Instance);
-                    // UILineInfo lives in the text-rendering assembly, not necessarily UI's:
-                    // the generic argument of TextGenerator.lines (IList<UILineInfo>) is the
-                    // reliable way to it.
-                    Type lineType = null;
-                    if (_generatorLinesProp != null)
-                    {
-                        var listType = _generatorLinesProp.PropertyType;
-                        if (listType.IsGenericType && listType.GetGenericArguments().Length == 1)
-                            lineType = listType.GetGenericArguments()[0];
-                    }
-                    if (lineType != null)
-                    {
-                        _lineStartCharField = lineType.GetField("startCharIdx", BindingFlags.Public | BindingFlags.Instance);
-                        _lineStartCharProp = lineType.GetProperty("startCharIdx", BindingFlags.Public | BindingFlags.Instance);
-                    }
-
-                    // The synchronous path. Both are public API on this engine (verified in the
-                    // bench game's own assemblies), and a generator of OUR OWN keeps the
-                    // component's untouched — that one belongs to its rendering.
-                    _getGenerationSettings = TypeHelper.UI_TextType.GetMethod("GetGenerationSettings",
-                        BindingFlags.Public | BindingFlags.Instance);
-                    _getPixelAdjustedRect = TypeHelper.UI_TextType.GetMethod("GetPixelAdjustedRect",
-                        BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
-                    if (genType != null)
-                    {
-                        foreach (var m in genType.GetMethods(BindingFlags.Public | BindingFlags.Instance))
-                        {
-                            if (m.Name != "Populate") continue;
-                            var ps = m.GetParameters();
-                            if (ps.Length == 2 && ps[0].ParameterType == typeof(string)) { _generatorPopulate = m; break; }
-                        }
-                        try { _ownGenerator = Activator.CreateInstance(genType); } catch { }
-                    }
-                }
-                catch { }
-            }
             if (_cachedGeneratorProp == null || _generatorLinesProp == null
                 || (_lineStartCharField == null && _lineStartCharProp == null))
             { whyNot = "text generator API not resolvable on this runtime"; return null; }

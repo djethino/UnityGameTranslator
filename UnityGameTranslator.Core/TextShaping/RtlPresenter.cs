@@ -86,7 +86,11 @@ namespace UnityGameTranslator.Core.TextShaping
                     // transition worth restoring for.
                     if (!RtlText.ContainsPresentationForms(value))
                     {
-                        RestoreIfFlagged(instance, compId, prop);
+                        // ⚠ Not for an echo of our own word-cut text: restoring the engine's wrap
+                        // there let it re-cut our explicit lines by character in a box the
+                        // layout had just shrunk to them (bench: a Thai label in three pieces).
+                        if (TranslatorCore.TryGetPresentedLogical(value) == null)
+                            RestoreIfFlagged(instance, compId, prop);
                         // A word reflow queued a moment ago by PresentSyllabic is this text's,
                         // not a leftover: only an RTL reflow is stale here.
                         if (_reflows.TryGetValue(compId, out var queued) && queued.Kind != ReflowKind.UGuiWords)
@@ -333,10 +337,10 @@ namespace UnityGameTranslator.Core.TextShaping
 
             // UI.Text does not break a line on U+200B (bench: a Thai paragraph cut inside its
             // words with the boundaries in place). Same two passes as its RTL text: the engine
-            // lays the string out and sizes the box, then the reflow measures a copy where each
-            // boundary is a space — which the legacy generator does break on — and puts a
-            // newline at every line start it reports, the engine's own wrapping held off while
-            // those lines are displayed. TMP and UI Toolkit break on the boundary themselves.
+            // lays the string out and sizes the box, then the reflow cuts the text on its
+            // boundaries against that width with the engine's own character advances, the
+            // engine's wrapping held off while those lines are displayed. TMP and UI Toolkit
+            // break on the boundary themselves.
             if (needsBreak && compId != -1 && working.IndexOf(WordBreaker.ZeroWidthSpace) >= 0
                 && TypeHelper.UI_TextType != null && TypeHelper.UI_TextType.IsAssignableFrom(instance.GetType()))
             {
@@ -346,7 +350,7 @@ namespace UnityGameTranslator.Core.TextShaping
                     Comp = new WeakReference(instance),
                     Logical = logical,
                     Assigned = working,
-                    Measure = working.Replace(WordBreaker.ZeroWidthSpace, ' '),
+                    Measure = working,
                     Mirror = false,
                     Kind = ReflowKind.UGuiWords,
                 };
@@ -382,8 +386,8 @@ namespace UnityGameTranslator.Core.TextShaping
         #region Deferred reflow (pass 2) — UI.Text, NGUI
 
         // UGuiWords: a UI.Text holding word boundaries (U+200B) the engine does not break on —
-        // Thai, Lao, Khmer, Myanmar. Measured on a copy where each boundary is a space, which the
-        // legacy generator DOES break on; its line starts are then applied to the real string.
+        // Thai, Lao, Khmer, Myanmar. Cut on those boundaries by us, against the box width, with
+        // the engine's own advance per character (BuildUGuiWordLines).
         private enum ReflowKind { UGuiText, UGuiWords, Ngui }
 
         private sealed class Reflow
@@ -441,6 +445,8 @@ namespace UnityGameTranslator.Core.TextShaping
         private static PropertyInfo _cachedGeneratorProp;   // Text.cachedTextGenerator
         private static PropertyInfo _generatorLinesProp;    // TextGenerator.lines -> IList<UILineInfo>
         private static PropertyInfo _generatorCharCountProp; // TextGenerator.characterCount
+        private static PropertyInfo _generatorCharsProp;     // TextGenerator.characters -> IList<UICharInfo>
+        private static FieldInfo _charWidthField;            // UICharInfo.charWidth
         private static PropertyInfo _supportRichTextProp;   // Text.supportRichText
         // The redraw gate (WillBeRedrawn): Graphic.canvas, Graphic.canvasRenderer, CanvasRenderer.cull.
         private static PropertyInfo _canvasProp;
@@ -517,7 +523,7 @@ namespace UnityGameTranslator.Core.TextShaping
                         if (entry.Kind == ReflowKind.UGuiText)
                             final = BuildUGuiLinesNow(comp, entry.Measure, out whyOwn);
                         else if (entry.Kind == ReflowKind.UGuiWords)
-                            final = BuildUGuiLinesNow(comp, entry.Measure, out whyOwn, entry.Assigned);
+                            final = BuildUGuiWordLines(comp, entry.Assigned, out whyOwn);
                         if (_fallbackLogBudget > 0)
                         {
                             _fallbackLogBudget--;
@@ -600,10 +606,10 @@ namespace UnityGameTranslator.Core.TextShaping
                 case ReflowKind.UGuiWords:
                     // The engine must have laid the assigned text out first — same reason as
                     // above, the box has its width for THIS text only then; its generator saying
-                    // so is the proof. Then our own generator measures the spaced copy at that
-                    // width and the real string is sliced at the line starts it reports.
+                    // so is the proof. Then the text is cut on its word boundaries against that
+                    // width, with the engine's own advance per character.
                     if (BuildPerLineVisual(comp, entry.Assigned, out whyNot) == null) return null;
-                    return BuildUGuiLinesNow(comp, entry.Measure, out whyNot, entry.Assigned);
+                    return BuildUGuiWordLines(comp, entry.Assigned, out whyNot);
                 default:
                     return BuildNguiLines(comp, entry.Measure, out whyNot);
             }
@@ -676,6 +682,13 @@ namespace UnityGameTranslator.Core.TextShaping
                 var genType = _cachedGeneratorProp?.PropertyType;
                 _generatorLinesProp = genType?.GetProperty("lines", BindingFlags.Public | BindingFlags.Instance);
                 _generatorCharCountProp = genType?.GetProperty("characterCount", BindingFlags.Public | BindingFlags.Instance);
+                _generatorCharsProp = genType?.GetProperty("characters", BindingFlags.Public | BindingFlags.Instance);
+                if (_generatorCharsProp != null)
+                {
+                    var charsType = _generatorCharsProp.PropertyType;
+                    if (charsType.IsGenericType && charsType.GetGenericArguments().Length == 1)
+                        _charWidthField = charsType.GetGenericArguments()[0].GetField("charWidth", BindingFlags.Public | BindingFlags.Instance);
+                }
                 // UILineInfo lives in the text-rendering assembly, not necessarily UI's:
                 // the generic argument of TextGenerator.lines (IList<UILineInfo>) is the
                 // reliable way to it.
@@ -752,12 +765,102 @@ namespace UnityGameTranslator.Core.TextShaping
         /// reflow, after a drawn component has had its frames. Null when the API or the layout
         /// is not there.
         /// </summary>
-        /// <param name="sliceFrom">
-        /// The string the lines are cut from when it is not the measured one — the real text
-        /// behind a spaced copy (UGuiWords). Same length as <paramref name="assigned"/>, by
-        /// construction: one boundary character replaced by one space.
-        /// </param>
-        private static string BuildUGuiLinesNow(object comp, string assigned, out string whyNot, string sliceFrom = null)
+        /// <summary>
+        /// A word-broken text cut on its boundaries (U+200B, space) against the box width, with
+        /// the engine's own advance per character: our generator lays the text out on one line
+        /// (both overflows on) and reports every character's width, in the same generation
+        /// pixels as the box width times the scale factor. Greedy: a line ends at the last
+        /// boundary before the width runs out; a stretch with no boundary is cut where the
+        /// engine would have cut it. ⚠ Measured on the REAL string: a spaced copy was one
+        /// space too wide per boundary, and a label that fitted its content-sized box exactly
+        /// came out on two lines (bench: a Thai "Vessels" label in three pieces).
+        /// The boundaries are dropped from the result — nothing to break on once the lines are
+        /// explicit — and the engine's wrapping is held off while they show.
+        /// </summary>
+        private static string BuildUGuiWordLines(object comp, string assigned, out string whyNot)
+        {
+            whyNot = null;
+            EnsureGeneratorPlumbing();
+            if (_generatorPopulate == null || _getGenerationSettings == null || _getPixelAdjustedRect == null
+                || _ownGenerator == null || _generatorCharsProp == null || _charWidthField == null)
+            { whyNot = "generator character widths not readable on this runtime"; return null; }
+            if (assigned.IndexOf('<') >= 0)
+            { whyNot = "rich text tags in a word-broken text — not cut"; return null; }
+
+            try
+            {
+                object rect = _getPixelAdjustedRect.Invoke(comp, null);
+                if (!(rect is UnityEngine.Rect r) || r.width < 1f)
+                { whyNot = "no layout yet (component has no width)"; return null; }
+
+                object settings = _getGenerationSettings.Invoke(comp, new object[] { r.size });
+                if (settings == null) { whyNot = "no generation settings"; return null; }
+                var st = settings.GetType();
+                // One line, every character: both overflows on. HorizontalWrapMode.Overflow = 1,
+                // VerticalWrapMode.Overflow = 1.
+                var hField = st.GetField("horizontalOverflow", BindingFlags.Public | BindingFlags.Instance);
+                var vField = st.GetField("verticalOverflow", BindingFlags.Public | BindingFlags.Instance);
+                if (hField != null) hField.SetValue(settings, Enum.ToObject(hField.FieldType, 1));
+                if (vField != null) vField.SetValue(settings, Enum.ToObject(vField.FieldType, 1));
+                float scale = 1f;
+                var scaleField = st.GetField("scaleFactor", BindingFlags.Public | BindingFlags.Instance);
+                if (scaleField != null) scale = Convert.ToSingle(scaleField.GetValue(settings));
+
+                if (!(bool)_generatorPopulate.Invoke(_ownGenerator, new object[] { assigned, settings }))
+                { whyNot = "generator refused to populate"; return null; }
+                var chars = _generatorCharsProp.GetValue(_ownGenerator, null) as System.Collections.IList;
+                if (chars == null || chars.Count < assigned.Length)
+                { whyNot = $"generator reports {chars?.Count ?? 0} characters for {assigned.Length}"; return null; }
+
+                float limit = r.width * scale;
+                var sb = new System.Text.StringBuilder(assigned.Length + 8);
+                int lineStart = 0;
+                float lineWidth = 0f;
+                int lastBoundary = -1;   // index of the boundary character on this line, or -1
+                for (int i = 0; i < assigned.Length; i++)
+                {
+                    char c = assigned[i];
+                    if (c == '\n')
+                    {
+                        AppendLine(sb, assigned, lineStart, i);
+                        sb.Append('\n');
+                        lineStart = i + 1; lineWidth = 0f; lastBoundary = -1;
+                        continue;
+                    }
+                    float w = Convert.ToSingle(_charWidthField.GetValue(chars[i]));
+                    bool boundary = c == WordBreaker.ZeroWidthSpace || c == ' ';
+                    if (lineWidth + w > limit && i > lineStart)
+                    {
+                        bool cutOnBoundary = lastBoundary >= lineStart;
+                        int cutAt = cutOnBoundary ? lastBoundary : i;
+                        AppendLine(sb, assigned, lineStart, cutAt);
+                        sb.Append('\n');
+                        lineStart = cutOnBoundary ? cutAt + 1 : cutAt;
+                        lastBoundary = -1;
+                        // Width of what already sits on the new line, this character included.
+                        lineWidth = 0f;
+                        for (int k = lineStart; k <= i; k++) lineWidth += Convert.ToSingle(_charWidthField.GetValue(chars[k]));
+                        if (boundary) lastBoundary = i;
+                        continue;
+                    }
+                    lineWidth += w;
+                    if (boundary) lastBoundary = i;
+                }
+                AppendLine(sb, assigned, lineStart, assigned.Length);
+                return sb.ToString();
+            }
+            catch (Exception ex) { whyNot = "word cut failed: " + ex.Message; return null; }
+        }
+
+        /// <summary>One cut line into the result, its zero-width boundaries dropped and its trailing space too.</summary>
+        private static void AppendLine(System.Text.StringBuilder sb, string text, int start, int end)
+        {
+            while (end > start && text[end - 1] == ' ') end--;
+            for (int i = start; i < end; i++)
+                if (text[i] != WordBreaker.ZeroWidthSpace) sb.Append(text[i]);
+        }
+
+        private static string BuildUGuiLinesNow(object comp, string assigned, out string whyNot)
         {
             whyNot = null;
             EnsureGeneratorPlumbing();
@@ -799,7 +902,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 if (!(bool)_generatorPopulate.Invoke(_ownGenerator, new object[] { assigned, settings }))
                 { whyNot = "generator refused to populate"; return null; }
 
-                string cut = BuildPerLineVisual(comp, assigned, out whyNot, _ownGenerator, sliceFrom);
+                string cut = BuildPerLineVisual(comp, assigned, out whyNot, _ownGenerator);
                 DescribeCut(comp, assigned, r, settings, cut);
                 return cut;
             }
@@ -813,7 +916,7 @@ namespace UnityGameTranslator.Core.TextShaping
         /// describe this text yet.
         /// </summary>
         private static string BuildPerLineVisual(object comp, string assigned, out string whyNot,
-                                                 object populated = null, string sliceFrom = null)
+                                                 object populated = null)
         {
             whyNot = null;
             EnsureGeneratorPlumbing();
@@ -892,7 +995,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 if (end <= start) continue;
                 int rawStart = tagMap == null ? start : tagMap[start];
                 int rawEnd = tagMap == null ? end : tagMap[end];
-                slices.Add((sliceFrom ?? assigned).Substring(rawStart, rawEnd - rawStart));
+                slices.Add(assigned.Substring(rawStart, rawEnd - rawStart));
             }
             return ComposeLines(slices);
         }

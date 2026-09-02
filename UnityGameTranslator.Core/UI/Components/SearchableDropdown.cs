@@ -75,6 +75,9 @@ namespace UnityGameTranslator.Core.UI.Components
         /// </summary>
         public event Action<string> OnSelectionChanged;
 
+        /// <summary>The closed field's container, once <see cref="CreateUI"/> has run — what a mark or a help description attaches to.</summary>
+        public GameObject Root => _rootObject;
+
         /// <summary>
         /// Optional: the language a row stands for, so its flag is drawn beside the name.
         ///

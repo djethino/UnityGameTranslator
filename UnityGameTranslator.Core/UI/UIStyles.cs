@@ -230,6 +230,32 @@ namespace UnityGameTranslator.Core.UI
         // see QualityBar.CountTags.
         public static readonly Color StatusModUi = Of(Theme.TagModUi);
 
+        // ── Waiting for Apply ─────────────────────────────────────────────────────────────────
+        //
+        // The diff convention, on the status ramp: added = green, changed = amber, removed = red.
+        // Drawn by Components.PendingMarks and nowhere else — a screen that needs to say "this
+        // is waiting for Apply" registers the element there rather than colouring it itself, so
+        // the same fact reads the same way on every screen with an Apply button.
+        public const float PendingBarWidth = 3f;
+
+        public static Color PendingBar(Components.PendingState state)
+        {
+            switch (state)
+            {
+                case Components.PendingState.Added: return StatusSuccess;
+                case Components.PendingState.Modified: return StatusWarning;
+                case Components.PendingState.Removed: return StatusError;
+                default: return Transparent;
+            }
+        }
+
+        /// <summary>The faint wash behind a whole row that is added or removed — the bar alone reads as one field.</summary>
+        public static Color PendingTint(Components.PendingState state)
+        {
+            var c = PendingBar(state);
+            return new Color(c.r, c.g, c.b, 0.12f);
+        }
+
         // ── What a translation is MADE OF ─────────────────────────────────────────────────────
         //
         // ⚠ Its own five keys, and not the status colours above, which is the whole point.

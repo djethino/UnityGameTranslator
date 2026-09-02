@@ -17,6 +17,15 @@ namespace UnityGameTranslator.Core.UI.Panels
     /// </summary>
     public abstract class TranslatorPanelBase : PanelBase
     {
+        /// <summary>
+        /// What this panel's Apply button will act on — every screen with an Apply registers
+        /// each of its fields and rows here, once, with the test that says whether it changed.
+        /// One list feeds both the "Apply (N)" count and the mark drawn on each waiting element,
+        /// so the two cannot disagree (see <see cref="PendingMarks"/>). On the base, like the
+        /// scope strip: a screen that gets an Apply later must not have to invent its own.
+        /// </summary>
+        protected readonly PendingMarks Pending = new PendingMarks();
+
         #region Style Helpers (delegates to UIStyles)
 
         /// <summary>

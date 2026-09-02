@@ -441,6 +441,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Setup change listeners for tracking pending changes
             SetupChangeListeners();
+            RegisterPendingFields();
         }
 
         private void CreateGeneralTabContent(GameObject parent)
@@ -2666,109 +2667,128 @@ namespace UnityGameTranslator.Core.UI.Panels
         }
 
         /// <summary>
-        /// Counts how many settings differ from their initial values.
+        /// How many settings differ from their initial values — counted AND marked in one pass,
+        /// from the list <see cref="RegisterPendingFields"/> built (see PendingMarks).
         /// </summary>
         private int CountPendingChanges()
         {
             if (_initialSnapshot == null) return 0;
+            return Pending.Refresh();
+        }
 
-            int count = 0;
+        /// <summary>
+        /// Every field Apply writes, with the test that says whether it changed — the SAME
+        /// readers Apply uses, so what the counter promises and what Apply writes cannot drift
+        /// apart. Each test reads the snapshot at call time: the snapshot moves on Apply and on
+        /// every opening, the registrations do not.
+        /// </summary>
+        private void RegisterPendingFields()
+        {
+            var P = Pending;
+            ConfigSnapshot S() => _initialSnapshot;
 
             // General
-            if (_enableTranslationsToggle.isOn != _initialSnapshot.enable_translations) count++;
-            if (_translateModUIToggle.isOn != _initialSnapshot.translate_mod_ui) count++;
-            if (NormalizeInterfaceFont(_interfaceFontDropdown?.SelectedValue) != _initialSnapshot.interface_font) count++;
+            P.Track(_enableTranslationsToggle.gameObject, () => _enableTranslationsToggle.isOn != S().enable_translations);
+            P.Track(_translateModUIToggle.gameObject, () => _translateModUIToggle.isOn != S().translate_mod_ui);
+            P.Track(_interfaceFontDropdown?.Root, () => NormalizeInterfaceFont(_interfaceFontDropdown?.SelectedValue) != S().interface_font);
 
             // Languages
-            string currentSource = _sourceLanguageDropdown.SelectedValue;
-            string snapshotSource = _initialSnapshot.source_language == "auto" ? "auto (Detect)" : _initialSnapshot.source_language;
-            if (currentSource != snapshotSource) count++;
+            P.Track(_sourceLanguageDropdown.Root, () =>
+                _sourceLanguageDropdown.SelectedValue != (S().source_language == "auto" ? "auto (Detect)" : S().source_language));
+            P.Track(_targetLanguageDropdown.Root, () =>
+                _targetLanguageDropdown.SelectedValue != (S().target_language == "auto" ? "auto (System)" : S().target_language));
 
-            string currentTarget = _targetLanguageDropdown.SelectedValue;
-            string snapshotTarget = _initialSnapshot.target_language == "auto" ? "auto (System)" : _initialSnapshot.target_language;
-            if (currentTarget != snapshotTarget) count++;
-
-            // Hotkey
-            if (_hotkeyCapture.HotkeyString != _initialSnapshot.settings_hotkey) count++;
-            if (_hotkeyToggleTranslations.HotkeyString != _initialSnapshot.toggle_translations_hotkey) count++;
-            if (_hotkeyToggleAI.HotkeyString != _initialSnapshot.toggle_ai_hotkey) count++;
-            if (_hotkeyToggleImages.HotkeyString != _initialSnapshot.toggle_images_hotkey) count++;
-            if (_hotkeyToggleFonts.HotkeyString != _initialSnapshot.toggle_fonts_hotkey) count++;
-            if (_hotkeyToggleOverlay.HotkeyString != _initialSnapshot.toggle_overlay_hotkey) count++;
-            if (_hotkeyOpenInspector.HotkeyString != _initialSnapshot.open_inspector_hotkey) count++;
-            if (_hotkeyOpenUpload.HotkeyString != _initialSnapshot.open_upload_hotkey) count++;
-            if (_hotkeyOpenExclusion.HotkeyString != _initialSnapshot.open_exclusion_mode_hotkey) count++;
-            if (_hotkeyOpenTextEditor.HotkeyString != _initialSnapshot.open_text_editor_hotkey) count++;
-            if (_hotkeyForceScan.HotkeyString != _initialSnapshot.force_scan_hotkey) count++;
+            // Hotkeys
+            P.Track(_hotkeyCapture.Root, () => _hotkeyCapture.HotkeyString != S().settings_hotkey);
+            P.Track(_hotkeyToggleTranslations.Root, () => _hotkeyToggleTranslations.HotkeyString != S().toggle_translations_hotkey);
+            P.Track(_hotkeyToggleAI.Root, () => _hotkeyToggleAI.HotkeyString != S().toggle_ai_hotkey);
+            P.Track(_hotkeyToggleImages.Root, () => _hotkeyToggleImages.HotkeyString != S().toggle_images_hotkey);
+            P.Track(_hotkeyToggleFonts.Root, () => _hotkeyToggleFonts.HotkeyString != S().toggle_fonts_hotkey);
+            P.Track(_hotkeyToggleOverlay.Root, () => _hotkeyToggleOverlay.HotkeyString != S().toggle_overlay_hotkey);
+            P.Track(_hotkeyOpenInspector.Root, () => _hotkeyOpenInspector.HotkeyString != S().open_inspector_hotkey);
+            P.Track(_hotkeyOpenUpload.Root, () => _hotkeyOpenUpload.HotkeyString != S().open_upload_hotkey);
+            P.Track(_hotkeyOpenExclusion.Root, () => _hotkeyOpenExclusion.HotkeyString != S().open_exclusion_mode_hotkey);
+            P.Track(_hotkeyOpenTextEditor.Root, () => _hotkeyOpenTextEditor.HotkeyString != S().open_text_editor_hotkey);
+            P.Track(_hotkeyForceScan.Root, () => _hotkeyForceScan.HotkeyString != S().force_scan_hotkey);
 
             // Translation (Backend + Capture)
-            if (_captureKeysOnlyToggle.isOn != _initialSnapshot.capture_keys_only) count++;
-            if (_debugLoggingToggle != null && _debugLoggingToggle.isOn != _initialSnapshot.debug) count++;
-            if (_debugAiToggle != null && _debugAiToggle.isOn != _initialSnapshot.debug_ai) count++;
-            if (GetSelectedBackendConfig() != _initialSnapshot.translation_backend) count++;
+            P.Track(_captureKeysOnlyToggle.gameObject, () => _captureKeysOnlyToggle.isOn != S().capture_keys_only);
+            P.Track(_debugLoggingToggle?.gameObject, () => _debugLoggingToggle.isOn != S().debug);
+            P.Track(_debugAiToggle?.gameObject, () => _debugAiToggle.isOn != S().debug_ai);
+            // The backend is one config value read from two dropdowns: the type owns a change
+            // of kind (AI or service), the provider a change of service within the API kind.
+            P.Track(_backendTypeDropdown?.Root, () => (S().translation_backend == "llm") != (GetSelectedBackendConfig() == "llm"));
+            P.Track(_providerDropdown?.Root, () =>
+            {
+                string now = GetSelectedBackendConfig();
+                return now != "llm" && S().translation_backend != "llm" && now != S().translation_backend;
+            });
 
             // Counted on its own, because the toggle no longer moves the backend: without this
             // line, switching translation off and pressing nothing would leave Apply reading
             // "Close" and the change would be silently dropped on the way out.
-            var runsNow = _enableTranslationBackendToggle != null && _enableTranslationBackendToggle.isOn;
-            if (runsNow != _initialSnapshot.enable_ai) count++;
-            if (_aiUrlInput.Text != _initialSnapshot.ai_url) count++;
-            if ((_aiApiKeyInput.Text ?? "") != _initialSnapshot.ai_api_key) count++;
-            if ((_modelDropdown.SelectedValue ?? "") != _initialSnapshot.ai_model) count++;
-            if (_gameContextInput.Text != _initialSnapshot.game_context) count++;
-            if (_strictSourceToggle.isOn != _initialSnapshot.strict_source_language) count++;
-            if ((_googleApiKeyInput?.Text ?? "") != _initialSnapshot.google_api_key) count++;
-            if ((_deeplApiKeyInput?.Text ?? "") != _initialSnapshot.deepl_api_key) count++;
-            if (_deeplUseFreeToggle.isOn != _initialSnapshot.deepl_use_free) count++;
-            float parsedDelay;
-            float currentDelay = (float.TryParse(_rateLimitDelayInput?.Text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out parsedDelay) && parsedDelay >= 0.1f) ? parsedDelay : 3f;
-            if (Math.Abs(currentDelay - _initialSnapshot.rate_limit_retry_delay) > 0.01f) count++;
+            P.Track(_enableTranslationBackendToggle?.gameObject, () =>
+                (_enableTranslationBackendToggle != null && _enableTranslationBackendToggle.isOn) != S().enable_ai);
+            P.Track(_aiUrlInput.Component.gameObject, () => _aiUrlInput.Text != S().ai_url);
+            P.Track(_aiApiKeyInput.Component.gameObject, () => (_aiApiKeyInput.Text ?? "") != S().ai_api_key);
+            P.Track(_modelDropdown.Root, () => (_modelDropdown.SelectedValue ?? "") != S().ai_model);
+            P.Track(_gameContextInput.Component.gameObject, () => _gameContextInput.Text != S().game_context);
+            P.Track(_strictSourceToggle.gameObject, () => _strictSourceToggle.isOn != S().strict_source_language);
+            P.Track(_googleApiKeyInput?.Component.gameObject, () => (_googleApiKeyInput?.Text ?? "") != S().google_api_key);
+            P.Track(_deeplApiKeyInput?.Component.gameObject, () => (_deeplApiKeyInput?.Text ?? "") != S().deepl_api_key);
+            P.Track(_deeplUseFreeToggle.gameObject, () => _deeplUseFreeToggle.isOn != S().deepl_use_free);
+            P.Track(_rateLimitDelayInput?.Component.gameObject, () =>
+            {
+                float parsedDelay;
+                float currentDelay = (float.TryParse(_rateLimitDelayInput?.Text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out parsedDelay) && parsedDelay >= 0.1f) ? parsedDelay : 3f;
+                return Math.Abs(currentDelay - S().rate_limit_retry_delay) > 0.01f;
+            });
 
-            // Advanced (AI) — counted through the SAME readers Apply uses, so what the counter
-            // promises and what Apply writes cannot drift apart.
-            int parsedAttempts;
-            int currentAttempts = (int.TryParse((_aiMaxAttemptsInput?.Text ?? "").Trim(), System.Globalization.NumberStyles.Integer,
-                                   System.Globalization.CultureInfo.InvariantCulture, out parsedAttempts)
-                                   && parsedAttempts >= 1 && parsedAttempts <= 10)
-                                  ? parsedAttempts : Placeholders.MaxAttempts;
-            if (currentAttempts != _initialSnapshot.ai_max_attempts) count++;
-            if (Math.Abs(TemperatureFromText(_aiTemperatureInput?.Text, 0.0) - _initialSnapshot.ai_temperature) > 0.001) count++;
-            if (Math.Abs(TemperatureFromText(_aiTemperatureRepairInput?.Text, 0.3) - _initialSnapshot.ai_temperature_repair) > 0.001) count++;
-            if (Math.Abs(TemperatureFromText(_aiTemperatureRetranslateInput?.Text, 0.8) - _initialSnapshot.ai_temperature_retranslate) > 0.001) count++;
-            if (SeedToText(SeedFromText(_aiSeedInput?.Text)) != _initialSnapshot.ai_seed) count++;
-            if (SeedToText(SeedFromText(_aiSeedRepairInput?.Text)) != _initialSnapshot.ai_seed_repair) count++;
-            if (SeedToText(SeedFromText(_aiSeedRetranslateInput?.Text)) != _initialSnapshot.ai_seed_retranslate) count++;
+            // Advanced (AI) — the same readers Apply uses.
+            P.Track(_aiMaxAttemptsInput?.Component.gameObject, () =>
+            {
+                int parsedAttempts;
+                int currentAttempts = (int.TryParse((_aiMaxAttemptsInput?.Text ?? "").Trim(), System.Globalization.NumberStyles.Integer,
+                                       System.Globalization.CultureInfo.InvariantCulture, out parsedAttempts)
+                                       && parsedAttempts >= 1 && parsedAttempts <= 10)
+                                      ? parsedAttempts : Placeholders.MaxAttempts;
+                return currentAttempts != S().ai_max_attempts;
+            });
+            P.Track(_aiTemperatureInput?.Component.gameObject, () => Math.Abs(TemperatureFromText(_aiTemperatureInput?.Text, 0.0) - S().ai_temperature) > 0.001);
+            P.Track(_aiTemperatureRepairInput?.Component.gameObject, () => Math.Abs(TemperatureFromText(_aiTemperatureRepairInput?.Text, 0.3) - S().ai_temperature_repair) > 0.001);
+            P.Track(_aiTemperatureRetranslateInput?.Component.gameObject, () => Math.Abs(TemperatureFromText(_aiTemperatureRetranslateInput?.Text, 0.8) - S().ai_temperature_retranslate) > 0.001);
+            P.Track(_aiSeedInput?.Component.gameObject, () => SeedToText(SeedFromText(_aiSeedInput?.Text)) != S().ai_seed);
+            P.Track(_aiSeedRepairInput?.Component.gameObject, () => SeedToText(SeedFromText(_aiSeedRepairInput?.Text)) != S().ai_seed_repair);
+            P.Track(_aiSeedRetranslateInput?.Component.gameObject, () => SeedToText(SeedFromText(_aiSeedRetranslateInput?.Text)) != S().ai_seed_retranslate);
 
             // Online
-            if (_onlineModeToggle.isOn != _initialSnapshot.online_mode) count++;
-            if (FrequencyDisplayToConfig(_checkFrequencyDropdown.SelectedValue) != _initialSnapshot.update_check_frequency) count++;
-            if (_realtimeOwnToggle.isOn != _initialSnapshot.realtime_own_translation) count++;
-            if (_notifyUpdatesToggle.isOn != _initialSnapshot.notify_updates) count++;
-            if (_autoDownloadToggle.isOn != _initialSnapshot.auto_download) count++;
-            if (_checkModUpdatesToggle.isOn != _initialSnapshot.check_mod_updates) count++;
-            if (_notifyPrereleasesToggle.isOn != _initialSnapshot.notify_prereleases) count++;
-            if (_notificationsEnabledToggle.isOn != _initialSnapshot.notifications_enabled) count++;
-            if (PositionDisplayToConfig(_notificationPositionDropdown.SelectedValue) != _initialSnapshot.notification_position) count++;
+            P.Track(_onlineModeToggle.gameObject, () => _onlineModeToggle.isOn != S().online_mode);
+            P.Track(_checkFrequencyDropdown.Root, () => FrequencyDisplayToConfig(_checkFrequencyDropdown.SelectedValue) != S().update_check_frequency);
+            P.Track(_realtimeOwnToggle.gameObject, () => _realtimeOwnToggle.isOn != S().realtime_own_translation);
+            P.Track(_notifyUpdatesToggle.gameObject, () => _notifyUpdatesToggle.isOn != S().notify_updates);
+            P.Track(_autoDownloadToggle.gameObject, () => _autoDownloadToggle.isOn != S().auto_download);
+            P.Track(_checkModUpdatesToggle.gameObject, () => _checkModUpdatesToggle.isOn != S().check_mod_updates);
+            P.Track(_notifyPrereleasesToggle.gameObject, () => _notifyPrereleasesToggle.isOn != S().notify_prereleases);
+            P.Track(_notificationsEnabledToggle.gameObject, () => _notificationsEnabledToggle.isOn != S().notifications_enabled);
+            P.Track(_notificationPositionDropdown.Root, () => PositionDisplayToConfig(_notificationPositionDropdown.SelectedValue) != S().notification_position);
 
             // Advanced (per-game settings)
-            if (_disableEventSystemOverrideToggle.isOn != _initialSnapshot.disable_eventsystem_override) count++;
-            if (_captureKeyboardToggle.isOn != _initialSnapshot.capture_keyboard) count++;
-            if (_captureKeyboardFocusOnlyToggle.isOn != _initialSnapshot.capture_keyboard_focus_only) count++;
-            if (_captureGameMenusToggle.isOn != _initialSnapshot.capture_game_menus) count++;
-            if (_captureGameClicksToggle.isOn != _initialSnapshot.capture_game_clicks) count++;
-            if (_captureMouseAxesToggle.isOn != _initialSnapshot.capture_mouse_axes) count++;
-            if (_pauseGameToggle.isOn != _initialSnapshot.pause_game) count++;
-            if (!Mathf.Approximately(_opacityFocusedSlider.value, _initialSnapshot.panel_opacity_focused)) count++;
-            if (!Mathf.Approximately(_opacityUnfocusedSlider.value, _initialSnapshot.panel_opacity_unfocused)) count++;
+            P.Track(_disableEventSystemOverrideToggle.gameObject, () => _disableEventSystemOverrideToggle.isOn != S().disable_eventsystem_override);
+            P.Track(_captureKeyboardToggle.gameObject, () => _captureKeyboardToggle.isOn != S().capture_keyboard);
+            P.Track(_captureKeyboardFocusOnlyToggle.gameObject, () => _captureKeyboardFocusOnlyToggle.isOn != S().capture_keyboard_focus_only);
+            P.Track(_captureGameMenusToggle.gameObject, () => _captureGameMenusToggle.isOn != S().capture_game_menus);
+            P.Track(_captureGameClicksToggle.gameObject, () => _captureGameClicksToggle.isOn != S().capture_game_clicks);
+            P.Track(_captureMouseAxesToggle.gameObject, () => _captureMouseAxesToggle.isOn != S().capture_mouse_axes);
+            P.Track(_pauseGameToggle.gameObject, () => _pauseGameToggle.isOn != S().pause_game);
+            P.Track(_opacityFocusedSlider.gameObject, () => !Mathf.Approximately(_opacityFocusedSlider.value, S().panel_opacity_focused));
+            P.Track(_opacityUnfocusedSlider.gameObject, () => !Mathf.Approximately(_opacityUnfocusedSlider.value, S().panel_opacity_unfocused));
 
             // Proxy / Network
-            if (ProxyModeDisplayToConfig(_proxyModeDropdown.SelectedValue) != _initialSnapshot.proxy_mode) count++;
-            if ((_proxyUrlInput.Text ?? "").Trim() != _initialSnapshot.proxy_url) count++;
-            if ((_proxyUserInput.Text ?? "") != _initialSnapshot.proxy_username) count++;
-            if ((_proxyPassInput.Text ?? "") != _initialSnapshot.proxy_password) count++;
-            if (_proxyBypassLocalToggle.isOn != _initialSnapshot.proxy_bypass_local) count++;
-
-            return count;
+            P.Track(_proxyModeDropdown.Root, () => ProxyModeDisplayToConfig(_proxyModeDropdown.SelectedValue) != S().proxy_mode);
+            P.Track(_proxyUrlInput.Component.gameObject, () => (_proxyUrlInput.Text ?? "").Trim() != S().proxy_url);
+            P.Track(_proxyUserInput.Component.gameObject, () => (_proxyUserInput.Text ?? "") != S().proxy_username);
+            P.Track(_proxyPassInput.Component.gameObject, () => (_proxyPassInput.Text ?? "") != S().proxy_password);
+            P.Track(_proxyBypassLocalToggle.gameObject, () => _proxyBypassLocalToggle.isOn != S().proxy_bypass_local);
         }
 
         /// <summary>

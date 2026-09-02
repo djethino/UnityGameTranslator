@@ -185,6 +185,22 @@ namespace UnityGameTranslator.Core.UI.Panels
             // EXCLUDE: code-managed dynamic text ("Apply"/"Close"/"Apply (N)") — async translation
             // would race with UpdateApplyButtonText and break the button. Static labels stay translatable.
             RegisterExcluded(_applyBtn.ButtonText);
+
+            RegisterPendingFields();
+        }
+
+        /// <summary>
+        /// The fields built once with the panel, registered once (see PendingMarks and the
+        /// panel base). The lists — fonts, exclusions, rules — register their rows each time
+        /// they are rebuilt, under a group of their own.
+        /// </summary>
+        private void RegisterPendingFields()
+        {
+            Pending.Track(_typewritingDetectionToggle?.gameObject, () => _typewritingDetectionToggle.isOn != TranslatorCore.TypewritingDetection);
+            Pending.Track(_concatDetectionToggle?.gameObject, () => _concatDetectionToggle.isOn != TranslatorCore.ConcatDetection);
+            Pending.Track(_enableFontReplacementToggle?.gameObject, () => _enableFontReplacementToggle.isOn != TranslatorCore.Config.enable_font_replacement);
+            Pending.Track(_enableImageReplacementToggle?.gameObject, () => _enableImageReplacementToggle.isOn != TranslatorCore.Config.enable_image_replacement);
+            Pending.Track(_fontAtlasSizeDropdown?.Root, () => _pendingAtlasSize != TranslatorCore.Config.max_font_atlas_size);
         }
 
         #region Tools Tab (formerly Behavior)
@@ -764,6 +780,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void RefreshExclusionsList()
         {
             if (_exclusionsListContainer == null) return;
+            Pending.ClearGroup("exclusions");
 
             // Clear existing items (manual iteration for IL2CPP compatibility)
             for (int i = _exclusionsListContainer.transform.childCount - 1; i >= 0; i--)
@@ -800,37 +817,29 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 var row = UIStyles.CreateFormRow(_exclusionsListContainer, $"Row_{pattern.GetHashCode()}", UIStyles.RowHeightNormal, 5);
 
-                // Show pattern with visual indicator for pending state
-                string displayText = pattern;
-                if (isPending) displayText = $"+ {pattern}";
-                else if (isRemoved) displayText = $"- {pattern}";
-
-                var patternLabel = UIFactory.CreateLabel(row, "PatternLabel", displayText, TextAnchor.MiddleLeft);
+                // What this row is waiting for is said by the shared mark (green added, red
+                // removed) and, for a removal, in words — the row stays until Apply so the
+                // removal can be seen and undone, exactly like a change to any other field.
+                var patternLabel = UIFactory.CreateLabel(row, "PatternLabel", pattern, TextAnchor.MiddleLeft);
                 patternLabel.fontSize = UIStyles.FontSizeSmall;
+                patternLabel.color = isRemoved ? UIStyles.TextMuted : UIStyles.TextPrimary;
                 UIFactory.SetLayoutElement(patternLabel.gameObject, flexibleWidth: 9999);
 
-                // Set color based on state
-                if (isPending)
-                {
-                    patternLabel.color = UIStyles.StatusSuccess;
-                }
-                else if (isRemoved)
-                {
-                    patternLabel.color = UIStyles.StatusError;
-                }
-                else
-                {
-                    patternLabel.color = UIStyles.TextPrimary;
-                }
+                var state = isPending ? PendingState.Added : isRemoved ? PendingState.Removed : PendingState.None;
+                Pending.TrackState(row, () => state, "exclusions");
 
-                var deleteBtn = CreateSecondaryButton(row, "DeleteBtn", isRemoved ? "\u21a9" : "X", 30);
                 var capturedPattern = pattern;
-                var capturedIsRemoved = isRemoved;
-
                 if (isRemoved)
                 {
-                    // Undo removal
-                    deleteBtn.OnClick += () =>
+                    var removedLabel = UIFactory.CreateLabel(row, "RemovedLabel", "Removed on Apply", TextAnchor.MiddleRight);
+                    removedLabel.fontSize = UIStyles.FontSizeSmall;
+                    removedLabel.color = UIStyles.StatusError;
+                    UIFactory.SetLayoutElement(removedLabel.gameObject, minWidth: 110);
+                    RegisterUIText(removedLabel);
+
+                    var undoBtn = CreateSecondaryButton(row, "UndoBtn", "Undo", 50);
+                    RegisterUIText(undoBtn.ButtonText);
+                    undoBtn.OnClick += () =>
                     {
                         _pendingExclusionRemoves.Remove(capturedPattern);
                         RefreshExclusionsList();
@@ -839,6 +848,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
                 else
                 {
+                    var deleteBtn = CreateSecondaryButton(row, "DeleteBtn", "X", 30);
                     deleteBtn.OnClick += () => OnDeleteExclusionClicked(capturedPattern);
                 }
             }
@@ -1104,11 +1114,24 @@ namespace UnityGameTranslator.Core.UI.Panels
         // Pending font overrides (local copy, applied on Apply button)
         private List<FontOverrideRule> _pendingFontOverrides = new List<FontOverrideRule>();
         private List<FontOverrideRule> _initialFontOverrides = new List<FontOverrideRule>();
+        // Rules that go away on Apply. Kept in the pending list (and on screen, marked) until
+        // then, so the removal can be seen and undone; Apply writes the list without them.
+        private readonly HashSet<FontOverrideRule> _removedFontOverrides = new HashSet<FontOverrideRule>();
+
+        /// <summary>The rules Apply will keep: everything pending, minus what is marked for removal.</summary>
+        private List<FontOverrideRule> KeptFontOverrides()
+        {
+            var kept = new List<FontOverrideRule>(_pendingFontOverrides.Count);
+            foreach (var rule in _pendingFontOverrides)
+                if (!_removedFontOverrides.Contains(rule)) kept.Add(rule);
+            return kept;
+        }
 
         private void InitPendingFontOverrides()
         {
             _pendingFontOverrides.Clear();
             _initialFontOverrides.Clear();
+            _removedFontOverrides.Clear();
             foreach (var rule in TranslatorCore.FontOverrides)
             {
                 _pendingFontOverrides.Add(CloneRule(rule));
@@ -1293,11 +1316,12 @@ namespace UnityGameTranslator.Core.UI.Panels
                 UnityEngine.Object.Destroy(_fontOverridesListContainer.transform.GetChild(i).gameObject);
             }
 
+            Pending.ClearGroup("overrides");
+
             if (_overridesCountLabel != null)
             {
-                _overridesCountLabel.text = _pendingFontOverrides.Count > 0
-                    ? $"{_pendingFontOverrides.Count} rule(s)"
-                    : "No rules defined";
+                int kept = _pendingFontOverrides.Count - _removedFontOverrides.Count;
+                _overridesCountLabel.text = kept > 0 ? $"{kept} rule(s)" : "No rules defined";
             }
 
             for (int i = 0; i < _pendingFontOverrides.Count; i++)
@@ -1306,12 +1330,52 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
         }
 
+        /// <summary>
+        /// A rule that goes away on Apply: its card stays, reduced to what identifies it, marked
+        /// and worded as waiting, with the one action that still makes sense.
+        /// </summary>
+        private void CreateRemovedFontOverrideRow(int index, FontOverrideRule rule)
+        {
+            var row = UIFactory.CreateHorizontalGroup(_fontOverridesListContainer, $"Override_{index}",
+                false, false, true, true, 5, new Vector4(5, 5, 8, 8), UIStyles.CardBackground, TextAnchor.MiddleLeft);
+            UIFactory.SetLayoutElement(row, minHeight: UIStyles.RowHeightNormal, flexibleWidth: 9999);
+            Pending.TrackState(row, () => PendingState.Removed, "overrides");
+
+            var matchLabel = UIFactory.CreateLabel(row, "MatchLabel", string.IsNullOrEmpty(rule.match) ? "(empty rule)" : rule.match, TextAnchor.MiddleLeft);
+            matchLabel.fontSize = UIStyles.FontSizeSmall;
+            matchLabel.color = UIStyles.TextMuted;
+            UIFactory.SetLayoutElement(matchLabel.gameObject, flexibleWidth: 9999);
+
+            var removedLabel = UIFactory.CreateLabel(row, "RemovedLabel", "Removed on Apply", TextAnchor.MiddleRight);
+            removedLabel.fontSize = UIStyles.FontSizeSmall;
+            removedLabel.color = UIStyles.StatusError;
+            UIFactory.SetLayoutElement(removedLabel.gameObject, minWidth: 110);
+            RegisterUIText(removedLabel);
+
+            var undoBtn = CreateSecondaryButton(row, "UndoBtn", "Undo", 50);
+            RegisterUIText(undoBtn.ButtonText);
+            undoBtn.OnClick += () =>
+            {
+                _removedFontOverrides.Remove(rule);
+                RefreshFontOverridesList();
+                UpdateApplyButtonText();
+            };
+        }
+
         private void CreateFontOverrideRow(int index, FontOverrideRule rule)
         {
+            if (_removedFontOverrides.Contains(rule)) { CreateRemovedFontOverrideRow(index, rule); return; }
+
             var row = UIFactory.CreateVerticalGroup(_fontOverridesListContainer, $"Override_{index}",
                 false, false, true, true, 3);
             UIFactory.SetLayoutElement(row, minHeight: UIStyles.MultiLineMedium, flexibleWidth: 9999);
             UIStyles.SetBackground(row, UIStyles.CardBackground);
+
+            // A rule the panel opened with is compared field by field to what it was; a rule
+            // added since is one thing waiting as a whole. The lists stay parallel by index —
+            // nothing reorders them, and a removal keeps its slot until Apply.
+            FontOverrideRule initial = index < _initialFontOverrides.Count ? _initialFontOverrides[index] : null;
+            if (initial == null) Pending.TrackState(row, () => PendingState.Added, "overrides");
 
             // Row 1: Match pattern (editable) + enabled toggle + delete button
             var topRow = UIFactory.CreateHorizontalGroup(row, "TopRow", false, false, true, true, 5);
@@ -1335,19 +1399,21 @@ namespace UnityGameTranslator.Core.UI.Panels
                     UpdateApplyButtonText();
                 }
             };
+            if (initial != null)
+                Pending.Track(matchInput.Component.gameObject, () => (rule.match ?? "") != (initial.match ?? ""), "overrides");
 
-            // Delete button
+            // Delete button: a rule the panel opened with waits for Apply, marked and undoable;
+            // one added since simply goes, there is nothing on disk to take back.
             var deleteBtn = UIFactory.CreateButton(topRow, "DeleteBtn", "X");
             UIFactory.SetLayoutElement(deleteBtn.Component.gameObject, minWidth: 28, minHeight: UIStyles.RowHeightNormal);
             UIStyles.SetBackground(deleteBtn.Component.gameObject, UIStyles.ButtonDanger);
             deleteBtn.OnClick += () =>
             {
-                if (capturedIndex < _pendingFontOverrides.Count)
-                {
-                    _pendingFontOverrides.RemoveAt(capturedIndex);
-                    RefreshFontOverridesList();
-                    UpdateApplyButtonText();
-                }
+                if (capturedIndex >= _pendingFontOverrides.Count) return;
+                if (initial != null) _removedFontOverrides.Add(rule);
+                else _pendingFontOverrides.RemoveAt(capturedIndex);
+                RefreshFontOverridesList();
+                UpdateApplyButtonText();
             };
 
             // Row 2: Size multiplier slider + comment
@@ -1382,6 +1448,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                     UpdateApplyButtonText();
                 }
             });
+            if (initial != null)
+                Pending.Track(sizeSliderObj, () => Math.Abs(rule.size_multiplier - initial.size_multiplier) > 0.001f, "overrides");
 
             // RTL alignment for the matched components (only when this translation involves
             // right-to-left text): inherit the font's setting, or force mirror/keep here — the
@@ -1409,6 +1477,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                     UpdateApplyButtonText();
                 }, 150);
                 _overrideRtlDropdowns.Add(rtlDropdown);
+                if (initial != null)
+                    Pending.Track(rtlDropdown.Root, () => !string.Equals(rule.rtl_alignment, initial.rtl_alignment, StringComparison.OrdinalIgnoreCase), "overrides");
             }
         }
 
@@ -1418,6 +1488,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             _rtlControlsVisible = TranslatorCore.TranslationTouchesRtl();
             TranslatorCore.LogInfo($"[TranslationParametersPanel] RefreshFontsList called");
+            Pending.ClearGroup("fonts");
 
             // Clean up searchable dropdowns first
             foreach (var dropdown in _fallbackDropdowns)
@@ -1592,6 +1663,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             enableToggle.isOn = fontInfo.Enabled;
 
             UIHelpers.AddToggleListener(enableToggle, (isOn) => OnFontEnableChanged(capturedFontName, isOn));
+            Pending.Track(toggleObj, () => FontFieldChanged(capturedFontName, (p, i) => p.enabled != i.enabled), "fonts");
 
             // RTL alignment (only when this translation involves right-to-left text): mirror the
             // component's alignment to follow the reading direction, or keep the game's own —
@@ -1606,6 +1678,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 UIFactory.SetLayoutElement(rtlToggleObj, minHeight: UIStyles.RowHeightNormal);
                 rtlToggle.isOn = GetEffectiveFontSettings(capturedFontName).mirrorRtl;
                 UIHelpers.AddToggleListener(rtlToggle, (isOn) => OnFontRtlAlignChanged(capturedFontName, isOn));
+                Pending.Track(rtlToggleObj, () => FontFieldChanged(capturedFontName, (p, i) => p.mirrorRtl != i.mirrorRtl), "fonts");
                 _helpZone?.Describe(rtlToggleObj,
                     "Right-to-left text flips left-aligned components to right-aligned, following the reading direction. Turn off to keep the game's own alignment when its layout was built around one side.");
             }
@@ -1751,6 +1824,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }, width: 350);
 
                 _fallbackDropdowns.Add(dropdown);
+                Pending.Track(dropdown.Root, () => FontFieldChanged(capturedFontName, (p, i) => p.fallback != i.fallback), "fonts");
             }
             else
             {
@@ -1796,6 +1870,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 capturedScaleLabel.text = $"{(int)(rounded * 100)}%";
                 OnFontScaleChanged(capturedFontName, rounded);
             });
+            Pending.Track(sliderObj, () => FontFieldChanged(capturedFontName, (p, i) => Math.Abs(p.sizePercent - i.sizePercent) > 0.001f), "fonts");
 
             // Auto design-scale toggle — folds the font's native design-scale into the size as a
             // baseline (so an imported font matches the game's original size), on top of which the
@@ -1812,7 +1887,28 @@ namespace UnityGameTranslator.Core.UI.Panels
                 autoScaleLabel.fontSize = UIStyles.FontSizeSmall;
                 UIFactory.SetLayoutElement(autoToggleObj, minWidth: 70);
                 UIHelpers.AddToggleListener(autoScaleToggle, (isOn) => OnFontAutoScaleChanged(capturedFontName, isOn));
+                Pending.Track(autoToggleObj, () => FontFieldChanged(capturedFontName, (p, i) => p.scaleAuto != i.scaleAuto), "fonts");
             }
+        }
+
+        /// <summary>
+        /// Whether one setting of a font differs from what the panel opened with. A font that
+        /// appeared after the opening (Refresh List) has no snapshot: what is stored for it now
+        /// stands in, which is what "as it was" means for that font.
+        /// </summary>
+        private bool FontFieldChanged(string fontName,
+            Func<(bool enabled, string fallback, float sizePercent, bool scaleAuto, bool mirrorRtl),
+                 (bool enabled, string fallback, float sizePercent, bool scaleAuto, bool mirrorRtl), bool> differs)
+        {
+            if (!_pendingFontSettings.TryGetValue(fontName, out var pending)) return false;
+            if (!_initialFontSettings.TryGetValue(fontName, out var initial))
+            {
+                var settings = FontManager.GetFontSettings(fontName);
+                initial = (settings?.enabled ?? true, settings?.fallback, FontManager.GetFontSizePercent(fontName),
+                           settings?.scale_auto ?? false,
+                           !string.Equals(settings?.rtl_alignment, "keep", StringComparison.OrdinalIgnoreCase));
+            }
+            return differs(pending, initial);
         }
 
         // Scale dropdown helpers
@@ -2567,7 +2663,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 bool fontOverridesChanged = HasFontOverrideChanges();
                 if (fontOverridesChanged)
                 {
-                    TranslatorCore.SetFontOverrides(new List<FontOverrideRule>(_pendingFontOverrides));
+                    TranslatorCore.SetFontOverrides(KeptFontOverrides());
                 }
 
                 // Apply behavior settings
@@ -2673,52 +2769,11 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// <summary>
         /// Counts how many settings differ from their initial values.
         /// </summary>
-        private int CountPendingChanges()
-        {
-            int count = 0;
-
-            // Fonts - count fonts that differ from initial
-            foreach (var kvp in _pendingFontSettings)
-            {
-                if (_initialFontSettings.TryGetValue(kvp.Key, out var initial))
-                {
-                    bool enabledDiff = kvp.Value.enabled != initial.enabled;
-                    bool fallbackDiff = kvp.Value.fallback != initial.fallback;
-                    bool sizeDiff = Math.Abs(kvp.Value.sizePercent - initial.sizePercent) > 0.001f;
-                    bool autoDiff = kvp.Value.scaleAuto != initial.scaleAuto;
-                    bool rtlDiff = kvp.Value.mirrorRtl != initial.mirrorRtl;
-                    if (enabledDiff || fallbackDiff || sizeDiff || autoDiff || rtlDiff)
-                    {
-                        count++;
-                    }
-                }
-                else
-                {
-                    // New font not in initial - count as change
-                    count++;
-                }
-            }
-
-            // Exclusions - count adds and removes
-            count += _pendingExclusionAdds.Count;
-            count += _pendingExclusionRemoves.Count;
-
-            // Font overrides
-            if (HasFontOverrideChanges()) count++;
-
-            // Behavior settings
-            if (_typewritingDetectionToggle != null && _typewritingDetectionToggle.isOn != TranslatorCore.TypewritingDetection) count++;
-            if (_concatDetectionToggle != null && _concatDetectionToggle.isOn != TranslatorCore.ConcatDetection) count++;
-
-            // Debug toggles (persisted in config.json)
-            if (_enableFontReplacementToggle != null && _enableFontReplacementToggle.isOn != TranslatorCore.Config.enable_font_replacement) count++;
-            if (_enableImageReplacementToggle != null && _enableImageReplacementToggle.isOn != TranslatorCore.Config.enable_image_replacement) count++;
-
-            // Font sharpness (max atlas budget)
-            if (_fontAtlasSizeDropdown != null && _pendingAtlasSize != TranslatorCore.Config.max_font_atlas_size) count++;
-
-            return count;
-        }
+        /// <summary>
+        /// How many things Apply will act on — counted AND marked in one pass, from what the
+        /// fields and the list rows registered (see PendingMarks).
+        /// </summary>
+        private int CountPendingChanges() => Pending.Refresh();
 
         /// <summary>
         /// Updates the Apply button text based on pending changes count.
@@ -2726,6 +2781,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         private bool HasFontOverrideChanges()
         {
+            if (_removedFontOverrides.Count > 0)
+                return true;
             if (_pendingFontOverrides.Count != _initialFontOverrides.Count)
                 return true;
 

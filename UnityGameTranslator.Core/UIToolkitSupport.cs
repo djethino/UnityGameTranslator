@@ -2519,6 +2519,10 @@ namespace UnityGameTranslator.Core
                 foreach (string paragraph in assigned.Split('\n'))
                 {
                     if (paragraph.Length == 0) { lines.Add(""); continue; }
+                    // ⚠ One measure first: most game strings are a button label or a title and
+                    // fit on their line. Going straight to the word-by-word loop cost one engine
+                    // measure PER WORD on every one of them, on every set_text.
+                    if (MeasureWidth(element, paragraph) <= width + 0.5f) { lines.Add(paragraph); continue; }
                     string current = "";
                     foreach (string word in paragraph.Split(' '))
                     {
@@ -2585,6 +2589,11 @@ namespace UnityGameTranslator.Core
                 var styleNow = _styleProp.GetValue(element, null);
                 if (styleNow == null) return;
                 var styleValue = Activator.CreateInstance(_styleTextAlignProp.PropertyType, mirrored);
+                // ⚠ Only when it actually differs. Writing an inline style invalidates the
+                // element's layout, and this runs on every set_text: re-asserting the same value
+                // made UI Toolkit re-lay-out for ever, which is heard as a fan rather than seen
+                // as a bug (user report, right after the single-pass path shipped).
+                if (Equals(_styleTextAlignProp.GetValue(styleNow, null), styleValue)) return;
                 _styleTextAlignProp.SetValue(styleNow, styleValue, null);
             }
             catch { }
@@ -2607,6 +2616,9 @@ namespace UnityGameTranslator.Core
                 var wsType = styleEnumType.IsGenericType ? styleEnumType.GetGenericArguments()[0] : null;
                 if (wsType == null) return;
                 var styleValue = Activator.CreateInstance(styleEnumType, Enum.Parse(wsType, "NoWrap"));
+                // Same rule as MirrorAlign: writing an unchanged inline style still invalidates
+                // the layout, every single set_text.
+                if (Equals(_styleWhiteSpaceProp.GetValue(style, null), styleValue)) return;
                 _styleWhiteSpaceProp.SetValue(style, styleValue, null);
             }
             catch { }

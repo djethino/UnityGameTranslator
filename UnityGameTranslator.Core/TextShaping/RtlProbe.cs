@@ -177,6 +177,15 @@ namespace UnityGameTranslator.Core.TextShaping
                             "5/7 LONG VISUAL (no RTL flag) — single line: correct. Multi-line: EXPECTED broken (wrong breaks, reversed line order) — that is what the generator-readback emission will fix. A best-fit component shrinks instead of wrapping: also worth noting");
                     break;
                 case 5:
+                    // UI.Text draws through an OS font (fontNames), never through an asset of
+                    // ours: U+E000 there is a square whatever the answer. Say so rather than
+                    // let a square pass for a verdict (bench: the first run probed a menu button).
+                    if (TypeHelper.UI_TextType != null && TypeHelper.UI_TextType.IsInstanceOfType(_target))
+                    {
+                        TranslatorCore.LogWarning("[RtlProbe] 6/7 PUA PROBE skipped: this is a UI.Text component, drawn through an OS font — the probe needs a TMP text rendered by OUR font asset. On this game: an in-game TMProOld text (inventory description) — put the mouse on an EMPTY spot of that screen so the fallback picks the longest TMProOld text, then Ctrl+F9.");
+                        Restore();
+                        break;
+                    }
                     // The private-use probe (analyse/issue-24-rtl-arabic.md §5 ter, lot 0): our
                     // font assets carry a glyph reached by INDEX, mapped to U+E000
                     // (TtfFontPipeline.PuaProbeCodepoint). If the engine draws it, a text engine

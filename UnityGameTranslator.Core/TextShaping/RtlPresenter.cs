@@ -87,7 +87,10 @@ namespace UnityGameTranslator.Core.TextShaping
                     if (!RtlText.ContainsPresentationForms(value))
                     {
                         RestoreIfFlagged(instance, compId, prop);
-                        _reflows.Remove(compId);
+                        // A word reflow queued a moment ago by PresentSyllabic is this text's,
+                        // not a leftover: only an RTL reflow is stale here.
+                        if (_reflows.TryGetValue(compId, out var queued) && queued.Kind != ReflowKind.UGuiWords)
+                            _reflows.Remove(compId);
                         return;
                     }
 
@@ -327,6 +330,27 @@ namespace UnityGameTranslator.Core.TextShaping
             TranslatorCore.RegisterPresentedText(working, logical);
             Log(compId, needsBreak && needsReorder ? "words+indic" : needsBreak ? "words" : "indic", logical, working);
             value = working;
+
+            // UI.Text does not break a line on U+200B (bench: a Thai paragraph cut inside its
+            // words with the boundaries in place). Same two passes as its RTL text: the engine
+            // lays the string out and sizes the box, then the reflow measures a copy where each
+            // boundary is a space — which the legacy generator does break on — and puts a
+            // newline at every line start it reports, the engine's own wrapping held off while
+            // those lines are displayed. TMP and UI Toolkit break on the boundary themselves.
+            if (needsBreak && compId != -1 && working.IndexOf(WordBreaker.ZeroWidthSpace) >= 0
+                && TypeHelper.UI_TextType != null && TypeHelper.UI_TextType.IsAssignableFrom(instance.GetType()))
+            {
+                RestoreRewrap(instance, compId);
+                _reflows[compId] = new Reflow
+                {
+                    Comp = new WeakReference(instance),
+                    Logical = logical,
+                    Assigned = working,
+                    Measure = working.Replace(WordBreaker.ZeroWidthSpace, ' '),
+                    Mirror = false,
+                    Kind = ReflowKind.UGuiWords,
+                };
+            }
         }
 
         private static int _dictionaryLogBudget = 3;
@@ -357,7 +381,10 @@ namespace UnityGameTranslator.Core.TextShaping
 
         #region Deferred reflow (pass 2) — UI.Text, NGUI
 
-        private enum ReflowKind { UGuiText, Ngui }
+        // UGuiWords: a UI.Text holding word boundaries (U+200B) the engine does not break on —
+        // Thai, Lao, Khmer, Myanmar. Measured on a copy where each boundary is a space, which the
+        // legacy generator DOES break on; its line starts are then applied to the real string.
+        private enum ReflowKind { UGuiText, UGuiWords, Ngui }
 
         private sealed class Reflow
         {
@@ -489,6 +516,8 @@ namespace UnityGameTranslator.Core.TextShaping
                         string whyOwn = null;
                         if (entry.Kind == ReflowKind.UGuiText)
                             final = BuildUGuiLinesNow(comp, entry.Measure, out whyOwn);
+                        else if (entry.Kind == ReflowKind.UGuiWords)
+                            final = BuildUGuiLinesNow(comp, entry.Measure, out whyOwn, entry.Assigned);
                         if (_fallbackLogBudget > 0)
                         {
                             _fallbackLogBudget--;
@@ -512,7 +541,7 @@ namespace UnityGameTranslator.Core.TextShaping
                         // alignment. NGUI has no such knob; its wrap re-measures the same glyph
                         // advances deterministically (no rendering rounding), so a trimmed line
                         // that fitted keeps fitting — bench holds the proof burden there.
-                        if (entry.Kind == ReflowKind.UGuiText)
+                        if (entry.Kind == ReflowKind.UGuiText || entry.Kind == ReflowKind.UGuiWords)
                             DisableRewrap(comp, id);
 
                         TranslatorPatches.BypassTextPrefix = true;
@@ -568,6 +597,13 @@ namespace UnityGameTranslator.Core.TextShaping
                     // caller's give-up path is where our own Populate comes in, once the layout
                     // has had its frames.
                     return BuildPerLineVisual(comp, entry.Measure, out whyNot);
+                case ReflowKind.UGuiWords:
+                    // The engine must have laid the assigned text out first — same reason as
+                    // above, the box has its width for THIS text only then; its generator saying
+                    // so is the proof. Then our own generator measures the spaced copy at that
+                    // width and the real string is sliced at the line starts it reports.
+                    if (BuildPerLineVisual(comp, entry.Assigned, out whyNot) == null) return null;
+                    return BuildUGuiLinesNow(comp, entry.Measure, out whyNot, entry.Assigned);
                 default:
                     return BuildNguiLines(comp, entry.Measure, out whyNot);
             }
@@ -586,7 +622,7 @@ namespace UnityGameTranslator.Core.TextShaping
         {
             if (!(comp is UnityEngine.Component c) || c.gameObject == null) return true;
             if (!c.gameObject.activeInHierarchy) return false;
-            if (kind != ReflowKind.UGuiText) return true;
+            if (kind == ReflowKind.Ngui) return true;
             if (comp is UnityEngine.Behaviour b && !b.isActiveAndEnabled) return false;
             EnsureGeneratorPlumbing();
             try
@@ -716,7 +752,12 @@ namespace UnityGameTranslator.Core.TextShaping
         /// reflow, after a drawn component has had its frames. Null when the API or the layout
         /// is not there.
         /// </summary>
-        private static string BuildUGuiLinesNow(object comp, string assigned, out string whyNot)
+        /// <param name="sliceFrom">
+        /// The string the lines are cut from when it is not the measured one — the real text
+        /// behind a spaced copy (UGuiWords). Same length as <paramref name="assigned"/>, by
+        /// construction: one boundary character replaced by one space.
+        /// </param>
+        private static string BuildUGuiLinesNow(object comp, string assigned, out string whyNot, string sliceFrom = null)
         {
             whyNot = null;
             EnsureGeneratorPlumbing();
@@ -758,7 +799,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 if (!(bool)_generatorPopulate.Invoke(_ownGenerator, new object[] { assigned, settings }))
                 { whyNot = "generator refused to populate"; return null; }
 
-                string cut = BuildPerLineVisual(comp, assigned, out whyNot, _ownGenerator);
+                string cut = BuildPerLineVisual(comp, assigned, out whyNot, _ownGenerator, sliceFrom);
                 DescribeCut(comp, assigned, r, settings, cut);
                 return cut;
             }
@@ -772,7 +813,7 @@ namespace UnityGameTranslator.Core.TextShaping
         /// describe this text yet.
         /// </summary>
         private static string BuildPerLineVisual(object comp, string assigned, out string whyNot,
-                                                 object populated = null)
+                                                 object populated = null, string sliceFrom = null)
         {
             whyNot = null;
             EnsureGeneratorPlumbing();
@@ -851,7 +892,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 if (end <= start) continue;
                 int rawStart = tagMap == null ? start : tagMap[start];
                 int rawEnd = tagMap == null ? end : tagMap[end];
-                slices.Add(assigned.Substring(rawStart, rawEnd - rawStart));
+                slices.Add((sliceFrom ?? assigned).Substring(rawStart, rawEnd - rawStart));
             }
             return ComposeLines(slices);
         }

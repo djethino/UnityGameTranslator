@@ -2361,9 +2361,6 @@ namespace UnityGameTranslator.Core
         private static bool _engineHasUnderlineFix;        // Unity >= 6000.5 (fix landed in 6000.5.0a5)
         private static PropertyInfo _fontDefFontAssetProp; // FontDefinition.fontAsset
         private static MethodInfo _hasCharactersMethod;    // FontAsset.HasCharacters(string, out uint[], bool, bool)
-        private static PropertyInfo _atlasPopulationProp;  // FontAsset.atlasPopulationMode
-        private static PropertyInfo _sourceFontFileProp;   // FontAsset.sourceFontFile -> Font
-        private static MethodInfo _fontHasCharacter;       // Font.HasCharacter(char)
 
         /// <summary>
         /// Can THIS element draw an underline/strikethrough over THIS text without dying?
@@ -2371,18 +2368,9 @@ namespace UnityGameTranslator.Core
         /// Unity's tracked defect (fixed in 6000.5.0a5, their repro is "&lt;u&gt;Hello 😁&lt;/u&gt;"):
         /// DrawUnderlineMesh indexes meshInfo with the material of the '_' glyph, and when the
         /// underlined glyphs come from a FALLBACK font asset that index is out of bounds. So the
-        /// underline is safe when the engine carries the fix, or when ONE font asset — the
-        /// element's own resolved one — can render both the RTL text and the '_': no fallback
-        /// mixing, no bad index. Unanswerable (no font asset, no API) counts as unsafe: this
-        /// decides whether a tag is dropped, and the bench paid twice.
-        ///
-        /// 🔴 Asked with tryAddCharacter FALSE — a question must not change the engine. The first
-        /// version passed true so a dynamic asset would answer for its font FILE rather than its
-        /// current atlas; but that overload ADDS the glyph, i.e. mutates (and can resize) an atlas
-        /// texture, from a text setter that runs while UITKTextJobSystem generates meshes in
-        /// parallel jobs. That is a plausible way to produce the very IndexOutOfRange this guard
-        /// exists to avoid. The cost of the honest question: an asset that could cover the script
-        /// but has not rasterized it yet answers "no", so the tag is dropped — the safe side.
+        /// underline is safe only when the engine carries the fix. Everything else is logged and
+        /// refused — see the block inside for why font coverage, the obvious candidate, turned
+        /// out not to predict the crash.
         /// </summary>
         internal static bool UnderlineIsSafe(object element, string text)
         {
@@ -2404,9 +2392,6 @@ namespace UnityGameTranslator.Core
                     var assetType = _fontDefFontAssetProp?.PropertyType;
                     _hasCharactersMethod = assetType?.GetMethod("HasCharacters",
                         new[] { typeof(string), typeof(uint[]).MakeByRefType(), typeof(bool), typeof(bool) });
-                    _atlasPopulationProp = assetType?.GetProperty("atlasPopulationMode", pubInst);
-                    _sourceFontFileProp = assetType?.GetProperty("sourceFontFile", pubInst);
-                    _fontHasCharacter = _sourceFontFileProp?.PropertyType.GetMethod("HasCharacter", new[] { typeof(char) });
                 }
                 catch { }
             }
@@ -2424,51 +2409,55 @@ namespace UnityGameTranslator.Core
                 if (fontAsset == null || (fontAsset is UnityEngine.Object uo && uo == null))
                 { LogUnderlineVerdict(element, false, "element resolves to no FontAsset (a legacy Font, or none)"); return false; }
 
-                string assetName = (fontAsset as UnityEngine.Object)?.name ?? "?";
-
-                // 🔴 Ask about the glyphs that will actually be DRAWN, and about all of them.
-                // The first version asked "does this asset carry U+0627?" on the LOGICAL text —
-                // and Noto Sans Display does carry base Arabic letters, so it answered KEEP while
-                // what reaches the screen is the shaped form (U+FE8D…U+FEFC), which it does not
-                // carry: those glyphs went to a fallback, the underline mixed materials, and the
-                // game died (bench, 3rd crash — the verdict line in the log is what showed it).
-                // The '_' rides along because the underline needs it from the same asset.
-                var args = new object[] { text + "_", null, false, false };
-                if ((bool)_hasCharactersMethod.Invoke(fontAsset, args))
-                { LogUnderlineVerdict(element, true, $"'{assetName}' carries every glyph to draw"); return true; }
-
-                // A DYNAMIC asset rasterizes on demand from its own font file: if that file has
-                // the missing glyphs, the asset will serve them itself — still no fallback, still
-                // safe. Asked on the source Font, which answers without touching any atlas.
-                var missing = args[1] as uint[];
-                if (missing != null && missing.Length > 0 && _atlasPopulationProp != null
-                    && _sourceFontFileProp != null && _fontHasCharacter != null)
-                {
-                    string mode = Enum.GetName(_atlasPopulationProp.PropertyType, _atlasPopulationProp.GetValue(fontAsset, null));
-                    if (mode == "Dynamic" || mode == "DynamicOS")
-                    {
-                        var sourceFont = _sourceFontFileProp.GetValue(fontAsset, null);
-                        if (sourceFont != null && !(sourceFont is UnityEngine.Object so && so == null))
-                        {
-                            bool all = true;
-                            foreach (uint cp in missing)
-                            {
-                                // Outside the BMP a char cannot carry it; such a glyph is not
-                                // this guard's business and counts as not covered.
-                                if (cp > 0xFFFF || !(bool)_fontHasCharacter.Invoke(sourceFont, new object[] { (char)cp }))
-                                { all = false; break; }
-                            }
-                            if (all)
-                            { LogUnderlineVerdict(element, true, $"'{assetName}' is dynamic and its font file covers the {missing.Length} missing glyph(s)"); return true; }
-                        }
-                    }
-                }
-
-                LogUnderlineVerdict(element, false,
-                    $"'{assetName}' is missing {(missing == null ? "some" : missing.Length.ToString())} of the glyphs to draw (they would come from a fallback)");
+                // 🔴 THE ANSWER IS NO, and the bench is what settled it — four crashes, the last
+                // one two lines after this very check logged "carries every glyph to draw".
+                //
+                // Font coverage was a reasonable hypothesis and it is WRONG as a predicate: a
+                // single asset covering every drawn glyph still died. The remaining suspects all
+                // live inside Unity's routine and none is observable from here — multi-atlas
+                // assets give one materialIndex per atlas texture, and the underline's '_' can
+                // sit in a different one from the RTL glyphs; the routine also derives the line
+                // from glyph positions that run right-to-left. Unity fixed it in 6000.5.0a5 and
+                // we cannot second-guess which branch a given frame takes.
+                //
+                // So on an engine without the fix, an RTL text on this generator loses its
+                // underline. Not arbitrary: it is the only rule the evidence supports. Everything
+                // below the return exists to keep LEARNING at zero risk — the details are logged,
+                // and the day one of them turns out to be the real discriminator, it becomes a
+                // condition. TMP is untouched (its bench never crashed), and so is 6000.5+.
+                LogUnderlineVerdict(element, false, DescribeAsset(fontAsset, text));
                 return false;
             }
             catch (Exception ex) { LogUnderlineVerdict(element, false, "check threw: " + ex.Message); return false; }
+        }
+
+        /// <summary>
+        /// What we know about this element's font, for the record: whether one asset covers every
+        /// drawn glyph, and how many atlas textures it spreads over. Characterises the defect
+        /// without betting the game on the answer.
+        /// </summary>
+        private static string DescribeAsset(object fontAsset, string text)
+        {
+            string name = (fontAsset as UnityEngine.Object)?.name ?? "?";
+            string coverage = "coverage unknown";
+            string atlases = "";
+            try
+            {
+                var args = new object[] { text + "_", null, false, false };
+                bool all = (bool)_hasCharactersMethod.Invoke(fontAsset, args);
+                var missing = args[1] as uint[];
+                coverage = all ? "covers every drawn glyph"
+                               : $"missing {(missing == null ? "?" : missing.Length.ToString())} drawn glyph(s)";
+            }
+            catch { }
+            try
+            {
+                var texturesProp = fontAsset.GetType().GetProperty("atlasTextures", BindingFlags.Public | BindingFlags.Instance);
+                if (texturesProp?.GetValue(fontAsset, null) is Array textures)
+                    atlases = $", {textures.Length} atlas texture(s)";
+            }
+            catch { }
+            return $"'{name}' {coverage}{atlases} — this engine's DrawUnderlineMesh is not safe for RTL whatever the answer";
         }
 
         // Every verdict is logged while this engine's underline defect is being characterised:

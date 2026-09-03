@@ -79,6 +79,9 @@ namespace UnityGameTranslator.Core.Checks
 
             Section("OpenType layout (GSUB/GPOS/GDEF on a real font)");
             OpenTypeLayoutChecks.Run(Check);
+
+            Section("Indic shaper (against HarfBuzz, word by word)");
+            IndicShaperChecks.Run(Check);
         }
 
         private static void Check(bool passed, string what, string why)

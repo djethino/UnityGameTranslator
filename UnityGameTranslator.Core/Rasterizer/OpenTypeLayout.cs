@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Text;
 
@@ -866,6 +866,19 @@ namespace UnityGameTranslator.Core.Rasterizer
             public int LigatureId;            // 0 = not from a ligature
             public int LigatureComponent;     // 1-based component a mark followed inside a ligature; 0 = none
 
+            /// <summary>
+            /// Syllable number the shaper assigned (0 = none). Matching never crosses from one
+            /// syllable into another: a ligature or a context stops at the boundary, as it does
+            /// in every OpenType shaper, so a font's rules only see the cluster they were written for.
+            /// </summary>
+            public int Syllable;
+
+            /// <summary>What substitution did to this glyph — the shaper's reordering reads these.</summary>
+            public bool Substituted, Ligated, Multiplied;
+
+            /// <summary>Two slots for the shaper's own classification (category, position).</summary>
+            public int Category, Position;
+
             public ShapedGlyph Clone() => (ShapedGlyph)MemberwiseClone();
         }
 
@@ -940,11 +953,15 @@ namespace UnityGameTranslator.Core.Rasterizer
             return false;
         }
 
+        private static bool SameSyllable(ShapedGlyph a, ShapedGlyph b) => a.Syllable == 0 || b.Syllable == 0 || a.Syllable == b.Syllable;
+
         private int Next(Lookup lookup, GlyphBuffer buf, int from, uint mask)
         {
+            var origin = buf[from];
             for (int i = from + 1; i < buf.Count; i++)
             {
                 var g = buf[i];
+                if (!SameSyllable(origin, g)) return -1;
                 if (IsIgnored(lookup, g)) continue;
                 return i;
             }
@@ -953,12 +970,45 @@ namespace UnityGameTranslator.Core.Rasterizer
 
         private int Prev(Lookup lookup, GlyphBuffer buf, int from)
         {
+            var origin = buf[from];
             for (int i = from - 1; i >= 0; i--)
             {
+                if (!SameSyllable(origin, buf[i])) return -1;
                 if (IsIgnored(lookup, buf[i])) continue;
                 return i;
             }
             return -1;
+        }
+
+        /// <summary>
+        /// Would any of these lookups rewrite exactly this glyph sequence? Single and ligature
+        /// subtables only, flags and contexts ignored — the question a shaper asks a font
+        /// before reordering ("does this consonant have a below-base form?"), not an application.
+        /// </summary>
+        public bool WouldSubstitute(LayoutTable table, int[] lookupIndices, int[] glyphs)
+        {
+            if (table == null || lookupIndices == null || glyphs == null || glyphs.Length == 0) return false;
+            foreach (int li in lookupIndices)
+            {
+                if (li < 0 || li >= table.Lookups.Length) continue;
+                foreach (var st in table.Lookups[li].Subtables)
+                {
+                    if (glyphs.Length == 1 && st is SingleSubst s && s.Coverage.Contains(glyphs[0])) return true;
+                    if (glyphs.Length > 1 && st is LigatureSubst l)
+                    {
+                        int ci = l.Coverage.Index(glyphs[0]);
+                        if (ci < 0 || ci >= l.Sets.Length) continue;
+                        foreach (var lig in l.Sets[ci])
+                        {
+                            if (lig.Components.Length != glyphs.Length - 1) continue;
+                            bool same = true;
+                            for (int k = 0; k < lig.Components.Length && same; k++) same = lig.Components[k] == glyphs[k + 1];
+                            if (same) return true;
+                        }
+                    }
+                }
+            }
+            return false;
         }
 
         /// <summary>
@@ -1005,6 +1055,7 @@ namespace UnityGameTranslator.Core.Rasterizer
                     int sub = s.Substitute(g.Glyph);
                     if (sub < 0) return 0;
                     g.Glyph = sub;
+                    g.Substituted = true;
                     return 1;
                 }
                 case MultipleSubst m:
@@ -1014,6 +1065,8 @@ namespace UnityGameTranslator.Core.Rasterizer
                     var seq = m.Sequences[ci];
                     if (seq.Length == 0) { buf.Glyphs.RemoveAt(i); return 1; }
                     g.Glyph = seq[0];
+                    g.Substituted = true;
+                    g.Multiplied = seq.Length > 1;
                     for (int k = 1; k < seq.Length; k++)
                     {
                         var copy = g.Clone();
@@ -1027,6 +1080,7 @@ namespace UnityGameTranslator.Core.Rasterizer
                     int ci = a.Coverage.Index(g.Glyph);
                     if (ci < 0 || ci >= a.Alternates.Length || a.Alternates[ci].Length == 0) return 0;
                     g.Glyph = a.Alternates[ci][0];
+                    g.Substituted = true;
                     return 1;
                 }
                 case LigatureSubst l:
@@ -1052,6 +1106,9 @@ namespace UnityGameTranslator.Core.Rasterizer
                         g.Glyph = lig.Glyph;
                         g.LigatureId = ligId;
                         g.LigatureComponent = 0;
+                        g.Substituted = true;
+                        g.Ligated = true;
+                        g.Multiplied = false;
                         int component = 1;
                         int last = matched.Count > 0 ? matched[matched.Count - 1] : i;
                         for (int k = i + 1; k <= last; k++)
@@ -1115,8 +1172,8 @@ namespace UnityGameTranslator.Core.Rasterizer
                     // The base: the nearest preceding glyph that is not a mark, skipping what the
                     // flags say to skip. A mark attaches to the base of its own cluster only.
                     int j = i - 1;
-                    while (j >= 0 && (ClassOf(buf[j]) == ClassMark || IsIgnored(lookup, buf[j]))) j--;
-                    if (j < 0) return 0;
+                    while (j >= 0 && SameSyllable(g, buf[j]) && (ClassOf(buf[j]) == ClassMark || IsIgnored(lookup, buf[j]))) j--;
+                    if (j < 0 || !SameSyllable(g, buf[j])) return 0;
                     int bi = mb.BaseCoverage.Index(buf[j].Glyph);
                     if (bi < 0 || bi >= mb.BaseAnchors.Length) return 0;
                     var mark = mb.Marks[mi];
@@ -1131,8 +1188,8 @@ namespace UnityGameTranslator.Core.Rasterizer
                     int mi = ml.MarkCoverage.Index(g.Glyph);
                     if (mi < 0 || mi >= ml.Marks.Length) return 0;
                     int j = i - 1;
-                    while (j >= 0 && (ClassOf(buf[j]) == ClassMark || IsIgnored(lookup, buf[j]))) j--;
-                    if (j < 0) return 0;
+                    while (j >= 0 && SameSyllable(g, buf[j]) && (ClassOf(buf[j]) == ClassMark || IsIgnored(lookup, buf[j]))) j--;
+                    if (j < 0 || !SameSyllable(g, buf[j])) return 0;
                     int li = ml.LigatureCoverage.Index(buf[j].Glyph);
                     if (li < 0 || li >= ml.LigatureAnchors.Length) return 0;
                     var comps = ml.LigatureAnchors[li];
@@ -1156,8 +1213,8 @@ namespace UnityGameTranslator.Core.Rasterizer
                     // The previous glyph, skipping only what mark filtering says to skip: it must
                     // itself be a mark, and belong to the same ligature component as this one.
                     int j = i - 1;
-                    while (j >= 0 && ClassOf(buf[j]) == ClassMark && IsIgnored(lookup, buf[j])) j--;
-                    if (j < 0 || ClassOf(buf[j]) != ClassMark) return 0;
+                    while (j >= 0 && SameSyllable(g, buf[j]) && ClassOf(buf[j]) == ClassMark && IsIgnored(lookup, buf[j])) j--;
+                    if (j < 0 || !SameSyllable(g, buf[j]) || ClassOf(buf[j]) != ClassMark) return 0;
                     var m2 = buf[j];
                     bool sameComponent = g.LigatureId == m2.LigatureId && g.LigatureComponent == m2.LigatureComponent;
                     if (!sameComponent && !(g.LigatureId == 0 && m2.LigatureId == 0)) return 0;

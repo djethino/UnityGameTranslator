@@ -34,11 +34,13 @@ namespace UnityGameTranslator.BepInEx5
             public bool IsIL2CPP => false;
         }
 
+        private bool uiInitialized;
+
         void Awake()
         {
             TranslatorCore.Initialize(new BepInExAdapter(Logger));
             TranslatorCore.OnTranslationComplete = TranslatorScanner.OnTranslationComplete;
-            // The UI (UniverseLib) is set up in Start, not here — see there.
+            // The UI (UniverseLib) is set up on the first scene load, not here — see below.
 
             harmony = new Harmony("com.community.unitygametranslator");
             int patchCount = TranslatorPatches.ApplyAll((target, prefix, postfix) =>
@@ -51,25 +53,27 @@ namespace UnityGameTranslator.BepInEx5
 
             SceneManager.sceneLoaded += (scene, mode) =>
             {
+                // BepInEx 5 runs this Awake from Application's static constructor, before the
+                // engine has run a frame. On Unity 6000.5 (tolerated by earlier versions), adding
+                // a component that carries Start or Update to a game object at that moment is a
+                // native crash — UniverseLib's behaviour from inside this Awake, and this very
+                // plugin the moment it declared a Start of its own. So the UI is set up on the
+                // first scene load, the first event the running engine hands us; this plugin
+                // keeps to Awake and OnApplicationQuit. The other loaders start plugins after
+                // the engine and initialise the UI at load, unchanged. Nothing of ours needs the
+                // UI before then: the patches only cache and translate, and every coroutine of
+                // the mod starts from the tick loop the UI owns.
+                if (!uiInitialized)
+                {
+                    uiInitialized = true;
+                    TranslatorUIManager.Initialize();
+                }
                 TranslatorCore.OnSceneChanged(scene.name);
             };
             SceneManager.sceneUnloaded += (scene) =>
             {
                 TranslatorCore.OnSceneUnloaded(scene.name);
             };
-        }
-
-        // BepInEx 5 runs Awake from Application's static constructor, before the engine has
-        // run a single frame. Creating a component there (UniverseLib's behaviour, from inside
-        // our own Awake) is a native crash on Unity 6000.5 — tolerated by earlier versions,
-        // which is how it went unnoticed. Start is the first point the engine itself calls on
-        // this plugin, once it is up. The other loaders (BepInEx 6, MelonLoader) start plugins
-        // after the engine and keep initialising the UI at load; only this entry point differs.
-        // Nothing of ours needs the UI before then: the Harmony patches above only cache and
-        // translate, and every coroutine of the mod starts from the tick loop the UI owns.
-        void Start()
-        {
-            TranslatorUIManager.Initialize();
         }
 
         void OnApplicationQuit()

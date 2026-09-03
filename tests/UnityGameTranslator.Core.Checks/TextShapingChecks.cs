@@ -139,6 +139,14 @@ namespace UnityGameTranslator.Core.Checks
                 "a PUA sentinel resolves as class L (F100..F8FF)",
                 "the whole token-protection scheme rests on this UCD fact");
 
+            // A private glyph codepoint inside a Hebrew word (a positioned mark from FontShaping)
+            // rides with the letter before it: the run stays one run, and reversal puts the
+            // mark before its base — the order its offsets were computed for.
+            string hebrewWithVariant = "אב";
+            string composedVariant = RtlComposer.Compose(hebrewWithVariant, RtlOutput.VisualOrder);
+            check(composedVariant.IndexOf("בא", System.StringComparison.Ordinal) >= 0,
+                "a private glyph codepoint keeps an RTL run whole", Escape(composedVariant));
+
             check(RtlComposer.Compose(ShortLogical, RtlOutput.RtlFlagged) == ShortShaped,
                 "pure Arabic, flagged form == shaped logical",
                 "no LTR run to move: composing must add nothing");
@@ -202,5 +210,12 @@ namespace UnityGameTranslator.Core.Checks
                 "shape-only keeps placeholders verbatim",
                 "pass 2 slices this string; a mangled token would slice wrong");
         }
-    }
+    
+        private static string Escape(string text)
+        {
+            var sb = new System.Text.StringBuilder();
+            foreach (char c in text) sb.Append(c < 128 ? c.ToString() : $"<{(int)c:X4}>");
+            return sb.ToString();
+        }
+}
 }

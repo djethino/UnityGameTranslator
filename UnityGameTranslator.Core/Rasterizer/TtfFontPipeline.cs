@@ -46,8 +46,8 @@ namespace UnityGameTranslator.Core.Rasterizer
         /// sentinels (never displayed), and a font with more unmapped glyphs than the range
         /// holds gets the first ones, with a warning — shaping then stays partial for it.
         /// </summary>
-        public const int PrivateGlyphBase = 0xE000;
-        public const int PrivateGlyphLast = 0xF0FF;
+        public const int PrivateGlyphBase = TextShaping.PrivateGlyphs.First;
+        public const int PrivateGlyphLast = TextShaping.PrivateGlyphs.Last;
 
         /// <summary>
         /// Target atlas budget for the automatic quality ladder. Deliberately below GPU

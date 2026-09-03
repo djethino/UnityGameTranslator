@@ -113,7 +113,19 @@ namespace UnityGameTranslator.Core.TextShaping
 
             // 3. UAX#9 on the tagless stream. Paragraph level forced RTL (see summary).
             var arr = cps.ToArray();
-            _bidiData.Init(new Slice<int>(arr), 1);
+            // A private glyph codepoint (a positioned mark, a kerned letter — see FontShaping) is
+            // class L in the UCD, which would cut a right-to-left run in two around it. For
+            // the bidi it is read as a non-spacing mark: it takes the direction of what it
+            // follows and travels with it, which is where its glyph belongs — the mark before
+            // its base once the run is reversed, exactly the order its offsets were computed for.
+            var bidiInput = arr;
+            for (int i = 0; i < arr.Length; i++)
+                if (PrivateGlyphs.Contains(arr[i]))
+                {
+                    if (ReferenceEquals(bidiInput, arr)) bidiInput = (int[])arr.Clone();
+                    bidiInput[i] = 0x0300;
+                }
+            _bidiData.Init(new Slice<int>(bidiInput), 1);
             _bidi.Process(_bidiData);
             var levels = _bidi.ResolvedLevels;
 

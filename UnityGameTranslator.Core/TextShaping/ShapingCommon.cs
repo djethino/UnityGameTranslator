@@ -7,6 +7,18 @@ using L = UnityGameTranslator.Core.Rasterizer.OpenTypeLayout;
 
 namespace UnityGameTranslator.Core.TextShaping
 {
+    /// <summary>
+    /// The private-use codepoints our font assets hand to glyphs no codepoint maps to and to
+    /// positioned variants (TtfFontPipeline, FontShaping). Named here, on the pure side, so
+    /// the composer and the shapers can recognise them without the rasterizer.
+    /// </summary>
+    internal static class PrivateGlyphs
+    {
+        internal const int First = 0xE000;
+        internal const int Last = 0xF0FF;
+        internal static bool Contains(int cp) => cp >= First && cp <= Last;
+    }
+
     /// <summary>One positioned glyph of a shaping result, in font units.</summary>
     internal struct ShapedGlyph
     {

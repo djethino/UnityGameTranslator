@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 
 namespace UnityGameTranslator.Core.Checks
 {
@@ -100,6 +100,9 @@ namespace UnityGameTranslator.Core.Checks
 
             Section("Indic shaper (against HarfBuzz, word by word)");
             IndicShaperChecks.Run(Check);
+
+            Section("OpenType text (runs and glyph naming)");
+            OpenTypeTextChecks.Run(Check);
         }
 
         private static void Check(bool passed, string what, string why)

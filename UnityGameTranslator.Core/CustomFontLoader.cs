@@ -398,6 +398,13 @@ namespace UnityGameTranslator.Core
 
             // Source: "custom" (fonts/ folder), "system" (OS fonts)
             public string Source { get; set; }
+
+            // What the live TMP asset's glyph entries were written with (CreateFontAsset) —
+            // needed again when an entry is added to it later (a positioned variant, see
+            // FontShaping): the same point size and the same character scale, or the new
+            // glyph renders at another size than its neighbours.
+            public float LivePointSize { get; set; }
+            public float LiveGlyphMetricsScale { get; set; } = 1f;
         }
 
         #endregion
@@ -431,6 +438,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static void InvalidateLoadedFonts()
         {
+            ShapingFontAsset.InvalidateAll();
             int n = 0;
             foreach (var fi in _customFonts.Values)
             {
@@ -787,7 +795,7 @@ namespace UnityGameTranslator.Core
                 try
                 {
                     // Cache always goes in the mod's fonts/ folder
-                    string cacheDir = fontInfo.Source == "system" ? _cacheFolderPath : Path.GetDirectoryName(fontInfo.TtfPath ?? "");
+                    string cacheDir = GenCacheDir(fontInfo);
 
                     // FAST PATH: .gen.json metadata plus the atlas pixels. TryLoadGenCache picks
                     // the raw DEFLATE atlases when present (what we write today) and only falls
@@ -906,7 +914,7 @@ namespace UnityGameTranslator.Core
                     // file we can reload later), save it under .gen[.atlasN].png, then load
                     // each PNG back as the runtime atlas texture.
                     int atlasCount = fontInfo.RgbaBuffers.Count;
-                    string cacheDir = fontInfo.Source == "system" ? _cacheFolderPath : Path.GetDirectoryName(fontInfo.TtfPath ?? "");
+                    string cacheDir = GenCacheDir(fontInfo);
                     var pngPaths = !string.IsNullOrEmpty(cacheDir) ? BuildGenPngPaths(cacheDir, atlasCount) : null;
 
                     if (pngPaths != null && !Directory.Exists(cacheDir))
@@ -2078,6 +2086,8 @@ namespace UnityGameTranslator.Core
                     glyphMetricsScale = 1f;
 
                 // Set glyphs
+                fontInfo.LivePointSize = pointSize;
+                fontInfo.LiveGlyphMetricsScale = glyphMetricsScale;
                 SetupGlyphs(fontAsset, fontInfo, pointSize, glyphMetricsScale);
 
                 return fontAsset;
@@ -2660,57 +2670,7 @@ namespace UnityGameTranslator.Core
                     TranslatorCore.LogInfo($"[CustomFontLoader] Using MODERN glyph system (m_GlyphTable + m_CharacterTable)");
                     SetupGlyphsModern(fontAsset, fontAssetType, glyphTable, charTable, fontInfo, pointSize, yFlipped, glyphMetricsScale);
 
-                    // Mark lookup tables as dirty so TMP rebuilds them, then force the rebuild
-                    // by calling ReadFontAssetDefinition (preferred — refreshes face metrics +
-                    // lookup dicts + atlas tracking) with a narrow fallback to
-                    // InitializeDictionaryLookupTables for builds that don't expose the broader
-                    // API or where the first throws on a missing TTF source.
-                    SetPropertyOrField(fontAsset, fontAssetType, "IsFontAssetLookupTablesDirty", true);
-
-                    System.Reflection.MethodInfo readFontMethod = null;
-                    System.Reflection.MethodInfo initLookupMethod = null;
-                    try
-                    {
-                        readFontMethod = fontAssetType.GetMethod("ReadFontAssetDefinition",
-                            BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
-                        initLookupMethod = fontAssetType.GetMethod("InitializeDictionaryLookupTables",
-                            BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
-                    }
-                    catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] resolve lookup methods failed: {_e.Message}"); }
-
-                    bool rebuilt = false;
-                    if (readFontMethod != null)
-                    {
-                        try
-                        {
-                            readFontMethod.Invoke(fontAsset, null);
-                            TranslatorCore.LogInfo("[CustomFontLoader] Called ReadFontAssetDefinition() to rebuild lookup tables");
-                            rebuilt = true;
-                        }
-                        catch (Exception ex)
-                        {
-                            var inner = ex.InnerException ?? ex;
-                            TranslatorCore.LogWarning($"[CustomFontLoader] ReadFontAssetDefinition() failed: {inner.GetType().Name}: {inner.Message}");
-                        }
-                    }
-                    if (!rebuilt && initLookupMethod != null)
-                    {
-                        try
-                        {
-                            initLookupMethod.Invoke(fontAsset, null);
-                            TranslatorCore.LogInfo("[CustomFontLoader] Called InitializeDictionaryLookupTables() to rebuild lookup tables (fallback)");
-                            rebuilt = true;
-                        }
-                        catch (Exception ex)
-                        {
-                            var inner = ex.InnerException ?? ex;
-                            TranslatorCore.LogWarning($"[CustomFontLoader] InitializeDictionaryLookupTables() failed: {inner.GetType().Name}: {inner.Message}");
-                        }
-                    }
-                    if (!rebuilt)
-                    {
-                        TranslatorCore.LogWarning("[CustomFontLoader] No working lookup-table rebuild method on TMP_FontAsset — lookup dicts will stay empty and rendering will miss glyphs.");
-                    }
+                    RebuildLookupTables(fontAsset, fontAssetType);
 
                     // IL2CPP property warm-up — DO NOT REMOVE without understanding what it does.
                     // Up to v0.9.63 a verbose debug block here read these same properties via
@@ -2748,6 +2708,165 @@ namespace UnityGameTranslator.Core
             catch (Exception ex)
             {
                 TranslatorCore.LogWarning($"[CustomFontLoader] Failed to setup glyphs: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Mark the modern asset's lookup tables dirty and force the rebuild by calling
+        /// ReadFontAssetDefinition (preferred — refreshes face metrics + lookup dicts + atlas
+        /// tracking) with a narrow fallback to InitializeDictionaryLookupTables for builds that
+        /// don't expose the broader API or where the first throws on a missing TTF source.
+        /// Called after the tables are filled, and again whenever an entry is added later.
+        /// </summary>
+        private static bool RebuildLookupTables(object fontAsset, Type fontAssetType)
+        {
+            SetPropertyOrField(fontAsset, fontAssetType, "IsFontAssetLookupTablesDirty", true);
+
+            System.Reflection.MethodInfo readFontMethod = null;
+            System.Reflection.MethodInfo initLookupMethod = null;
+            try
+            {
+                readFontMethod = fontAssetType.GetMethod("ReadFontAssetDefinition",
+                    BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
+                initLookupMethod = fontAssetType.GetMethod("InitializeDictionaryLookupTables",
+                    BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
+            }
+            catch (Exception _e) { TranslatorCore.LogDebug($"[CustomFontLoader] resolve lookup methods failed: {_e.Message}"); }
+
+            bool rebuilt = false;
+            if (readFontMethod != null)
+            {
+                try
+                {
+                    readFontMethod.Invoke(fontAsset, null);
+                    TranslatorCore.LogInfo("[CustomFontLoader] Called ReadFontAssetDefinition() to rebuild lookup tables");
+                    rebuilt = true;
+                }
+                catch (Exception ex)
+                {
+                    var inner = ex.InnerException ?? ex;
+                    TranslatorCore.LogWarning($"[CustomFontLoader] ReadFontAssetDefinition() failed: {inner.GetType().Name}: {inner.Message}");
+                }
+            }
+            if (!rebuilt && initLookupMethod != null)
+            {
+                try
+                {
+                    initLookupMethod.Invoke(fontAsset, null);
+                    TranslatorCore.LogInfo("[CustomFontLoader] Called InitializeDictionaryLookupTables() to rebuild lookup tables (fallback)");
+                    rebuilt = true;
+                }
+                catch (Exception ex)
+                {
+                    var inner = ex.InnerException ?? ex;
+                    TranslatorCore.LogWarning($"[CustomFontLoader] InitializeDictionaryLookupTables() failed: {inner.GetType().Name}: {inner.Message}");
+                }
+            }
+            if (!rebuilt)
+            {
+                TranslatorCore.LogWarning("[CustomFontLoader] No working lookup-table rebuild method on TMP_FontAsset — lookup dicts will stay empty and rendering will miss glyphs.");
+            }
+            return rebuilt;
+        }
+
+        /// <summary>
+        /// Add entries to a LIVE font asset — the same rectangles of the same atlas under new
+        /// codepoints, with their own metrics (a positioned variant of a glyph, see
+        /// FontShaping). Modern TMP: one Glyph + one Character per entry, then the lookup
+        /// tables rebuilt; TMProOld: one legacy glyph into m_glyphInfoList and the character
+        /// dictionary rebuilt. False when nothing could be added, said in the log.
+        /// </summary>
+        internal static bool AddGlyphsToLiveAsset(CustomFontInfo fontInfo, List<GlyphInfo> added)
+        {
+            var fontAsset = fontInfo?.FontAsset;
+            if (fontAsset == null || added == null || added.Count == 0 || fontInfo.AtlasData?.atlas == null) return false;
+            if (!_typesInitialized) InitializeTypes();
+            try
+            {
+                var fontAssetType = fontAsset.GetType();
+                var atlas = fontInfo.AtlasData.atlas;
+                bool yFlipped = atlas.yOrigin == "bottom";
+                float pointSize = fontInfo.LivePointSize > 0f ? fontInfo.LivePointSize : atlas.size;
+
+                object glyphTable = GetPropertyOrField(fontAsset, fontAssetType, "m_GlyphTable");
+                object charTable = GetPropertyOrField(fontAsset, fontAssetType, "m_CharacterTable");
+                if (glyphTable != null && charTable != null)
+                {
+                    var atlases = (fontInfo.AtlasData.atlases != null && fontInfo.AtlasData.atlases.Count > 0)
+                        ? fontInfo.AtlasData.atlases : new List<AtlasInfo> { atlas };
+                    var addGlyph = glyphTable.GetType().GetMethod("Add");
+                    var addChar = charTable.GetType().GetMethod("Add");
+                    Type glyphType = GetListElementType(glyphTable);
+                    Type charType = GetListElementType(charTable);
+                    long count = ReflectListCount(glyphTable);
+                    if (addGlyph == null || addChar == null || glyphType == null || charType == null || count < 0)
+                    {
+                        TranslatorCore.LogWarning("[CustomFontLoader] AddGlyphsToLiveAsset: modern tables not reachable");
+                        return false;
+                    }
+                    foreach (var glyphInfo in added)
+                    {
+                        // Indices are contiguous from SetupGlyphsModern: the table's count is free.
+                        uint index = (uint)count++;
+                        object newGlyph = CreateModernGlyph(glyphType, index, glyphInfo, atlases, pointSize, yFlipped);
+                        if (newGlyph == null) return false;
+                        addGlyph.Invoke(glyphTable, new[] { newGlyph });
+                        object newChar = CreateModernCharacter(charType, (uint)glyphInfo.unicode, index, fontInfo.LiveGlyphMetricsScale);
+                        if (newChar == null) return false;
+                        addChar.Invoke(charTable, new[] { newChar });
+                    }
+                    return RebuildLookupTables(fontAsset, fontAssetType);
+                }
+
+                object glyphList = GetPropertyOrField(fontAsset, fontAssetType, "m_glyphInfoList");
+                var addLegacy = glyphList?.GetType().GetMethod("Add");
+                if (addLegacy == null)
+                {
+                    TranslatorCore.LogWarning("[CustomFontLoader] AddGlyphsToLiveAsset: legacy glyph list not reachable");
+                    return false;
+                }
+                foreach (var glyphInfo in added)
+                {
+                    var glyph = CreateGlyph(glyphInfo, atlas, pointSize, yFlipped);
+                    if (glyph == null) return false;
+                    addLegacy.Invoke(glyphList, new[] { glyph });
+                }
+                BuildCharacterDictionary(fontAsset, glyphList);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogWarning($"[CustomFontLoader] AddGlyphsToLiveAsset failed for {fontInfo.Name}: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>Where a TTF-built font's .gen cache lives: the mod's fonts/ folder for a system font, next to the TTF for a custom one.</summary>
+        private static string GenCacheDir(CustomFontInfo fontInfo)
+        {
+            return fontInfo.Source == "system" ? _cacheFolderPath : Path.GetDirectoryName(fontInfo.TtfPath ?? "");
+        }
+
+        /// <summary>
+        /// Rewrite the .gen.json of a font whose atlas data gained entries (positioned
+        /// variants) — only when the cache already exists: a json without its atlases would
+        /// be a half cache the next launch refuses. Small file, written in place, on the main
+        /// thread, at most once per shaped string.
+        /// </summary>
+        internal static void SaveGenJson(CustomFontInfo fontInfo)
+        {
+            if (fontInfo?.AtlasData == null) return;
+            try
+            {
+                string dir = GenCacheDir(fontInfo);
+                if (string.IsNullOrEmpty(dir)) return;
+                string jsonPath = Path.Combine(dir, fontInfo.Name + ".gen.json");
+                if (!File.Exists(jsonPath)) return;
+                File.WriteAllText(jsonPath, Newtonsoft.Json.JsonConvert.SerializeObject(fontInfo.AtlasData, Newtonsoft.Json.Formatting.None));
+            }
+            catch (Exception ex)
+            {
+                TranslatorCore.LogWarning($"[CustomFontLoader] Failed to update .gen.json for {fontInfo.Name}: {ex.Message}");
             }
         }
 

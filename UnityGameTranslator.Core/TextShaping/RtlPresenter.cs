@@ -71,7 +71,7 @@ namespace UnityGameTranslator.Core.TextShaping
             long tPerf = Perf.Start();
             try
             {
-                PresentSyllabic(instance, compId, ref value);
+                PresentSyllabic(instance, compId, ref value, settingsFontName);
 
                 var prop = RtlProp(instance);
 
@@ -307,11 +307,12 @@ namespace UnityGameTranslator.Core.TextShaping
         /// idempotent: a moved sign sits after the previous syllable's consonant exactly like
         /// an unmoved one would, so an echo re-read would move it again. Asked once, first.
         /// </summary>
-        private static void PresentSyllabic(object instance, long compId, ref string value)
+        private static void PresentSyllabic(object instance, long compId, ref string value, string settingsFontName)
         {
             bool needsBreak = WordBreaker.NeedsBreaking(value);
+            bool needsShape = OpenTypeText.NeedsShaping(value);
             bool needsReorder = IndicReorderer.NeedsReordering(value);
-            if (!needsBreak && !needsReorder) return;
+            if (!needsBreak && !needsReorder && !needsShape) return;
             if (TranslatorCore.TryGetPresentedLogical(value) != null) return;
             if (UIToolkitSupport.IsTextElementInstance(instance) && UIToolkitSupport.IsAtgActive(instance)) return;
 
@@ -327,12 +328,31 @@ namespace UnityGameTranslator.Core.TextShaping
                     TranslatorCore.LogWarning($"[RtlPresenter] word breaking skipped — {whyNot}");
                 }
             }
-            if (needsReorder)
+
+            // Stage B2 — the font's own OpenType tables, for a TMP component drawn by a font
+            // asset of ours (FontShaping): conjuncts, half forms, reph, positioned marks, as the
+            // font designed them. 🔴 Never followed by the codepoint reorder: a shaped run
+            // already carries its pre-base signs in visual order, and the reorder would move
+            // one from the syllable it belongs to into the one before it (कि + क: the sign now
+            // sits AFTER a consonant that is not its own). Every other engine — UI.Text on an
+            // OS font, UI Toolkit, a game font we do not control — keeps stage C's reorder,
+            // the most a font we cannot read can take.
+            bool shaped = false;
+            if (needsShape && TypeHelper.TMP_TextType != null && TypeHelper.TMP_TextType.IsInstanceOfType(instance))
+            {
+                var asset = ShapingFontAsset.ForSettings(settingsFontName);
+                if (asset != null)
+                {
+                    string s = OpenTypeText.Shape(working, asset.Font, asset);
+                    if (!ReferenceEquals(s, working)) { working = s; shaped = true; }
+                }
+            }
+            if (needsReorder && !shaped)
                 working = IndicReorderer.Reorder(working);
 
             if (ReferenceEquals(working, logical) || working == logical) return;
             TranslatorCore.RegisterPresentedText(working, logical);
-            Log(compId, needsBreak && needsReorder ? "words+indic" : needsBreak ? "words" : "indic", logical, working);
+            Log(compId, (needsBreak ? "words+" : "") + (shaped ? "opentype" : needsReorder ? "indic" : "none"), logical, working);
             value = working;
 
             // UI.Text does not break a line on U+200B (bench: a Thai paragraph cut inside its

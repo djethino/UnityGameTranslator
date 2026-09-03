@@ -10,7 +10,8 @@ namespace UnityGameTranslator.Core.TextShaping
     /// to the shaper its script calls for, the way HarfBuzz's categorize does:
     ///   • the ten classic Indic scripts → <see cref="IndicShaper"/>;
     ///   • Myanmar → <see cref="MyanmarShaper"/>; Khmer → <see cref="KhmerShaper"/>;
-    ///   • the universal-engine scripts (Tibetan, Javanese, Balinese, Mongolian…) → <see cref="UseShaper"/>;
+    ///   • the universal-engine scripts (Tibetan, Javanese, Balinese, Mongolian, Adlam, Chakma…
+    ///     — HarfBuzz's list, generated, every plane) → <see cref="UseShaper"/>;
     ///   • Thai, Lao, Hebrew, and any other script → <see cref="DefaultShaper"/>.
     /// Arabic is not routed here: it goes through the presentation-form path, the only one
     /// that reaches engines whose font we do not control.
@@ -29,21 +30,14 @@ namespace UnityGameTranslator.Core.TextShaping
             if (script == S.Myanmar) return Engine.Myanmar;
             if (script == S.Khmer) return Engine.Khmer;
             if (script == S.Arabic || script == S.Syriac) return Engine.None;
-            if (IsUseScript(script)) return Engine.Use;
+            if (ShapingCommon.IsUseScript(script)) return Engine.Use;
             return Engine.Default;
         }
 
-        private static bool IsUseScript(int script)
-        {
-            return script == S.Tibetan || script == S.Mongolian || script == S.Buhid || script == S.Hanunoo || script == S.Tagalog
-                || script == S.Tagbanwa || script == S.Limbu || script == S.Tai_Le || script == S.Buginese || script == S.Syloti_Nagri
-                || script == S.Tifinagh || script == S.Balinese || script == S.Nko || script == S.Phags_Pa || script == S.Cham
-                || script == S.Kayah_Li || script == S.Lepcha || script == S.Rejang || script == S.Saurashtra || script == S.Sundanese
-                || script == S.Javanese || script == S.Meetei_Mayek || script == S.Tai_Tham || script == S.Tai_Viet || script == S.Batak
-                || script == S.Mandaic;
-        }
-
-        /// <summary>Does this string hold a character of a script the shapers act on?</summary>
+        /// <summary>
+        /// Does this string hold a character of a script the shapers act on? Judged per code
+        /// point (a supplementary-plane letter arrives as a surrogate pair) on its script.
+        /// </summary>
         internal static bool NeedsShaping(string text)
         {
             if (string.IsNullOrEmpty(text)) return false;
@@ -51,17 +45,27 @@ namespace UnityGameTranslator.Core.TextShaping
             {
                 char c = text[i];
                 if (c < 0x0590) continue;
-                if (c >= 0x0590 && c <= 0x05FF) return true;                       // Hebrew
-                if (c >= IndicTables.IndicFirst && c <= 0x0FFF) return true;       // Indic, Thai, Lao, Tibetan
-                if (c >= 0x1000 && c <= 0x109F) return true;                       // Myanmar
-                if (c >= 0x1700 && c <= 0x1AAF) return true;                       // Philippine, Khmer, Mongolian, Limbu, Tai Le, Buginese, Tai Tham
-                if (c >= 0x1B00 && c <= 0x1C4F) return true;                       // Balinese, Sundanese, Batak, Lepcha
-                if (c >= 0xA800 && c <= 0xAAFF) return true;                       // Syloti, Phags-pa, Saurashtra, Kayah Li, Rejang, Javanese, Myanmar ext, Cham, Tai Viet, Meetei
-                if (c >= 0xABC0 && c <= 0xABFF) return true;                       // Meetei Mayek
-                if (c >= 0x07C0 && c <= 0x085F) return true;                       // NKo, Mandaic
-                if (c >= 0x2D30 && c <= 0x2D7F) return true;                       // Tifinagh
+                int cp = c;
+                if (char.IsHighSurrogate(c) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1])) { cp = char.ConvertToUtf32(c, text[i + 1]); i++; }
+                if (IsShapedScript(ShapingCommon.ScriptOf(cp))) return true;
             }
             return false;
+        }
+
+        /// <summary>
+        /// The scripts a run is shaped for: the ones with a syllabic engine, the universal
+        /// engine's, and the three the default engine is asked for — Hebrew, Thai and Lao,
+        /// whose marks a font positions and whose vowels it substitutes. Every other script
+        /// is left as written: Latin, Cyrillic, Greek, CJK and Arabic have their own paths.
+        /// </summary>
+        private static bool IsShapedScript(int script)
+        {
+            switch (EngineOf(script))
+            {
+                case Engine.Indic: case Engine.Myanmar: case Engine.Khmer: case Engine.Use: return true;
+                case Engine.Default: return script == S.Hebrew || script == S.Thai || script == S.Lao;
+                default: return false;
+            }
         }
 
         /// <summary>

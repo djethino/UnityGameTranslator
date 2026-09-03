@@ -47,33 +47,11 @@ namespace UnityGameTranslator.Core.TextShaping
             return plan;
         }
 
-        /// <summary>The OpenType script tag of a run, from the script of its first letter.</summary>
-        internal static string ScriptTag(int script)
-        {
-            if (script == ShapingTables.Script.Thai) return "thai";
-            if (script == ShapingTables.Script.Lao) return "lao ";
-            if (script == ShapingTables.Script.Hebrew) return "hebr";
-            if (script == ShapingTables.Script.Cyrillic) return "cyrl";
-            if (script == ShapingTables.Script.Greek) return "grek";
-            if (script == ShapingTables.Script.Armenian) return "armn";
-            if (script == ShapingTables.Script.Georgian) return "geor";
-            if (script == ShapingTables.Script.Ethiopic) return "ethi";
-            if (script == ShapingTables.Script.Cherokee) return "cher";
-            if (script == ShapingTables.Script.Canadian_Aboriginal) return "cans";
-            if (script == ShapingTables.Script.Ogham) return "ogam";
-            if (script == ShapingTables.Script.Runic) return "runr";
-            if (script == ShapingTables.Script.Vai) return "vai ";
-            if (script == ShapingTables.Script.Bamum) return "bamu";
-            if (script == ShapingTables.Script.New_Tai_Lue) return "talu";
-            if (script == ShapingTables.Script.Ol_Chiki) return "olck";
-            if (script == ShapingTables.Script.Lisu) return "lisu";
-            return "latn";
-        }
-
         /// <summary>Shape one run of a script this shaper covers; the result is appended.</summary>
         internal static void Shape(List<int> cps, List<int> clusters, int script, IShapingFont font, List<ShapedGlyph> result)
         {
-            var plan = PlanFor(font, ScriptTag(script));
+            // The script's own tag (the generated table), then the font's defaults.
+            var plan = PlanFor(font, ShapingCommon.ScriptTag(script));
             bool thaiOrLao = script == ShapingTables.Script.Thai || script == ShapingTables.Script.Lao;
             bool hebrew = script == ShapingTables.Script.Hebrew;
 

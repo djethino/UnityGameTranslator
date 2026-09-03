@@ -1,26 +1,36 @@
 #!/usr/bin/env python3
 """Generate UnityGameTranslator.Core/TextShaping/ShapingTables.g.cs from the Unicode Character Database.
 
-What the shapers other than the classic Indic one need, and IndicTables.g.cs does not carry:
+What the shapers other than the classic Indic one need, and IndicTables.g.cs does not carry —
+every table covers the whole code space, the supplementary planes included:
 
   CombiningClasses        canonical combining class of every combining mark, with HarfBuzz's
                           modifications (Hebrew, Arabic, Telugu, Thai, Lao, Tibetan) — the order
                           marks are sorted into before shaping
-  Decompositions          first-level canonical decompositions of the BMP, with whether the pair
+  Decompositions          first-level canonical decompositions, with whether the pair
                           recomposes (composition exclusions) — the normalizer's two directions
   DefaultIgnorable        what a shaper hides (joiners, variation selectors, format controls)
   MyanmarKhmerCategories  HarfBuzz's Indic-table categories for the Myanmar and Khmer blocks
                           (gen-indic-table.py's mapping and overrides, reproduced)
   UseCategories           the Universal Shaping Engine categories (gen-use-table.py, reproduced)
-                          for every BMP script HarfBuzz routes to it
+                          for every script HarfBuzz routes to it
+  UseScripts              which scripts those are (hb-ot-shaper.hh's list, minus Sinhala, which
+                          the classic Indic shaper keeps here)
   JoiningTypes            Arabic-style joining types of the USE scripts that join
-  Scripts                 the script of every BMP code point, for cutting a string into runs
+  Scripts                 the script of every code point, for cutting a string into runs
+  ScriptTags              the OpenType script tag of every script (ISO 15924 in lower case, with
+                          HarfBuzz's five exceptions) — the Indic and Myanmar shapers add their
+                          own "2" tags on top
+  RightToLeftScripts      the scripts whose letters carry a right-to-left bidi class
+  VowelConstraints        the vowel-sign sequences the USE specification forbids, between which
+                          every shaper inserts a dotted circle (hb-ot-shaper-vowel-constraints)
 
 Inputs (downloaded from https://www.unicode.org/Public/UCD/latest/ucd/ unless given a dir):
   IndicSyllabicCategory.txt IndicPositionalCategory.txt ArabicShaping.txt
-  DerivedCoreProperties.txt UnicodeData.txt Blocks.txt Scripts.txt
-plus HarfBuzz's two ms-use additional files (from its repository, MIT), and Python's
-unicodedata for combining classes, decompositions and NFC.
+  DerivedCoreProperties.txt UnicodeData.txt Blocks.txt Scripts.txt PropertyValueAliases.txt
+plus HarfBuzz's three ms-use files (from its repository, MIT): the two "Additional" property
+files and IndicShapingInvalidCluster.txt, and Python's unicodedata for combining classes,
+decompositions and NFC.
 
 Usage:  python tools/generate-shaping-tables.py [dir-with-the-txt-files]
 """
@@ -35,8 +45,9 @@ OUT = os.path.join(HERE, "..", "UnityGameTranslator.Core", "TextShaping", "Shapi
 UCD = "https://www.unicode.org/Public/UCD/latest/ucd/"
 HB = "https://raw.githubusercontent.com/harfbuzz/harfbuzz/main/src/ms-use/"
 FILES = ["IndicSyllabicCategory.txt", "IndicPositionalCategory.txt", "ArabicShaping.txt",
-         "DerivedCoreProperties.txt", "UnicodeData.txt", "Blocks.txt", "Scripts.txt"]
-MS_FILES = ["IndicSyllabicCategory-Additional.txt", "IndicPositionalCategory-Additional.txt"]
+         "DerivedCoreProperties.txt", "UnicodeData.txt", "Blocks.txt", "Scripts.txt", "PropertyValueAliases.txt"]
+MS_FILES = ["IndicSyllabicCategory-Additional.txt", "IndicPositionalCategory-Additional.txt", "IndicShapingInvalidCluster.txt"]
+CODE_SPACE = 0x110000
 
 
 def load(name, src_dir, base):
@@ -87,25 +98,27 @@ def parse_derived(text, wanted):
 
 
 def parse_unicode_data(text):
-    """General category per code point, First/Last ranges expanded."""
-    gc = {}
+    """General category and bidi class per code point, First/Last ranges expanded."""
+    gc, bidi = {}, {}
     first = None
     for line in text.splitlines():
         fields = line.split(";")
-        if len(fields) < 3:
+        if len(fields) < 5:
             continue
         cp = int(fields[0], 16)
-        name, cat = fields[1], fields[2]
+        name, cat, bc = fields[1], fields[2], fields[4]
         if name.endswith(", First>"):
             first = cp
             continue
         if name.endswith(", Last>"):
             for c in range(first, cp + 1):
                 gc[c] = cat
+                bidi[c] = bc
             first = None
             continue
         gc[cp] = cat
-    return gc
+        bidi[cp] = bc
+    return gc, bidi
 
 
 def parse_blocks(text):
@@ -118,6 +131,32 @@ def parse_blocks(text):
         a, b = rng.split("..")
         blocks.append((int(a, 16), int(b, 16), name))
     return blocks
+
+
+def parse_script_aliases(text):
+    """PropertyValueAliases.txt: long script name -> ISO 15924 code."""
+    codes = {}
+    for line in text.splitlines():
+        body = line.split("#")[0].strip()
+        if not body.startswith("sc "):
+            continue
+        fields = [x.strip() for x in body.split(";")]
+        if len(fields) >= 3:
+            codes[fields[2]] = fields[1]
+    return codes
+
+
+def parse_invalid_clusters(text):
+    """IndicShapingInvalidCluster.txt: the forbidden sequences, each a list of code points."""
+    seqs = []
+    for line in text.splitlines():
+        body = line.split("#")[0].strip()
+        if not body:
+            continue
+        cps = [int(x, 16) for x in body.split(";")[0].split()]
+        if len(cps) >= 2:
+            seqs.append(cps)
+    return seqs
 
 
 def block_of(blocks, cp):
@@ -147,6 +186,13 @@ def runs(mapping):
         else:
             out.append([cp, cp, v])
     return out
+
+
+def code_points():
+    for cp in range(CODE_SPACE):
+        if 0xD800 <= cp <= 0xDFFF:
+            continue
+        yield cp
 
 
 # HarfBuzz's modified combining classes (hb-unicode.hh): the reorderings Uniscribe applies.
@@ -199,14 +245,29 @@ SYLLABIC_NAMES = ["X", "C", "V", "N", "H", "ZWNJ", "ZWJ", "M", "SM", "A", "VD", 
                   "RS", "MPst", "Repha", "Ra", "CM", "Symbol", "CS", "SMPst",
                   "VAbv", "VBlw", "VPre", "VPst", "Robatic", "Xgroup", "Ygroup",
                   "As", "MH", "MR", "MW", "MY", "PT", "VS", "ML"]
-MYANMAR_KHMER_BLOCKS = {"Myanmar", "Myanmar Extended-A", "Myanmar Extended-B", "Khmer"}
+MYANMAR_KHMER_BLOCKS = {"Myanmar", "Myanmar Extended-A", "Myanmar Extended-B", "Myanmar Extended-C", "Khmer"}
 
-# gen-use-table.py, reproduced. Scripts HarfBuzz routes to the universal engine (hb-ot-shaper.hh), BMP ones.
-USE_SCRIPTS = {
+# The scripts HarfBuzz routes to the universal engine (hb-ot-shaper.hh, hb_ot_shaper_categorize),
+# in its order, all planes. Sinhala is on its list and not on this one: the classic Indic shaper
+# keeps it here (its own configuration line, HarfBuzz's). A name absent from Scripts.txt is a
+# script newer than the UCD in hand — reported, not fatal.
+USE_SCRIPTS = [
     "Tibetan", "Mongolian", "Buhid", "Hanunoo", "Tagalog", "Tagbanwa", "Limbu", "Tai_Le", "Buginese",
-    "Syloti_Nagri", "Tifinagh", "Balinese", "Nko", "Phags_Pa", "Cham", "Kayah_Li", "Lepcha", "Rejang",
-    "Saurashtra", "Sundanese", "Javanese", "Meetei_Mayek", "Tai_Tham", "Tai_Viet", "Batak", "Mandaic",
-}
+    "Kharoshthi", "Syloti_Nagri", "Tifinagh", "Balinese", "Nko", "Phags_Pa", "Cham", "Kayah_Li", "Lepcha",
+    "Rejang", "Saurashtra", "Sundanese", "Egyptian_Hieroglyphs", "Javanese", "Kaithi", "Meetei_Mayek",
+    "Tai_Tham", "Tai_Viet", "Batak", "Brahmi", "Mandaic", "Chakma", "Miao", "Sharada", "Takri", "Duployan",
+    "Grantha", "Khojki", "Khudawadi", "Mahajani", "Manichaean", "Modi", "Pahawh_Hmong", "Psalter_Pahlavi",
+    "Siddham", "Tirhuta", "Ahom", "Multani", "Adlam", "Bhaiksuki", "Marchen", "Newa", "Masaram_Gondi",
+    "Soyombo", "Zanabazar_Square", "Dogra", "Gunjala_Gondi", "Hanifi_Rohingya", "Makasar", "Medefaidrin",
+    "Old_Sogdian", "Sogdian", "Elymaic", "Nandinagari", "Nyiakeng_Puachue_Hmong", "Wancho", "Chorasmian",
+    "Dives_Akuru", "Khitan_Small_Script", "Yezidi", "Cypro_Minoan", "Old_Uyghur", "Tangsa", "Toto",
+    "Vithkuqi", "Kawi", "Nag_Mundari", "Garay", "Gurung_Khema", "Kirat_Rai", "Ol_Onal", "Sunuwar", "Todhri",
+    "Tulu_Tigalari", "Beria_Erfe", "Sidetic", "Tai_Yo", "Tolong_Siki",
+]
+
+# hb-ot-tag.cc hb_ot_old_tag_from_script: the ISO 15924 code in lower case, except these.
+SCRIPT_TAG_EXCEPTIONS = {"Hiragana": "kana", "Lao": "lao ", "Yi": "yi  ", "Nko": "nko ", "Vai": "vai "}
+
 USE_VALUES = {
     "O": 0, "B": 1, "N": 4, "GB": 5, "CGJ": 6, "SUB": 11, "H": 12, "HN": 13, "ZWNJ": 14, "WJ": 16, "R": 18,
     "CS": 43, "IS": 44, "Sk": 48, "G": 49, "J": 50, "SB": 51, "SE": 52, "HVM": 53, "HM": 54, "HR": 55, "RK": 56,
@@ -316,9 +377,10 @@ def main():
     pos, _ = parse_props(load(FILES[1], src_dir, UCD))
     ajt, _ = parse_props(load(FILES[2], src_dir, UCD), field=2)
     udi = parse_derived(load(FILES[3], src_dir, UCD), "Default_Ignorable_Code_Point")
-    gc = parse_unicode_data(load(FILES[4], src_dir, UCD))
+    gc, bidi = parse_unicode_data(load(FILES[4], src_dir, UCD))
     blocks = parse_blocks(load(FILES[5], src_dir, UCD))
     scripts, _ = parse_props(load(FILES[6], src_dir, UCD))
+    iso_codes = parse_script_aliases(load(FILES[7], src_dir, UCD))
     # HarfBuzz's additions: Microsoft's USE data for characters Unicode leaves unassigned.
     syl_add, _ = parse_props(load(MS_FILES[0], src_dir, HB))
     pos_add, _ = parse_props(load(MS_FILES[1], src_dir, HB))
@@ -326,20 +388,25 @@ def main():
         syl[cp] = "Syllable_Modifier" if v == "Consonant_Final_Modifier" else v
     for cp, v in pos_add.items():
         pos[cp] = "Not_Applicable" if v == "NA" else v
+    invalid_clusters = parse_invalid_clusters(load(MS_FILES[2], src_dir, HB))
 
-    # 1. Combining classes, HarfBuzz-modified (BMP and the supplementary planes' marks).
+    script_names = sorted(set(scripts.values()) | {"Unknown"})
+    script_index = {name: i for i, name in enumerate(script_names)}
+    use_names = [s for s in USE_SCRIPTS if s in script_index]
+    missing_use = [s for s in USE_SCRIPTS if s not in script_index]
+    use_set = set(use_names)
+
+    # 1. Combining classes, HarfBuzz-modified, every plane.
     ccc = {}
-    for cp in list(range(0x0300, 0x10000)) + list(range(0x10000, 0x1F000)):
-        if 0xD800 <= cp <= 0xDFFF:
-            continue
+    for cp in code_points():
         c = unicodedata.combining(chr(cp))
         if c:
             ccc[cp] = MODIFIED_CCC.get(c, c)
 
-    # 2. First-level canonical decompositions of the BMP, with whether the pair recomposes.
+    # 2. First-level canonical decompositions, every plane, with whether the pair recomposes.
     decomp = {}
-    for cp in range(0x00C0, 0x10000):
-        if 0xD800 <= cp <= 0xDFFF:
+    for cp in code_points():
+        if cp < 0x00C0:
             continue
         d = unicodedata.decomposition(chr(cp))
         if not d or d.startswith("<"):
@@ -354,8 +421,8 @@ def main():
 
     # 4. Myanmar / Khmer categories, as HarfBuzz's Indic table classes them.
     mk = {}
-    for cp in list(range(0x1000, 0x10A0)) + list(range(0x1780, 0x1800)) + list(range(0xA9E0, 0xAA00)) + list(range(0xAA60, 0xAA80)):
-        if block_of(blocks, cp) not in MYANMAR_KHMER_BLOCKS:
+    for cp in code_points():
+        if scripts.get(cp) not in ("Myanmar", "Khmer") or block_of(blocks, cp) not in MYANMAR_KHMER_BLOCKS:
             continue
         cat = myanmar_khmer_category(cp, syl, pos)
         if cat != "X":
@@ -366,11 +433,11 @@ def main():
     mk[0x200C] = "ZWNJ"
     mk[0x200D] = "ZWJ"
 
-    # 5. USE categories for the scripts routed to it (BMP), HarfBuzz's derivation.
+    # 5. USE categories for the scripts routed to it, HarfBuzz's derivation.
     use = {}
     unresolved = []
-    for cp in range(0x0000, 0x10000):
-        if scripts.get(cp, "Unknown") not in USE_SCRIPTS:
+    for cp in code_points():
+        if scripts.get(cp, "Unknown") not in use_set:
             continue
         UISC = syl.get(cp, "Other")
         UIPC = pos.get(cp, "Not_Applicable")
@@ -390,22 +457,44 @@ def main():
     for vs in range(0xFE00, 0xFE10):
         use[vs] = USE_VALUES["CGJ"]
 
-    # 6. Joining types of the USE scripts that join (Arabic-style forms).
+    # 6. Joining types of the USE scripts that join (Arabic-style forms), every plane.
     JT_VALUES = {"U": 0, "C": 1, "D": 2, "L": 3, "R": 4, "T": 5}
     jt = {}
     for cp, t in ajt.items():
-        if cp > 0xFFFF or scripts.get(cp) not in USE_SCRIPTS or t == "U":
+        if scripts.get(cp) not in use_set or t == "U":
             continue
         jt[cp] = JT_VALUES.get(t, 0)
-    for cp in range(0x10000):
-        if scripts.get(cp) in USE_SCRIPTS and gc.get(cp) in ("Mn", "Me", "Cf") and cp not in jt:
+    for cp in code_points():
+        if scripts.get(cp) in use_set and gc.get(cp) in ("Mn", "Me", "Cf") and cp not in jt:
             jt[cp] = JT_VALUES["T"]
 
-    # 7. Scripts of the BMP, as runs; names as constants.
-    bmp_scripts = {cp: v for cp, v in scripts.items() if cp <= 0xFFFF}
-    script_names = sorted(set(bmp_scripts.values()) | {"Unknown"})
-    script_index = {name: i for i, name in enumerate(script_names)}
-    script_runs = runs({cp: script_index[v] for cp, v in bmp_scripts.items()})
+    # 7. Scripts of every code point, as runs; names as constants; their OpenType tags.
+    script_runs = runs({cp: script_index[v] for cp, v in scripts.items()})
+    tags = []
+    for name in script_names:
+        if name in SCRIPT_TAG_EXCEPTIONS:
+            tags.append(SCRIPT_TAG_EXCEPTIONS[name])
+        elif name in ("Common", "Inherited", "Unknown"):
+            tags.append("DFLT")
+        else:
+            tags.append(iso_codes[name].lower())
+
+    # 8. Right-to-left scripts: a letter of theirs carries a right-to-left bidi class.
+    rtl_scripts = set()
+    for cp, bc in bidi.items():
+        if bc in ("R", "AL") and gc.get(cp, "").startswith("L"):
+            s = scripts.get(cp, "Unknown")
+            if s not in ("Common", "Inherited", "Unknown"):
+                rtl_scripts.add(script_index[s])
+
+    # 9. Vowel constraints: sequences sorted; a sequence that is the prefix of a longer one
+    #    makes the longer one redundant (HarfBuzz's trie keeps the shorter).
+    seqs = sorted(set(tuple(s) for s in invalid_clusters))
+    kept = [s for s in seqs if not any(len(t) < len(s) and s[:len(t)] == t for t in seqs)]
+    too_long = [s for s in kept if len(s) > 3]
+    if too_long:
+        sys.exit("vowel constraint longer than three code points: " + ", ".join("%04X" % c for c in too_long[0]))
+
     use_runs = runs(use)
     jt_runs = runs(jt)
 
@@ -413,8 +502,8 @@ def main():
     w = lines.append
     w("// <auto-generated>")
     w(f"//   By tools/generate-shaping-tables.py from Unicode {version} (IndicSyllabicCategory,")
-    w("//   IndicPositionalCategory, ArabicShaping, DerivedCoreProperties, UnicodeData, Blocks, Scripts),")
-    w("//   HarfBuzz's ms-use additions, and Python's unicodedata. Do not edit: rerun the generator.")
+    w("//   IndicPositionalCategory, ArabicShaping, DerivedCoreProperties, UnicodeData, Blocks, Scripts,")
+    w("//   PropertyValueAliases), HarfBuzz's ms-use files, and Python's unicodedata. Do not edit: rerun the generator.")
     w("// </auto-generated>")
     w("namespace UnityGameTranslator.Core.TextShaping")
     w("{")
@@ -430,7 +519,7 @@ def main():
         w("            " + ", ".join(f"0x{cp:04X}, {c}" for cp, c in items[i:i + 8]) + ",")
     w("        };")
     w("")
-    w("        /// <summary>First-level canonical decompositions of the BMP — flattened (composed, first, second or 0, 1 when the pair recomposes), sorted.</summary>")
+    w("        /// <summary>First-level canonical decompositions — flattened (composed, first, second or 0, 1 when the pair recomposes), sorted.</summary>")
     w("        internal static readonly int[] Decompositions =")
     w("        {")
     items = sorted(decomp.items())
@@ -479,7 +568,7 @@ def main():
         w("            " + ", ".join(f"0x{a:04X}, 0x{b:04X}, {v}" for a, b, v in jt_runs[i:i + 6]) + ",")
     w("        };")
     w("")
-    w("        /// <summary>Script of every BMP code point — runs (first, last, script), sorted. Unlisted = Unknown.</summary>")
+    w("        /// <summary>Script of every code point — runs (first, last, script), sorted. Unlisted = Unknown.</summary>")
     w("        internal static class Script")
     w("        {")
     for name in script_names:
@@ -491,14 +580,47 @@ def main():
     for i in range(0, len(script_runs), 6):
         w("            " + ", ".join(f"0x{a:04X}, 0x{b:04X}, {v}" for a, b, v in script_runs[i:i + 6]) + ",")
     w("        };")
+    w("")
+    w("        /// <summary>OpenType script tag of every script, by script index (ISO 15924 in lower case; HarfBuzz's exceptions kept; DFLT for Common, Inherited and Unknown).</summary>")
+    w("        internal static readonly string[] ScriptTags =")
+    w("        {")
+    for i in range(0, len(tags), 8):
+        w("            " + ", ".join(f"\"{t}\"" for t in tags[i:i + 8]) + ",")
+    w("        };")
+    w("")
+    w("        /// <summary>The scripts HarfBuzz routes to the Universal Shaping Engine (script indices, sorted).</summary>")
+    w("        internal static readonly int[] UseScripts =")
+    w("        {")
+    use_indices = sorted(script_index[s] for s in use_names)
+    for i in range(0, len(use_indices), 16):
+        w("            " + ", ".join(str(v) for v in use_indices[i:i + 16]) + ",")
+    w("        };")
+    w("")
+    w("        /// <summary>The scripts whose letters carry a right-to-left bidi class (script indices, sorted).</summary>")
+    w("        internal static readonly int[] RightToLeftScripts =")
+    w("        {")
+    rtl_indices = sorted(rtl_scripts)
+    for i in range(0, len(rtl_indices), 16):
+        w("            " + ", ".join(str(v) for v in rtl_indices[i:i + 16]) + ",")
+    w("        };")
+    w("")
+    w("        /// <summary>Vowel-sign sequences the USE specification forbids — flattened (first, second, third or 0), sorted by first; a dotted circle goes before the last one.</summary>")
+    w("        internal static readonly int[] VowelConstraints =")
+    w("        {")
+    for i in range(0, len(kept), 4):
+        w("            " + ", ".join(f"0x{s[0]:04X}, 0x{s[1]:04X}, 0x{(s[2] if len(s) > 2 else 0):04X}" for s in kept[i:i + 4]) + ",")
+    w("        };")
     w("    }")
     w("}")
     with io.open(OUT, "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(lines) + "\n")
     print(f"{OUT}: {len(ccc)} combining classes, {len(decomp)} decompositions, {len(ignorable)} ignorable ranges, "
-          f"{len(mk)} Myanmar/Khmer categories, {len(use_runs)} USE runs ({len(unresolved)} unresolved"
+          f"{len(mk)} Myanmar/Khmer categories, {len(use_runs)} USE runs over {len(use_names)} scripts ({len(unresolved)} unresolved"
           f"{': ' + ', '.join('%04X' % u for u in unresolved[:8]) if unresolved else ''}), "
-          f"{len(jt_runs)} joining runs, {len(script_runs)} script runs, Unicode {version}")
+          f"{len(jt_runs)} joining runs, {len(script_runs)} script runs, {len(script_names)} scripts, "
+          f"{len(rtl_indices)} right-to-left, {len(kept)} vowel constraints, Unicode {version}")
+    if missing_use:
+        print(f"USE scripts not in this UCD (newer than {version}): {', '.join(missing_use)}")
 
 
 if __name__ == "__main__":

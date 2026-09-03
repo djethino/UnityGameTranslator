@@ -36,7 +36,12 @@ namespace UnityGameTranslator.Core.TextShaping
     ///
     /// The model is the one every shaping engine implements for these scripts — Microsoft's
     /// "Developing OpenType Fonts for Devanagari Script" (the dev2 specification) as HarfBuzz
-    /// realises it (hb-ot-shaper-indic.cc), which is what the fonts were tested against:
+    /// realises it (hb-ot-shaper-indic.cc), which is what the fonts were tested against. A font
+    /// that only carries the old script tag (deva without dev2) gets the old specification's
+    /// three differences: the first post-base Halant moved after the last consonant, no
+    /// below-base forms before the base, and Devanagari's eyelash Ra formed through 'blwf'.
+    /// (HarfBuzz also merges the clusters of an old-spec syllable; clusters carry nothing
+    /// here but the source index, so there is nothing to merge.) The stages:
     ///   1. cut the text into syllables (a grammar over Unicode's Indic_Syllabic_Category);
     ///   2. per syllable, find the base consonant and reorder around it — reph candidate first,
     ///      pre-base matras to the front, marks travelling with what they follow, a stable
@@ -343,10 +348,15 @@ namespace UnityGameTranslator.Core.TextShaping
             return result;
         }
 
-        /// <summary>One run of code points (with their source indices), the result appended.</summary>
+        /// <summary>
+        /// One run of code points (with their source indices), the result appended. The lists
+        /// are the run's own and are edited in place (the forbidden vowel sequences get their
+        /// dotted circle before anything else looks at the text).
+        /// </summary>
         internal static void ShapeRun(List<int> input, List<int> inputClusters, IShapingFont font, List<ShapedGlyph> result)
         {
             var layout = font.Layout;
+            ShapingCommon.ApplyVowelConstraints(input, inputClusters);
             var cps = Decompose(input, inputClusters, font, out var clusters);
             var buf = new L.GlyphBuffer();
             var categories = new StringBuilder(cps.Count);
@@ -595,8 +605,11 @@ namespace UnityGameTranslator.Core.TextShaping
                     g.Position = ConsonantPositionFromFace(plan, g.Glyph, font);
             }
 
-            // 1. Find base consonant.
-            int b = start;
+            // 1. Find base consonant. None until one is found: a syllable that ends in Halant +
+            //    ZWJ asks for explicit half forms of everything, so its consonants all sit
+            //    before a base that is not there (HarfBuzz starts at `end` for that reason —
+            //    starting at `start` made the first consonant the base and denied it 'half').
+            int b = end;
             bool hasReph = false;
             int limit = start;
 
@@ -740,6 +753,18 @@ namespace UnityGameTranslator.Core.TextShaping
                 mask = MaskBlwf | MaskAbvf | MaskPstf;
                 for (int i = b + 1; i < end; i++) buf[i].Mask |= mask;
             }
+
+            // Old-spec Devanagari: an eyelash Ra — Ra + Halant before the base — takes the
+            // below-base form, the old specification applying 'blwf' to every such Ra as well
+            // as to below-base consonants. Not when a ZWJ follows: Ra, Halant, ZWJ is the
+            // explicit request for the eyelash, and the font handles it (HarfBuzz).
+            if (plan.IsOldSpec && script.Block == 0x0900)
+                for (int i = start; i + 1 < b; i++)
+                    if (buf[i].Category == CatRa && buf[i + 1].Category == CatH && (i + 2 == b || buf[i + 2].Category != CatZWJ))
+                    {
+                        buf[i].Mask |= MaskBlwf;
+                        buf[i + 1].Mask |= MaskBlwf;
+                    }
 
             // Pre-base-reordering Ra: a Halant + Ra pair after the base the font would ligate through 'pref'.
             if (plan.Pref != null && b + 2 <= end)

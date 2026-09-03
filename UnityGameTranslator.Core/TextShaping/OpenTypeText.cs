@@ -42,9 +42,10 @@ namespace UnityGameTranslator.Core.TextShaping
             int i = 0;
             while (i < text.Length)
             {
-                if (!InRun(text[i])) { i++; continue; }
+                int cp = CodePointAt(text, i, out int width);
+                if (!InRun(cp)) { i += width; continue; }
                 int start = i;
-                while (i < text.Length && InRun(text[i])) i++;
+                while (i < text.Length && InRun(CodePointAt(text, i, out width))) i += width;
                 // A run made only of joiners, spaces or marks has nothing to shape.
                 if (!OpenTypeShaping.NeedsShaping(text.Substring(start, i - start))) continue;
 
@@ -66,12 +67,12 @@ namespace UnityGameTranslator.Core.TextShaping
         /// circle, and the combining marks of any block (they belong to the letter before them).
         /// A space ends a run: a font's rules never cross one, and it keeps runs short.
         /// </summary>
-        private static bool InRun(char c)
+        private static bool InRun(int cp)
         {
-            if (c == '‌' || c == '‍' || c == '◌') return true;
-            if (c < 0x0300) return false;
-            if (c >= 0x0300 && c <= 0x036F) return true;
-            int script = ShapingCommon.ScriptOf(c);
+            if (cp == 0x200C || cp == 0x200D || cp == 0x25CC) return true;
+            if (cp < 0x0300) return false;
+            if (cp >= 0x0300 && cp <= 0x036F) return true;
+            int script = ShapingCommon.ScriptOf(cp);
             if (script == ShapingTables.Script.Inherited) return true;
             if (script == ShapingTables.Script.Common || script == ShapingTables.Script.Unknown || script == ShapingTables.Script.Latin
                 || script == ShapingTables.Script.Arabic || script == ShapingTables.Script.Han || script == ShapingTables.Script.Hiragana
@@ -79,6 +80,15 @@ namespace UnityGameTranslator.Core.TextShaping
                 || script == ShapingTables.Script.Greek)
                 return false;
             return true;
+        }
+
+        /// <summary>The code point at <paramref name="i"/> and how many chars it takes (a surrogate pair is one).</summary>
+        private static int CodePointAt(string s, int i, out int width)
+        {
+            char c = s[i];
+            if (char.IsHighSurrogate(c) && i + 1 < s.Length && char.IsLowSurrogate(s[i + 1])) { width = 2; return char.ConvertToUtf32(c, s[i + 1]); }
+            width = 1;
+            return c;
         }
 
         /// <summary>One run: glyphs in, codepoints out; null when a glyph could not be named.</summary>

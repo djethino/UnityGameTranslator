@@ -269,12 +269,60 @@ namespace UnityGameTranslator.Core.TextShaping
         /// </summary>
         internal static readonly string[] CommonGsubFeatures = { "rlig", "calt", "clig", "liga", "rclt" };
 
-        /// <summary>Scripts written right to left among the ones routed to a shaper here.</summary>
-        internal static bool IsRightToLeft(int script)
+        /// <summary>Is this script written right to left? From the bidi class of its letters (the generated table).</summary>
+        internal static bool IsRightToLeft(int script) => Array.BinarySearch(ShapingTables.RightToLeftScripts, script) >= 0;
+
+        /// <summary>Is this a script HarfBuzz sends to the universal engine? (its list, generated)</summary>
+        internal static bool IsUseScript(int script) => Array.BinarySearch(ShapingTables.UseScripts, script) >= 0;
+
+        /// <summary>The OpenType script tag of a script (the generated table); "DFLT" for one that has none.</summary>
+        internal static string ScriptTag(int script)
         {
-            return script == ShapingTables.Script.Hebrew || script == ShapingTables.Script.Arabic || script == ShapingTables.Script.Syriac
-                || script == ShapingTables.Script.Nko || script == ShapingTables.Script.Mandaic || script == ShapingTables.Script.Thaana
-                || script == ShapingTables.Script.Samaritan;
+            var tags = ShapingTables.ScriptTags;
+            return script >= 0 && script < tags.Length ? tags[script] : "DFLT";
+        }
+
+        /// <summary>
+        /// HarfBuzz's vowel constraints (hb-ot-shaper-vowel-constraints.cc — the preprocessing of
+        /// its Indic and universal engines): a dotted circle goes into a sequence of an
+        /// independent vowel and a vowel sign that the USE specification forbids, because the
+        /// pair would pass for another vowel (U+0905 U+093E for U+0906). Runs on code points,
+        /// before normalization; the circle takes the cluster of the sign it precedes. The
+        /// three-code-point sequences (Ra, virama, I; A, aa, ai…) put it before their last one.
+        /// </summary>
+        internal static void ApplyVowelConstraints(List<int> cps, List<int> clusters)
+        {
+            var t = ShapingTables.VowelConstraints;
+            for (int i = 0; i + 1 < cps.Count;)
+            {
+                int len = ForbiddenSequenceAt(t, cps, i);
+                if (len == 0) { i++; continue; }
+                int at = i + len - 1;
+                cps.Insert(at, 0x25CC);
+                clusters.Insert(at, clusters[at]);
+                i = at + 2;
+            }
+        }
+
+        /// <summary>Length of the forbidden sequence starting at <paramref name="i"/>; 0 when none does.</summary>
+        private static int ForbiddenSequenceAt(int[] t, List<int> cps, int i)
+        {
+            int first = cps[i], entries = t.Length / 3;
+            // To the first entry with this first code point, then through its group.
+            int lo = 0, hi = entries;
+            while (lo < hi)
+            {
+                int mid = (lo + hi) >> 1;
+                if (t[mid * 3] < first) lo = mid + 1; else hi = mid;
+            }
+            for (int e = lo; e < entries && t[e * 3] == first; e++)
+            {
+                if (cps[i + 1] != t[e * 3 + 1]) continue;
+                int third = t[e * 3 + 2];
+                if (third == 0) return 2;
+                if (i + 2 < cps.Count && cps[i + 2] == third) return 3;
+            }
+            return 0;
         }
 
         /// <summary>The category string of the buffer as it is now (after a stage merged or split glyphs).</summary>

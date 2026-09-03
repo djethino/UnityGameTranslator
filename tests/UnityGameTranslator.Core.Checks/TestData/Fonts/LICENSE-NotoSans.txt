@@ -1,14 +1,23 @@
 The Noto*.ttf files in this folder — Noto Sans Devanagari (variable, wdth/wght), and the
 Regular of Noto Sans Bengali, Gujarati, Gurmukhi, Kannada, Malayalam, Oriya, Sinhala, Tamil,
-Telugu, Thai, Lao, Hebrew, Khmer, Myanmar, Javanese, Balinese and Noto Serif Tibetan
+Telugu, Thai, Lao, Hebrew, Khmer, Myanmar, Javanese, Balinese, Adlam, Chakma, Khojki and
+Noto Serif Tibetan
 Copyright 2022–2025 The Noto Project Authors (https://github.com/notofonts)
 
 This Font Software is licensed under the SIL Open Font License, Version 1.1.
 This license is available with a FAQ at: https://openfontlicense.org
 
+The four *-deva / *-beng / *-knda / *-mlym files are DERIVED from the Noto Sans font of the
+same script by tools/shaping-oracle/harfbuzz-expectations.py (`derive`): instanced at the
+default weight, subset to the script's block, and with the "2" OpenType script tag removed or
+renamed so that only the old-specification tag (deva, beng, knda, mlym) remains. Their name
+records say "Noto Sans OldSpec …". They exist so that HarfBuzz and our shaper both take the
+old-specification path on the same lookups — no font of that kind being otherwise at hand —
+and are check data under the same licence.
+
 Used here as CHECK DATA only: the OpenType layout reader (Rasterizer/OpenTypeLayout.cs) and
-the Indic shaper (TextShaping/IndicShaper.cs) are exercised against their GSUB/GPOS/GDEF
-tables, with expectations produced from the same files by independent tools (fontTools,
-HarfBuzz — see tools/shaping-oracle/). The fonts are not shipped with the mod by this project.
+the shapers (TextShaping/*.cs) are exercised against their GSUB/GPOS/GDEF tables, with
+expectations produced from the same files by independent tools (fontTools, HarfBuzz — see
+tools/shaping-oracle/). The fonts are not shipped with the mod by this project.
 Glyph ids in the expectations are those of these exact files: replacing a font means
-regenerating TestData/Shaping/ with the oracle.
+regenerating TestData/Shaping/ with the oracle (`derive` first for the old-spec variants).

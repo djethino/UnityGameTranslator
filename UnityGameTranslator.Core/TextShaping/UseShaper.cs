@@ -7,11 +7,13 @@ namespace UnityGameTranslator.Core.TextShaping
 {
     /// <summary>
     /// The Universal Shaping Engine — Microsoft's data-driven model for every script without a
-    /// dedicated one (Tibetan, Javanese, Balinese, Tai Tham, Cham, Mongolian, N'Ko…), as
-    /// HarfBuzz realises it (hb-ot-shaper-use.cc): clusters cut by the USE grammar over
-    /// categories derived from Unicode's own properties, the repha and pre-base pieces
-    /// reordered, the feature groups of the specification in order, joining forms for the
-    /// cursive scripts, positioning with mark advances zeroed first.
+    /// dedicated one (Tibetan, Javanese, Balinese, Tai Tham, Cham, Mongolian, N'Ko, Adlam,
+    /// Chakma, Brahmi… — HarfBuzz's list, generated into ShapingTables.UseScripts, every plane),
+    /// as HarfBuzz realises it (hb-ot-shaper-use.cc): the forbidden vowel sequences broken with
+    /// a dotted circle, clusters cut by the USE grammar over categories derived from Unicode's
+    /// own properties, the repha and pre-base pieces reordered, the feature groups of the
+    /// specification in order, joining forms for the cursive scripts, positioning with mark
+    /// advances zeroed first.
     ///
     /// PURE by contract (no Unity) — linked into Core.Checks.
     /// </summary>
@@ -90,7 +92,7 @@ namespace UnityGameTranslator.Core.TextShaping
             }
         }
 
-        private sealed class Plan { public Dictionary<string, int[]> Gsub, Gpos; public bool Joins; }
+        private sealed class Plan { public Dictionary<string, int[]> Gsub, Gpos; }
         private static readonly Dictionary<L, Dictionary<string, Plan>> _plans = new Dictionary<L, Dictionary<string, Plan>>();
 
         private static Plan PlanFor(IShapingFont font, string tag)
@@ -104,41 +106,11 @@ namespace UnityGameTranslator.Core.TextShaping
             return plan;
         }
 
-        /// <summary>OpenType script tags of the USE scripts this shaper meets (BMP).</summary>
-        internal static string ScriptTag(int script)
-        {
-            if (script == ShapingTables.Script.Tibetan) return "tibt";
-            if (script == ShapingTables.Script.Mongolian) return "mong";
-            if (script == ShapingTables.Script.Javanese) return "java";
-            if (script == ShapingTables.Script.Balinese) return "bali";
-            if (script == ShapingTables.Script.Sundanese) return "sund";
-            if (script == ShapingTables.Script.Tai_Tham) return "lana";
-            if (script == ShapingTables.Script.Tai_Viet) return "tavt";
-            if (script == ShapingTables.Script.Cham) return "cham";
-            if (script == ShapingTables.Script.Meetei_Mayek) return "mtei";
-            if (script == ShapingTables.Script.Buginese) return "bugi";
-            if (script == ShapingTables.Script.Batak) return "batk";
-            if (script == ShapingTables.Script.Lepcha) return "lepc";
-            if (script == ShapingTables.Script.Limbu) return "limb";
-            if (script == ShapingTables.Script.Tai_Le) return "tale";
-            if (script == ShapingTables.Script.Syloti_Nagri) return "sylo";
-            if (script == ShapingTables.Script.Phags_Pa) return "phag";
-            if (script == ShapingTables.Script.Saurashtra) return "saur";
-            if (script == ShapingTables.Script.Kayah_Li) return "kali";
-            if (script == ShapingTables.Script.Rejang) return "rjng";
-            if (script == ShapingTables.Script.Nko) return "nko ";
-            if (script == ShapingTables.Script.Tifinagh) return "tfng";
-            if (script == ShapingTables.Script.Mandaic) return "mand";
-            if (script == ShapingTables.Script.Tagalog) return "tglg";
-            if (script == ShapingTables.Script.Hanunoo) return "hano";
-            if (script == ShapingTables.Script.Buhid) return "buhd";
-            if (script == ShapingTables.Script.Tagbanwa) return "tagb";
-            return "DFLT";
-        }
-
+        /// <summary>Shape one run of a USE script (any plane); the lists are the run's own and are edited in place.</summary>
         internal static void Shape(List<int> cps, List<int> clusters, int script, IShapingFont font, List<ShapedGlyph> result)
         {
-            var plan = PlanFor(font, ScriptTag(script));
+            var plan = PlanFor(font, ShapingCommon.ScriptTag(script));
+            ShapingCommon.ApplyVowelConstraints(cps, clusters);
             ShapingCommon.Normalize(cps, clusters, font, ShapingCommon.NormalizationMode.DecomposedThenComposedDiacritics);
 
             bool rtl = ShapingCommon.IsRightToLeft(script);

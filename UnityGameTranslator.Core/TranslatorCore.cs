@@ -490,6 +490,17 @@ namespace UnityGameTranslator.Core
                 // private-use codepoint (Co) naming a shaped glyph — a conjunct IS letters.
                 // Without those, a shaped word coming back through the setter was "not ours",
                 // went to the AI, and its own translation entered the cache as a Hindi→Hindi key.
+                // A letter outside the basic plane arrives as a surrogate pair: judged as one
+                // code point (a lone surrogate is no letter), copied as its two halves.
+                if (char.IsHighSurrogate(c) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1]))
+                {
+                    if (IsWordCharacter(text, i)) { letters++; run++; if (run > longestRun) longestRun = run; }
+                    else run = 0;
+                    sb.Append(c).Append(text[i + 1]);
+                    i++;
+                    lastWasSpace = false;
+                    continue;
+                }
                 if (IsWordCharacter(c))
                 {
                     letters++;
@@ -507,13 +518,27 @@ namespace UnityGameTranslator.Core
             return sb.Length == 0 ? null : sb.ToString();
         }
 
-        private static bool IsWordCharacter(char c)
+        private static bool IsWordCharacter(char c) => IsWordCategory(System.Globalization.CharUnicodeInfo.GetUnicodeCategory(c));
+
+        /// <summary>The same question for the code point at <paramref name="i"/>, a surrogate pair read as one.</summary>
+        private static bool IsWordCharacter(string s, int i) => IsWordCategory(System.Globalization.CharUnicodeInfo.GetUnicodeCategory(s, i));
+
+        private static bool IsWordCategory(System.Globalization.UnicodeCategory category)
         {
-            if (char.IsLetter(c)) return true;
-            var category = System.Globalization.CharUnicodeInfo.GetUnicodeCategory(c);
-            return category == System.Globalization.UnicodeCategory.NonSpacingMark
-                || category == System.Globalization.UnicodeCategory.SpacingCombiningMark
-                || category == System.Globalization.UnicodeCategory.PrivateUse;
+            switch (category)
+            {
+                case System.Globalization.UnicodeCategory.UppercaseLetter:
+                case System.Globalization.UnicodeCategory.LowercaseLetter:
+                case System.Globalization.UnicodeCategory.TitlecaseLetter:
+                case System.Globalization.UnicodeCategory.ModifierLetter:
+                case System.Globalization.UnicodeCategory.OtherLetter:
+                case System.Globalization.UnicodeCategory.NonSpacingMark:
+                case System.Globalization.UnicodeCategory.SpacingCombiningMark:
+                case System.Globalization.UnicodeCategory.PrivateUse:
+                    return true;
+                default:
+                    return false;
+            }
         }
 
         // Presented strings that carry private-use codepoints (glyphs named by our font assets),

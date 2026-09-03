@@ -1,0 +1,9 @@
+NotoSansDevanagari.ttf — Noto Sans Devanagari (variable, wdth/wght)
+Copyright 2022 The Noto Project Authors (https://github.com/notofonts/devanagari)
+
+This Font Software is licensed under the SIL Open Font License, Version 1.1.
+This license is available with a FAQ at: https://openfontlicense.org
+
+Used here as CHECK DATA only: the OpenType layout reader (Rasterizer/OpenTypeLayout.cs) is
+exercised against its GSUB/GPOS/GDEF tables, with expectations read off the same file by an
+independent tool (fontTools). The font is not shipped with the mod by this project.

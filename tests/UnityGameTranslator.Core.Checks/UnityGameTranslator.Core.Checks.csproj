@@ -51,8 +51,16 @@
     <!-- The word breaker's dictionaries, same reasoning: it reads them from its own assembly. -->
     <EmbeddedResource Include="../../UnityGameTranslator.Core/TextShaping/Resources/Dictionaries/*.gz"
                       LogicalName="UnityGameTranslator.Core.TextShaping.Dictionaries.%(Filename)%(Extension)" />
+    <!-- The font parser and the OpenType layout reader: pure .NET, byte work on a font file —
+         the same purity contract as above. The rasterizer's OTHER files (SDF, packing, the
+         pipeline) are not here: the pipeline logs through TranslatorCore. -->
+    <Compile Include="../../UnityGameTranslator.Core/Rasterizer/TtfParser.cs" />
+    <Compile Include="../../UnityGameTranslator.Core/Rasterizer/CffParser.cs" />
+    <Compile Include="../../UnityGameTranslator.Core/Rasterizer/GlyphData.cs" />
+    <Compile Include="../../UnityGameTranslator.Core/Rasterizer/OpenTypeLayout.cs" />
     <!-- The Unicode conformance suite, gzipped (15 MB of text otherwise) — data from the
-         Unicode Consortium, not derived from the code under test. -->
+         Unicode Consortium, not derived from the code under test — and one real font (OFL, see
+         TestData/Fonts/LICENSE-*) the layout reader is checked against. -->
     <None Include="TestData/**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 

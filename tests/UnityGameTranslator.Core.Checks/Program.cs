@@ -76,6 +76,9 @@ namespace UnityGameTranslator.Core.Checks
 
             Section("Bidi conformance (Unicode suite)");
             BidiConformanceChecks.Run(Check);
+
+            Section("OpenType layout (GSUB/GPOS/GDEF on a real font)");
+            OpenTypeLayoutChecks.Run(Check);
         }
 
         private static void Check(bool passed, string what, string why)

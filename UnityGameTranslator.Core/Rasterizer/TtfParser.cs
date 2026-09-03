@@ -123,6 +123,34 @@ namespace UnityGameTranslator.Core.Rasterizer
             return -1;
         }
 
+        /// <summary>Glyph index a codepoint maps to, or 0 (the .notdef glyph) when it maps to none.</summary>
+        public int GetGlyphIndex(int unicode)
+        {
+            return _unicodeToGlyph.TryGetValue(unicode, out int glyphIndex) ? glyphIndex : 0;
+        }
+
+        /// <summary>Horizontal advance of a glyph by index, in font units (hmtx).</summary>
+        public int GetAdvanceWidth(int glyphIndex)
+        {
+            return _advanceWidths != null && glyphIndex >= 0 && glyphIndex < _advanceWidths.Length ? _advanceWidths[glyphIndex] : 0;
+        }
+
+        /// <summary>Offset and length of a table by tag, false when the font has no such table.</summary>
+        public bool TryGetTable(string tag, out uint offset, out uint length)
+        {
+            if (_tables.TryGetValue(tag, out var rec)) { offset = rec.Offset; length = rec.Length; return true; }
+            offset = 0; length = 0;
+            return false;
+        }
+
+        private OpenTypeLayout _layout;
+
+        /// <summary>
+        /// The font's OpenType layout tables (GDEF/GSUB/GPOS), read on first use. Never null:
+        /// a font without them answers with empty tables, so a shaper can ask and get nothing.
+        /// </summary>
+        public OpenTypeLayout Layout => _layout ?? (_layout = new OpenTypeLayout(_data, TryGetTable));
+
         #region Main Parse
 
         private void Parse()

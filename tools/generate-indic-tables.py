@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Generate UnityGameTranslator.Core/TextShaping/IndicTables.g.cs from the Unicode Character Database.
 
 The reordering of pre-base vowel signs (IndicReorderer.cs) is one rule driven by two Unicode
@@ -146,6 +146,14 @@ def main():
     syl_bytes = [syl_names.index(syl.get(cp, "Other")) for cp in range(INDIC_FIRST, INDIC_LAST + 1)]
     pos_bytes = [pos_names.index(pos.get(cp, "NA")) for cp in range(INDIC_FIRST, INDIC_LAST + 1)]
     assert len(syl_names) < 256 and len(pos_names) < 256
+    # Every canonical decomposition in those blocks, fully applied: what a shaper takes apart
+    # before it reorders (two-part vowel signs, nukta consonants), whether or not the font has
+    # the composed glyph — the composed form is never what the font's rules were written for.
+    decompositions = {}
+    for cp in range(INDIC_FIRST, INDIC_LAST + 1):
+        parts = full_decomposition(cp)
+        if parts and len(parts) > 1:
+            decompositions[cp] = parts
 
     lines = []
     w = lines.append
@@ -228,11 +236,22 @@ def main():
     for i in range(0, len(pos_bytes), 32):
         w("            " + ", ".join(str(b) for b in pos_bytes[i:i + 32]) + ",")
     w("        };")
+    w("")
+    w("        /// <summary>")
+    w("        /// Full canonical decompositions of U+0900..U+0DFF, flattened as (code point, count,")
+    w("        /// parts...), sorted by code point — everything Unicode takes apart, exclusions included.")
+    w("        /// </summary>")
+    w("        internal static readonly int[] Decompositions =")
+    w("        {")
+    for cp in sorted(decompositions):
+        parts = decompositions[cp]
+        w(f"            0x{cp:04X}, {len(parts)}, " + ", ".join(f"0x{p:04X}" for p in parts) + ",")
+    w("        };")
     w("    }")
     w("}")
     with io.open(OUT, "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(lines) + "\n")
-    print(f"{OUT}: {len(left)} left signs, {len(bases)} base ranges, {len(binders)} binder ranges, {len(attach)} attach ranges, {len(splits)} splits, {len(syl_names)} syllabic / {len(pos_names)} positional categories, Unicode {pos_version}")
+    print(f"{OUT}: {len(left)} left signs, {len(bases)} base ranges, {len(binders)} binder ranges, {len(attach)} attach ranges, {len(splits)} splits, {len(decompositions)} decompositions, {len(syl_names)} syllabic / {len(pos_names)} positional categories, Unicode {pos_version}")
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -89,6 +89,12 @@ namespace UnityGameTranslator.Core.TextShaping
             public int RephPos;
             public RephMode RephMode;
             public BlwfMode BlwfMode;
+            /// <summary>
+            /// Marks (GDEF class) get a zero advance before positioning — what the universal
+            /// shaping engine does, which is where HarfBuzz sends Sinhala; the classic Indic
+            /// engine leaves advances to the font.
+            /// </summary>
+            public bool ZeroMarkWidths;
         }
 
         // HarfBuzz indic_configs, verbatim (has_old_spec, virama, base_pos, reph_pos, reph_mode, blwf_mode).
@@ -103,7 +109,7 @@ namespace UnityGameTranslator.Core.TextShaping
             new ScriptConfig { Name = "Telugu",     Block = 0x0C00, NewTag = "tel2", OldTag = "telu", Virama = 0x0C4D, RephPos = PosAfterPost,  RephMode = RephMode.Explicit, BlwfMode = BlwfMode.PostOnly },
             new ScriptConfig { Name = "Kannada",    Block = 0x0C80, NewTag = "knd2", OldTag = "knda", Virama = 0x0CCD, RephPos = PosAfterPost,  RephMode = RephMode.Implicit, BlwfMode = BlwfMode.PostOnly },
             new ScriptConfig { Name = "Malayalam",  Block = 0x0D00, NewTag = "mlm2", OldTag = "mlym", Virama = 0x0D4D, RephPos = PosAfterMain,  RephMode = RephMode.LogRepha, BlwfMode = BlwfMode.PreAndPost },
-            new ScriptConfig { Name = "Sinhala",    Block = 0x0D80, NewTag = "sinh", OldTag = "sinh", Virama = 0x0DCA, BasePosLastSinhala = true, RephPos = PosAfterPost, RephMode = RephMode.Explicit, BlwfMode = BlwfMode.PreAndPost },
+            new ScriptConfig { Name = "Sinhala",    Block = 0x0D80, NewTag = "sinh", OldTag = "sinh", Virama = 0x0DCA, BasePosLastSinhala = true, RephPos = PosAfterPost, RephMode = RephMode.Explicit, BlwfMode = BlwfMode.PreAndPost, ZeroMarkWidths = true },
         };
 
         // Ra of each script: the consonant that forms a reph (and a rakar / pre-base-reordering form).
@@ -157,8 +163,14 @@ namespace UnityGameTranslator.Core.TextShaping
             public ScriptConfig Script;
             public bool IsOldSpec;
             public Dictionary<string, int[]> Gsub, Gpos;
-            public int[] Rphf, Pref, Blwf, Pstf;
+            public int[] Rphf, Pref, Blwf, Pstf, Vatu;
             public int ViramaGlyph;
+            /// <summary>
+            /// Whether "would substitute" demands a rule with no context around the sequence.
+            /// New-spec fonts: yes; old-spec fonts and Malayalam: no — HarfBuzz's setting, and
+            /// Malayalam fonts do write their below forms as contextual rules.
+            /// </summary>
+            public bool ZeroContext;
         }
 
         private static readonly Dictionary<OpenTypeLayout, Dictionary<ScriptConfig, Plan>> _plans = new Dictionary<OpenTypeLayout, Dictionary<ScriptConfig, Plan>>();
@@ -178,6 +190,8 @@ namespace UnityGameTranslator.Core.TextShaping
             plan.Gsub.TryGetValue("pref", out plan.Pref);
             plan.Gsub.TryGetValue("blwf", out plan.Blwf);
             plan.Gsub.TryGetValue("pstf", out plan.Pstf);
+            plan.Gsub.TryGetValue("vatu", out plan.Vatu);
+            plan.ZeroContext = !plan.IsOldSpec && script.Block != 0x0D00;
             byScript[script] = plan;
             return plan;
         }
@@ -266,12 +280,11 @@ namespace UnityGameTranslator.Core.TextShaping
         /// </summary>
         private static int MatraPosition(int cp, byte positional, ScriptConfig script)
         {
+            // Two-part signs are decomposed before this is asked; the composed sign's own side,
+            // for the ones that are not, is where its right part goes (HarfBuzz's table).
             int side;
-            if (positional == IndicTables.Positional.Left || positional == IndicTables.Positional.Left_And_Right
-                || positional == IndicTables.Positional.Top_And_Left || positional == IndicTables.Positional.Top_And_Left_And_Right
-                || positional == IndicTables.Positional.Bottom_And_Left || positional == IndicTables.Positional.Top_And_Bottom_And_Left)
-                side = PosPreC;
-            else if (positional == IndicTables.Positional.Top) side = PosAboveC;
+            if (positional == IndicTables.Positional.Left) side = PosPreC;
+            else if (positional == IndicTables.Positional.Top || positional == IndicTables.Positional.Top_And_Left) side = PosAboveC;
             else if (positional == IndicTables.Positional.Bottom || positional == IndicTables.Positional.Top_And_Bottom) side = PosBelowC;
             else if (positional == IndicTables.Positional.Overstruck) return PosAfterMain;
             else side = PosPostC; // Right, Top_And_Right, Bottom_And_Right, Top_And_Bottom_And_Right
@@ -318,39 +331,28 @@ namespace UnityGameTranslator.Core.TextShaping
         }
 
         /// <summary>
-        /// Shape a whole string for one font. Two-part vowel signs are decomposed first (the
-        /// font recomposes what it wants), every codepoint becomes a glyph through the cmap, and
-        /// only the Indic syllables get the treatment above.
+        /// Shape a whole string for one font. Canonically decomposable characters are taken
+        /// apart first (two-part vowel signs, nukta consonants — the font's rules are written
+        /// for the parts), every codepoint becomes a glyph through the cmap, and only the Indic
+        /// syllables get the treatment above.
         /// </summary>
         internal static List<ShapedGlyph> Shape(string text, IShapingFont font)
         {
             var layout = font.Layout;
-            var cps = Decompose(text, out var clusters);
+            var cps = Decompose(text, font, out var clusters);
             var buf = new L.GlyphBuffer();
             var categories = new StringBuilder(cps.Count);
-            for (int i = 0; i < cps.Count; i++)
-            {
-                Classify(cps[i], out int category, out int position);
-                int glyph = font.GlyphIndex(cps[i]);
-                buf.Glyphs.Add(new L.ShapedGlyph
-                {
-                    Glyph = glyph,
-                    Cluster = clusters[i],
-                    Category = category,
-                    Position = position,
-                    XAdvance = font.AdvanceWidth(glyph),
-                    UnicodeMark = category == CatM || category == CatN || category == CatH || category == CatSM || category == CatVD,
-                    Mask = 0,
-                });
-                categories.Append(CategoryLetters[category]);
-            }
+            for (int i = 0; i < cps.Count; i++) AddGlyph(buf, categories, cps[i], clusters[i], font);
 
             // 1. Syllables — over the categories, the longest matching rule; anything else is one glyph.
+            //    A broken cluster (marks with nothing to carry them) gets a dotted circle to sit on,
+            //    as every shaper draws it — after a logical repha when there is one.
             var syllables = new List<Syllable>();
-            string cats = categories.ToString();
+            int dottedCircle = font.GlyphIndex(0x25CC);
             int p = 0, syllableNumber = 0;
-            while (p < cats.Length)
+            while (p < categories.Length)
             {
+                string cats = categories.ToString();
                 int bestLen = 0; SyllableType bestType = SyllableType.NonIndic;
                 foreach (var rule in SyllableRules)
                 {
@@ -358,6 +360,19 @@ namespace UnityGameTranslator.Core.TextShaping
                     if (m.Success && m.Length > bestLen) { bestLen = m.Length; bestType = rule.Type; }
                 }
                 if (bestLen == 0) { bestLen = 1; bestType = SyllableType.NonIndic; }
+                if (bestType == SyllableType.BrokenCluster && dottedCircle > 0)
+                {
+                    int at = p;
+                    while (at < p + bestLen && buf[at].Category == CatRepha) at++;
+                    cps.Insert(at, 0x25CC);
+                    clusters.Insert(at, clusters[p]);
+                    var inserted = new L.GlyphBuffer();
+                    var insertedCats = new StringBuilder();
+                    AddGlyph(inserted, insertedCats, 0x25CC, clusters[p], font);
+                    buf.Glyphs.Insert(at, inserted[0]);
+                    categories.Insert(at, insertedCats[0]);
+                    bestLen++;
+                }
                 syllableNumber++;
                 ScriptConfig script = null;
                 for (int k = p; k < p + bestLen && script == null; k++) script = ScriptOf(cps[k]);
@@ -377,35 +392,55 @@ namespace UnityGameTranslator.Core.TextShaping
                 InitialReordering(buf, syl.Start, syl.End, plan, font);
             }
 
-            // 3. Substitutions: preliminaries, then the basic features, then final reordering, then presentation.
-            ApplyGsub(layout, buf, plans, PreFeatures);
-            ApplyGsub(layout, buf, plans, BasicFeatures);
+            // 3. Substitutions: preliminaries, then the basic features, then final reordering, then
+            //    presentation. After the final reordering the syllable boundaries are released —
+            //    presentation and positioning see the whole run, as in HarfBuzz.
+            ApplyStage(layout, layout.Gsub, buf, plans, PreFeatures, gsub: true);
+            ApplyStage(layout, layout.Gsub, buf, plans, BasicFeatures, gsub: true);
             FinalReorderingAll(buf, plans);
-            ApplyGsub(layout, buf, plans, PresentationFeatures);
+            for (int i = 0; i < buf.Count; i++) buf[i].Syllable = 0;
+            ApplyStage(layout, layout.Gsub, buf, plans, PresentationFeatures, gsub: true);
 
             // 4. Positioning.
-            for (int i = 0; i < buf.Count; i++) buf[i].XAdvance = font.AdvanceWidth(buf[i].Glyph);
+            bool zeroMarks = false;
+            foreach (var plan in DistinctPlans(plans)) zeroMarks |= plan.Script.ZeroMarkWidths;
+            for (int i = 0; i < buf.Count; i++)
+            {
+                buf[i].XAdvance = font.AdvanceWidth(buf[i].Glyph);
+                if (zeroMarks && layout.GlyphClass(buf[i].Glyph) == L.ClassMark) buf[i].XAdvance = 0;
+            }
             if (layout.Gpos != null)
             {
-                foreach (string feature in PositioningFeatures)
-                {
-                    var done = new HashSet<int>();
-                    foreach (var plan in DistinctPlans(plans))
-                        if (plan.Gpos.TryGetValue(feature, out var lookups))
-                            foreach (int li in lookups)
-                                if (done.Add(li))
-                                    layout.ApplyLookup(layout.Gpos, li, buf, uint.MaxValue);
-                }
+                ApplyStage(layout, layout.Gpos, buf, plans, PositioningFeatures, gsub: false);
                 buf.ResolveAttachments();
             }
 
+            // Joiners have done their work: they leave the output, as every shaper hides them.
             var result = new List<ShapedGlyph>(buf.Count);
             for (int i = 0; i < buf.Count; i++)
             {
                 var g = buf[i];
+                if (g.Category == CatZWJ || g.Category == CatZWNJ) continue;
                 result.Add(new ShapedGlyph { Glyph = g.Glyph, Cluster = g.Cluster, XAdvance = g.XAdvance, XOffset = g.XOffset, YOffset = g.YOffset });
             }
             return result;
+        }
+
+        private static void AddGlyph(L.GlyphBuffer buf, StringBuilder categories, int cp, int cluster, IShapingFont font)
+        {
+            Classify(cp, out int category, out int position);
+            int glyph = font.GlyphIndex(cp);
+            buf.Glyphs.Add(new L.ShapedGlyph
+            {
+                Glyph = glyph,
+                Cluster = cluster,
+                Category = category,
+                Position = position,
+                XAdvance = font.AdvanceWidth(glyph),
+                UnicodeMark = category == CatM || category == CatN || category == CatH || category == CatSM || category == CatVD,
+                Mask = 0,
+            });
+            categories.Append(CategoryLetters[category]);
         }
 
         private static IEnumerable<Plan> DistinctPlans(Plan[] plans)
@@ -415,26 +450,35 @@ namespace UnityGameTranslator.Core.TextShaping
         }
 
         /// <summary>
-        /// One feature list over the whole buffer: for every feature in order, every lookup of
-        /// every script present, once. Masks decide where a lookup applies.
+        /// One stage over the whole buffer: the lookups of every listed feature of every script
+        /// present, each once, in lookup-index order, with the masks of the features naming it
+        /// merged — the way OpenType engines run a stage. Masks decide where a lookup applies.
         /// </summary>
-        private static void ApplyGsub(OpenTypeLayout layout, L.GlyphBuffer buf, Plan[] plans, string[] features)
+        private static void ApplyStage(OpenTypeLayout layout, L.LayoutTable table, L.GlyphBuffer buf, Plan[] plans, string[] features, bool gsub)
         {
-            if (layout.Gsub == null) return;
+            if (table == null) return;
+            var masks = new SortedDictionary<int, uint>();
             foreach (string feature in features)
             {
-                uint mask = MaskOf(feature);
-                var done = new HashSet<int>();
+                uint mask = gsub ? MaskOf(feature) : uint.MaxValue;
                 foreach (var plan in DistinctPlans(plans))
-                    if (plan.Gsub.TryGetValue(feature, out var lookups))
-                        foreach (int li in lookups)
-                            if (done.Add(li))
-                                layout.ApplyLookup(layout.Gsub, li, buf, mask);
+                {
+                    var byFeature = gsub ? plan.Gsub : plan.Gpos;
+                    if (!byFeature.TryGetValue(feature, out var lookups)) continue;
+                    foreach (int li in lookups)
+                        masks[li] = masks.TryGetValue(li, out uint m) ? (m | mask) : mask;
+                }
             }
+            foreach (var kv in masks) layout.ApplyLookup(table, kv.Key, buf, kv.Value);
         }
 
-        /// <summary>Two-part vowel signs split into their parts (the generated Splits table), with each output's source index.</summary>
-        private static List<int> Decompose(string text, out List<int> clusters)
+        /// <summary>
+        /// Canonical decomposition of the text, with each output's source index. Everything
+        /// Unicode takes apart is taken apart (the generated Decompositions table), with the
+        /// exceptions every shaper makes for compatibility with the fonts: four letters left
+        /// whole, and Bengali ya + nukta put back together as yya.
+        /// </summary>
+        private static List<int> Decompose(string text, IShapingFont font, out List<int> clusters)
         {
             var cps = new List<int>(text.Length);
             clusters = new List<int>(text.Length);
@@ -442,24 +486,40 @@ namespace UnityGameTranslator.Core.TextShaping
             {
                 int cp = char.ConvertToUtf32(text, i);
                 int width = cp > 0xFFFF ? 2 : 1;
-                int[] parts = SplitOf(cp);
+                int[] parts = DecompositionOf(cp, font);
                 if (parts != null) foreach (int part in parts) { cps.Add(part); clusters.Add(i); }
                 else { cps.Add(cp); clusters.Add(i); }
                 i += width;
             }
+            // Recompose the one pair the fonts want composed (a composition exclusion in Unicode).
+            for (int i = 0; i + 1 < cps.Count; i++)
+                if (cps[i] == 0x09AF && cps[i + 1] == 0x09BC && font.GlyphIndex(0x09DF) > 0)
+                {
+                    cps[i] = 0x09DF;
+                    cps.RemoveAt(i + 1);
+                    clusters.RemoveAt(i + 1);
+                }
             return cps;
         }
 
-        private static int[] SplitOf(int cp)
+        private static int[] DecompositionOf(int cp, IShapingFont font)
         {
-            var splits = IndicTables.Splits;
-            for (int i = 0; i + 1 < splits.Length;)
+            switch (cp)
             {
-                int sign = splits[i], count = splits[i + 1];
+                case 0x0931: // DEVANAGARI LETTER RRA
+                case 0x09DC: // BENGALI LETTER RRA
+                case 0x09DD: // BENGALI LETTER RHA
+                case 0x0B94: // TAMIL LETTER AU
+                    return null;
+            }
+            var table = IndicTables.Decompositions;
+            for (int i = 0; i + 1 < table.Length;)
+            {
+                int sign = table[i], count = table[i + 1];
                 if (sign == cp)
                 {
                     var parts = new int[count];
-                    Array.Copy(splits, i + 2, parts, 0, count);
+                    Array.Copy(table, i + 2, parts, 0, count);
                     return parts;
                 }
                 if (sign > cp) return null;
@@ -486,9 +546,11 @@ namespace UnityGameTranslator.Core.TextShaping
             int virama = plan.ViramaGlyph;
             var cv = new[] { consonant, virama };
             var vc = new[] { virama, consonant };
-            if (layout.WouldSubstitute(layout.Gsub, plan.Blwf, cv) || layout.WouldSubstitute(layout.Gsub, plan.Blwf, vc)) return PosBelowC;
-            if (layout.WouldSubstitute(layout.Gsub, plan.Pstf, cv) || layout.WouldSubstitute(layout.Gsub, plan.Pstf, vc)) return PosPostC;
-            if (layout.WouldSubstitute(layout.Gsub, plan.Pref, cv) || layout.WouldSubstitute(layout.Gsub, plan.Pref, vc)) return PosPostC;
+            bool zc = plan.ZeroContext;
+            if (layout.WouldSubstitute(layout.Gsub, plan.Blwf, vc, zc) || layout.WouldSubstitute(layout.Gsub, plan.Blwf, cv, zc)
+                || layout.WouldSubstitute(layout.Gsub, plan.Vatu, vc, zc) || layout.WouldSubstitute(layout.Gsub, plan.Vatu, cv, zc)) return PosBelowC;
+            if (layout.WouldSubstitute(layout.Gsub, plan.Pstf, vc, zc) || layout.WouldSubstitute(layout.Gsub, plan.Pstf, cv, zc)) return PosPostC;
+            if (layout.WouldSubstitute(layout.Gsub, plan.Pref, vc, zc) || layout.WouldSubstitute(layout.Gsub, plan.Pref, cv, zc)) return PosPostC;
             return PosBaseC;
         }
 
@@ -540,8 +602,8 @@ namespace UnityGameTranslator.Core.TextShaping
             {
                 var two = new[] { buf[start].Glyph, buf[start + 1].Glyph };
                 bool forms = buf[start].Category == CatRa && buf[start + 1].Category == CatH
-                    && (layout.WouldSubstitute(layout.Gsub, plan.Rphf, two)
-                        || (script.RephMode == RephMode.Explicit && layout.WouldSubstitute(layout.Gsub, plan.Rphf, new[] { two[0], two[1], buf[start + 2].Glyph })));
+                    && (layout.WouldSubstitute(layout.Gsub, plan.Rphf, two, plan.ZeroContext)
+                        || (script.RephMode == RephMode.Explicit && layout.WouldSubstitute(layout.Gsub, plan.Rphf, new[] { two[0], two[1], buf[start + 2].Glyph }, plan.ZeroContext)));
                 if (forms)
                 {
                     limit += 2;
@@ -679,7 +741,7 @@ namespace UnityGameTranslator.Core.TextShaping
                 for (int i = b + 1; i + 1 < end; i++)
                 {
                     var pair = new[] { buf[i].Glyph, buf[i + 1].Glyph };
-                    if (layout.WouldSubstitute(layout.Gsub, plan.Pref, pair))
+                    if (layout.WouldSubstitute(layout.Gsub, plan.Pref, pair, plan.ZeroContext))
                     {
                         buf[i].Mask |= MaskPref;
                         buf[i + 1].Mask |= MaskPref;

@@ -1,0 +1,13 @@
+The ten NotoSans*.ttf files in this folder — Noto Sans Devanagari (variable, wdth/wght),
+Bengali, Gujarati, Gurmukhi, Kannada, Malayalam, Oriya, Sinhala, Tamil, Telugu (Regular)
+Copyright 2022–2025 The Noto Project Authors (https://github.com/notofonts)
+
+This Font Software is licensed under the SIL Open Font License, Version 1.1.
+This license is available with a FAQ at: https://openfontlicense.org
+
+Used here as CHECK DATA only: the OpenType layout reader (Rasterizer/OpenTypeLayout.cs) and
+the Indic shaper (TextShaping/IndicShaper.cs) are exercised against their GSUB/GPOS/GDEF
+tables, with expectations produced from the same files by independent tools (fontTools,
+HarfBuzz — see tools/shaping-oracle/). The fonts are not shipped with the mod by this project.
+Glyph ids in the expectations are those of these exact files: replacing a font means
+regenerating TestData/Shaping/ with the oracle.

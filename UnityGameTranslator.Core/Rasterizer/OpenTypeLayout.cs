@@ -981,34 +981,72 @@ namespace UnityGameTranslator.Core.Rasterizer
         }
 
         /// <summary>
-        /// Would any of these lookups rewrite exactly this glyph sequence? Single and ligature
-        /// subtables only, flags and contexts ignored — the question a shaper asks a font
-        /// before reordering ("does this consonant have a below-base form?"), not an application.
+        /// Would any of these lookups rewrite exactly this glyph sequence? Flags are ignored;
+        /// a contextual rule counts when its input is the whole sequence — and, with
+        /// <paramref name="zeroContext"/>, only if it requires nothing before or after
+        /// (HarfBuzz's would_apply). The question a shaper asks a font before reordering
+        /// ("does this consonant have a below-base form?"), not an application.
         /// </summary>
-        public bool WouldSubstitute(LayoutTable table, int[] lookupIndices, int[] glyphs)
+        public bool WouldSubstitute(LayoutTable table, int[] lookupIndices, int[] glyphs, bool zeroContext = true)
         {
             if (table == null || lookupIndices == null || glyphs == null || glyphs.Length == 0) return false;
             foreach (int li in lookupIndices)
             {
                 if (li < 0 || li >= table.Lookups.Length) continue;
                 foreach (var st in table.Lookups[li].Subtables)
-                {
-                    if (glyphs.Length == 1 && st is SingleSubst s && s.Coverage.Contains(glyphs[0])) return true;
-                    if (glyphs.Length > 1 && st is LigatureSubst l)
-                    {
-                        int ci = l.Coverage.Index(glyphs[0]);
-                        if (ci < 0 || ci >= l.Sets.Length) continue;
-                        foreach (var lig in l.Sets[ci])
-                        {
-                            if (lig.Components.Length != glyphs.Length - 1) continue;
-                            bool same = true;
-                            for (int k = 0; k < lig.Components.Length && same; k++) same = lig.Components[k] == glyphs[k + 1];
-                            if (same) return true;
-                        }
-                    }
-                }
+                    if (WouldApply(st, glyphs, zeroContext)) return true;
             }
             return false;
+        }
+
+        private static bool WouldApply(Subtable st, int[] glyphs, bool zeroContext)
+        {
+            switch (st)
+            {
+                case SingleSubst s: return glyphs.Length == 1 && s.Coverage.Contains(glyphs[0]);
+                case MultipleSubst m: return glyphs.Length == 1 && m.Coverage.Contains(glyphs[0]);
+                case AlternateSubst a: return glyphs.Length == 1 && a.Coverage.Contains(glyphs[0]);
+                case LigatureSubst l:
+                {
+                    if (glyphs.Length < 2) return false;
+                    int ci = l.Coverage.Index(glyphs[0]);
+                    if (ci < 0 || ci >= l.Sets.Length) return false;
+                    foreach (var lig in l.Sets[ci])
+                    {
+                        if (lig.Components.Length != glyphs.Length - 1) continue;
+                        bool same = true;
+                        for (int k = 0; k < lig.Components.Length && same; k++) same = lig.Components[k] == glyphs[k + 1];
+                        if (same) return true;
+                    }
+                    return false;
+                }
+                case ContextSubst c:
+                {
+                    if (c.Format == 3)
+                    {
+                        var r = c.Rule3;
+                        if (zeroContext && (r.BacktrackCov.Length != 0 || r.LookaheadCov.Length != 0)) return false;
+                        if (r.InputCov.Length != glyphs.Length) return false;
+                        for (int k = 0; k < glyphs.Length; k++) if (!r.InputCov[k].Contains(glyphs[k])) return false;
+                        return true;
+                    }
+                    int first = c.Coverage.Index(glyphs[0]);
+                    if (first < 0) return false;
+                    int set = c.Format == 1 ? first : c.InputClasses.Class(glyphs[0]);
+                    if (set < 0 || set >= c.RuleSets.Length) return false;
+                    foreach (var rule in c.RuleSets[set])
+                    {
+                        if (zeroContext && (rule.Backtrack.Length != 0 || rule.Lookahead.Length != 0)) continue;
+                        if (rule.Input.Length != glyphs.Length - 1) continue;
+                        bool same = true;
+                        for (int k = 0; k < rule.Input.Length && same; k++)
+                            same = c.Format == 1 ? rule.Input[k] == glyphs[k + 1] : c.InputClasses.Class(glyphs[k + 1]) == rule.Input[k];
+                        if (same) return true;
+                    }
+                    return false;
+                }
+                default: return false;
+            }
         }
 
         /// <summary>

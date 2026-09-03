@@ -2325,7 +2325,11 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static void OnTranslationComplete(string originalText, string translation, List<object> components)
         {
-            if (components == null || components.Count == 0) return;
+            if (components == null || components.Count == 0)
+            {
+                TranslatorCore.LogDebug($"[Apply NONE] no component waited for '{(originalText.Length > 40 ? originalText.Substring(0, 40) : originalText)}' — the scanner's next pass must place it");
+                return;
+            }
 
             lock (pendingUpdatesLock)
             {
@@ -2456,16 +2460,18 @@ namespace UnityGameTranslator.Core
                 try
                 {
                     // Skip destroyed components (IL2CPP proxy still exists but Unity object is gone)
-                    if (comp is UnityEngine.Object uobj && uobj == null) continue;
+                    if (comp is UnityEngine.Object uobj && uobj == null)
+                    { TranslatorCore.LogDebug($"[Apply DEAD] '{(originalText.Length > 40 ? originalText.Substring(0, 40) : originalText)}'"); continue; }
 
                     // Own UI + mod-UI translation turned OFF: don't apply a late/in-flight translation
                     // result — it would overwrite the English we just restored (the enable/disable race).
                     // Cheap when ON (translate_mod_ui short-circuits). Game text is never affected.
                     if (!TranslatorCore.ShouldTranslateOwnUI && comp is Component ownc && TranslatorCore.IsOwnUI(ownc))
-                        continue;
+                    { TranslatorCore.LogDebug($"[Apply OWN-UI] comp={TypeHelper.GetInstanceID(comp)} '{(originalText.Length > 40 ? originalText.Substring(0, 40) : originalText)}'"); continue; }
 
                     string actualText = TypeHelper.GetText(comp);
-                    if (actualText == null) continue;
+                    if (actualText == null)
+                    { TranslatorCore.LogDebug($"[Apply NO-TEXT] comp={TypeHelper.GetInstanceID(comp)} '{(originalText.Length > 40 ? originalText.Substring(0, 40) : originalText)}'"); continue; }
 
                     string expectedPreview = originalText.Length > 40 ? originalText.Substring(0, 40) + "..." : originalText;
                     string actualPreview = actualText.Length > 40 ? actualText.Substring(0, 40) + "..." : actualText;

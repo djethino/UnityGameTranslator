@@ -3020,7 +3020,13 @@ namespace UnityGameTranslator.Core
             }
             else
             {
-                TranslatorCore.QueueForTranslation(text, TargetOf(compId));
+                object target = TargetOf(compId);
+                // A stabilized text queued without its component can never be delivered: the
+                // answer would land in the cache and the screen would keep the source (bench
+                // 2026-09-03: a menu stuck in English with every translation cached). Said.
+                if (target == null)
+                    TranslatorCore.LogWarning($"[TW-FINALIZE] comp={compId} has no tracked target — queued without a component, the answer will not reach the screen: '{(text.Length > 40 ? text.Substring(0, 40) : text)}'");
+                TranslatorCore.QueueForTranslation(text, target);
             }
         }
 
@@ -3509,6 +3515,8 @@ namespace UnityGameTranslator.Core
                 if (compId != -1 && _fontNameCache.TryGetValue(compId, out string cachedFontName))
                 {
                     fontName = cachedFontName;
+                    // The reference travels with the name, whichever path cached it first.
+                    _patchedComponentRefs[compId] = __instance;
                 }
                 else
                 {
@@ -3780,7 +3788,14 @@ namespace UnityGameTranslator.Core
                 resolved = uobj.name;
             // Cached even when null: a component without a readable font must not pay the
             // reflection on every size assignment (animated sizes hit this per frame).
+            // 🔴 Same two writes as the set_text prefix, TOGETHER. This resolver filled the name
+            // cache alone; the text prefix then saw a cached name and skipped its own block —
+            // where the component reference is recorded. A game that sets fontSize before text
+            // (every pooled menu does) left the component unreachable by id, and a typewriter
+            // text queued by id could be translated but never delivered (bench 2026-09-03:
+            // a whole menu stuck in English with every answer in the cache).
             _fontNameCache[instanceId] = resolved;
+            _patchedComponentRefs[instanceId] = instance;
             return resolved;
         }
 

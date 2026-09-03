@@ -343,6 +343,114 @@ namespace UnityGameTranslator.Core
             _negotiation.ForgetIfChanged($"{Config?.ai_url}|{Config?.ai_model}");
 
         /// <summary>
+        /// The languages `translations.json` states for itself, or null when it states none.
+        ///
+        /// 🔴 **The file, not the preference.** `config.json` says what somebody wants; these say
+        /// what this translation IS. They are what survives a backup restore, a copy to another
+        /// machine, and a mod that never looks at the configuration — see
+        /// <see cref="TranslationLanguages"/> for which of the three answers wins.
+        ///
+        /// ⚠ Null on every file written before the mod stamped them, which is most of them today.
+        /// Null means "this file does not say", never "this file has no language".
+        /// </summary>
+        public static string FileSourceLanguage { get; private set; }
+
+        /// <inheritdoc cref="FileSourceLanguage"/>
+        public static string FileTargetLanguage { get; private set; }
+
+        /// <summary>
+        /// The languages in force for this translation, resolved from the server, then the file,
+        /// then the configuration. Null on either side when nobody has settled it yet.
+        /// </summary>
+        public static string EffectiveSourceLanguage => TranslationLanguages.Resolve(
+            ServerState?.SourceLanguage, FileSourceLanguage, Config?.source_language);
+
+        /// <inheritdoc cref="EffectiveSourceLanguage"/>
+        public static string EffectiveTargetLanguage => TranslationLanguages.Resolve(
+            ServerState?.TargetLanguage, FileTargetLanguage, Config?.target_language);
+
+        /// <summary>
+        /// Write back what the resolution settled, so the three places stop drifting apart.
+        ///
+        /// 🔴 **The server makes it true, and nothing here may argue.** A lineage's languages are
+        /// frozen at publication and the server ignores any sent with an update; a local value that
+        /// differs is not an opinion, it is a copy that was never brought up to date. The commonest
+        /// case by far is a source left at "auto" — written back only by an upload made from THIS
+        /// machine, so every translation somebody downloaded still has none, and the mod has been
+        /// asking the model to translate without saying from what.
+        ///
+        /// ⚠ Called wherever the server answers about this lineage — the sync stream, a download,
+        /// an upload — and silent when it has not.
+        /// </summary>
+        public static void AlignLanguagesFromServer()
+        {
+            if (Config == null || ServerState == null || !ServerState.Exists) return;
+
+            bool changed = false;
+
+            if (Languages.IsSettled(ServerState.SourceLanguage)
+                && !string.Equals(Config.source_language, ServerState.SourceLanguage, StringComparison.OrdinalIgnoreCase))
+            {
+                Adapter?.LogInfo($"[Languages] Source: '{Config.source_language ?? "(unset)"}' → "
+                                 + $"'{ServerState.SourceLanguage}', as this translation is published.");
+                Config.source_language = ServerState.SourceLanguage;
+                changed = true;
+            }
+
+            if (Languages.IsSettled(ServerState.TargetLanguage)
+                && !string.Equals(Config.target_language, ServerState.TargetLanguage, StringComparison.OrdinalIgnoreCase))
+            {
+                Adapter?.LogInfo($"[Languages] Target: '{Config.target_language ?? "(unset)"}' → "
+                                 + $"'{ServerState.TargetLanguage}', as this translation is published.");
+                Config.target_language = ServerState.TargetLanguage;
+                changed = true;
+            }
+
+            // The file says the same thing from now on, so it still knows once it is offline.
+            if (Languages.IsSettled(ServerState.SourceLanguage)
+                && !string.Equals(FileSourceLanguage, ServerState.SourceLanguage, StringComparison.OrdinalIgnoreCase))
+            {
+                FileSourceLanguage = ServerState.SourceLanguage;
+                cacheModified = true;
+            }
+            if (Languages.IsSettled(ServerState.TargetLanguage)
+                && !string.Equals(FileTargetLanguage, ServerState.TargetLanguage, StringComparison.OrdinalIgnoreCase))
+            {
+                FileTargetLanguage = ServerState.TargetLanguage;
+                cacheModified = true;
+            }
+
+            if (changed) SaveConfig();
+        }
+
+        /// <summary>
+        /// Settle the target language the moment this translation acquires its first line.
+        ///
+        /// 🔴 **"auto" resolves at every read, which is not the same as being settled.** A file
+        /// whose configuration still says "auto" aims at whatever language the machine is set to,
+        /// so the same file targets French here and German on the next machine — and follows the
+        /// player's system language if they ever change it, retargeting lines already written.
+        /// A target settles when the first line is written; from then on it is a value, not a mode.
+        ///
+        /// ⚠ The SOURCE is deliberately not settled here. "auto" there means "detect", which is a
+        /// working mode with no resolved value to write; it settles when the person declares one at
+        /// upload, or when the server states it (see <see cref="AlignLanguagesFromServer"/>).
+        /// </summary>
+        private static void SettleTargetLanguageOnFirstLine()
+        {
+            if (Config == null || Languages.IsSettled(Config.target_language)) return;
+
+            string resolved = Config.GetTargetLanguage();
+            if (!Languages.IsSettled(resolved)) return;
+
+            Config.target_language = resolved;
+            FileTargetLanguage = resolved;
+            SaveConfig();
+            Adapter?.LogInfo($"[Languages] Target settled as '{resolved}' with this translation's "
+                             + "first line — it no longer follows the system language.");
+        }
+
+        /// <summary>
         /// Whether the source and target languages may still be changed.
         ///
         /// Two reasons they may not, and the second was missing:
@@ -2587,6 +2695,12 @@ namespace UnityGameTranslator.Core
             string previousUuid = FileUuid;
             ServerState = null;
 
+            // Re-derived from the file being loaded, like everything else here: a reload may land
+            // on a file that states no language, and keeping the previous one would let a restored
+            // backup inherit the languages of the file it replaced.
+            FileSourceLanguage = null;
+            FileTargetLanguage = null;
+
             // The mod's own interface lives in its own file and is read first: the game file below
             // may still carry interface lines (written before the split, or arrived with somebody
             // else's translation) and what happens to them depends on what this already holds.
@@ -2646,6 +2760,19 @@ namespace UnityGameTranslator.Core
                     else if (prop.Name == "_uuid")
                     {
                         FileUuid = prop.Value.ToString();
+                    }
+                    else if (prop.Name == "_source_language")
+                    {
+                        // Kept only when it says something: a file written with "auto" in it —
+                        // an older mod, or a hand edit — states nothing, and reading it as an
+                        // answer would let a mode outrank the server.
+                        string stated = prop.Value.ToString();
+                        if (Languages.IsSettled(stated)) FileSourceLanguage = stated;
+                    }
+                    else if (prop.Name == "_target_language")
+                    {
+                        string stated = prop.Value.ToString();
+                        if (Languages.IsSettled(stated)) FileTargetLanguage = stated;
                     }
                     else if (prop.Name == "_local_changes")
                     {
@@ -2866,6 +2993,12 @@ namespace UnityGameTranslator.Core
                 // has, or one with nothing in it. The remaining case — a published line whose
                 // server row later disappears — costs one pass of the translator on the mod's own
                 // menus, never a word of somebody's work.
+                //
+                // ⚠ **Runs BEFORE the file adopts a language below, and the order is the fix.** The
+                // language it compares must be the one the FILE stated, never one derived from the
+                // configuration: a translations.json restored from a Thai-era backup while the
+                // machine is set to French would otherwise be read as French and its Thai labels
+                // declared a match. That is precisely how 28 of them landed in a French interface.
                 if (strandedModUi != null)
                 {
                     int kept = 0, dropped = 0;
@@ -2874,7 +3007,9 @@ namespace UnityGameTranslator.Core
                         var verdict = ModUiMigration.Decide(
                             inAncestor: AncestorCache.ContainsKey(kvp.Key),
                             alreadyHeld: ModUiCache.ContainsKey(kvp.Key),
-                            isEmpty: kvp.Value.IsEmpty);
+                            isEmpty: kvp.Value.IsEmpty,
+                            lineLanguage: FileTargetLanguage,
+                            interfaceLanguage: ModUiLanguage);
 
                         if (verdict == ModUiMigration.Verdict.Drop)
                         {
@@ -2890,7 +3025,37 @@ namespace UnityGameTranslator.Core
                     if (kept > 0) modUiCacheModified = true;
                     Adapter.LogInfo($"[ModUI] translations.json carried {strandedModUi.Count} interface line(s): "
                                     + $"{kept} moved to {ModUi.FileName}, {dropped} dropped "
-                                    + "(published, already held, or empty).");
+                                    + "(published, already held, of another language, or empty).");
+                }
+
+                // ── The language this file states about itself ────────────────────────
+                //
+                // A file that already holds lines HAS a target language — it settled when the
+                // first one was written. Files made before the mod wrote it down say nothing, and
+                // the only answer available for them is what this machine is set to. Adopting it
+                // once makes the file self-describing from here on: a backup restored later
+                // carries its own language instead of borrowing whatever the machine says then.
+                //
+                // ⚠ **It records what the machine was set to, which is right unless the file came
+                // from another era.** Nothing can do better with no stamp and no server — and that
+                // is exactly why it happens ONCE: from the next save the file answers for itself.
+                if (TranslationCache.Count > 0
+                    && !Languages.IsSettled(FileTargetLanguage)
+                    && Languages.IsSettled(Config?.target_language))
+                {
+                    FileTargetLanguage = Config.target_language;
+                    cacheModified = true;
+                    Adapter.LogInfo($"[Languages] This translation now states its target: "
+                                    + $"'{FileTargetLanguage}' — taken from this machine's setting, "
+                                    + "the only answer available for a file written before it said so.");
+                }
+
+                if (TranslationCache.Count > 0
+                    && !Languages.IsSettled(FileSourceLanguage)
+                    && Languages.IsSettled(Config?.source_language))
+                {
+                    FileSourceLanguage = Config.source_language;
+                    cacheModified = true;
                 }
 
                 // Same move for the font that interface asked for: it described the MOD from
@@ -6363,6 +6528,11 @@ namespace UnityGameTranslator.Core
                     Index = toModUi ? (long?)null : NextOrderIndex()
                 };
 
+                // Asked BEFORE the line lands: this is the last instant at which the translation
+                // has no line, and a target language that settles "on the first line" has to be
+                // settled by the first line rather than by the second.
+                bool firstGameLine = !toModUi && TranslationCache.Count == 0;
+
                 store[normalizedKey] = entry;
 
                 if (toModUi)
@@ -6372,6 +6542,7 @@ namespace UnityGameTranslator.Core
                 else
                 {
                     cacheModified = true;
+                    if (firstGameLine) SettleTargetLanguageOnFirstLine();
 
                     // Track local changes (if different from ancestor or new)
                     if (AncestorCache.Count > 0)
@@ -7463,6 +7634,25 @@ namespace UnityGameTranslator.Core
                     // Metadata
                     output["_engine_version"] = CurrentEngineVersion;
                     output["_uuid"] = FileUuid;
+
+                    // 🔴 **What this translation IS, written into it.** A uuid has a source and a
+                    // target; they settle at the first line and publishing freezes them. Until
+                    // now only config.json held them — a preference standing in for a fact — so
+                    // restoring a backup restored lines without their language, and a file copied
+                    // anywhere arrived anonymous. See TranslationLanguages.
+                    //
+                    // ⚠ Only when SETTLED: "auto" is a mode, not a language, and writing it would
+                    // make the file claim an answer nobody gave.
+                    //
+                    // ⚠ Underscore keys are excluded from the content hash on both sides
+                    // (ContentHash.Of, Translation::hashFile), so this cannot make a single
+                    // installed mod believe the server moved. A mod too old to know the key drops
+                    // it on its next save — a loss of credit, never a breakage, exactly like
+                    // _forked_from.
+                    if (Languages.IsSettled(FileSourceLanguage))
+                        output["_source_language"] = FileSourceLanguage;
+                    if (Languages.IsSettled(FileTargetLanguage))
+                        output["_target_language"] = FileTargetLanguage;
 
                     if (CurrentGame != null)
                     {

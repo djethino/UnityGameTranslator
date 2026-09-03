@@ -38,15 +38,43 @@ namespace UnityGameTranslator.Core
         /// A line absent from the ancestor was produced here, and throwing away a pass of the
         /// translator would be a loss for no gain.
         /// </summary>
+        /// 🔴 **And it must be in the RIGHT LANGUAGE, which this did not ask.** Found the day it
+        /// shipped: a translations.json restored from a Thai-era backup put 28 Thai labels into an
+        /// interface file stamped French, because the only questions asked were about provenance.
+        /// An interface translated into one language is noise in another — that is the whole reason
+        /// the interface file carries its own language — so the language of the file the line comes
+        /// FROM has to answer too.
+        ///
+        /// ⚠ Unknown is not a match. A translations.json written before it stamped its language
+        /// says nothing, and a line of unknown language may not join a file that has one: the cost
+        /// of refusing is one pass of the translator, the cost of accepting is a mixed interface
+        /// nobody can untangle.
+        /// </summary>
         /// <param name="inAncestor">The published copy carries this key.</param>
         /// <param name="alreadyHeld">The interface file already has this key — it wins, being the
         /// current language's work rather than a leftover.</param>
         /// <param name="isEmpty">Nothing in it. There is no work to save in an empty line, and the
         /// interface file has no editor to fill one in.</param>
-        public static Verdict Decide(bool inAncestor, bool alreadyHeld, bool isEmpty)
+        /// <param name="lineLanguage">
+        /// The language the stranded line is written in — that of the file it was found in. Null or
+        /// "auto" when that file does not say.
+        /// </param>
+        /// <param name="interfaceLanguage">
+        /// The language the interface file is in. Null when it holds nothing yet, in which case the
+        /// line settles it and anything may join.
+        /// </param>
+        public static Verdict Decide(bool inAncestor, bool alreadyHeld, bool isEmpty,
+                                     string lineLanguage, string interfaceLanguage)
         {
             if (inAncestor || alreadyHeld || isEmpty) return Verdict.Drop;
-            return Verdict.Move;
+
+            // Nothing established on the receiving side: the line has nothing to contradict.
+            if (!Languages.IsSettled(interfaceLanguage)) return Verdict.Move;
+
+            // Established there, unknown here — refuse rather than guess.
+            if (!Languages.IsSettled(lineLanguage)) return Verdict.Drop;
+
+            return Languages.Disagree(lineLanguage, interfaceLanguage) ? Verdict.Drop : Verdict.Move;
         }
 
         /// <summary>
@@ -76,5 +104,9 @@ namespace UnityGameTranslator.Core
             if (presentLocally) return false;
             return !Merge.IsGameLine(ancestorTag);
         }
+
+        // The language of a translation itself — where it comes from, and when two answers
+        // disagree — lives in TranslationLanguages. It governs the game's file as much as the
+        // interface's, so it is not this file's subject.
     }
 }

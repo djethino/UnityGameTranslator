@@ -2627,6 +2627,15 @@ namespace UnityGameTranslator.Core.UI
                     serverState.Notes = translation["notes"]?.Value<string>();
                     serverState.ResourcesUrl = translation["resources_url"]?.Value<string>();
 
+                    // 🔴 **The languages this lineage was published with, and they were never read
+                    // here.** The payload has carried them all along; only an upload made from THIS
+                    // machine wrote them back into the configuration. So every translation somebody
+                    // downloaded kept a source of "auto" — and "auto" means the mod asks the model
+                    // to translate without saying from what, and leaves strict_source_language
+                    // nothing to enforce. See TranslatorCore.AlignLanguagesFromServer.
+                    serverState.SourceLanguage = translation["source_language"]?.Value<string>();
+                    serverState.TargetLanguage = translation["target_language"]?.Value<string>();
+
                     // Same reason as the status right above: this is the path the main screen
                     // takes at startup, and learning it only when somebody opens the upload panel
                     // would be learning it at the one moment it is too late to be useful.
@@ -2688,6 +2697,12 @@ namespace UnityGameTranslator.Core.UI
                     serverState.MainSiteId = serverState.SiteId;
                     serverState.MainHash = serverState.Hash;
                     serverState.MainLineCount = main["line_count"]?.Value<int>() ?? 0;
+
+                    // Same reason as on one's own row above — and this is the case that matters
+                    // most, because it is the person running a translation they downloaded, whose
+                    // source has been "auto" ever since.
+                    serverState.SourceLanguage = main["source_language"]?.Value<string>();
+                    serverState.TargetLanguage = main["target_language"]?.Value<string>();
                 }
 
                 // Votes on the published translation of this lineage. Left null on a server that
@@ -2705,6 +2720,11 @@ namespace UnityGameTranslator.Core.UI
                 }
 
                 TranslatorCore.ServerState = serverState;
+
+                // The lineage has spoken about its own languages, so the machine stops guessing —
+                // this is what repairs every translation whose source stayed "auto" because only
+                // an upload used to write it back.
+                TranslatorCore.AlignLanguagesFromServer();
 
                 TranslatorCore.LogDebug($"[SyncSSE] State: exists={exists}, role={role}, siteId={serverState.SiteId}");
 
@@ -4915,6 +4935,13 @@ namespace UnityGameTranslator.Core.UI
                             SourceLanguage = translationSourceLang,
                             TargetLanguage = translationTargetLang
                         };
+
+                        // Taking somebody's translation settles what languages this game is now
+                        // being played in. Before this, a download left the configuration on the
+                        // previous pair — the manager wrote the target on install, the mod wrote
+                        // nothing at all — so the mod went on translating towards one language
+                        // over a file written in another.
+                        TranslatorCore.AlignLanguagesFromServer();
 
                         // Update sync state before saving (so SaveCache persists the hash)
                         TranslatorCore.LastSyncedHash = fileHash ?? translationFileHash;

@@ -35,6 +35,7 @@
     <Compile Include="../../UnityGameTranslator.Core/InputEcho.cs" />
     <Compile Include="../../UnityGameTranslator.Core/TargetPath.cs" />
     <Compile Include="../../UnityGameTranslator.Core/ModUiMigration.cs" />
+    <Compile Include="../../UnityGameTranslator.Core/TranslationLanguages.cs" />
     <!--
       The socle, as an assembly rather than as files. It has no Unity reference of any kind — the
       mod, the manager and this project all read the same build — so the reasoning above does not

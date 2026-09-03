@@ -691,6 +691,32 @@ namespace UnityGameTranslator.Core.UI.Panels
                 return;
             }
 
+            // 🔴 **The file must be in the languages this lineage was published with.** Sending it
+            // otherwise would push content of one language into a translation declared as another
+            // — and the server would take the content while keeping its own language labels, so
+            // nothing downstream would ever say what happened. The two ways to get here are a hand
+            // edit of translations.json and a backup restored from a time the game was played in
+            // another language.
+            //
+            // ⚠ Only two STATED languages can disagree: a source still reading "auto" is the
+            // ordinary state of a translation whose local copy was never written back, and it is
+            // resolved from the server, never refused.
+            var conflict = TranslationLanguages.PublicationConflict(
+                TranslatorCore.FileSourceLanguage, TranslatorCore.FileTargetLanguage,
+                TranslatorCore.ServerState?.SourceLanguage, TranslatorCore.ServerState?.TargetLanguage);
+
+            if (conflict != TranslationLanguages.Side.None)
+            {
+                string why = TranslationLanguages.ExplainConflict(conflict,
+                    TranslatorCore.FileSourceLanguage, TranslatorCore.FileTargetLanguage,
+                    TranslatorCore.ServerState?.SourceLanguage, TranslatorCore.ServerState?.TargetLanguage);
+
+                TranslatorCore.LogWarning($"[UploadPanel] Refused: {why}");
+                SetDynamicText(_statusLabel, why);
+                _statusLabel.color = UIStyles.StatusError;
+                return;
+            }
+
             _isUploading = true;
             _uploadBtn.Component.interactable = false;
 

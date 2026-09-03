@@ -85,6 +85,9 @@ namespace UnityGameTranslator.Core.Checks
         {
             Section("Mod interface migration");
             ModUiMigrationChecks.Run(Check);
+
+            Section("The language of a translation");
+            TranslationLanguagesChecks.Run(Check);
         }
 
         /// <summary>Which strings trigger the presentation pass, and what shaping makes of them.</summary>

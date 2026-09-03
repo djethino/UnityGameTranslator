@@ -90,7 +90,23 @@ A mod that players install into any Unity game to play it in their language — 
 | **V** | Validated | Machine wording a human read and accepted |
 | **A** | AI | Machine wording nobody has read yet |
 | **S** | Skip | A human ruled that this line stays as it is — a fictional language, a proper name, text that must not change. Counts as settled, never as work left to do |
-| **M** | Mod | Mod UI translations (internal, never counted) |
+| **M** | Mod | The mod's own interface. It lives in `modui-translate.json`, beside the translation and never inside it — see below |
+
+### The mod's own interface — `modui-translate.json`
+
+Turning on **Translate mod interface** translates the mod's own buttons and labels. Those lines are
+kept in **`modui-translate.json`**, next to `translations.json` in the same folder, and they are
+**never part of a game translation**: not counted, not merged, not uploaded and not downloaded.
+
+- The file carries the **language** it was written in. Change the game's target language and it is
+  set aside as `modui-translate.<language>.json`; come back to that language and it returns.
+- It also carries the **font** the interface needs (`_settings.ui_font`), so copying the file to
+  another game brings what makes it readable. A font chosen in Options wins over it.
+- Copying it from one game to another is the way to reuse the work — there is no sharing of mod
+  interface translations through the site.
+
+An older file that still holds `M` lines is cleaned up on the next launch: lines written on this
+machine move into the new file, lines that arrived with somebody else's translation are dropped.
 
 The mod shows a **review stage** rather than a mark — `(H + V + S) / (H + V + S + A)`, read as
 "machine translation / review started / well under way / fully reviewed". Every translation begins

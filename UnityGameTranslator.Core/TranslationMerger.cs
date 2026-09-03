@@ -42,11 +42,30 @@ namespace UnityGameTranslator.Core
             if (remote != null) allKeys.UnionWith(remote.Keys.Where(k => !k.StartsWith("_")));
             if (ancestor != null) allKeys.UnionWith(ancestor.Keys.Where(k => !k.StartsWith("_")));
 
+            int interfaceLinesDropped = 0;
+
             foreach (var key in allKeys)
             {
                 var localEntry = GetOrDefault(local, key);
                 var remoteEntry = GetOrDefault(remote, key);
                 var ancestorEntry = GetOrDefault(ancestor, key);
+
+                // 🔴 **A merge settles lines OF THE GAME.** An interface line reaching here comes
+                // from a file written before the mod's interface had one of its own, or from
+                // somebody else's translation — and letting it through would put the words of our
+                // own buttons under the choice of whoever wrote that file. It is dropped from the
+                // result, never arbitrated, never counted.
+                //
+                // ⚠ Dropped from the RESULT only. The ancestor keeps whatever it holds: it is the
+                // record of what the server's copy contains, and the sync verdict reads it to know
+                // that a line missing here was never ours to publish (see ComputeContentHash).
+                if (!Common.Merge.IsGameLine(localEntry?.Tag)
+                    || !Common.Merge.IsGameLine(remoteEntry?.Tag)
+                    || !Common.Merge.IsGameLine(ancestorEntry?.Tag))
+                {
+                    interfaceLinesDropped++;
+                    continue;
+                }
 
                 var decision = ResolveKeyWithTags(key, localEntry, remoteEntry, ancestorEntry, result.Statistics);
 
@@ -67,6 +86,12 @@ namespace UnityGameTranslator.Core
                 {
                     result.Merged[key] = decision.FinalEntry;
                 }
+            }
+
+            if (interfaceLinesDropped > 0)
+            {
+                TranslatorCore.LogInfo($"[Merge] Left out {interfaceLinesDropped} interface line(s): "
+                    + "the mod's own labels are not part of a game translation.");
             }
 
             RenumberMergedIndices(result.Merged, local);

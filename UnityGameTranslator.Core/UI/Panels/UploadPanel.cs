@@ -793,8 +793,10 @@ namespace UnityGameTranslator.Core.UI.Panels
                     // The person it fails for is the one who made it.
                     if (result.TranslationId > 0) TranslatorCore.SourceSiteId = result.TranslationId;
 
-                    // Keep the local file in step with what was just published
-                    TranslatorCore.TranslationUIFont = TranslatorCore.EffectiveInterfaceFont;
+                    // ⚠ The interface font is NOT recorded here any more. Publishing used to write
+                    // it into the game's file, which is how a mod setting came to be shared with a
+                    // game translation; it now lives in the interface file, which is never
+                    // published (see TranslatorCore.SaveModUiCache).
 
                     // Remember the source language declared at setup. It used to be sent to the
                     // server and forgotten: the user states "this game is written in X" — a fact
@@ -938,11 +940,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (!TranslatorCore.ConcatDetection)
                 sharedSettings["concat_detection"] = false;
 
-            // Uploading IS publishing, so the font this translated UI needs travels with it. The
-            // font FILES come separately, from the author's resources link (fonts/ folder).
-            string uiFont = TranslatorCore.EffectiveInterfaceFont;
-            if (!string.IsNullOrEmpty(uiFont))
-                sharedSettings["ui_font"] = uiFont;
+            // ⚠ The mod's interface font used to be published here. It is a MOD setting: it says
+            // how our own window renders, not how the game's text does, and sending it filed a
+            // local preference inside somebody else's game translation. It lives in
+            // modui-translate.json now, which is never uploaded.
 
             if (sharedSettings.Count > 0)
                 output["_settings"] = sharedSettings;

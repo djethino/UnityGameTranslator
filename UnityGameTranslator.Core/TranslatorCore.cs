@@ -50,8 +50,25 @@ namespace UnityGameTranslator.Core
         public static volatile bool ShuttingDown;
         public static ModConfig Config { get; private set; } = new ModConfig();
         public static Dictionary<string, TranslationEntry> TranslationCache { get; private set; } = new Dictionary<string, TranslationEntry>();
+
+        /// <summary>
+        /// The mod's OWN interface, in its own file. Never the game's text, never uploaded, never
+        /// downloaded — see <see cref="Common.ModUi"/> for what that separation buys.
+        ///
+        /// 🔴 **The two dictionaries never meet.** Which one a text belongs to is decided from the
+        /// COMPONENT at the moment it is queued (see <see cref="QueuedText"/>), carried on the
+        /// queued item, and turned into a tag by the worker; <see cref="AddToCache"/> then files it
+        /// by that tag. So "is this ours" is asked once, where it can be answered, and never
+        /// guessed from a string.
+        /// </summary>
+        public static Dictionary<string, TranslationEntry> ModUiCache { get; private set; } = new Dictionary<string, TranslationEntry>();
+
         public static List<PatternEntry> PatternEntries { get; private set; } = new List<PatternEntry>();
         public static string CachePath { get; private set; }
+
+        /// <summary>Beside <see cref="CachePath"/>, in the same folder, for the same game.</summary>
+        public static string ModUiCachePath { get; private set; }
+
         public static string ConfigPath { get; private set; }
         public static string ModFolder { get; private set; }
         public static bool DebugMode { get; private set; } = false;
@@ -364,8 +381,45 @@ namespace UnityGameTranslator.Core
         private static int aiTranslationCount = 0;
         private static int cacheHitCount = 0;
         private static Dictionary<int, string> lastSeenText = new Dictionary<int, string>();
-        private static HashSet<string> pendingTranslations = new HashSet<string>();
-        private static Queue<string> translationQueue = new Queue<string>();
+        /// <summary>
+        /// One text waiting for a backend, with everything the answer will need.
+        ///
+        /// 🔴 **One object, because four parallel structures could not be emptied together.** The
+        /// queue used to be a `Queue&lt;string&gt;` beside a set of pending texts, a map of waiting
+        /// components and a set of "this one is ours" — four containers describing one item, filled
+        /// and drained in different places. Every defect it produced is the same defect:
+        ///
+        ///  · a rate-limited text was re-queued into two of the four, so the second attempt had
+        ///    neither its components nor its origin: a mod-UI label came back as a GAME line;
+        ///  · <see cref="ClearQueue"/> emptied three of the four, and the surviving set of strings
+        ///    made a later GAME text tagged as the mod's interface — the mirror of the same fault;
+        ///  · the origin was consumed at dequeue, so it could not be consulted twice.
+        ///
+        /// ⚠ **The origin is decided ONCE, at the moment of queuing**, which is the only moment the
+        /// component still exists to be asked (<see cref="IsOwnUI(Component)"/> answers on a
+        /// component; past the dequeue there is only a string). It then travels with the item —
+        /// which is also what tells <see cref="AddToCache"/> which file the answer belongs in.
+        ///
+        /// ⚠ Deliberately NOT a string-keyed lookup of "is this text ours": that existed once and
+        /// was removed for false positives when a game's text happened to equal one of our labels.
+        /// The component is the authority; this only carries what it said.
+        /// </summary>
+        private sealed class QueuedText
+        {
+            public QueuedText(string text) { Text = text; }
+
+            public readonly string Text;
+
+            /// <summary>Components displaying it, to be updated when the answer arrives.</summary>
+            public readonly List<object> Components = new List<object>();
+
+            /// <summary>Set when ANY submitter said this text is the mod's own interface.</summary>
+            public bool FromOwnUI;
+        }
+
+        // Guarded by lockObj, both of them, always together.
+        private static readonly Dictionary<string, QueuedText> pendingTranslations = new Dictionary<string, QueuedText>();
+        private static readonly Queue<QueuedText> translationQueue = new Queue<QueuedText>();
 
         /// <summary>
         /// Texts already refused for being longer than any backend accepts, so the warning is
@@ -373,13 +427,14 @@ namespace UnityGameTranslator.Core
         /// in the translation file.
         /// </summary>
         private static readonly HashSet<string> tooLongTexts = new HashSet<string>();
-        // Texts queued explicitly as mod-UI (guarded by lockObj, like the queue itself).
-        private static readonly HashSet<string> pendingOwnUITexts = new HashSet<string>();
         // Own-UI texts already submitted in this session, so a label rewritten every frame is
         // submitted once even when the answer never produces a cache entry. Cleared on cache reload.
+        //
+        // ⚠ This is a THROTTLE, never an identity: it answers "have we asked for this already",
+        // and nothing reads it to decide whether a text belongs to the mod. Own-UI detection
+        // happens on the COMPONENT (see QueuedText) — a string-keyed identity existed once and was
+        // removed for false positives when a game's text matched one of our labels.
         private static readonly HashSet<string> ownUISubmitted = new HashSet<string>();
-        // Note: Own UI detection now happens at processing time using IsOwnUITranslatable(component)
-        // instead of string-based tracking which caused false positives when game text matched mod UI text
         private static object lockObj = new object();
         private static bool cacheModified = false;
         // Next capture-order index "i" to assign (monotonic, per lineage).
@@ -631,6 +686,28 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Record one translated value in both reverse indexes, so the text can be recognised as
+        /// OUR output if the game hands it back — exactly, or wearing a decoration it added.
+        ///
+        /// ⚠ **Shared by the game's translation and the mod's own interface, deliberately.** The
+        /// two live in different files and must never mix there; this is not storage, it is the
+        /// anti-loop device that stops a string on screen from being learnt as a new source. A
+        /// label of ours that is not in here can come back through a getter and be queued as game
+        /// text — which is the very leak the separate file exists to prevent.
+        /// </summary>
+        private static void IndexTranslatedValue(string key, string value)
+        {
+            if (string.IsNullOrEmpty(value) || key == value) return;
+
+            string normalized = NormalizeLineEndings(value);
+            if (Config != null && Config.normalize_numbers)
+                normalized = ExtractNumbersToPlaceholders(normalized, out _);
+
+            translatedTexts.TryAdd(normalized.TrimEnd(), 0);
+            IndexReadbackTranslation(key, value);
+        }
+
+        /// <summary>
         /// True when the text is one of our own translations handed back by the game with a different
         /// decoration. Callers must treat it exactly like an exact reverse-cache hit: leave the text
         /// alone. Nothing on screen changes — the game's own rendering is kept as the developer built
@@ -669,9 +746,6 @@ namespace UnityGameTranslator.Core
             }
             return true;
         }
-
-        // Component tracking: components waiting for a translation (using object to avoid Unity dependencies)
-        private static Dictionary<string, List<object>> pendingComponents = new Dictionary<string, List<object>>();
 
         // Pattern match failure cache (texts that don't match any pattern)
         private static HashSet<string> patternMatchFailures = new HashSet<string>();
@@ -981,8 +1055,10 @@ namespace UnityGameTranslator.Core
                 settingsObj["typewriting_detection"] = false;
             if (!ConcatDetection)
                 settingsObj["concat_detection"] = false;
-            if (!string.IsNullOrEmpty(TranslationUIFont))
-                settingsObj["ui_font"] = TranslationUIFont;
+            // ⚠ No ui_font here any more. It described the MOD's interface, and it lived in the
+            // GAME's file — published with it, and taken from whoever wrote that file. It is
+            // written in modui-translate.json now (see SaveModUiCache), which is the file it
+            // belongs to and the one that never leaves this machine.
 
             return settingsObj.Count > 0 ? settingsObj : null;
         }
@@ -1078,8 +1154,9 @@ namespace UnityGameTranslator.Core
             DisableEventSystemOverride = settingsObj?["disable_eventsystem_override"]?.Value<bool>() ?? false;
             TypewritingDetection = settingsObj?["typewriting_detection"]?.Value<bool>() ?? true;
             ConcatDetection = settingsObj?["concat_detection"]?.Value<bool>() ?? true;
-            TranslationUIFont = settingsObj?["ui_font"]?.Value<string>();
-            InvalidateInterfaceFontAvailability();
+            // ⚠ ui_font is deliberately NOT read here: the mod's interface font comes from the
+            // interface file or from config.json, never from a game translation. LoadCache lifts
+            // one out of an old file exactly once, on its way to the right place.
         }
 
         /// <summary>
@@ -1606,30 +1683,25 @@ namespace UnityGameTranslator.Core
             return IsOwnUI(instanceId) || IsOwnUIByHierarchy(component);
         }
 
-        // ── Mod-interface translation: what the translation asks for vs what the user overrides ──
-
-        /// <summary>
-        /// Font the translation wants the mod interface rendered with ("_settings.ui_font"), so a
-        /// translator shipping a non-Latin UI can name the font that renders it. Travels with the
-        /// file; the font FILES themselves come from the author's resources link (fonts/ folder).
-        /// </summary>
-        public static string TranslationUIFont { get; set; }
-
-        /// <summary>True once the loaded translation contains mod-UI lines (tag "M").</summary>
-        public static bool TranslationHasUILines { get; private set; }
+        // ── Mod-interface translation: what the interface file asks for vs what the user overrides ──
 
         private static string _fontAvailabilityCheckedFor;
         private static bool _fontAvailabilityResult;
 
         /// <summary>
-        /// Interface font in effect: the local choice wins, otherwise what the translation asks for.
+        /// Interface font in effect: the local choice wins, otherwise what the interface file asks
+        /// for (<see cref="ModUiFont"/>).
+        ///
+        /// ⚠ It used to fall back on the GAME translation's `_settings.ui_font` — a mod setting
+        /// living in the game's file, published with it and taken from whoever wrote it. The font
+        /// now travels with the interface itself, which is the thing it renders.
         /// </summary>
         public static string EffectiveInterfaceFont
         {
             get
             {
                 string local = Config?.interface_font;
-                return !string.IsNullOrEmpty(local) ? local : TranslationUIFont;
+                return !string.IsNullOrEmpty(local) ? local : ModUiFont;
             }
         }
 
@@ -1659,8 +1731,13 @@ namespace UnityGameTranslator.Core
         /// <summary>
         /// Whether the mod's own interface should be translated right now.
         ///
-        /// The local setting wins when the user expressed one; otherwise the translation decides
-        /// (a file carrying "M" lines was authored with a translated UI).
+        /// The local setting wins when the user expressed one; otherwise the interface file itself
+        /// decides — one already sitting there was translated on this machine, so carry on.
+        ///
+        /// 🔴 **It used to be decided by the GAME's translation**, which held the interface lines:
+        /// downloading somebody's translation both turned this on for a person who never asked and
+        /// supplied the words of our own buttons. The answer now comes from a file that is never
+        /// downloaded, which is what makes the question safe to ask at all.
         ///
         /// Overriding both: if the required font is missing we keep the interface in English. The
         /// alternative is a UI full of boxes — and unlike the game, where boxes prompt the user to
@@ -1673,7 +1750,7 @@ namespace UnityGameTranslator.Core
             {
                 if (InterfaceFontMissing) return false;
                 bool? local = Config?.translate_mod_ui;
-                return local ?? TranslationHasUILines;
+                return local ?? ModUiHasLines;
             }
         }
 
@@ -1899,6 +1976,7 @@ namespace UnityGameTranslator.Core
                 Directory.CreateDirectory(ModFolder);
 
             CachePath = Path.Combine(ModFolder, "translations.json");
+            ModUiCachePath = Path.Combine(ModFolder, ModUi.FileName);
             ConfigPath = Path.Combine(ModFolder, "config.json");
 
             LoadConfig();
@@ -2044,6 +2122,8 @@ namespace UnityGameTranslator.Core
             {
                 try { SaveCache(); } catch { }
             }
+            // No try/catch: SaveModUiCache logs its own failure rather than throwing.
+            SaveModUiCacheIfDirty();
 
             Adapter?.LogInfo($"Session: {translatedCount} translations, {cacheHitCount} cache hits, {aiTranslationCount} AI calls");
             Adapter?.LogInfo($"Skipped: {skippedAlreadyTranslated} (reverse cache)");
@@ -2100,10 +2180,11 @@ namespace UnityGameTranslator.Core
             // Keep variable values (seeds, player names...) in sync with live game state
             VariableManager.OnUpdate(currentTime);
 
-            if (cacheModified && currentTime - lastSaveTime > 30f)
+            if ((cacheModified || modUiCacheModified) && currentTime - lastSaveTime > 30f)
             {
                 lastSaveTime = currentTime;
-                SaveCache();
+                if (cacheModified) SaveCache();
+                SaveModUiCacheIfDirty();
             }
         }
 
@@ -2506,8 +2587,12 @@ namespace UnityGameTranslator.Core
             string previousUuid = FileUuid;
             ServerState = null;
 
-            // Re-derived from the file being loaded (a reload may drop what a previous file carried)
-            TranslationHasUILines = false;
+            // The mod's own interface lives in its own file and is read first: the game file below
+            // may still carry interface lines (written before the split, or arrived with somebody
+            // else's translation) and what happens to them depends on what this already holds.
+            SaveModUiCacheIfDirty();
+            LoadModUiCache();
+
             // Game settings are written only when they leave their default, so a
             // file WITHOUT the section means "everything default" — not "keep
             // whatever the previous file set". Only ui_font was being reset here,
@@ -2547,6 +2632,9 @@ namespace UnityGameTranslator.Core
                 // Track saved _game.steam_id to compare with current detection
                 string savedSteamId = null;
                 int engineVersion = 0;
+                // Interface lines found where they no longer belong — see the migration below.
+                Dictionary<string, TranslationEntry> strandedModUi = null;
+                string strandedUiFont = null;
 
                 // Extract metadata and translations
                 foreach (var prop in parsed.Properties())
@@ -2628,6 +2716,12 @@ namespace UnityGameTranslator.Core
                     }
                     else if (prop.Name == "_settings" && prop.Value.Type == JTokenType.Object)
                     {
+                        // ui_font described the MOD's interface from inside the GAME's file. It is
+                        // read here only to be carried over to the interface file once, then never
+                        // written back — see the migration below.
+                        strandedUiFont = (prop.Value as JObject)?["ui_font"]?.Value<string>();
+                        if (!string.IsNullOrEmpty(strandedUiFont)) cacheModified = true;
+
                         ApplyGameSettingsSection(prop.Value);
                         LogDebug($"[LoadCache] Loaded settings: DisableEventSystemOverride={DisableEventSystemOverride}, TW={TypewritingDetection}, Concat={ConcatDetection}");
                     }
@@ -2665,6 +2759,17 @@ namespace UnityGameTranslator.Core
                             continue;
                         }
 
+                        // 🔴 An interface line has no business in this file any more. It is taken
+                        // out here — before anything counts, hashes or merges it — and what
+                        // becomes of it is settled below, once the ancestor is known.
+                        if (newEntry.Tag == ModUi.Tag)
+                        {
+                            if (strandedModUi == null) strandedModUi = new Dictionary<string, TranslationEntry>();
+                            strandedModUi[normalizedKey] = newEntry;
+                            cacheModified = true;   // the file will be rewritten without it
+                            continue;
+                        }
+
                         // Handle duplicates after normalization (e.g., "LB\r\n" and "LB\n" become same key)
                         if (TranslationCache.TryGetValue(normalizedKey, out var existingEntry))
                         {
@@ -2682,10 +2787,6 @@ namespace UnityGameTranslator.Core
                         {
                             TranslationCache[normalizedKey] = newEntry;
                         }
-
-                        // "M" lines mean this file was authored with a translated mod interface —
-                        // that's what decides for users who never set the option themselves.
-                        if (newEntry.Tag == "M") TranslationHasUILines = true;
 
                         // Mark modified if key was normalized
                         if (normalizedKey != prop.Name)
@@ -2754,6 +2855,49 @@ namespace UnityGameTranslator.Core
                 // Load ancestor cache if exists (for 3-way merge support)
                 LoadAncestorCache();
 
+                // ── The interface lines this file was still carrying ──────────────────
+                // The rule is ModUiMigration.Decide — pure, and checked there rather than here.
+                if (strandedModUi != null)
+                {
+                    int kept = 0, dropped = 0;
+                    foreach (var kvp in strandedModUi)
+                    {
+                        var verdict = ModUiMigration.Decide(
+                            inAncestor: AncestorCache.ContainsKey(kvp.Key),
+                            alreadyHeld: ModUiCache.ContainsKey(kvp.Key),
+                            isEmpty: kvp.Value.IsEmpty);
+
+                        if (verdict == ModUiMigration.Verdict.Drop)
+                        {
+                            dropped++;
+                            continue;
+                        }
+
+                        ModUiCache[kvp.Key] = kvp.Value;
+                        IndexTranslatedValue(kvp.Key, kvp.Value.Value);
+                        kept++;
+                    }
+
+                    if (kept > 0) modUiCacheModified = true;
+                    Adapter.LogInfo($"[ModUI] translations.json carried {strandedModUi.Count} interface line(s): "
+                                    + $"{kept} moved to {ModUi.FileName}, {dropped} dropped "
+                                    + "(published, already held, or empty).");
+                }
+
+                // Same move for the font that interface asked for: it described the MOD from
+                // inside the GAME's file. Taken over only when nothing local already answers,
+                // and never taken from a file that came from the server.
+                if (!string.IsNullOrEmpty(strandedUiFont)
+                    && string.IsNullOrEmpty(ModUiFont)
+                    && string.IsNullOrEmpty(Config?.interface_font)
+                    && AncestorCache.Count == 0)
+                {
+                    ModUiFont = strandedUiFont;
+                    modUiCacheModified = true;
+                    InvalidateInterfaceFontAvailability();
+                    Adapter.LogInfo($"[ModUI] Interface font '{strandedUiFont}' moved out of translations.json.");
+                }
+
                 // Migrate old placeholder format [vN] → [!v*N] if needed
                 if (engineVersion < CurrentEngineVersion)
                 {
@@ -2793,19 +2937,12 @@ namespace UnityGameTranslator.Core
                 presentedToLogical.Clear();
                 _readbackSkipLogCount = 0;
                 foreach (var kv in TranslationCache)
-                {
-                    if (kv.Key != kv.Value.Value && !string.IsNullOrEmpty(kv.Value.Value))
-                    {
-                        string normalizedValue = NormalizeLineEndings(kv.Value.Value);
-                        if (Config.normalize_numbers)
-                        {
-                            normalizedValue = ExtractNumbersToPlaceholders(normalizedValue, out _);
-                        }
-                        normalizedValue = normalizedValue.TrimEnd();
-                        translatedTexts.TryAdd(normalizedValue, 0);
-                        IndexReadbackTranslation(kv.Key, kv.Value.Value);
-                    }
-                }
+                    IndexTranslatedValue(kv.Key, kv.Value.Value);
+                // The interface's own translated forms too — the index was just emptied, and
+                // losing them would let one of our labels come back through a getter and be
+                // learnt as game text. See IndexTranslatedValue for why this one thing is shared.
+                foreach (var kv in ModUiCache)
+                    IndexTranslatedValue(kv.Key, kv.Value.Value);
 
                 BuildPatternEntries();
                 // Same lineage as before the reload: keep what we already knew about the server
@@ -2838,6 +2975,11 @@ namespace UnityGameTranslator.Core
                 }
                 if (shapedKeys + shapedValues > 0)
                     Adapter.LogWarning($"[Cache audit] {shapedKeys} shaped key(s), {shapedValues} shaped value(s) in translations.json — these should not exist and will not sync cleanly.");
+
+                // What the migration above took is on disk before anything else runs: the next
+                // save of translations.json writes it without those lines, and a crash between
+                // the two would otherwise lose them for good.
+                SaveModUiCacheIfDirty();
 
                 Adapter.LogInfo($"Loaded {TranslationCache.Count} cached translations, {translatedTexts.Count} reverse entries, {readbackTranslations.Count} decoration-insensitive, UUID: {FileUuid}");
             }
@@ -2915,6 +3057,259 @@ namespace UnityGameTranslator.Core
                 AncestorSettings = null;
             }
         }
+
+        #region The mod's own interface — modui-translate.json
+
+        private static bool modUiCacheModified;
+
+        /// <summary>
+        /// The language the interface file holds, as it says itself (`_target_language`).
+        ///
+        /// ⚠ The FILE is the authority, never its name: the name carries a slug that does not
+        /// round-trip for the handful of languages the catalogue has no code for.
+        /// </summary>
+        public static string ModUiLanguage { get; private set; }
+
+        /// <summary>
+        /// Font the interface file asks to be rendered with (`_settings.ui_font`).
+        ///
+        /// 🔴 **It moved out of translations.json, where it was a mod setting inside the game's
+        /// file.** It travels here so that copying this one file to another game brings the font
+        /// that makes it readable with it. <see cref="ModConfig.interface_font"/> still wins: a
+        /// local choice beats what a file asks for.
+        /// </summary>
+        public static string ModUiFont { get; private set; }
+
+        /// <summary>True once the interface file holds something to show.</summary>
+        public static bool ModUiHasLines => ModUiCache.Count > 0;
+
+        /// <summary>
+        /// Two languages are the same one exactly when they would set aside the same file — the
+        /// identity the file names already use, asked once rather than spelled a second way here.
+        /// </summary>
+        private static bool SameLanguage(string a, string b) =>
+            string.Equals(ModUi.SetAsideFileName(a), ModUi.SetAsideFileName(b), StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Read the interface file for the language this game is being played in.
+        ///
+        /// 🔴 **A file in another language is put away, never overwritten and never used.** An
+        /// interface translated into French is noise in a Korean game, and deleting it would throw
+        /// away a pass of the translator for somebody trying a language for an evening. Coming back
+        /// to that language finds the file again, because the set-aside name is derived from the
+        /// language and not remembered anywhere.
+        /// </summary>
+        private static void LoadModUiCache()
+        {
+            ModUiCache = new Dictionary<string, TranslationEntry>();
+            ModUiLanguage = null;
+            ModUiFont = null;
+            modUiCacheModified = false;
+            lock (lockObj) { ownUISubmitted.Clear(); }
+
+            if (string.IsNullOrEmpty(ModUiCachePath)) return;
+
+            string wanted = Config?.GetTargetLanguage();
+
+            try
+            {
+                // The file in place belongs to another language: put it away, then look for the
+                // one that was put away for THIS language.
+                if (File.Exists(ModUiCachePath))
+                {
+                    string held = ReadModUiLanguage(ModUiCachePath);
+                    if (!string.IsNullOrEmpty(held) && !string.IsNullOrEmpty(wanted) && !SameLanguage(held, wanted))
+                    {
+                        SetAsideModUiFile(held);
+                    }
+                }
+
+                if (!File.Exists(ModUiCachePath) && !string.IsNullOrEmpty(wanted))
+                {
+                    string putAway = Path.Combine(ModFolder, ModUi.SetAsideFileName(wanted));
+                    if (File.Exists(putAway))
+                    {
+                        File.Move(putAway, ModUiCachePath);
+                        Adapter?.LogInfo($"[ModUI] Took back the interface already translated into {wanted}");
+                    }
+                }
+
+                if (!File.Exists(ModUiCachePath)) return;
+
+                var parsed = JObject.Parse(File.ReadAllText(ModUiCachePath).Replace("\r\n", "\n"));
+
+                foreach (var prop in parsed.Properties())
+                {
+                    if (prop.Name == "_target_language")
+                    {
+                        ModUiLanguage = prop.Value.ToString();
+                    }
+                    else if (prop.Name == "_settings" && prop.Value.Type == JTokenType.Object)
+                    {
+                        ModUiFont = (prop.Value as JObject)?["ui_font"]?.Value<string>();
+                    }
+                    else if (!prop.Name.StartsWith("_"))
+                    {
+                        string key = NormalizeLineEndings(prop.Name);
+                        if (prop.Value.Type == JTokenType.Object)
+                        {
+                            var obj = prop.Value as JObject;
+                            ModUiCache[key] = new TranslationEntry
+                            {
+                                Value = NormalizeLineEndings(obj?["v"]?.ToString() ?? ""),
+                                Tag = obj?["t"]?.ToString() ?? ModUi.Tag,
+                                Index = ParseTranslationIndex(obj?["i"])
+                            };
+                        }
+                        else if (prop.Value.Type == JTokenType.String)
+                        {
+                            ModUiCache[key] = new TranslationEntry
+                            {
+                                Value = NormalizeLineEndings(prop.Value.ToString()),
+                                Tag = ModUi.Tag
+                            };
+                        }
+                    }
+                }
+
+                // Its translated forms join the shared reverse index, on purpose: that index is
+                // the anti-loop device that stops a string the game reads back from being queued
+                // again as a new source. Which FILE a line lives in is the separation that matters;
+                // recognising our own output on screen is not storage, it is safety.
+                foreach (var kvp in ModUiCache)
+                    IndexTranslatedValue(kvp.Key, kvp.Value.Value);
+
+                InvalidateInterfaceFontAvailability();
+                Adapter?.LogInfo($"[ModUI] Loaded {ModUiCache.Count} interface line(s)"
+                    + (string.IsNullOrEmpty(ModUiLanguage) ? "" : $" in {ModUiLanguage}")
+                    + (string.IsNullOrEmpty(ModUiFont) ? "" : $", font {ModUiFont}"));
+            }
+            catch (Exception e)
+            {
+                // Loud, and empty rather than half-read: a partially parsed interface would show
+                // some labels translated and some not, which reads as a bug in the mod.
+                Adapter?.LogError($"[ModUI] Failed to read {ModUi.FileName}: {e.Message}");
+                ModUiCache = new Dictionary<string, TranslationEntry>();
+                ModUiLanguage = null;
+                ModUiFont = null;
+            }
+        }
+
+        /// <summary>The `_target_language` of a file, without loading it. Null when it says nothing.</summary>
+        private static string ReadModUiLanguage(string path)
+        {
+            try
+            {
+                return JObject.Parse(File.ReadAllText(path).Replace("\r\n", "\n"))["_target_language"]?.ToString();
+            }
+            catch (Exception e)
+            {
+                Adapter?.LogWarning($"[ModUI] Could not read the language of {Path.GetFileName(path)}: {e.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Move the interface file out of the way, under the language it holds.
+        ///
+        /// ⚠ An existing file for that language is replaced, and that is right: both are the same
+        /// interface in the same language, and the one being put away is the later of the two.
+        /// </summary>
+        private static void SetAsideModUiFile(string language)
+        {
+            try
+            {
+                string target = Path.Combine(ModFolder, ModUi.SetAsideFileName(language));
+                if (File.Exists(target)) File.Delete(target);
+                File.Move(ModUiCachePath, target);
+                Adapter?.LogInfo($"[ModUI] Set aside the interface translated into {language} as {Path.GetFileName(target)}");
+            }
+            catch (Exception e)
+            {
+                // Nothing is lost — the file is still there — but it is in the wrong language, so
+                // it must not be read. Said out loud rather than swallowed.
+                Adapter?.LogError($"[ModUI] Could not set aside {ModUi.FileName} ({e.Message}); it will not be used.");
+            }
+        }
+
+        /// <summary>
+        /// Write the interface file. Same shape as translations.json, minus everything that
+        /// describes a GAME translation: no uuid, no game, no sync state, no local-change count —
+        /// this file is never published, so none of that has an answer here.
+        /// </summary>
+        public static void SaveModUiCache()
+        {
+            if (string.IsNullOrEmpty(ModUiCachePath)) return;
+
+            lock (lockObj)
+            {
+                try
+                {
+                    var output = new JObject();
+                    output["_engine_version"] = CurrentEngineVersion;
+
+                    // What this interface is written in. Recorded at every save from the language
+                    // in force, so a file copied to another game announces itself.
+                    string language = Config?.GetTargetLanguage();
+                    if (!string.IsNullOrEmpty(language))
+                    {
+                        ModUiLanguage = language;
+                        output["_target_language"] = language;
+                    }
+
+                    // The font that makes it readable, so it travels with the copy. Written from
+                    // the font IN FORCE — a local choice, else what the file already asked for.
+                    string font = EffectiveInterfaceFont;
+                    if (!string.IsNullOrEmpty(font))
+                    {
+                        ModUiFont = font;
+                        output["_settings"] = new JObject { ["ui_font"] = font };
+                    }
+
+                    var sortedKeys = ModUiCache.Keys.OrderBy(k => k).ToList();
+                    foreach (var key in sortedKeys)
+                    {
+                        var entry = ModUiCache[key];
+                        var obj = new JObject
+                        {
+                            ["v"] = entry.Value,
+                            ["t"] = entry.Tag ?? ModUi.Tag
+                        };
+                        if (entry.Index.HasValue) obj["i"] = entry.Index.Value;
+                        output[key] = obj;
+                    }
+
+                    File.WriteAllText(ModUiCachePath, output.ToString(Formatting.Indented));
+                    modUiCacheModified = false;
+
+                    if (DebugMode)
+                        Adapter?.LogInfo($"[ModUI] Saved {sortedKeys.Count} interface line(s)");
+                }
+                catch (Exception e)
+                {
+                    Adapter?.LogError($"[ModUI] Failed to save {ModUi.FileName}: {e.Message}");
+                }
+            }
+        }
+
+        /// <summary>Write the interface file only if something changed since it was last written.</summary>
+        public static void SaveModUiCacheIfDirty()
+        {
+            if (modUiCacheModified) SaveModUiCache();
+        }
+
+        // 🔴 **Where an interface line arriving from the network is stopped, and why there is no
+        // function here for it.** Two doors, each already the only way through:
+        //
+        //  · <see cref="TranslationMerger.MergeWithTags"/> never emits one, so nothing a download,
+        //    a Main merge or the browser editor brings back can reach TranslationCache;
+        //  · <see cref="LoadCache"/> takes any left in the file on disk and asks
+        //    <see cref="ModUiMigration.Decide"/> what to do with it.
+        //
+        // A third helper doing the same work in a third place would be exactly the parallel path
+        // this split exists to remove — and the one nobody would remember to call.
+
+        #endregion
 
         /// <summary>
         /// Reload the cache from disk. Call this after downloading a translation
@@ -3321,6 +3716,13 @@ namespace UnityGameTranslator.Core
             foreach (var kvp in AncestorCache)
             {
                 if (kvp.Key.StartsWith("_")) continue;
+                // 🔴 An interface line the server's copy holds and this file no longer does is
+                // NOT a change somebody made. Those lines were published by a version that kept
+                // the mod's interface inside the game's translation; taking them out is this
+                // version doing what it must, not work waiting to be shared. Counting them showed
+                // "unpublished changes" on a file nobody had touched — and to somebody holding
+                // another person's Main, a count they could never clear.
+                if (!Common.Merge.IsGameLine(kvp.Value?.Tag)) continue;
                 if (!TranslationCache.ContainsKey(kvp.Key)) removed++;
             }
             changes += removed;
@@ -3405,6 +3807,18 @@ namespace UnityGameTranslator.Core
                     // included — because the website keeps a null there rather than emptying it.
                     lines.Add(new KeyValuePair<string, TranslationLine>(
                         kvp.Key, new TranslationLine(kvp.Value.Value, kvp.Value.Tag ?? "A")));
+                }
+
+                // Interface lines the published copy still carries count as present — see
+                // ModUiMigration.StillCountsAsPublished for why, and for its cases.
+                foreach (var kvp in AncestorCache)
+                {
+                    if (!ModUiMigration.StillCountsAsPublished(kvp.Value?.Tag,
+                                                               TranslationCache.ContainsKey(kvp.Key)))
+                        continue;
+
+                    lines.Add(new KeyValuePair<string, TranslationLine>(
+                        kvp.Key, new TranslationLine(kvp.Value.Value, kvp.Value.Tag)));
                 }
 
                 return ContentHash.Of(lines, FileUuid);
@@ -3785,6 +4199,17 @@ namespace UnityGameTranslator.Core
                 return;
             }
 
+            // 🔴 The editors only ever show the GAME's lines — the in-game inspector skips our own
+            // components, and the browser is handed translations.json. A key that only exists in
+            // the interface file therefore cannot legitimately arrive here, and creating it in the
+            // game's file is exactly the mixing this split removes.
+            if (!TranslationCache.ContainsKey(key) && ModUiCache.ContainsKey(key))
+            {
+                LogWarning($"[Editor] REFUSED to save: '{(key.Length > 40 ? key.Substring(0, 40) + "…" : key)}' "
+                           + $"belongs to the mod's interface ({ModUi.FileName}), not to this game's translation.");
+                return;
+            }
+
             if (TranslationCache.TryGetValue(key, out var existing))
             {
                 existing.Value = newValue;
@@ -3803,11 +4228,7 @@ namespace UnityGameTranslator.Core
             }
 
             // Reverse cache sync so the new value isn't detected as untranslated text
-            string normalizedTranslation = NormalizeLineEndings(newValue);
-            if (Config.normalize_numbers)
-                normalizedTranslation = ExtractNumbersToPlaceholders(normalizedTranslation, out _);
-            translatedTexts.TryAdd(normalizedTranslation.TrimEnd(), 0);
-            IndexReadbackTranslation(key, newValue);
+            IndexTranslatedValue(key, newValue);
 
             if (key.Contains(PlaceholderPrefix))
                 BuildPatternEntries();
@@ -3821,6 +4242,10 @@ namespace UnityGameTranslator.Core
         /// browser-requested retranslation: the key travels from the browser
         /// through the site verbatim, and only texts already in OUR file may
         /// ever be queued to the player's AI backend.
+        ///
+        /// ⚠ The GAME's file, and deliberately not the interface one: the browser is handed
+        /// translations.json and nothing else, so a key it sends that only exists in the mod's
+        /// interface did not come from anything it was shown.
         /// </summary>
         public static bool HasTranslationKey(string key)
         {
@@ -3964,7 +4389,13 @@ namespace UnityGameTranslator.Core
                     return true;
                 }
 
-                bool hadEntry = TranslationCache.TryGetValue(key, out var previous);
+                // Which file the line lives in decides everything downstream: the prompt it is
+                // asked with, the tag it comes back as, and the file the answer is written to. A
+                // retranslation attaches no component, so this is the only place that can say it.
+                bool isOwnUI = ModUiCache.ContainsKey(key);
+                var store = isOwnUI ? ModUiCache : TranslationCache;
+
+                bool hadEntry = store.TryGetValue(key, out var previous);
                 request = new RetranslateRequest
                 {
                     Key = key,
@@ -3972,11 +4403,7 @@ namespace UnityGameTranslator.Core
                     PreviousValue = hadEntry ? previous.Value : null,
                     PreviousTag = hadEntry ? (previous.Tag ?? "A") : null,
                     PreviousIndex = hadEntry ? previous.Index : null,
-                    // The mod's own interface is translated with its own prompt and its own tag.
-                    // The worker normally infers that from the components attached to the request,
-                    // and a retranslation attaches none — so it is said here, from the tag the line
-                    // already carries, or an M line comes back as game text tagged A.
-                    IsOwnUI = hadEntry && previous.Tag == "M",
+                    IsOwnUI = isOwnUI,
                     StoreResult = storeResult
                 };
                 retranslateRequests[key] = request;
@@ -3984,7 +4411,7 @@ namespace UnityGameTranslator.Core
                 // Proposing changes nothing until a human says so — the entry stays exactly where
                 // it is, and the worker is told to skip the cache rather than read it.
                 if (storeResult)
-                    TranslationCache.Remove(key);
+                    store.Remove(key);
             }
 
             if (storeResult && key.Contains(PlaceholderPrefix))
@@ -4168,15 +4595,19 @@ namespace UnityGameTranslator.Core
 
             lock (lockObj)
             {
-                TranslationCache[request.Key] = new TranslationEntry
+                // Back where it was taken from — the request remembers which file that is.
+                var store = request.IsOwnUI ? ModUiCache : TranslationCache;
+                store[request.Key] = new TranslationEntry
                 {
                     Value = request.PreviousValue,
                     Tag = request.PreviousTag,
-                    Index = request.PreviousIndex ?? NextOrderIndex()
+                    // The interface is not in the web editors' ordered list and takes no index.
+                    Index = request.IsOwnUI ? request.PreviousIndex : (request.PreviousIndex ?? NextOrderIndex())
                 };
+                if (request.IsOwnUI) modUiCacheModified = true;
             }
 
-            if (request.Key.Contains(PlaceholderPrefix))
+            if (!request.IsOwnUI && request.Key.Contains(PlaceholderPrefix))
                 BuildPatternEntries();
         }
 
@@ -4407,6 +4838,10 @@ namespace UnityGameTranslator.Core
 
         /// <summary>
         /// Clear the translation queue. Called when AI is disabled.
+        ///
+        /// ⚠ Two containers, emptied together, and that is the point: this used to empty three of
+        /// four, and the survivor was the set of "these texts are the mod's interface". A GAME text
+        /// queued afterwards that happened to equal one of our labels was then filed as interface.
         /// </summary>
         public static void ClearQueue()
         {
@@ -4415,7 +4850,6 @@ namespace UnityGameTranslator.Core
                 int count = translationQueue.Count;
                 translationQueue.Clear();
                 pendingTranslations.Clear();
-                pendingComponents.Clear();
                 isTranslating = false;
                 currentlyTranslating = null;
                 if (count > 0)
@@ -4872,6 +5306,7 @@ namespace UnityGameTranslator.Core
                     return;
                 }
 
+                QueuedText queued = null;
                 string textToTranslate = null;
                 List<object> componentsToUpdate = null;
                 bool queuedAsOwnUI = false;
@@ -4880,33 +5315,25 @@ namespace UnityGameTranslator.Core
                 {
                     if (translationQueue.Count > 0)
                     {
-                        textToTranslate = translationQueue.Dequeue();
+                        // The item carries its components AND its origin, so nothing has to be
+                        // looked up from the text — and nothing can be lost by looking up one of
+                        // the two and forgetting the other, which is what a re-queue used to do.
+                        queued = translationQueue.Dequeue();
+                        textToTranslate = queued.Text;
+                        componentsToUpdate = queued.Components.Count > 0 ? queued.Components : null;
+                        queuedAsOwnUI = queued.FromOwnUI;
 
-                        // TAKE components (remove from dict) so new queues create fresh entries
-                        if (pendingComponents.TryGetValue(textToTranslate, out var comps))
-                        {
-                            componentsToUpdate = comps; // Take the list directly
-                            pendingComponents.Remove(textToTranslate); // Remove NOW
-                            if (Config.debug_ai)
-                                Adapter?.LogInfo($"[Worker] Found {comps.Count} components for text");
-                        }
-                        else
-                        {
-                            if (Config.debug_ai)
-                                Adapter?.LogWarning($"[Worker] NO components found for text!");
-                        }
-
-                        // Remove from pending so same text can be re-queued with new components
+                        // Out of the pending map so the same text can be queued afresh; the item
+                        // stays alive in `queued`, which is what a rate-limit re-queue puts back.
                         pendingTranslations.Remove(textToTranslate);
 
-                        // Take the own-UI intent recorded at queue time: a code-owned label is
-                        // often queued WITHOUT a component (a fragment concatenated with data, a
-                        // help text applied by its own zone), and the components are the only
-                        // other way to recognise our own UI.
-                        queuedAsOwnUI = pendingOwnUITexts.Remove(textToTranslate);
-
                         if (Config.debug_ai)
+                        {
+                            Adapter?.LogInfo(componentsToUpdate != null
+                                ? $"[Worker] Found {componentsToUpdate.Count} components for text"
+                                : "[Worker] NO components found for text!");
                             Adapter?.LogInfo($"[Worker] Dequeued: {textToTranslate?.Substring(0, Math.Min(30, textToTranslate?.Length ?? 0))}...");
+                        }
                     }
                 }
 
@@ -4996,12 +5423,27 @@ namespace UnityGameTranslator.Core
                             RunRetranslation(retranslate, normalizedOriginal, extractedNumbers,
                                 workerExtractedVars, originalText, componentsToUpdate);
                         }
-                        // Capture keys only mode: store H+empty without calling AI
+                        // Capture keys only mode: store H+empty without calling AI.
+                        //
+                        // 🔴 **The mod's own interface is not captured**, and this branch ignoring
+                        // that is what filed our menu labels in the GAME's file as empty human
+                        // captures. Capturing collects the game's strings for somebody to
+                        // translate later — on the site, or in the browser editor. Our interface
+                        // goes to neither, no backend is called in this mode, so an entry for it
+                        // would have no editor, no destination and nothing to become.
                         else if (Config.capture_keys_only)
                         {
-                            AddToCache(normalizedOriginal, "", "H");
-                            if (Config.debug_ai)
-                                Adapter?.LogInfo($"[Worker] Captured key (no translation): {normalizedOriginal.Substring(0, Math.Min(30, normalizedOriginal.Length))}...");
+                            if (isOwnUI)
+                            {
+                                if (Config.debug_ai)
+                                    Adapter?.LogInfo("[Worker] Interface label not captured: capture mode collects the game's text.");
+                            }
+                            else
+                            {
+                                AddToCache(normalizedOriginal, "", "H");
+                                if (Config.debug_ai)
+                                    Adapter?.LogInfo($"[Worker] Captured key (no translation): {normalizedOriginal.Substring(0, Math.Min(30, normalizedOriginal.Length))}...");
+                            }
                         }
                         // Text already failed placeholder validation this session:
                         // don't hammer the backend, it will be retried next launch
@@ -5028,16 +5470,21 @@ namespace UnityGameTranslator.Core
                             if (Config.debug_ai)
                                 Adapter?.LogInfo($"[Worker] {backend} returned: {(translation == null ? "(null)" : translation.Substring(0, Math.Min(40, translation.Length)))}");
 
-                            // Handle rate limit: re-queue the text and backoff
+                            // Handle rate limit: re-queue the text and backoff.
+                            //
+                            // ⚠ The SAME item goes back, not its text. Re-queuing a bare string
+                            // left the second attempt with neither the components to update nor
+                            // the origin — so a mod-interface label came back from the retry as a
+                            // GAME line, written into the game's file under a game tag.
                             if (translation == null && _apiRateLimited)
                             {
                                 _apiRateLimited = false;
                                 lock (lockObj)
                                 {
-                                    if (!pendingTranslations.Contains(originalText))
+                                    if (queued != null && !pendingTranslations.ContainsKey(originalText))
                                     {
-                                        pendingTranslations.Add(originalText);
-                                        translationQueue.Enqueue(originalText);
+                                        pendingTranslations[originalText] = queued;
+                                        translationQueue.Enqueue(queued);
                                     }
                                 }
                                 float delaySec = Math.Max(0.1f, Config.rate_limit_retry_delay);
@@ -5069,9 +5516,26 @@ namespace UnityGameTranslator.Core
                                 // Note: Google/DeepL don't return skip markers, so this only applies to LLM
                                 bool isSkipped = Answers.Read(translation) == AnswerKind.Skip;
 
-                                // Cache with appropriate tag: S=Skipped, M=Mod UI, A=AI-translated
-                                string tag = isSkipped ? "S" : (isOwnUI ? "M" : "A");
-                                AddToCache(normalizedOriginal, isSkipped ? normalizedOriginal : translation, tag);
+                                // 🔴 **Where a line comes from outranks what happened to it.** The
+                                // skip marker used to win over the origin, so a refused interface
+                                // label was filed "S" — a tag that means "a person ruled this line
+                                // must stay as it is", in the GAME's file, counted and merged like
+                                // any game line. An interface line is an interface line whatever
+                                // the model answered.
+                                //
+                                // ⚠ And a REFUSED one is not stored at all: the source of our own
+                                // labels is always English, so a skip here is the model declining a
+                                // job it was given wrongly, not a decision worth recording.
+                                if (isOwnUI && isSkipped)
+                                {
+                                    if (Config.debug_ai)
+                                        Adapter?.LogInfo("[Worker] The model declined an interface label; left in English, nothing stored.");
+                                }
+                                else
+                                {
+                                    string tag = isOwnUI ? ModUi.Tag : (isSkipped ? "S" : "A");
+                                    AddToCache(normalizedOriginal, isSkipped ? normalizedOriginal : translation, tag);
+                                }
 
                                 if (!isSkipped && translation != normalizedOriginal)
                                 {
@@ -5124,9 +5588,8 @@ namespace UnityGameTranslator.Core
                         currentlyTranslating = null;
                     }
 
-                    // Note: pendingTranslations and pendingComponents already cleaned at dequeue time
-
-                    // Note: pendingTranslations and pendingComponents already cleaned at dequeue time
+                    // Nothing to clean up: the item left the pending map at dequeue, and it carries
+                    // everything else with it.
                 }
                 else
                 {
@@ -5832,11 +6295,17 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Add a translation to the cache with an optional tag.
+        /// Add a translation, to the file its tag says it belongs in.
+        ///
+        /// 🔴 **The tag IS the destination.** <see cref="ModUi.Tag"/> means the mod's own interface
+        /// and goes to <see cref="ModUiCache"/>; everything else is the game's and goes to
+        /// <see cref="TranslationCache"/>. One door, one rule, and it holds whatever route got
+        /// here — which is the point: the leaks this replaced were all a caller that knew the
+        /// answer and a writer that did not ask.
         /// </summary>
         /// <param name="original">Original text (key)</param>
         /// <param name="translated">Translated text (value)</param>
-        /// <param name="tag">Tag: A=AI, H=Human, V=Validated (default: A)</param>
+        /// <param name="tag">Tag: A=AI, H=Human, V=Validated, S=Skipped, M=the mod's interface</param>
         public static void AddToCache(string original, string translated, string tag = "A")
         {
             if (string.IsNullOrEmpty(original))
@@ -5846,13 +6315,17 @@ namespace UnityGameTranslator.Core
             if (string.IsNullOrEmpty(translated) && tag != "H")
                 return;
 
+            bool toModUi = tag == ModUi.Tag;
+
             // Normalize line endings for cross-platform consistency
             string normalizedKey = NormalizeLineEndings(original);
             string normalizedValue = NormalizeLineEndings(translated ?? "");
 
             lock (lockObj)
             {
-                if (TranslationCache.ContainsKey(normalizedKey))
+                var store = toModUi ? ModUiCache : TranslationCache;
+
+                if (store.ContainsKey(normalizedKey))
                     return;
 
                 // Last stop before an entry exists: every route that creates one passes here, so this
@@ -5861,7 +6334,7 @@ namespace UnityGameTranslator.Core
                 // target-language key kept coming back. A key we can recognise as our own translation
                 // wearing a different decoration must never become an entry, whoever asked for it.
                 // The stack is logged once so the caller that got this far is named, not guessed at.
-                if (!TranslationCache.ContainsKey(normalizedKey) && IsReadbackOfOwnTranslation(normalizedKey))
+                if (IsReadbackOfOwnTranslation(normalizedKey))
                 {
                     if (_readbackStoreLogged < 3)
                     {
@@ -5871,65 +6344,59 @@ namespace UnityGameTranslator.Core
                     return;
                 }
 
-                // Re-adding an existing key keeps its original capture order;
-                // only genuinely new keys consume a new index
-                long? orderIndex;
-                if (TranslationCache.TryGetValue(normalizedKey, out var previousEntry) && previousEntry.Index.HasValue)
-                    orderIndex = previousEntry.Index;
-                else
-                    orderIndex = NextOrderIndex();
-
                 var entry = new TranslationEntry
                 {
                     Value = normalizedValue,
                     Tag = tag ?? "A",
-                    Index = orderIndex
+                    // The capture order is what the web editors sort by, so it is the GAME's
+                    // counter. The interface is not in that list and never will be; numbering it
+                    // from the same counter would leave gaps in the game's own sequence.
+                    Index = toModUi ? (long?)null : NextOrderIndex()
                 };
 
-                TranslationCache[normalizedKey] = entry;
-                cacheModified = true;
-                if (entry.Tag == "M") TranslationHasUILines = true;
+                store[normalizedKey] = entry;
 
-                // Track local changes (if different from ancestor or new)
-                if (AncestorCache.Count > 0)
+                if (toModUi)
                 {
-                    if (!AncestorCache.TryGetValue(normalizedKey, out var ancestorEntry) ||
-                        ancestorEntry.Value != entry.Value ||
-                        ancestorEntry.Tag != entry.Tag)
-                    {
-                        LocalChangesCount++;
-                    }
+                    modUiCacheModified = true;
                 }
                 else
                 {
-                    // No ancestor = all translations are local
-                    LocalChangesCount++;
+                    cacheModified = true;
+
+                    // Track local changes (if different from ancestor or new)
+                    if (AncestorCache.Count > 0)
+                    {
+                        if (!AncestorCache.TryGetValue(normalizedKey, out var ancestorEntry) ||
+                            ancestorEntry.Value != entry.Value ||
+                            ancestorEntry.Tag != entry.Tag)
+                        {
+                            LocalChangesCount++;
+                        }
+                    }
+                    else
+                    {
+                        // No ancestor = all translations are local
+                        LocalChangesCount++;
+                    }
                 }
 
-                // Add to reverse cache (only if value is non-empty and different from key)
-                if (normalizedKey != entry.Value && !string.IsNullOrEmpty(entry.Value))
-                {
-                    string normalizedTranslation = NormalizeLineEndings(entry.Value);
-                    if (Config.normalize_numbers)
-                    {
-                        normalizedTranslation = ExtractNumbersToPlaceholders(normalizedTranslation, out _);
-                    }
-                    normalizedTranslation = normalizedTranslation.TrimEnd();
-                    translatedTexts.TryAdd(normalizedTranslation, 0);
-                    IndexReadbackTranslation(normalizedKey, entry.Value);
-                }
+                // Recognising our own output on screen is shared by both — see IndexTranslatedValue.
+                IndexTranslatedValue(normalizedKey, entry.Value);
 
                 // Note: No longer clearing lastSeenText here.
                 // OnTranslationComplete updates tracked components directly.
                 // New components will be translated on their next scan cycle.
 
-                if (normalizedKey.Contains(PlaceholderPrefix))
+                // Patterns are built from the GAME's lines only: a pattern of ours matching a
+                // game text is exactly the mixing this split removes.
+                if (!toModUi && normalizedKey.Contains(PlaceholderPrefix))
                 {
                     BuildPatternEntries();
                 }
 
                 if (DebugMode)
-                    Adapter?.LogInfo($"[Cache+] {normalizedKey.Substring(0, Math.Min(40, normalizedKey.Length))}... [{tag}]");
+                    Adapter?.LogInfo($"[{(toModUi ? "ModUI+" : "Cache+")}] {normalizedKey.Substring(0, Math.Min(40, normalizedKey.Length))}... [{tag}]");
             }
         }
 
@@ -6088,14 +6555,24 @@ namespace UnityGameTranslator.Core
             return IsNumericOrSymbol(stripped.ToString());
         }
 
-        public static bool HasCachedTranslation(string text)
+        /// <summary>
+        /// Is there a usable translation for this SOURCE text?
+        /// </summary>
+        /// <param name="ownUI">
+        /// True to ask about one of the mod's own labels, which lives in the interface file. The
+        /// caller always knows which of the two it is holding — a game component or one of ours —
+        /// so this is passed rather than guessed from the string.
+        /// </param>
+        public static bool HasCachedTranslation(string text, bool ownUI = false)
         {
             if (string.IsNullOrEmpty(text)) return false;
 
+            var store = ownUI ? ModUiCache : TranslationCache;
+
             // Exact match as key
-            if (TranslationCache.TryGetValue(text, out var exact))
+            if (store.TryGetValue(text, out var exact))
             {
-                if (exact.IsHumanEmpty || exact.Tag == "S") return false;
+                if (exact.IsEmpty || exact.Tag == "S") return false;
                 // key==value with tag "A" = AI couldn't translate (source language text).
                 // Exception: natural identity (only digits/punctuation/placeholders) is expected
                 // to be identical — not an AI failure.
@@ -6106,9 +6583,9 @@ namespace UnityGameTranslator.Core
 
             // Normalized match as key
             string normalized = NormalizeForCacheLookup(text);
-            if (TranslationCache.TryGetValue(normalized, out var norm))
+            if (store.TryGetValue(normalized, out var norm))
             {
-                if (norm.IsHumanEmpty || norm.Tag == "S") return false;
+                if (norm.IsEmpty || norm.Tag == "S") return false;
                 if (norm.Value == normalized && norm.Tag == "A" && !IsNaturalIdentity(normalized)) return false;
                 return true;
             }
@@ -6129,14 +6606,15 @@ namespace UnityGameTranslator.Core
         /// original stored (issue #21: such a component could not revert on disable). O(cache) scan —
         /// call only for the rare untracked-yet-translated component. Returns null if not found.
         /// </summary>
-        public static string GetSourceForTranslation(string translatedText)
+        public static string GetSourceForTranslation(string translatedText,
+                                                     Dictionary<string, TranslationEntry> store = null)
         {
             if (string.IsNullOrEmpty(translatedText)) return null;
             string norm = NormalizeForCacheLookup(translatedText).TrimEnd();
-            foreach (var kv in TranslationCache)
+            foreach (var kv in store ?? TranslationCache)
             {
                 var entry = kv.Value;
-                if (entry == null || entry.IsHumanEmpty || entry.Tag == "S" || string.IsNullOrEmpty(entry.Value))
+                if (entry == null || entry.IsEmpty || entry.Tag == "S")
                     continue;
                 if (entry.Value == translatedText || NormalizeForCacheLookup(entry.Value).TrimEnd() == norm)
                     return kv.Key;
@@ -6223,30 +6701,33 @@ namespace UnityGameTranslator.Core
 
             lock (lockObj)
             {
+                // One item per waiting text, whoever submits it and however many times.
+                bool isNew = !pendingTranslations.TryGetValue(text, out var item);
+                if (isNew)
+                {
+                    item = new QueuedText(text);
+                    pendingTranslations[text] = item;
+                    translationQueue.Enqueue(item);
+                }
+
                 if (component != null)
                 {
-                    if (!pendingComponents.ContainsKey(text))
-                        pendingComponents[text] = new List<object>();
                     // Same reference, one entry. Without this, a component whose text waits long
                     // in the queue is re-added on every scan cycle — a UI Toolkit element (whose
                     // GetInstanceID is -1) reached 137 strong references for ONE label, i.e. 136
                     // useless apply iterations and that many elements pinned against collection.
                     // (Reference equality: two IL2CPP proxies of one native object still slip
                     // through — bounded by proxy caching, and harmless beyond a wasted slot.)
-                    var waiting = pendingComponents[text];
-                    if (!waiting.Contains(component)) waiting.Add(component);
+                    if (!item.Components.Contains(component)) item.Components.Add(component);
                 }
 
-                // Record the own-UI intent: the worker also infers it from the components, but a
-                // code-owned label may be queued without any (see the dequeue). Never set from
-                // game text, so it cannot turn a game string into mod UI by coincidence.
-                if (isOwnUI)
-                    pendingOwnUITexts.Add(text);
+                // The origin, decided here because here is where the component still exists to be
+                // asked. Sticky: one submitter saying "this is our interface" settles it for the
+                // item, and a later submission with no component cannot unsay it. Never set from
+                // game text, so a game string equal to one of our labels stays a game line.
+                if (isOwnUI) item.FromOwnUI = true;
 
-                if (pendingTranslations.Contains(text)) return true;
-
-                pendingTranslations.Add(text);
-                translationQueue.Enqueue(text);
+                if (!isNew) return true;
 
                 // Log first queued item always, then every 10th
                 int queueSize = translationQueue.Count;
@@ -6475,9 +6956,9 @@ namespace UnityGameTranslator.Core
             if (Config != null && Config.normalize_numbers)
                 key = ExtractNumbersToPlaceholders(key, out _);
 
-            if (TranslationCache.ContainsKey(key)) return true;
+            if (ModUiCache.ContainsKey(key)) return true;
             string trimmed = key.Trim();
-            return trimmed != key && TranslationCache.ContainsKey(trimmed);
+            return trimmed != key && ModUiCache.ContainsKey(trimmed);
         }
 
         public static string TranslateTextWithTracking(string text, object component, bool isOwnUI = false, bool skipTypewriting = false, bool skipQueueing = false)
@@ -6554,8 +7035,14 @@ namespace UnityGameTranslator.Core
                 return text; // already translated, don't re-process
             }
 
+            // 🔴 Which file this text is looked up in, decided once and used for every lookup
+            // below. The mod's own labels and the game's text never see each other's entries —
+            // that is the whole separation, and asking the same question three times is how a
+            // branch ends up asking a fourth way.
+            var store = isOwnUI ? ModUiCache : TranslationCache;
+
             // Fast path: try exact text lookup BEFORE any normalization (avoids allocations for cache hits)
-            if (TranslationCache.TryGetValue(text, out var exactEntry))
+            if (store.TryGetValue(text, out var exactEntry))
             {
                 // If this component is in typewriting state, touch the timestamp
                 // so the stabilizer doesn't think the typewriting stopped.
@@ -6566,7 +7053,10 @@ namespace UnityGameTranslator.Core
                     TranslatorPatches.TouchTypewritingTimestamp(twId2, text);
                 }
 
-                if (exactEntry.IsHumanEmpty || exactEntry.Tag == "S")
+                // An entry with nothing in it is a line waiting for a translation, whatever tag it
+                // wears: the game's captures say so with H, and a hand-written interface file can
+                // hold a key somebody has not filled in yet. Both show the source text.
+                if (exactEntry.IsEmpty || exactEntry.Tag == "S")
                 {
                     cacheHitCount++;
                     return text;
@@ -6633,11 +7123,11 @@ namespace UnityGameTranslator.Core
 
             // Check cache with NORMALIZED key
             bool foundInCache = false;
-            if (TranslationCache.TryGetValue(normalizedText, out var cachedEntry))
+            if (store.TryGetValue(normalizedText, out var cachedEntry))
             {
                 foundInCache = true;
-                // H+empty (capture-only) or S (skipped): return original text
-                if (cachedEntry.IsHumanEmpty || cachedEntry.Tag == "S")
+                // Nothing in it (a capture, or a key nobody filled in) or S: return original text
+                if (cachedEntry.IsEmpty || cachedEntry.Tag == "S")
                 {
                     cacheHitCount++;
                     return text;
@@ -6664,11 +7154,11 @@ namespace UnityGameTranslator.Core
             if (translation == null && !foundInCache)
             {
                 string trimmed = normalizedText.Trim();
-                if (trimmed != normalizedText && TranslationCache.TryGetValue(trimmed, out var cachedTrimmedEntry))
+                if (trimmed != normalizedText && store.TryGetValue(trimmed, out var cachedTrimmedEntry))
                 {
                     foundInCache = true;
-                    // H+empty (capture-only) or S (skipped): return original text
-                    if (cachedTrimmedEntry.IsHumanEmpty || cachedTrimmedEntry.Tag == "S")
+                    // Nothing in it (a capture, or a key nobody filled in) or S: return original
+                    if (cachedTrimmedEntry.IsEmpty || cachedTrimmedEntry.Tag == "S")
                     {
                         cacheHitCount++;
                         return text;
@@ -6685,8 +7175,12 @@ namespace UnityGameTranslator.Core
             }
 
             // Pattern matching no longer needed for numbers (normalized lookup handles it)
-            // But keep for other patterns that might exist
-            if (translation == null)
+            // But keep for other patterns that might exist.
+            //
+            // ⚠ The GAME's patterns only. They are built from the game's lines, and letting one
+            // rewrite a label of ours is the mixing this split removes — our own placeholders
+            // ("Apply ([!v*0])") already resolve through the normalized lookup above.
+            if (translation == null && !isOwnUI)
             {
                 string patternResult = TryPatternMatch(text);
                 if (patternResult != null)
@@ -6733,10 +7227,21 @@ namespace UnityGameTranslator.Core
                     // if an original is already tracked.
                     if (component != null && TranslatorScanner.GetOriginalText(component) == null)
                     {
-                        string src = GetSourceForTranslation(text);
+                        string src = GetSourceForTranslation(text, store);
                         if (!string.IsNullOrEmpty(src) && src != text)
                             TranslatorScanner.StoreOriginalText(component, src);
                     }
+                    return text;
+                }
+
+                // Own UI text that's already translated (displayed result) — don't re-queue.
+                // The mod UI shows translated text; re-queueing it creates an infinite loop.
+                //
+                // ⚠ Before the stale-translation check below, which reasons about the GAME's cache
+                // as it stood before a reload: nothing of ours is in that snapshot, so asking it
+                // about one of our labels can only ever answer wrongly.
+                if (isOwnUI)
+                {
                     return text;
                 }
 
@@ -6745,13 +7250,6 @@ namespace UnityGameTranslator.Core
                 string staleRefreshed = TryResolveStaleTranslation(text, trimmedNormalized, component);
                 if (staleRefreshed != null)
                     return staleRefreshed;
-
-                // Own UI text that's already translated (displayed result) — don't re-queue
-                // The mod UI shows translated text; re-queueing it creates an infinite loop
-                if (isOwnUI)
-                {
-                    return text;
-                }
 
                 // Skip invisible components ONLY if they're also in typewriting state
                 // (likely an accumulator: hidden component with growing text).

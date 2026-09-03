@@ -80,8 +80,8 @@ namespace UnityGameTranslator.Core
                     missing.Fonts++;
             }
 
-            // The interface font, when the translation asks for one we do not have
-            string uiFont = TranslatorCore.TranslationUIFont;
+            // The interface font, when the interface file asks for one we do not have
+            string uiFont = TranslatorCore.ModUiFont;
             if (!string.IsNullOrEmpty(uiFont) && !IsFontAvailable(uiFont))
                 missing.Fonts++;
 

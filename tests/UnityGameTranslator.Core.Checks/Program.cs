@@ -45,6 +45,7 @@ namespace UnityGameTranslator.Core.Checks
             HowTextChanges();
             WhenTextMayBeTyping();
             HowATargetIsNamed();
+            WhereTheModsInterfaceGoes();
             HowAStringIsShaped();
 
             Console.WriteLine();
@@ -77,6 +78,13 @@ namespace UnityGameTranslator.Core.Checks
         {
             Section("Target path");
             TargetPathChecks.Run(Check);
+        }
+
+        /// <summary>Which interface lines leave a game translation, and which the hash still counts.</summary>
+        private static void WhereTheModsInterfaceGoes()
+        {
+            Section("Mod interface migration");
+            ModUiMigrationChecks.Run(Check);
         }
 
         /// <summary>Which strings trigger the presentation pass, and what shaping makes of them.</summary>

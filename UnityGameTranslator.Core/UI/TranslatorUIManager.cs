@@ -1519,11 +1519,11 @@ namespace UnityGameTranslator.Core.UI
             {
                 // Enqueue directly (not via a text re-assignment): re-setting the same value does
                 // not fire the set_text patch (the setter short-circuits on equal values), so the
-                // patch route never queued anything. QueueForTranslation registers this component in
-                // pendingComponents AND enqueues; isOwnUI is resolved at processing time from those
-                // components (UI-specific prompt + tag "M"). When the worker finishes, the result is
+                // patch route never queued anything. QueueForTranslation puts the component AND the
+                // own-UI origin on the queued item, so the worker uses the interface prompt and
+                // files the answer in the mod's own file. When the worker finishes, the result is
                 // applied back to this component via the normal completion path.
-                if (!TranslatorCore.HasCachedTranslation(text.text))
+                if (!TranslatorCore.HasCachedTranslation(text.text, ownUI: true))
                 {
                     TranslatorCore.QueueForTranslation(text.text, text, isOwnUI: true);
                     count++;

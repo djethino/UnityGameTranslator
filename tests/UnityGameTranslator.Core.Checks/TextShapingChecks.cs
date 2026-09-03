@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using UnityGameTranslator.Core.TextShaping;
 
 namespace UnityGameTranslator.Core.Checks
@@ -134,8 +134,9 @@ namespace UnityGameTranslator.Core.Checks
         /// </summary>
         private static void WhatComposingProduces(Action<bool, string, string> check)
         {
-            check(Topten.RichTextKit.UnicodeClasses.Directionality(0xE000) == Topten.RichTextKit.Directionality.L,
-                "a PUA sentinel resolves as class L",
+            check(Topten.RichTextKit.UnicodeClasses.Directionality(0xF100) == Topten.RichTextKit.Directionality.L
+                  && Topten.RichTextKit.UnicodeClasses.Directionality(0xF8FF) == Topten.RichTextKit.Directionality.L,
+                "a PUA sentinel resolves as class L (F100..F8FF)",
                 "the whole token-protection scheme rests on this UCD fact");
 
             check(RtlComposer.Compose(ShortLogical, RtlOutput.RtlFlagged) == ShortShaped,

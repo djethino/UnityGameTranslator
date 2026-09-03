@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -106,21 +106,16 @@ namespace UnityGameTranslator.Core.Rasterizer
         }
 
         /// <summary>
-        /// The first glyph no codepoint maps to and that draws something — the probe glyph of
-        /// the private-use experiment (analyse/issue-24-rtl-arabic.md §5 ter). -1 when every
-        /// glyph of the font is reachable through the cmap.
+        /// Every glyph no codepoint maps to, in index order, .notdef excluded — the glyphs only
+        /// OpenType shaping reaches (conjuncts, half forms, ligatures, contextual variants).
         /// </summary>
-        public int FirstUnmappedDrawableGlyph()
+        public int[] UnmappedGlyphs()
         {
             var mapped = new HashSet<int>(_unicodeToGlyph.Values);
+            var result = new List<int>();
             for (int index = 1; index < _numGlyphs; index++)
-            {
-                if (mapped.Contains(index)) continue;
-                var outline = GetGlyphByIndex(index);
-                if (outline != null && !outline.IsEmpty && outline.Contours != null && outline.Contours.Length > 0)
-                    return index;
-            }
-            return -1;
+                if (!mapped.Contains(index)) result.Add(index);
+            return result.ToArray();
         }
 
         /// <summary>Glyph index a codepoint maps to, or 0 (the .notdef glyph) when it maps to none.</summary>

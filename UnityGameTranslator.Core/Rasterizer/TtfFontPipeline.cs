@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using Newtonsoft.Json;
@@ -31,20 +31,23 @@ namespace UnityGameTranslator.Core.Rasterizer
         /// re-rasterizing existing .gen caches (spacing, sampling size, SDF encoding…).
         /// v2: inter-glyph spacing = distanceRange (was 1px — underlay/shadow sampling
         /// bled the neighbouring glyph row into rendered text) + automatic sampling size.
-        /// v4: the private-use probe glyph (see PuaProbeCodepoint) — an atlas without it
-        /// cannot answer the question it exists for.
+        /// v5: EVERY glyph of the font is in the atlas, not only the ones a codepoint maps
+        /// to — the unmapped ones (conjuncts, half forms, ligatures, contextual variants)
+        /// get private-use codepoints of ours (see PrivateGlyphBase) and each entry carries
+        /// its font glyph index, which is what OpenType shaping needs to name them.
         /// </summary>
-        public const int PipelineVersion = 4;
+        public const int PipelineVersion = 5;
 
         /// <summary>
-        /// ⚠ TEMPORARY bench experiment (analyse/issue-24-rtl-arabic.md §5 ter, lot 0): the
-        /// first glyph of the font that no codepoint maps to — a conjunct, a half form, a
-        /// ligature — is rasterized like any other and mapped to THIS private-use codepoint.
-        /// The whole question of the syllabic scripts hangs on one fact: does a text engine
-        /// that only knows codepoints draw a glyph we mapped to one ourselves? Show U+E000
-        /// through our font asset (RtlProbe, step 6) and look. Removed with the probe.
+        /// Private-use codepoints handed to the glyphs no codepoint maps to, in glyph-index
+        /// order, skipping any the font's own cmap occupies — so the assignment is stable for
+        /// a given font file and a shaper can rely on the .gen.json to name a glyph. The range
+        /// stops at <see cref="PrivateGlyphLast"/>: above it the RTL composer keeps its own
+        /// sentinels (never displayed), and a font with more unmapped glyphs than the range
+        /// holds gets the first ones, with a warning — shaping then stays partial for it.
         /// </summary>
-        public const int PuaProbeCodepoint = 0xE000;
+        public const int PrivateGlyphBase = 0xE000;
+        public const int PrivateGlyphLast = 0xF0FF;
 
         /// <summary>
         /// Target atlas budget for the automatic quality ladder. Deliberately below GPU
@@ -117,14 +120,31 @@ namespace UnityGameTranslator.Core.Rasterizer
                 TranslatorCore.LogInfo($"[TtfPipeline] Font: {parser.Metrics.FontName}, " +
                     $"UPM: {parser.Metrics.UnitsPerEm}, Glyphs: {parser.GlyphCount}");
 
-                // Step 2: Get all codepoints. We process every codepoint the font
-                // exposes — no arbitrary cap. Any downstream constraint (atlas
-                // texture size, GPU max texture, PNG encoding limit, etc.) is the
-                // responsibility of the rasterizer / atlas packer to surface
-                // explicitly rather than silently dropping glyphs picked at
-                // random by Dictionary iteration order.
+                // Step 2: everything the font draws. Every codepoint it exposes — no
+                // arbitrary cap; any downstream constraint (atlas texture size, GPU max
+                // texture…) is the rasterizer's / packer's to surface explicitly rather than
+                // silently dropping glyphs picked at random by Dictionary iteration order —
+                // PLUS every glyph no codepoint maps to, under a private-use codepoint of
+                // ours (PrivateGlyphBase). Those are what OpenType shaping produces; without
+                // them in the atlas a conjunct has nothing to be drawn with.
                 var codepoints = parser.GetSupportedCodepoints();
-                TranslatorCore.LogInfo($"[TtfPipeline] Mapped codepoints: {codepoints.Length}");
+                var unmapped = parser.UnmappedGlyphs();
+                var privateCodepoints = new int[unmapped.Length];   // parallel to unmapped; 0 = none left
+                int privateCount = 0;
+                {
+                    int next = PrivateGlyphBase;
+                    for (int u = 0; u < unmapped.Length; u++)
+                    {
+                        while (next <= PrivateGlyphLast && parser.HasCodepoint(next)) next++;
+                        if (next > PrivateGlyphLast) break;
+                        privateCodepoints[u] = next++;
+                        privateCount++;
+                    }
+                }
+                if (privateCount < unmapped.Length)
+                    TranslatorCore.LogWarning($"[TtfPipeline] {fontName}: {unmapped.Length} unmapped glyphs but only {privateCount} private codepoints — shaping will be partial for this font");
+                TranslatorCore.LogInfo($"[TtfPipeline] Mapped codepoints: {codepoints.Length}, unmapped glyphs: {unmapped.Length} ({privateCount} given private codepoints)");
+                int totalGlyphs = codepoints.Length + privateCount;
 
                 // Automatic quality: renderSize <= 0 means "pick for me" — small charsets
                 // get a higher sampling size (crisp at large on-screen sizes), huge ones
@@ -132,44 +152,39 @@ namespace UnityGameTranslator.Core.Rasterizer
                 // 48px/8px ratio (1/6 em) so shader gradients stay proportional.
                 if (renderSize <= 0f)
                 {
-                    renderSize = ChooseRenderSize(codepoints.Length, maxAtlasSize, atlasBudget);
+                    renderSize = ChooseRenderSize(totalGlyphs, maxAtlasSize, atlasBudget);
                     distanceRange = (float)Math.Round(renderSize / 6f);
-                    TranslatorCore.LogInfo($"[TtfPipeline] Auto quality: {codepoints.Length} glyphs → renderSize={renderSize}px, distanceRange={distanceRange}px (budget={(atlasBudget > 0 ? atlasBudget : 4096)})");
+                    TranslatorCore.LogInfo($"[TtfPipeline] Auto quality: {totalGlyphs} glyphs → renderSize={renderSize}px, distanceRange={distanceRange}px (budget={(atlasBudget > 0 ? atlasBudget : 4096)})");
                 }
 
                 int sdfPadding = (int)Math.Ceiling(distanceRange) + 1;
 
-                // Step 3: Rasterize all glyphs
-                TranslatorCore.LogInfo($"[TtfPipeline] Rasterizing {codepoints.Length} glyphs at {renderSize}px...");
+                // Step 3: Rasterize all glyphs — the mapped codepoints first, then the unmapped
+                // glyphs by index under their private codepoints. Same steps for both: SDF,
+                // packing, tables; only how the outline is reached differs.
+                TranslatorCore.LogInfo($"[TtfPipeline] Rasterizing {totalGlyphs} glyphs at {renderSize}px...");
                 var rasterizedGlyphs = new List<RasterizedGlyph>();
                 var glyphOutlines = new List<GlyphOutline>(); // Keep for metadata generation
                 int rasterizedCount = 0;
                 int emptyCount = 0;
                 int failCount = 0;
 
-                // The private-use probe: one glyph reached by index, not by codepoint (see
-                // PuaProbeCodepoint). Appended to the list so it goes through every step the
-                // others do — SDF, packing, tables — with U+E000 as its codepoint.
-                int probeGlyph = parser.HasCodepoint(PuaProbeCodepoint) ? -1 : parser.FirstUnmappedDrawableGlyph();
-                if (probeGlyph > 0)
-                {
-                    var withProbe = new int[codepoints.Length + 1];
-                    Array.Copy(codepoints, withProbe, codepoints.Length);
-                    withProbe[codepoints.Length] = PuaProbeCodepoint;
-                    codepoints = withProbe;
-                    TranslatorCore.LogInfo($"[TtfPipeline] PUA probe: glyph #{probeGlyph} (no codepoint of its own) mapped to U+{PuaProbeCodepoint:X4}");
-                }
+                var work = new List<KeyValuePair<int, int>>(totalGlyphs); // (codepoint, glyph index or -1 = by codepoint)
+                foreach (int cp in codepoints) work.Add(new KeyValuePair<int, int>(cp, -1));
+                for (int u = 0; u < unmapped.Length; u++)
+                    if (privateCodepoints[u] != 0) work.Add(new KeyValuePair<int, int>(privateCodepoints[u], unmapped[u]));
 
-                for (int i = 0; i < codepoints.Length; i++)
+                for (int i = 0; i < work.Count; i++)
                 {
+                    int codepoint = work[i].Key;
                     GlyphOutline outline;
-                    if (codepoints[i] == PuaProbeCodepoint && probeGlyph > 0)
+                    if (work[i].Value >= 0)
                     {
-                        outline = parser.GetGlyphOutlineByIndex(probeGlyph);
-                        if (outline != null) outline.Unicode = PuaProbeCodepoint;
+                        outline = parser.GetGlyphOutlineByIndex(work[i].Value);
+                        if (outline != null) outline.Unicode = codepoint;
                     }
                     else
-                        outline = parser.GetGlyphOutline(codepoints[i]);
+                        outline = parser.GetGlyphOutline(codepoint);
                     if (outline == null)
                     {
                         failCount++;
@@ -189,7 +204,7 @@ namespace UnityGameTranslator.Core.Rasterizer
                     {
                         // Empty glyph (space, etc.) — keep for metrics
                         emptyCount++;
-                        rasterized.Unicode = codepoints[i];
+                        rasterized.Unicode = codepoint;
                         rasterizedGlyphs.Add(rasterized);
                         glyphOutlines.Add(outline);
                         continue;
@@ -204,7 +219,7 @@ namespace UnityGameTranslator.Core.Rasterizer
                         rasterized.Bitmap = sdfBitmap;
                     }
 
-                    rasterized.Unicode = codepoints[i];
+                    rasterized.Unicode = codepoint;
                     rasterizedGlyphs.Add(rasterized);
                     glyphOutlines.Add(outline);
                     rasterizedCount++;
@@ -212,7 +227,7 @@ namespace UnityGameTranslator.Core.Rasterizer
                     // Progress logging for large fonts
                     if (i > 0 && i % 5000 == 0)
                     {
-                        TranslatorCore.LogInfo($"[TtfPipeline] Progress: {i}/{codepoints.Length} glyphs...");
+                        TranslatorCore.LogInfo($"[TtfPipeline] Progress: {i}/{work.Count} glyphs...");
                     }
                 }
 
@@ -313,6 +328,7 @@ namespace UnityGameTranslator.Core.Rasterizer
                 var glyphInfo = new CustomFontLoader.GlyphInfo
                 {
                     unicode = rg.Unicode,
+                    glyphIndex = outline?.GlyphIndex ?? 0,
                     advance = rg.AdvanceWidth / upm,
                     atlasIndex = atlasIdx
                 };

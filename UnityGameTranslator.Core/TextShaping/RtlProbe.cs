@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Reflection;
 using UnityEngine;
@@ -187,15 +187,15 @@ namespace UnityGameTranslator.Core.TextShaping
                         break;
                     }
                     // The private-use probe (analyse/issue-24-rtl-arabic.md §5 ter, lot 0): our
-                    // font assets carry a glyph reached by INDEX, mapped to U+E000
-                    // (TtfFontPipeline.PuaProbeCodepoint). If the engine draws it, a text engine
+                    // font assets carry every unmapped glyph under private codepoints from U+E000
+                    // (TtfFontPipeline.PrivateGlyphBase). If the engine draws it, a text engine
                     // that only knows codepoints can show the glyphs OpenType shaping produces —
                     // conjuncts, half forms — through codepoints we assign ourselves. Only
                     // meaningful on a component whose font is one of ours (a custom or fallback
                     // font built by the rasterizer): on the game's own font U+E000 is tofu, and
                     // that is not an answer.
                     Apply("क्ष   क्ष", rtl: false,
-                        "6/7 PUA PROBE — expected on OUR font asset: the two U+E000 show a REAL glyph of the font (whichever it is), not a square. A square means the asset in use is the game's, or the probe glyph did not make it into the atlas — check the [TtfPipeline] PUA probe line");
+                        "6/7 PUA PROBE — expected on OUR font asset: the two U+E000 show a REAL glyph of the font (its first unmapped one), not a square. A square means the asset in use is the game's, or the unmapped glyphs did not make it into the atlas — check the [TtfPipeline] 'unmapped glyphs' line");
                     break;
                 default:
                     Restore();

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -67,6 +67,12 @@ namespace UnityGameTranslator.Core
         public class GlyphInfo
         {
             public int unicode { get; set; }
+
+            // The glyph's index in the source font file — how OpenType lookups name it. 0 in
+            // user-provided msdf-atlas-gen JSONs (no font behind them, so no shaping either)
+            // and in pre-v5 caches, which the pipeline version gate re-rasterizes anyway.
+            public int glyphIndex { get; set; }
+
             public float advance { get; set; }
             public BoundsInfo planeBounds { get; set; }
             public BoundsInfo atlasBounds { get; set; }

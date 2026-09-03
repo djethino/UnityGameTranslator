@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Text;
 using Topten.RichTextKit;
@@ -55,8 +55,11 @@ namespace UnityGameTranslator.Core.TextShaping
         // Placeholders become private-use codepoints before shaping and bidi (class L in the
         // UCD — verified in checks), expanded back at the very end. Tags use a SEPARATE sentinel
         // range only through the shaping step, then leave the stream entirely.
-        private const int PlaceholderBase = 0xE000;
-        private const int TagBase = 0xE800;
+        // ⚠ Both ranges sit ABOVE the private codepoints our font assets hand to unmapped
+        // glyphs (TtfFontPipeline.PrivateGlyphBase..PrivateGlyphLast = E000..F0FF): those DO
+        // travel in displayed text, a sentinel never does, and the two must not overlap.
+        private const int PlaceholderBase = 0xF100;
+        private const int TagBase = 0xF500;
         private const int SentinelMax = 0x400;
 
         // Mirrored by RTL convention though not Bidi_Mirrored in the UCD — guillemets read

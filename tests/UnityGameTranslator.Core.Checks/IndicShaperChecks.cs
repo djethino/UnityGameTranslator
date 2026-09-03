@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -73,7 +73,9 @@ namespace UnityGameTranslator.Core.Checks
             foreach (string file in files)
             {
                 string script = Path.GetFileNameWithoutExtension(file);
+                // The Noto family carrying the script: Sans, or Serif where Noto ships only that.
                 string fontPath = Path.Combine(fontsDir, "NotoSans" + script + ".ttf");
+                if (!File.Exists(fontPath)) fontPath = Path.Combine(fontsDir, "NotoSerif" + script + ".ttf");
                 if (!File.Exists(fontPath)) { check(false, script + ": font present", fontPath); continue; }
                 var scriptFont = new TtfShapingFont(new TtfParser(File.ReadAllBytes(fontPath)));
                 int words = 0;
@@ -86,7 +88,14 @@ namespace UnityGameTranslator.Core.Checks
                     string word = line.Substring(0, tab), expected = line.Substring(tab + 1);
                     words++;
                     string got;
-                    try { got = Describe(IndicShaper.Shape(word, scriptFont)); }
+                    try
+                    {
+                        var shaped = OpenTypeShaping.Shape(word, scriptFont);
+                        // Our output is logical order; HarfBuzz's is visual — the reverse, for a
+                        // right-to-left script (the RTL composer does that reversal in the mod).
+                        if (script == "Hebrew") shaped.Reverse();
+                        got = Describe(shaped);
+                    }
                     catch (Exception ex) { got = "threw " + ex.GetType().Name + ": " + ex.Message; }
                     if (got != expected) failures.Add(word + ": got " + got + " / HarfBuzz " + expected);
                 }
@@ -103,7 +112,7 @@ namespace UnityGameTranslator.Core.Checks
             check(got == expected, what, got == expected ? "= HarfBuzz" : "got " + got + " / HarfBuzz " + expected);
         }
 
-        private static string Describe(List<IndicShaper.ShapedGlyph> glyphs)
+        private static string Describe(List<ShapedGlyph> glyphs)
         {
             var sb = new StringBuilder();
             foreach (var g in glyphs)

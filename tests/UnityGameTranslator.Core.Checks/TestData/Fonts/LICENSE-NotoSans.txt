@@ -1,5 +1,6 @@
-The ten NotoSans*.ttf files in this folder — Noto Sans Devanagari (variable, wdth/wght),
-Bengali, Gujarati, Gurmukhi, Kannada, Malayalam, Oriya, Sinhala, Tamil, Telugu (Regular)
+The Noto*.ttf files in this folder — Noto Sans Devanagari (variable, wdth/wght), and the
+Regular of Noto Sans Bengali, Gujarati, Gurmukhi, Kannada, Malayalam, Oriya, Sinhala, Tamil,
+Telugu, Thai, Lao, Hebrew, Khmer, Myanmar, Javanese, Balinese and Noto Serif Tibetan
 Copyright 2022–2025 The Noto Project Authors (https://github.com/notofonts)
 
 This Font Software is licensed under the SIL Open Font License, Version 1.1.

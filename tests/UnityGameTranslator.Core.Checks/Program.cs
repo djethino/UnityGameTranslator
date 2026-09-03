@@ -22,18 +22,20 @@ namespace UnityGameTranslator.Core.Checks
 
         private static int Main(string[] args)
         {
-            // `dotnet run -- shape <font.ttf> <word>...` — print what the Indic shaper makes of
+            // `dotnet run -- shape <font.ttf> <word>...` — print what the shapers make of
             // each word with that font, in the same notation as the HarfBuzz oracle used for
             // IndicShaperChecks (glyph@cluster(advance,xOffset,yOffset)), so the two can be
             // diffed over any word list and any font without editing a check.
             if (args.Length >= 2 && args[0] == "shape")
             {
                 Console.OutputEncoding = System.Text.Encoding.UTF8;
+                if (Environment.GetEnvironmentVariable("UGT_SHAPE_TRACE") == "1")
+                    TextShaping.ShapingCommon.Trace = line => Console.Error.WriteLine(line);
                 var font = new TextShaping.TtfShapingFont(new Rasterizer.TtfParser(System.IO.File.ReadAllBytes(args[1])));
                 for (int i = 2; i < args.Length; i++)
                 {
                     var parts = new System.Collections.Generic.List<string>();
-                    foreach (var g in TextShaping.IndicShaper.Shape(args[i], font))
+                    foreach (var g in TextShaping.OpenTypeShaping.Shape(args[i], font))
                         parts.Add($"{g.Glyph}@{g.Cluster}({g.XAdvance},{g.XOffset},{g.YOffset})");
                     Console.WriteLine(args[i] + "\t" + string.Join(" ", parts));
                 }

@@ -25,8 +25,8 @@ namespace UnityGameTranslator.Core.TextShaping
     /// </summary>
     internal static class OpenTypeText
     {
-        /// <summary>Does this text hold a run the shaper would act on?</summary>
-        internal static bool NeedsShaping(string text) => IndicShaper.NeedsShaping(text);
+        /// <summary>Does this text hold a run the shapers would act on?</summary>
+        internal static bool NeedsShaping(string text) => OpenTypeShaping.NeedsShaping(text);
 
         /// <summary>
         /// Shape every run of <paramref name="text"/>. Returns the same instance when nothing
@@ -45,10 +45,8 @@ namespace UnityGameTranslator.Core.TextShaping
                 if (!InRun(text[i])) { i++; continue; }
                 int start = i;
                 while (i < text.Length && InRun(text[i])) i++;
-                // A run made only of joiners has nothing to shape.
-                bool hasLetter = false;
-                for (int k = start; k < i && !hasLetter; k++) hasLetter = text[k] >= IndicTables.IndicFirst && text[k] <= IndicTables.IndicLast;
-                if (!hasLetter) continue;
+                // A run made only of joiners, spaces or marks has nothing to shape.
+                if (!OpenTypeShaping.NeedsShaping(text.Substring(start, i - start))) continue;
 
                 string run = text.Substring(start, i - start);
                 string shaped = ShapeRun(run, font, namer);
@@ -63,15 +61,30 @@ namespace UnityGameTranslator.Core.TextShaping
             return sb.ToString();
         }
 
+        /// <summary>
+        /// What a run is made of: the letters of a shaped script, the joiners and the dotted
+        /// circle, and the combining marks of any block (they belong to the letter before them).
+        /// A space ends a run: a font's rules never cross one, and it keeps runs short.
+        /// </summary>
         private static bool InRun(char c)
         {
-            return (c >= IndicTables.IndicFirst && c <= IndicTables.IndicLast) || c == '‌' || c == '‍' || c == '◌';
+            if (c == '‌' || c == '‍' || c == '◌') return true;
+            if (c < 0x0300) return false;
+            if (c >= 0x0300 && c <= 0x036F) return true;
+            int script = ShapingCommon.ScriptOf(c);
+            if (script == ShapingTables.Script.Inherited) return true;
+            if (script == ShapingTables.Script.Common || script == ShapingTables.Script.Unknown || script == ShapingTables.Script.Latin
+                || script == ShapingTables.Script.Arabic || script == ShapingTables.Script.Han || script == ShapingTables.Script.Hiragana
+                || script == ShapingTables.Script.Katakana || script == ShapingTables.Script.Hangul || script == ShapingTables.Script.Cyrillic
+                || script == ShapingTables.Script.Greek)
+                return false;
+            return true;
         }
 
         /// <summary>One run: glyphs in, codepoints out; null when a glyph could not be named.</summary>
         private static string ShapeRun(string run, IShapingFont font, IGlyphNamer namer)
         {
-            var glyphs = IndicShaper.Shape(run, font);
+            var glyphs = OpenTypeShaping.Shape(run, font);
             var sb = new StringBuilder(glyphs.Count);
             foreach (var g in glyphs)
             {

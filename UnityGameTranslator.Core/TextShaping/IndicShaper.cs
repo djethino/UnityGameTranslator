@@ -322,14 +322,6 @@ namespace UnityGameTranslator.Core.TextShaping
 
         // ───────────────────────────── shaping ─────────────────────────────
 
-        /// <summary>One positioned glyph of the result, in font units.</summary>
-        internal struct ShapedGlyph
-        {
-            public int Glyph;
-            public int Cluster;      // index of the first codepoint of its syllable in the input
-            public int XAdvance, XOffset, YOffset;
-        }
-
         /// <summary>
         /// Shape a whole string for one font. Canonically decomposable characters are taken
         /// apart first (two-part vowel signs, nukta consonants — the font's rules are written
@@ -338,8 +330,24 @@ namespace UnityGameTranslator.Core.TextShaping
         /// </summary>
         internal static List<ShapedGlyph> Shape(string text, IShapingFont font)
         {
+            var cps = new List<int>(text.Length);
+            var clusters = new List<int>(text.Length);
+            for (int i = 0; i < text.Length;)
+            {
+                int cp = char.ConvertToUtf32(text, i);
+                cps.Add(cp); clusters.Add(i);
+                i += cp > 0xFFFF ? 2 : 1;
+            }
+            var result = new List<ShapedGlyph>(cps.Count);
+            ShapeRun(cps, clusters, font, result);
+            return result;
+        }
+
+        /// <summary>One run of code points (with their source indices), the result appended.</summary>
+        internal static void ShapeRun(List<int> input, List<int> inputClusters, IShapingFont font, List<ShapedGlyph> result)
+        {
             var layout = font.Layout;
-            var cps = Decompose(text, font, out var clusters);
+            var cps = Decompose(input, inputClusters, font, out var clusters);
             var buf = new L.GlyphBuffer();
             var categories = new StringBuilder(cps.Count);
             for (int i = 0; i < cps.Count; i++) AddGlyph(buf, categories, cps[i], clusters[i], font);
@@ -400,6 +408,8 @@ namespace UnityGameTranslator.Core.TextShaping
             FinalReorderingAll(buf, plans);
             for (int i = 0; i < buf.Count; i++) buf[i].Syllable = 0;
             ApplyStage(layout, layout.Gsub, buf, plans, PresentationFeatures, gsub: true);
+            // The common features last, on the whole run (HarfBuzz collects them after the shaper's).
+            ApplyStage(layout, layout.Gsub, buf, plans, ShapingCommon.CommonGsubFeatures, gsub: true);
 
             // 4. Positioning.
             bool zeroMarks = false;
@@ -416,14 +426,12 @@ namespace UnityGameTranslator.Core.TextShaping
             }
 
             // Joiners have done their work: they leave the output, as every shaper hides them.
-            var result = new List<ShapedGlyph>(buf.Count);
             for (int i = 0; i < buf.Count; i++)
             {
                 var g = buf[i];
                 if (g.Category == CatZWJ || g.Category == CatZWNJ) continue;
                 result.Add(new ShapedGlyph { Glyph = g.Glyph, Cluster = g.Cluster, XAdvance = g.XAdvance, XOffset = g.XOffset, YOffset = g.YOffset });
             }
-            return result;
         }
 
         private static void AddGlyph(L.GlyphBuffer buf, StringBuilder categories, int cp, int cluster, IShapingFont font)
@@ -478,18 +486,16 @@ namespace UnityGameTranslator.Core.TextShaping
         /// exceptions every shaper makes for compatibility with the fonts: four letters left
         /// whole, and Bengali ya + nukta put back together as yya.
         /// </summary>
-        private static List<int> Decompose(string text, IShapingFont font, out List<int> clusters)
+        private static List<int> Decompose(List<int> input, List<int> inputClusters, IShapingFont font, out List<int> clusters)
         {
-            var cps = new List<int>(text.Length);
-            clusters = new List<int>(text.Length);
-            for (int i = 0; i < text.Length;)
+            var cps = new List<int>(input.Count + 4);
+            clusters = new List<int>(input.Count + 4);
+            for (int k = 0; k < input.Count; k++)
             {
-                int cp = char.ConvertToUtf32(text, i);
-                int width = cp > 0xFFFF ? 2 : 1;
+                int cp = input[k], i = inputClusters[k];
                 int[] parts = DecompositionOf(cp, font);
                 if (parts != null) foreach (int part in parts) { cps.Add(part); clusters.Add(i); }
                 else { cps.Add(cp); clusters.Add(i); }
-                i += width;
             }
             // Recompose the one pair the fonts want composed (a composition exclusion in Unicode).
             for (int i = 0; i + 1 < cps.Count; i++)

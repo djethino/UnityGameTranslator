@@ -875,6 +875,10 @@ namespace UnityGameTranslator.Core.Rasterizer
 
             /// <summary>What substitution did to this glyph — the shaper's reordering reads these.</summary>
             public bool Substituted, Ligated, Multiplied;
+            /// <summary>Which output of a multiple substitution this is (0 = the first, or not from one).</summary>
+            public int MultipleIndex;
+            /// <summary>Left out of the output: a joiner or another default-ignorable that did its work.</summary>
+            public bool Hidden;
 
             /// <summary>Two slots for the shaper's own classification (category, position).</summary>
             public int Category, Position;
@@ -893,31 +897,43 @@ namespace UnityGameTranslator.Core.Rasterizer
 
             /// <summary>
             /// Turn every attachment into final offsets: a mark sits at its base's origin plus the
-            /// anchor difference, so the advances between the two are subtracted from its
-            /// placement and the base's own placement is inherited. Call once, after GPOS.
+            /// anchor difference, and inherits the base's own placement. Left to right, the
+            /// advances between base and mark are subtracted from the mark's placement (the pen
+            /// has moved past the base when the mark is drawn); right to left, the pen moves the
+            /// other way and the advances after the base up to the mark are added instead — the
+            /// numbers a right-to-left run needs once its glyphs are drawn in visual order.
+            /// Call once, after GPOS.
             /// </summary>
-            public void ResolveAttachments()
+            public void ResolveAttachments(bool rightToLeft = false)
             {
                 for (int i = 0; i < Glyphs.Count; i++)
                 {
                     var g = Glyphs[i];
                     if (g.AttachedTo < 0) continue;
                     // Follow the chain base-ward first so a mark on a mark inherits a resolved parent.
-                    Resolve(i, 0);
+                    Resolve(i, 0, rightToLeft);
                 }
             }
 
-            private void Resolve(int i, int depth)
+            private void Resolve(int i, int depth, bool rightToLeft)
             {
                 var g = Glyphs[i];
                 int j = g.AttachedTo;
                 if (j < 0 || j >= Glyphs.Count || depth > 8) return;
                 var parent = Glyphs[j];
-                if (parent.AttachedTo >= 0) Resolve(j, depth + 1);
+                if (parent.AttachedTo >= 0) Resolve(j, depth + 1, rightToLeft);
                 int x = g.AttachX + parent.XOffset;
                 int y = g.AttachY + parent.YOffset;
-                if (j < i) for (int k = j; k < i; k++) x -= Glyphs[k].XAdvance;
-                else for (int k = i; k < j; k++) x += Glyphs[k].XAdvance;
+                if (!rightToLeft)
+                {
+                    if (j < i) for (int k = j; k < i; k++) x -= Glyphs[k].XAdvance;
+                    else for (int k = i; k < j; k++) x += Glyphs[k].XAdvance;
+                }
+                else
+                {
+                    if (j < i) for (int k = j + 1; k <= i; k++) x += Glyphs[k].XAdvance;
+                    else for (int k = i + 1; k <= j; k++) x -= Glyphs[k].XAdvance;
+                }
                 g.XOffset = x;
                 g.YOffset = y;
                 g.AttachedTo = -1;
@@ -1105,10 +1121,12 @@ namespace UnityGameTranslator.Core.Rasterizer
                     g.Glyph = seq[0];
                     g.Substituted = true;
                     g.Multiplied = seq.Length > 1;
+                    g.MultipleIndex = 0;
                     for (int k = 1; k < seq.Length; k++)
                     {
                         var copy = g.Clone();
                         copy.Glyph = seq[k];
+                        copy.MultipleIndex = k;
                         buf.Glyphs.Insert(i + k, copy);
                     }
                     return seq.Length;
@@ -1254,8 +1272,13 @@ namespace UnityGameTranslator.Core.Rasterizer
                     while (j >= 0 && SameSyllable(g, buf[j]) && ClassOf(buf[j]) == ClassMark && IsIgnored(lookup, buf[j])) j--;
                     if (j < 0 || !SameSyllable(g, buf[j]) || ClassOf(buf[j]) != ClassMark) return 0;
                     var m2 = buf[j];
-                    bool sameComponent = g.LigatureId == m2.LigatureId && g.LigatureComponent == m2.LigatureComponent;
-                    if (!sameComponent && !(g.LigatureId == 0 && m2.LigatureId == 0)) return 0;
+                    // Two marks pair when they hang on the same base or the same component of the
+                    // same ligature — or when one of the two IS a ligature (a subjoined consonant
+                    // formed by one, say), whatever the other belongs to.
+                    bool pair = g.LigatureId == m2.LigatureId
+                        ? (g.LigatureId == 0 || g.LigatureComponent == m2.LigatureComponent)
+                        : ((g.LigatureId > 0 && g.LigatureComponent == 0) || (m2.LigatureId > 0 && m2.LigatureComponent == 0));
+                    if (!pair) return 0;
                     int m2i = mm.Mark2Coverage.Index(m2.Glyph);
                     if (m2i < 0 || m2i >= mm.Mark2Anchors.Length) return 0;
                     var mark = mm.Marks1[mi];

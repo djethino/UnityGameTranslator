@@ -177,7 +177,14 @@ The mod works with **any server that exposes the OpenAI-compatible API** (`/v1/c
 
 **Setup:** Open the mod panel (F10) → Mod Options → Translation tab → select backend → enter URL/key → Test → Enable.
 
-> **Recommended local model:** `qwen3:8b` — best balance of speed, quality, and multilingual support (~6-8 GB VRAM).
+> **Which local model?** A file cannot answer that: models age in weeks, and a name written here
+> would still be advertised long after it stopped being a sensible choice — the one that used to sit
+> in this line had been superseded by its own family, at figures that were never right.
+> The models we have measured, with what each one holds, how long it takes to load, and how much of
+> the mod's instructions it followed, are listed in
+> [the documentation](https://unitygametranslator.asymptomatikgames.com/docs#local-models).
+> The Manager can also put any model through those same instructions, on your machine and in your
+> language.
 
 ## Configuration
 

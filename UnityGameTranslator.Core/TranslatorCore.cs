@@ -6753,7 +6753,7 @@ namespace UnityGameTranslator.Core
                 // This prevents partial typewriting text from being sent to AI.
                 // Skip for concat deltas (they should be queued immediately, not deferred).
                 int compId = (component is Component comp2) ? TypeHelper.GetInstanceID(comp2) : -1;
-                if (!skipTypewriting && TranslatorPatches.IsTypewritingInProgress(compId, text))
+                if (!skipTypewriting && TranslatorPatches.IsTypewritingInProgress(compId, text, component))
                 {
                     return text;
                 }

@@ -1902,6 +1902,14 @@ namespace UnityGameTranslator.Core
         {
             public TextMode Mode;
 
+            // The component this state is about, recorded by whoever first tracked it — the
+            // setter prefix or the scanner. A stabilized typewriter text is queued by id and
+            // delivered to THIS; it used to be looked up in the prefixes' own table, which the
+            // scanner never fills, so a component the scanner met first (its text set before
+            // any setter ran, or the scan reaching it before the game did) could be translated
+            // and never updated (bench 2026-09-03: a whole menu stuck in English).
+            public object Target;
+
             // --- What the game last wrote, and what we last showed ---
             public string LastRaw;          // pre-translation, for delta computation
             public string LastTranslated;   // for display: translatedBase + translatedDelta
@@ -2916,12 +2924,13 @@ namespace UnityGameTranslator.Core
         private static int _dbgTwProgress = 0;
         private static int _fontDebugOnce = 0;
 
-        public static bool IsTypewritingInProgress(long compId, string newText)
+        public static bool IsTypewritingInProgress(long compId, string newText, object component = null)
         {
             if (compId == -1 || string.IsNullOrEmpty(newText)) return false;
             if (!TranslatorCore.TypewritingDetection) return false;
 
             var state = StateFor(compId);
+            if (component != null) state.Target = component;
 
             // Concat components are handled by the concat system, not TW
             if (state.Mode == TextMode.Concat) return false;
@@ -3039,6 +3048,13 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static object TargetOf(long id)
         {
+            // The state's own record first: it is set by every path that tracks the component.
+            var state = PeekState(id);
+            if (state?.Target != null)
+            {
+                if (state.Target is UnityEngine.Object uobj && uobj == null) state.Target = null;
+                else return state.Target;
+            }
             if (id >= int.MinValue && id <= int.MaxValue)
             {
                 _patchedComponentRefs.TryGetValue((int)id, out var comp);

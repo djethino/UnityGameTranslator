@@ -2857,6 +2857,15 @@ namespace UnityGameTranslator.Core
 
                 // ── The interface lines this file was still carrying ──────────────────
                 // The rule is ModUiMigration.Decide — pure, and checked there rather than here.
+                //
+                // ⚠ **No backup is taken, and that is a decision rather than an omission.** This
+                // rewrites translations.json without lines it used to hold, which normally calls
+                // for one — but nothing here can be lost: a line that is kept is written to the
+                // interface file BELOW, before the game's file is next saved, and a line that is
+                // dropped is one the published copy still holds, one the interface file already
+                // has, or one with nothing in it. The remaining case — a published line whose
+                // server row later disappears — costs one pass of the translator on the mod's own
+                // menus, never a word of somebody's work.
                 if (strandedModUi != null)
                 {
                     int kept = 0, dropped = 0;

@@ -484,7 +484,13 @@ namespace UnityGameTranslator.Core
                     continue;
                 }
 
-                if (char.IsLetter(c))
+                // A word is letters AND what rides on them: a vowel sign or a tone mark (Mn/Mc —
+                // IsLetter says no, so कि, से, บ้าน counted one letter and every short Indic or
+                // Thai text fell below the threshold, never indexed, never recognised), and a
+                // private-use codepoint (Co) naming a shaped glyph — a conjunct IS letters.
+                // Without those, a shaped word coming back through the setter was "not ours",
+                // went to the AI, and its own translation entered the cache as a Hindi→Hindi key.
+                if (IsWordCharacter(c))
                 {
                     letters++;
                     run++;
@@ -499,6 +505,43 @@ namespace UnityGameTranslator.Core
             // Trailing space, if any
             if (sb.Length > 0 && sb[sb.Length - 1] == ' ') sb.Length--;
             return sb.Length == 0 ? null : sb.ToString();
+        }
+
+        private static bool IsWordCharacter(char c)
+        {
+            if (char.IsLetter(c)) return true;
+            var category = System.Globalization.CharUnicodeInfo.GetUnicodeCategory(c);
+            return category == System.Globalization.UnicodeCategory.NonSpacingMark
+                || category == System.Globalization.UnicodeCategory.SpacingCombiningMark
+                || category == System.Globalization.UnicodeCategory.PrivateUse;
+        }
+
+        // Presented strings that carry private-use codepoints (glyphs named by our font assets),
+        // kept whole: a typewriter frame or a concat step of one comes back as a FRAGMENT of the
+        // presented string, which no normalized whole-string index can recognise — and a fragment
+        // holding one of our private codepoints can be nothing but ours.
+        private static readonly List<string> presentedWithPrivate = new List<string>();
+        private const int PresentedWithPrivateMax = 4096;
+
+        private static bool HasPrivateGlyphCodepoint(string text)
+        {
+            foreach (char c in text)
+                if (c >= Rasterizer.TtfFontPipeline.PrivateGlyphBase && c <= Rasterizer.TtfFontPipeline.PrivateGlyphLast) return true;
+            return false;
+        }
+
+        /// <summary>A text holding one of our private glyph codepoints, found inside a string we presented.</summary>
+        private static bool IsFragmentOfPresentedText(string text)
+        {
+            if (!HasPrivateGlyphCodepoint(text)) return false;
+            string probe = text.Trim();
+            if (probe.Length == 0) return false;
+            lock (presentedWithPrivate)
+            {
+                foreach (string presented in presentedWithPrivate)
+                    if (presented.IndexOf(probe, StringComparison.Ordinal) >= 0) return true;
+            }
+            return false;
         }
 
         /// <summary>
@@ -528,6 +571,14 @@ namespace UnityGameTranslator.Core
         internal static void RegisterPresentedText(string presented, string logical)
         {
             if (string.IsNullOrEmpty(presented)) return;
+            if (HasPrivateGlyphCodepoint(presented))
+            {
+                lock (presentedWithPrivate)
+                {
+                    if (presentedWithPrivate.Count >= PresentedWithPrivateMax) presentedWithPrivate.RemoveAt(0);
+                    presentedWithPrivate.Add(presented);
+                }
+            }
             string n = NormalizeForReadbackMatch(presented);
             if (n == null) return;
             readbackTranslations.TryAdd(n, 0);
@@ -582,10 +633,9 @@ namespace UnityGameTranslator.Core
 
         public static bool IsReadbackOfOwnTranslation(string text)
         {
-            if (readbackTranslations.Count == 0) return false;
+            if (readbackTranslations.Count == 0) return IsFragmentOfPresentedText(text);
             string n = NormalizeForReadbackMatch(text);
-            if (n == null) return false;
-            if (!readbackTranslations.ContainsKey(n)) return false;
+            if (n == null || !readbackTranslations.ContainsKey(n)) return IsFragmentOfPresentedText(text);
 
             if (_readbackSkipLogCount < ReadbackSkipLogBudget)
             {

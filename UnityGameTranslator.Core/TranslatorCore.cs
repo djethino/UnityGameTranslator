@@ -637,6 +637,20 @@ namespace UnityGameTranslator.Core
 
             /// <summary>Set when ANY submitter said this text is the mod's own interface.</summary>
             public bool FromOwnUI;
+
+            /// <summary>
+            /// Set when a component of the GAME displays this text.
+            ///
+            /// 🔴 **The queue is indexed by TEXT, so one item can be claimed by both.** "Options",
+            /// "Cancel", "Close" are ours and a game's alike, and while the origin only chose a
+            /// prompt and a tag inside one file that was a detail. It now chooses WHICH FILE, so a
+            /// string a game happens to share with one of our labels would be filed as the mod's
+            /// interface — a game key in the mod's file, which is exactly what the split forbids.
+            ///
+            /// The game wins: its file is the one that gets published, shared and merged, and a
+            /// label of ours that fails to find itself there simply asks again.
+            /// </summary>
+            public bool FromGame;
         }
 
         // Guarded by lockObj, both of them, always together.
@@ -5589,7 +5603,9 @@ namespace UnityGameTranslator.Core
                         queued = translationQueue.Dequeue();
                         textToTranslate = queued.Text;
                         componentsToUpdate = queued.Components.Count > 0 ? queued.Components : null;
-                        queuedAsOwnUI = queued.FromOwnUI;
+
+                        // Ours only when the game never claimed it too — see QueuedText.FromGame.
+                        queuedAsOwnUI = queued.FromOwnUI && !queued.FromGame;
 
                         // Out of the pending map so the same text can be queued afresh; the item
                         // stays alive in `queued`, which is what a rate-limit re-queue puts back.
@@ -5616,21 +5632,30 @@ namespace UnityGameTranslator.Core
                     isTranslating = true;
                     currentlyTranslating = textToTranslate.Length > 50 ? textToTranslate.Substring(0, 50) + "..." : textToTranslate;
 
-                    // Check if this text is from our own UI by examining the pending components
-                    // Use IsOwnUI (not IsOwnUITranslatable) for tagging - it doesn't depend on translate_mod_ui config
-                    // This is more accurate than string-based tracking which caused false positives
-                    bool isOwnUI = queuedAsOwnUI;
-                    if (!isOwnUI && componentsToUpdate != null && componentsToUpdate.Count > 0)
+                    // 🔴 **Whose text this is — asked of everything known, and the game has the
+                    // last word.** Two facts, not one: somebody claimed it as our interface, and
+                    // somebody displayed it in the game. The queue is indexed by TEXT, so both can
+                    // be true of one item — "Options", "Cancel", "Close" are ours and a game's
+                    // alike — and the answer now decides which FILE it is written to. A shared
+                    // string belongs to the game's, which is the one that gets published and
+                    // merged; a label of ours that does not find itself there simply asks again.
+                    //
+                    // ⚠ IsOwnUI, not IsOwnUITranslatable: this decides where the answer is FILED,
+                    // and that must not depend on whether the interface is being translated today.
+                    bool claimedByOurUi = queuedAsOwnUI;
+                    bool shownByTheGame = queued != null && queued.FromGame;
+
+                    if (componentsToUpdate != null)
                     {
                         foreach (var comp in componentsToUpdate)
                         {
-                            if (comp is Component component && IsOwnUI(component))
-                            {
-                                isOwnUI = true;
-                                break;
-                            }
+                            if (!(comp is Component component)) continue;
+                            if (IsOwnUI(component)) claimedByOurUi = true;
+                            else shownByTheGame = true;
                         }
                     }
+
+                    bool isOwnUI = claimedByOurUi && !shownByTheGame;
                     currentTextIsOwnUI = isOwnUI;
 
                     // Declared out here so the catch below can put back what a retranslation took
@@ -7011,10 +7036,11 @@ namespace UnityGameTranslator.Core
                 }
 
                 // The origin, decided here because here is where the component still exists to be
-                // asked. Sticky: one submitter saying "this is our interface" settles it for the
-                // item, and a later submission with no component cannot unsay it. Never set from
-                // game text, so a game string equal to one of our labels stays a game line.
+                // asked. Both sides are recorded rather than one: a text can be claimed by our
+                // interface AND displayed by the game, and which of the two files it belongs in is
+                // settled at the dequeue — see QueuedText.FromGame.
                 if (isOwnUI) item.FromOwnUI = true;
+                else if (component != null) item.FromGame = true;
 
                 if (!isNew) return true;
 

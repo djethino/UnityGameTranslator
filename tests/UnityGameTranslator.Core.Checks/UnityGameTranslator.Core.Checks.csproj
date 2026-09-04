@@ -37,6 +37,13 @@
     <Compile Include="../../UnityGameTranslator.Core/ModUiMigration.cs" />
     <Compile Include="../../UnityGameTranslator.Core/TranslationLanguages.cs" />
     <!--
+      What a downloaded translation may ask of the disk and of the main thread. Both are pure by
+      construction — a string in, an answer out — and both exist as files of their own so that the
+      refusals AND the acceptances can be proved here rather than in a game.
+    -->
+    <Compile Include="../../UnityGameTranslator.Core/PlainFileName.cs" />
+    <Compile Include="../../UnityGameTranslator.Core/TextRule.cs" />
+    <!--
       🔴 The file mechanics, and the reason they are a file of their own.
 
       The RULES about which interface line goes where were pure and checkable from the first day.

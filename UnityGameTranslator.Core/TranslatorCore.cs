@@ -1110,7 +1110,7 @@ namespace UnityGameTranslator.Core
             for (int i = 0; i < fontOverrides.Count; i++)
             {
                 var rule = fontOverrides[i];
-                if (!rule.enabled) continue;
+                if (!rule.enabled || rule.SwitchedOffThisSession) continue;
                 if (MatchesFontOverride(rule, gameObjectPath, fontName, textContent))
                 {
                     matched = rule;
@@ -1202,9 +1202,35 @@ namespace UnityGameTranslator.Core
                 // Regex if wrapped in /.../
                 if (pattern.StartsWith("/") && pattern.EndsWith("/") && pattern.Length > 2)
                 {
-                    string regex = pattern.Substring(1, pattern.Length - 2);
-                    try { return System.Text.RegularExpressions.Regex.IsMatch(text, regex, System.Text.RegularExpressions.RegexOptions.IgnoreCase); }
-                    catch { return false; }
+                    // 🔴 Compiled once per rule, matched under TextRule's budget. This used to call
+                    // Regex.IsMatch on every component with no limit: a pattern from a downloaded
+                    // file built to backtrack froze the game on the main thread, and an invalid one
+                    // was swallowed without a word. Both are now said once, naming the rule, and the
+                    // rule is left out for the rest of the session — never written back to the file:
+                    // `enabled` belongs to the author, this is a verdict on one run.
+                    if (!rule.TextRegexCompiled)
+                    {
+                        rule.TextRegexCompiled = true;
+                        rule.TextRegex = TextRule.Compile(pattern.Substring(1, pattern.Length - 2));
+                        if (rule.TextRegex == null)
+                        {
+                            rule.SwitchedOffThisSession = true;
+                            LogWarning($"[FontOverride] Rule \"{match}\" is not a valid pattern; ignored. Check it in the Fonts tab.");
+                        }
+                    }
+                    if (rule.TextRegex == null) return false;
+
+                    switch (TextRule.Match(rule.TextRegex, text))
+                    {
+                        case TextRule.Outcome.Matched:
+                            return true;
+                        case TextRule.Outcome.TimedOut:
+                            rule.SwitchedOffThisSession = true;
+                            LogWarning($"[FontOverride] Rule \"{match}\" took more than {TextRule.Budget.TotalSeconds:0} s on one text and is switched off until the next launch. Check the pattern in the Fonts tab.");
+                            return false;
+                        default:
+                            return false;
+                    }
                 }
                 return text.IndexOf(pattern, StringComparison.OrdinalIgnoreCase) >= 0;
             }
@@ -8757,6 +8783,22 @@ namespace UnityGameTranslator.Core
         /// Without prefix: tries path first, then text substring.
         /// </summary>
         public string match { get; set; }
+
+        // ── Runtime state, never part of the file ────────────────────────────────────────────
+        // Internal fields, so no serializer writes them and the parser does not read them: a rule
+        // object is rebuilt from the file on every load and by the Fonts tab on every edit, which
+        // is exactly when this state should start over.
+
+        /// <summary>The compiled <c>text:/…/</c> pattern, once TextRegexCompiled is set; null if invalid.</summary>
+        internal System.Text.RegularExpressions.Regex TextRegex;
+        internal bool TextRegexCompiled;
+
+        /// <summary>
+        /// Left out for the rest of this run — an invalid pattern, or one that ran past
+        /// TextRule.Budget. Distinct from <see cref="enabled"/> on purpose: that one is the author's
+        /// choice and is saved; this is a verdict on one session and never is.
+        /// </summary>
+        internal bool SwitchedOffThisSession;
 
         /// <summary>
         /// Replacement font name. Null = keep current font (only override size).

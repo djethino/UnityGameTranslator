@@ -47,6 +47,7 @@ namespace UnityGameTranslator.Core.Checks
             HowATargetIsNamed();
             WhereTheModsInterfaceGoes();
             HowAStringIsShaped();
+            WhatADownloadedFileMayAskFor();
 
             Console.WriteLine();
             if (_failures == 0)
@@ -78,6 +79,19 @@ namespace UnityGameTranslator.Core.Checks
         {
             Section("Target path");
             TargetPathChecks.Run(Check);
+        }
+
+        /// <summary>
+        /// What a translation downloaded from another player may make the mod do on this machine:
+        /// which names it may turn into files, and how long one of its patterns may run.
+        /// </summary>
+        private static void WhatADownloadedFileMayAskFor()
+        {
+            Section("Plain file names");
+            PlainFileNameChecks.Run(Check);
+
+            Section("Text rules under a budget");
+            TextRuleChecks.Run(Check);
         }
 
         /// <summary>Which interface lines leave a game translation, and which the hash still counts.</summary>

@@ -222,7 +222,7 @@ namespace UnityGameTranslator.Core
             // ⚠ Every other call in this file reads its body straight into a string. Now that the
             // handler inflates, a hostile server could answer a few kilobytes that become
             // gigabytes, so the buffer carries the same ceiling the download reads under.
-            client.MaxResponseContentBufferSize = MaxTranslationJsonBytes;
+            client.MaxResponseContentBufferSize = Limits.TranslationFileBytes;
 
             client.DefaultRequestHeaders.Add("User-Agent", UserAgent());
             client.DefaultRequestHeaders.Add("Accept", "application/json");
@@ -300,12 +300,6 @@ namespace UnityGameTranslator.Core
                 http.DefaultRequestHeaders.Add("User-Agent", agent);
             }
         }
-
-        /// <summary>
-        /// Maximum accepted size for a translation JSON payload (decompressed).
-        /// 100MB is more than enough for any translation file.
-        /// </summary>
-        private const int MaxTranslationJsonBytes = 100 * 1024 * 1024;
 
         /// <summary>
         /// Parse a JSON object from a network response with an enforced depth limit.
@@ -1055,12 +1049,12 @@ namespace UnityGameTranslator.Core
                     int read;
                     while ((read = await body.ReadAsync(buffer, 0, buffer.Length)) > 0)
                     {
-                        if (output.Length + read > MaxTranslationJsonBytes)
+                        if (output.Length + read > Limits.TranslationFileBytes)
                         {
                             return new TranslationDownloadResult
                             {
                                 Success = false,
-                                Error = $"Decompressed content exceeds {MaxTranslationJsonBytes} bytes"
+                                Error = $"Decompressed content exceeds {Limits.TranslationFileBytes} bytes"
                             };
                         }
                         output.Write(buffer, 0, read);
@@ -1346,7 +1340,7 @@ namespace UnityGameTranslator.Core
             }
 
             // Size limit
-            if (json.Length > MaxTranslationJsonBytes)
+            if (json.Length > Limits.TranslationFileBytes)
             {
                 error = $"Content too large ({json.Length} bytes)";
                 return false;
@@ -1744,12 +1738,6 @@ namespace UnityGameTranslator.Core
         #region Upload
 
         /// <summary>
-        /// Maximum upload size (100MB) - must match server limit.
-        /// Even Baldur's Gate 3 (largest RPG ever) = ~80MB JSON with key+value.
-        /// </summary>
-        private const int MaxUploadSizeBytes = 100 * 1024 * 1024;
-
-        /// <summary>
         /// Compress JSON string using gzip for upload bandwidth optimization.
         /// Reduces upload size by ~70% for typical translation files.
         /// </summary>
@@ -1809,10 +1797,10 @@ namespace UnityGameTranslator.Core
                 var jsonPayload = JsonConvert.SerializeObject(payload);
 
                 // Check size before sending to avoid wasting bandwidth
-                if (jsonPayload.Length > MaxUploadSizeBytes)
+                if (jsonPayload.Length > Limits.TranslationFileBytes)
                 {
-                    TranslatorCore.LogWarning($"[ApiClient] Upload rejected: file too large ({jsonPayload.Length / (1024 * 1024)}MB > {MaxUploadSizeBytes / (1024 * 1024)}MB limit)");
-                    return new UploadResult { Success = false, Error = $"Translation file too large ({jsonPayload.Length / (1024 * 1024)}MB). Maximum is {MaxUploadSizeBytes / (1024 * 1024)}MB." };
+                    TranslatorCore.LogWarning($"[ApiClient] Upload rejected: file too large ({jsonPayload.Length / (1024 * 1024)}MB > {Limits.TranslationFileBytes / (1024 * 1024)}MB limit)");
+                    return new UploadResult { Success = false, Error = $"Translation file too large ({jsonPayload.Length / (1024 * 1024)}MB). Maximum is {Limits.TranslationFileBytes / (1024 * 1024)}MB." };
                 }
 
                 var content = CompressJson(jsonPayload);

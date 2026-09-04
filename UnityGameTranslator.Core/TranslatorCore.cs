@@ -635,26 +635,44 @@ namespace UnityGameTranslator.Core
             /// <summary>Components displaying it, to be updated when the answer arrives.</summary>
             public readonly List<object> Components = new List<object>();
 
-            /// <summary>Set when ANY submitter said this text is the mod's own interface.</summary>
+            /// <summary>Whether this is the mod's own interface rather than the game's text.</summary>
             public bool FromOwnUI;
+        }
 
-            /// <summary>
-            /// Set when a component of the GAME displays this text.
-            ///
-            /// 🔴 **The queue is indexed by TEXT, so one item can be claimed by both.** "Options",
-            /// "Cancel", "Close" are ours and a game's alike, and while the origin only chose a
-            /// prompt and a tag inside one file that was a detail. It now chooses WHICH FILE, so a
-            /// string a game happens to share with one of our labels would be filed as the mod's
-            /// interface — a game key in the mod's file, which is exactly what the split forbids.
-            ///
-            /// The game wins: its file is the one that gets published, shared and merged, and a
-            /// label of ours that fails to find itself there simply asks again.
-            /// </summary>
-            public bool FromGame;
+        /// <summary>
+        /// What identifies one waiting item: the text AND whose text it is.
+        ///
+        /// 🔴 **The two are not one queue entry.** "Options", "Cancel", "Close" belong to a game
+        /// and to us alike, and they are two different jobs: two files, two prompts — the game's
+        /// carries its name, its context and its source language, ours says the source is always
+        /// English and names this tool's vocabulary. Keyed by text alone, one of the two would win
+        /// and the other would get an answer produced for a question nobody asked about it.
+        ///
+        /// ⚠ It costs one extra request for a string that is genuinely shared, which is rare, and
+        /// buys the property somebody would expect anyway: the game's "Options" may become "Salut"
+        /// while the interface's becomes "Bonsoir", each in its own file, neither aware of the other.
+        /// </summary>
+        private readonly struct QueueKey : IEquatable<QueueKey>
+        {
+            public QueueKey(string text, bool ownUi) { Text = text; OwnUi = ownUi; }
+
+            public readonly string Text;
+            public readonly bool OwnUi;
+
+            public bool Equals(QueueKey other) =>
+                OwnUi == other.OwnUi && string.Equals(Text, other.Text, StringComparison.Ordinal);
+
+            public override bool Equals(object obj) => obj is QueueKey other && Equals(other);
+
+            // ⚠ Hand-written rather than tuple-derived: this runs on IL2CPP, where a value type's
+            // default hashing has cost this project surprises before. One shift is not clever, and
+            // it is one thing fewer to depend on.
+            public override int GetHashCode() =>
+                ((Text != null ? Text.GetHashCode() : 0) << 1) ^ (OwnUi ? 1 : 0);
         }
 
         // Guarded by lockObj, both of them, always together.
-        private static readonly Dictionary<string, QueuedText> pendingTranslations = new Dictionary<string, QueuedText>();
+        private static readonly Dictionary<QueueKey, QueuedText> pendingTranslations = new Dictionary<QueueKey, QueuedText>();
         private static readonly Queue<QueuedText> translationQueue = new Queue<QueuedText>();
 
         /// <summary>
@@ -667,9 +685,10 @@ namespace UnityGameTranslator.Core
         // submitted once even when the answer never produces a cache entry. Cleared on cache reload.
         //
         // ⚠ This is a THROTTLE, never an identity: it answers "have we asked for this already",
-        // and nothing reads it to decide whether a text belongs to the mod. Own-UI detection
-        // happens on the COMPONENT (see QueuedText) — a string-keyed identity existed once and was
-        // removed for false positives when a game's text matched one of our labels.
+        // and nothing reads it to decide whether a text belongs to the mod. Which file a text
+        // belongs in is settled at the moment it is queued and carried on the item itself
+        // (see QueueKey) — a string-keyed identity existed once and was removed for false
+        // positives when a game's text matched one of our labels.
         private static readonly HashSet<string> ownUISubmitted = new HashSet<string>();
         private static object lockObj = new object();
         private static bool cacheModified = false;
@@ -4674,7 +4693,12 @@ namespace UnityGameTranslator.Core
                 // Which file the line lives in decides everything downstream: the prompt it is
                 // asked with, the tag it comes back as, and the file the answer is written to. A
                 // retranslation attaches no component, so this is the only place that can say it.
-                bool isOwnUI = ModUiCache.ContainsKey(key);
+                //
+                // ⚠ The GAME's file first when both hold the key. The editors that offer this
+                // gesture — the in-game inspector, the browser — are handed the game's lines and
+                // nothing else, so a key they name is the game's even when our interface happens
+                // to use the same words.
+                bool isOwnUI = !TranslationCache.ContainsKey(key) && ModUiCache.ContainsKey(key);
                 var store = isOwnUI ? ModUiCache : TranslationCache;
 
                 bool hadEntry = store.TryGetValue(key, out var previous);
@@ -5603,13 +5627,11 @@ namespace UnityGameTranslator.Core
                         queued = translationQueue.Dequeue();
                         textToTranslate = queued.Text;
                         componentsToUpdate = queued.Components.Count > 0 ? queued.Components : null;
-
-                        // Ours only when the game never claimed it too — see QueuedText.FromGame.
-                        queuedAsOwnUI = queued.FromOwnUI && !queued.FromGame;
+                        queuedAsOwnUI = queued.FromOwnUI;
 
                         // Out of the pending map so the same text can be queued afresh; the item
                         // stays alive in `queued`, which is what a rate-limit re-queue puts back.
-                        pendingTranslations.Remove(textToTranslate);
+                        pendingTranslations.Remove(new QueueKey(textToTranslate, queued.FromOwnUI));
 
                         if (Config.debug_ai)
                         {
@@ -5632,30 +5654,16 @@ namespace UnityGameTranslator.Core
                     isTranslating = true;
                     currentlyTranslating = textToTranslate.Length > 50 ? textToTranslate.Substring(0, 50) + "..." : textToTranslate;
 
-                    // 🔴 **Whose text this is — asked of everything known, and the game has the
-                    // last word.** Two facts, not one: somebody claimed it as our interface, and
-                    // somebody displayed it in the game. The queue is indexed by TEXT, so both can
-                    // be true of one item — "Options", "Cancel", "Close" are ours and a game's
-                    // alike — and the answer now decides which FILE it is written to. A shared
-                    // string belongs to the game's, which is the one that gets published and
-                    // merged; a label of ours that does not find itself there simply asks again.
+                    // 🔴 **Whose text this is was settled when it was queued, and nothing re-decides
+                    // it here.** The item's identity IS (text, origin) — the game's "Options" and
+                    // ours are two entries, asked with two prompts and filed in two files — so
+                    // there is nothing left to infer, and inferring anyway is how a shared string
+                    // used to end up in whichever file asked last.
                     //
-                    // ⚠ IsOwnUI, not IsOwnUITranslatable: this decides where the answer is FILED,
-                    // and that must not depend on whether the interface is being translated today.
-                    bool claimedByOurUi = queuedAsOwnUI;
-                    bool shownByTheGame = queued != null && queued.FromGame;
-
-                    if (componentsToUpdate != null)
-                    {
-                        foreach (var comp in componentsToUpdate)
-                        {
-                            if (!(comp is Component component)) continue;
-                            if (IsOwnUI(component)) claimedByOurUi = true;
-                            else shownByTheGame = true;
-                        }
-                    }
-
-                    bool isOwnUI = claimedByOurUi && !shownByTheGame;
+                    // ⚠ The components are deliberately not consulted: a text queued by our
+                    // interface with no component at all (a help zone, a label the code writes) is
+                    // just as much ours as one that came with fifty.
+                    bool isOwnUI = queuedAsOwnUI;
                     currentTextIsOwnUI = isOwnUI;
 
                     // Declared out here so the catch below can put back what a retranslation took
@@ -5774,9 +5782,10 @@ namespace UnityGameTranslator.Core
                                 _apiRateLimited = false;
                                 lock (lockObj)
                                 {
-                                    if (queued != null && !pendingTranslations.ContainsKey(originalText))
+                                    var requeue = new QueueKey(originalText, queued?.FromOwnUI ?? false);
+                                    if (queued != null && !pendingTranslations.ContainsKey(requeue))
                                     {
-                                        pendingTranslations[originalText] = queued;
+                                        pendingTranslations[requeue] = queued;
                                         translationQueue.Enqueue(queued);
                                     }
                                 }
@@ -7015,12 +7024,14 @@ namespace UnityGameTranslator.Core
 
             lock (lockObj)
             {
-                // One item per waiting text, whoever submits it and however many times.
-                bool isNew = !pendingTranslations.TryGetValue(text, out var item);
+                // One item per waiting text AND per origin: the game's "Options" and ours are two
+                // jobs, asked with two different prompts and filed in two different files.
+                var key = new QueueKey(text, isOwnUI);
+                bool isNew = !pendingTranslations.TryGetValue(key, out var item);
                 if (isNew)
                 {
-                    item = new QueuedText(text);
-                    pendingTranslations[text] = item;
+                    item = new QueuedText(text) { FromOwnUI = isOwnUI };
+                    pendingTranslations[key] = item;
                     translationQueue.Enqueue(item);
                 }
 
@@ -7034,13 +7045,6 @@ namespace UnityGameTranslator.Core
                     // through — bounded by proxy caching, and harmless beyond a wasted slot.)
                     if (!item.Components.Contains(component)) item.Components.Add(component);
                 }
-
-                // The origin, decided here because here is where the component still exists to be
-                // asked. Both sides are recorded rather than one: a text can be claimed by our
-                // interface AND displayed by the game, and which of the two files it belongs in is
-                // settled at the dequeue — see QueuedText.FromGame.
-                if (isOwnUI) item.FromOwnUI = true;
-                else if (component != null) item.FromGame = true;
 
                 if (!isNew) return true;
 

@@ -1785,6 +1785,10 @@ namespace UnityGameTranslator.Core
                 {
                     steam_id = request.SteamId,
                     game_name = request.GameName,
+
+                    // ⚠ Sent whenever the game states one. A site that predates the field ignores
+                    // it, so this costs nothing where it is not understood.
+                    game_company = request.GameCompany,
                     source_language = request.SourceLanguage,
                     target_language = request.TargetLanguage,
                     status = request.Status,
@@ -2638,6 +2642,16 @@ namespace UnityGameTranslator.Core
     {
         public string SteamId { get; set; }
         public string GameName { get; set; }
+
+        /// <summary>
+        /// The studio Unity records beside the product name, when the game states one.
+        ///
+        /// 🔴 **What it buys.** The site keeps the pair as `unity_name`/`unity_company` and
+        /// resolves lookups with it, so a translation published from here stays findable from
+        /// another install whatever its folder is called. A product name alone is often too weak
+        /// to identify a game — "Game", "Prototype" — and the studio settles it.
+        /// </summary>
+        public string GameCompany { get; set; }
         public string SourceLanguage { get; set; }
         public string TargetLanguage { get; set; }
         // Note: Type is now auto-calculated by server from HVASM tags

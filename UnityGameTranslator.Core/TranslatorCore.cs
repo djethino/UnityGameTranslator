@@ -8727,6 +8727,18 @@ namespace UnityGameTranslator.Core
         /// here, so anything that needs a name a human would recognise reads this one.
         /// </summary>
         public string product_name { get; set; }
+
+        /// <summary>
+        /// The studio Unity records beside it — `Application.companyName`.
+        ///
+        /// 🔴 **It is what turns a weak product name into an identity.** A game calling itself
+        /// "Game" identifies nothing on its own; with the studio beside it, two machines looking at
+        /// the same title agree without anybody typing anything. The site keeps the pair and
+        /// resolves lookups with it, so a translation published from here stays findable from
+        /// another install whatever the folder is called.
+        /// </summary>
+        public string company_name { get; set; }
+
         /// <summary>
         /// How the steam_id was detected: "steam_appid.txt", "appmanifest", or null if not detected
         /// </summary>

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using UnityEngine;
 using UnityEngine.UI;
 using UniverseLib;
@@ -752,7 +752,13 @@ namespace UnityGameTranslator.Core.UI.Panels
                 var request = new UploadRequest
                 {
                     SteamId = TranslatorCore.CurrentGame?.steam_id,
-                    GameName = TranslatorCore.CurrentGame?.name ?? "Unknown Game",
+                    // ⚠ **The name the GAME states, never the folder it sits in.** `name` falls
+                    // back to the folder — "HyperEchelon6vYY3", "Forsaken.Frontiers.v1510" — and
+                    // publishing under that makes the translation unfindable from any other
+                    // install, because no other machine reads that string. See GameInfo.
+                    GameName = TranslatorCore.CurrentGame?.product_name
+                               ?? TranslatorCore.CurrentGame?.name ?? "Unknown Game",
+                    GameCompany = TranslatorCore.CurrentGame?.company_name,
                     SourceLanguage = srcLang,
                     TargetLanguage = tgtLang,
                     // ⚠ Null for a Branch: the server makes it inherit its Main's, and sending a

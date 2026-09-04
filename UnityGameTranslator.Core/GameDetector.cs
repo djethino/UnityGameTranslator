@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Text.RegularExpressions;
 using UnityEngine;
@@ -102,6 +102,15 @@ namespace UnityGameTranslator.Core
                 {
                     info.name = productName;
                     info.product_name = productName;
+
+                    // Read in the same breath: it costs one property and it is what the site keeps
+                    // beside the product name to tell two games with the same title apart.
+                    // "DefaultCompany" is Unity's placeholder — a value nobody set.
+                    string companyName = Application.companyName;
+                    if (!string.IsNullOrEmpty(companyName) && companyName != "DefaultCompany")
+                    {
+                        info.company_name = companyName;
+                    }
                     TranslatorCore.LogInfo($"[GameDetector] Application.productName: {productName}");
                 }
             }

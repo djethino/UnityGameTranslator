@@ -907,6 +907,16 @@ namespace UnityGameTranslator.Core.UI.Panels
             var output = new System.Collections.Generic.Dictionary<string, object>();
             output["_uuid"] = TranslatorCore.FileUuid;
 
+            // What this translation IS, sent with it. The server keeps the languages a lineage was
+            // published with and ignores any sent as request fields, so this changes nothing there
+            // — it is for whoever DOWNLOADS the file: they get one that states its own languages
+            // before any server has answered, instead of borrowing whatever their machine is set
+            // to. Excluded from the content hash on both sides, so it cannot move a file_hash.
+            if (Languages.IsSettled(TranslatorCore.FileSourceLanguage))
+                output["_source_language"] = TranslatorCore.FileSourceLanguage;
+            if (Languages.IsSettled(TranslatorCore.FileTargetLanguage))
+                output["_target_language"] = TranslatorCore.FileTargetLanguage;
+
             if (TranslatorCore.CurrentGame != null)
             {
                 output["_game"] = new System.Collections.Generic.Dictionary<string, string>

@@ -3637,10 +3637,21 @@ namespace UnityGameTranslator.Core
             }
         }
 
-        /// <summary>Write the interface file only if something changed since it was last written.</summary>
+        /// <summary>
+        /// Write the interface file only if something changed since it was last written.
+        ///
+        /// ⚠ **The font counts as a change, and asking here is what makes that reliable.** It is
+        /// not stored in the dictionary, so nothing marks the file dirty when somebody picks one in
+        /// the options — the file kept the previous font until a new line happened to be
+        /// translated, and on a finished interface that is never. Derived rather than signalled:
+        /// a flag set by one caller is a flag the next caller forgets.
+        /// </summary>
         public static void SaveModUiCacheIfDirty()
         {
-            if (modUiCacheModified) SaveModUiCache();
+            bool fontMoved = !string.IsNullOrEmpty(EffectiveInterfaceFont)
+                             && !string.Equals(EffectiveInterfaceFont, ModUiFont, StringComparison.OrdinalIgnoreCase);
+
+            if (modUiCacheModified || fontMoved) SaveModUiCache();
         }
 
         // 🔴 **Where an interface line arriving from the network is stopped, and why there is no

@@ -930,7 +930,7 @@ namespace UnityGameTranslator.Core
         /// then refuses to learn from it, and everything that resolves a DISPLAYED text back to
         /// the cache (<see cref="ResolveDisplayedText"/>) recovers the logical truth first —
         /// a shaped form must never be queued to the AI, cached as a source text, or written to
-        /// translations.json (decision D8). Also used by the temporary RtlProbe bench.
+        /// translations.json (decision D8).
         /// </summary>
         internal static void RegisterPresentedText(string presented, string logical)
         {
@@ -946,7 +946,7 @@ namespace UnityGameTranslator.Core
             string n = NormalizeForReadbackMatch(presented);
             if (n == null) return;
             // The GAME's index: the RTL presentation pass runs on the game's components and skips
-            // ours outright (RtlPresenter / RtlProbe both check IsOwnUI), so nothing shaped here
+            // ours outright (RtlPresenter checks IsOwnUI), so nothing shaped here
             // ever belongs to the interface.
             readbackTranslations.TryAdd(n, 0);
             if (!string.IsNullOrEmpty(logical) && !string.Equals(presented, logical, StringComparison.Ordinal))

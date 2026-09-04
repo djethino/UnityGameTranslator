@@ -1273,9 +1273,14 @@ namespace UnityGameTranslator.Core.TextShaping
 
         private static void Log(long compId, string mode, string logical, string composed)
         {
-            // ⚠ Bench diagnostic (to remove with RtlProbe): the exact code-point order of what
-            // came in and what went out. A terminal renders Arabic with its own bidi, so the
-            // summary line below cannot tell "the composer reordered this" from "my viewer did".
+            // ⚠ **Diagnostic, behind DebugMode — silent unless somebody sets `"debug": true`.** The
+            // exact code-point order of what came in and what went out: a terminal renders Arabic
+            // with its own bidi, so the summary line below cannot tell "the composer reordered
+            // this" from "my viewer did". It is what answers an issue saying "right-to-left is
+            // broken in my game", which is why it stayed when the bench probes were removed.
+            //
+            // ⚠ The budget never rearms: past 300 lines this is silent for the rest of the session.
+            // Fine for one reproduction, to revisit if a report ever needs more.
             if (TranslatorCore.DebugMode && _dumpBudget > 0)
             {
                 _dumpBudget--;

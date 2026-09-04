@@ -357,13 +357,6 @@ namespace UnityGameTranslator.Core.UI.Panels
         }
 
         /// <summary>
-        /// TEMPORARY (feature/text-shaping): lets the RTL bench probe reuse this panel's raycast
-        /// to find the text under the cursor, instead of duplicating the whole reflection stack.
-        /// Remove with TextShaping/RtlProbe.cs.
-        /// </summary>
-        internal GameObject ProbeRaycastAt(Vector3 screenPosition) => RaycastUIElement(screenPosition);
-
-        /// <summary>
         /// Raycast to find UI element under screen position.
         /// Uses pure reflection — works on both Mono and IL2CPP.
         /// </summary>

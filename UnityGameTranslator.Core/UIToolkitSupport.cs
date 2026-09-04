@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Runtime.CompilerServices;
@@ -1474,128 +1474,6 @@ namespace UnityGameTranslator.Core
         }
 
 
-        #region RTL / ATG probe (TEMPORARY — feature/text-shaping bench, see TextShaping/RtlProbe.cs)
-
-        private static int _probeStep = -1;
-        private static object _probeEl;
-        private static string _probeOriginal;
-
-        /// <summary>
-        /// From RtlProbe — cycles the TextElement the tester POINTED AT (passed on acquisition,
-        /// null on later presses) through: raw Arabic on the current generator, then the SAME
-        /// logical text after switching the element's style to the Advanced Text Generator
-        /// (Unity 6 — HarfBuzz shapes and orders by itself), then a long paragraph for wrapping,
-        /// then restore. If ATG renders the logical text correctly, this whole engine needs NO
-        /// shaping from us — the answer §7 of the analyse doc waits on.
-        /// Returns true while the cycle is still holding an element.
-        /// </summary>
-        internal static bool ProbeAtgCycle(object element, string shortLogical, string longLogical)
-        {
-            if (TextElementType == null || _textProp == null)
-            {
-                TranslatorCore.LogWarning("[RtlProbe] UI Toolkit not present or not resolved in this game.");
-                return false;
-            }
-            try
-            {
-                if (_probeEl == null)
-                {
-                    _probeStep = -1;
-                    if (element == null) return false;
-                    _probeEl = element;
-                    _probeOriginal = _textProp.GetValue(_probeEl, null) as string;
-                    TranslatorCore.LogInfo($"[RtlProbe] UITK target acquired under cursor, path='{PathOf(_probeEl)}' original='{(_probeOriginal != null && _probeOriginal.Length > 40 ? _probeOriginal.Substring(0, 40) + "..." : _probeOriginal)}'");
-                }
-
-                _probeStep++;
-                switch (_probeStep)
-                {
-                    case 0:
-                        ProbeSetText(_probeEl, shortLogical);
-                        TranslatorCore.LogInfo("[RtlProbe] UITK 1/4 raw logical Arabic, current generator — expected broken (isolated, LTR) unless the game already runs ATG.");
-                        return true;
-                    case 1:
-                        {
-                            string detail;
-                            bool ok = ProbeTrySetAdvancedGenerator(_probeEl, out detail);
-                            ProbeSetText(_probeEl, shortLogical);
-                            TranslatorCore.LogInfo($"[RtlProbe] UITK 2/4 same logical text, generator→Advanced: {(ok ? "SET" : "FAILED")} ({detail}) — if rendered joined+RTL, ATG does the whole job on this engine.");
-                        }
-                        return true;
-                    case 2:
-                        ProbeSetText(_probeEl, longLogical);
-                        TranslatorCore.LogInfo("[RtlProbe] UITK 3/4 long logical paragraph on Advanced — wrap and line order are ATG's to prove.");
-                        return true;
-                    default:
-                        ProbeSetText(_probeEl, _probeOriginal ?? "");
-                        TranslatorCore.LogInfo("[RtlProbe] UITK 4/4 restored text. ⚠ Generator left on Advanced for this element until scene reload. Point at another text and press again to probe it.");
-                        _probeEl = null;
-                        _probeOriginal = null;
-                        _probeStep = -1;
-                        return false;
-                }
-            }
-            catch (Exception ex)
-            {
-                TranslatorCore.LogError($"[RtlProbe] UITK: {ex.Message}\n{ex.StackTrace}");
-                _probeEl = null;
-                _probeOriginal = null;
-                _probeStep = -1;
-                return false;
-            }
-        }
-
-        private static void ProbeSetText(object element, string text)
-        {
-            _writingBack = true;
-            try { _textProp.SetValue(element, text, null); }
-            finally { _writingBack = false; }
-        }
-
-        /// <summary>
-        /// style.unityTextGenerator = TextGeneratorType.Advanced, all by reflection: the property
-        /// only exists on Unity 6, and Core compiles against far older assemblies.
-        ///
-        /// ⚠ The enum type is DERIVED from the property's own StyleEnum&lt;T&gt; generic argument,
-        /// never looked up by name: the first attempt did FindType("UnityEngine.UIElements.
-        /// TextGeneratorType") and reported "no ATG" on a Unity 6000.3 game of the bench — the
-        /// enum lives elsewhere (namespace varies), but the property always knows its own T.
-        /// </summary>
-        private static bool ProbeTrySetAdvancedGenerator(object element, out string detail)
-        {
-            try
-            {
-                var style = _styleProp?.GetValue(element, null);
-                if (style == null) { detail = "style unreadable"; return false; }
-
-                var prop = style.GetType().GetProperty("unityTextGenerator", BindingFlags.Public | BindingFlags.Instance)
-                           ?? _styleProp.PropertyType.GetProperty("unityTextGenerator", BindingFlags.Public | BindingFlags.Instance);
-                if (prop?.SetMethod == null) { detail = "unityTextGenerator property absent — no ATG on this Unity"; return false; }
-
-                // StyleEnum<TextGeneratorType> → TextGeneratorType, wherever it lives.
-                Type enumType = null;
-                var pt = prop.PropertyType;
-                if (pt.IsEnum) enumType = pt;
-                else if (pt.IsGenericType && pt.GetGenericArguments().Length == 1)
-                    enumType = pt.GetGenericArguments()[0];
-                if (enumType == null || !enumType.IsEnum)
-                { detail = $"cannot derive enum from {pt.Name}"; return false; }
-
-                var advanced = Enum.Parse(enumType, "Advanced");
-                object value = pt.IsEnum ? advanced : Activator.CreateInstance(pt, advanced);
-                prop.SetValue(style, value, null);
-                detail = $"ok ({enumType.FullName})";
-                return true;
-            }
-            catch (Exception ex)
-            {
-                detail = ex.Message;
-                return false;
-            }
-        }
-
-        #endregion
-
         /// <summary>
         /// Walks one document and hands over every TextElement in it. Returns how many elements
         /// were looked at, so a caller can spend a budget across several documents.
@@ -1742,7 +1620,7 @@ namespace UnityGameTranslator.Core
         /// width — on an element sized by its content, the one width that is wrong by
         /// construction (the UI.Text lesson, §7.10).
         /// </summary>
-        // Bench diagnostic (to remove with RtlProbe): which path finished each element and how
+        // ⚠ Diagnostic, behind DebugMode: which path finished each element and how
         // many frames after its assignment — the user sees "a jump under a second" and the two
         // paths differ by exactly that.
         private static int _finishLogBudget = 80;

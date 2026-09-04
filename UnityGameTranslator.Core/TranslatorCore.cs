@@ -3404,6 +3404,15 @@ namespace UnityGameTranslator.Core
         private static bool modUiCacheModified;
 
         /// <summary>
+        /// Whether the interface file has been read at least once this session.
+        ///
+        /// 🔴 The guard on every write — see <see cref="SaveModUiCache"/>. An empty store is
+        /// indistinguishable from an interface nobody has translated yet, so writing before
+        /// reading destroys the file silently.
+        /// </summary>
+        private static bool _modUiLoaded;
+
+        /// <summary>
         /// The language the interface file holds, as it says itself (`_target_language`).
         ///
         /// ⚠ The FILE is the authority, never its name: the name carries a slug that does not
@@ -3446,6 +3455,10 @@ namespace UnityGameTranslator.Core
             ModUiLanguage = null;
             ModUiFont = null;
             modUiCacheModified = false;
+            // ⚠ Lowered for the duration of the read, not only on the first one: a RELOAD that
+            // fails to parse would otherwise leave an empty store behind a flag still saying
+            // "this reflects the disk", and the next save would write that emptiness over the file.
+            _modUiLoaded = false;
             // Rebuilt from the file below, exactly as LoadCache does for the game's: a language set
             // aside leaves its translations in here otherwise, answering about a file they left.
             modUiTranslatedTexts.Clear();
@@ -3479,7 +3492,8 @@ namespace UnityGameTranslator.Core
                     }
                 }
 
-                if (!File.Exists(ModUiCachePath)) return;
+                // No file: an empty store is the truth, and writing one destroys nothing.
+                if (!File.Exists(ModUiCachePath)) { _modUiLoaded = true; return; }
 
                 var parsed = JObject.Parse(File.ReadAllText(ModUiCachePath).Replace("\r\n", "\n"));
 
@@ -3523,6 +3537,12 @@ namespace UnityGameTranslator.Core
                 // the game's text, whose register is not this tool's.
                 foreach (var kvp in ModUiCache)
                     IndexTranslatedValue(kvp.Key, kvp.Value.Value, ownUi: true);
+
+                // Read in full: the store now reflects the file, so writing it back cannot lose
+                // anything. Deliberately NOT set when the parse threw — an unreadable file is
+                // still somebody's work, and overwriting it with an empty one is the one outcome
+                // that cannot be undone.
+                _modUiLoaded = true;
 
                 InvalidateInterfaceFontAvailability();
                 Adapter?.LogInfo($"[ModUI] Loaded {ModUiCache.Count} interface line(s)"
@@ -3585,6 +3605,17 @@ namespace UnityGameTranslator.Core
         public static void SaveModUiCache()
         {
             if (string.IsNullOrEmpty(ModUiCachePath)) return;
+
+            // 🔴 **Never write what was never read.** The store starts empty, so any write before
+            // the file has been opened replaces somebody's interface with nothing. It is not a
+            // theoretical order: LoadCache flushes a pending save BEFORE it reads the file, and a
+            // save triggered by the font alone — which needs no line to be dirty — fired exactly
+            // there. Found by re-reading the wiring, not by a crash: an empty file throws nothing.
+            if (!_modUiLoaded)
+            {
+                Adapter?.LogWarning("[ModUI] Refused to write the interface file before reading it.");
+                return;
+            }
 
             lock (lockObj)
             {

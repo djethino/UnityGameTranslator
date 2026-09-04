@@ -834,7 +834,21 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Search for translations by game name
+        /// Search for translations by game name.
+        ///
+        /// 🔴 **The answer can describe SEVERAL games, and this used to take all of it.** A game
+        /// with no Steam id is looked up by name, and the site matches loosely on purpose — a game
+        /// folder is not always named as the site names it ("Foo" against "Foo: Deluxe Edition").
+        /// So `q=Cat` also answers for Cattails and Cat Quest II, and every one of those
+        /// translations was listed here as this game's, ready to be downloaded into it.
+        ///
+        /// The site now groups its answer by game. Which of those groups was asked about is
+        /// <see cref="GameNames"/>' decision — the socle's, because the Manager asks the same
+        /// question about fifty games and the two must not answer it differently.
+        ///
+        /// ⚠ The flat list is still read when `games` is absent: a self-hosted site older than this
+        /// mod answers exactly as before, and losing its results would be a worse fault than the
+        /// one being fixed.
         /// </summary>
         public static async Task<TranslationSearchResult> SearchByGameName(string gameName, string targetLang)
         {
@@ -852,8 +866,43 @@ namespace UnityGameTranslator.Core
                 var data = ParseJsonSafe(json);
 
                 var result = new TranslationSearchResult { Success = true };
-                result.Count = data["count"]?.Value<int>() ?? 0;
                 result.Translations = new List<TranslationInfo>();
+
+                var grouped = data["games"] as JArray;
+
+                if (grouped != null)
+                {
+                    var names = new List<string>();
+                    foreach (var group in grouped)
+                    {
+                        names.Add(group["game"]?["name"]?.Value<string>() ?? "");
+                    }
+
+                    var which = GameNames.Which(names, gameName);
+
+                    // ⚠ Counted from what was KEPT, never from the server's total: the total
+                    // answers about every game the name touched, and printing it beside a filtered
+                    // list is the same lie in a smaller place.
+                    result.Count = 0;
+
+                    foreach (var index in which.Chosen)
+                    {
+                        var group = grouped[index];
+                        result.Count += group["total"]?.Value<int>() ?? 0;
+
+                        var rows = group["translations"] as JArray;
+                        if (rows == null) continue;
+
+                        foreach (var t in rows)
+                        {
+                            result.Translations.Add(ParseTranslationInfo(t));
+                        }
+                    }
+
+                    return result;
+                }
+
+                result.Count = data["count"]?.Value<int>() ?? 0;
 
                 var translations = data["translations"] as JArray;
                 if (translations != null)

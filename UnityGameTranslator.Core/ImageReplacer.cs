@@ -652,16 +652,14 @@ namespace UnityGameTranslator.Core
         /// The name comes from the translation file, which is downloaded from another player, so
         /// it is treated as input rather than as data we wrote: it must name a file INSIDE the
         /// images folder — a plain file name, with no directory part and no "..". Path.Combine
-        /// would otherwise happily return a location anywhere on the disk.
+        /// would otherwise happily return a location anywhere on the disk. The rule itself is
+        /// <see cref="PlainFileName"/>, shared with the font lookups that face the same input.
         /// </summary>
         private static string ResolveImagePath(string fileName)
         {
             if (string.IsNullOrEmpty(fileName)) return null;
 
-            if (fileName.IndexOf('/') >= 0 || fileName.IndexOf('\\') >= 0
-                || fileName.IndexOf("..", StringComparison.Ordinal) >= 0
-                || Path.IsPathRooted(fileName)
-                || fileName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+            if (!PlainFileName.Accepts(fileName))
             {
                 TranslatorCore.LogWarning(
                     $"[ImageReplacer] Ignoring image entry: '{Sanitize.Path(fileName)}' is not a file name in the images folder");

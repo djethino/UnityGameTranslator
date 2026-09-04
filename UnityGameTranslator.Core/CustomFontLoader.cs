@@ -598,6 +598,17 @@ namespace UnityGameTranslator.Core
         {
             if (string.IsNullOrEmpty(fontName)) return null;
 
+            // 🔴 A name, never a location. The name may come from a downloaded translation
+            // (`_fonts[].fallback`, `_font_overrides[].replacement`, `_settings.ui_font`), and it is
+            // combined with the font folders below: with a separator in it, the file found — and the
+            // atlas cache later written under that same name — would sit wherever its author chose.
+            // No font is named with a separator, so nothing real is refused here.
+            if (!PlainFileName.Accepts(fontName))
+            {
+                TranslatorCore.LogWarning($"[CustomFontLoader] '{Sanitize.Path(fontName)}' is not a font name (it reads as a path); ignored");
+                return null;
+            }
+
             var dirs = new List<string>();
             try
             {

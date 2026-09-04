@@ -4488,6 +4488,14 @@ namespace UnityGameTranslator.Core
         {
             if (string.IsNullOrEmpty(fontName)) return null;
 
+            // Same door as CustomFontLoader.FindSystemTtfPath, same rule: the name is combined
+            // with the font folders, so it must be a name and not a path.
+            if (!PlainFileName.Accepts(fontName))
+            {
+                TranslatorCore.LogWarning($"[FontManager] '{Sanitize.Path(fontName)}' is not a font name (it reads as a path); ignored");
+                return null;
+            }
+
             string[] fontDirs;
             if (Application.platform == RuntimePlatform.WindowsPlayer || Application.platform == RuntimePlatform.WindowsEditor)
             {

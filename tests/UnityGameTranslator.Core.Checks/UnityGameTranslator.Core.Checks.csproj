@@ -37,11 +37,25 @@
     <Compile Include="../../UnityGameTranslator.Core/ModUiMigration.cs" />
     <Compile Include="../../UnityGameTranslator.Core/TranslationLanguages.cs" />
     <!--
+      🔴 The file mechanics, and the reason they are a file of their own.
+
+      The RULES about which interface line goes where were pure and checkable from the first day.
+      What actually lost data was neither of them: it was a right rule firing at the wrong MOMENT —
+      a save flushed before the file had been read, replacing somebody's interface with an empty
+      one, throwing nothing and logging nothing. A moment only exists in a SEQUENCE, so the
+      sequence has to be replayable without a game, on real files in a real folder.
+    -->
+    <Compile Include="../../UnityGameTranslator.Core/ModUiStore.cs" />
+    <Compile Include="../../UnityGameTranslator.Core/TranslationEntry.cs" />
+    <!--
       The socle, as an assembly rather than as files. It has no Unity reference of any kind — the
       mod, the manager and this project all read the same build — so the reasoning above does not
       apply to it: what it forbids is dragging a game engine in, not sharing a pure library.
     -->
     <ProjectReference Include="../../common/src/UnityGameTranslator.Common/UnityGameTranslator.Common.csproj" />
+    <!-- The same version the Core ships, so the file this project writes is byte-identical to the
+         one a game writes. A different serialiser would make the round-trip check prove nothing. -->
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
     <!-- The whole shaping pipeline is pure by contract — stages A/B/C are string work, and the
          vendored RTLTMPro tables carry no Unity reference (their runtime never did). The glob is
          deliberate: a stage added later is checked by default, and if it is not pure, this

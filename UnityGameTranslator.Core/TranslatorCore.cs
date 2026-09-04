@@ -3229,8 +3229,7 @@ namespace UnityGameTranslator.Core
                     && string.IsNullOrEmpty(Config?.interface_font)
                     && AncestorCache.Count == 0)
                 {
-                    ModUiFont = strandedUiFont;
-                    modUiCacheModified = true;
+                    _modUi.AdoptFont(strandedUiFont);
                     InvalidateInterfaceFontAvailability();
                     Adapter.LogInfo($"[ModUI] Interface font '{strandedUiFont}' moved out of translations.json.");
                 }
@@ -3401,16 +3400,16 @@ namespace UnityGameTranslator.Core
 
         #region The mod's own interface — modui-translate.json
 
-        private static bool modUiCacheModified;
-
         /// <summary>
-        /// Whether the interface file has been read at least once this session.
+        /// The file itself — reading, writing and setting aside live in <see cref="ModUiStore"/>,
+        /// which knows nothing of Unity and can therefore be replayed by the checks project.
         ///
-        /// 🔴 The guard on every write — see <see cref="SaveModUiCache"/>. An empty store is
-        /// indistinguishable from an interface nobody has translated yet, so writing before
-        /// reading destroys the file silently.
+        /// 🔴 **That is not tidiness, it is where the data loss was.** The rules about which line
+        /// goes where were pure and checkable from the start; what went wrong was a right rule
+        /// firing at the wrong MOMENT, and a moment only exists in a sequence. See
+        /// tests/UnityGameTranslator.Core.Checks/ModUiStoreChecks.cs.
         /// </summary>
-        private static bool _modUiLoaded;
+        private static readonly ModUiStore _modUi = new ModUiStore();
 
         /// <summary>
         /// The language the interface file holds, as it says itself (`_target_language`).
@@ -3418,7 +3417,7 @@ namespace UnityGameTranslator.Core
         /// ⚠ The FILE is the authority, never its name: the name carries a slug that does not
         /// round-trip for the handful of languages the catalogue has no code for.
         /// </summary>
-        public static string ModUiLanguage { get; private set; }
+        public static string ModUiLanguage => _modUi.Language;
 
         /// <summary>
         /// Font the interface file asks to be rendered with (`_settings.ui_font`).
@@ -3428,17 +3427,10 @@ namespace UnityGameTranslator.Core
         /// that makes it readable with it. <see cref="ModConfig.interface_font"/> still wins: a
         /// local choice beats what a file asks for.
         /// </summary>
-        public static string ModUiFont { get; private set; }
+        public static string ModUiFont => _modUi.Font;
 
         /// <summary>True once the interface file holds something to show.</summary>
         public static bool ModUiHasLines => ModUiCache.Count > 0;
-
-        /// <summary>
-        /// Two languages are the same one exactly when they would set aside the same file — the
-        /// identity the file names already use, asked once rather than spelled a second way here.
-        /// </summary>
-        private static bool SameLanguage(string a, string b) =>
-            string.Equals(ModUi.SetAsideFileName(a), ModUi.SetAsideFileName(b), StringComparison.OrdinalIgnoreCase);
 
         /// <summary>
         /// Read the interface file for the language this game is being played in.
@@ -3451,238 +3443,62 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static void LoadModUiCache()
         {
-            ModUiCache = new Dictionary<string, TranslationEntry>();
-            ModUiLanguage = null;
-            ModUiFont = null;
-            modUiCacheModified = false;
-            // ⚠ Lowered for the duration of the read, not only on the first one: a RELOAD that
-            // fails to parse would otherwise leave an empty store behind a flag still saying
-            // "this reflects the disk", and the next save would write that emptiness over the file.
-            _modUiLoaded = false;
-            // Rebuilt from the file below, exactly as LoadCache does for the game's: a language set
-            // aside leaves its translations in here otherwise, answering about a file they left.
+            _modUi.Info = m => Adapter?.LogInfo(m);
+            _modUi.Warn = m => Adapter?.LogWarning(m);
+
+            _modUi.Load(ModFolder, Config?.GetTargetLanguage());
+            ModUiCache = _modUi.Entries;
+
+            // Rebuilt from what was just read, exactly as LoadCache does for the game's: a language
+            // set aside leaves its translations in here otherwise, answering about a file they left.
             modUiTranslatedTexts.Clear();
             modUiReadbackTranslations.Clear();
             lock (lockObj) { ownUISubmitted.Clear(); }
 
-            if (string.IsNullOrEmpty(ModUiCachePath)) return;
+            // Its translated forms go into the INTERFACE's reverse index — its own, never the
+            // game's. It is the anti-loop device that stops one of our labels, read back from a
+            // component, being learnt as a new source; it has no business answering about the
+            // game's text, whose register is not this tool's.
+            foreach (var kvp in ModUiCache)
+                IndexTranslatedValue(kvp.Key, kvp.Value.Value, ownUi: true);
 
-            string wanted = Config?.GetTargetLanguage();
+            InvalidateInterfaceFontAvailability();
 
-            try
+            if (ModUiCache.Count > 0)
             {
-                // The file in place belongs to another language: put it away, then look for the
-                // one that was put away for THIS language.
-                if (File.Exists(ModUiCachePath))
-                {
-                    string held = ReadModUiLanguage(ModUiCachePath);
-                    if (!string.IsNullOrEmpty(held) && !string.IsNullOrEmpty(wanted) && !SameLanguage(held, wanted))
-                    {
-                        SetAsideModUiFile(held);
-                    }
-                }
-
-                if (!File.Exists(ModUiCachePath) && !string.IsNullOrEmpty(wanted))
-                {
-                    string putAway = Path.Combine(ModFolder, ModUi.SetAsideFileName(wanted));
-                    if (File.Exists(putAway))
-                    {
-                        File.Move(putAway, ModUiCachePath);
-                        Adapter?.LogInfo($"[ModUI] Took back the interface already translated into {wanted}");
-                    }
-                }
-
-                // No file: an empty store is the truth, and writing one destroys nothing.
-                if (!File.Exists(ModUiCachePath)) { _modUiLoaded = true; return; }
-
-                var parsed = JObject.Parse(File.ReadAllText(ModUiCachePath).Replace("\r\n", "\n"));
-
-                foreach (var prop in parsed.Properties())
-                {
-                    if (prop.Name == "_target_language")
-                    {
-                        ModUiLanguage = prop.Value.ToString();
-                    }
-                    else if (prop.Name == "_settings" && prop.Value.Type == JTokenType.Object)
-                    {
-                        ModUiFont = (prop.Value as JObject)?["ui_font"]?.Value<string>();
-                    }
-                    else if (!prop.Name.StartsWith("_"))
-                    {
-                        string key = NormalizeLineEndings(prop.Name);
-                        if (prop.Value.Type == JTokenType.Object)
-                        {
-                            var obj = prop.Value as JObject;
-                            ModUiCache[key] = new TranslationEntry
-                            {
-                                Value = NormalizeLineEndings(obj?["v"]?.ToString() ?? ""),
-                                Tag = obj?["t"]?.ToString() ?? ModUi.Tag,
-                                Index = ParseTranslationIndex(obj?["i"])
-                            };
-                        }
-                        else if (prop.Value.Type == JTokenType.String)
-                        {
-                            ModUiCache[key] = new TranslationEntry
-                            {
-                                Value = NormalizeLineEndings(prop.Value.ToString()),
-                                Tag = ModUi.Tag
-                            };
-                        }
-                    }
-                }
-
-                // Its translated forms go into the INTERFACE's reverse index — its own, never the
-                // game's. It is the anti-loop device that stops one of our labels, read back from
-                // a component, being learnt as a new source; it has no business answering about
-                // the game's text, whose register is not this tool's.
-                foreach (var kvp in ModUiCache)
-                    IndexTranslatedValue(kvp.Key, kvp.Value.Value, ownUi: true);
-
-                // Read in full: the store now reflects the file, so writing it back cannot lose
-                // anything. Deliberately NOT set when the parse threw — an unreadable file is
-                // still somebody's work, and overwriting it with an empty one is the one outcome
-                // that cannot be undone.
-                _modUiLoaded = true;
-
-                InvalidateInterfaceFontAvailability();
                 Adapter?.LogInfo($"[ModUI] Loaded {ModUiCache.Count} interface line(s)"
                     + (string.IsNullOrEmpty(ModUiLanguage) ? "" : $" in {ModUiLanguage}")
                     + (string.IsNullOrEmpty(ModUiFont) ? "" : $", font {ModUiFont}"));
             }
-            catch (Exception e)
-            {
-                // Loud, and empty rather than half-read: a partially parsed interface would show
-                // some labels translated and some not, which reads as a bug in the mod.
-                Adapter?.LogError($"[ModUI] Failed to read {ModUi.FileName}: {e.Message}");
-                ModUiCache = new Dictionary<string, TranslationEntry>();
-                ModUiLanguage = null;
-                ModUiFont = null;
-            }
         }
 
-        /// <summary>The `_target_language` of a file, without loading it. Null when it says nothing.</summary>
-        private static string ReadModUiLanguage(string path)
-        {
-            try
-            {
-                return JObject.Parse(File.ReadAllText(path).Replace("\r\n", "\n"))["_target_language"]?.ToString();
-            }
-            catch (Exception e)
-            {
-                Adapter?.LogWarning($"[ModUI] Could not read the language of {Path.GetFileName(path)}: {e.Message}");
-                return null;
-            }
-        }
-
-        /// <summary>
-        /// Move the interface file out of the way, under the language it holds.
-        ///
-        /// ⚠ An existing file for that language is replaced, and that is right: both are the same
-        /// interface in the same language, and the one being put away is the later of the two.
-        /// </summary>
-        private static void SetAsideModUiFile(string language)
-        {
-            try
-            {
-                string target = Path.Combine(ModFolder, ModUi.SetAsideFileName(language));
-                if (File.Exists(target)) File.Delete(target);
-                File.Move(ModUiCachePath, target);
-                Adapter?.LogInfo($"[ModUI] Set aside the interface translated into {language} as {Path.GetFileName(target)}");
-            }
-            catch (Exception e)
-            {
-                // Nothing is lost — the file is still there — but it is in the wrong language, so
-                // it must not be read. Said out loud rather than swallowed.
-                Adapter?.LogError($"[ModUI] Could not set aside {ModUi.FileName} ({e.Message}); it will not be used.");
-            }
-        }
-
-        /// <summary>
-        /// Write the interface file. Same shape as translations.json, minus everything that
-        /// describes a GAME translation: no uuid, no game, no sync state, no local-change count —
-        /// this file is never published, so none of that has an answer here.
-        /// </summary>
+        /// <summary>Write the interface file. See <see cref="ModUiStore.Save"/>.</summary>
         public static void SaveModUiCache()
         {
-            if (string.IsNullOrEmpty(ModUiCachePath)) return;
-
-            // 🔴 **Never write what was never read.** The store starts empty, so any write before
-            // the file has been opened replaces somebody's interface with nothing. It is not a
-            // theoretical order: LoadCache flushes a pending save BEFORE it reads the file, and a
-            // save triggered by the font alone — which needs no line to be dirty — fired exactly
-            // there. Found by re-reading the wiring, not by a crash: an empty file throws nothing.
-            if (!_modUiLoaded)
-            {
-                Adapter?.LogWarning("[ModUI] Refused to write the interface file before reading it.");
-                return;
-            }
-
             lock (lockObj)
             {
-                try
+                if (_modUi.Save(ModFolder, Config?.GetTargetLanguage(), EffectiveInterfaceFont)
+                    && DebugMode)
                 {
-                    var output = new JObject();
-                    output["_engine_version"] = CurrentEngineVersion;
-
-                    // What this interface is written in. Recorded at every save from the language
-                    // in force, so a file copied to another game announces itself.
-                    string language = Config?.GetTargetLanguage();
-                    if (!string.IsNullOrEmpty(language))
-                    {
-                        ModUiLanguage = language;
-                        output["_target_language"] = language;
-                    }
-
-                    // The font that makes it readable, so it travels with the copy. Written from
-                    // the font IN FORCE — a local choice, else what the file already asked for.
-                    string font = EffectiveInterfaceFont;
-                    if (!string.IsNullOrEmpty(font))
-                    {
-                        ModUiFont = font;
-                        output["_settings"] = new JObject { ["ui_font"] = font };
-                    }
-
-                    var sortedKeys = ModUiCache.Keys.OrderBy(k => k).ToList();
-                    foreach (var key in sortedKeys)
-                    {
-                        var entry = ModUiCache[key];
-                        var obj = new JObject
-                        {
-                            ["v"] = entry.Value,
-                            ["t"] = entry.Tag ?? ModUi.Tag
-                        };
-                        if (entry.Index.HasValue) obj["i"] = entry.Index.Value;
-                        output[key] = obj;
-                    }
-
-                    File.WriteAllText(ModUiCachePath, output.ToString(Formatting.Indented));
-                    modUiCacheModified = false;
-
-                    if (DebugMode)
-                        Adapter?.LogInfo($"[ModUI] Saved {sortedKeys.Count} interface line(s)");
-                }
-                catch (Exception e)
-                {
-                    Adapter?.LogError($"[ModUI] Failed to save {ModUi.FileName}: {e.Message}");
+                    Adapter?.LogInfo($"[ModUI] Saved {ModUiCache.Count} interface line(s)");
                 }
             }
         }
 
-        /// <summary>
-        /// Write the interface file only if something changed since it was last written.
-        ///
-        /// ⚠ **The font counts as a change, and asking here is what makes that reliable.** It is
-        /// not stored in the dictionary, so nothing marks the file dirty when somebody picks one in
-        /// the options — the file kept the previous font until a new line happened to be
-        /// translated, and on a finished interface that is never. Derived rather than signalled:
-        /// a flag set by one caller is a flag the next caller forgets.
-        /// </summary>
+        /// <summary>Write it only if the file does not already hold what we have.</summary>
         public static void SaveModUiCacheIfDirty()
         {
-            bool fontMoved = !string.IsNullOrEmpty(EffectiveInterfaceFont)
-                             && !string.Equals(EffectiveInterfaceFont, ModUiFont, StringComparison.OrdinalIgnoreCase);
+            lock (lockObj)
+            {
+                _modUi.SaveIfDirty(ModFolder, Config?.GetTargetLanguage(), EffectiveInterfaceFont);
+            }
+        }
 
-            if (modUiCacheModified || fontMoved) SaveModUiCache();
+        /// <summary>Something changed in the interface that the file does not yet hold.</summary>
+        private static bool modUiCacheModified
+        {
+            get { return _modUi.Modified; }
+            set { _modUi.Modified = value; }
         }
 
         // 🔴 **Where an interface line arriving from the network is stopped, and why there is no
@@ -8892,75 +8708,8 @@ namespace UnityGameTranslator.Core
     /// </summary>
 
 
-    /// <summary>
-    /// A translation entry with value and tag.
-    /// JSON format: {"v": "value", "t": "A/H/V", "i": 123}
-    /// </summary>
-    public class TranslationEntry
-    {
-        /// <summary>The translated value</summary>
-        public string Value { get; set; } = "";
-
-        /// <summary>
-        /// Tag indicating the source of this translation.
-        /// A = AI generated, H = Human, V = AI Validated by human,
-        /// S = Skipped (wrong source language), M = Mod UI.
-        /// Null defaults to A.
-        /// </summary>
-        public string Tag { get; set; } = "A";
-
-        /// <summary>
-        /// Capture-order index "i": monotonic number assigned when the text is
-        /// first captured, used by the web editors to sort entries in the order
-        /// they appeared in-game. Presentation metadata ONLY — excluded from the
-        /// content hash (mod and website), ignored by merge comparisons, and
-        /// absent on entries written by older mod versions.
-        /// </summary>
-        public long? Index { get; set; }
-
-        /// <summary>True if this is a Skipped or Mod UI entry (immutable tags)</summary>
-        public bool IsImmutableTag => Tag == "S" || Tag == "M";
-
-        /// <summary>True if Value is null or empty</summary>
-        public bool IsEmpty => string.IsNullOrEmpty(Value);
-
-        /// <summary>True if this is a Human-tagged empty entry (capture-only placeholder)</summary>
-        public bool IsHumanEmpty => Tag == "H" && IsEmpty;
-
-        /// <summary>
-        /// Get the priority of this entry for merge conflict resolution.
-        /// Higher priority wins: H empty (0) < A (1) < V (2) < H with value (3) < S/M (99)
-        /// S and M are immutable and should never be replaced.
-        /// </summary>
-        /// <summary>
-        /// ⚠ The ladder itself lives in <see cref="UnityGameTranslator.Common.Merge.PriorityOf"/>.
-        /// It decides who wins a merge with nobody asked, and the manager settles the same lines
-        /// from outside a running game — two tables would be two answers about one file.
-        /// </summary>
-        public int Priority => Common.Merge.PriorityOf(Tag, Value);
-
-        /// <summary>
-        /// Create a new TranslationEntry from a string value (defaults to AI tag).
-        /// </summary>
-        public static TranslationEntry FromValue(string value, string tag = "A")
-        {
-            return new TranslationEntry { Value = value ?? "", Tag = tag ?? "A" };
-        }
-
-        /// <summary>
-        /// Check if this entry can replace another entry based on tag hierarchy.
-        /// S and M tags are immutable and cannot be replaced.
-        /// </summary>
-        public bool CanReplace(TranslationEntry other)
-        {
-            if (other == null) return true;
-            // Cannot replace immutable tags (S/M) regardless of priority
-            if (other.IsImmutableTag) return false;
-            return Priority > other.Priority;
-        }
-
-        public override string ToString() => $"{Value} [{Tag}]";
-    }
+    // TranslationEntry moved to TranslationEntry.cs — it has to be reachable from the checks
+    // project, and this file references UnityEngine.
 
     /// <summary>
     /// Game identification info

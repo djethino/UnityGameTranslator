@@ -5,6 +5,7 @@ using UnityEngine;
 using UnityEngine.UI;
 using UniverseLib.UI;
 using UniverseLib.UI.Models;
+using UnityGameTranslator.Common;
 using UnityGameTranslator.Core.UI.Components;
 
 namespace UnityGameTranslator.Core.UI.Panels
@@ -46,6 +47,9 @@ namespace UnityGameTranslator.Core.UI.Panels
         // Validation
         private Text _validationLabel;
         private ButtonRef _continueBtn;
+
+        // Under the target dropdown, saying why it does not open once the file holds lines
+        private Text _targetSettledHint;
 
         // Contextual help
         private Components.HelpZone _helpZone;
@@ -148,15 +152,33 @@ namespace UnityGameTranslator.Core.UI.Panels
             string configSource = TranslatorCore.Config.source_language;
             string configTarget = TranslatorCore.Config.target_language;
 
-            // Source: use config if not auto, otherwise leave empty for user to select
+            // Source: use config if not auto, otherwise leave empty for user to select. This is
+            // the one language that IS a question here — "auto" means "detect", a working mode,
+            // and the source only becomes a value when somebody declares it, which is now.
             if (!string.IsNullOrEmpty(configSource) && configSource.ToLower() != "auto")
             {
                 _sourceDropdown.SelectedValue = configSource;
             }
 
-            // Target: use config if not auto, otherwise fall back to system language
-            if (!string.IsNullOrEmpty(configTarget) && configTarget.ToLower() != "auto")
+            // 🔴 **The target is not a question: it is what the file IS.** It settled with the
+            // first translated line (TranslatorCore.SettleTargetLanguageOnFirstLine) and every
+            // line since is written in it — and a file with no line cannot be published at all.
+            // This dropdown used to be prefilled AND open: pick another target here and the site
+            // stored it while the file went on stating its own, so the next launch raised a
+            // language conflict on a translation the person had just published. Same rule as
+            // Options (AreLanguagesLocked): shown, and settled.
+            //
+            // ⚠ Read from the FILE, not the config: the config follows the file, never the other
+            // way round ("the file wins", SettleLanguagesFromFile).
+            bool targetSettled = Languages.IsSettled(TranslatorCore.FileTargetLanguage);
+
+            if (targetSettled)
             {
+                _targetDropdown.SelectedValue = TranslatorCore.FileTargetLanguage;
+            }
+            else if (!string.IsNullOrEmpty(configTarget) && configTarget.ToLower() != "auto")
+            {
+                // A file written before it said so: the config is the same answer, one step older.
                 _targetDropdown.SelectedValue = configTarget;
             }
             else
@@ -164,6 +186,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 string systemLang = LanguageHelper.GetSystemLanguageName();
                 _targetDropdown.SelectedValue = systemLang;
             }
+
+            _targetDropdown.SetInteractable(!targetSettled);
+            if (_targetSettledHint != null) _targetSettledHint.gameObject.SetActive(targetSettled);
 
             // Reset search state
             _gameSearchResults = null;
@@ -304,7 +329,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             RegisterUIText(targetTitle);
             var tgtObj = _targetDropdown.CreateUI(card, (lang) => UpdateValidation(), width: 200);
             _helpZone?.Describe(tgtObj,
-                "The language you are translating into. Must be different from the source language.");
+                "The language this translation is written in. Settled with its first line — clear the translation to change it.");
+
+            // Why the dropdown above does not open, in the words Options uses for the same lock.
+            // Shown only while it is true (ShowForSetup), which on a publishable file is always.
+            _targetSettledHint = UIStyles.CreateHint(card, "TargetSettled",
+                "Settled: this file already holds lines in this language.");
+            RegisterUIText(_targetSettledHint);
 
             UIStyles.CreateSpacer(card, 10);
 

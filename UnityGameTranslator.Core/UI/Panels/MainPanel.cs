@@ -1803,6 +1803,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Determine upload action text
             string uploadAction;
             string uploadHint;
+            _uploadAct = null;
 
             // Check for merge conflict first (highest priority action)
             bool needsMerge = TranslatorUIManager.HasPendingUpdate &&
@@ -1836,9 +1837,19 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
             else if (existsOnServer && !state.IsOwner)
             {
-                uploadAction = "Contribute";
-                uploadHint = Tr("Contribute as a branch to")
-                    + " " + People.MentionOf(state.Uploader, TranslatorCore.Config.api_user);
+                // 🔴 **The socle says whether a contribution can land here at all.** This said
+                // "Contribute" whatever the Main had decided, opened the upload screen, and the
+                // server refused after the upload. The word on the button is the act that can
+                // actually be taken — Fork, when the Main works alone or the lineage has lost its
+                // head — and the button then does that act (see OnUploadClicked).
+                _uploadAct = Uploads.ActOf(Publication.NotYours, false, state.AcceptsBranches,
+                                           state.MainMissing, state.MainAbandoned, null)
+                             ?? UploadAct.Contribute;
+                uploadAction = Uploads.Verb(_uploadAct.Value);
+                uploadHint = _uploadAct == UploadAct.Fork
+                    ? Tr("Leave this translation and publish your lines as your own")
+                    : Tr("Contribute as a branch to")
+                      + " " + People.MentionOf(state.Uploader, TranslatorCore.Config.api_user);
             }
             else
             {
@@ -2066,6 +2077,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
         }
 
+        /// <summary>
+        /// What the Actions-row upload button would do, as the socle read it on the last refresh.
+        /// Null everywhere the button is not about somebody else's lineage.
+        /// </summary>
+        private UploadAct? _uploadAct;
+
         private async void OnUploadClicked()
         {
             if (!TranslatorCore.Config.online_mode) return;
@@ -2076,6 +2093,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 // Start merge flow - download remote and show merge panel
                 await TranslatorUIManager.DownloadForMerge();
+            }
+            else if (_uploadAct == UploadAct.Fork)
+            {
+                // The button says Fork, so it forks — the same act, the same confirmation, as the
+                // Fork button of the role row. Opening the upload screen here showed a refusal.
+                OnCreateIndependentClicked();
             }
             else
             {

@@ -395,7 +395,15 @@ namespace UnityGameTranslator.Core.UI.Panels
                             MainUsername = result.MainUsername,
                             SiteId = result.OriginalTranslation?.Id,
                             Uploader = result.OriginalTranslation?.Uploader,
-                            Type = result.OriginalTranslation?.Type
+                            Type = result.OriginalTranslation?.Type,
+
+                            // ⚠ Carried over, or this rebuild WIPED it: the main panel had read the
+                            // Main's refusal from sync/state and hidden "Contribute as Branch" on
+                            // it; opening this screen put a state without the flag in its place,
+                            // and the row came back on the next refresh.
+                            AcceptsBranches = result.AcceptsBranches,
+                            MainMissing = result.MainMissing,
+                            MainAbandoned = result.MainAbandoned
                         };
 
                         // Capture for closure
@@ -408,20 +416,21 @@ namespace UnityGameTranslator.Core.UI.Panels
                         //
                         // ⚠ Only when the server SAID so. AcceptsBranches is null on a server that
                         // predates the field, and null means "not asked" — behaving as a refusal
-                        // there would put words in an author's mouth.
-                        if (result.AcceptsBranches == false)
+                        // there would put words in an author's mouth. The socle weighs it, so the
+                        // wall reads the same here, on the main panel and in the Manager.
+                        string wall = Uploads.Wall(Publication.NotYours, false, uploader,
+                                                   result.AcceptsBranches, result.MainMissing,
+                                                   result.MainAbandoned, null);
+                        if (wall != null)
                         {
                             TranslatorUIManager.RunOnMainThread(() =>
                             {
                                 _uploadMode = UploadMode.Branch;
                                 RefreshStatusControl();
-                                SetDynamicText(_titleLabel, "This translation is solo work");
-                                _modeInfoLabel.text = "@" + uploader + " "
-                                    + Tr("works alone on this one and does not take contributions.")
-                                    + System.Environment.NewLine
-                                    + Tr("Your lines are safe. Make yours independent to publish them.");
+                                SetDynamicText(_titleLabel, "This translation cannot take a contribution");
+                                _modeInfoLabel.text = wall;
                                 SetDynamicText(_uploadBtn.ButtonText, "Contribute");
-                                DescribeUploadButton("This translation does not take contributions. Make yours independent instead — it keeps your lines and publishes them under your own name.");
+                                DescribeUploadButton("This translation does not take contributions. Fork instead — it keeps your lines and publishes them under your own name.");
                                 _statusLabel.text = "";
                                 _isChecking = false;
                                 _uploadBtn.Component.interactable = false;

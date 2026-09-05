@@ -60,81 +60,28 @@ namespace UnityGameTranslator.Core.UI.Panels
         }
 
         /// <summary>
-        /// Calculate confidence score for a game search result.
-        /// Higher score = more likely to be the correct game.
+        /// How likely a search result is to be the detected game — the socle's rule, shared with
+        /// the Manager since it asks the same question before a first publication.
         /// </summary>
         private int CalculateConfidence(GameApiInfo game)
         {
-            int score = 0;
             var currentGame = TranslatorCore.CurrentGame;
-
-            // steam_id match with detected game: +50 points
-            if (!string.IsNullOrEmpty(game.SteamId) &&
-                currentGame != null &&
-                !string.IsNullOrEmpty(currentGame.steam_id) &&
-                game.SteamId == currentGame.steam_id)
-            {
-                score += 50;
-            }
-
-            // source == "local" (has translations): +30 points
-            if (game.Source == "local")
-            {
-                score += 30;
-            }
-            // source == "steam": +20 points
-            else if (game.Source == "steam")
-            {
-                score += 20;
-            }
-
-            // Name matching
-            if (currentGame != null && !string.IsNullOrEmpty(currentGame.name))
-            {
-                string detectedName = currentGame.name.ToLowerInvariant();
-                string resultName = game.Name?.ToLowerInvariant() ?? "";
-
-                // Exact name match: +20 points
-                if (detectedName == resultName)
-                {
-                    score += 20;
-                }
-                // Partial name match (contains): +5 points
-                else if (resultName.Contains(detectedName) || detectedName.Contains(resultName))
-                {
-                    score += 5;
-                }
-            }
-
-            return score;
+            return GameCandidates.Confidence(game.SteamId, game.Name, game.Source,
+                                             currentGame?.steam_id, currentGame?.name);
         }
 
         /// <summary>
-        /// Get background color based on confidence score.
+        /// Get background color based on confidence score. The thresholds are the socle's, the
+        /// same lines that decide the ★ and ☆ marks.
         /// </summary>
         private Color GetConfidenceColor(int score)
         {
-            if (score >= 50)
+            if (score >= GameCandidates.BestMatch)
                 return UIStyles.StatusSuccess; // Green - high confidence
-            else if (score >= 20)
+            else if (score >= GameCandidates.LikelyMatch)
                 return UIStyles.StatusWarning; // Yellow - medium confidence
             else
                 return UIStyles.ItemBackground; // Default - low confidence
-        }
-
-        /// <summary>
-        /// Get user-friendly display name for source.
-        /// </summary>
-        private string GetSourceDisplayName(string source)
-        {
-            switch (source?.ToLowerInvariant())
-            {
-                case "local": return "catalog"; // Already in our database with translations
-                case "steam": return "steam";
-                case "igdb": return "igdb";
-                case "rawg": return "rawg";
-                default: return source ?? "";
-            }
         }
 
         /// <summary>
@@ -288,8 +235,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             RegisterExcluded(_gameSearchStatus);
 
             // Legend for the search result markers
-            var resultsLegend = UIStyles.CreateHint(gameBox, "ResultsLegend",
-                "Pick the matching game. ★ = best match • [catalog] = already known here, other tags = external game databases");
+            var resultsLegend = UIStyles.CreateHint(gameBox, "ResultsLegend", GameCandidates.Legend);
             RegisterUIText(resultsLegend);
 
             // Search results scroll
@@ -537,21 +483,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 Color bgColor = GetConfidenceColor(confidence);
                 UIStyles.SetBackground(btn.Component.gameObject, bgColor);
 
-                // Build display text with source and confidence indicator
-                string displayText = game.Name;
-                if (!string.IsNullOrEmpty(game.Source))
-                {
-                    string sourceDisplay = GetSourceDisplayName(game.Source);
-                    displayText += $" [{sourceDisplay}]";
-                }
-
-                // Add confidence indicator
-                if (confidence >= 50)
-                    displayText += " ★"; // High confidence
-                else if (confidence >= 20)
-                    displayText += " ☆"; // Medium confidence
-
-                btn.ButtonText.text = displayText;
+                // Name, source in brackets, mark — the socle's row, the same one the Manager lists.
+                btn.ButtonText.text = GameCandidates.Row(game.Name, game.Source, confidence);
 
                 // Capture game in closure
                 var capturedGame = game;

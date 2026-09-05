@@ -100,8 +100,8 @@ namespace UnityGameTranslator.Core.Checks
             Section("Mod interface migration");
             ModUiMigrationChecks.Run(Check);
 
-            Section("The language of a translation");
-            TranslationLanguagesChecks.Run(Check);
+            // ⚠ "The language of a translation" left with its rule: TranslationLanguages lives in
+            // the socle since 2026-09-05, and its cases run in Common.Checks.
 
             Section("The interface file, across a whole sequence");
             ModUiStoreChecks.Run(Check);

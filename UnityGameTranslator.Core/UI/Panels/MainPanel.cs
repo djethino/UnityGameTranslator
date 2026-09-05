@@ -1891,9 +1891,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             bool lineageIsDead = lineage != null
                                  && (lineage.MainMissing == true || lineage.MainAbandoned == true);
 
+            // ⚠ A dead lineage closes the SEND, not the way out: when the socle has turned this
+            // button into Fork, forking is precisely what a dead lineage calls for, and greying it
+            // under a hint saying "Fork to carry on" would be a door and its own refusal.
             bool canUpload = isLoggedIn && TranslatorCore.Config.online_mode &&
                             TranslatorCore.TranslationCache.Count > 0 && !isInSync && !stillTheCopy
-                            && !lineageIsDead;
+                            && (!lineageIsDead || _uploadAct == UploadAct.Fork);
             _uploadBtn.Component.interactable = canUpload;
             ScopeMarks.Tint(_uploadBtn, canUpload);
 

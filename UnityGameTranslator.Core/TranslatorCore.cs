@@ -3365,7 +3365,7 @@ namespace UnityGameTranslator.Core
 
         private static void LoadAncestorCache()
         {
-            string ancestorPath = CachePath + ".ancestor";
+            string ancestorPath = TranslationFiles.AncestorOf(CachePath);
             if (!File.Exists(ancestorPath))
             {
                 AncestorCache = new Dictionary<string, TranslationEntry>();
@@ -3572,7 +3572,7 @@ namespace UnityGameTranslator.Core
         // branch owns (present locally and in its ancestor, absent from the Main)
         // look like a remote deletion. See analyse/main-to-branch-sync.md §2.
 
-        private static string MainAncestorPath => CachePath + ".mainancestor";
+        private static string MainAncestorPath => TranslationFiles.MainAncestorOf(CachePath);
 
         /// <summary>
         /// The Main's content at the last merge from it, or an EMPTY dictionary
@@ -3733,7 +3733,7 @@ namespace UnityGameTranslator.Core
         {
             try
             {
-                string ancestorPath = CachePath + ".ancestor";
+                string ancestorPath = TranslationFiles.AncestorOf(CachePath);
                 var output = new JObject();
 
                 foreach (var kvp in TranslationCache)
@@ -3783,7 +3783,7 @@ namespace UnityGameTranslator.Core
         {
             try
             {
-                string ancestorPath = CachePath + ".ancestor";
+                string ancestorPath = TranslationFiles.AncestorOf(CachePath);
                 var output = new JObject();
 
                 foreach (var kvp in remoteTranslations)
@@ -3827,7 +3827,7 @@ namespace UnityGameTranslator.Core
         {
             try
             {
-                string ancestorPath = CachePath + ".ancestor";
+                string ancestorPath = TranslationFiles.AncestorOf(CachePath);
                 var output = new JObject();
 
                 foreach (var kvp in remoteTranslations)
@@ -7912,22 +7912,33 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Clears the ancestor cache file.
+        /// Drops both baselines a fork inherits from the lineage it leaves: its own last-synced
+        /// ancestor and, if it was a branch, the Main it last merged from. A fork is a Main in its
+        /// own right; what serves a branch only, it no longer needs (decided 2026-09-07).
+        ///
+        /// 🔴 The memory is cleared WHETHER OR NOT a file existed. This used to sit inside the
+        /// `File.Exists` test — and the path it tested was misspelt (`translations.ancestor.json`
+        /// for a file every reader names `translations.json.ancestor`), so nothing was ever deleted
+        /// and the clear never ran: every fork went on counting its lines against a stranger's
+        /// ancestor until its first upload rewrote it. The name lives in
+        /// <see cref="TranslationFiles"/> now, the deletion in <see cref="CompanionFiles"/>, where
+        /// Core.Checks replays it on real files.
         /// </summary>
         private static void ClearAncestorCache()
         {
+            AncestorCache = new Dictionary<string, TranslationEntry>();
+            AncestorSettings = null;
+
             try
             {
-                string ancestorPath = CachePath.Replace(".json", ".ancestor.json");
-                if (File.Exists(ancestorPath))
-                {
-                    File.Delete(ancestorPath);
-                    AncestorCache.Clear();
-                }
+                int dropped = CompanionFiles.DeleteAncestors(CachePath);
+                LogDebug($"[Fork] Dropped {dropped} ancestor file(s)");
             }
             catch (Exception e)
             {
-                Adapter?.LogWarning($"Failed to clear ancestor cache: {e.Message}");
+                // A file that would not go stays to be reloaded at the next launch — said loudly,
+                // because that is exactly the state this method exists to prevent.
+                Adapter?.LogWarning($"Failed to drop the ancestors after forking: {e.Message}");
             }
         }
     }

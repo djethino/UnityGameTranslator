@@ -46,6 +46,7 @@ namespace UnityGameTranslator.Core.Checks
             WhenTextMayBeTyping();
             HowATargetIsNamed();
             WhereTheModsInterfaceGoes();
+            WhatSitsBesideTheTranslation();
             HowAStringIsShaped();
             WhatADownloadedFileMayAskFor();
 
@@ -105,6 +106,13 @@ namespace UnityGameTranslator.Core.Checks
 
             Section("The interface file, across a whole sequence");
             ModUiStoreChecks.Run(Check);
+        }
+
+        /// <summary>The ancestors a fork drops and the images a backup carries — on real files, by their real names.</summary>
+        private static void WhatSitsBesideTheTranslation()
+        {
+            Section("Companion files (ancestors, images)");
+            CompanionFilesChecks.Run(Check);
         }
 
         /// <summary>Which strings trigger the presentation pass, and what shaping makes of them.</summary>

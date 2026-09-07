@@ -32,8 +32,9 @@ namespace UnityGameTranslator.Core
                 ? null
                 : Path.Combine(TranslatorCore.ModFolder, Backups.FolderName);
 
-        private const string TranslationFile = "translations.json";
-        private const string AncestorFile = "translations.json.ancestor";
+        // The names as a copy stores them — the same the game folder uses, so a copy IS the folder.
+        private const string TranslationFile = TranslationFiles.Name;
+        private static readonly string AncestorFile = TranslationFiles.AncestorOf(TranslationFiles.Name);
 
         /// <summary>Marks an id naming a file an earlier version left, rather than a folder.</summary>
         private const string LegacyPrefix = "legacy:";
@@ -342,7 +343,7 @@ namespace UnityGameTranslator.Core
                 // both sides agreed on; restoring a file while leaving the newer ancestor behind
                 // leaves the next merge comparing against a state that never existed, and nothing
                 // would ever notice.
-                var ancestor = source + ".ancestor";
+                var ancestor = TranslationFiles.AncestorOf(source);
                 if (File.Exists(ancestor))
                     File.Copy(ancestor, Path.Combine(directory, AncestorFile), overwrite: true);
 
@@ -422,36 +423,28 @@ namespace UnityGameTranslator.Core
             }
         }
 
-        /// <summary>The image files this translation puts in place, read from the file itself.</summary>
+        /// <summary>
+        /// The image files this translation puts in place, read from the file itself.
+        ///
+        /// ⚠ Read under the key the file WRITES (<see cref="TranslationFiles.ImagesSection"/>). This
+        /// read `_images` for weeks — a key nothing writes — so every saved copy carried the fonts
+        /// and never an image, and nothing said so. The reading is <see cref="CompanionFiles"/>'s,
+        /// where a check breaks it on purpose.
+        /// </summary>
         private static List<string> ImagesInUse()
         {
-            var names = new List<string>();
-
             try
             {
                 var path = TranslatorCore.CachePath;
-                if (string.IsNullOrEmpty(path) || !File.Exists(path)) return names;
+                if (string.IsNullOrEmpty(path) || !File.Exists(path)) return new List<string>();
 
-                var root = JObject.Parse(File.ReadAllText(path));
-                if (!(root["_images"] is JArray images)) return names;
-
-                foreach (var item in images)
-                {
-                    if (!(item is JObject obj)) continue;
-
-                    var file = obj.Value<string>("file")
-                               ?? obj.Value<string>("replacement_file")
-                               ?? obj.Value<string>("original_file");
-
-                    if (!string.IsNullOrEmpty(file)) names.Add(file);
-                }
+                return CompanionFiles.ImagesNamedBy(JObject.Parse(File.ReadAllText(path)));
             }
             catch (Exception e)
             {
                 TranslatorCore.LogWarning($"[Backups] Could not read the images in use: {e.Message}");
+                return new List<string>();
             }
-
-            return names;
         }
 
         /// <summary>
@@ -590,7 +583,7 @@ namespace UnityGameTranslator.Core
 
                     // ⚠ The stale ancestor goes rather than staying to describe an agreement that
                     // never happened. A blind first merge is a known state; a wrong base is not.
-                    var stale = TranslatorCore.CachePath + ".ancestor";
+                    var stale = TranslationFiles.AncestorOf(TranslatorCore.CachePath);
                     if (File.Exists(stale)) File.Delete(stale);
 
                     TranslatorCore.ReloadCache();
@@ -606,7 +599,7 @@ namespace UnityGameTranslator.Core
 
                 // The ancestor of the copy, or none at all — never the one belonging to the file
                 // we have just replaced. See the note where copies are taken.
-                var ancestorTarget = TranslatorCore.CachePath + ".ancestor";
+                var ancestorTarget = TranslationFiles.AncestorOf(TranslatorCore.CachePath);
                 var ancestorSource = Path.Combine(directory, AncestorFile);
 
                 if (File.Exists(ancestorSource)) File.Copy(ancestorSource, ancestorTarget, overwrite: true);

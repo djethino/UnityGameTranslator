@@ -54,6 +54,12 @@
     <Compile Include="../../UnityGameTranslator.Core/ModUiStore.cs" />
     <Compile Include="../../UnityGameTranslator.Core/TranslationEntry.cs" />
     <!--
+      Same family, same reason: the fork's ancestor clean-up and the backups' image list were both
+      wrong on the NAME of a file or a key, and nothing could see it. Paths and parsed JSON in,
+      files gone or names out — replayed here on a real folder.
+    -->
+    <Compile Include="../../UnityGameTranslator.Core/CompanionFiles.cs" />
+    <!--
       The socle, as an assembly rather than as files. It has no Unity reference of any kind — the
       mod, the manager and this project all read the same build — so the reasoning above does not
       apply to it: what it forbids is dragging a game engine in, not sharing a pure library.

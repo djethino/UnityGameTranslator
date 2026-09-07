@@ -314,6 +314,12 @@ namespace UnityGameTranslator.Core.UI.Components
             set { Text?.Say(value); }
         }
 
+        /// <summary>Recolour for another purpose — a confirm that turns dangerous.</summary>
+        public ButtonTone Tone
+        {
+            set { if (Object != null) UIStyles.SetBackground(Object, Tones.ButtonFill(value)); }
+        }
+
         /// <summary>Pressed. Every subscriber runs, in order.</summary>
         public event Action Clicked
         {

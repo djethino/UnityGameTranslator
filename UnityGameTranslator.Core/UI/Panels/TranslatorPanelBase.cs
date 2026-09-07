@@ -718,6 +718,33 @@ namespace UnityGameTranslator.Core.UI.Panels
             return scrollObj;
         }
 
+        // ── The frontier, as the panels reach it ──────────────────────────────────────────
+        // A panel that has moved to the vocabulary holds Hosts and handles and nothing else.
+        // These are the same layouts as the GameObject ones above, handed out as Hosts; the
+        // GameObject ones go the day the last panel has moved.
+
+        /// <summary>The panel's own content root, as a host.</summary>
+        protected Host Content => new Host(ContentRoot);
+
+        /// <summary>The scrollable body and the fixed footer, as hosts.</summary>
+        protected void Layout(out Host scrollContent, out Host buttonRow, int cardWidth = 420)
+        {
+            CreateScrollablePanelLayout(out GameObject scroll, out GameObject footer, cardWidth);
+            scrollContent = new Host(scroll);
+            buttonRow = new Host(footer);
+        }
+
+        /// <summary>The help bar, pinned above a footer held as a host.</summary>
+        protected Components.HelpZone CreateHelpZone(Host buttonRow, string defaultText = "")
+            => CreateHelpZone(buttonRow?.Object, defaultText);
+
+        /// <summary>A fixed header between the title bar and the scroll area, as a host.</summary>
+        protected Host FixedHeader(string name = "FixedHeader") => new Host(CreateFixedHeader(name));
+
+        /// <summary>A title with the scope switch beside it, as a label a panel may hold.</summary>
+        protected LabelHandle ScopedTitle(Host parent, string name, string text, EditSide side)
+            => new LabelHandle(CreateScopedTitle(parent.Object, name, text, side), TextPolicy.UiText);
+
         /// <summary>
         /// Creates a contextual help bar pinned between the scroll area and the footer
         /// buttons. Hovering any control described via helpZone.Describe(...) shows its

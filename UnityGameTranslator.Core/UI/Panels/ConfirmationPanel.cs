@@ -1,13 +1,15 @@
 using System;
-using UnityEngine;
-using UnityEngine.UI;
 using UniverseLib.UI;
-using UniverseLib.UI.Models;
+using UnityGameTranslator.Core.UI.Components;
 
 namespace UnityGameTranslator.Core.UI.Panels
 {
     /// <summary>
     /// Reusable confirmation dialog for destructive actions.
+    ///
+    /// ⚠ The first panel written entirely against the vocabulary (2026-09-07): it holds labels and
+    /// buttons, and knows nothing about what draws them. What it looks like is decided by the roles
+    /// it names — a Title, a Description, a Primary that turns Danger.
     /// </summary>
     public class ConfirmationPanel : TranslatorPanelBase
     {
@@ -20,10 +22,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         protected override int MinPanelHeight => 150;
         protected override bool PersistWindowPreferences => false;
 
-        private Text _titleLabel;
-        private Text _messageLabel;
-        private ButtonRef _confirmBtn;
-        private ButtonRef _cancelBtn;
+        private LabelHandle _title;
+        private LabelHandle _message;
+        private ButtonHandle _confirm;
+        private ButtonHandle _cancel;
         private Action _onConfirm;
         private Action _onCancel;
 
@@ -48,51 +50,36 @@ namespace UnityGameTranslator.Core.UI.Panels
             Action onCancel = null,
             bool isDanger = true)
         {
-            SetDynamicText(_titleLabel, title);
-            SetDynamicText(_messageLabel, message);
-            SetDynamicText(_confirmBtn.ButtonText, confirmText);
+            _title.Say(title);
+            _message.Say(message);
+            _confirm.Label = confirmText;
             _onConfirm = onConfirm;
             _onCancel = onCancel;
 
-            // Style confirm button
-            UIStyles.SetBackground(_confirmBtn.Component.gameObject,
-                isDanger ? UIStyles.ButtonDanger : UIStyles.ButtonPrimary);
+            _confirm.Tone = isDanger ? ButtonTone.Danger : ButtonTone.Primary;
 
             SetActive(true);
         }
 
         protected override void ConstructPanelContent()
         {
-            // Use centralized scroll layout like all other panels
-            CreateScrollablePanelLayout(out var scrollContent, out var buttonRow, PanelWidth - 40);
+            Layout(out var body, out var footer, PanelWidth - 40);
 
-            var card = CreateAdaptiveCard(scrollContent, "ConfirmCard", 360);
+            var card = Stacks.Card(body, "ConfirmCard", 360);
 
-            // Title - dynamically set, use UI-specific translation
-            _titleLabel = UIFactory.CreateLabel(card, "Title", "Confirm", TextAnchor.MiddleCenter);
-            _titleLabel.fontSize = UIStyles.FontSizeTitle;
-            _titleLabel.fontStyle = FontStyle.Bold;
-            _titleLabel.color = UIStyles.TextPrimary;
-            UIFactory.SetLayoutElement(_titleLabel.gameObject, minHeight: UIStyles.TitleHeight);
-            RegisterExcluded(_titleLabel);
+            // Written by Show, so Dynamic: translated at the moment they are written.
+            _title = Labels.Create(card, "Title", "Confirm", TextRole.Title, policy: TextPolicy.Dynamic);
 
-            UIStyles.CreateSpacer(card, 10);
+            Stacks.Spacer(card, 10);
 
-            // Message - dynamically set, use UI-specific translation
-            _messageLabel = UIFactory.CreateLabel(card, "Message", "", TextAnchor.MiddleCenter);
-            _messageLabel.fontSize = UIStyles.FontSizeNormal;
-            _messageLabel.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(_messageLabel.gameObject, minHeight: UIStyles.MultiLineSmall);
-            RegisterExcluded(_messageLabel);
+            _message = Labels.Create(card, "Message", "", TextRole.Description,
+                                     policy: TextPolicy.Dynamic, minHeight: UIStyles.MultiLineSmall);
 
-            // Buttons in fixed footer
-            _cancelBtn = CreateSecondaryButton(buttonRow, "CancelBtn", "Cancel");
-            _cancelBtn.OnClick += OnCancelClicked;
-            RegisterUIText(_cancelBtn.ButtonText);
+            _cancel = Buttons.Secondary(footer, "CancelBtn", "Cancel");
+            _cancel.Clicked += OnCancelClicked;
 
-            _confirmBtn = CreatePrimaryButton(buttonRow, "ConfirmBtn", "Confirm");
-            _confirmBtn.OnClick += OnConfirmClicked;
-            RegisterExcluded(_confirmBtn.ButtonText);
+            _confirm = Buttons.Primary(footer, "ConfirmBtn", "Confirm", policy: TextPolicy.Dynamic);
+            _confirm.Clicked += OnConfirmClicked;
         }
 
         private void OnConfirmClicked()

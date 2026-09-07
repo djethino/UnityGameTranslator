@@ -84,6 +84,13 @@ namespace UnityGameTranslator.Core.UI.Components
         /// <param name="parent">Parent GameObject to add UI to</param>
         /// <param name="onHotkeyChanged">Callback when hotkey changes</param>
         /// <param name="includeDisplayLabel">Whether to include a display label below</param>
+        /// <summary>Build the capture control in a host.</summary>
+        public void CreateUI(Host parent, Action<string> onHotkeyChanged = null, bool includeDisplayLabel = true)
+            => CreateUI(parent.Object, onHotkeyChanged, includeDisplayLabel);
+
+        /// <summary>The control, as a panel holds it.</summary>
+        public Host Handle => new Host(_root);
+
         public void CreateUI(GameObject parent, Action<string> onHotkeyChanged = null, bool includeDisplayLabel = true)
         {
             _onHotkeyChanged = onHotkeyChanged;

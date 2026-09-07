@@ -1,15 +1,12 @@
 using System;
-using UnityEngine;
-using UnityEngine.UI;
 using UniverseLib.UI;
-using UniverseLib.UI.Models;
 using UnityGameTranslator.Core.UI.Components;
 
 namespace UnityGameTranslator.Core.UI.Panels
 {
     /// <summary>
     /// Language selection panel for choosing source and target languages.
-    /// Uses reusable LanguageSelector components.
+    /// Uses reusable SearchableDropdown components.
     /// </summary>
     public class LanguagePanel : TranslatorPanelBase
     {
@@ -26,10 +23,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         private SearchableDropdown _targetDropdown;
 
         // Summary display
-        private Text _summaryLabel;
+        private LabelHandle _summary;
 
         // Contextual help bar
-        private Components.HelpZone _helpZone;
+        private HelpZone _helpZone;
 
         // Callback
         private Action<string, string> _onLanguagesSelected;
@@ -65,75 +62,64 @@ namespace UnityGameTranslator.Core.UI.Panels
             _sourceDropdown.MarkProvider = row => row;
             _targetDropdown.MarkProvider = row => row;
 
-            // Use scrollable layout for the content
-            CreateScrollablePanelLayout(out var scrollContent, out var buttonRow, PanelWidth - 40);
+            Layout(out var body, out var footer, PanelWidth - 40);
 
             // Contextual help bar between content and footer
-            _helpZone = CreateHelpZone(buttonRow, "Hover an element to see what it does");
+            _helpZone = CreateHelpZone(footer, "Hover an element to see what it does");
 
-            var card = CreateAdaptiveCard(scrollContent, "LanguageCard", PanelWidth - 40);
+            var card = Stacks.Card(body, "LanguageCard", PanelWidth - 40);
 
-            var title = CreateTitle(card, "Title", "Select Languages");
-            RegisterUIText(title);
+            Labels.Create(card, "Title", "Select Languages", TextRole.Title);
 
-            UIStyles.CreateSpacer(card, 5);
+            Stacks.Spacer(card, 5);
 
             // Source language section
-            var sourceTitle = UIStyles.CreateSectionTitle(card, "SourceTitle", "Source Language (original game language)");
-            RegisterUIText(sourceTitle);
-            var srcObj = _sourceDropdown.CreateUI(card, (lang) => UpdateSummary(), width: 200);
-            _helpZone?.Describe(srcObj,
+            Labels.Create(card, "SourceTitle", "Source Language (original game language)", TextRole.SectionTitle);
+            var source = _sourceDropdown.CreateUI(card, lang => UpdateSummary(), width: 200);
+            _helpZone?.Describe(source,
                 "The game's original language that the mod reads from. Pick the language the game currently displays.");
 
-            UIStyles.CreateSpacer(card, 10);
+            Stacks.Spacer(card, 10);
 
             // Target language section
-            var targetTitle = UIStyles.CreateSectionTitle(card, "TargetTitle", "Target Language (translation language)");
-            RegisterUIText(targetTitle);
-            var tgtObj = _targetDropdown.CreateUI(card, (lang) => UpdateSummary(), width: 200);
-            _helpZone?.Describe(tgtObj,
+            Labels.Create(card, "TargetTitle", "Target Language (translation language)", TextRole.SectionTitle);
+            var target = _targetDropdown.CreateUI(card, lang => UpdateSummary(), width: 200);
+            _helpZone?.Describe(target,
                 "The language you want the game translated into. The mod converts text from the source language to this one.");
 
-            UIStyles.CreateSpacer(card, 10);
+            Stacks.Spacer(card, 10);
 
-            // Summary display - shows language codes, exclude from translation
-            _summaryLabel = UIFactory.CreateLabel(card, "Summary", "", TextAnchor.MiddleCenter);
-            _summaryLabel.fontSize = UIStyles.FontSizeNormal + 2;
-            _summaryLabel.fontStyle = FontStyle.Bold;
-            UIFactory.SetLayoutElement(_summaryLabel.gameObject, minHeight: UIStyles.RowHeightXLarge);
-            RegisterExcluded(_summaryLabel); // Contains language names in original form
+            // Summary: language names in their original form, written by the code — never translated
+            _summary = Labels.Create(card, "Summary", "", TextRole.SectionTitle, centred: true,
+                                     policy: TextPolicy.Dynamic, minHeight: UIStyles.RowHeightXLarge);
 
             UpdateSummary();
 
             // Buttons - in fixed footer
-            var cancelBtn = CreateSecondaryButton(buttonRow, "CancelBtn", "Cancel");
-            cancelBtn.OnClick += () => SetActive(false);
-            RegisterUIText(cancelBtn.ButtonText);
+            var cancel = Buttons.Secondary(footer, "CancelBtn", "Cancel");
+            cancel.Clicked += () => SetActive(false);
 
-            var confirmBtn = CreatePrimaryButton(buttonRow, "ConfirmBtn", "Confirm");
-            UIStyles.SetBackground(confirmBtn.Component.gameObject, UIStyles.ButtonSuccess);
-            confirmBtn.OnClick += ConfirmSelection;
-            RegisterUIText(confirmBtn.ButtonText);
-            _helpZone?.Describe(confirmBtn.Component.gameObject,
-                "Confirm the selected source and target languages and continue.");
+            var confirm = Buttons.Create(footer, "ConfirmBtn", "Confirm", ButtonTone.Success, minWidth: 130);
+            confirm.Clicked += ConfirmSelection;
+            _helpZone?.Describe(confirm, "Confirm the selected source and target languages and continue.");
         }
 
         private void UpdateSummary()
         {
-            if (_summaryLabel == null) return;
+            if (_summary == null) return;
 
             string target = _targetDropdown?.SelectedValue;
             string source = _sourceDropdown?.SelectedValue ?? "English";
 
             if (!string.IsNullOrEmpty(target))
             {
-                _summaryLabel.text = $"{source} → {target}";
-                _summaryLabel.color = UIStyles.StatusSuccess;
+                _summary.Show($"{source} → {target}");
+                _summary.Tone = Tone.Success;
             }
             else
             {
-                SetDynamicText(_summaryLabel, "Select a target language");
-                _summaryLabel.color = UIStyles.TextMuted;
+                _summary.Say("Select a target language");
+                _summary.Tone = Tone.Muted;
             }
         }
 
@@ -143,8 +129,8 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             if (string.IsNullOrEmpty(target))
             {
-                SetDynamicText(_summaryLabel, "Please select a target language!");
-                _summaryLabel.color = UIStyles.StatusError;
+                _summary.Say("Please select a target language!");
+                _summary.Tone = Tone.Error;
                 return;
             }
 

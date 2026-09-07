@@ -71,6 +71,10 @@ namespace UnityGameTranslator.Core.UI.Components
         /// </summary>
         /// <param name="parent">Parent GameObject to add UI to</param>
         /// <param name="onLanguageChanged">Callback when selection changes</param>
+        /// <summary>Create the selector in a host.</summary>
+        public void CreateUI(Host parent, Action<string> onLanguageChanged = null)
+            => CreateUI(parent.Object, onLanguageChanged);
+
         public void CreateUI(GameObject parent, Action<string> onLanguageChanged = null)
         {
             _onLanguageChanged = onLanguageChanged;

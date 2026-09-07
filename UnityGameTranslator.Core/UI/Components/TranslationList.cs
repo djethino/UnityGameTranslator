@@ -90,6 +90,17 @@ namespace UnityGameTranslator.Core.UI.Components
         /// The panel's help bar, so each row's composition bar can say its own figures on hover.
         /// Optional: without one the bar simply stays silent, as it did before.
         /// </param>
+        /// <summary>Build the list in a host.</summary>
+        public void CreateUI(Host parent, int listHeight, Action<TranslationInfo> onSelectionChanged = null,
+                             HelpZone help = null)
+            => CreateUI(parent.Object, listHeight, onSelectionChanged, help);
+
+        /// <summary>The list, as a panel holds it.</summary>
+        public Host Handle => new Host(_root);
+
+        /// <summary>Set the status message, in a tone.</summary>
+        public void SetStatus(string message, Tone tone) => SetStatus(message, Tones.Colour(tone));
+
         public void CreateUI(GameObject parent, int listHeight, Action<TranslationInfo> onSelectionChanged = null,
             HelpZone help = null)
         {

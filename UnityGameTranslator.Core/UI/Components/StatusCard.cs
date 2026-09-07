@@ -104,6 +104,12 @@ namespace UnityGameTranslator.Core.UI.Components
         /// </summary>
         /// <param name="parent">Parent container</param>
         /// <param name="width">Optional fixed width (0 = flexible width to fill parent)</param>
+        /// <summary>Create the card in a host.</summary>
+        public void CreateUI(Host parent, int width = 0) => CreateUI(parent.Object, width);
+
+        /// <summary>The card, as a panel holds it.</summary>
+        public Host Handle => new Host(_root);
+
         public void CreateUI(GameObject parent, int width = 0)
         {
             // Main card container - use flexible width if not specified

@@ -125,6 +125,13 @@ namespace UnityGameTranslator.Core.UI.Components
         /// <param name="onValueChanged">Callback when selection changes</param>
         /// <param name="width">Width of the dropdown button</param>
         /// <returns>The root GameObject of the dropdown</returns>
+        /// <summary>Build the dropdown in a host, and get it back as one — to describe or place it.</summary>
+        public Host CreateUI(Host parent, Action<string> onValueChanged = null, int width = 200)
+            => new Host(CreateUI(parent.Object, onValueChanged, width));
+
+        /// <summary>The dropdown, as a panel holds it.</summary>
+        public Host Handle => new Host(_rootObject);
+
         public GameObject CreateUI(GameObject parent, Action<string> onValueChanged = null, int width = 200)
         {
             _onValueChanged = onValueChanged;

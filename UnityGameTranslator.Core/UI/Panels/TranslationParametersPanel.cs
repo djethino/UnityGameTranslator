@@ -1,13 +1,8 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
-using UnityEngine;
-using UnityEngine.UI;
-using UniverseLib;
 using UniverseLib.UI;
-using UniverseLib.UI.Models;
 using UnityGameTranslator.Common;
-using UnityGameTranslator.Core.UI.Components;
 using UnityGameTranslator.Core.UI.Components;
 
 namespace UnityGameTranslator.Core.UI.Panels
@@ -15,6 +10,12 @@ namespace UnityGameTranslator.Core.UI.Panels
     /// <summary>
     /// Translation parameters panel with Exclusions, Fonts, Images, and Variables tabs.
     /// Extracted from OptionsPanel to keep options focused on general settings.
+    ///
+    /// ⚠ Migrated to the UI vocabulary 2026-09-08 (see
+    /// analyse/inventaire-couches/brief-migration-panneau.md): the panel now holds handles
+    /// (Host, LabelHandle, ButtonHandle, FieldHandle, ToggleHandle, SliderHandle) and talks to
+    /// the Stacks/Labels/Buttons/Fields/CheckBoxes/Sliders/ScrollList/Callout factories — it
+    /// names nothing of Unity or UniverseLib. See the migration report for what moved and why.
     /// </summary>
     public class TranslationParametersPanel : TranslatorPanelBase
     {
@@ -34,21 +35,18 @@ namespace UnityGameTranslator.Core.UI.Panels
         private TabBar _tabBar;
         private Components.HelpZone _helpZone;
 
-        // Tab sizing
-
         // Behavior section
-        private Toggle _typewritingDetectionToggle;
-        private Toggle _concatDetectionToggle;
+        private ToggleHandle _typewritingDetectionToggle;
+        private ToggleHandle _concatDetectionToggle;
 
         // Exclusions section
-        private GameObject _exclusionsListContainer;
-        private InputFieldRef _manualPatternInput;
-        private Text _exclusionsStatusLabel;
+        private ScrollList _exclusionsList;
+        private FieldHandle _manualPatternInput;
+        private LabelHandle _exclusionsStatus;
 
         // Find by value
-        private InputFieldRef _findByValueInput;
-        private GameObject _findResultsContainer;
-        private GameObject _findResultsScrollObj;
+        private FieldHandle _findByValueInput;
+        private ScrollList _findResultsList;
 
         // Pending exclusion changes
         private HashSet<string> _pendingExclusionAdds = new HashSet<string>();
@@ -56,9 +54,9 @@ namespace UnityGameTranslator.Core.UI.Panels
         private HashSet<string> _initialExclusions = new HashSet<string>();
 
         // Fonts section
-        private GameObject _fontsListContainer;
-        private Text _fontsStatusLabel;
-        private Toggle _enableFontReplacementToggle;
+        private ScrollList _fontsList;
+        private LabelHandle _fontsStatus;
+        private ToggleHandle _enableFontReplacementToggle;
         private string[] _systemFonts;
         private List<SearchableDropdown> _fallbackDropdowns = new List<SearchableDropdown>();
         // Same lifecycle rule as the fallback dropdowns: a SearchableDropdown owns a popup
@@ -79,29 +77,29 @@ namespace UnityGameTranslator.Core.UI.Panels
         private bool _rtlControlsVisible;
 
         // Images section
-        private GameObject _imagesListContainer;
-        private Text _imagesStatusLabel;
-        private Toggle _enableImageReplacementToggle;
+        private ScrollList _imagesList;
+        private LabelHandle _imagesStatus;
+        private ToggleHandle _enableImageReplacementToggle;
 
         // Variables section
-        private GameObject _variablesListContainer;
-        private Text _variablesStatusLabel;
-        private InputFieldRef _scanValueInput;
-        private GameObject _scanResultsContainer;
+        private ScrollList _variablesList;
+        private LabelHandle _variablesStatus;
+        private FieldHandle _scanValueInput;
+        private ScrollList _scanResultsList;
         private bool _isScanning;
 
         // Apply button tracking
-        private ButtonRef _applyBtn;
+        private ButtonHandle _applyBtn;
 
         // Tools tab — browser editor (live edit session)
-        private ButtonRef _browserEditorBtn;
-        private Text _browserEditorStatus;
+        private ButtonHandle _browserEditorBtn;
+        private LabelHandle _browserEditorStatus;
         // True while a start or stop round trip is in flight (see OnBrowserEditorClicked)
         private bool _browserEditorBusy;
 
         // Font highlight tracking
         private string _highlightedFontName = null;
-        private ButtonRef _highlightedButton = null;
+        private ButtonHandle _highlightedButton = null;
 
         public TranslationParametersPanel(UIBase owner) : base(owner)
         {
@@ -110,13 +108,13 @@ namespace UnityGameTranslator.Core.UI.Panels
         protected override void ConstructPanelContent()
         {
             // Use scrollable layout - content scrolls if needed, buttons stay fixed
-            CreateScrollablePanelLayout(out var scrollContent, out var buttonRow, PanelWidth - 40);
+            Layout(out var scrollContent, out var buttonRow, PanelWidth - 40);
 
             // Contextual help bar between content and footer
             _helpZone = CreateHelpZone(buttonRow, "Hover an element to see what it does");
 
             // Fixed header: tab buttons stay put, only tab content scrolls
-            var header = CreateFixedHeader();
+            var header = FixedHeader();
 
             // No big title here — the window title bar already shows "Translation Tools" (redundant).
 
@@ -125,38 +123,32 @@ namespace UnityGameTranslator.Core.UI.Panels
             _tabBar.CreateUI(header, scrollContent);
 
             // Create tab contents
-            var behaviorTab = _tabBar.AddTab("Tools");
-            var exclusionsTab = _tabBar.AddTab("Exclusions");
-            var fontsTab = _tabBar.AddTab("Fonts");
-            var imagesTab = _tabBar.AddTab("Images");
-            var variablesTab = _tabBar.AddTab("Variables");
+            var behaviorTab = _tabBar.Tab("Tools");
+            var exclusionsTab = _tabBar.Tab("Exclusions");
+            var fontsTab = _tabBar.Tab("Fonts");
+            var imagesTab = _tabBar.Tab("Images");
+            var variablesTab = _tabBar.Tab("Variables");
 
-            // Register tab texts for localization
-            foreach (var text in _tabBar.GetTabButtonTexts())
-            {
-                RegisterUIText(text);
-            }
+            // The TabBar registers its own tab labels for localization now — nothing left to do here.
 
             // Explain what lives behind each tab
-            _helpZone?.Describe(_tabBar.GetTabButton("Tools"),
+            _helpZone?.Describe(_tabBar.Button("Tools"),
                 "Text editors (in-game and browser) and text detection settings");
-            _helpZone?.Describe(_tabBar.GetTabButton("Exclusions"),
+            _helpZone?.Describe(_tabBar.Button("Exclusions"),
                 "Prevent specific texts or UI elements from being translated");
-            _helpZone?.Describe(_tabBar.GetTabButton("Fonts"),
+            _helpZone?.Describe(_tabBar.Button("Fonts"),
                 "Replace the game's fonts when they can't display your language's characters");
-            _helpZone?.Describe(_tabBar.GetTabButton("Images"),
+            _helpZone?.Describe(_tabBar.Button("Images"),
                 "Replace images that contain baked-in text");
-            _helpZone?.Describe(_tabBar.GetTabButton("Variables"),
+            _helpZone?.Describe(_tabBar.Button("Variables"),
                 "Protect dynamic values (numbers, names) inside translated texts");
 
             // Host for the Fonts sub-tab buttons: they belong to the chrome, not to the content,
             // so they sit in the fixed header like the main tabs instead of scrolling away with
             // the settings they switch between. Shown only while the Fonts tab is open.
-            _fontsSubTabHost = UIFactory.CreateVerticalGroup(header, "FontsSubTabHost",
-                false, false, true, true, 0, default, Color.clear);
-            UIFactory.SetLayoutElement(_fontsSubTabHost, flexibleWidth: 9999, flexibleHeight: 0);
-            _tabBar.OnTabChanged += (_, tabName) => _fontsSubTabHost.SetActive(tabName == "Fonts");
-            _fontsSubTabHost.SetActive(_tabBar.SelectedName == "Fonts");
+            _fontsSubTabHost = Stacks.Vertical(header, "FontsSubTabHost");
+            _tabBar.OnTabChanged += (_, tabName) => _fontsSubTabHost.Visible = tabName == "Fonts";
+            _fontsSubTabHost.Visible = _tabBar.SelectedName == "Fonts";
 
             // Build each tab's content
             CreateBehaviorTabContent(behaviorTab);
@@ -176,15 +168,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             };
 
             // Buttons - in fixed footer (outside scroll)
-            var cancelBtn = CreateSecondaryButton(buttonRow, "CancelBtn", "Cancel");
-            cancelBtn.OnClick += () => SetActive(false);
-            RegisterUIText(cancelBtn.ButtonText);
+            var cancelBtn = Buttons.Secondary(buttonRow, "CancelBtn", "Cancel");
+            cancelBtn.Clicked += () => SetActive(false);
 
-            _applyBtn = CreatePrimaryButton(buttonRow, "ApplyBtn", "Apply");
-            _applyBtn.OnClick += OnApplyClicked;
-            // EXCLUDE: code-managed dynamic text ("Apply"/"Close"/"Apply (N)") — async translation
-            // would race with UpdateApplyButtonText and break the button. Static labels stay translatable.
-            RegisterExcluded(_applyBtn.ButtonText);
+            _applyBtn = Buttons.Primary(buttonRow, "ApplyBtn", "Apply", policy: TextPolicy.Dynamic);
+            _applyBtn.Clicked += OnApplyClicked;
+            // Dynamic: code-managed text ("Apply"/"Close"/"Apply (N)") — async translation would
+            // race with UpdateApplyButtonText and break the button. Static labels stay UiText.
 
             RegisterPendingFields();
         }
@@ -196,100 +186,80 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         private void RegisterPendingFields()
         {
-            Pending.Track(_typewritingDetectionToggle?.gameObject, () => _typewritingDetectionToggle.isOn != TranslatorCore.TypewritingDetection);
-            Pending.Track(_concatDetectionToggle?.gameObject, () => _concatDetectionToggle.isOn != TranslatorCore.ConcatDetection);
-            Pending.Track(_enableFontReplacementToggle?.gameObject, () => _enableFontReplacementToggle.isOn != TranslatorCore.Config.enable_font_replacement);
-            Pending.Track(_enableImageReplacementToggle?.gameObject, () => _enableImageReplacementToggle.isOn != TranslatorCore.Config.enable_image_replacement);
-            Pending.Track(_fontAtlasSizeDropdown?.Root, () => _pendingAtlasSize != TranslatorCore.Config.max_font_atlas_size);
+            Pending.Track(_typewritingDetectionToggle, () => _typewritingDetectionToggle.IsOn != TranslatorCore.TypewritingDetection);
+            Pending.Track(_concatDetectionToggle, () => _concatDetectionToggle.IsOn != TranslatorCore.ConcatDetection);
+            Pending.Track(_enableFontReplacementToggle, () => _enableFontReplacementToggle.IsOn != TranslatorCore.Config.enable_font_replacement);
+            Pending.Track(_enableImageReplacementToggle, () => _enableImageReplacementToggle.IsOn != TranslatorCore.Config.enable_image_replacement);
+            Pending.Track(_fontAtlasSizeDropdown?.Handle, () => _pendingAtlasSize != TranslatorCore.Config.max_font_atlas_size);
         }
 
         #region Tools Tab (formerly Behavior)
 
-        private void CreateBehaviorTabContent(GameObject parent)
+        private void CreateBehaviorTabContent(Host parent)
         {
-            var card = CreateAdaptiveCard(parent, "ToolsCard", PanelWidth - 60, stretchVertically: true);
+            var card = Stacks.Card(parent, "ToolsCard", PanelWidth - 60, stretchVertically: true);
 
             // Text Editor section
-            var editorTitle = UIStyles.CreateSectionTitle(card, "TextEditorLabel", "Text Editor");
-            RegisterUIText(editorTitle);
+            Labels.Create(card, "TextEditorLabel", "Text Editor", TextRole.SectionTitle);
 
-            var editorHint = UIStyles.CreateHint(card, "TextEditorHint",
-                "Click on any text in-game to edit its translation or retranslate it with AI.");
-            RegisterUIText(editorHint);
+            Labels.Create(card, "TextEditorHint",
+                "Click on any text in-game to edit its translation or retranslate it with AI.", TextRole.Hint);
 
-            var editorBtn = CreatePrimaryButton(card, "TextEditorBtn", "Start Text Editor", PanelWidth - 100);
-            editorBtn.OnClick += OnStartTextEditorClicked;
+            var editorBtn = Buttons.Primary(card, "TextEditorBtn", "Start Text Editor", PanelWidth - 100,
+                scope: EditSide.Local);
+            editorBtn.Clicked += OnStartTextEditorClicked;
             // L'éditeur en jeu écrit le fichier d'ici, comme l'éditeur navigateur juste dessous.
-            ScopeMarks.Adorn(editorBtn, EditSide.Local);
-            RegisterUIText(editorBtn.ButtonText);
-            _helpZone?.Describe(editorBtn.Component.gameObject,
+            _helpZone?.Describe(editorBtn,
                 "Pick any text on screen to fix its translation without leaving the game");
 
-            UIStyles.CreateSpacer(card, 15);
+            Stacks.Spacer(card, 15);
 
             // Browser Editor section (live edit session on the website, no account needed)
-            var browserEditorTitle = UIStyles.CreateSectionTitle(card, "BrowserEditorLabel", "Browser Editor");
-            RegisterUIText(browserEditorTitle);
+            Labels.Create(card, "BrowserEditorLabel", "Browser Editor", TextRole.SectionTitle);
 
-            var browserEditorHint = UIStyles.CreateHint(card, "BrowserEditorHint",
-                "Edit your translation file comfortably in your browser while playing — no account needed, nothing is published. Each save is applied in-game automatically.");
-            RegisterUIText(browserEditorHint);
+            Labels.Create(card, "BrowserEditorHint",
+                "Edit your translation file comfortably in your browser while playing — no account needed, nothing is published. Each save is applied in-game automatically.",
+                TextRole.Hint);
 
-            _browserEditorBtn = CreatePrimaryButton(card, "BrowserEditorBtn", "Edit in browser", PanelWidth - 100);
-            _browserEditorBtn.OnClick += OnBrowserEditorClicked;
+            _browserEditorBtn = Buttons.Primary(card, "BrowserEditorBtn", "Edit in browser", PanelWidth - 100,
+                scope: EditSide.Local, policy: TextPolicy.Dynamic);
+            _browserEditorBtn.Clicked += OnBrowserEditorClicked;
             // Éditer dans le navigateur ne change que le fichier d'ici — rien n'est publié.
-            ScopeMarks.Adorn(_browserEditorBtn, EditSide.Local);
-            RegisterExcluded(_browserEditorBtn.ButtonText);
-            _helpZone?.Describe(_browserEditorBtn.Component.gameObject,
+            _helpZone?.Describe(_browserEditorBtn,
                 "Open your translation in a browser editor: search, filters, and every save applied in-game live");
 
-            _browserEditorStatus = UIStyles.CreateHint(card, "BrowserEditorStatus", "");
-            RegisterExcluded(_browserEditorStatus);
+            _browserEditorStatus = Labels.Create(card, "BrowserEditorStatus", "", TextRole.Hint,
+                policy: TextPolicy.Excluded);
             RefreshBrowserEditorUI();
 
-            UIStyles.CreateSpacer(card, 15);
+            Stacks.Spacer(card, 15);
 
             // Detection section
-            var sectionTitle = UIStyles.CreateSectionTitle(card, "DetectionLabel", "Detection");
-            RegisterUIText(sectionTitle);
+            Labels.Create(card, "DetectionLabel", "Detection", TextRole.SectionTitle);
 
-            var detectionHint = UIStyles.CreateHint(card, "DetectionHint",
-                "Control how the mod detects special text patterns. Disable if causing issues with your game.");
-            RegisterUIText(detectionHint);
+            Labels.Create(card, "DetectionHint",
+                "Control how the mod detects special text patterns. Disable if causing issues with your game.",
+                TextRole.Hint);
 
             // Typewriting detection toggle
-            var twObj = UIFactory.CreateToggle(card, "TypewritingToggle", out _typewritingDetectionToggle, out var twLabel);
-            twLabel.text = " Typewriting detection";
-            twLabel.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(twObj, minHeight: UIStyles.RowHeightNormal);
-            RegisterUIText(twLabel);
-            _helpZone?.Describe(twObj,
+            _typewritingDetectionToggle = CheckBoxes.Create(card, "TypewritingToggle", "Typewriting detection",
+                TranslatorCore.TypewritingDetection, _ => UpdateApplyButtonText());
+            _helpZone?.Describe(_typewritingDetectionToggle,
                 "Detects text that appears letter by letter, like dialogues, and waits for it to settle before translating. Disable if it causes issues.");
 
-            var twHint = UIStyles.CreateHint(card, "TypewritingHint",
-                "Text that appears letter by letter (dialogues, cutscenes). Waits for the text to stabilize before translating.");
-            RegisterUIText(twHint);
+            Labels.Create(card, "TypewritingHint",
+                "Text that appears letter by letter (dialogues, cutscenes). Waits for the text to stabilize before translating.",
+                TextRole.Hint);
 
             // Concat detection toggle
-            var concatObj = UIFactory.CreateToggle(card, "ConcatToggle", out _concatDetectionToggle, out var concatLabel);
-            concatLabel.text = " Procedural text detection";
-            concatLabel.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(concatObj, minHeight: UIStyles.RowHeightNormal);
-            RegisterUIText(concatLabel);
-            _helpZone?.Describe(concatObj,
+            _concatDetectionToggle = CheckBoxes.Create(card, "ConcatToggle", "Procedural text detection",
+                TranslatorCore.ConcatDetection, _ => UpdateApplyButtonText());
+            _helpZone?.Describe(_concatDetectionToggle,
                 "Detects text assembled in parts, like tooltips or item stats, and translates each part for better cache reuse. Disable if it causes issues.");
 
-            var concatHint = UIStyles.CreateHint(card, "ConcatHint",
-                "Text built in multiple steps (tooltips, item stats). Translates each part separately for better cache reuse.");
-            RegisterUIText(concatHint);
-
-            // Init values
-            _typewritingDetectionToggle.isOn = TranslatorCore.TypewritingDetection;
-            _concatDetectionToggle.isOn = TranslatorCore.ConcatDetection;
-
-            // Listeners for Apply button
-            UIHelpers.AddToggleListener(_typewritingDetectionToggle, (val) => UpdateApplyButtonText());
-            UIHelpers.AddToggleListener(_concatDetectionToggle, (val) => UpdateApplyButtonText());
+            Labels.Create(card, "ConcatHint",
+                "Text built in multiple steps (tooltips, item stats). Translates each part separately for better cache reuse.",
+                TextRole.Hint);
         }
 
         private void OnStartTextEditorClicked()
@@ -327,7 +297,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         public void OnEditSessionEnded(string reason)
         {
-            SetBrowserEditorStatus(reason, UIStyles.TextMuted);
+            SetBrowserEditorStatus(reason, Tone.Muted);
             // Also the end of the "Stopping..." round trip when the user clicked Stop
             SetBrowserEditorBusy(false);
         }
@@ -342,7 +312,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             SetBrowserEditorStatus(
                 "Session resumed — your browser tab is connected again.",
-                UIStyles.StatusSuccess);
+                Tone.Success);
             SetBrowserEditorBusy(false);
         }
 
@@ -372,7 +342,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 {
                     // No way to ask is not a licence to decide: the safe answer is to do nothing
                     // and say why, rather than erase a session somebody may be typing in.
-                    SetBrowserEditorStatus(blocking.Question, UIStyles.StatusWarning);
+                    SetBrowserEditorStatus(blocking.Question, Tone.Warning);
                     SetBrowserEditorBusy(false);
                     return;
                 }
@@ -404,7 +374,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             SetBrowserEditorBusy(true, "Opening...");
             SetBrowserEditorStatus(
                 "Sending your translation file... your browser opens when it is ready (the tab may appear behind the game).",
-                UIStyles.TextSecondary);
+                Tone.Secondary);
 
             try
             {
@@ -428,7 +398,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 {
                     if (!success || string.IsNullOrEmpty(modKey) || string.IsNullOrEmpty(url))
                     {
-                        SetBrowserEditorStatus($"Failed to start: {error ?? "unknown error"}", UIStyles.StatusError);
+                        SetBrowserEditorStatus($"Failed to start: {error ?? "unknown error"}", Tone.Error);
                         SetBrowserEditorBusy(false);
                         return;
                     }
@@ -437,7 +407,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     TranslatorCore.OpenUrlSafe(fullUrl);
 
                     TranslatorUIManager.StartEditSessionListener(modKey);
-                    SetBrowserEditorStatus("Session active — edit in your browser, each save is applied in-game.", UIStyles.StatusSuccess);
+                    SetBrowserEditorStatus("Session active — edit in your browser, each save is applied in-game.", Tone.Success);
                     SetBrowserEditorBusy(false);
                 });
             }
@@ -448,17 +418,17 @@ namespace UnityGameTranslator.Core.UI.Panels
                 var errorMsg = e.Message;
                 TranslatorUIManager.RunOnMainThread(() =>
                 {
-                    SetBrowserEditorStatus($"Failed to start: {errorMsg}", UIStyles.StatusError);
+                    SetBrowserEditorStatus($"Failed to start: {errorMsg}", Tone.Error);
                     SetBrowserEditorBusy(false);
                 });
             }
         }
 
-        private void SetBrowserEditorStatus(string message, Color color)
+        private void SetBrowserEditorStatus(string message, Tone tone)
         {
             if (_browserEditorStatus == null) return;
-            _browserEditorStatus.text = message;
-            _browserEditorStatus.color = color;
+            _browserEditorStatus.Show(message);
+            _browserEditorStatus.Tone = tone;
         }
 
         /// <summary>
@@ -471,26 +441,24 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             _browserEditorBusy = busy;
 
-            if (_browserEditorBtn?.Component != null)
-                _browserEditorBtn.Component.interactable = !busy;
-
             if (busy)
             {
-                if (busyLabel != null && _browserEditorBtn?.ButtonText != null)
-                    SetDynamicText(_browserEditorBtn.ButtonText, busyLabel);
+                if (busyLabel != null) _browserEditorBtn?.Busy(busyLabel);
+                else if (_browserEditorBtn != null) _browserEditorBtn.Enabled = false;
                 return;
             }
 
+            if (_browserEditorBtn != null) _browserEditorBtn.Enabled = true;
             RefreshBrowserEditorUI();
         }
 
         private void RefreshBrowserEditorUI()
         {
-            if (_browserEditorBtn?.ButtonText != null)
+            if (_browserEditorBtn != null)
             {
-                SetDynamicText(_browserEditorBtn.ButtonText, TranslatorUIManager.IsEditSessionActive
+                _browserEditorBtn.Label = TranslatorUIManager.IsEditSessionActive
                     ? "Stop browser session"
-                    : "Edit in browser");
+                    : "Edit in browser";
             }
         }
 
@@ -498,106 +466,79 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         #region Exclusions Tab
 
-        private void CreateExclusionsTabContent(GameObject parent)
+        private void CreateExclusionsTabContent(Host parent)
         {
-            var card = CreateAdaptiveCard(parent, "ExclusionsCard", PanelWidth - 60, stretchVertically: true);
+            var card = Stacks.Card(parent, "ExclusionsCard", PanelWidth - 60, stretchVertically: true);
 
             // Header and explanation
-            var sectionTitle = UIStyles.CreateSectionTitle(card, "ExclusionsLabel", "UI Exclusions");
-            RegisterUIText(sectionTitle);
+            Labels.Create(card, "ExclusionsLabel", "UI Exclusions", TextRole.SectionTitle);
 
-            var explainHint = UIStyles.CreateHint(card, "ExclusionsHint", "Exclude UI elements from translation (chat windows, player names, etc.). Exclusions are shared when you upload your translation.");
-            RegisterUIText(explainHint);
+            Labels.Create(card, "ExclusionsHint",
+                "Exclude UI elements from translation (chat windows, player names, etc.). Exclusions are shared when you upload your translation.",
+                TextRole.Hint);
 
-            UIStyles.CreateSpacer(card, 10);
+            Stacks.Spacer(card, 10);
 
             // Inspector button
-            var inspectorBtn = CreatePrimaryButton(card, "InspectorBtn", "Start Inspector Mode", PanelWidth - 100);
-            inspectorBtn.OnClick += OnStartInspectorClicked;
-            RegisterUIText(inspectorBtn.ButtonText);
-            _helpZone?.Describe(inspectorBtn.Component.gameObject,
+            var inspectorBtn = Buttons.Primary(card, "InspectorBtn", "Start Inspector Mode", PanelWidth - 100);
+            inspectorBtn.Clicked += OnStartInspectorClicked;
+            _helpZone?.Describe(inspectorBtn,
                 "Closes this panel so you can click UI elements in-game to exclude them from translation.");
 
-            var inspectorHint = UIStyles.CreateHint(card, "InspectorHint", "Click on UI elements to exclude them");
-            RegisterUIText(inspectorHint);
+            Labels.Create(card, "InspectorHint", "Click on UI elements to exclude them", TextRole.Hint);
 
-            UIStyles.CreateSpacer(card, 10);
+            Stacks.Spacer(card, 10);
 
             // Manual add section
-            var manualLabel = UIFactory.CreateLabel(card, "ManualLabel", "Add pattern manually:", TextAnchor.MiddleLeft);
-            manualLabel.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(manualLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
-            RegisterUIText(manualLabel);
+            Labels.Create(card, "ManualLabel", "Add pattern manually:", TextRole.Small);
 
-            var addRow = UIStyles.CreateFormRow(card, "AddRow", UIStyles.InputHeight, 5);
+            var addRow = Stacks.Row(card, "AddRow", spacing: 5, minHeight: UIStyles.InputHeight);
 
-            _manualPatternInput = UIFactory.CreateInputField(addRow, "PatternInput", "e.g., **/ChatPanel/**");
-            UIFactory.SetLayoutElement(_manualPatternInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
-            UIStyles.SetBackground(_manualPatternInput.Component.gameObject, UIStyles.InputBackground);
-            _helpZone?.Describe(_manualPatternInput.Component.gameObject,
+            _manualPatternInput = Fields.Create(addRow, "PatternInput", "e.g., **/ChatPanel/**");
+            _helpZone?.Describe(_manualPatternInput,
                 "Type a hierarchy path pattern to exclude. Use ** for any depth and * for a single level.");
 
-            var addBtn = CreateSecondaryButton(addRow, "AddBtn", "Add", 60);
-            addBtn.OnClick += OnAddManualPatternClicked;
-            RegisterUIText(addBtn.ButtonText);
-            _helpZone?.Describe(addBtn.Component.gameObject,
+            var addBtn = Buttons.Secondary(addRow, "AddBtn", "Add", 60);
+            addBtn.Clicked += OnAddManualPatternClicked;
+            _helpZone?.Describe(addBtn,
                 "Adds the typed pattern to the exclusion list. Takes effect on Apply.");
 
-            var patternHint = UIStyles.CreateHint(card, "PatternHint", "Use ** for any depth, * for single level");
-            RegisterUIText(patternHint);
+            Labels.Create(card, "PatternHint", "Use ** for any depth, * for single level", TextRole.Hint);
 
-            UIStyles.CreateSpacer(card, 10);
+            Stacks.Spacer(card, 10);
 
             // Find by value section
-            var findLabel = UIFactory.CreateLabel(card, "FindLabel", "Find by text content:", TextAnchor.MiddleLeft);
-            findLabel.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(findLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
-            RegisterUIText(findLabel);
+            Labels.Create(card, "FindLabel", "Find by text content:", TextRole.Small);
 
-            var findRow = UIStyles.CreateFormRow(card, "FindRow", UIStyles.InputHeight, 5);
+            var findRow = Stacks.Row(card, "FindRow", spacing: 5, minHeight: UIStyles.InputHeight);
 
-            _findByValueInput = UIFactory.CreateInputField(findRow, "FindValueInput", "Enter text visible in-game...");
-            UIFactory.SetLayoutElement(_findByValueInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
-            UIStyles.SetBackground(_findByValueInput.Component.gameObject, UIStyles.InputBackground);
-            _helpZone?.Describe(_findByValueInput.Component.gameObject,
+            _findByValueInput = Fields.Create(findRow, "FindValueInput", "Enter text visible in-game...");
+            _helpZone?.Describe(_findByValueInput,
                 "Type text visible in-game to locate the UI element that shows it, then exclude it.");
 
-            var findBtn = CreateSecondaryButton(findRow, "FindBtn", "Find", 60);
-            findBtn.OnClick += OnFindByValueClicked;
-            RegisterUIText(findBtn.ButtonText);
-            _helpZone?.Describe(findBtn.Component.gameObject,
+            var findBtn = Buttons.Secondary(findRow, "FindBtn", "Find", 60);
+            findBtn.Clicked += OnFindByValueClicked;
+            _helpZone?.Describe(findBtn,
                 "Searches the scene for UI components displaying the entered text.");
 
-            var findHint = UIStyles.CreateHint(card, "FindHint", "Find which UI component displays this text, then exclude it");
-            RegisterUIText(findHint);
+            Labels.Create(card, "FindHint", "Find which UI component displays this text, then exclude it", TextRole.Hint);
 
             // Find results (hidden until search)
-            var findResultsScroll = UIFactory.CreateScrollView(card, "FindResultsScroll", out var findResultsContent, out _);
-            UIFactory.SetLayoutElement(findResultsScroll, minHeight: 0, preferredHeight: 80, flexibleHeight: 0);
-            _findResultsContainer = findResultsContent;
-            _findResultsScrollObj = findResultsScroll;
-            findResultsScroll.SetActive(false);
+            _findResultsList = ScrollList.Create(card, "FindResultsScroll", minHeight: 0, preferredHeight: 80,
+                fillHeight: false, emptyText: "No UI component found with this text.");
+            _findResultsList.Visible = false;
 
-            UIStyles.CreateSpacer(card, 10);
+            Stacks.Spacer(card, 10);
 
             // Current exclusions list
-            var listLabel = UIFactory.CreateLabel(card, "ListLabel", "Current Exclusions:", TextAnchor.MiddleLeft);
-            listLabel.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(listLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
-            RegisterUIText(listLabel);
+            Labels.Create(card, "ListLabel", "Current Exclusions:", TextRole.Small);
 
             // Scrollable container for exclusions
-            var scrollObj = UIFactory.CreateScrollView(card, "ExclusionsScroll", out var scrollContent, out var scrollbar);
-            UIFactory.SetLayoutElement(scrollObj, minHeight: 200, preferredHeight: 200, flexibleHeight: 9999, flexibleWidth: 9999);
-            UIStyles.SetBackground(scrollObj, UIStyles.TroughBackground);
-            UIFactory.ConfigureAutoHideScrollbar(scrollObj);
-
-            _exclusionsListContainer = scrollContent;
+            _exclusionsList = ScrollList.Create(card, "ExclusionsScroll", minHeight: 200, preferredHeight: 200,
+                emptyText: "No exclusions defined");
 
             // Status label
-            _exclusionsStatusLabel = UIFactory.CreateLabel(card, "ExclusionsStatus", "", TextAnchor.MiddleLeft);
-            _exclusionsStatusLabel.fontSize = UIStyles.FontSizeSmall;
-            UIFactory.SetLayoutElement(_exclusionsStatusLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+            _exclusionsStatus = Labels.Create(card, "ExclusionsStatus", "", TextRole.Small, policy: TextPolicy.Dynamic);
         }
 
         /// <summary>
@@ -621,7 +562,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             SetActive(true);
             _tabBar?.SelectTab("Tools");
-            if (UIRoot != null) UIRoot.transform.SetAsLastSibling();
+            Window.ToBack();
         }
 
         public void OpenOnFontOverridesTab()
@@ -630,7 +571,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _tabBar?.SelectTab("Fonts");
             _fontsSubTabBar?.SelectTab("Overrides");
             RefreshFontOverridesList();
-            if (UIRoot != null) UIRoot.transform.SetAsLastSibling();
+            Window.ToBack();
         }
 
         private void OnStartInspectorClicked()
@@ -653,8 +594,8 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             if (string.IsNullOrEmpty(pattern))
             {
-                SetDynamicText(_exclusionsStatusLabel, "Enter a pattern first");
-                _exclusionsStatusLabel.color = UIStyles.StatusWarning;
+                _exclusionsStatus.Say("Enter a pattern first");
+                _exclusionsStatus.Tone = Tone.Warning;
                 return;
             }
 
@@ -665,8 +606,8 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             if (alreadyExists && !wasRemoved)
             {
-                SetDynamicText(_exclusionsStatusLabel, "Pattern already exists");
-                _exclusionsStatusLabel.color = UIStyles.StatusWarning;
+                _exclusionsStatus.Say("Pattern already exists");
+                _exclusionsStatus.Tone = Tone.Warning;
                 return;
             }
 
@@ -681,8 +622,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
 
             _manualPatternInput.Text = "";
-            SetDynamicText(_exclusionsStatusLabel, "Pattern will be added on Apply");
-            _exclusionsStatusLabel.color = UIStyles.TextSecondary;
+            _exclusionsStatus.Say("Pattern will be added on Apply");
+            _exclusionsStatus.Tone = Tone.Secondary;
 
             RefreshExclusionsList();
             UpdateApplyButtonText();
@@ -693,18 +634,16 @@ namespace UnityGameTranslator.Core.UI.Panels
             string searchValue = _findByValueInput?.Text?.Trim();
             if (string.IsNullOrEmpty(searchValue))
             {
-                SetDynamicText(_exclusionsStatusLabel, "Enter text to search for");
-                _exclusionsStatusLabel.color = UIStyles.StatusWarning;
+                _exclusionsStatus.Say("Enter text to search for");
+                _exclusionsStatus.Tone = Tone.Warning;
                 return;
             }
 
             // Show results container
-            _findResultsScrollObj.SetActive(true);
+            _findResultsList.Visible = true;
 
             // Clear previous results
-            int childCount = _findResultsContainer.transform.childCount;
-            for (int i = childCount - 1; i >= 0; i--)
-                UnityEngine.Object.Destroy(_findResultsContainer.transform.GetChild(i).gameObject);
+            _findResultsList.Clear();
 
             // 🔴 One enumeration for every framework, not a list of type names written here.
             // This used to name UI.Text and TMP_Text in its own code, so a player on an NGUI, tk2d,
@@ -727,66 +666,48 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             if (found.Count == 0)
             {
-                var emptyLabel = UIFactory.CreateLabel(_findResultsContainer, "NoResults",
-                    "No UI component found with this text.", TextAnchor.MiddleCenter);
-                emptyLabel.color = UIStyles.TextMuted;
-                emptyLabel.fontStyle = FontStyle.Italic;
-                UIFactory.SetLayoutElement(emptyLabel.gameObject, minHeight: 30, flexibleWidth: 9999);
-
-                SetDynamicText(_exclusionsStatusLabel, "No results");
-                _exclusionsStatusLabel.color = UIStyles.StatusWarning;
+                _exclusionsStatus.Say("No results");
+                _exclusionsStatus.Tone = Tone.Warning;
                 return;
             }
 
             foreach (var kvp in found)
             {
-                var row = UIFactory.CreateUIObject("FindResult", _findResultsContainer);
-                UIFactory.SetLayoutGroup<HorizontalLayoutGroup>(row, false, false, true, true, 5, 2, 2, 2, 2);
-                UIFactory.SetLayoutElement(row, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999);
+                var row = Stacks.Horizontal(_findResultsList.Rows, "FindResult", spacing: 5, pad: Pad.All(2),
+                    minHeight: UIStyles.RowHeightSmall);
 
-                var label = UIFactory.CreateLabel(row, "Path", kvp.Key, TextAnchor.MiddleLeft);
-                label.fontSize = UIStyles.FontSizeSmall;
-                UIFactory.SetLayoutElement(label.gameObject, flexibleWidth: 9999);
+                Labels.Create(row, "Path", kvp.Key, TextRole.Small, fill: Fill.Stretch);
 
                 // Which framework drew it. A UI Toolkit path is a list of USS classes and reads
                 // nothing like a GameObject hierarchy — without this, one of the two looks broken.
-                var engine = UIFactory.CreateLabel(row, "Engine", kvp.Value, TextAnchor.MiddleRight);
-                engine.fontSize = UIStyles.FontSizeHint;
-                engine.color = UIStyles.TextMuted;
-                engine.horizontalOverflow = HorizontalWrapMode.Overflow;
-                UIFactory.SetLayoutElement(engine.gameObject, minWidth: 60, flexibleWidth: 0);
-                RegisterExcluded(engine);
+                Labels.Create(row, "Engine", kvp.Value, TextRole.Caption, policy: TextPolicy.Excluded,
+                    wrap: false, minWidth: 60, align: Placement.MiddleRight);
 
                 var capturedPath = kvp.Key;
-                var excludeBtn = CreateSecondaryButton(row, "Exclude", "+");
-                UIFactory.SetLayoutElement(excludeBtn.Component.gameObject, minWidth: 30);
-                excludeBtn.OnClick += () =>
+                var excludeBtn = Buttons.Secondary(row, "Exclude", "+", 30);
+                excludeBtn.Clicked += () =>
                 {
                     if (!_pendingExclusionAdds.Contains(capturedPath))
                     {
                         _pendingExclusionAdds.Add(capturedPath);
                         RefreshExclusionsList();
                         UpdateApplyButtonText();
-                        _exclusionsStatusLabel.text = Tr("Added:") + $" {capturedPath}";
-                        _exclusionsStatusLabel.color = UIStyles.StatusSuccess;
+                        _exclusionsStatus.Show(Tr("Added:") + $" {capturedPath}");
+                        _exclusionsStatus.Tone = Tone.Success;
                     }
                 };
             }
 
-            SetDynamicText(_exclusionsStatusLabel, $"Found {found.Count} component(s)");
-            _exclusionsStatusLabel.color = UIStyles.StatusSuccess;
+            _findResultsList.Filled();
+            _exclusionsStatus.Say($"Found {found.Count} component(s)");
+            _exclusionsStatus.Tone = Tone.Success;
         }
 
         private void RefreshExclusionsList()
         {
-            if (_exclusionsListContainer == null) return;
+            if (_exclusionsList == null) return;
             Pending.ClearGroup("exclusions");
-
-            // Clear existing items (manual iteration for IL2CPP compatibility)
-            for (int i = _exclusionsListContainer.transform.childCount - 1; i >= 0; i--)
-            {
-                UnityEngine.Object.Destroy(_exclusionsListContainer.transform.GetChild(i).gameObject);
-            }
+            _exclusionsList.Clear();
 
             // Build effective list: current - pending removes + pending adds
             var effectiveExclusions = new List<(string pattern, bool isPending, bool isRemoved)>();
@@ -804,26 +725,18 @@ namespace UnityGameTranslator.Core.UI.Panels
                 effectiveExclusions.Add((pattern, true, false));
             }
 
-            if (effectiveExclusions.Count == 0)
-            {
-                var emptyLabel = UIFactory.CreateLabel(_exclusionsListContainer, "EmptyLabel", "No exclusions defined", TextAnchor.MiddleCenter);
-                emptyLabel.color = UIStyles.TextMuted;
-                emptyLabel.fontStyle = FontStyle.Italic;
-                UIFactory.SetLayoutElement(emptyLabel.gameObject, minHeight: 40, flexibleWidth: 9999);
-                return;
-            }
+            if (effectiveExclusions.Count == 0) return;
 
             foreach (var (pattern, isPending, isRemoved) in effectiveExclusions)
             {
-                var row = UIStyles.CreateFormRow(_exclusionsListContainer, $"Row_{pattern.GetHashCode()}", UIStyles.RowHeightNormal, 5);
+                var row = Stacks.Row(_exclusionsList.Rows, $"Row_{pattern.GetHashCode()}", spacing: 5,
+                    minHeight: UIStyles.RowHeightNormal);
 
                 // What this row is waiting for is said by the shared mark (green added, red
                 // removed) and, for a removal, in words — the row stays until Apply so the
                 // removal can be seen and undone, exactly like a change to any other field.
-                var patternLabel = UIFactory.CreateLabel(row, "PatternLabel", pattern, TextAnchor.MiddleLeft);
-                patternLabel.fontSize = UIStyles.FontSizeSmall;
-                patternLabel.color = isRemoved ? UIStyles.TextMuted : UIStyles.TextPrimary;
-                UIFactory.SetLayoutElement(patternLabel.gameObject, flexibleWidth: 9999);
+                Labels.Create(row, "PatternLabel", pattern, TextRole.Small,
+                    tone: isRemoved ? Tone.Muted : Tone.Plain, policy: TextPolicy.Excluded, fill: Fill.Stretch);
 
                 var state = isPending ? PendingState.Added : isRemoved ? PendingState.Removed : PendingState.None;
                 Pending.TrackState(row, () => state, "exclusions");
@@ -831,15 +744,11 @@ namespace UnityGameTranslator.Core.UI.Panels
                 var capturedPattern = pattern;
                 if (isRemoved)
                 {
-                    var removedLabel = UIFactory.CreateLabel(row, "RemovedLabel", "Removed on Apply", TextAnchor.MiddleRight);
-                    removedLabel.fontSize = UIStyles.FontSizeSmall;
-                    removedLabel.color = UIStyles.StatusError;
-                    UIFactory.SetLayoutElement(removedLabel.gameObject, minWidth: 110);
-                    RegisterUIText(removedLabel);
+                    Labels.Create(row, "RemovedLabel", "Removed on Apply", TextRole.Small, tone: Tone.Error,
+                        minWidth: 110, align: Placement.MiddleRight);
 
-                    var undoBtn = CreateSecondaryButton(row, "UndoBtn", "Undo", 50);
-                    RegisterUIText(undoBtn.ButtonText);
-                    undoBtn.OnClick += () =>
+                    var undoBtn = Buttons.Secondary(row, "UndoBtn", "Undo", 50);
+                    undoBtn.Clicked += () =>
                     {
                         _pendingExclusionRemoves.Remove(capturedPattern);
                         RefreshExclusionsList();
@@ -848,10 +757,12 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
                 else
                 {
-                    var deleteBtn = CreateSecondaryButton(row, "DeleteBtn", "X", 30);
-                    deleteBtn.OnClick += () => OnDeleteExclusionClicked(capturedPattern);
+                    var deleteBtn = Buttons.Secondary(row, "DeleteBtn", "X", 30);
+                    deleteBtn.Clicked += () => OnDeleteExclusionClicked(capturedPattern);
                 }
             }
+
+            _exclusionsList.Filled();
         }
 
         private void OnDeleteExclusionClicked(string pattern)
@@ -860,15 +771,15 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_pendingExclusionAdds.Contains(pattern))
             {
                 _pendingExclusionAdds.Remove(pattern);
-                SetDynamicText(_exclusionsStatusLabel, "Pending pattern cancelled");
-                _exclusionsStatusLabel.color = UIStyles.TextSecondary;
+                _exclusionsStatus.Say("Pending pattern cancelled");
+                _exclusionsStatus.Tone = Tone.Secondary;
             }
             else
             {
                 // Mark for removal on Apply
                 _pendingExclusionRemoves.Add(pattern);
-                SetDynamicText(_exclusionsStatusLabel, "Pattern will be removed on Apply");
-                _exclusionsStatusLabel.color = UIStyles.TextSecondary;
+                _exclusionsStatus.Say("Pattern will be removed on Apply");
+                _exclusionsStatus.Tone = Tone.Secondary;
             }
 
             RefreshExclusionsList();
@@ -880,67 +791,57 @@ namespace UnityGameTranslator.Core.UI.Panels
         #region Fonts Tab
 
         // Font overrides UI
-        private GameObject _fontOverridesListContainer;
+        private ScrollList _fontOverridesList;
         private TabBar _fontsSubTabBar;
-        private GameObject _fontsSubTabHost;
+        private Host _fontsSubTabHost;
 
-        private void CreateFontsTabContent(GameObject parent)
+        private void CreateFontsTabContent(Host parent)
         {
             // Sub-tab buttons in the fixed header, their contents in the scrolling tab body:
             // the scrollbar then covers the settings only, not the switcher above them.
             _fontsSubTabBar = new TabBar();
             _fontsSubTabBar.CreateUI(_fontsSubTabHost, parent, tabRowHeight: 26); // Compact height for sub-tabs
 
-            var globalTab = _fontsSubTabBar.AddTab("Global");
-            var overridesTab = _fontsSubTabBar.AddTab("Overrides");
+            var globalTab = _fontsSubTabBar.Tab("Global");
+            var overridesTab = _fontsSubTabBar.Tab("Overrides");
 
-            foreach (var text in _fontsSubTabBar.GetTabButtonTexts())
-                RegisterUIText(text);
-
-            _helpZone?.Describe(_fontsSubTabBar.GetTabButton("Global"),
+            _helpZone?.Describe(_fontsSubTabBar.Button("Global"),
                 "Global font settings for every detected font, including fallbacks and sharpness.");
-            _helpZone?.Describe(_fontsSubTabBar.GetTabButton("Overrides"),
+            _helpZone?.Describe(_fontsSubTabBar.Button("Overrides"),
                 "Per-element rules that override the font size for specific UI elements.");
 
             CreateFontsGlobalSubTab(globalTab);
             CreateFontsOverridesSubTab(overridesTab);
         }
 
-        private void CreateFontsGlobalSubTab(GameObject parent)
+        private void CreateFontsGlobalSubTab(Host parent)
         {
-            var card = CreateAdaptiveCard(parent, "FontsCard", PanelWidth - 60, stretchVertically: true);
+            var card = Stacks.Card(parent, "FontsCard", PanelWidth - 60, stretchVertically: true);
 
             // Header and explanation
-            var sectionTitle = UIStyles.CreateSectionTitle(card, "FontsLabel", "Font Management");
-            RegisterUIText(sectionTitle);
+            Labels.Create(card, "FontsLabel", "Font Management", TextRole.SectionTitle);
 
-            var explainHint = UIStyles.CreateHint(card, "FontsHint", "Configure translation for detected fonts. Add fallback fonts for non-Latin scripts (Hindi, Arabic, Chinese, etc.). Settings are saved with translations.");
-            RegisterUIText(explainHint);
+            Labels.Create(card, "FontsHint",
+                "Configure translation for detected fonts. Add fallback fonts for non-Latin scripts (Hindi, Arabic, Chinese, etc.). Settings are saved with translations.",
+                TextRole.Hint);
 
-            UIStyles.CreateSpacer(card, 5);
+            Stacks.Spacer(card, 5);
 
             // Debug toggle: globally disable font replacement (for translators).
-            var fontEnableObj = UIFactory.CreateToggle(card, "EnableFontReplacementToggle", out _enableFontReplacementToggle, out var fontEnableLabel);
-            fontEnableLabel.text = " Enable font replacement (uncheck to debug with original fonts)";
-            fontEnableLabel.color = UIStyles.TextSecondary;
-            UIHelpers.AddToggleListener(_enableFontReplacementToggle, OnEnableFontReplacementChanged);
-            UIFactory.SetLayoutElement(fontEnableObj, minHeight: UIStyles.RowHeightNormal);
-            RegisterUIText(fontEnableLabel);
-            _helpZone?.Describe(fontEnableObj,
+            _enableFontReplacementToggle = CheckBoxes.Create(card, "EnableFontReplacementToggle",
+                "Enable font replacement (uncheck to debug with original fonts)",
+                TranslatorCore.Config.enable_font_replacement, OnEnableFontReplacementChanged);
+            _helpZone?.Describe(_enableFontReplacementToggle,
                 "Replaces game fonts so your language's characters display correctly. Uncheck to debug with the original fonts.");
 
             // Font sharpness = max SDF atlas dimension. Higher = crisper when the translation
             // scales text up, at a VRAM cost. LAYOUT-NEUTRAL (text size unchanged). Options are
             // bounded dynamically by the GPU texture limit; applied immediately (SaveConfig),
             // takes effect on the next font rebuild (auto-detected — no manual .gen deletion).
-            var sharpRow = UIStyles.CreateFormRow(card, "FontSharpnessRow", UIStyles.RowHeightMedium, 5);
-            var sharpLabel = UIFactory.CreateLabel(sharpRow, "FontSharpnessLabel", "Font sharpness:", TextAnchor.MiddleLeft);
-            sharpLabel.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(sharpLabel.gameObject, minWidth: 100);
-            RegisterUIText(sharpLabel);
+            var sharpRow = Stacks.Row(card, "FontSharpnessRow", spacing: 5, minHeight: UIStyles.RowHeightMedium);
+            Labels.Create(sharpRow, "FontSharpnessLabel", "Font sharpness:", TextRole.Small, minWidth: 100);
 
-            int maxTex = 8192;
-            try { int sys = UnityEngine.SystemInfo.maxTextureSize; if (sys >= 512) maxTex = sys; } catch { }
+            int maxTex = FontManager.GetMaxTextureSize();
             var sharpOptions = new List<string> { "Auto" };
             foreach (int s in new[] { 4096, 8192, 16384 })
                 if (s <= maxTex) sharpOptions.Add(s.ToString());
@@ -951,165 +852,124 @@ namespace UnityGameTranslator.Core.UI.Panels
             _pendingAtlasSize = curBudget;
             _fontAtlasSizeDropdown = new SearchableDropdown("FontSharpness", sharpOptions.ToArray(),
                 sharpInitial, popupHeight: 150, showSearch: false);
-            var sharpDropdownObj = _fontAtlasSizeDropdown.CreateUI(sharpRow, (val) =>
+            var sharpHost = _fontAtlasSizeDropdown.CreateUI(sharpRow, (val) =>
             {
                 // Pending only — applied (and fonts rebuilt) on Apply, like every other setting.
                 _pendingAtlasSize = (val == "Auto" || !int.TryParse(val, out int b)) ? 0 : b;
                 UpdateApplyButtonText();
             }, width: 140);
-            UIFactory.SetLayoutElement(sharpDropdownObj, minWidth: 140, minHeight: UIStyles.InputHeight);
-            _helpZone?.Describe(sharpDropdownObj, "How finely replacement fonts are rendered. Higher = crisper when the translation scales text up, but uses more video memory. 'Auto' is a safe default. Text size is unchanged. Takes effect on the next font rebuild.");
+            _helpZone?.Describe(sharpHost, "How finely replacement fonts are rendered. Higher = crisper when the translation scales text up, but uses more video memory. 'Auto' is a safe default. Text size is unchanged. Takes effect on the next font rebuild.");
 
-            UIStyles.CreateSpacer(card, 10);
+            Stacks.Spacer(card, 10);
 
             // Refresh button
-            var refreshRow = UIStyles.CreateFormRow(card, "RefreshRow", UIStyles.RowHeightNormal, 5);
+            var refreshRow = Stacks.Row(card, "RefreshRow", spacing: 5, minHeight: UIStyles.RowHeightNormal);
 
-            var refreshBtn = CreateSecondaryButton(refreshRow, "RefreshFontsBtn", "Refresh List", 100);
+            var refreshBtn = Buttons.Secondary(refreshRow, "RefreshFontsBtn", "Refresh List", 100);
             // Explicit user request: this is the one place the ranking is allowed to re-rank.
-            refreshBtn.OnClick += () => { InvalidateFontOrder(); RefreshFontsList(); };
-            RegisterUIText(refreshBtn.ButtonText);
-            _helpZone?.Describe(refreshBtn.Component.gameObject,
+            refreshBtn.Clicked += () => { InvalidateFontOrder(); RefreshFontsList(); };
+            _helpZone?.Describe(refreshBtn,
                 "Rescans the game for fonts currently in use and updates the list below.");
 
-            _fontsStatusLabel = UIFactory.CreateLabel(refreshRow, "FontsStatus", "", TextAnchor.MiddleLeft);
-            _fontsStatusLabel.fontSize = UIStyles.FontSizeSmall;
-            UIFactory.SetLayoutElement(_fontsStatusLabel.gameObject, flexibleWidth: 9999);
+            _fontsStatus = Labels.Create(refreshRow, "FontsStatus", "", TextRole.Small,
+                policy: TextPolicy.Dynamic, fill: Fill.Stretch);
 
-            UIStyles.CreateSpacer(card, 10);
+            Stacks.Spacer(card, 10);
 
             // Detected fonts list
-            var listLabel = UIFactory.CreateLabel(card, "FontsListLabel", "Detected Fonts:", TextAnchor.MiddleLeft);
-            listLabel.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(listLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
-            RegisterUIText(listLabel);
+            Labels.Create(card, "FontsListLabel", "Detected Fonts:", TextRole.Small);
 
             // Scrollable container for fonts
-            var scrollObj = UIFactory.CreateScrollView(card, "FontsScroll", out var scrollContent, out var scrollbar);
-            // Three heights, and all three matter (measured in-game, see [SizeDiag] logs):
             //  - preferred = a COMFORTABLE height, not the minimum. The panel sizes itself to the
             //    content's preferred height exactly, so a list asking for its minimum leaves the
             //    panel no slack at all: one pixel over and it grows its own scrollbar next to the
             //    list's. Asking for more gives the panel room it can take back under pressure.
             //  - min = how far the list may be squeezed on a small screen before the panel scrolls.
-            //  - flexible = it soaks up any spare height when the window is enlarged.
+            //  - flexible (fillHeight) = it soaks up any spare height when the window is enlarged.
             // Without the preferred height the tab would instead claim the WHOLE list's height,
             // which overflows the screen for the same double-scrollbar result.
-            UIFactory.SetLayoutElement(scrollObj, minHeight: 180, preferredHeight: 180,
-                flexibleHeight: 9999, flexibleWidth: 9999);
-            UIStyles.SetBackground(scrollObj, UIStyles.TroughBackground);
-            UIFactory.ConfigureAutoHideScrollbar(scrollObj);
-
-            _fontsListContainer = scrollContent;
+            _fontsList = ScrollList.Create(card, "FontsScroll", minHeight: 180, preferredHeight: 180,
+                emptyText: "No fonts detected yet. Play the game to detect fonts.");
         }
 
-        private void CreateFontsOverridesSubTab(GameObject parent)
+        private void CreateFontsOverridesSubTab(Host parent)
         {
-            var card = CreateAdaptiveCard(parent, "OverridesCard", PanelWidth - 60, stretchVertically: true);
+            var card = Stacks.Card(parent, "OverridesCard", PanelWidth - 60, stretchVertically: true);
 
-            var sectionTitle = UIStyles.CreateSectionTitle(card, "OverridesLabel", "Font Overrides");
-            RegisterUIText(sectionTitle);
+            Labels.Create(card, "OverridesLabel", "Font Overrides", TextRole.SectionTitle);
 
-            var explainHint = UIStyles.CreateHint(card, "OverridesHint",
-                "Override font size for specific UI elements. Use inspector, search, or manual pattern.");
-            RegisterUIText(explainHint);
+            Labels.Create(card, "OverridesHint",
+                "Override font size for specific UI elements. Use inspector, search, or manual pattern.", TextRole.Hint);
 
-            UIStyles.CreateSpacer(card, 5);
+            Stacks.Spacer(card, 5);
 
             // Inspector button — click on element to add override
-            var inspectorBtn = CreatePrimaryButton(card, "FontOverrideInspectorBtn", "Inspect Element", PanelWidth - 100);
-            inspectorBtn.OnClick += OnStartFontOverrideInspector;
-            RegisterUIText(inspectorBtn.ButtonText);
-            _helpZone?.Describe(inspectorBtn.Component.gameObject,
+            var inspectorBtn = Buttons.Primary(card, "FontOverrideInspectorBtn", "Inspect Element", PanelWidth - 100);
+            inspectorBtn.Clicked += OnStartFontOverrideInspector;
+            _helpZone?.Describe(inspectorBtn,
                 "Closes this panel so you can click a UI element in-game to create a font override for it.");
 
-            var inspectorHint = UIStyles.CreateHint(card, "InspectorHint", "Click on a UI element to create an override for it");
-            RegisterUIText(inspectorHint);
+            Labels.Create(card, "InspectorHint", "Click on a UI element to create an override for it", TextRole.Hint);
 
-            UIStyles.CreateSpacer(card, 5);
+            Stacks.Spacer(card, 5);
 
             // Find by content
-            var findLabel = UIFactory.CreateLabel(card, "FindLabel", "Find by text content:", TextAnchor.MiddleLeft);
-            findLabel.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(findLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
-            RegisterUIText(findLabel);
+            Labels.Create(card, "FindLabel", "Find by text content:", TextRole.Small);
 
-            var findRow = UIStyles.CreateFormRow(card, "FindOverrideRow", UIStyles.InputHeight, 5);
+            var findRow = Stacks.Row(card, "FindOverrideRow", spacing: 5, minHeight: UIStyles.InputHeight);
 
-            _fontOverrideFindInput = UIFactory.CreateInputField(findRow, "FindOverrideInput", "Enter text visible in-game...");
-            UIFactory.SetLayoutElement(_fontOverrideFindInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
-            UIStyles.SetBackground(_fontOverrideFindInput.Component.gameObject, UIStyles.InputBackground);
-            _helpZone?.Describe(_fontOverrideFindInput.Component.gameObject,
+            _fontOverrideFindInput = Fields.Create(findRow, "FindOverrideInput", "Enter text visible in-game...");
+            _helpZone?.Describe(_fontOverrideFindInput,
                 "Type text visible in-game to locate the UI element that shows it, then create an override.");
 
-            var findBtn = CreateSecondaryButton(findRow, "FindOverrideBtn", "Find", 60);
-            findBtn.OnClick += OnFindForFontOverride;
-            RegisterUIText(findBtn.ButtonText);
-            _helpZone?.Describe(findBtn.Component.gameObject,
+            var findBtn = Buttons.Secondary(findRow, "FindOverrideBtn", "Find", 60);
+            findBtn.Clicked += OnFindForFontOverride;
+            _helpZone?.Describe(findBtn,
                 "Searches the scene for UI components displaying the entered text.");
 
             // Find results (hidden until search)
-            var findResultsScroll = UIFactory.CreateScrollView(card, "OverrideFindResults", out var findResultsContent, out _);
-            UIFactory.SetLayoutElement(findResultsScroll, minHeight: 0, preferredHeight: 80, flexibleHeight: 0);
-            _fontOverrideFindResultsContainer = findResultsContent;
-            _fontOverrideFindResultsScroll = findResultsScroll;
-            findResultsScroll.SetActive(false);
+            _fontOverrideFindResultsList = ScrollList.Create(card, "OverrideFindResults", minHeight: 0,
+                preferredHeight: 80, fillHeight: false, emptyText: "No UI component found with this text.");
+            _fontOverrideFindResultsList.Visible = false;
 
-            UIStyles.CreateSpacer(card, 5);
+            Stacks.Spacer(card, 5);
 
             // Manual add
-            var manualLabel = UIFactory.CreateLabel(card, "ManualLabel", "Add pattern manually:", TextAnchor.MiddleLeft);
-            manualLabel.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(manualLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
-            RegisterUIText(manualLabel);
+            Labels.Create(card, "ManualLabel", "Add pattern manually:", TextRole.Small);
 
-            var addRow = UIStyles.CreateFormRow(card, "AddOverrideRow", UIStyles.InputHeight, 5);
-            _fontOverrideManualInput = UIFactory.CreateInputField(addRow, "ManualOverrideInput", "path:**/TablePanel/**");
-            UIFactory.SetLayoutElement(_fontOverrideManualInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
-            UIStyles.SetBackground(_fontOverrideManualInput.Component.gameObject, UIStyles.InputBackground);
-            _helpZone?.Describe(_fontOverrideManualInput.Component.gameObject,
+            var addRow = Stacks.Row(card, "AddOverrideRow", spacing: 5, minHeight: UIStyles.InputHeight);
+            _fontOverrideManualInput = Fields.Create(addRow, "ManualOverrideInput", "path:**/TablePanel/**");
+            _helpZone?.Describe(_fontOverrideManualInput,
                 "Type a rule to match elements. Prefix with path:, font:, or text: to match by hierarchy, font name, or content.");
 
-            var addBtn = CreateSecondaryButton(addRow, "AddOverrideBtn", "Add", 60);
-            addBtn.OnClick += OnAddManualFontOverride;
-            RegisterUIText(addBtn.ButtonText);
-            _helpZone?.Describe(addBtn.Component.gameObject,
+            var addBtn = Buttons.Secondary(addRow, "AddOverrideBtn", "Add", 60);
+            addBtn.Clicked += OnAddManualFontOverride;
+            _helpZone?.Describe(addBtn,
                 "Adds the typed pattern as a new override rule. Takes effect on Apply.");
 
-            var patternHint = UIStyles.CreateHint(card, "PatternHint", "Prefixes: path: (hierarchy), font: (name), text: (content)");
-            RegisterUIText(patternHint);
+            Labels.Create(card, "PatternHint", "Prefixes: path: (hierarchy), font: (name), text: (content)", TextRole.Hint);
 
-            UIStyles.CreateSpacer(card, 5);
+            Stacks.Spacer(card, 5);
 
             // Count label
-            _overridesCountLabel = UIFactory.CreateLabel(card, "OverridesCount", "", TextAnchor.MiddleLeft);
-            _overridesCountLabel.fontSize = UIStyles.FontSizeSmall;
-            _overridesCountLabel.color = UIStyles.TextMuted;
-            UIFactory.SetLayoutElement(_overridesCountLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+            _overridesCountLabel = Labels.Create(card, "OverridesCount", "", TextRole.Small, tone: Tone.Muted,
+                policy: TextPolicy.Excluded);
 
             // Scrollable list of overrides
-            var scrollObj = UIFactory.CreateScrollView(card, "OverridesScroll", out var scrollContent, out var scrollbar);
-            UIFactory.SetLayoutElement(scrollObj, minHeight: 200, preferredHeight: 200, flexibleHeight: 9999, flexibleWidth: 9999);
-            UIStyles.SetBackground(scrollObj, UIStyles.TroughBackground);
-            UIFactory.ConfigureAutoHideScrollbar(scrollObj);
-
-            _fontOverridesListContainer = scrollContent;
+            _fontOverridesList = ScrollList.Create(card, "OverridesScroll", minHeight: 200, preferredHeight: 200);
 
             // Status label
-            _fontOverrideStatusLabel = UIFactory.CreateLabel(card, "OverrideStatus", "", TextAnchor.MiddleLeft);
-            _fontOverrideStatusLabel.fontSize = UIStyles.FontSizeSmall;
-            UIFactory.SetLayoutElement(_fontOverrideStatusLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+            _fontOverrideStatus = Labels.Create(card, "OverrideStatus", "", TextRole.Small, policy: TextPolicy.Dynamic);
 
             RefreshFontOverridesList();
         }
 
         // Font override UI fields
-        private Text _overridesCountLabel;
-        private Text _fontOverrideStatusLabel;
-        private InputFieldRef _fontOverrideFindInput;
-        private InputFieldRef _fontOverrideManualInput;
-        private GameObject _fontOverrideFindResultsContainer;
-        private GameObject _fontOverrideFindResultsScroll;
+        private LabelHandle _overridesCountLabel;
+        private LabelHandle _fontOverrideStatus;
+        private FieldHandle _fontOverrideFindInput;
+        private FieldHandle _fontOverrideManualInput;
+        private ScrollList _fontOverrideFindResultsList;
 
         // Pending font overrides (local copy, applied on Apply button)
         private List<FontOverrideRule> _pendingFontOverrides = new List<FontOverrideRule>();
@@ -1174,7 +1034,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // THEN add the new rule (on top of initialized state)
             AddFontOverrideForPath(path);
             // Ensure we're in front of MainPanel (which may have been restored)
-            if (UIRoot != null) UIRoot.transform.SetAsLastSibling();
+            Window.ToBack();
         }
 
         private void OnAddManualFontOverride()
@@ -1182,8 +1042,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             string pattern = _fontOverrideManualInput?.Text?.Trim();
             if (string.IsNullOrEmpty(pattern))
             {
-                SetDynamicText(_fontOverrideStatusLabel, "Enter a pattern first");
-                _fontOverrideStatusLabel.color = UIStyles.StatusWarning;
+                _fontOverrideStatus.Say("Enter a pattern first");
+                _fontOverrideStatus.Tone = Tone.Warning;
                 return;
             }
 
@@ -1196,90 +1056,52 @@ namespace UnityGameTranslator.Core.UI.Panels
             string searchValue = _fontOverrideFindInput?.Text?.Trim();
             if (string.IsNullOrEmpty(searchValue))
             {
-                SetDynamicText(_fontOverrideStatusLabel, "Enter text to search for");
-                _fontOverrideStatusLabel.color = UIStyles.StatusWarning;
+                _fontOverrideStatus.Say("Enter text to search for");
+                _fontOverrideStatus.Tone = Tone.Warning;
                 return;
             }
 
-            _fontOverrideFindResultsScroll.SetActive(true);
+            _fontOverrideFindResultsList.Visible = true;
+            _fontOverrideFindResultsList.Clear();
 
-            // Clear previous results
-            for (int i = _fontOverrideFindResultsContainer.transform.childCount - 1; i >= 0; i--)
-                UnityEngine.Object.Destroy(_fontOverrideFindResultsContainer.transform.GetChild(i).gameObject);
-
-            // Search text components (same logic as exclusions find)
+            // 🔴 Aligned on the Exclusions tab's Find: TextTargets.All() instead of the old
+            // TypeHelper-based uGUI/TMP enumeration, which found nothing on a game drawn by any
+            // other framework (NGUI, tk2d, TMProOld, TextMesh, UI Toolkit). The case-insensitive
+            // match stays — that is this Find's own trait, not something to align away.
             var found = new List<KeyValuePair<string, string>>();
             var seenPaths = new HashSet<string>();
 
-            try
+            foreach (var target in TextTargets.All(text => text.IndexOf(searchValue, StringComparison.OrdinalIgnoreCase) >= 0))
             {
-                var textTypes = new List<Type>();
-                if (TypeHelper.UI_TextType != null) textTypes.Add(TypeHelper.UI_TextType);
-                if (TypeHelper.TMP_TextType != null) textTypes.Add(TypeHelper.TMP_TextType);
-
-                foreach (var textType in textTypes)
-                {
-                    var allComponents = TypeHelper.FindAllObjectsOfType(textType);
-                    if (allComponents == null) continue;
-
-                    foreach (var obj in allComponents)
-                    {
-                        if (obj == null) continue;
-                        try
-                        {
-                            string text = TypeHelper.GetText(obj);
-                            if (string.IsNullOrEmpty(text)) continue;
-                            if (text.IndexOf(searchValue, StringComparison.OrdinalIgnoreCase) < 0) continue;
-
-                            Component comp = obj as Component;
-                            if (comp == null)
-                                comp = TypeHelper.Il2CppCast(obj, typeof(Component)) as Component;
-                            if (comp == null || comp.gameObject == null) continue;
-                            if (TranslatorCore.ShouldSkipTranslation(comp)) continue;
-
-                            string path = TranslatorCore.GetGameObjectPath(comp.gameObject);
-                            if (seenPaths.Contains(path)) continue;
-                            seenPaths.Add(path);
-
-                            string snippet = text.Length > 50 ? text.Substring(0, 50) + "..." : text;
-                            found.Add(new KeyValuePair<string, string>(path, snippet));
-                        }
-                        catch { }
-                    }
-                }
+                string path = target.Path;
+                if (string.IsNullOrEmpty(path) || !seenPaths.Add(path)) continue;
+                found.Add(new KeyValuePair<string, string>(path, target.Engine));
             }
-            catch { }
 
             if (found.Count == 0)
             {
-                var emptyLabel = UIFactory.CreateLabel(_fontOverrideFindResultsContainer, "NoResults",
-                    "No UI component found with this text.", TextAnchor.MiddleCenter);
-                emptyLabel.color = UIStyles.TextMuted;
-                emptyLabel.fontStyle = FontStyle.Italic;
-                UIFactory.SetLayoutElement(emptyLabel.gameObject, minHeight: 30, flexibleWidth: 9999);
-                SetDynamicText(_fontOverrideStatusLabel, "No results");
-                _fontOverrideStatusLabel.color = UIStyles.StatusWarning;
+                _fontOverrideStatus.Say("No results");
+                _fontOverrideStatus.Tone = Tone.Warning;
                 return;
             }
 
             foreach (var kvp in found)
             {
-                var row = UIFactory.CreateUIObject("FindResult", _fontOverrideFindResultsContainer);
-                UIFactory.SetLayoutGroup<HorizontalLayoutGroup>(row, false, false, true, true, 5, 2, 2, 2, 2);
-                UIFactory.SetLayoutElement(row, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999);
+                var row = Stacks.Horizontal(_fontOverrideFindResultsList.Rows, "FindResult", spacing: 5,
+                    pad: Pad.All(2), minHeight: UIStyles.RowHeightSmall);
 
-                var label = UIFactory.CreateLabel(row, "Path", kvp.Key, TextAnchor.MiddleLeft);
-                label.fontSize = UIStyles.FontSizeSmall;
-                UIFactory.SetLayoutElement(label.gameObject, flexibleWidth: 9999);
+                Labels.Create(row, "Path", kvp.Key, TextRole.Small, fill: Fill.Stretch);
+                Labels.Create(row, "Engine", kvp.Value, TextRole.Caption, policy: TextPolicy.Excluded,
+                    wrap: false, minWidth: 60, align: Placement.MiddleRight);
 
                 var capturedPath = kvp.Key;
-                var addPathBtn = CreateSecondaryButton(row, "AddOverride", "+");
-                UIFactory.SetLayoutElement(addPathBtn.Component.gameObject, minWidth: 30);
-                addPathBtn.OnClick += () => AddFontOverrideForPath("path:" + capturedPath);
+                var addPathBtn = Buttons.Secondary(row, "AddOverride", "+", 30);
+                addPathBtn.Clicked += () => AddFontOverrideForPath("path:" + capturedPath);
             }
 
-            SetDynamicText(_fontOverrideStatusLabel, $"Found {found.Count} component(s)");
-            _fontOverrideStatusLabel.color = UIStyles.StatusSuccess;
+            _fontOverrideFindResultsList.Filled();
+            _fontOverrideStatus.Say($"Found {found.Count} component(s)");
+            _fontOverrideStatus.Tone = Tone.Success;
         }
 
         private void AddFontOverrideForPath(string match)
@@ -1293,16 +1115,16 @@ namespace UnityGameTranslator.Core.UI.Panels
             _pendingFontOverrides.Add(rule);
             RefreshFontOverridesList();
             UpdateApplyButtonText();
-            if (_fontOverrideStatusLabel != null)
+            if (_fontOverrideStatus != null)
             {
-                _fontOverrideStatusLabel.text = $"Added: {match} (Apply to save)";
-                _fontOverrideStatusLabel.color = UIStyles.StatusSuccess;
+                _fontOverrideStatus.Show($"Added: {match} (Apply to save)");
+                _fontOverrideStatus.Tone = Tone.Success;
             }
         }
 
         private void RefreshFontOverridesList()
         {
-            if (_fontOverridesListContainer == null) return;
+            if (_fontOverridesList == null) return;
 
             _rtlControlsVisible = TranslatorCore.TranslationTouchesRtl();
 
@@ -1310,24 +1132,21 @@ namespace UnityGameTranslator.Core.UI.Panels
                 dropdown.Destroy();
             _overrideRtlDropdowns.Clear();
 
-            // Clear existing rows
-            for (int i = _fontOverridesListContainer.transform.childCount - 1; i >= 0; i--)
-            {
-                UnityEngine.Object.Destroy(_fontOverridesListContainer.transform.GetChild(i).gameObject);
-            }
-
+            _fontOverridesList.Clear();
             Pending.ClearGroup("overrides");
 
             if (_overridesCountLabel != null)
             {
                 int kept = _pendingFontOverrides.Count - _removedFontOverrides.Count;
-                _overridesCountLabel.text = kept > 0 ? $"{kept} rule(s)" : "No rules defined";
+                _overridesCountLabel.Show(kept > 0 ? $"{kept} rule(s)" : "No rules defined");
             }
 
             for (int i = 0; i < _pendingFontOverrides.Count; i++)
             {
                 CreateFontOverrideRow(i, _pendingFontOverrides[i]);
             }
+
+            if (_pendingFontOverrides.Count > 0) _fontOverridesList.Filled();
         }
 
         /// <summary>
@@ -1336,25 +1155,18 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         private void CreateRemovedFontOverrideRow(int index, FontOverrideRule rule)
         {
-            var row = UIFactory.CreateHorizontalGroup(_fontOverridesListContainer, $"Override_{index}",
-                false, false, true, true, 5, new Vector4(5, 5, 8, 8), UIStyles.CardBackground, TextAnchor.MiddleLeft);
-            UIFactory.SetLayoutElement(row, minHeight: UIStyles.RowHeightNormal, flexibleWidth: 9999);
+            var row = Stacks.Horizontal(_fontOverridesList.Rows, $"Override_{index}", spacing: 5,
+                pad: new Pad(5, 5, 8, 8), surface: Surface.Card, minHeight: UIStyles.RowHeightNormal);
             Pending.TrackState(row, () => PendingState.Removed, "overrides");
 
-            var matchLabel = UIFactory.CreateLabel(row, "MatchLabel", string.IsNullOrEmpty(rule.match) ? "(empty rule)" : rule.match, TextAnchor.MiddleLeft);
-            matchLabel.fontSize = UIStyles.FontSizeSmall;
-            matchLabel.color = UIStyles.TextMuted;
-            UIFactory.SetLayoutElement(matchLabel.gameObject, flexibleWidth: 9999);
+            Labels.Create(row, "MatchLabel", string.IsNullOrEmpty(rule.match) ? "(empty rule)" : rule.match,
+                TextRole.Small, tone: Tone.Muted, policy: TextPolicy.Excluded, fill: Fill.Stretch);
 
-            var removedLabel = UIFactory.CreateLabel(row, "RemovedLabel", "Removed on Apply", TextAnchor.MiddleRight);
-            removedLabel.fontSize = UIStyles.FontSizeSmall;
-            removedLabel.color = UIStyles.StatusError;
-            UIFactory.SetLayoutElement(removedLabel.gameObject, minWidth: 110);
-            RegisterUIText(removedLabel);
+            Labels.Create(row, "RemovedLabel", "Removed on Apply", TextRole.Small, tone: Tone.Error,
+                minWidth: 110, align: Placement.MiddleRight);
 
-            var undoBtn = CreateSecondaryButton(row, "UndoBtn", "Undo", 50);
-            RegisterUIText(undoBtn.ButtonText);
-            undoBtn.OnClick += () =>
+            var undoBtn = Buttons.Secondary(row, "UndoBtn", "Undo", 50);
+            undoBtn.Clicked += () =>
             {
                 _removedFontOverrides.Remove(rule);
                 RefreshFontOverridesList();
@@ -1366,10 +1178,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (_removedFontOverrides.Contains(rule)) { CreateRemovedFontOverrideRow(index, rule); return; }
 
-            var row = UIFactory.CreateVerticalGroup(_fontOverridesListContainer, $"Override_{index}",
-                false, false, true, true, 3);
-            UIFactory.SetLayoutElement(row, minHeight: UIStyles.MultiLineMedium, flexibleWidth: 9999);
-            UIStyles.SetBackground(row, UIStyles.CardBackground);
+            var row = Stacks.Vertical(_fontOverridesList.Rows, $"Override_{index}", spacing: 3,
+                surface: Surface.Card, minHeight: UIStyles.MultiLineMedium);
 
             // A rule the panel opened with is compared field by field to what it was; a rule
             // added since is one thing waiting as a whole. The lists stay parallel by index —
@@ -1377,21 +1187,17 @@ namespace UnityGameTranslator.Core.UI.Panels
             FontOverrideRule initial = index < _initialFontOverrides.Count ? _initialFontOverrides[index] : null;
             if (initial == null) Pending.TrackState(row, () => PendingState.Added, "overrides");
 
-            // Row 1: Match pattern (editable) + enabled toggle + delete button
-            var topRow = UIFactory.CreateHorizontalGroup(row, "TopRow", false, false, true, true, 5);
-            UIFactory.SetLayoutElement(topRow, minHeight: UIStyles.RowHeightNormal, flexibleWidth: 9999);
+            // Row 1: Match pattern (editable) + delete button
+            var topRow = Stacks.Row(row, "TopRow", spacing: 5, minHeight: UIStyles.RowHeightNormal);
 
-            var matchLabel = UIFactory.CreateLabel(topRow, "MatchLabel", "Match:", TextAnchor.MiddleLeft);
-            matchLabel.fontSize = UIStyles.FontSizeSmall;
-            UIFactory.SetLayoutElement(matchLabel.gameObject, minWidth: 45);
+            Labels.Create(topRow, "MatchLabel", "Match:", TextRole.Small, policy: TextPolicy.Excluded, minWidth: 45);
 
-            var matchInput = UIFactory.CreateInputField(topRow, "MatchInput", "path:*Pattern*");
-            UIFactory.SetLayoutElement(matchInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.RowHeightNormal);
+            var matchInput = Fields.Create(topRow, "MatchInput", "path:*Pattern*");
             matchInput.Text = rule.match ?? "";
 
             int capturedIndex = index;
 
-            matchInput.OnValueChanged += (val) =>
+            matchInput.Changed += (val) =>
             {
                 if (capturedIndex < _pendingFontOverrides.Count)
                 {
@@ -1400,14 +1206,13 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
             };
             if (initial != null)
-                Pending.Track(matchInput.Component.gameObject, () => (rule.match ?? "") != (initial.match ?? ""), "overrides");
+                Pending.Track(matchInput, () => (rule.match ?? "") != (initial.match ?? ""), "overrides");
 
             // Delete button: a rule the panel opened with waits for Apply, marked and undoable;
             // one added since simply goes, there is nothing on disk to take back.
-            var deleteBtn = UIFactory.CreateButton(topRow, "DeleteBtn", "X");
-            UIFactory.SetLayoutElement(deleteBtn.Component.gameObject, minWidth: 28, minHeight: UIStyles.RowHeightNormal);
-            UIStyles.SetBackground(deleteBtn.Component.gameObject, UIStyles.ButtonDanger);
-            deleteBtn.OnClick += () =>
+            var deleteBtn = Buttons.Compact(topRow, "DeleteBtn", "X", ButtonTone.Danger, minWidth: 28,
+                policy: TextPolicy.Excluded);
+            deleteBtn.Clicked += () =>
             {
                 if (capturedIndex >= _pendingFontOverrides.Count) return;
                 if (initial != null) _removedFontOverrides.Add(rule);
@@ -1416,40 +1221,29 @@ namespace UnityGameTranslator.Core.UI.Panels
                 UpdateApplyButtonText();
             };
 
-            // Row 2: Size multiplier slider + comment
-            var bottomRow = UIFactory.CreateHorizontalGroup(row, "BottomRow", false, false, true, true, 5);
-            UIFactory.SetLayoutElement(bottomRow, minHeight: UIStyles.RowHeightNormal, flexibleWidth: 9999);
-
-            var sizeLabel = UIFactory.CreateLabel(bottomRow, "SizeLabel", "Size:", TextAnchor.MiddleLeft);
-            sizeLabel.fontSize = UIStyles.FontSizeSmall;
-            UIFactory.SetLayoutElement(sizeLabel.gameObject, minWidth: 35);
-
-            var sizeValueLabel = UIFactory.CreateLabel(bottomRow, "SizeValue",
-                rule.size_multiplier > 0.001f ? $"{(int)(rule.size_multiplier * 100)}%" : "default",
-                TextAnchor.MiddleCenter);
-            sizeValueLabel.fontSize = UIStyles.FontSizeSmall;
-            UIFactory.SetLayoutElement(sizeValueLabel.gameObject, minWidth: 45);
-
-            var sizeSliderObj = UIFactory.CreateSlider(bottomRow, "SizeSlider", out var sizeSlider);
-            UIFactory.SetLayoutElement(sizeSliderObj, flexibleWidth: 9999, minHeight: UIStyles.RowHeightNormal);
-            sizeSlider.minValue = 0f;
-            sizeSlider.maxValue = 3f;
-            sizeSlider.value = rule.size_multiplier > 0.001f ? rule.size_multiplier : 1.0f;
-
-            UIHelpers.AddSliderListener(sizeSlider, (val) =>
-            {
-                // Round to nearest 5%
-                float rounded = (float)Math.Round(val * 20) / 20f;
-                sizeValueLabel.text = $"{(int)(rounded * 100)}%";
-
-                if (capturedIndex < _pendingFontOverrides.Count)
+            // Row 2: Size multiplier slider — the mod's other "Size:" slider (the Fonts sub-tab's
+            // per-font row) reads label → slider → value; this one used to read label → value →
+            // slider. The vocabulary's slider factory offers one order, so this row now reads the
+            // same way as its sibling — a harmless reordering, not a behaviour change.
+            float initialSlider = rule.size_multiplier > 0.001f ? rule.size_multiplier : 1.0f;
+            var sizeSlider = Sliders.Labelled(row, $"OverrideSize_{index}", "Size:", 0f, 3f, initialSlider,
+                v =>
                 {
-                    _pendingFontOverrides[capturedIndex].size_multiplier = rounded;
-                    UpdateApplyButtonText();
-                }
-            });
+                    float rounded = (float)Math.Round(v * 20) / 20f;
+                    return rounded > 0.001f ? $"{(int)(rounded * 100)}%" : "default";
+                },
+                v =>
+                {
+                    float rounded = (float)Math.Round(v * 20) / 20f;
+                    if (capturedIndex < _pendingFontOverrides.Count)
+                    {
+                        _pendingFontOverrides[capturedIndex].size_multiplier = rounded;
+                        UpdateApplyButtonText();
+                    }
+                },
+                captionWidth: 35);
             if (initial != null)
-                Pending.Track(sizeSliderObj, () => Math.Abs(rule.size_multiplier - initial.size_multiplier) > 0.001f, "overrides");
+                Pending.Track(sizeSlider, () => Math.Abs(rule.size_multiplier - initial.size_multiplier) > 0.001f, "overrides");
 
             // RTL alignment for the matched components (only when this translation involves
             // right-to-left text): inherit the font's setting, or force mirror/keep here — the
@@ -1457,19 +1251,16 @@ namespace UnityGameTranslator.Core.UI.Panels
             // one-side-built buttons).
             if (_rtlControlsVisible)
             {
-                var rtlRow = UIFactory.CreateHorizontalGroup(row, "RtlRow", false, false, true, true, 5);
-                UIFactory.SetLayoutElement(rtlRow, minHeight: UIStyles.RowHeightNormal, flexibleWidth: 9999);
+                var rtlRow = Stacks.Row(row, "RtlRow", spacing: 5, minHeight: UIStyles.RowHeightNormal);
 
-                var rtlLabel = UIFactory.CreateLabel(rtlRow, "RtlLabel", "RTL alignment:", TextAnchor.MiddleLeft);
-                rtlLabel.fontSize = UIStyles.FontSizeSmall;
-                UIFactory.SetLayoutElement(rtlLabel.gameObject, minWidth: 95);
+                Labels.Create(rtlRow, "RtlLabel", "RTL alignment:", TextRole.Small, policy: TextPolicy.Excluded, minWidth: 95);
 
                 string initialRtl = string.Equals(rule.rtl_alignment, "mirror", StringComparison.OrdinalIgnoreCase) ? "Mirror"
                                   : string.Equals(rule.rtl_alignment, "keep", StringComparison.OrdinalIgnoreCase) ? "Keep game's"
                                   : "Inherit from font";
-                var rtlDropdown = new Components.SearchableDropdown($"OverrideRtl_{index}",
+                var rtlDropdown = new SearchableDropdown($"OverrideRtl_{index}",
                     new[] { "Inherit from font", "Mirror", "Keep game's" }, initialRtl, showSearch: false);
-                rtlDropdown.CreateUI(rtlRow, (selected) =>
+                var rtlHost = rtlDropdown.CreateUI(rtlRow, (selected) =>
                 {
                     if (capturedIndex >= _pendingFontOverrides.Count) return;
                     _pendingFontOverrides[capturedIndex].rtl_alignment =
@@ -1478,13 +1269,13 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }, 150);
                 _overrideRtlDropdowns.Add(rtlDropdown);
                 if (initial != null)
-                    Pending.Track(rtlDropdown.Root, () => !string.Equals(rule.rtl_alignment, initial.rtl_alignment, StringComparison.OrdinalIgnoreCase), "overrides");
+                    Pending.Track(rtlHost, () => !string.Equals(rule.rtl_alignment, initial.rtl_alignment, StringComparison.OrdinalIgnoreCase), "overrides");
             }
         }
 
         private void RefreshFontsList()
         {
-            if (_fontsListContainer == null) return;
+            if (_fontsList == null) return;
 
             _rtlControlsVisible = TranslatorCore.TranslationTouchesRtl();
             TranslatorCore.LogInfo($"[TranslationParametersPanel] RefreshFontsList called");
@@ -1497,27 +1288,17 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
             _fallbackDropdowns.Clear();
 
-            // Clear existing items (manual iteration for IL2CPP compatibility)
-            for (int i = _fontsListContainer.transform.childCount - 1; i >= 0; i--)
-            {
-                UnityEngine.Object.Destroy(_fontsListContainer.transform.GetChild(i).gameObject);
-            }
+            _fontsList.Clear();
 
             var fonts = FontManager.GetDetectedFontsInfo();
             fonts = ApplyStableFontOrder(fonts);
 
             if (fonts.Count == 0)
             {
-                var emptyLabel = UIFactory.CreateLabel(_fontsListContainer, "EmptyLabel", "No fonts detected yet. Play the game to detect fonts.", TextAnchor.MiddleCenter);
-                emptyLabel.color = UIStyles.TextMuted;
-                emptyLabel.fontStyle = FontStyle.Italic;
-                UIFactory.SetLayoutElement(emptyLabel.gameObject, minHeight: 60, flexibleWidth: 9999);
-                RegisterUIText(emptyLabel);
-
-                if (_fontsStatusLabel != null)
+                if (_fontsStatus != null)
                 {
-                    SetDynamicText(_fontsStatusLabel, "0 fonts detected");
-                    _fontsStatusLabel.color = UIStyles.TextMuted;
+                    _fontsStatus.Say("0 fonts detected");
+                    _fontsStatus.Tone = Tone.Muted;
                 }
                 return;
             }
@@ -1533,10 +1314,12 @@ namespace UnityGameTranslator.Core.UI.Panels
                 CreateFontRow(fontInfo);
             }
 
-            if (_fontsStatusLabel != null)
+            _fontsList.Filled();
+
+            if (_fontsStatus != null)
             {
-                SetDynamicText(_fontsStatusLabel, $"{fonts.Count} font(s) detected");
-                _fontsStatusLabel.color = UIStyles.StatusSuccess;
+                _fontsStatus.Say($"{fonts.Count} font(s) detected");
+                _fontsStatus.Tone = Tone.Success;
             }
         }
 
@@ -1610,88 +1393,61 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void CreateFontRow(FontDisplayInfo fontInfo)
         {
             // Main row container with padding
-            var row = UIFactory.CreateVerticalGroup(_fontsListContainer, $"FontRow_{fontInfo.Name.GetHashCode()}",
-                false, false, true, true, 3, new Vector4(5, 5, 5, 5), UIStyles.CardBackground, TextAnchor.UpperLeft);
-            UIFactory.SetLayoutElement(row, minHeight: 55, flexibleWidth: 9999);
+            var row = Stacks.Vertical(_fontsList.Rows, $"FontRow_{fontInfo.Name.GetHashCode()}", spacing: 3,
+                pad: Pad.All(5), surface: Surface.Card, minHeight: 55);
 
             // Header row: font name + type + enable toggle
-            var headerRow = UIStyles.CreateFormRow(row, "HeaderRow", UIStyles.RowHeightNormal, 5);
+            var headerRow = Stacks.Row(row, "HeaderRow", spacing: 5, minHeight: UIStyles.RowHeightNormal);
 
             // Capture values for closure
             string capturedFontName = fontInfo.Name;
 
             // Font name and type
-            var fontLabel = UIFactory.CreateLabel(headerRow, "FontLabel", $"{fontInfo.Name} ({fontInfo.Type})", TextAnchor.MiddleLeft);
-            fontLabel.color = UIStyles.TextPrimary;
-            fontLabel.fontSize = UIStyles.FontSizeNormal;
-            UIFactory.SetLayoutElement(fontLabel.gameObject, flexibleWidth: 9999);
+            Labels.Create(headerRow, "FontLabel", $"{fontInfo.Name} ({fontInfo.Type})", TextRole.Body,
+                tone: Tone.Plain, policy: TextPolicy.Excluded, fill: Fill.Stretch);
 
             // How present this font is on the screen right now — the figure that tells the user
             // whether a font is worth configuring. -1 means the count couldn't be taken; say
             // nothing rather than show a misleading zero.
             if (fontInfo.SceneCount >= 0)
             {
-                var countLabel = UIFactory.CreateLabel(headerRow, "SceneCount",
-                    $"{fontInfo.SceneCount} " + Tr("in scene"), TextAnchor.MiddleRight);
-                countLabel.color = fontInfo.SceneCount > 0 ? UIStyles.TextSecondary : UIStyles.TextMuted;
-                countLabel.fontSize = UIStyles.FontSizeSmall;
-                UIFactory.SetLayoutElement(countLabel.gameObject, minWidth: 70);
-                RegisterExcluded(countLabel);
+                Labels.Create(headerRow, "SceneCount", $"{fontInfo.SceneCount} " + Tr("in scene"), TextRole.Small,
+                    tone: fontInfo.SceneCount > 0 ? Tone.Secondary : Tone.Muted, policy: TextPolicy.Excluded,
+                    minWidth: 70);
             }
 
-            // Identify button: highlight in-game texts using this font. This button swaps its color at
-            // runtime (?/slate ↔ X/accent) via Image.color, so create it with a WHITE ColorBlock
-            // normalColor and let Image.color drive the visible color directly (otherwise rendered =
-            // Image.color × 0.25 default, which crushed the slate to near-black).
-            var identifyBtn = UIFactory.CreateButton(headerRow, "IdentifyBtn", "?", Color.white);
-            UIFactory.SetLayoutElement(identifyBtn.GameObject, minWidth: 28, minHeight: 22);
-            identifyBtn.ButtonText.fontSize = UIStyles.FontSizeSmall;
-            identifyBtn.ButtonText.color = UIStyles.TextSecondary;
-            var identifyBg = identifyBtn.GameObject.GetComponent<Image>();
-            if (identifyBg != null)
-            {
-                identifyBg.color = UIStyles.ButtonSecondary;
-            }
-            identifyBtn.OnClick += () => ToggleFontHighlight(capturedFontName, identifyBtn);
+            // Identify button: highlight in-game texts using this font. Its tone swaps between
+            // Secondary and Primary to say whether it is the one currently highlighted — the
+            // vocabulary's tones stand in for the bespoke slate/accent fill the raw button used.
+            var identifyBtn = Buttons.Compact(headerRow, "IdentifyBtn", "?", ButtonTone.Secondary, minWidth: 28,
+                policy: TextPolicy.Excluded);
+            identifyBtn.Clicked += () => ToggleFontHighlight(capturedFontName, identifyBtn);
 
             // Enable toggle
-            var toggleObj = UIFactory.CreateToggle(headerRow, "EnableToggle", out var enableToggle, out var toggleLabel);
-            toggleLabel.text = " Translate";
-            toggleLabel.color = UIStyles.TextSecondary;
-            toggleLabel.fontSize = UIStyles.FontSizeSmall;
-            UIFactory.SetLayoutElement(toggleObj, minWidth: 80);
-            enableToggle.isOn = fontInfo.Enabled;
-
-            UIHelpers.AddToggleListener(enableToggle, (isOn) => OnFontEnableChanged(capturedFontName, isOn));
-            Pending.Track(toggleObj, () => FontFieldChanged(capturedFontName, (p, i) => p.enabled != i.enabled), "fonts");
+            var enableToggle = CheckBoxes.Create(headerRow, "EnableToggle", "Translate", fontInfo.Enabled,
+                (isOn) => OnFontEnableChanged(capturedFontName, isOn));
+            Pending.Track(enableToggle, () => FontFieldChanged(capturedFontName, (p, i) => p.enabled != i.enabled), "fonts");
 
             // RTL alignment (only when this translation involves right-to-left text): mirror the
             // component's alignment to follow the reading direction, or keep the game's own —
             // per font and shared with the translation, refinable per rule below.
             if (_rtlControlsVisible)
             {
-                var rtlRow = UIStyles.CreateFormRow(row, "RtlRow", UIStyles.RowHeightNormal, 5);
-                var rtlToggleObj = UIFactory.CreateToggle(rtlRow, "RtlMirrorToggle", out var rtlToggle, out var rtlLabel);
-                rtlLabel.text = " Mirror alignment (RTL)";
-                rtlLabel.color = UIStyles.TextSecondary;
-                rtlLabel.fontSize = UIStyles.FontSizeSmall;
-                UIFactory.SetLayoutElement(rtlToggleObj, minHeight: UIStyles.RowHeightNormal);
-                rtlToggle.isOn = GetEffectiveFontSettings(capturedFontName).mirrorRtl;
-                UIHelpers.AddToggleListener(rtlToggle, (isOn) => OnFontRtlAlignChanged(capturedFontName, isOn));
-                Pending.Track(rtlToggleObj, () => FontFieldChanged(capturedFontName, (p, i) => p.mirrorRtl != i.mirrorRtl), "fonts");
-                _helpZone?.Describe(rtlToggleObj,
+                var rtlRow = Stacks.Row(row, "RtlRow", spacing: 5, minHeight: UIStyles.RowHeightNormal);
+                var rtlToggle = CheckBoxes.Create(rtlRow, "RtlMirrorToggle", "Mirror alignment (RTL)",
+                    GetEffectiveFontSettings(capturedFontName).mirrorRtl,
+                    (isOn) => OnFontRtlAlignChanged(capturedFontName, isOn));
+                Pending.Track(rtlToggle, () => FontFieldChanged(capturedFontName, (p, i) => p.mirrorRtl != i.mirrorRtl), "fonts");
+                _helpZone?.Describe(rtlToggle,
                     "Right-to-left text flips left-aligned components to right-aligned, following the reading direction. Turn off to keep the game's own alignment when its layout was built around one side.");
             }
 
             // Fallback row (only for fonts that support it)
             if (fontInfo.SupportsFallback)
             {
-                var fallbackRow = UIStyles.CreateFormRow(row, "FallbackRow", UIStyles.RowHeightNormal, 5);
+                var fallbackRow = Stacks.Row(row, "FallbackRow", spacing: 5, minHeight: UIStyles.RowHeightNormal);
 
-                var fallbackLabel = UIFactory.CreateLabel(fallbackRow, "FallbackLabel", "Fallback:", TextAnchor.MiddleLeft);
-                fallbackLabel.color = UIStyles.TextSecondary;
-                fallbackLabel.fontSize = UIStyles.FontSizeSmall;
-                UIFactory.SetLayoutElement(fallbackLabel.gameObject, minWidth: 55);
+                Labels.Create(fallbackRow, "FallbackLabel", "Fallback:", TextRole.Small, policy: TextPolicy.Excluded, minWidth: 55);
 
                 // Build options array based on font type
                 var options = new List<string> { "(None)" };
@@ -1761,25 +1517,20 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
 
                 // Add custom fonts (user-provided fonts from fonts/ folder)
-                string[] customFonts = null;
+                string[] customFonts = FontManager.GetCustomFontNames();
+                if (customFonts != null && customFonts.Length > 0)
                 {
-                    customFonts = FontManager.GetCustomFontNames();
-                    if (customFonts != null && customFonts.Length > 0)
-                    {
-                        if (options.Count > 1)
-                            options.Add("--- Custom Fonts ---");
-                        foreach (var customFont in customFonts)
-                            options.Add("[Custom] " + customFont);
-                    }
+                    if (options.Count > 1)
+                        options.Add("--- Custom Fonts ---");
+                    foreach (var customFont in customFonts)
+                        options.Add("[Custom] " + customFont);
                 }
 
                 // If no fonts available at all
                 if (options.Count <= 1)
                 {
-                    var noFontsLabel = UIFactory.CreateLabel(fallbackRow, "NoFontsLabel", "(no fonts available)", TextAnchor.MiddleLeft);
-                    noFontsLabel.color = UIStyles.TextMuted;
-                    noFontsLabel.fontSize = UIStyles.FontSizeSmall;
-                    noFontsLabel.fontStyle = FontStyle.Italic;
+                    Labels.Create(fallbackRow, "NoFontsLabel", "(no fonts available)", TextRole.Small,
+                        tone: Tone.Muted, policy: TextPolicy.Excluded);
                     return;
                 }
 
@@ -1815,7 +1566,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 );
                 dropdown.CategoryProvider = FontManager.GetFontOrigin;
 
-                dropdown.CreateUI(fallbackRow, (selectedValue) =>
+                var dropdownHost = dropdown.CreateUI(fallbackRow, (selectedValue) =>
                 {
                     // Markers are display only — what gets stored is the font name
                     selectedValue = FontManager.StripOptionMarker(selectedValue);
@@ -1824,53 +1575,29 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }, width: 350);
 
                 _fallbackDropdowns.Add(dropdown);
-                Pending.Track(dropdown.Root, () => FontFieldChanged(capturedFontName, (p, i) => p.fallback != i.fallback), "fonts");
+                Pending.Track(dropdownHost, () => FontFieldChanged(capturedFontName, (p, i) => p.fallback != i.fallback), "fonts");
             }
             else
             {
                 // Show hint for non-TMP fonts
-                var noFallbackLabel = UIFactory.CreateLabel(row, "NoFallbackLabel", "Fallback not supported for this font type", TextAnchor.MiddleLeft);
-                noFallbackLabel.color = UIStyles.TextMuted;
-                noFallbackLabel.fontSize = UIStyles.FontSizeSmall;
-                noFallbackLabel.fontStyle = FontStyle.Italic;
-                UIFactory.SetLayoutElement(noFallbackLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+                Labels.Create(row, "NoFallbackLabel", "Fallback not supported for this font type", TextRole.Small,
+                    tone: Tone.Muted, policy: TextPolicy.Excluded);
             }
 
             // Size row (for all fonts) — the DELIBERATE size percent (fit/readability, e.g. a longer
             // cross-script translation vs the HUD). Orthogonal to the auto design-scale: the two
             // combine multiplicatively (Model B). 100% = native.
-            var scaleRow = UIStyles.CreateFormRow(row, "ScaleRow", UIStyles.RowHeightNormal, 5);
-
-            var scaleLabel = UIFactory.CreateLabel(scaleRow, "ScaleLabel", "Size:", TextAnchor.MiddleLeft);
-            scaleLabel.color = UIStyles.TextSecondary;
-            scaleLabel.fontSize = UIStyles.FontSizeSmall;
-            UIFactory.SetLayoutElement(scaleLabel.gameObject, minWidth: 55);
+            var scaleRow = Stacks.Row(row, "ScaleRow", spacing: 5, minHeight: UIStyles.RowHeightNormal);
 
             // Size slider (1% to 200%) = the deliberate percent. Always active; it does NOT replace
             // the auto design-scale, it applies on top of it.
-            var sliderObj = UIFactory.CreateSlider(scaleRow, $"ScaleSlider_{capturedFontName}", out UnityEngine.UI.Slider scaleSlider);
-            UIFactory.SetLayoutElement(sliderObj, minWidth: 120, flexibleWidth: 1, minHeight: 20);
-            scaleSlider.minValue = 0.01f;
-            scaleSlider.maxValue = 2.0f;
-            scaleSlider.wholeNumbers = false;
             float sizePercent = FontManager.GetFontSizePercent(capturedFontName);
-            scaleSlider.value = Math.Min(scaleSlider.maxValue, sizePercent);
-
-            var scaleValueLabel = UIFactory.CreateLabel(scaleRow, $"ScaleValue_{capturedFontName}",
-                $"{(int)(sizePercent * 100)}%", TextAnchor.MiddleCenter);
-            scaleValueLabel.fontSize = UIStyles.FontSizeSmall;
-            scaleValueLabel.color = UIStyles.TextPrimary;
-            UIFactory.SetLayoutElement(scaleValueLabel.gameObject, minWidth: 40);
-
-            var capturedScaleLabel = scaleValueLabel;
-            UIHelpers.AddSliderListener(scaleSlider, (float val) =>
-            {
-                // Round to nearest 1%
-                float rounded = (float)Math.Round(val, 2);
-                capturedScaleLabel.text = $"{(int)(rounded * 100)}%";
-                OnFontScaleChanged(capturedFontName, rounded);
-            });
-            Pending.Track(sliderObj, () => FontFieldChanged(capturedFontName, (p, i) => Math.Abs(p.sizePercent - i.sizePercent) > 0.001f), "fonts");
+            var scaleSlider = Sliders.Labelled(scaleRow, $"Scale_{capturedFontName}", "Size:", 0.01f, 2.0f,
+                Math.Min(2.0f, sizePercent),
+                v => $"{(int)(Math.Round(v, 2) * 100)}%",
+                v => OnFontScaleChanged(capturedFontName, (float)Math.Round(v, 2)),
+                captionWidth: 55);
+            Pending.Track(scaleSlider, () => FontFieldChanged(capturedFontName, (p, i) => Math.Abs(p.sizePercent - i.sizePercent) > 0.001f), "fonts");
 
             // Auto design-scale toggle — folds the font's native design-scale into the size as a
             // baseline (so an imported font matches the game's original size), on top of which the
@@ -1880,14 +1607,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (FontManager.SupportsDesignScale(fontInfo.Type))
             {
                 bool fontScaleAuto = FontManager.GetFontSettings(capturedFontName)?.scale_auto ?? false;
-                var autoToggleObj = UIFactory.CreateToggle(scaleRow, $"AutoScale_{capturedFontName}", out UnityEngine.UI.Toggle autoScaleToggle, out var autoScaleLabel);
-                autoScaleToggle.isOn = fontScaleAuto;
-                autoScaleLabel.text = " Auto";
-                autoScaleLabel.color = UIStyles.TextSecondary;
-                autoScaleLabel.fontSize = UIStyles.FontSizeSmall;
-                UIFactory.SetLayoutElement(autoToggleObj, minWidth: 70);
-                UIHelpers.AddToggleListener(autoScaleToggle, (isOn) => OnFontAutoScaleChanged(capturedFontName, isOn));
-                Pending.Track(autoToggleObj, () => FontFieldChanged(capturedFontName, (p, i) => p.scaleAuto != i.scaleAuto), "fonts");
+                var autoToggle = CheckBoxes.Create(scaleRow, $"AutoScale_{capturedFontName}", "Auto", fontScaleAuto,
+                    (isOn) => OnFontAutoScaleChanged(capturedFontName, isOn));
+                Pending.Track(autoToggle, () => FontFieldChanged(capturedFontName, (p, i) => p.scaleAuto != i.scaleAuto), "fonts");
             }
         }
 
@@ -1938,7 +1660,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// <summary>
         /// Toggle font highlight: click to show, click again (or click another) to clear.
         /// </summary>
-        private void ToggleFontHighlight(string fontName, ButtonRef button)
+        private void ToggleFontHighlight(string fontName, ButtonHandle button)
         {
             if (_highlightedFontName == fontName)
             {
@@ -1957,10 +1679,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _highlightedButton = button;
 
                 // Visual feedback: active state on button
-                button.ButtonText.text = "X";
-                button.ButtonText.color = UIStyles.TextPrimary;
-                var bg = button.GameObject.GetComponent<Image>();
-                if (bg != null) bg.color = UIStyles.TextAccent;
+                button.Text.Show("X");
+                button.Text.Tone = Tone.Plain;
+                button.Tone = ButtonTone.Primary;
             }
         }
 
@@ -1968,10 +1689,9 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (_highlightedButton != null)
             {
-                _highlightedButton.ButtonText.text = "?";
-                _highlightedButton.ButtonText.color = UIStyles.TextSecondary;
-                var bg = _highlightedButton.GameObject.GetComponent<Image>();
-                if (bg != null) bg.color = UIStyles.ButtonSecondary;
+                _highlightedButton.Text.Show("?");
+                _highlightedButton.Text.Tone = Tone.Secondary;
+                _highlightedButton.Tone = ButtonTone.Secondary;
             }
             _highlightedFontName = null;
             _highlightedButton = null;
@@ -2007,10 +1727,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             var cur = GetEffectiveFontSettings(fontName);
             _pendingFontSettings[fontName] = (enabled, cur.fallback, cur.sizePercent, cur.scaleAuto, cur.mirrorRtl);
 
-            if (_fontsStatusLabel != null)
+            if (_fontsStatus != null)
             {
-                _fontsStatusLabel.text = enabled ? $"Translation enabled for {fontName}" : $"Translation disabled for {fontName}";
-                _fontsStatusLabel.color = UIStyles.TextSecondary;
+                _fontsStatus.Show(enabled ? $"Translation enabled for {fontName}" : $"Translation disabled for {fontName}");
+                _fontsStatus.Tone = Tone.Secondary;
             }
 
             UpdateApplyButtonText();
@@ -2021,17 +1741,17 @@ namespace UnityGameTranslator.Core.UI.Panels
             var cur = GetEffectiveFontSettings(fontName);
             _pendingFontSettings[fontName] = (cur.enabled, fallbackFont, cur.sizePercent, cur.scaleAuto, cur.mirrorRtl);
 
-            if (_fontsStatusLabel != null)
+            if (_fontsStatus != null)
             {
                 if (string.IsNullOrEmpty(fallbackFont))
                 {
-                    _fontsStatusLabel.text = $"Fallback will be removed from {fontName}";
+                    _fontsStatus.Show($"Fallback will be removed from {fontName}");
                 }
                 else
                 {
-                    _fontsStatusLabel.text = $"Fallback '{fallbackFont}' will be applied to {fontName}";
+                    _fontsStatus.Show($"Fallback '{fallbackFont}' will be applied to {fontName}");
                 }
-                _fontsStatusLabel.color = UIStyles.TextSecondary;
+                _fontsStatus.Tone = Tone.Secondary;
             }
 
             UpdateApplyButtonText();
@@ -2044,11 +1764,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             // scaleAuto is preserved (Model B: the two combine).
             _pendingFontSettings[fontName] = (cur.enabled, cur.fallback, sizePercent, cur.scaleAuto, cur.mirrorRtl);
 
-            if (_fontsStatusLabel != null)
+            if (_fontsStatus != null)
             {
-                int percent = Mathf.RoundToInt(sizePercent * 100f);
-                _fontsStatusLabel.text = $"Font size {percent}% will be applied to {fontName}";
-                _fontsStatusLabel.color = UIStyles.TextSecondary;
+                int percent = (int)Math.Round(sizePercent * 100f);
+                _fontsStatus.Show($"Font size {percent}% will be applied to {fontName}");
+                _fontsStatus.Tone = Tone.Secondary;
             }
 
             UpdateApplyButtonText();
@@ -2063,12 +1783,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             var cur = GetEffectiveFontSettings(fontName);
             _pendingFontSettings[fontName] = (cur.enabled, cur.fallback, cur.sizePercent, scaleAuto, cur.mirrorRtl);
 
-            if (_fontsStatusLabel != null)
+            if (_fontsStatus != null)
             {
-                _fontsStatusLabel.text = scaleAuto
+                _fontsStatus.Show(scaleAuto
                     ? $"Auto native size enabled for {fontName}"
-                    : $"Auto native size disabled for {fontName}";
-                _fontsStatusLabel.color = UIStyles.TextSecondary;
+                    : $"Auto native size disabled for {fontName}");
+                _fontsStatus.Tone = Tone.Secondary;
             }
 
             UpdateApplyButtonText();
@@ -2078,72 +1798,57 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         #region Images Tab
 
-        private void CreateImagesTabContent(GameObject parent)
+        private void CreateImagesTabContent(Host parent)
         {
-            var card = CreateAdaptiveCard(parent, "ImagesCard", PanelWidth - 60, stretchVertically: true);
+            var card = Stacks.Card(parent, "ImagesCard", PanelWidth - 60, stretchVertically: true);
 
             // Section title
-            var sectionTitle = UIStyles.CreateSectionTitle(card, "ImagesLabel", "Bitmap Replacements");
-            RegisterUIText(sectionTitle);
+            Labels.Create(card, "ImagesLabel", "Bitmap Replacements", TextRole.SectionTitle);
 
-            var explainHint = UIStyles.CreateHint(card, "ImagesHint",
+            Labels.Create(card, "ImagesHint",
                 "Replace images that contain text (bitmap text) with translated versions. " +
                 "Use the inspector to select images, export originals as templates, " +
-                "then import your translated PNG files.");
-            RegisterUIText(explainHint);
+                "then import your translated PNG files.", TextRole.Hint);
 
-            UIStyles.CreateSpacer(card, 5);
+            Stacks.Spacer(card, 5);
 
             // Debug toggle: globally disable image replacement (for translators).
-            var imgEnableObj = UIFactory.CreateToggle(card, "EnableImageReplacementToggle", out _enableImageReplacementToggle, out var imgEnableLabel);
-            imgEnableLabel.text = " Enable image replacement (uncheck to debug with original images)";
-            imgEnableLabel.color = UIStyles.TextSecondary;
-            UIHelpers.AddToggleListener(_enableImageReplacementToggle, OnEnableImageReplacementChanged);
-            UIFactory.SetLayoutElement(imgEnableObj, minHeight: UIStyles.RowHeightNormal);
-            RegisterUIText(imgEnableLabel);
-            _helpZone?.Describe(imgEnableObj,
+            _enableImageReplacementToggle = CheckBoxes.Create(card, "EnableImageReplacementToggle",
+                "Enable image replacement (uncheck to debug with original images)",
+                TranslatorCore.Config.enable_image_replacement, OnEnableImageReplacementChanged);
+            _helpZone?.Describe(_enableImageReplacementToggle,
                 "Swaps images that contain baked-in text for your translated versions. Uncheck to debug with the original images.");
 
-            UIStyles.CreateSpacer(card, 5);
+            Stacks.Spacer(card, 5);
 
             // Start Image Inspector button
-            var inspectorBtn = CreatePrimaryButton(card, "ImageInspectorBtn", "Start Image Inspector", PanelWidth - 100);
-            inspectorBtn.OnClick += OnStartImageInspectorClicked;
-            RegisterUIText(inspectorBtn.ButtonText);
-            _helpZone?.Describe(inspectorBtn.Component.gameObject,
+            var inspectorBtn = Buttons.Primary(card, "ImageInspectorBtn", "Start Image Inspector", PanelWidth - 100);
+            inspectorBtn.Clicked += OnStartImageInspectorClicked;
+            _helpZone?.Describe(inspectorBtn,
                 "Closes this panel so you can click images in-game to mark them for replacement.");
 
-            var inspectorHint = UIStyles.CreateHint(card, "ImageInspectorHint",
-                "Click on images in the game to mark them for replacement");
-            RegisterUIText(inspectorHint);
+            Labels.Create(card, "ImageInspectorHint", "Click on images in the game to mark them for replacement", TextRole.Hint);
 
-            UIStyles.CreateSpacer(card, 8);
+            Stacks.Spacer(card, 8);
 
             // Current replacements list
-            var listLabel = UIFactory.CreateLabel(card, "ListLabel", "Current Replacements:", TextAnchor.MiddleLeft);
-            listLabel.fontSize = UIStyles.FontSizeSmall;
-            listLabel.fontStyle = FontStyle.Bold;
-            RegisterUIText(listLabel);
+            Labels.Create(card, "ListLabel", "Current Replacements:", TextRole.Small).Bold = true;
 
-            var scrollObj = UIFactory.CreateScrollView(card, "ImagesScroll", out var scrollContent, out var scrollbar);
-            UIFactory.SetLayoutElement(scrollObj, minHeight: 200, preferredHeight: 200, flexibleHeight: 9999);
-            _imagesListContainer = scrollContent;
+            _imagesList = ScrollList.Create(card, "ImagesScroll", minHeight: 200, preferredHeight: 200,
+                emptyText: "No images marked for replacement yet.\nUse the Image Inspector to select images.");
 
             // Apply All button
-            UIStyles.CreateSpacer(card, 5);
+            Stacks.Spacer(card, 5);
 
-            var applyRow = UIStyles.CreateFormRow(card, "ApplyRow", UIStyles.ButtonHeight, 5);
-            var applyAllBtn = CreatePrimaryButton(applyRow, "ApplyAllBtn", "Load All Replacements");
-            applyAllBtn.OnClick += OnLoadAllReplacementsClicked;
-            UIFactory.SetLayoutElement(applyAllBtn.Component.gameObject, flexibleWidth: 9999);
-            RegisterUIText(applyAllBtn.ButtonText);
-            _helpZone?.Describe(applyAllBtn.Component.gameObject,
+            var applyRow = Stacks.Row(card, "ApplyRow", spacing: 5, minHeight: UIStyles.ButtonHeight);
+            var applyAllBtn = Buttons.Create(applyRow, "ApplyAllBtn", "Load All Replacements",
+                ButtonTone.Primary, fill: Fill.Stretch);
+            applyAllBtn.Clicked += OnLoadAllReplacementsClicked;
+            _helpZone?.Describe(applyAllBtn,
                 "Reloads your edited PNG files from disk and applies them in-game. Use after editing the exported templates.");
 
             // Status label
-            _imagesStatusLabel = UIFactory.CreateLabel(card, "ImagesStatus", "", TextAnchor.MiddleLeft);
-            _imagesStatusLabel.fontSize = UIStyles.FontSizeSmall;
-            UIFactory.SetLayoutElement(_imagesStatusLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+            _imagesStatus = Labels.Create(card, "ImagesStatus", "", TextRole.Small, policy: TextPolicy.Dynamic);
 
             // Initial populate
             RefreshImageReplacementsList();
@@ -2151,27 +1856,11 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private void RefreshImageReplacementsList()
         {
-            if (_imagesListContainer == null) return;
-
-            // Clear existing items (backwards for IL2CPP safety)
-            int childCount = _imagesListContainer.transform.childCount;
-            for (int i = childCount - 1; i >= 0; i--)
-            {
-                var child = _imagesListContainer.transform.GetChild(i);
-                UnityEngine.Object.Destroy(child.gameObject);
-            }
+            if (_imagesList == null) return;
+            _imagesList.Clear();
 
             var replacements = ImageReplacer.GetAll();
-            if (replacements.Count == 0)
-            {
-                var emptyLabel = UIFactory.CreateLabel(_imagesListContainer, "Empty",
-                    "No images marked for replacement yet.\nUse the Image Inspector to select images.",
-                    TextAnchor.MiddleCenter);
-                emptyLabel.color = UIStyles.TextMuted;
-                emptyLabel.fontStyle = FontStyle.Italic;
-                UIFactory.SetLayoutElement(emptyLabel.gameObject, minHeight: 60, flexibleWidth: 9999);
-                return;
-            }
+            if (replacements.Count == 0) return;
 
             foreach (var kvp in replacements)
             {
@@ -2182,58 +1871,49 @@ namespace UnityGameTranslator.Core.UI.Panels
                 var capturedName = spriteName;
 
                 // Row container
-                var row = UIFactory.CreateUIObject("Row_" + spriteName, _imagesListContainer);
-                UIFactory.SetLayoutGroup<UnityEngine.UI.HorizontalLayoutGroup>(row, false, false, true, true, 5, 2, 2, 2, 2);
-                UIFactory.SetLayoutElement(row, minHeight: UIStyles.RowHeightNormal, flexibleWidth: 9999);
+                var row = Stacks.Horizontal(_imagesList.Rows, "Row_" + spriteName, spacing: 5, pad: Pad.All(2),
+                    minHeight: UIStyles.RowHeightNormal);
 
                 // Info
-                var infoObj = UIFactory.CreateUIObject("Info", row);
-                UIFactory.SetLayoutGroup<UnityEngine.UI.VerticalLayoutGroup>(infoObj, false, false, true, true, 0);
-                UIFactory.SetLayoutElement(infoObj, flexibleWidth: 9999);
+                var infoCol = Stacks.Vertical(row, "Info", fill: Fill.Stretch);
 
-                var nameLabel = UIFactory.CreateLabel(infoObj, "Name",
-                    $"{spriteName} ({entry.OriginalWidth}x{entry.OriginalHeight})",
-                    TextAnchor.MiddleLeft);
-                nameLabel.fontSize = UIStyles.FontSizeSmall;
-                nameLabel.fontStyle = FontStyle.Bold;
-                UIFactory.SetLayoutElement(nameLabel.gameObject, flexibleWidth: 9999);
+                Labels.Create(infoCol, "Name", $"{spriteName} ({entry.OriginalWidth}x{entry.OriginalHeight})",
+                    TextRole.Small, policy: TextPolicy.Excluded, fill: Fill.Stretch).Bold = true;
 
                 // Status
-                string statusText;
-                Color statusColor;
+                string statusText; Tone statusTone;
                 if (isLoaded)
                 {
                     statusText = "Replacement active";
-                    statusColor = UIStyles.StatusSuccess;
+                    statusTone = Tone.Success;
                 }
                 else if (fileExists)
                 {
                     statusText = $"File ready: {entry.File} (click Load All)";
-                    statusColor = UIStyles.StatusWarning;
+                    statusTone = Tone.Warning;
                 }
                 else
                 {
                     statusText = "Edit the exported PNG, then Load All";
-                    statusColor = UIStyles.TextMuted;
+                    statusTone = Tone.Muted;
                 }
 
-                var statusLabel = UIFactory.CreateLabel(infoObj, "Status", statusText, TextAnchor.MiddleLeft);
-                statusLabel.fontSize = UIStyles.FontSizeSmall - 1;
-                statusLabel.color = statusColor;
-                UIFactory.SetLayoutElement(statusLabel.gameObject, flexibleWidth: 9999);
+                Labels.Create(infoCol, "Status", statusText, TextRole.Caption, tone: statusTone,
+                    policy: TextPolicy.Excluded, fill: Fill.Stretch);
 
                 // Remove button
-                var removeBtn = CreateSecondaryButton(row, "Remove_" + spriteName, "X");
-                UIFactory.SetLayoutElement(removeBtn.Component.gameObject, minWidth: 30, minHeight: UIStyles.RowHeightNormal);
-                removeBtn.OnClick += () =>
+                var removeBtn = Buttons.Secondary(row, "Remove_" + spriteName, "X", 30);
+                removeBtn.Clicked += () =>
                 {
                     ImageReplacer.RemoveReplacement(capturedName);
                     TranslatorCore.SaveCache();
                     RefreshImageReplacementsList();
-                    _imagesStatusLabel.text = Tr("Removed:") + $" {capturedName}";
-                    _imagesStatusLabel.color = UIStyles.TextSecondary;
+                    _imagesStatus.Show(Tr("Removed:") + $" {capturedName}");
+                    _imagesStatus.Tone = Tone.Secondary;
                 };
             }
+
+            _imagesList.Filled();
         }
 
         private void OnLoadAllReplacementsClicked()
@@ -2245,13 +1925,13 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             if (loaded > 0)
             {
-                SetDynamicText(_imagesStatusLabel, $"Loaded {loaded} replacement(s)");
-                _imagesStatusLabel.color = UIStyles.StatusSuccess;
+                _imagesStatus.Say($"Loaded {loaded} replacement(s)");
+                _imagesStatus.Tone = Tone.Success;
             }
             else
             {
-                SetDynamicText(_imagesStatusLabel, "No new replacements to load");
-                _imagesStatusLabel.color = UIStyles.TextMuted;
+                _imagesStatus.Say("No new replacements to load");
+                _imagesStatus.Tone = Tone.Muted;
             }
         }
 
@@ -2259,68 +1939,53 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         #region Variables Tab
 
-        private void CreateVariablesTabContent(GameObject parent)
+        private void CreateVariablesTabContent(Host parent)
         {
-            var card = CreateAdaptiveCard(parent, "VariablesCard", PanelWidth - 60, stretchVertically: true);
+            var card = Stacks.Card(parent, "VariablesCard", PanelWidth - 60, stretchVertically: true);
 
             // Section title
-            var sectionTitle = UIStyles.CreateSectionTitle(card, "VarsLabel", "Game Variables");
-            RegisterUIText(sectionTitle);
+            Labels.Create(card, "VarsLabel", "Game Variables", TextRole.SectionTitle);
 
-            var explainHint = UIStyles.CreateHint(card, "VarsHint",
+            Labels.Create(card, "VarsHint",
                 "Capture dynamic game values (player name, clan name, etc.) so translations can be reused regardless of the actual value. " +
-                "Variables are replaced with placeholders before translation.");
-            RegisterUIText(explainHint);
+                "Variables are replaced with placeholders before translation.", TextRole.Hint);
 
-            UIStyles.CreateSpacer(card, 8);
+            Stacks.Spacer(card, 8);
 
             // Capture section
-            var captureTitle = UIStyles.CreateSectionTitle(card, "CaptureLabel", "Capture Variable");
-            RegisterUIText(captureTitle);
+            Labels.Create(card, "CaptureLabel", "Capture Variable", TextRole.SectionTitle);
 
-            var captureHint = UIStyles.CreateHint(card, "CaptureHint",
-                "Enter the current value of a game variable (e.g. your character name) to find it in memory.");
-            RegisterUIText(captureHint);
+            Labels.Create(card, "CaptureHint",
+                "Enter the current value of a game variable (e.g. your character name) to find it in memory.", TextRole.Hint);
 
-            var captureRow = UIStyles.CreateFormRow(card, "CaptureRow", UIStyles.RowHeightNormal, 5);
+            var captureRow = Stacks.Row(card, "CaptureRow", spacing: 5, minHeight: UIStyles.RowHeightNormal);
 
-            _scanValueInput = UIFactory.CreateInputField(captureRow, "ScanValueInput", "Enter value to search...");
-            UIFactory.SetLayoutElement(_scanValueInput.UIRoot, minHeight: UIStyles.RowHeightNormal, flexibleWidth: 9999);
-            _helpZone?.Describe(_scanValueInput.Component.gameObject,
+            _scanValueInput = Fields.Create(captureRow, "ScanValueInput", "Enter value to search...");
+            _helpZone?.Describe(_scanValueInput,
                 "Type the current value of a game variable, like your character name, to find it in memory.");
 
-            var scanBtn = CreatePrimaryButton(captureRow, "ScanBtn", "Scan");
-            scanBtn.OnClick += OnScanClicked;
-            UIFactory.SetLayoutElement(scanBtn.Component.gameObject, minWidth: 70);
-            RegisterUIText(scanBtn.ButtonText);
-            _helpZone?.Describe(scanBtn.Component.gameObject,
+            var scanBtn = Buttons.Primary(captureRow, "ScanBtn", "Scan", 70);
+            scanBtn.Clicked += OnScanClicked;
+            _helpZone?.Describe(scanBtn,
                 "Searches game memory for the entered value so it can be turned into a reusable placeholder.");
 
-            UIStyles.CreateSpacer(card, 5);
+            Stacks.Spacer(card, 5);
 
             // Scan results (hidden until scan)
-            var resultsScroll = UIFactory.CreateScrollView(card, "ScanResultsScroll", out var resultsContent, out _);
-            UIFactory.SetLayoutElement(resultsScroll, minHeight: 80, preferredHeight: 100, flexibleHeight: 0);
-            _scanResultsContainer = resultsContent;
-            resultsScroll.SetActive(false);
+            _scanResultsList = ScrollList.Create(card, "ScanResultsScroll", minHeight: 80, preferredHeight: 100,
+                fillHeight: false, emptyText: "No matching fields found in game memory.");
+            _scanResultsList.Visible = false;
 
-            UIStyles.CreateSpacer(card, 8);
+            Stacks.Spacer(card, 8);
 
             // Current variables list
-            var listLabel = UIFactory.CreateLabel(card, "ListLabel", "Defined Variables:", TextAnchor.MiddleLeft);
-            listLabel.fontSize = UIStyles.FontSizeSmall;
-            listLabel.fontStyle = FontStyle.Bold;
-            RegisterUIText(listLabel);
+            Labels.Create(card, "ListLabel", "Defined Variables:", TextRole.Small).Bold = true;
 
-            var scrollObj = UIFactory.CreateScrollView(card, "VarsScroll", out var scrollContent, out _);
-            UIFactory.SetLayoutElement(scrollObj, minHeight: 200, preferredHeight: 200, flexibleHeight: 9999);
-            _variablesListContainer = scrollContent;
+            _variablesList = ScrollList.Create(card, "VarsScroll", minHeight: 200, preferredHeight: 200);
 
             // Status label
-            UIStyles.CreateSpacer(card, 5);
-            _variablesStatusLabel = UIFactory.CreateLabel(card, "VarsStatus", "", TextAnchor.MiddleLeft);
-            _variablesStatusLabel.fontSize = UIStyles.FontSizeSmall;
-            UIFactory.SetLayoutElement(_variablesStatusLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+            Stacks.Spacer(card, 5);
+            _variablesStatus = Labels.Create(card, "VarsStatus", "", TextRole.Small, policy: TextPolicy.Dynamic);
 
             // Initial populate
             RefreshVariablesList();
@@ -2333,22 +1998,20 @@ namespace UnityGameTranslator.Core.UI.Panels
             string value = _scanValueInput?.Text?.Trim();
             if (string.IsNullOrEmpty(value))
             {
-                SetDynamicText(_variablesStatusLabel, "Enter a value to search for");
-                _variablesStatusLabel.color = UIStyles.StatusWarning;
+                _variablesStatus.Say("Enter a value to search for");
+                _variablesStatus.Tone = Tone.Warning;
                 return;
             }
 
             _isScanning = true;
-            SetDynamicText(_variablesStatusLabel, "Scanning...");
-            _variablesStatusLabel.color = UIStyles.TextSecondary;
+            _variablesStatus.Say("Scanning...");
+            _variablesStatus.Tone = Tone.Secondary;
 
             // Show results container
-            _scanResultsContainer.transform.parent.parent.gameObject.SetActive(true);
+            _scanResultsList.Visible = true;
 
             // Clear previous results
-            int childCount = _scanResultsContainer.transform.childCount;
-            for (int i = childCount - 1; i >= 0; i--)
-                UnityEngine.Object.Destroy(_scanResultsContainer.transform.GetChild(i).gameObject);
+            _scanResultsList.Clear();
 
             try
             {
@@ -2356,22 +2019,15 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 if (candidates.Count == 0)
                 {
-                    var emptyLabel = UIFactory.CreateLabel(_scanResultsContainer, "NoResults",
-                        "No matching fields found in game memory.", TextAnchor.MiddleCenter);
-                    emptyLabel.color = UIStyles.TextMuted;
-                    emptyLabel.fontStyle = FontStyle.Italic;
-                    UIFactory.SetLayoutElement(emptyLabel.gameObject, minHeight: 30, flexibleWidth: 9999);
-
-                    SetDynamicText(_variablesStatusLabel, "No results found");
-                    _variablesStatusLabel.color = UIStyles.StatusWarning;
+                    _variablesStatus.Say("No results found");
+                    _variablesStatus.Tone = Tone.Warning;
                 }
                 else
                 {
                     foreach (var candidate in candidates)
                     {
-                        var row = UIFactory.CreateUIObject("Candidate", _scanResultsContainer);
-                        UIFactory.SetLayoutGroup<HorizontalLayoutGroup>(row, false, false, true, true, 5, 2, 2, 2, 2);
-                        UIFactory.SetLayoutElement(row, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999);
+                        var row = Stacks.Horizontal(_scanResultsList.Rows, "Candidate", spacing: 5, pad: Pad.All(2),
+                            minHeight: UIStyles.RowHeightSmall);
 
                         // Show the matched value: with partial matches (composed display
                         // strings like "seedA-seedB"), the path alone doesn't tell the
@@ -2381,33 +2037,32 @@ namespace UnityGameTranslator.Core.UI.Panels
                         string display = $"{candidate.ClassName}.{candidate.FieldPath} = \"{valPreview}\"";
                         if (candidate.IsStatic) display += " (static)";
 
-                        var label = UIFactory.CreateLabel(row, "Label", display, TextAnchor.MiddleLeft);
-                        label.fontSize = UIStyles.FontSizeSmall;
-                        UIFactory.SetLayoutElement(label.gameObject, flexibleWidth: 9999);
+                        Labels.Create(row, "Label", display, TextRole.Small, policy: TextPolicy.Excluded, fill: Fill.Stretch);
 
                         var capturedCandidate = candidate;
-                        var addBtn = CreateSecondaryButton(row, "Add", "+");
-                        UIFactory.SetLayoutElement(addBtn.Component.gameObject, minWidth: 30);
-                        addBtn.OnClick += () =>
+                        var addBtn = Buttons.Secondary(row, "Add", "+", 30);
+                        addBtn.Clicked += () =>
                         {
                             // Prompt for a name — use the field name as default
                             string varName = capturedCandidate.FieldPath.Split('.').Last();
                             VariableManager.AddVariable(varName, capturedCandidate.ClassName, capturedCandidate.FieldPath);
                             TranslatorCore.SaveCache();
                             RefreshVariablesList();
-                            _variablesStatusLabel.text = $"Added: {varName} ({capturedCandidate.ClassName}.{capturedCandidate.FieldPath})";
-                            _variablesStatusLabel.color = UIStyles.StatusSuccess;
+                            _variablesStatus.Show($"Added: {varName} ({capturedCandidate.ClassName}.{capturedCandidate.FieldPath})");
+                            _variablesStatus.Tone = Tone.Success;
                         };
                     }
 
-                    SetDynamicText(_variablesStatusLabel, $"Found {candidates.Count} candidate(s). Click + to add.");
-                    _variablesStatusLabel.color = UIStyles.StatusSuccess;
+                    _scanResultsList.Filled();
+
+                    _variablesStatus.Say($"Found {candidates.Count} candidate(s). Click + to add.");
+                    _variablesStatus.Tone = Tone.Success;
                 }
             }
             catch (Exception ex)
             {
-                _variablesStatusLabel.text = $"Scan error: {ex.Message}";
-                _variablesStatusLabel.color = UIStyles.StatusError;
+                _variablesStatus.Show($"Scan error: {ex.Message}");
+                _variablesStatus.Tone = Tone.Error;
             }
 
             _isScanning = false;
@@ -2415,23 +2070,11 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private void RefreshVariablesList()
         {
-            if (_variablesListContainer == null) return;
-
-            int childCount = _variablesListContainer.transform.childCount;
-            for (int i = childCount - 1; i >= 0; i--)
-                UnityEngine.Object.Destroy(_variablesListContainer.transform.GetChild(i).gameObject);
+            if (_variablesList == null) return;
+            _variablesList.Clear();
 
             var definitions = VariableManager.Definitions;
-            if (definitions.Count == 0)
-            {
-                var emptyLabel = UIFactory.CreateLabel(_variablesListContainer, "Empty",
-                    "No variables defined.\nUse Capture to find game variables.",
-                    TextAnchor.MiddleCenter);
-                emptyLabel.color = UIStyles.TextMuted;
-                emptyLabel.fontStyle = FontStyle.Italic;
-                UIFactory.SetLayoutElement(emptyLabel.gameObject, minHeight: 40, flexibleWidth: 9999);
-                return;
-            }
+            if (definitions.Count == 0) return;
 
             // Refresh values
             VariableManager.RefreshValues();
@@ -2442,42 +2085,34 @@ namespace UnityGameTranslator.Core.UI.Panels
                 int stableId = def.Id;
                 string currentVal = VariableManager.GetValue(stableId);
 
-                var row = UIFactory.CreateUIObject("Var_" + stableId, _variablesListContainer);
-                UIFactory.SetLayoutGroup<HorizontalLayoutGroup>(row, false, false, true, true, 5, 2, 2, 2, 2);
-                UIFactory.SetLayoutElement(row, minHeight: UIStyles.RowHeightNormal, flexibleWidth: 9999);
+                var row = Stacks.Horizontal(_variablesList.Rows, "Var_" + stableId, spacing: 5, pad: Pad.All(2),
+                    minHeight: UIStyles.RowHeightNormal);
 
                 // Info
-                var infoObj = UIFactory.CreateUIObject("Info", row);
-                UIFactory.SetLayoutGroup<VerticalLayoutGroup>(infoObj, false, false, true, true, 0);
-                UIFactory.SetLayoutElement(infoObj, flexibleWidth: 9999);
+                var infoCol = Stacks.Vertical(row, "Info", fill: Fill.Stretch);
 
-                var nameLabel = UIFactory.CreateLabel(infoObj, "Name",
-                    $"[!STR*{stableId}] {def.Name}", TextAnchor.MiddleLeft);
-                nameLabel.fontSize = UIStyles.FontSizeSmall;
-                nameLabel.fontStyle = FontStyle.Bold;
-                UIFactory.SetLayoutElement(nameLabel.gameObject, flexibleWidth: 9999);
+                Labels.Create(infoCol, "Name", $"[!STR*{stableId}] {def.Name}", TextRole.Small,
+                    policy: TextPolicy.Excluded, fill: Fill.Stretch).Bold = true;
 
                 string pathStr = $"{def.ClassName}.{def.FieldPath}";
                 string valStr = currentVal != null ? $" = \"{currentVal}\"" : " = (not resolved)";
-                var detailLabel = UIFactory.CreateLabel(infoObj, "Detail",
-                    pathStr + valStr, TextAnchor.MiddleLeft);
-                detailLabel.fontSize = UIStyles.FontSizeSmall - 1;
-                detailLabel.color = currentVal != null ? UIStyles.TextSecondary : UIStyles.StatusWarning;
-                UIFactory.SetLayoutElement(detailLabel.gameObject, flexibleWidth: 9999);
+                Labels.Create(infoCol, "Detail", pathStr + valStr, TextRole.Caption,
+                    tone: currentVal != null ? Tone.Secondary : Tone.Warning, policy: TextPolicy.Excluded, fill: Fill.Stretch);
 
                 // Remove button
                 int capturedId = stableId;
-                var removeBtn = CreateSecondaryButton(row, "Remove_" + stableId, "X");
-                UIFactory.SetLayoutElement(removeBtn.Component.gameObject, minWidth: 30, minHeight: UIStyles.RowHeightNormal);
-                removeBtn.OnClick += () =>
+                var removeBtn = Buttons.Secondary(row, "Remove_" + stableId, "X", 30);
+                removeBtn.Clicked += () =>
                 {
                     VariableManager.RemoveVariable(capturedId);
                     TranslatorCore.SaveCache();
                     RefreshVariablesList();
-                    SetDynamicText(_variablesStatusLabel, "Variable removed");
-                    _variablesStatusLabel.color = UIStyles.TextSecondary;
+                    _variablesStatus.Say("Variable removed");
+                    _variablesStatus.Tone = Tone.Secondary;
                 };
             }
+
+            _variablesList.Filled();
         }
 
         #endregion
@@ -2524,9 +2159,9 @@ namespace UnityGameTranslator.Core.UI.Panels
         public void RefreshFromConfig()
         {
             if (_enableFontReplacementToggle != null)
-                _enableFontReplacementToggle.isOn = TranslatorCore.Config.enable_font_replacement;
+                _enableFontReplacementToggle.IsOn = TranslatorCore.Config.enable_font_replacement;
             if (_enableImageReplacementToggle != null)
-                _enableImageReplacementToggle.isOn = TranslatorCore.Config.enable_image_replacement;
+                _enableImageReplacementToggle.IsOn = TranslatorCore.Config.enable_image_replacement;
 
             UpdateApplyButtonText();
         }
@@ -2546,9 +2181,9 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             // Debug toggles
             if (_enableFontReplacementToggle != null)
-                _enableFontReplacementToggle.isOn = TranslatorCore.Config.enable_font_replacement;
+                _enableFontReplacementToggle.IsOn = TranslatorCore.Config.enable_font_replacement;
             if (_enableImageReplacementToggle != null)
-                _enableImageReplacementToggle.isOn = TranslatorCore.Config.enable_image_replacement;
+                _enableImageReplacementToggle.IsOn = TranslatorCore.Config.enable_image_replacement;
             _pendingAtlasSize = TranslatorCore.Config.max_font_atlas_size;
 
             // Refresh UI lists
@@ -2668,15 +2303,15 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 // Apply behavior settings
                 if (_typewritingDetectionToggle != null)
-                    TranslatorCore.TypewritingDetection = _typewritingDetectionToggle.isOn;
+                    TranslatorCore.TypewritingDetection = _typewritingDetectionToggle.IsOn;
                 if (_concatDetectionToggle != null)
-                    TranslatorCore.ConcatDetection = _concatDetectionToggle.isOn;
+                    TranslatorCore.ConcatDetection = _concatDetectionToggle.IsOn;
 
                 // Apply debug toggles — only act when the value actually changed, to avoid
                 // unnecessarily restoring/applying when the user didn't touch these.
                 if (_enableFontReplacementToggle != null)
                 {
-                    bool fontEnabled = _enableFontReplacementToggle.isOn;
+                    bool fontEnabled = _enableFontReplacementToggle.IsOn;
                     if (fontEnabled != TranslatorCore.Config.enable_font_replacement)
                     {
                         TranslatorCore.Config.enable_font_replacement = fontEnabled;
@@ -2687,7 +2322,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 if (_enableImageReplacementToggle != null)
                 {
-                    bool imgEnabled = _enableImageReplacementToggle.isOn;
+                    bool imgEnabled = _enableImageReplacementToggle.IsOn;
                     if (imgEnabled != TranslatorCore.Config.enable_image_replacement)
                     {
                         TranslatorCore.Config.enable_image_replacement = imgEnabled;
@@ -2806,9 +2441,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_applyBtn == null) return;
 
             int changes = CountPendingChanges();
-            string label = changes > 0 ? $"Apply ({changes})" : "Close";
-            // Translate at set-time (cache/placeholder-aware) — no race with the async pipeline.
-            _applyBtn.ButtonText.text = TranslatorCore.TranslateOwnUIDynamic(label, _applyBtn.ButtonText);
+            // Translated at set-time (cache/placeholder-aware) — no race with the async pipeline.
+            _applyBtn.Label = changes > 0 ? $"Apply ({changes})" : "Close";
         }
 
         #endregion

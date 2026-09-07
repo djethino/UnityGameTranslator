@@ -130,10 +130,17 @@ namespace UnityGameTranslator.Core.UI.Components
         /// Fill the row's width and raise the height to an ordinary field's, for a dropdown
         /// standing alone on its own line rather than sized to its own text.
         /// </param>
-        public Host CreateUI(Host parent, Action<string> onValueChanged = null, int width = 200, bool stretch = false)
+        /// <param name="stretch">Fill the row, at a field's height.</param>
+        /// <param name="minHeight">A fixed-width dropdown that still sits at a field's height —
+        /// beside a caption on a form row, where its neighbours are fields. Null keeps the
+        /// dropdown's own 25 px; <paramref name="stretch"/> already implies a field's height.</param>
+        public Host CreateUI(Host parent, Action<string> onValueChanged = null, int width = 200, bool stretch = false,
+                             int? minHeight = null)
         {
             var obj = CreateUI(parent.Object, onValueChanged, width);
-            if (stretch) UIFactory.SetLayoutElement(obj, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
+            int? height = minHeight ?? (stretch ? (int?)UIStyles.InputHeight : null);
+            if (stretch || height != null)
+                UIFactory.SetLayoutElement(obj, flexibleWidth: stretch ? (int?)9999 : null, minHeight: height);
             return new Host(obj);
         }
 

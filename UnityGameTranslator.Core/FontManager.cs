@@ -1820,6 +1820,22 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// The GPU's own texture size ceiling, or a safe default when it cannot be read — the
+        /// upper bound the Fonts tab's sharpness options are built against.
+        ///
+        /// ⚠ Added for the UI vocabulary migration (2026-09-08): `UnityEngine.SystemInfo` is an
+        /// engine call, and a panel may not name the engine at all (see
+        /// analyse/inventaire-couches/brief-migration-panneau.md). It lives here rather than being
+        /// inlined at the call site so the panel only ever asks a business question.
+        /// </summary>
+        public static int GetMaxTextureSize()
+        {
+            int maxTex = 8192;
+            try { int sys = UnityEngine.SystemInfo.maxTextureSize; if (sys >= 512) maxTex = sys; } catch { }
+            return maxTex;
+        }
+
+        /// <summary>
         /// Get the font scale for a specific component, checking per-component overrides first.
         /// </summary>
         public static float GetFontScale(string fontName, int componentId)

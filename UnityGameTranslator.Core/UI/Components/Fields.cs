@@ -22,15 +22,20 @@ namespace UnityGameTranslator.Core.UI.Components
         /// field editing text a player or a file could have written, where seeing the markup IS the
         /// point (InspectorPanel's text editor). True (the default) is uGUI's own default.
         /// </param>
+        /// <param name="minWidth">
+        /// A floor on width, for a short numeric field that should not stretch to the row — combine
+        /// with <see cref="Fill.Content"/>. Null leaves the width to <paramref name="fill"/> alone,
+        /// as before this parameter existed.
+        /// </param>
         public static FieldHandle Create(Host parent, string name, string placeholder = "",
                                          FieldKind kind = FieldKind.Text, int? minHeight = null,
                                          Fill fill = Fill.Stretch, Action<string> onChanged = null,
-                                         bool richText = true)
+                                         bool richText = true, int? minWidth = null)
         {
             var input = UIFactory.CreateInputField(parent.Object, name, placeholder ?? "");
 
             int height = minHeight ?? (kind == FieldKind.Multiline ? UIStyles.MultiLineMedium : UIStyles.InputHeight);
-            UIFactory.SetLayoutElement(input.Component.gameObject, minHeight: height,
+            UIFactory.SetLayoutElement(input.Component.gameObject, minWidth: minWidth, minHeight: height,
                                        flexibleWidth: fill == Fill.Stretch ? (int?)9999 : null);
             UIStyles.SetBackground(input.Component.gameObject, UIStyles.InputBackground);
 
@@ -54,24 +59,30 @@ namespace UnityGameTranslator.Core.UI.Components
         /// A caption and a field on one row: "Server  [__________]". The caption keeps a fixed
         /// width so the fields of a form line up.
         /// </summary>
+        /// <param name="fieldMinWidth">Forwarded to <see cref="Create"/> — a floor for a short field
+        /// beside its caption (an attempt count, a temperature), instead of filling the row.</param>
+        /// <param name="fieldFill">Forwarded to <see cref="Create"/>.</param>
         public static FieldHandle Captioned(Host parent, string name, string caption, out LabelHandle captionLabel,
                                             string placeholder = "", FieldKind kind = FieldKind.Text,
-                                            int captionWidth = 120, Action<string> onChanged = null)
+                                            int captionWidth = 120, Action<string> onChanged = null,
+                                            int? fieldMinWidth = null, Fill fieldFill = Fill.Stretch)
         {
             var row = Stacks.Row(parent, name + "Row");
             captionLabel = Labels.Create(row, name + "Caption", caption, TextRole.Body,
                                          minHeight: UIStyles.RowHeightNormal);
             UIFactory.SetLayoutElement(captionLabel.Text.gameObject, minWidth: captionWidth, flexibleWidth: 0);
 
-            return Create(row, name, placeholder, kind, onChanged: onChanged);
+            return Create(row, name, placeholder, kind, onChanged: onChanged, minWidth: fieldMinWidth, fill: fieldFill);
         }
 
         /// <summary>Same, for callers that do not need the caption back.</summary>
         public static FieldHandle Captioned(Host parent, string name, string caption, string placeholder = "",
                                             FieldKind kind = FieldKind.Text, int captionWidth = 120,
-                                            Action<string> onChanged = null)
+                                            Action<string> onChanged = null, int? fieldMinWidth = null,
+                                            Fill fieldFill = Fill.Stretch)
         {
-            return Captioned(parent, name, caption, out _, placeholder, kind, captionWidth, onChanged);
+            return Captioned(parent, name, caption, out _, placeholder, kind, captionWidth, onChanged,
+                             fieldMinWidth, fieldFill);
         }
     }
 }

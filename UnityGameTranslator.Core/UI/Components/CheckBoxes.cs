@@ -14,15 +14,19 @@ namespace UnityGameTranslator.Core.UI.Components
     {
         /// <param name="initial">On or off at creation. Set BEFORE the listener is attached, so creating it fires nothing.</param>
         /// <param name="onChanged">Flipped by the person — never by <see cref="ToggleHandle.IsOn"/> from code.</param>
+        /// <param name="fill">Stretch to push whatever follows it on the same row to the far edge —
+        /// a checkbox sharing a row with a button beyond it. Content (the default) keeps its own
+        /// width, as every checkbox did before this parameter existed.</param>
         public static ToggleHandle Create(Host parent, string name, string label, bool initial = false,
                                           Action<bool> onChanged = null, TextPolicy policy = TextPolicy.UiText,
-                                          Tone tone = Tone.Plain)
+                                          Tone tone = Tone.Plain, Fill fill = Fill.Content)
         {
             var row = UIFactory.CreateToggle(parent.Object, name, out Toggle toggle, out Text text);
             text.text = label ?? "";
             text.fontSize = UIStyles.FontSizeNormal;
             text.color = Tones.Colour(tone);
-            UIFactory.SetLayoutElement(row, minHeight: UIStyles.ToggleHeight);
+            UIFactory.SetLayoutElement(row, minHeight: UIStyles.ToggleHeight,
+                                       flexibleWidth: fill == Fill.Stretch ? (int?)9999 : null);
 
             // The factory creates it ON; the value is put right before anybody listens.
             toggle.isOn = initial;

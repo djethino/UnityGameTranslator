@@ -302,6 +302,43 @@ namespace UnityGameTranslator.Core
             set { if (Config != null) Config.pause_game = value; }
         }
 
+        /// <summary>
+        /// What a settings screen may ask the runtime to take from the game — mirrors
+        /// UniverseLib.Input.InputCapture.CaptureKind, so that a panel (which may name nothing of
+        /// UniverseLib, see UI/Components/Handles.cs) can ask for one without naming it.
+        /// </summary>
+        public enum InputIntent { Keyboard, GameMenus, GameClicks, MouseAxes }
+
+        private static UniverseLib.Input.InputCapture.CaptureKind ToCaptureKind(InputIntent intent)
+        {
+            switch (intent)
+            {
+                case InputIntent.GameMenus: return UniverseLib.Input.InputCapture.CaptureKind.GameMenus;
+                case InputIntent.GameClicks: return UniverseLib.Input.InputCapture.CaptureKind.GameClicks;
+                case InputIntent.MouseAxes: return UniverseLib.Input.InputCapture.CaptureKind.MouseAxes;
+                default: return UniverseLib.Input.InputCapture.CaptureKind.Keyboard;
+            }
+        }
+
+        /// <summary>Whether this game can be made to hand over one kind of input — each strategy
+        /// probed itself at startup; this only asks, per intention.</summary>
+        public static bool CanCaptureInput(InputIntent intent) => UniverseLib.Input.InputCapture.CanCapture(ToCaptureKind(intent));
+
+        /// <summary>Why <see cref="CanCaptureInput"/> answered no, in words a settings screen can show.</summary>
+        public static string WhyInputCaptureUnavailable(InputIntent intent) => UniverseLib.Input.InputCapture.WhyNot(ToCaptureKind(intent));
+
+        /// <summary>
+        /// Keep UniverseLib's own copy of the EventSystem-override flag in step with
+        /// <see cref="DisableEventSystemOverride"/> — its EventSystem patches read it live, so this
+        /// is what makes toggling the option in Options take effect at once instead of only at the
+        /// next launch. Kept here (never called as UniverseLib.Config… from a panel) so a panel can
+        /// hold handles only.
+        /// </summary>
+        public static void SyncEventSystemOverrideLive()
+        {
+            UniverseLib.Config.ConfigManager.Disable_EventSystem_Override = DisableEventSystemOverride;
+        }
+
         /// <summary>Opacity of a mod window, focused and unfocused. Floored so it stays readable.</summary>
         public static float PanelOpacityFocused
         {

@@ -30,9 +30,9 @@ namespace UnityGameTranslator.Core.Checks
         /// <summary>Panels still written against UniverseLib. Remove one when it moves.</summary>
         private static readonly HashSet<string> PanelsStillOpen = new HashSet<string>(StringComparer.Ordinal)
         {
-            // The base carries the rendering half of every panel — sizing, persistence, the
-            // scroll skeleton — and will keep Unity on purpose. It moves to a whitelist of its
-            // own the day its declarative half is split from it.
+            // The base's rendering half — sizing, persistence, the scroll skeleton, the
+            // coroutines — keeps Unity on purpose. Its declarative half, what a panel may call,
+            // is TranslatorPanelBase.Frontier.cs, judged like any panel (split 2026-09-08).
             "TranslatorPanelBase.cs",
         };
 

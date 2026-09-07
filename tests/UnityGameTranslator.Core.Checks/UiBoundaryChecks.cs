@@ -30,8 +30,6 @@ namespace UnityGameTranslator.Core.Checks
         /// <summary>Panels still written against UniverseLib. Remove one when it moves.</summary>
         private static readonly HashSet<string> PanelsStillOpen = new HashSet<string>(StringComparer.Ordinal)
         {
-            "InspectorPanel.cs",
-            "MainPanel.cs",
             "OptionsPanel.cs",
             "TranslationParametersPanel.cs",
             // The base carries the rendering half of every panel — sizing, persistence, the

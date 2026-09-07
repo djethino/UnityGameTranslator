@@ -17,9 +17,15 @@ namespace UnityGameTranslator.Core.UI.Components
     public static class Fields
     {
         /// <summary>A field on its own.</summary>
+        /// <param name="richText">
+        /// False renders &lt;color=…&gt; and friends literally instead of interpreting them — for a
+        /// field editing text a player or a file could have written, where seeing the markup IS the
+        /// point (InspectorPanel's text editor). True (the default) is uGUI's own default.
+        /// </param>
         public static FieldHandle Create(Host parent, string name, string placeholder = "",
                                          FieldKind kind = FieldKind.Text, int? minHeight = null,
-                                         Fill fill = Fill.Stretch, Action<string> onChanged = null)
+                                         Fill fill = Fill.Stretch, Action<string> onChanged = null,
+                                         bool richText = true)
         {
             var input = UIFactory.CreateInputField(parent.Object, name, placeholder ?? "");
 
@@ -35,6 +41,9 @@ namespace UnityGameTranslator.Core.UI.Components
                 case FieldKind.Decimal: input.Component.contentType = InputField.ContentType.DecimalNumber; break;
                 case FieldKind.Multiline: input.Component.lineType = InputField.LineType.MultiLineNewline; break;
             }
+
+            if (!richText && input.Component.textComponent != null)
+                input.Component.textComponent.supportRichText = false;
 
             var handle = new FieldHandle(input);
             if (onChanged != null) handle.Changed += onChanged;

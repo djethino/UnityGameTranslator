@@ -83,6 +83,19 @@ namespace UnityGameTranslator.Core.UI.Components
         /// <summary>The empty sentence, to reword it.</summary>
         public LabelHandle EmptyText => _empty;
 
+        /// <summary>
+        /// Revise the room this list claims by itself — for a list whose row count is only known
+        /// once it is filled (InspectorPanel's text editor: one row needs a small box, a dozen need
+        /// more). Added 2026-09-08; <c>fillHeight</c> from <see cref="Create"/> is left as it was,
+        /// so the list still grows to fill whatever this leaves free.
+        /// </summary>
+        public void SetHeight(int height)
+        {
+            if (_scroll == null) return;
+            UIFactory.SetLayoutElement(_scroll, minHeight: height, preferredHeight: height,
+                                       flexibleHeight: 9999, flexibleWidth: 9999);
+        }
+
         public bool Visible
         {
             get => _scroll != null && _scroll.activeSelf;

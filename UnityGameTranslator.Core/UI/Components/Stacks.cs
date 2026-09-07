@@ -65,10 +65,20 @@ namespace UnityGameTranslator.Core.UI.Components
                               minHeight: minHeight ?? UIStyles.RowHeightMedium);
         }
 
-        /// <summary>A card, centred in its parent at the panel's card width, padded and edged.</summary>
-        public static Host Card(Host parent, string name, int width = 420, bool stretchVertically = false)
+        /// <summary>
+        /// A card, centred in its parent at the panel's card width, padded and edged.
+        /// </summary>
+        /// <param name="surface">
+        /// <see cref="Surface.Card"/> (the ordinary background) or <see cref="Surface.Elevated"/>
+        /// for a card that must read as raised — a prominent call-to-action, a notice that stands
+        /// out from the section around it.
+        /// </param>
+        public static Host Card(Host parent, string name, int width = 420, bool stretchVertically = false,
+                                Surface surface = Surface.Card)
         {
-            return new Host(UIStyles.CreateAdaptiveCard(parent.Object, name, width, stretchVertically));
+            var card = UIStyles.CreateAdaptiveCard(parent.Object, name, width, stretchVertically);
+            if (surface == Surface.Elevated) UIStyles.SetBackground(card, UIStyles.CardElevated);
+            return new Host(card);
         }
 
         /// <summary>A section inside a card: no edge, its own padding.</summary>
@@ -93,6 +103,17 @@ namespace UnityGameTranslator.Core.UI.Components
         {
             if (host?.Object == null) return;
             UIStyles.SetBackground(host.Object, chosen ? UIStyles.ItemBackgroundSelected : UIStyles.ItemBackground);
+        }
+
+        /// <summary>
+        /// Repaints a stack between <see cref="Surface.Card"/> and <see cref="Surface.Elevated"/>
+        /// without rebuilding it — a box that raises itself while something in it needs attention
+        /// and settles back once it does not.
+        /// </summary>
+        public static void Retint(Host host, Surface surface)
+        {
+            if (host?.Object == null) return;
+            UIStyles.SetBackground(host.Object, surface == Surface.Elevated ? UIStyles.CardElevated : UIStyles.CardBackground);
         }
 
         /// <summary>A fixed gap.</summary>

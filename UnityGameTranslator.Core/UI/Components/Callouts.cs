@@ -87,5 +87,20 @@ namespace UnityGameTranslator.Core.UI.Components
             UIStyles.SetBackground(body.Object, Fill(tone));
             return body;
         }
+
+        /// <summary>
+        /// A tone-tinted ROW, for a message and its buttons sharing one line — the mod update
+        /// banner's shape, which <see cref="Box"/> cannot give (it stacks vertically).
+        /// </summary>
+        public static Host HorizontalBox(Host parent, string name, CalloutTone tone, int spacing = 8,
+                                         Pad? pad = null, Placement placement = Placement.MiddleLeft,
+                                         int minHeight = 0)
+        {
+            var body = Stacks.Horizontal(parent, name, spacing: spacing, pad: pad ?? Pad.Of(8, 5),
+                                         placement: placement,
+                                         minHeight: minHeight > 0 ? minHeight : UIStyles.NotificationBoxHeight);
+            UIStyles.SetBackground(body.Object, Fill(tone));
+            return body;
+        }
     }
 }

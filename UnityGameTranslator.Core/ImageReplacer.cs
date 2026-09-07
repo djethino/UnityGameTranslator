@@ -456,6 +456,31 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Same as <see cref="AddReplacement"/>, but reads the sprite's own size, pivot, border and
+        /// pixels-per-unit from <paramref name="spriteObj"/> instead of taking them as parameters.
+        ///
+        /// Added 2026-09-08 for InspectorPanel's migration to the UI vocabulary: the panel may no
+        /// longer name <c>Vector2</c>/<c>Vector4</c>/<c>Vector2Int</c> (see
+        /// analyse/inventaire-couches/brief-migration-panneau.md), which is exactly what marking a
+        /// replacement from a freshly-picked sprite used to require. Keeping the math here, in a
+        /// non-UI file, is where it already lived conceptually — the panel only ever had the sprite
+        /// object and a path, never a reason of its own to hold Unity math types.
+        /// </summary>
+        public static void AddReplacementFromSprite(object spriteObj, string hierarchyPath, string spriteName)
+        {
+            if (spriteObj == null || string.IsNullOrEmpty(spriteName)) return;
+
+            var size = GetSpriteSize(spriteObj);
+
+            Vector2 pivot = new Vector2(0.5f, 0.5f);
+            float ppu = 100f;
+            Vector4 border = Vector4.zero;
+            TextureUtils.GetSpriteProperties(spriteObj, out pivot, out ppu, out border);
+
+            AddReplacement(spriteName, hierarchyPath, size.x, size.y, pivot, border, ppu);
+        }
+
+        /// <summary>
         /// Remove a replacement entry.
         /// </summary>
         public static void RemoveReplacement(string spriteName)

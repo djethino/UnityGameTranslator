@@ -1,14 +1,9 @@
 using System;
 using System.Collections.Generic;
-using System.Reflection;
-using System.Runtime.CompilerServices;
-using UnityEngine;
-using UnityEngine.UI;
-using UniverseLib;
-using UniverseLib.Input;
 using UniverseLib.UI;
-using UniverseLib.UI.Models;
 using UnityGameTranslator.Common;
+using UnityGameTranslator.Core.UI;
+using UnityGameTranslator.Core.UI.Components;
 
 namespace UnityGameTranslator.Core.UI.Panels
 {
@@ -27,7 +22,12 @@ namespace UnityGameTranslator.Core.UI.Panels
     /// Inspector panel for visually selecting UI elements.
     /// Dual mode: Exclusion (select text to exclude) or BitmapReplace (select images to replace).
     /// DevTools-style: hover preview with highlight overlay, click to select.
-    /// All Unity API calls use reflection for IL2CPP compatibility.
+    ///
+    /// ⚠ Migrated to the UI vocabulary 2026-09-08 (see
+    /// analyse/inventaire-couches/brief-migration-panneau.md): everything that actually touches
+    /// Unity — the reflection-based IL2CPP-safe raycast, the highlight overlay, camera picking —
+    /// moved to <see cref="InspectorPicker"/>. This class keeps only what a panel is for: buttons,
+    /// labels, the text-edit list, and the per-mode decisions.
     /// </summary>
     public class InspectorPanel : TranslatorPanelBase
     {
@@ -45,33 +45,35 @@ namespace UnityGameTranslator.Core.UI.Panels
         // vertical room when the user enlarges the panel.
         protected override bool HasFlexibleContent => true;
 
+        // The in-game half of the inspector — see its own class summary.
+        private readonly InspectorPicker _picker;
+
         // Mode
         private InspectorMode _currentMode = InspectorMode.Exclusion;
 
         // UI elements — shared
-        private Text _hoveredPathLabel;
-        private Text _selectedPathLabel;
-        private Text _statusLabel;
-        private ButtonRef _cancelBtn;
-        private Text _titleLabel;
+        private LabelHandle _hoveredPathLabel;
+        private LabelHandle _selectedPathLabel;
+        private LabelHandle _statusLabel;
+        private ButtonHandle _cancelBtn;
+        private LabelHandle _titleLabel;
         private Components.HelpZone _helpZone;
 
         // UI elements — Exclusion mode
-        private ButtonRef _excludeThisBtn;
-        private ButtonRef _excludePatternBtn;
-        private GameObject _exclusionActionsRow;
+        private ButtonHandle _excludeThisBtn;
+        private ButtonHandle _excludePatternBtn;
+        private Host _exclusionActionsRow;
 
         // UI elements — BitmapReplace mode
-        private ButtonRef _exportOriginalBtn;
-        private ButtonRef _markReplaceBtn;
-        private GameObject _imageActionsRow;
-        private Text _spriteInfoLabel;
+        private ButtonHandle _exportOriginalBtn;
+        private ButtonHandle _markReplaceBtn;
+        private Host _imageActionsRow;
+        private LabelHandle _spriteInfoLabel;
 
         // UI elements — TextEdit mode
-        private GameObject _textEditRow;
-        private GameObject _textEditScroll;
-        private GameObject _textEditListContent;
-        private Text _textEditCountLabel;
+        private Host _textEditRow;
+        private ScrollList _textEditList;
+        private LabelHandle _textEditCountLabel;
 
         /// <summary>
         /// The list's floor, and its ceiling once filled. One text needs a small box; a busy screen
@@ -106,20 +108,19 @@ namespace UnityGameTranslator.Core.UI.Panels
             // stored and edited carries placeholders, what the game draws carries numbers.
             public Dictionary<int, string> LiveNumbers;
 
-            public InputFieldRef Input;
-            public Text KeyLabel;
+            public FieldHandle Input;
+            public LabelHandle KeyLabel;
             /// <summary>
             /// The tag's coloured square and the letter on it — what the website has always drawn
             /// and this panel wrote as `[H] ` in front of the key, in the same grey as the key.
             /// Kept on the row because four different gestures rewrite it: saving, retranslating,
             /// reverting, and the periodic refresh.
             /// </summary>
-            public GameObject TagChip;
-            public Text TagLetter;
-            public Text PreviewLabel;
-            public ButtonRef SaveBtn;
-            public ButtonRef RetranslateBtn;
-            public ButtonRef RevertBtn;
+            public TagChipHandle TagChip;
+            public LabelHandle PreviewLabel;
+            public ButtonHandle SaveBtn;
+            public ButtonHandle RetranslateBtn;
+            public ButtonHandle RevertBtn;
 
             /// <summary>
             /// What the AI last proposed for this line, or null. Kept so that saving it untouched
@@ -128,545 +129,22 @@ namespace UnityGameTranslator.Core.UI.Panels
             public string AiProposal;
         }
 
-        // Camera selection for world-space raycast
+        // Camera selection — the dropdown lives here (it is UI); which camera is picked lives in
+        // the picker, which is what actually needs a Camera reference.
         private Components.SearchableDropdown _cameraDropdown;
-        private Camera _selectedCamera = null; // null = UI Only mode
-        private Camera[] _sceneCameras = new Camera[0];
-        private string[] _cameraNames = new string[0];
 
-        // State
-        private bool _isInspecting = false;
-        private string _lastHoveredPath = "";
+        // State kept about the current selection, for the buttons below to act on. The Unity side
+        // of a selection (the GameObject/element it came from) never leaves the picker.
         private string _lastSelectedPath = "";
-        private GameObject _lastSelectedObject = null;
+        private string _lastSelectedName = "";
         private object _lastSelectedSpriteObj = null;
-        private int _frameSkip = 0;
         private bool _mainPanelWasOpen = false;
-
-        // Highlight overlay
-        private GameObject _highlightCanvas;
-        private Image _hoverHighlight;
-        private Image _selectedHighlight;
-        private RectTransform _hoverHighlightRect;
-        private RectTransform _selectedHighlightRect;
-
-        // Colors for highlights (DevTools-style) — from the palette
-        private static readonly Color HoverHighlightColor = UIStyles.GameHighlightHover;
-        private static readonly Color SelectedHighlightColor = UIStyles.GameHighlightSelected;
-
-        #region IL2CPP-safe Raycast Infrastructure
-
-        // Resolved types (cached at first use)
-        private static bool _raycastInitialized = false;
-        private static bool _raycastAvailable = false;
-
-        // Resolved types
-        private static Type _graphicRaycasterType;
-        private static Type _pointerEventDataType;
-        private static Type _eventSystemType;
-        private static Type _raycastResultType;
-        private static Type _graphicType;
-
-        // Resolved methods/properties
-        private static PropertyInfo _eventSystemCurrentProp;
-        private static ConstructorInfo _pointerEventDataCtor;
-        private static PropertyInfo _pointerEventDataPositionProp;
-        private static MethodInfo _raycasterRaycastMethod;
-
-        // For reading results
-        private static PropertyInfo _raycastResultGameObjectProp;
-
-        // For creating the list parameter (IL2CPP needs Il2CppSystem list)
-        private static Type _listType;          // The actual List<RaycastResult> type to use
-        private static MethodInfo _listCountProp;
-        private static MethodInfo _listGetItem;
-
-        /// <summary>
-        /// Initialize raycast types and methods via reflection.
-        /// Safe for both Mono and IL2CPP.
-        /// </summary>
-        private static void InitializeRaycast()
-        {
-            if (_raycastInitialized) return;
-            _raycastInitialized = true;
-
-            try
-            {
-                // Resolve types
-                _graphicRaycasterType = FindUIType("UnityEngine.UI.GraphicRaycaster");
-                _pointerEventDataType = FindUIType("UnityEngine.EventSystems.PointerEventData");
-                _eventSystemType = FindUIType("UnityEngine.EventSystems.EventSystem");
-                _raycastResultType = FindUIType("UnityEngine.EventSystems.RaycastResult");
-                _graphicType = FindUIType("UnityEngine.UI.Graphic");
-
-                if (_graphicRaycasterType == null || _pointerEventDataType == null ||
-                    _eventSystemType == null || _raycastResultType == null)
-                {
-                    TranslatorCore.LogWarning("[Inspector] Could not resolve UI types for raycast");
-                    return;
-                }
-
-                // EventSystem.current
-                _eventSystemCurrentProp = _eventSystemType.GetProperty("current",
-                    BindingFlags.Public | BindingFlags.Static);
-
-                // PointerEventData(EventSystem)
-                _pointerEventDataCtor = _pointerEventDataType.GetConstructor(
-                    new[] { _eventSystemType });
-
-                // PointerEventData.position
-                _pointerEventDataPositionProp = _pointerEventDataType.GetProperty("position",
-                    BindingFlags.Public | BindingFlags.Instance);
-
-                // Resolve the List<RaycastResult> type and GraphicRaycaster.Raycast(PointerEventData, List<RaycastResult>)
-                ResolveRaycastMethod();
-
-                if (_eventSystemCurrentProp == null || _pointerEventDataCtor == null ||
-                    _pointerEventDataPositionProp == null || _raycasterRaycastMethod == null)
-                {
-                    TranslatorCore.LogWarning("[Inspector] Could not resolve all raycast methods");
-                    LogResolvedState();
-                    return;
-                }
-
-                _raycastAvailable = true;
-                TranslatorCore.LogInfo("[Inspector] Raycast infrastructure initialized (IL2CPP-safe)");
-            }
-            catch (Exception ex)
-            {
-                TranslatorCore.LogError($"[Inspector] Raycast init failed: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// Find the correct Raycast method and the list type it expects.
-        /// On IL2CPP, parameters use Il2CppSystem.Collections.Generic.List.
-        /// </summary>
-        private static void ResolveRaycastMethod()
-        {
-            var pubInst = BindingFlags.Public | BindingFlags.Instance;
-
-            // Find Raycast(PointerEventData, List<RaycastResult>) on GraphicRaycaster
-            foreach (var method in _graphicRaycasterType.GetMethods(pubInst))
-            {
-                if (method.Name != "Raycast") continue;
-                var parameters = method.GetParameters();
-                if (parameters.Length != 2) continue;
-
-                // First param should be PointerEventData-like
-                var param0Type = parameters[0].ParameterType;
-                if (!IsTypeMatch(param0Type, "PointerEventData")) continue;
-
-                // Second param should be List<RaycastResult>-like
-                var param1Type = parameters[1].ParameterType;
-                if (!param1Type.IsGenericType) continue;
-
-                var genericArgs = param1Type.GetGenericArguments();
-                if (genericArgs.Length != 1 || !IsTypeMatch(genericArgs[0], "RaycastResult")) continue;
-
-                _raycasterRaycastMethod = method;
-                _listType = param1Type;
-
-                // Resolve list accessors
-                var countProp = _listType.GetProperty("Count", pubInst);
-                _listCountProp = countProp?.GetGetMethod();
-
-                // get_Item(int) — indexer
-                _listGetItem = _listType.GetMethod("get_Item", pubInst, null, new[] { typeof(int) }, null);
-
-                // RaycastResult.gameObject
-                _raycastResultGameObjectProp = genericArgs[0].GetProperty("gameObject", pubInst);
-                // Fallback: try m_GameObject field (IL2CPP struct)
-                if (_raycastResultGameObjectProp == null)
-                    _raycastResultGameObjectProp = genericArgs[0].GetProperty("gameObject",
-                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-
-                TranslatorCore.LogDebug($"[Inspector] Resolved Raycast: list={_listType.FullName}, result={genericArgs[0].FullName}");
-                break;
-            }
-        }
-
-        /// <summary>
-        /// Check if a type name matches (handles IL2CPP prefixed names).
-        /// </summary>
-        private static bool IsTypeMatch(Type type, string simpleName)
-        {
-            if (type == null) return false;
-            string name = type.Name;
-            if (name == simpleName) return true;
-            // IL2CPP prefix
-            if (name.StartsWith("Il2Cpp") && name.Substring(6) == simpleName) return true;
-            return false;
-        }
-
-        /// <summary>
-        /// Find a UI type across all loaded assemblies (handles IL2CPP prefixed assemblies).
-        /// </summary>
-        private static Type FindUIType(string fullName)
-        {
-            // Direct lookup first
-            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                try
-                {
-                    var type = asm.GetType(fullName);
-                    if (type != null) return type;
-                }
-                catch { }
-            }
-
-            // IL2CPP: try with Il2Cpp prefix on the namespace
-            // e.g., "UnityEngine.UI.GraphicRaycaster" → "Il2CppUnityEngine.UI.GraphicRaycaster"
-            string il2cppName = "Il2Cpp" + fullName;
-            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                try
-                {
-                    var type = asm.GetType(il2cppName);
-                    if (type != null) return type;
-                }
-                catch { }
-            }
-
-            // Last resort: search by simple name
-            string simpleName = fullName.Substring(fullName.LastIndexOf('.') + 1);
-            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                try
-                {
-                    foreach (var type in asm.GetTypes())
-                    {
-                        if (type.Name == simpleName && type.FullName.Contains(simpleName))
-                            return type;
-                    }
-                }
-                catch { }
-            }
-
-            return null;
-        }
-
-        private static void LogResolvedState()
-        {
-            TranslatorCore.LogDebug($"[Inspector] GraphicRaycaster={_graphicRaycasterType != null}, " +
-                $"PointerEventData={_pointerEventDataType != null}, EventSystem={_eventSystemType != null}, " +
-                $"RaycastResult={_raycastResultType != null}");
-            TranslatorCore.LogDebug($"[Inspector] EventSystem.current={_eventSystemCurrentProp != null}, " +
-                $"PointerEventData ctor={_pointerEventDataCtor != null}, " +
-                $"Raycast method={_raycasterRaycastMethod != null}");
-        }
-
-        /// <summary>
-        /// Raycast to find UI element under screen position.
-        /// Uses pure reflection — works on both Mono and IL2CPP.
-        /// </summary>
-        [MethodImpl(MethodImplOptions.NoInlining)]
-        private GameObject RaycastUIElement(Vector3 screenPosition)
-        {
-            // If a camera is selected, raycast via that camera (world-space)
-            if (_selectedCamera != null)
-                return RaycastViaCamera(_selectedCamera, screenPosition);
-
-            // Default: UI Only mode via GraphicRaycasters
-            if (!_raycastAvailable) return null;
-
-            try
-            {
-                // Get EventSystem.current
-                var eventSystem = _eventSystemCurrentProp.GetValue(null, null);
-                if (eventSystem == null) return null;
-
-                // Find all GraphicRaycasters in the scene
-                var raycasters = TypeHelper.FindAllObjectsOfType(_graphicRaycasterType);
-                if (raycasters == null || raycasters.Length == 0) return null;
-
-                foreach (var raycasterObj in raycasters)
-                {
-                    if (raycasterObj == null) continue;
-
-                    // Skip our own highlight canvas raycaster
-                    var raycasterComp = raycasterObj as Component;
-                    if (raycasterComp == null)
-                        raycasterComp = TypeHelper.Il2CppCast(raycasterObj, typeof(Component)) as Component;
-                    if (raycasterComp != null && raycasterComp.gameObject != null && IsOwnUI(raycasterComp.gameObject))
-                        continue;
-
-                    // IL2CPP: cast to the proper type
-                    var raycaster = TypeHelper.Il2CppCast(raycasterObj, _graphicRaycasterType);
-                    if (raycaster == null) continue;
-
-                    try
-                    {
-                        // Create PointerEventData
-                        var pointer = _pointerEventDataCtor.Invoke(new[] { eventSystem });
-                        if (pointer == null) continue;
-
-                        // Set position
-                        _pointerEventDataPositionProp.SetValue(pointer, (Vector2)screenPosition, null);
-
-                        // Create List<RaycastResult>
-                        var resultsList = Activator.CreateInstance(_listType);
-                        if (resultsList == null) continue;
-
-                        // Call Raycast(pointer, results)
-                        // Step aside from the input capture: it silences the game's raycasters so
-                        // nothing behind our window reacts to a click, and this raycast IS into
-                        // the game — inspecting it is the one time we want them to answer.
-                        UniverseLib.Input.InputCapture.ConsumerReading = true;
-                        try { _raycasterRaycastMethod.Invoke(raycaster, new[] { pointer, resultsList }); }
-                        finally { UniverseLib.Input.InputCapture.ConsumerReading = false; }
-
-                        // Check count
-                        int count = (int)_listCountProp.Invoke(resultsList, null);
-                        if (count == 0) continue;
-
-                        // Iterate results — in BitmapReplace mode, skip non-image components
-                        for (int i = 0; i < count; i++)
-                        {
-                            var resultItem = _listGetItem.Invoke(resultsList, new object[] { i });
-                            if (resultItem == null) continue;
-
-                            var gameObj = _raycastResultGameObjectProp.GetValue(resultItem, null);
-                            GameObject go = gameObj as GameObject;
-
-                            // IL2CPP: may need cast
-                            if (go == null && gameObj != null)
-                            {
-                                var casted = TypeHelper.Il2CppCast(gameObj, typeof(GameObject));
-                                go = casted as GameObject;
-                            }
-
-                            if (go == null) continue;
-
-                            // In BitmapReplace mode, only accept GameObjects with image components
-                            if (_currentMode == InspectorMode.BitmapReplace)
-                            {
-                                if (!ImageReplacer.HasImageComponent(go)) continue;
-                            }
-
-                            return go;
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        TranslatorCore.LogDebug($"[Inspector] Raycast on {raycasterObj.name} failed: {ex.Message}");
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                TranslatorCore.LogDebug($"[Inspector] RaycastUIElement error: {ex.Message}");
-            }
-
-            return null;
-        }
-
-        /// <summary>
-        /// Raycast World Space Canvases that use a specific camera.
-        /// Uses GraphicRaycaster on each matching Canvas.
-        /// </summary>
-        private GameObject RaycastWorldSpaceCanvases(Camera camera, Vector3 screenPosition)
-        {
-            if (camera == null || !_raycastAvailable) return null;
-
-            try
-            {
-                var eventSystem = _eventSystemCurrentProp.GetValue(null, null);
-                if (eventSystem == null) return null;
-
-                var raycasters = TypeHelper.FindAllObjectsOfType(_graphicRaycasterType);
-                if (raycasters == null) return null;
-
-                foreach (var raycasterObj in raycasters)
-                {
-                    if (raycasterObj == null) continue;
-
-                    // Get the Canvas of this raycaster
-                    var raycasterComp = raycasterObj as Component;
-                    if (raycasterComp == null)
-                        raycasterComp = TypeHelper.Il2CppCast(raycasterObj, typeof(Component)) as Component;
-                    if (raycasterComp == null || raycasterComp.gameObject == null) continue;
-                    if (IsOwnUI(raycasterComp.gameObject)) continue;
-
-                    // Check if this Canvas is World Space and uses our selected camera
-                    var canvas = raycasterComp.gameObject.GetComponent<Canvas>();
-                    if (canvas == null) continue;
-                    // Match canvases that use this camera (WorldSpace or ScreenSpaceCamera)
-                    if (canvas.renderMode == RenderMode.ScreenSpaceOverlay) continue;
-                    if (canvas.worldCamera != camera) continue;
-
-                    // This Canvas uses our camera — raycast through it
-                    var raycaster = TypeHelper.Il2CppCast(raycasterObj, _graphicRaycasterType);
-                    if (raycaster == null) continue;
-
-                    try
-                    {
-                        var pointer = _pointerEventDataCtor.Invoke(new[] { eventSystem });
-                        if (pointer == null) continue;
-                        _pointerEventDataPositionProp.SetValue(pointer, (Vector2)screenPosition, null);
-
-                        var resultsList = Activator.CreateInstance(_listType);
-                        if (resultsList == null) continue;
-
-                        // Step aside from the input capture: it silences the game's raycasters so
-                        // nothing behind our window reacts to a click, and this raycast IS into
-                        // the game — inspecting it is the one time we want them to answer.
-                        UniverseLib.Input.InputCapture.ConsumerReading = true;
-                        try { _raycasterRaycastMethod.Invoke(raycaster, new[] { pointer, resultsList }); }
-                        finally { UniverseLib.Input.InputCapture.ConsumerReading = false; }
-
-                        int count = (int)_listCountProp.Invoke(resultsList, null);
-                        for (int i = 0; i < count; i++)
-                        {
-                            var resultItem = _listGetItem.Invoke(resultsList, new object[] { i });
-                            if (resultItem == null) continue;
-
-                            var gameObj = _raycastResultGameObjectProp.GetValue(resultItem, null);
-                            GameObject go = gameObj as GameObject;
-                            if (go == null && gameObj != null)
-                                go = TypeHelper.Il2CppCast(gameObj, typeof(GameObject)) as GameObject;
-                            if (go == null || IsOwnUI(go)) continue;
-
-                            if (_currentMode == InspectorMode.BitmapReplace)
-                            {
-                                if (!ImageReplacer.HasImageComponent(go)) continue;
-                            }
-
-                            return go;
-                        }
-                    }
-                    catch { }
-                }
-            }
-            catch (Exception ex)
-            {
-                TranslatorCore.LogDebug($"[Inspector] RaycastWorldSpaceCanvases error: {ex.Message}");
-            }
-
-            return null;
-        }
-
-        /// <summary>
-        /// Raycast via a specific Camera for world-space Renderers.
-        /// Only checks renderers visible to this camera (via cullingMask).
-        /// </summary>
-        private GameObject RaycastViaCamera(Camera camera, Vector3 screenPosition)
-        {
-            if (camera == null) return null;
-
-            // First: check World Space Canvases that use this camera
-            // (these have GraphicRaycasters but aren't found by "UI Only" mode
-            // because their GraphicRaycaster needs the correct camera context)
-            var canvasHit = RaycastWorldSpaceCanvases(camera, screenPosition);
-            if (canvasHit != null) return canvasHit;
-
-            // Then: bounds check for renderers visible to this camera
-            try
-            {
-                int cullingMask = camera.cullingMask;
-                var all = TypeHelper.FindAllObjectsOfType(typeof(Renderer));
-                if (all == null) return null;
-
-                GameObject bestHit = null;
-                float bestArea = float.MaxValue;
-
-                foreach (var obj in all)
-                {
-                    if (obj == null) continue;
-
-                    Renderer rend = obj as Renderer;
-                    if (rend == null)
-                    {
-                        var casted = TypeHelper.Il2CppCast(obj, typeof(Renderer));
-                        rend = casted as Renderer;
-                    }
-                    if (rend == null || rend.gameObject == null) continue;
-                    if (!rend.enabled || !rend.isVisible) continue;
-                    if (!rend.gameObject.activeInHierarchy) continue;
-
-                    // Filter by camera culling mask
-                    if ((cullingMask & (1 << rend.gameObject.layer)) == 0) continue;
-
-                    if (IsOwnUI(rend.gameObject)) continue;
-
-                    if (_currentMode == InspectorMode.BitmapReplace)
-                    {
-                        if (!ImageReplacer.HasImageComponent(rend.gameObject)) continue;
-                    }
-
-                    try
-                    {
-                        var bounds = rend.bounds;
-                        if (bounds.size == Vector3.zero) continue;
-
-                        Vector3 center = bounds.center;
-                        Vector3 extents = bounds.extents;
-
-                        Vector3 screenCenter = camera.WorldToScreenPoint(center);
-                        // Only filter by Z for perspective cameras (orthographic can have negative Z)
-                        if (!camera.orthographic && screenCenter.z < 0) continue;
-
-                        Vector3 s0 = camera.WorldToScreenPoint(center - extents);
-                        Vector3 s1 = camera.WorldToScreenPoint(center + extents);
-
-                        float minX = Mathf.Min(s0.x, s1.x);
-                        float maxX = Mathf.Max(s0.x, s1.x);
-                        float minY = Mathf.Min(s0.y, s1.y);
-                        float maxY = Mathf.Max(s0.y, s1.y);
-
-                        if (screenPosition.x >= minX && screenPosition.x <= maxX &&
-                            screenPosition.y >= minY && screenPosition.y <= maxY)
-                        {
-                            float hitArea = (maxX - minX) * (maxY - minY);
-                            if (hitArea < bestArea)
-                            {
-                                bestArea = hitArea;
-                                bestHit = rend.gameObject;
-                            }
-                        }
-                    }
-                    catch { }
-                }
-
-                return bestHit;
-            }
-            catch (Exception ex)
-            {
-                TranslatorCore.LogDebug($"[Inspector] RaycastViaCamera error: {ex.Message}");
-                return null;
-            }
-        }
-
-        /// <summary>
-        /// Check if an object is a Graphic component (IL2CPP-safe).
-        /// </summary>
-        private static bool IsGraphic(Component component)
-        {
-            if (component == null || _graphicType == null) return false;
-            try
-            {
-                return _graphicType.IsInstanceOfType(component);
-            }
-            catch
-            {
-                // Fallback: name-based check for IL2CPP proxy types
-                var type = component.GetType();
-                while (type != null)
-                {
-                    string name = type.Name;
-                    if (name == "Graphic" || name == "Il2CppGraphic") return true;
-                    type = type.BaseType;
-                }
-                return false;
-            }
-        }
-
-        #endregion
 
         public InspectorPanel(UIBase owner) : base(owner)
         {
-            // Initialize raycast infrastructure on first panel creation
-            InitializeRaycast();
+            _picker = new InspectorPicker();
+            _picker.Hovered += OnHovered;
+            _picker.Picked += OnPicked;
 
             // Panels are built once for the life of the process (CreatePanels), so this
             // subscription needs no matching removal — and must not be made per row, which would
@@ -676,291 +154,140 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         protected override void ConstructPanelContent()
         {
-            CreateScrollablePanelLayout(out var scrollContent, out var buttonRow, PanelWidth - 40);
+            Layout(out var scrollContent, out var buttonRow, PanelWidth - 40);
 
             // Contextual help bar between content and footer
             _helpZone = CreateHelpZone(buttonRow, "Hover an element to see what it does");
 
             // Title
-            _titleLabel = CreateScopedTitle(scrollContent, "Title", "Element Inspector", EditSide.Local);
-            RegisterExcluded(_titleLabel);
+            _titleLabel = ScopedTitle(scrollContent, "Title", "Element Inspector", EditSide.Local,
+                                      policy: TextPolicy.Dynamic);
 
-            UIStyles.CreateSpacer(scrollContent, 5);
+            Stacks.Spacer(scrollContent, 5);
 
             // Main card
-            var card = CreateAdaptiveCard(scrollContent, "InspectorCard", PanelWidth - 60, stretchVertically: true);
+            var card = Stacks.Card(scrollContent, "InspectorCard", PanelWidth - 60, stretchVertically: true);
 
             // Instructions
-            var instructionTitle = UIStyles.CreateSectionTitle(card, "InstructionsLabel", "Instructions");
-            RegisterUIText(instructionTitle);
+            Labels.Create(card, "InstructionsLabel", "Instructions", TextRole.SectionTitle);
+            Labels.Create(card, "InstructionsHint", "Hover over any UI element to preview it. Click to select.",
+                         TextRole.Hint);
 
-            var instructionHint = UIStyles.CreateHint(card, "InstructionsHint",
-                "Hover over any UI element to preview it. Click to select.");
-            RegisterUIText(instructionHint);
-
-            UIStyles.CreateSpacer(card, 8);
+            Stacks.Spacer(card, 8);
 
             // --- Camera selection ---
-            var cameraTitle = UIStyles.CreateSectionTitle(card, "CameraLabel", "Target");
-            RegisterUIText(cameraTitle);
+            Labels.Create(card, "CameraLabel", "Target", TextRole.SectionTitle);
 
             _cameraDropdown = new Components.SearchableDropdown("CameraTarget",
                 new[] { "UI Only" }, "UI Only", popupHeight: 150, showSearch: false);
-            var cameraObj = _cameraDropdown.CreateUI(card, OnCameraSelected, PanelWidth - 80);
-            UIFactory.SetLayoutElement(cameraObj, minHeight: UIStyles.RowHeightNormal, flexibleWidth: 9999);
-            _helpZone?.Describe(cameraObj,
+            var cameraHost = _cameraDropdown.CreateUI(card, OnCameraSelected, PanelWidth - 80, stretch: true);
+            _helpZone?.Describe(cameraHost,
                 "'UI Only' picks on-screen interface text. Choose a camera to pick objects in the game world instead.");
 
-            UIStyles.CreateSpacer(card, 8);
+            Stacks.Spacer(card, 8);
 
             // --- Hovered Element section ---
-            var hoverTitle = UIStyles.CreateSectionTitle(card, "HoverSectionLabel", "Hovered");
-            RegisterUIText(hoverTitle);
+            Labels.Create(card, "HoverSectionLabel", "Hovered", TextRole.SectionTitle);
 
-            var hoverBox = CreateSection(card, "HoverBox");
+            var hoverBox = Stacks.Section(card, "HoverBox");
 
-            _hoveredPathLabel = UIFactory.CreateLabel(hoverBox, "HoverPathValue", "(move cursor over a UI element)", TextAnchor.MiddleLeft);
-            _hoveredPathLabel.color = UIStyles.TextMuted;
-            _hoveredPathLabel.fontStyle = FontStyle.Italic;
-            _hoveredPathLabel.fontSize = UIStyles.FontSizeSmall;
-            UIFactory.SetLayoutElement(_hoveredPathLabel.gameObject, minHeight: UIStyles.RowHeightNormal, flexibleWidth: 9999);
+            _hoveredPathLabel = Labels.Create(hoverBox, "HoverPathValue", "(move cursor over a UI element)",
+                TextRole.Small, tone: Tone.Muted, policy: TextPolicy.Dynamic, fill: Fill.Stretch,
+                minHeight: UIStyles.RowHeightNormal);
+            _hoveredPathLabel.Italic = true;
 
-            UIStyles.CreateSpacer(card, 8);
+            Stacks.Spacer(card, 8);
 
             // --- Selected Element section ---
-            var selectedTitle = UIStyles.CreateSectionTitle(card, "SelectedSectionLabel", "Selected");
-            RegisterUIText(selectedTitle);
+            Labels.Create(card, "SelectedSectionLabel", "Selected", TextRole.SectionTitle);
 
-            var selectedBox = CreateSection(card, "SelectedBox");
+            var selectedBox = Stacks.Section(card, "SelectedBox");
 
-            _selectedPathLabel = UIFactory.CreateLabel(selectedBox, "SelectedPathValue", "(click to select)", TextAnchor.MiddleLeft);
-            _selectedPathLabel.color = UIStyles.TextMuted;
-            _selectedPathLabel.fontStyle = FontStyle.Italic;
-            _selectedPathLabel.fontSize = UIStyles.FontSizeSmall;
-            UIFactory.SetLayoutElement(_selectedPathLabel.gameObject, minHeight: UIStyles.RowHeightNormal, flexibleWidth: 9999);
+            _selectedPathLabel = Labels.Create(selectedBox, "SelectedPathValue", "(click to select)",
+                TextRole.Small, tone: Tone.Muted, policy: TextPolicy.Dynamic, fill: Fill.Stretch,
+                minHeight: UIStyles.RowHeightNormal);
+            _selectedPathLabel.Italic = true;
 
-            UIStyles.CreateSpacer(card, 8);
+            Stacks.Spacer(card, 8);
 
             // --- Sprite info (BitmapReplace mode only) ---
-            _spriteInfoLabel = UIFactory.CreateLabel(card, "SpriteInfo", "", TextAnchor.MiddleLeft);
-            _spriteInfoLabel.fontSize = UIStyles.FontSizeSmall;
-            _spriteInfoLabel.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(_spriteInfoLabel.gameObject, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999);
-            _spriteInfoLabel.gameObject.SetActive(false);
+            _spriteInfoLabel = Labels.Create(card, "SpriteInfo", "", TextRole.Small, tone: Tone.Secondary,
+                policy: TextPolicy.Dynamic, fill: Fill.Stretch, minHeight: UIStyles.RowHeightSmall);
+            _spriteInfoLabel.Visible = false;
 
-            UIStyles.CreateSpacer(card, 4);
+            Stacks.Spacer(card, 4);
 
             // --- Action buttons ---
-            var actionsTitle = UIStyles.CreateSectionTitle(card, "ActionsLabel", "Actions");
-            RegisterUIText(actionsTitle);
+            Labels.Create(card, "ActionsLabel", "Actions", TextRole.SectionTitle);
 
             // Exclusion mode actions
-            _exclusionActionsRow = UIStyles.CreateFormRow(card, "ExclusionActionRow", UIStyles.ButtonHeight, 5);
+            _exclusionActionsRow = Stacks.Row(card, "ExclusionActionRow", spacing: 5, minHeight: UIStyles.ButtonHeight);
 
-            _excludeThisBtn = CreatePrimaryButton(_exclusionActionsRow, "ExcludeThisBtn", "Exclude This Element");
-            _excludeThisBtn.OnClick += OnExcludeThisClicked;
-            _excludeThisBtn.Component.interactable = false;
-            UIFactory.SetLayoutElement(_excludeThisBtn.Component.gameObject, flexibleWidth: 9999);
-            RegisterUIText(_excludeThisBtn.ButtonText);
-            _helpZone?.Describe(_excludeThisBtn.Component.gameObject,
-                "Never translate this exact element (only this one)");
+            _excludeThisBtn = Buttons.Create(_exclusionActionsRow, "ExcludeThisBtn", "Exclude This Element",
+                ButtonTone.Primary, fill: Fill.Stretch);
+            _excludeThisBtn.Enabled = false;
+            _excludeThisBtn.Clicked += OnExcludeThisClicked;
+            _helpZone?.Describe(_excludeThisBtn, "Never translate this exact element (only this one)");
 
-            _excludePatternBtn = CreateSecondaryButton(_exclusionActionsRow, "ExcludePatternBtn", "Exclude Pattern");
-            _excludePatternBtn.OnClick += OnExcludePatternClicked;
-            _excludePatternBtn.Component.interactable = false;
-            UIFactory.SetLayoutElement(_excludePatternBtn.Component.gameObject, flexibleWidth: 9999);
-            RegisterUIText(_excludePatternBtn.ButtonText);
-            _helpZone?.Describe(_excludePatternBtn.Component.gameObject,
+            _excludePatternBtn = Buttons.Create(_exclusionActionsRow, "ExcludePatternBtn", "Exclude Pattern",
+                ButtonTone.Secondary, fill: Fill.Stretch);
+            _excludePatternBtn.Enabled = false;
+            _excludePatternBtn.Clicked += OnExcludePatternClicked;
+            _helpZone?.Describe(_excludePatternBtn,
                 "Never translate ANY element with this name, anywhere in the game (e.g. every chat line)");
 
             // BitmapReplace mode actions
-            _imageActionsRow = UIStyles.CreateFormRow(card, "ImageActionRow", UIStyles.ButtonHeight, 5);
+            _imageActionsRow = Stacks.Row(card, "ImageActionRow", spacing: 5, minHeight: UIStyles.ButtonHeight);
 
-            _exportOriginalBtn = CreatePrimaryButton(_imageActionsRow, "ExportOriginalBtn", "Export Original");
-            _exportOriginalBtn.OnClick += OnExportOriginalClicked;
-            _exportOriginalBtn.Component.interactable = false;
-            UIFactory.SetLayoutElement(_exportOriginalBtn.Component.gameObject, flexibleWidth: 9999);
-            RegisterUIText(_exportOriginalBtn.ButtonText);
-            _helpZone?.Describe(_exportOriginalBtn.Component.gameObject,
-                "Save the game's current image to disk as a template you can edit");
+            _exportOriginalBtn = Buttons.Create(_imageActionsRow, "ExportOriginalBtn", "Export Original",
+                ButtonTone.Primary, fill: Fill.Stretch);
+            _exportOriginalBtn.Enabled = false;
+            _exportOriginalBtn.Clicked += OnExportOriginalClicked;
+            _helpZone?.Describe(_exportOriginalBtn, "Save the game's current image to disk as a template you can edit");
 
-            _markReplaceBtn = CreateSecondaryButton(_imageActionsRow, "MarkReplaceBtn", "Mark for Replace");
-            _markReplaceBtn.OnClick += OnMarkReplaceClicked;
-            _markReplaceBtn.Component.interactable = false;
-            UIFactory.SetLayoutElement(_markReplaceBtn.Component.gameObject, flexibleWidth: 9999);
-            RegisterUIText(_markReplaceBtn.ButtonText);
-            _helpZone?.Describe(_markReplaceBtn.Component.gameObject,
+            _markReplaceBtn = Buttons.Create(_imageActionsRow, "MarkReplaceBtn", "Mark for Replace",
+                ButtonTone.Secondary, fill: Fill.Stretch);
+            _markReplaceBtn.Enabled = false;
+            _markReplaceBtn.Clicked += OnMarkReplaceClicked;
+            _helpZone?.Describe(_markReplaceBtn,
                 "Register this image for replacement: drop your edited version in the images folder and it swaps in-game");
 
-            _imageActionsRow.SetActive(false); // Hidden by default (exclusion mode)
+            _imageActionsRow.Visible = false; // Hidden by default (exclusion mode)
 
             // TextEdit mode — scrollable list of child texts
-            _textEditRow = UIFactory.CreateVerticalGroup(card, "TextEditRow", false, false, true, true, 4);
-            UIFactory.SetLayoutElement(_textEditRow, flexibleWidth: 9999, flexibleHeight: 9999);
+            _textEditRow = Stacks.Vertical(card, "TextEditRow", spacing: 4, fillHeight: true);
 
-            _textEditCountLabel = UIFactory.CreateLabel(_textEditRow, "TextEditCount", "", TextAnchor.MiddleLeft);
-            _textEditCountLabel.fontSize = UIStyles.FontSizeSmall;
-            _textEditCountLabel.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(_textEditCountLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+            _textEditCountLabel = Labels.Create(_textEditRow, "TextEditCount", "", TextRole.Small,
+                tone: Tone.Secondary, policy: TextPolicy.Dynamic, minHeight: UIStyles.RowHeightSmall);
 
-            _textEditScroll = UIFactory.CreateScrollView(_textEditRow, "TextEditScroll", out _textEditListContent, out _);
             // See TranslatorPanelBase.ScrollingListHeightRule. Both numbers are revised once the
             // list is filled (SizeTextEditList): the smallest useful box for one line is not the
             // smallest useful box for a dozen, and this panel is regularly handed a dozen.
-            UIFactory.SetLayoutElement(_textEditScroll, minHeight: TextEditListMinHeight, preferredHeight: TextEditListMinHeight,
-                flexibleHeight: 9999, flexibleWidth: 9999);
-            UIStyles.SetBackground(_textEditScroll, UIStyles.TroughBackground);
-            UIFactory.SetLayoutGroup<VerticalLayoutGroup>(_textEditListContent, false, false, true, true, 5, 5, 5, 5, 5);
+            _textEditList = ScrollList.Create(_textEditRow, "TextEditScroll",
+                minHeight: TextEditListMinHeight, preferredHeight: TextEditListMinHeight);
 
-            _textEditRow.SetActive(false); // Hidden by default
+            _textEditRow.Visible = false; // Hidden by default
 
             // Shared clear selection button
-            var actionRow2 = UIStyles.CreateFormRow(card, "ActionRow2", UIStyles.ButtonHeight, 5);
+            var actionRow2 = Stacks.Row(card, "ActionRow2", spacing: 5, minHeight: UIStyles.ButtonHeight);
 
-            _cancelBtn = CreateSecondaryButton(actionRow2, "CancelBtn", "Clear Selection");
-            _cancelBtn.OnClick += OnCancelClicked;
-            _cancelBtn.Component.interactable = false;
-            UIFactory.SetLayoutElement(_cancelBtn.Component.gameObject, flexibleWidth: 9999);
-            RegisterUIText(_cancelBtn.ButtonText);
-            _helpZone?.Describe(_cancelBtn.Component.gameObject,
+            _cancelBtn = Buttons.Create(actionRow2, "CancelBtn", "Clear Selection", ButtonTone.Secondary,
+                fill: Fill.Stretch);
+            _cancelBtn.Enabled = false;
+            _cancelBtn.Clicked += OnCancelClicked;
+            _helpZone?.Describe(_cancelBtn,
                 "Deselect the current element and keep inspecting. Nothing is changed.");
 
             // Status label
-            UIStyles.CreateSpacer(card, 5);
-            _statusLabel = UIFactory.CreateLabel(card, "Status", "", TextAnchor.MiddleLeft);
-            _statusLabel.fontSize = UIStyles.FontSizeSmall;
-            UIFactory.SetLayoutElement(_statusLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+            Stacks.Spacer(card, 5);
+            _statusLabel = Labels.Create(card, "Status", "", TextRole.Small, tone: Tone.Plain,
+                policy: TextPolicy.Dynamic, minHeight: UIStyles.RowHeightSmall);
 
             // Footer button (fixed at bottom)
-            var stopBtn = CreatePrimaryButton(buttonRow, "StopBtn", "Stop Inspecting");
-            stopBtn.OnClick += OnStopClicked;
-            RegisterUIText(stopBtn.ButtonText);
-            _helpZone?.Describe(stopBtn.Component.gameObject,
-                "Leave inspect mode and close this window. Element picking stops.");
-
-            // Create the highlight overlay
-            CreateHighlightOverlay();
+            var stopBtn = Buttons.Primary(buttonRow, "StopBtn", "Stop Inspecting");
+            stopBtn.Clicked += OnStopClicked;
+            _helpZone?.Describe(stopBtn, "Leave inspect mode and close this window. Element picking stops.");
         }
-
-        #region Highlight Overlay
-
-        /// <summary>
-        /// Create the highlight overlay canvas with hover and selected highlights.
-        /// Uses a separate ScreenSpaceOverlay Canvas with very high sort order.
-        /// </summary>
-        private void CreateHighlightOverlay()
-        {
-            // Create a root object for the highlight canvas
-            _highlightCanvas = new GameObject("UGT_InspectorHighlight");
-            UnityEngine.Object.DontDestroyOnLoad(_highlightCanvas);
-
-            var canvas = _highlightCanvas.AddComponent<Canvas>();
-            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-            canvas.sortingOrder = 29000; // Below our UI (UniverseLib uses 30000)
-
-            // GraphicRaycaster needed so the EventSystem sees our highlights
-            // and they can block clicks from reaching game elements below
-            _highlightCanvas.AddComponent<UnityEngine.UI.GraphicRaycaster>();
-
-            // Hover highlight — raycastTarget=true to block game clicks on the hovered element
-            var hoverObj = new GameObject("HoverHighlight");
-            hoverObj.transform.SetParent(_highlightCanvas.transform, false);
-            _hoverHighlight = hoverObj.AddComponent<Image>();
-            _hoverHighlight.color = HoverHighlightColor;
-            _hoverHighlight.raycastTarget = true;
-            _hoverHighlightRect = hoverObj.GetComponent<RectTransform>();
-            _hoverHighlightRect.anchorMin = Vector2.zero;
-            _hoverHighlightRect.anchorMax = Vector2.zero;
-            _hoverHighlightRect.pivot = new Vector2(0, 0);
-            hoverObj.SetActive(false);
-
-            // Selected highlight
-            var selectedObj = new GameObject("SelectedHighlight");
-            selectedObj.transform.SetParent(_highlightCanvas.transform, false);
-            _selectedHighlight = selectedObj.AddComponent<Image>();
-            _selectedHighlight.color = SelectedHighlightColor;
-            _selectedHighlight.raycastTarget = true;
-            _selectedHighlightRect = selectedObj.GetComponent<RectTransform>();
-            _selectedHighlightRect.anchorMin = Vector2.zero;
-            _selectedHighlightRect.anchorMax = Vector2.zero;
-            _selectedHighlightRect.pivot = new Vector2(0, 0);
-            selectedObj.SetActive(false);
-
-            // Start hidden
-            _highlightCanvas.SetActive(false);
-        }
-
-        /// <summary>
-        /// Position a highlight rect over a target GameObject's RectTransform bounds.
-        /// Uses TransformPoint instead of GetWorldCorners (IL2CPP-safe: no array params).
-        /// </summary>
-        private void PositionHighlight(RectTransform highlightRect, Image highlightImage, GameObject target)
-        {
-            if (target == null || highlightRect == null || highlightImage == null)
-            {
-                highlightImage?.gameObject.SetActive(false);
-                return;
-            }
-
-            Vector2 screenMin, screenMax;
-
-            var targetRect = target.GetComponent<RectTransform>();
-            if (targetRect != null)
-            {
-                // Canvas UI: use RectTransform bounds
-                if (!GetScreenBounds(targetRect, out screenMin, out screenMax))
-                {
-                    highlightImage.gameObject.SetActive(false);
-                    return;
-                }
-            }
-            else
-            {
-                // World-space object (SpriteRenderer): project bounds to screen
-                if (!GetScreenBoundsFromRenderer(target, out screenMin, out screenMax))
-                {
-                    highlightImage.gameObject.SetActive(false);
-                    return;
-                }
-            }
-
-            // ⚠ Fully qualified: PanelBase exposes a `Rect` PROPERTY (this panel's RectTransform),
-            // which shadows the type inside any expression here.
-            PositionHighlightRect(highlightRect, highlightImage,
-                                  UnityEngine.Rect.MinMaxRect(screenMin.x, screenMin.y,
-                                                              screenMax.x, screenMax.y));
-        }
-
-        /// <summary>
-        /// Place the highlight over a screen rectangle.
-        ///
-        /// ⚠ Split from PositionHighlight so a third source of coordinates can use it. That method
-        /// already handled two — a RectTransform in a Canvas and a Renderer in the world — and
-        /// UI Toolkit is a third, which reports its own rectangle rather than any Unity transform.
-        /// </summary>
-        private void PositionHighlightRect(RectTransform highlightRect, Image highlightImage, Rect screen)
-        {
-            if (highlightRect == null || highlightImage == null) return;
-
-            // Skip degenerate rects
-            if (screen.width < 1f || screen.height < 1f)
-            {
-                highlightImage.gameObject.SetActive(false);
-                return;
-            }
-
-            highlightRect.anchoredPosition = new Vector2(screen.xMin, screen.yMin);
-            highlightRect.sizeDelta = new Vector2(screen.width, screen.height);
-            highlightImage.gameObject.SetActive(true);
-        }
-
-        private void HideAllHighlights()
-        {
-            if (_hoverHighlight != null) _hoverHighlight.gameObject.SetActive(false);
-            if (_selectedHighlight != null) _selectedHighlight.gameObject.SetActive(false);
-        }
-
-        #endregion
 
         /// <summary>
         /// Set the inspector mode. Must be called before SetActive(true).
@@ -978,80 +305,26 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Update title
             if (_titleLabel != null)
-                SetDynamicText(_titleLabel, isImage ? "Image Inspector"
+                _titleLabel.Say(isImage ? "Image Inspector"
                     : isFontOverride ? "Font Override — Click on an element"
                     : isTextEdit ? "Text Editor — Click on text to edit"
                     : "Element Inspector");
 
             // Toggle action button visibility per mode
-            if (_exclusionActionsRow != null) _exclusionActionsRow.SetActive(!isImage && !isFontOverride && !isTextEdit);
-            if (_imageActionsRow != null) _imageActionsRow.SetActive(isImage);
-            if (_spriteInfoLabel != null) _spriteInfoLabel.gameObject.SetActive(isImage);
-            if (_textEditRow != null) _textEditRow.SetActive(false); // Shown only after clicking a text
+            _exclusionActionsRow.Visible = !isImage && !isFontOverride && !isTextEdit;
+            _imageActionsRow.Visible = isImage;
+            _spriteInfoLabel.Visible = isImage;
+            _textEditRow.Visible = false; // Shown only after clicking a text
 
-            // Refresh camera list
-            RefreshCameraList();
-        }
-
-        private void RefreshCameraList()
-        {
-            if (_cameraDropdown == null) return;
-
-            var options = new List<string> { "UI Only" };
-            var cameraList = new List<Camera>();
-
-            try
-            {
-                var allCams = TypeHelper.FindAllObjectsOfType(typeof(Camera));
-                if (allCams != null)
-                {
-                    foreach (var obj in allCams)
-                    {
-                        Camera cam = obj as Camera;
-                        if (cam == null)
-                            cam = TypeHelper.Il2CppCast(obj, typeof(Camera)) as Camera;
-                        if (cam != null && cam.gameObject.activeInHierarchy)
-                            cameraList.Add(cam);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                TranslatorCore.LogDebug($"[Inspector] RefreshCameraList error: {ex.Message}");
-            }
-
-            _sceneCameras = cameraList.ToArray();
-            foreach (var cam in _sceneCameras)
-            {
-                string type = cam.orthographic ? "ortho" : "persp";
-                options.Add($"{cam.name} ({type})");
-            }
-
-            _cameraNames = options.ToArray();
-            _cameraDropdown.SetOptions(_cameraNames);
+            // The picker already rebuilt its camera list in Start(); just mirror it into the dropdown.
+            _cameraDropdown.SetOptions(_picker.CameraNames);
             _cameraDropdown.SelectedValue = "UI Only";
-            _selectedCamera = null;
-
         }
 
         private void OnCameraSelected(string value)
         {
-            if (value == "UI Only" || string.IsNullOrEmpty(value))
-            {
-                _selectedCamera = null;
-            }
-            else
-            {
-                _selectedCamera = null;
-                foreach (var cam in _sceneCameras)
-                {
-                    if (cam != null && value.StartsWith(cam.name))
-                    {
-                        _selectedCamera = cam;
-                        break;
-                    }
-                }
-            }
+            int index = Array.IndexOf(_picker.CameraNames, value);
+            _picker.SelectCamera(index);
 
             ClearSelection();
             ClearHover();
@@ -1064,12 +337,12 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             if (active)
             {
-                _isInspecting = true;
                 if (!wasActive)
                 {
+                    _picker.Start(_currentMode, Rect);
                     ClearSelection();
                     ClearHover();
-                    _statusLabel.text = "";
+                    _statusLabel.Show("");
                     UpdateUIForMode();
 
                     // Hide MainPanel during inspection to clear the view
@@ -1078,15 +351,10 @@ namespace UnityGameTranslator.Core.UI.Panels
                     if (_mainPanelWasOpen)
                         mainPanel.SetActive(false);
                 }
-                if (_highlightCanvas != null)
-                    _highlightCanvas.SetActive(true);
             }
             else
             {
-                _isInspecting = false;
-                HideAllHighlights();
-                if (_highlightCanvas != null)
-                    _highlightCanvas.SetActive(false);
+                _picker.Stop();
 
                 // Restore MainPanel if it was open before inspection
                 if (_mainPanelWasOpen)
@@ -1101,350 +369,132 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             base.Update();
 
-            if (!_isInspecting || !Enabled) return;
+            if (!Enabled) return;
+            _picker.Tick();
+        }
 
-            // Throttle raycast: every 2 frames for hover (smooth enough, saves perf)
-            _frameSkip++;
-            bool doHoverRaycast = (_frameSkip % 2 == 0);
-
-            Vector3 mousePos = InputManager.MousePosition;
-
-            // Skip if mouse is over our panel
-            if (Rect != null && IsMouseOverPanel(mousePos))
+        /// <summary>The hovered path changed (or was cleared: <paramref name="path"/> is empty).</summary>
+        private void OnHovered(string path)
+        {
+            if (string.IsNullOrEmpty(path))
             {
-                // Hide hover highlight when over our panel
-                if (_hoverHighlight != null) _hoverHighlight.gameObject.SetActive(false);
-                ClearHoverLabel();
+                _hoveredPathLabel.Say("(move cursor over a UI element)");
+                _hoveredPathLabel.Tone = Tone.Muted;
+            }
+            else
+            {
+                _hoveredPathLabel.Show(path);
+                _hoveredPathLabel.Tone = Tone.Secondary;
+            }
+            _hoveredPathLabel.Italic = true;
+        }
+
+        /// <summary>
+        /// Something was picked. Every mode's own reaction lives here — the picker only reports
+        /// WHAT was found, never what to do about it.
+        ///
+        /// ⚠ A UI Toolkit pick never enabled the exclude/export/mark buttons in the original inline
+        /// handlers either — <c>SelectUIToolkitAt</c> touched only the path labels and (in
+        /// BitmapReplace mode) the sprite line, never a button's <c>interactable</c>. Preserved
+        /// here as <c>isCanvasOrWorld</c> rather than silently fixed: see the migration report.
+        /// </summary>
+        private void OnPicked(PickedTarget target)
+        {
+            _lastSelectedPath = target.Path;
+            _lastSelectedName = target.Name;
+            _lastSelectedSpriteObj = target.SpriteObject;
+
+            _selectedPathLabel.Show(target.Path);
+            _selectedPathLabel.Tone = Tone.Plain;
+            _selectedPathLabel.Italic = false;
+            _cancelBtn.Enabled = true;
+
+            bool isCanvasOrWorld = target.Engine != "UI Toolkit";
+
+            if (_currentMode == InspectorMode.TextEdit)
+            {
+                ShowTextEditUI(target.Path);
+            }
+            else if (_currentMode == InspectorMode.FontOverride)
+            {
+                // Font override mode: add override for parent path with /** to cover siblings
+                // e.g. "Canvas/Panel/Table/Text" → "path:Canvas/Panel/Table/**"
+                string overridePath = target.Path;
+                int lastSlash = overridePath.LastIndexOf('/');
+                if (lastSlash > 0)
+                    overridePath = overridePath.Substring(0, lastSlash) + "/**";
+                // Close inspector FIRST (restores MainPanel if it was open)
+                SetActive(false);
+                // THEN open TranslationParamsPanel (SetAsLastSibling puts it on top)
+                TranslatorUIManager.TranslationParamsPanel?.AddFontOverrideFromInspector("path:" + overridePath);
                 return;
             }
-
-            // --- Hover detection (every 2 frames) ---
-            if (doHoverRaycast)
+            else if (_currentMode == InspectorMode.BitmapReplace)
             {
-                var hoveredObject = RaycastUIElement(mousePos);
-
-                if (hoveredObject != null)
+                if (!target.HasSprite && target.Engine == "UI Toolkit")
                 {
-                    // Skip our own UI
-                    if (IsOwnUI(hoveredObject))
-                    {
-                        if (_hoverHighlight != null) _hoverHighlight.gameObject.SetActive(false);
-                        ClearHoverLabel();
-                    }
-                    else
-                    {
-                        string path = TranslatorCore.GetGameObjectPath(hoveredObject);
-                        if (path != _lastHoveredPath)
-                        {
-                            _lastHoveredPath = path;
-                            _hoveredPathLabel.text = path;
-                            _hoveredPathLabel.color = UIStyles.TextSecondary;
-                            _hoveredPathLabel.fontStyle = FontStyle.Italic;
-                        }
-
-                        // Position hover highlight
-                        PositionHighlight(_hoverHighlightRect, _hoverHighlight, hoveredObject);
-                    }
+                    // Said rather than left blank: an element can draw a bare texture, or a shape
+                    // with no picture at all, and neither has a name to match a replacement to.
+                    _spriteInfoLabel.Show("No named image on this element.");
+                    _spriteInfoLabel.Tone = Tone.Muted;
                 }
                 else
                 {
-                    // Nothing in the Canvas: this may be a UI Toolkit interface, which the
-                    // GraphicRaycaster cannot see at all. See UIToolkitSupport.PickAt.
-                    var element = UIToolkitSupport.PickAt(mousePos, out var elementRect);
-                    if (element != null)
-                    {
-                        string elementPath = UIToolkitSupport.PathOf(element);
-                        if (elementPath != _lastHoveredPath)
-                        {
-                            _lastHoveredPath = elementPath;
-                            _hoveredPathLabel.text = elementPath;
-                            _hoveredPathLabel.color = UIStyles.TextSecondary;
-                            _hoveredPathLabel.fontStyle = FontStyle.Italic;
-                        }
-
-                        PositionHighlightRect(_hoverHighlightRect, _hoverHighlight, elementRect);
-                    }
-                    else
-                    {
-                        if (_hoverHighlight != null) _hoverHighlight.gameObject.SetActive(false);
-                        ClearHoverLabel();
-                    }
+                    _spriteInfoLabel.Show(
+                        $"{target.SpriteComponentType}: \"{target.SpriteName}\" ({target.SpriteWidth}x{target.SpriteHeight})");
+                    _spriteInfoLabel.Tone = Tone.Plain;
                 }
-            }
 
-            // --- Click detection (select) ---
-            if (InputManager.GetMouseButtonDown(0))
-            {
-                var hitObject = RaycastUIElement(mousePos);
-                if (hitObject == null && SelectUIToolkitAt(mousePos)) return;
-
-                if (hitObject != null && !IsOwnUI(hitObject))
+                if (isCanvasOrWorld)
                 {
-                    string path = TranslatorCore.GetGameObjectPath(hitObject);
-                    _lastSelectedPath = path;
-                    _lastSelectedObject = hitObject;
-                    _lastSelectedSpriteObj = null;
-
-                    _selectedPathLabel.text = path;
-                    _selectedPathLabel.color = UIStyles.TextPrimary;
-                    _selectedPathLabel.fontStyle = FontStyle.Normal;
-                    _cancelBtn.Component.interactable = true;
-
-                    if (_currentMode == InspectorMode.TextEdit)
-                    {
-                        ShowTextEditUI(path);
-                    }
-                    else if (_currentMode == InspectorMode.FontOverride)
-                    {
-                        // Font override mode: add override for parent path with /** to cover siblings
-                        // e.g. "Canvas/Panel/Table/Text" → "path:Canvas/Panel/Table/**"
-                        string overridePath = path;
-                        int lastSlash = path.LastIndexOf('/');
-                        if (lastSlash > 0)
-                            overridePath = path.Substring(0, lastSlash) + "/**";
-                        // Close inspector FIRST (restores MainPanel if it was open)
-                        SetActive(false);
-                        // THEN open TranslationParamsPanel (SetAsLastSibling puts it on top)
-                        TranslatorUIManager.TranslationParamsPanel?.AddFontOverrideFromInspector("path:" + overridePath);
-                        return;
-                    }
-                    else if (_currentMode == InspectorMode.BitmapReplace)
-                    {
-                        try
-                        {
-                            _lastSelectedSpriteObj = ImageReplacer.GetSpriteFromComponent(hitObject);
-                            var spriteName = ImageReplacer.GetSpriteName(_lastSelectedSpriteObj) ?? "(unnamed)";
-                            var size = ImageReplacer.GetSpriteSize(_lastSelectedSpriteObj);
-                            var compType = ImageReplacer.GetComponentTypeName(hitObject);
-                            _spriteInfoLabel.text = $"{compType}: \"{spriteName}\" ({size.x}x{size.y})";
-                            _spriteInfoLabel.color = UIStyles.TextPrimary;
-
-                            _exportOriginalBtn.Component.interactable = _lastSelectedSpriteObj != null;
-                            _markReplaceBtn.Component.interactable = _lastSelectedSpriteObj != null;
-                        }
-                        catch (Exception ex)
-                        {
-                            TranslatorCore.LogDebug($"[Inspector] BitmapReplace click handler error: {ex}");
-                        }
-                    }
-                    else
-                    {
-                        _excludeThisBtn.Component.interactable = true;
-                        _excludePatternBtn.Component.interactable = true;
-                    }
-
-                    SetDynamicText(_statusLabel, "Element selected");
-                    _statusLabel.color = UIStyles.StatusSuccess;
-
-                    // Position selected highlight
-                    PositionHighlight(_selectedHighlightRect, _selectedHighlight, hitObject);
+                    _exportOriginalBtn.Enabled = target.HasSprite;
+                    _markReplaceBtn.Enabled = target.HasSprite;
                 }
             }
-
-            // Keep selected highlight tracking (object may move)
-            if (_lastSelectedObject != null && _selectedHighlight != null && _selectedHighlight.gameObject.activeSelf)
+            else
             {
-                // Re-position every ~10 frames to track moving elements
-                if (_frameSkip % 10 == 0)
-                    PositionHighlight(_selectedHighlightRect, _selectedHighlight, _lastSelectedObject);
-            }
-        }
-
-        /// <summary>
-        /// Check if a GameObject is part of our mod UI (IL2CPP-safe).
-        /// Uses hierarchy name check — no generic Unity methods that crash on IL2CPP JIT.
-        /// </summary>
-        private bool IsOwnUI(GameObject obj)
-        {
-            if (obj == null) return false;
-
-            // Check hierarchy by name — works on both Mono and IL2CPP without any
-            // generic method calls (GetComponents<T>() crashes at JIT on IL2CPP)
-            var current = obj.transform;
-            while (current != null)
-            {
-                string name = current.name;
-                if (name.StartsWith("UGT_") || name.StartsWith("UniverseLibCanvas")
-                    || name.StartsWith("UniverseLib_") || name == "UGT_InspectorHighlight")
-                    return true;
-                current = current.parent;
-            }
-
-            return false;
-        }
-
-        /// <summary>
-        /// Check if mouse position is over this panel's rect.
-        /// Uses TransformPoint instead of GetWorldCorners (IL2CPP-safe).
-        /// </summary>
-        private bool IsMouseOverPanel(Vector3 screenPos)
-        {
-            if (Rect == null) return false;
-
-            Vector2 screenMin, screenMax;
-            if (!GetScreenBounds(Rect, out screenMin, out screenMax))
-                return false;
-
-            return screenPos.x >= screenMin.x && screenPos.x <= screenMax.x &&
-                   screenPos.y >= screenMin.y && screenPos.y <= screenMax.y;
-        }
-
-        /// <summary>
-        /// Get screen-space bounds of a RectTransform using TransformPoint (IL2CPP-safe).
-        /// GetWorldCorners(Vector3[]) crashes on IL2CPP because the array param becomes
-        /// Il2CppStructArray — using TransformPoint(Vector3) avoids this entirely.
-        /// </summary>
-        private static bool GetScreenBounds(RectTransform rect, out Vector2 screenMin, out Vector2 screenMax)
-        {
-            screenMin = Vector2.zero;
-            screenMax = Vector2.zero;
-
-            if (rect == null) return false;
-
-            try
-            {
-                // Get the local rect (x, y, width, height in local space)
-                Rect localRect = rect.rect;
-
-                // Transform the 4 corners from local to world space
-                // TransformPoint takes a Vector3 value type — no IL2CPP array issues
-                Vector3 c0 = rect.TransformPoint(new Vector3(localRect.xMin, localRect.yMin, 0));
-                Vector3 c1 = rect.TransformPoint(new Vector3(localRect.xMin, localRect.yMax, 0));
-                Vector3 c2 = rect.TransformPoint(new Vector3(localRect.xMax, localRect.yMax, 0));
-                Vector3 c3 = rect.TransformPoint(new Vector3(localRect.xMax, localRect.yMin, 0));
-
-                // For ScreenSpaceOverlay canvases, world coords = screen coords
-                // For other render modes, we'd need camera conversion
-                float minX = Mathf.Min(c0.x, c1.x, c2.x, c3.x);
-                float maxX = Mathf.Max(c0.x, c1.x, c2.x, c3.x);
-                float minY = Mathf.Min(c0.y, c1.y, c2.y, c3.y);
-                float maxY = Mathf.Max(c0.y, c1.y, c2.y, c3.y);
-
-                // Check if the target might be on a non-Overlay canvas — convert via camera
-                // Walk up to find the root Canvas
-                Canvas rootCanvas = null;
-                try
+                if (isCanvasOrWorld)
                 {
-                    // GetComponentInParent<Canvas>() should be safe on IL2CPP (single generic param, no arrays)
-                    rootCanvas = rect.GetComponentInParent<Canvas>();
-                    if (rootCanvas != null) rootCanvas = rootCanvas.rootCanvas;
+                    _excludeThisBtn.Enabled = true;
+                    _excludePatternBtn.Enabled = true;
                 }
-                catch { }
-
-                if (rootCanvas != null && rootCanvas.renderMode != RenderMode.ScreenSpaceOverlay)
-                {
-                    var cam = rootCanvas.worldCamera;
-                    if (cam != null)
-                    {
-                        Vector3 s0 = cam.WorldToScreenPoint(c0);
-                        Vector3 s1 = cam.WorldToScreenPoint(c1);
-                        Vector3 s2 = cam.WorldToScreenPoint(c2);
-                        Vector3 s3 = cam.WorldToScreenPoint(c3);
-
-                        minX = Mathf.Min(s0.x, s1.x, s2.x, s3.x);
-                        maxX = Mathf.Max(s0.x, s1.x, s2.x, s3.x);
-                        minY = Mathf.Min(s0.y, s1.y, s2.y, s3.y);
-                        maxY = Mathf.Max(s0.y, s1.y, s2.y, s3.y);
-                    }
-                }
-
-                screenMin = new Vector2(minX, minY);
-                screenMax = new Vector2(maxX, maxY);
-                return true;
             }
-            catch (Exception ex)
+
+            if (isCanvasOrWorld)
             {
-                TranslatorCore.LogDebug($"[Inspector] GetScreenBounds failed: {ex.Message}");
-                return false;
-            }
-        }
-
-        /// <summary>
-        /// Get screen-space bounds for a world-space object (SpriteRenderer).
-        /// Uses Renderer.bounds projected to screen via Camera.main.
-        /// </summary>
-        private static bool GetScreenBoundsFromRenderer(GameObject target, out Vector2 screenMin, out Vector2 screenMax)
-        {
-            screenMin = screenMax = Vector2.zero;
-            try
-            {
-                var camera = Camera.main;
-                if (camera == null) return false;
-
-                // Try to get Renderer.bounds via reflection
-                var renderer = target.GetComponent<Renderer>();
-                if (renderer == null) return false;
-
-                var bounds = renderer.bounds;
-                if (bounds.size == Vector3.zero) return false;
-
-                Vector3 center = bounds.center;
-                Vector3 extents = bounds.extents;
-
-                // Project 4 corners to screen space
-                Vector3 s0 = camera.WorldToScreenPoint(center + new Vector3(-extents.x, -extents.y, 0));
-                Vector3 s1 = camera.WorldToScreenPoint(center + new Vector3(extents.x, -extents.y, 0));
-                Vector3 s2 = camera.WorldToScreenPoint(center + new Vector3(-extents.x, extents.y, 0));
-                Vector3 s3 = camera.WorldToScreenPoint(center + new Vector3(extents.x, extents.y, 0));
-
-                if (!camera.orthographic && s0.z < 0) return false; // Behind perspective camera
-
-                float minX = Mathf.Min(Mathf.Min(s0.x, s1.x), Mathf.Min(s2.x, s3.x));
-                float maxX = Mathf.Max(Mathf.Max(s0.x, s1.x), Mathf.Max(s2.x, s3.x));
-                float minY = Mathf.Min(Mathf.Min(s0.y, s1.y), Mathf.Min(s2.y, s3.y));
-                float maxY = Mathf.Max(Mathf.Max(s0.y, s1.y), Mathf.Max(s2.y, s3.y));
-
-                screenMin = new Vector2(minX, minY);
-                screenMax = new Vector2(maxX, maxY);
-                return true;
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
-        private void ClearHoverLabel()
-        {
-            if (_lastHoveredPath != "")
-            {
-                _lastHoveredPath = "";
-                SetDynamicText(_hoveredPathLabel, "(move cursor over a UI element)");
-                _hoveredPathLabel.color = UIStyles.TextMuted;
-                _hoveredPathLabel.fontStyle = FontStyle.Italic;
+                _statusLabel.Say("Element selected");
+                _statusLabel.Tone = Tone.Success;
             }
         }
 
         private void ClearHover()
         {
-            ClearHoverLabel();
-            if (_hoverHighlight != null) _hoverHighlight.gameObject.SetActive(false);
+            _hoveredPathLabel.Say("(move cursor over a UI element)");
+            _hoveredPathLabel.Tone = Tone.Muted;
+            _hoveredPathLabel.Italic = true;
+            _picker.ClearHover();
         }
 
         private void ClearSelection()
         {
             _lastSelectedPath = "";
-            _lastSelectedObject = null;
+            _lastSelectedName = "";
             _lastSelectedSpriteObj = null;
-            SetDynamicText(_selectedPathLabel, "(click to select)");
-            _selectedPathLabel.color = UIStyles.TextMuted;
-            _selectedPathLabel.fontStyle = FontStyle.Italic;
-            _excludeThisBtn.Component.interactable = false;
-            _excludePatternBtn.Component.interactable = false;
-            _exportOriginalBtn.Component.interactable = false;
-            _markReplaceBtn.Component.interactable = false;
-            _cancelBtn.Component.interactable = false;
-            if (_spriteInfoLabel != null) _spriteInfoLabel.text = "";
-            if (_selectedHighlight != null) _selectedHighlight.gameObject.SetActive(false);
+            _selectedPathLabel.Say("(click to select)");
+            _selectedPathLabel.Tone = Tone.Muted;
+            _selectedPathLabel.Italic = true;
+            _excludeThisBtn.Enabled = false;
+            _excludePatternBtn.Enabled = false;
+            _exportOriginalBtn.Enabled = false;
+            _markReplaceBtn.Enabled = false;
+            _cancelBtn.Enabled = false;
+            _spriteInfoLabel.Show("");
+            _picker.ClearSelection();
 
             // Clear TextEdit UI
             _pendingRetranslateRows.Clear();
-            if (_textEditRow != null) _textEditRow.SetActive(false);
-            if (_textEditListContent != null)
-            {
-                for (int i = _textEditListContent.transform.childCount - 1; i >= 0; i--)
-                    UnityEngine.Object.Destroy(_textEditListContent.transform.GetChild(i).gameObject);
-            }
+            _textEditRow.Visible = false;
+            _textEditList.Clear();
         }
 
         private void OnExcludeThisClicked()
@@ -1453,24 +503,23 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             TranslatorCore.AddExclusion(_lastSelectedPath);
 
-            SetDynamicText(_statusLabel, "Excluded!");
-            _statusLabel.color = UIStyles.StatusSuccess;
+            _statusLabel.Say("Excluded!");
+            _statusLabel.Tone = Tone.Success;
 
             ClearSelection();
         }
 
         private void OnExcludePatternClicked()
         {
-            if (string.IsNullOrEmpty(_lastSelectedPath) || _lastSelectedObject == null) return;
+            if (string.IsNullOrEmpty(_lastSelectedPath) || string.IsNullOrEmpty(_lastSelectedName)) return;
 
-            string objectName = _lastSelectedObject.name;
-            string pattern = "**/" + objectName;
+            string pattern = "**/" + _lastSelectedName;
 
             TranslatorCore.AddExclusion(pattern);
             TranslatorCore.SaveCache();
 
-            _statusLabel.text = Tr("Excluded:") + $" {pattern}";
-            _statusLabel.color = UIStyles.StatusSuccess;
+            _statusLabel.Show(Tr("Excluded:") + $" {pattern}");
+            _statusLabel.Tone = Tone.Success;
 
             ClearSelection();
         }
@@ -1478,7 +527,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void OnCancelClicked()
         {
             ClearSelection();
-            _statusLabel.text = "";
+            _statusLabel.Show("");
         }
 
         #region BitmapReplace Actions
@@ -1490,8 +539,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             var spriteName = ImageReplacer.GetSpriteName(_lastSelectedSpriteObj);
             if (string.IsNullOrEmpty(spriteName))
             {
-                SetDynamicText(_statusLabel, "Cannot export: sprite has no name");
-                _statusLabel.color = UIStyles.StatusError;
+                _statusLabel.Say("Cannot export: sprite has no name");
+                _statusLabel.Tone = Tone.Error;
                 return;
             }
 
@@ -1504,14 +553,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             var exportedPath = ImageReplacer.ExportOriginal(_lastSelectedSpriteObj, spriteName);
             if (exportedPath != null)
             {
-                _statusLabel.text = $"Exported: {System.IO.Path.GetFileName(exportedPath)}";
-                _statusLabel.color = UIStyles.StatusSuccess;
+                _statusLabel.Show($"Exported: {System.IO.Path.GetFileName(exportedPath)}");
+                _statusLabel.Tone = Tone.Success;
                 TranslatorCore.SaveCache();
             }
             else
             {
-                SetDynamicText(_statusLabel, "Export failed (check log)");
-                _statusLabel.color = UIStyles.StatusError;
+                _statusLabel.Say("Export failed (check log)");
+                _statusLabel.Tone = Tone.Error;
             }
         }
 
@@ -1522,15 +571,15 @@ namespace UnityGameTranslator.Core.UI.Panels
             var spriteName = ImageReplacer.GetSpriteName(_lastSelectedSpriteObj);
             if (string.IsNullOrEmpty(spriteName))
             {
-                SetDynamicText(_statusLabel, "Cannot mark: sprite has no name");
-                _statusLabel.color = UIStyles.StatusError;
+                _statusLabel.Say("Cannot mark: sprite has no name");
+                _statusLabel.Tone = Tone.Error;
                 return;
             }
 
             MarkCurrentForReplace(spriteName);
 
-            _statusLabel.text = Tr("Marked:") + $" {spriteName}";
-            _statusLabel.color = UIStyles.StatusSuccess;
+            _statusLabel.Show(Tr("Marked:") + $" {spriteName}");
+            _statusLabel.Tone = Tone.Success;
 
             TranslatorCore.SaveCache();
             ClearSelection();
@@ -1538,87 +587,12 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private void MarkCurrentForReplace(string spriteName)
         {
-            var size = ImageReplacer.GetSpriteSize(_lastSelectedSpriteObj);
-
-            Vector2 pivot = new Vector2(0.5f, 0.5f);
-            float ppu = 100f;
-            Vector4 border = Vector4.zero;
-            TextureUtils.GetSpriteProperties(_lastSelectedSpriteObj, out pivot, out ppu, out border);
-
-            ImageReplacer.AddReplacement(spriteName, _lastSelectedPath,
-                size.x, size.y, pivot, border, ppu);
+            ImageReplacer.AddReplacementFromSprite(_lastSelectedSpriteObj, _lastSelectedPath, spriteName);
         }
 
         #endregion
 
         #region TextEdit Mode
-
-        /// <summary>
-        /// Select a UI Toolkit element under the pointer. True when one was taken.
-        ///
-        /// 🔴 The Canvas raycast returns nothing on a UI Toolkit interface, so before this the
-        /// inspector simply did not work on those games — clicking anywhere found nothing.
-        ///
-        /// ⚠ Everything after the selection already worked from the PATH alone: exclusions, font
-        /// rules and the text editor all match on it. Only the picking was uGUI's, so only the
-        /// picking had to be written again.
-        /// </summary>
-        private bool SelectUIToolkitAt(Vector2 mousePos)
-        {
-            var element = UIToolkitSupport.PickAt(mousePos, out var screenRect);
-            if (element == null) return false;
-
-            string path = UIToolkitSupport.PathOf(element);
-            if (string.IsNullOrEmpty(path)) return false;
-
-            _lastSelectedPath = path;
-            _lastSelectedObject = null;   // there is no GameObject behind a VisualElement
-            _lastSelectedSpriteObj = null;
-
-            _selectedPathLabel.text = path;
-            _selectedPathLabel.color = UIStyles.TextPrimary;
-            _selectedPathLabel.fontStyle = FontStyle.Normal;
-            _cancelBtn.Component.interactable = true;
-            PositionHighlightRect(_selectedHighlightRect, _selectedHighlight, screenRect);
-
-            if (_currentMode == InspectorMode.TextEdit)
-            {
-                ShowTextEditUI(path);
-            }
-            else if (_currentMode == InspectorMode.FontOverride)
-            {
-                string overridePath = path;
-                int lastSlash = path.LastIndexOf('/');
-                if (lastSlash > 0) overridePath = path.Substring(0, lastSlash) + "/**";
-
-                SetActive(false);
-                TranslatorUIManager.TranslationParamsPanel?.AddFontOverrideFromInspector("path:" + overridePath);
-            }
-            else if (_currentMode == InspectorMode.BitmapReplace)
-            {
-                // The sprite comes from the element's style rather than from a component, but it is
-                // the same object afterwards — so naming, sizing and exporting go through
-                // ImageReplacer exactly as they do for uGUI.
-                _lastSelectedSpriteObj = UIToolkitSupport.SpriteOf(element);
-
-                if (_lastSelectedSpriteObj == null)
-                {
-                    // Said rather than left blank: an element can draw a bare texture, or a shape
-                    // with no picture at all, and neither has a name to match a replacement to.
-                    _spriteInfoLabel.text = "No named image on this element.";
-                    _spriteInfoLabel.color = UIStyles.TextMuted;
-                }
-                else
-                {
-                    var spriteName = ImageReplacer.GetSpriteName(_lastSelectedSpriteObj) ?? "(unnamed)";
-                    var size = ImageReplacer.GetSpriteSize(_lastSelectedSpriteObj);
-                    _spriteInfoLabel.text = $"UI Toolkit: \"{spriteName}\" ({size.x}x{size.y})";
-                    _spriteInfoLabel.color = UIStyles.TextPrimary;
-                }
-            }
-
-            return true;
-        }
 
         /// <summary>
         /// Show what can be edited under a path.
@@ -1629,7 +603,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         private void ShowTextEditUI(string path)
         {
-            if (_textEditRow == null || _textEditListContent == null) return;
+            if (_textEditRow == null || _textEditList == null) return;
 
             var textEntries = new List<(object component, string text, string originalKey, string tag, string childPath, Dictionary<int, string> liveNumbers)>();
 
@@ -1650,20 +624,19 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             if (textEntries.Count == 0)
             {
-                SetDynamicText(_statusLabel, "No text components found");
-                _statusLabel.color = UIStyles.StatusWarning;
+                _statusLabel.Say("No text components found");
+                _statusLabel.Tone = Tone.Warning;
                 return;
             }
 
             // Clear previous entries — and with them any retranslation still expected for a row
             // that is about to be destroyed
             _pendingRetranslateRows.Clear();
-            for (int i = _textEditListContent.transform.childCount - 1; i >= 0; i--)
-                UnityEngine.Object.Destroy(_textEditListContent.transform.GetChild(i).gameObject);
+            _textEditList.Clear();
 
             // Show the edit UI
-            _textEditRow.SetActive(true);
-            SetDynamicText(_textEditCountLabel, $"{textEntries.Count} text(s) found:");
+            _textEditRow.Visible = true;
+            _textEditCountLabel.Say($"{textEntries.Count} text(s) found:");
 
             // Create an editable row for each text
             for (int i = 0; i < textEntries.Count; i++)
@@ -1673,8 +646,8 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             SizeTextEditList(textEntries.Count);
 
-            SetDynamicText(_statusLabel, "Edit translations and click Save");
-            _statusLabel.color = UIStyles.TextSecondary;
+            _statusLabel.Say("Edit translations and click Save");
+            _statusLabel.Tone = Tone.Secondary;
         }
 
         /// <summary>
@@ -1688,11 +661,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         private void SizeTextEditList(int rowCount)
         {
-            if (_textEditScroll == null) return;
+            if (_textEditList == null) return;
 
-            int wanted = Mathf.Clamp(rowCount * TextEditRowHeight, TextEditListMinHeight, TextEditListMaxHeight);
-            UIFactory.SetLayoutElement(_textEditScroll, minHeight: wanted, preferredHeight: wanted,
-                flexibleHeight: 9999, flexibleWidth: 9999);
+            int wanted = Math.Max(TextEditListMinHeight, Math.Min(TextEditListMaxHeight, rowCount * TextEditRowHeight));
+            _textEditList.SetHeight(wanted);
 
             RecalculateSize();
         }
@@ -1735,38 +707,32 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private void CreateTextEditRow((object component, string text, string originalKey, string tag, string childPath, Dictionary<int, string> liveNumbers) entry)
         {
-            var row = UIFactory.CreateVerticalGroup(_textEditListContent, "TextEditEntry", false, false, true, true, 3);
-            UIFactory.SetLayoutElement(row, flexibleWidth: 9999);
-            UIStyles.SetBackground(row, UIStyles.CardBackground);
+            var row = Stacks.Vertical(_textEditList.Rows, "TextEditEntry", spacing: 3, surface: Surface.Card);
 
             // Original key: full text, word-wrapped (translating needs the whole source).
             //
-            // ⚠ supportRichText: false, and this is the whole point of the row. Left on — the
-            // UIFactory default — the label RENDERS `<color=#FF0000>` instead of showing it, so a
-            // decorated line appeared coloured with its markup invisible, and there was no way to
-            // see what had to be preserved while editing. What is edited here is the file's exact
-            // text; that is what has to be on screen. The rendering is shown separately below.
+            // ⚠ richText: false, and this is the whole point of the row. Left on, the label RENDERS
+            // `<color=#FF0000>` instead of showing it, so a decorated line appeared coloured with
+            // its markup invisible, and there was no way to see what had to be preserved while
+            // editing. What is edited here is the file's exact text; that is what has to be on
+            // screen. The rendering is shown separately below.
             // 🔴 The tag as a CHIP, not as `[H] ` in front of the key.
             //
             // Written into the key's own label, it was grey text among grey text — the one thing
             // on the row that carries a colour everyone has already learnt on the site's tables,
             // and it carried none. It cannot be rich text either: this label deliberately renders
-            // markup literally (see below), so `<color=…>` would show as characters.
+            // markup literally (see above), so `<color=…>` would show as characters.
             //
             // Hence a row: the chip, then the key. The colours come from the shared library, so
             // changing how a tag looks is one edit there rather than three across the products.
-            var keyRow = UIFactory.CreateHorizontalGroup(row, "KeyRow", false, false, true, true, 6,
-                                                         default, default, TextAnchor.UpperLeft);
-            UIFactory.SetLayoutElement(keyRow, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999);
+            var keyRow = Stacks.Horizontal(row, "KeyRow", spacing: 6, placement: Placement.TopLeft,
+                                           minHeight: UIStyles.RowHeightSmall);
 
-            var tagChip = UIStyles.CreateTagChip(keyRow, entry.tag, out var tagLetter);
+            var tagChip = TagChips.Create(keyRow, entry.tag);
 
-            var keyLabel = UIFactory.CreateLabel(keyRow, "Key", entry.originalKey, TextAnchor.UpperLeft,
-                                                 supportRichText: false);
-            keyLabel.fontSize = UIStyles.FontSizeSmall;
-            keyLabel.color = UIStyles.TextMuted;
-            keyLabel.horizontalOverflow = HorizontalWrapMode.Wrap;
-            UIFactory.SetLayoutElement(keyLabel.gameObject, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999);
+            var keyLabel = Labels.Create(keyRow, "Key", entry.originalKey, TextRole.Small,
+                policy: TextPolicy.Excluded, richText: false, fill: Fill.Stretch,
+                minHeight: UIStyles.RowHeightSmall);
 
             // Live values of the [!v*N] placeholders, as currently displayed in-game
             if (entry.liveNumbers != null && entry.liveNumbers.Count > 0)
@@ -1774,37 +740,25 @@ namespace UnityGameTranslator.Core.UI.Panels
                 var parts = new List<string>();
                 foreach (var kv in entry.liveNumbers)
                     parts.Add($"[!v*{kv.Key}] = {kv.Value}");
-                var hintLabel = UIFactory.CreateLabel(row, "LiveValues",
-                    $"Keep placeholders as-is. Current values: {string.Join("   ", parts)}", TextAnchor.UpperLeft,
-                    supportRichText: false);
-                hintLabel.fontSize = UIStyles.FontSizeHint;
-                hintLabel.color = UIStyles.TextAccent;
-                hintLabel.horizontalOverflow = HorizontalWrapMode.Wrap;
-                UIFactory.SetLayoutElement(hintLabel.gameObject, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999);
+                Labels.Create(row, "LiveValues",
+                    $"Keep placeholders as-is. Current values: {string.Join("   ", parts)}", TextRole.Caption,
+                    tone: Tone.Accent, policy: TextPolicy.Excluded, richText: false, fill: Fill.Stretch,
+                    minHeight: UIStyles.RowHeightSmall);
             }
 
             // Editable translation field — raw text, markup included, exactly as the file holds it
-            var input = UIFactory.CreateInputField(row, "TranslationInput", "Enter translation...");
-            UIFactory.SetLayoutElement(input.Component.gameObject, minHeight: 40, flexibleWidth: 9999);
-            UIStyles.SetBackground(input.Component.gameObject, UIStyles.InputBackground);
-            input.Component.lineType = UnityEngine.UI.InputField.LineType.MultiLineNewline;
-            if (input.Component.textComponent != null)
-                input.Component.textComponent.supportRichText = false;
+            var input = Fields.Create(row, "TranslationInput", "Enter translation...",
+                FieldKind.Multiline, minHeight: 40, richText: false);
             input.Text = entry.text;
 
             // …and right under it, the same string RENDERED. One shows what you are editing, the
             // other what the game will draw — a colour tag broken while typing shows up here
             // immediately, instead of on a screen you have to go back to.
-            var previewLabel = UIFactory.CreateLabel(row, "Preview", "", TextAnchor.UpperLeft);
-            previewLabel.fontSize = UIStyles.FontSizeSmall;
-            previewLabel.color = UIStyles.TextSecondary;
-            previewLabel.horizontalOverflow = HorizontalWrapMode.Wrap;
-            UIFactory.SetLayoutElement(previewLabel.gameObject, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999);
-            RegisterExcluded(previewLabel);
+            var previewLabel = Labels.Create(row, "Preview", "", TextRole.Small, tone: Tone.Secondary,
+                policy: TextPolicy.Excluded, fill: Fill.Stretch, minHeight: UIStyles.RowHeightSmall);
 
             // Buttons row
-            var btnRow = UIFactory.CreateHorizontalGroup(row, "BtnRow", false, false, true, true, 4);
-            UIFactory.SetLayoutElement(btnRow, minHeight: UIStyles.RowHeightNormal, flexibleWidth: 9999);
+            var btnRow = Stacks.Horizontal(row, "BtnRow", spacing: 4, minHeight: UIStyles.RowHeightNormal);
 
             // Everything this row needs, in one place: its handlers, the answer that arrives
             // seconds later on another thread, and the button-state refresh all work from it.
@@ -1817,25 +771,24 @@ namespace UnityGameTranslator.Core.UI.Panels
                 Input = input,
                 KeyLabel = keyLabel,
                 TagChip = tagChip,
-                TagLetter = tagLetter,
                 PreviewLabel = previewLabel
             };
             string capturedKey = entry.originalKey;
             object capturedComponent = entry.component;
             var capturedNumbers = entry.liveNumbers;
 
-            var saveBtn = UIFactory.CreateButton(btnRow, "SaveBtn", "Save (H)");
-            UIFactory.SetLayoutElement(saveBtn.Component.gameObject, minWidth: 80, minHeight: UIStyles.RowHeightNormal);
-            UIStyles.SetBackground(saveBtn.Component.gameObject, UIStyles.ButtonSuccess);
+            // ⚠ policy: Excluded on all three — none of these three labels was ever registered for
+            // translation in the original either (no RegisterUIText call reached them), unlike
+            // every other button in this panel. Preserved as-is; see the migration report.
+            var saveBtn = Buttons.Compact(btnRow, "SaveBtn", "Save (H)", ButtonTone.Success,
+                minWidth: 80, policy: TextPolicy.Excluded);
 
-            var retranslateBtn = UIFactory.CreateButton(btnRow, "RetranslateBtn", "Retranslate (AI)");
-            UIFactory.SetLayoutElement(retranslateBtn.Component.gameObject, minWidth: 110, minHeight: UIStyles.RowHeightNormal);
-            UIStyles.SetBackground(retranslateBtn.Component.gameObject, UIStyles.ButtonPrimary);
+            var retranslateBtn = Buttons.Compact(btnRow, "RetranslateBtn", "Retranslate (AI)", ButtonTone.Primary,
+                minWidth: 110, policy: TextPolicy.Excluded);
 
-            var revertBtn = UIFactory.CreateButton(btnRow, "RevertBtn", "Revert");
-            UIFactory.SetLayoutElement(revertBtn.Component.gameObject, minWidth: 70, minHeight: UIStyles.RowHeightNormal);
-            UIStyles.SetBackground(revertBtn.Component.gameObject, UIStyles.ButtonSecondary);
-            _helpZone?.Describe(revertBtn.Component.gameObject,
+            var revertBtn = Buttons.Compact(btnRow, "RevertBtn", "Revert", ButtonTone.Secondary,
+                minWidth: 70, policy: TextPolicy.Excluded);
+            _helpZone?.Describe(revertBtn,
                 "Put the field back to what the translation file holds, discarding what you typed or what the AI proposed.");
 
             rowState.SaveBtn = saveBtn;
@@ -1844,7 +797,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Both buttons exist before either handler is written: each one has to be able to put
             // the other back in its right state, and a lambda cannot reach a local declared later.
-            saveBtn.OnClick += () =>
+            saveBtn.Clicked += () =>
             {
                 string newValue = input.Text;
                 if (string.IsNullOrEmpty(newValue)) return;
@@ -1858,8 +811,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 string placeholderError = TranslatorCore.ValidateEditedPlaceholders(capturedKey, newValue);
                 if (placeholderError != null)
                 {
-                    _statusLabel.text = $"Not saved — {placeholderError}";
-                    _statusLabel.color = UIStyles.StatusError;
+                    _statusLabel.Show($"Not saved — {placeholderError}");
+                    _statusLabel.Tone = Tone.Error;
                     return;
                 }
 
@@ -1868,8 +821,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // in TranslatorCore refuses it too; this one says WHY on screen.
                 if (TextShaping.RtlText.ContainsPresentationForms(capturedKey))
                 {
-                    _statusLabel.text = "Not saved — this row's key is display-shaped text, not a source text";
-                    _statusLabel.color = UIStyles.StatusError;
+                    _statusLabel.Show("Not saved — this row's key is display-shaped text, not a source text");
+                    _statusLabel.Tone = Tone.Error;
                     return;
                 }
 
@@ -1893,18 +846,18 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
                 catch { }
 
-                SetDynamicText(_statusLabel, tag == "A" ? "AI translation applied" : "Saved!");
-                _statusLabel.color = UIStyles.StatusSuccess;
-                UIStyles.SetTagChip(rowState.TagChip, rowState.TagLetter, tag);
+                _statusLabel.Say(tag == "A" ? "AI translation applied" : "Saved!");
+                _statusLabel.Tone = Tone.Success;
+                rowState.TagChip.Retag(tag);
                 RefreshRow(rowState);
             };
 
-            retranslateBtn.OnClick += () =>
+            retranslateBtn.Clicked += () =>
             {
                 if (TranslatorCore.Config == null || !TranslatorCore.Config.IsTranslationEnabled)
                 {
-                    SetDynamicText(_statusLabel, "Translation is switched off — turn it on in Options first");
-                    _statusLabel.color = UIStyles.StatusWarning;
+                    _statusLabel.Say("Translation is switched off — turn it on in Options first");
+                    _statusLabel.Tone = Tone.Warning;
                     return;
                 }
 
@@ -1915,20 +868,19 @@ namespace UnityGameTranslator.Core.UI.Panels
                 StartRetranslate(rowState);
             };
 
-            revertBtn.OnClick += () =>
+            revertBtn.Clicked += () =>
             {
                 // Back to what the file holds — the AI's proposal and anything typed both go.
                 input.Text = TranslatorCore.GetTranslationValue(capturedKey) ?? capturedKey;
                 rowState.AiProposal = null;
-                UIStyles.SetTagChip(rowState.TagChip, rowState.TagLetter,
-                                    TranslatorCore.GetTranslationTag(capturedKey));
-                SetDynamicText(_statusLabel, "Back to the saved translation");
-                _statusLabel.color = UIStyles.TextSecondary;
+                rowState.TagChip.Retag(TranslatorCore.GetTranslationTag(capturedKey));
+                _statusLabel.Say("Back to the saved translation");
+                _statusLabel.Tone = Tone.Secondary;
                 RefreshRow(rowState);
             };
 
-            // The C# event of InputFieldRef, never onValueChanged.AddListener — see UIHelpers.
-            input.OnValueChanged += _ => RefreshRow(rowState);
+            // FieldHandle.Changed, never a raw InputField event — see UIHelpers.
+            input.Changed += _ => RefreshRow(rowState);
             RefreshRow(rowState);
         }
 
@@ -1953,20 +905,18 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         private void RefreshRow(TextEditRowState row)
         {
-            if (row?.Input?.Component == null) return;
+            if (row?.Input == null) return;
 
             bool changed = HasUnsavedEdit(row.Key, row.Input.Text);
 
-            if (row.SaveBtn?.Component != null)
-                row.SaveBtn.Component.interactable = changed;
+            if (row.SaveBtn != null) row.SaveBtn.Enabled = changed;
 
             // Revert answers the same question as Save, from the other side: there is something to
             // undo exactly when there is something to save.
-            if (row.RevertBtn?.Component != null)
-                row.RevertBtn.Component.interactable = changed;
+            if (row.RevertBtn != null) row.RevertBtn.Enabled = changed;
 
-            if (row.RetranslateBtn?.Component != null)
-                row.RetranslateBtn.Component.interactable = !_pendingRetranslateRows.Contains(row);
+            if (row.RetranslateBtn != null)
+                row.RetranslateBtn.Enabled = !_pendingRetranslateRows.Contains(row);
 
             if (row.PreviewLabel != null)
             {
@@ -1975,13 +925,12 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // repeat the field word for word, costing a row of height per entry in a list that
                 // routinely holds a dozen — and this panel was reported as too short.
                 bool worthShowing = field.IndexOf('<') >= 0 && field.IndexOf('>') >= 0;
-                row.PreviewLabel.gameObject.SetActive(worthShowing);
+                row.PreviewLabel.Visible = worthShowing;
                 if (worthShowing)
                 {
                     // The only place in this row where markup is meant to be interpreted. Numbers
                     // are put back too, so this is the line as the game would draw it right now.
-                    row.PreviewLabel.text = TranslatorCore.RestoreNumbersFromPlaceholders(
-                        field, row.LiveNumbers);
+                    row.PreviewLabel.Show(TranslatorCore.RestoreNumbersFromPlaceholders(field, row.LiveNumbers));
                 }
             }
         }
@@ -2000,15 +949,15 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (!TranslatorCore.RemoveTranslationForRetranslate(row.Key, storeResult: false))
             {
                 _pendingRetranslateRows.Remove(row);
-                SetDynamicText(_statusLabel, "Could not ask the AI — check the backend in Options");
-                _statusLabel.color = UIStyles.StatusError;
-                UIStyles.SetTagChip(row.TagChip, row.TagLetter, TranslatorCore.GetTranslationTag(row.Key));
+                _statusLabel.Say("Could not ask the AI — check the backend in Options");
+                _statusLabel.Tone = Tone.Error;
+                row.TagChip.Retag(TranslatorCore.GetTranslationTag(row.Key));
                 RefreshRow(row);
                 return;
             }
 
-            SetDynamicText(_statusLabel, "Asking the AI for another translation...");
-            _statusLabel.color = UIStyles.TextAccent;
+            _statusLabel.Say("Asking the AI for another translation...");
+            _statusLabel.Tone = Tone.Accent;
             // ⚠ The chip keeps the tag the line still HAS while the AI is asked. It used to read
             // `[AI...]`, which announced a provenance the line had not been given yet — and if the
             // request failed, that was simply false. The status line above says what is happening.
@@ -2044,7 +993,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             foreach (var row in rows)
             {
                 // The row may have been destroyed since (another element was clicked)
-                if (row.Input?.Component == null || row.KeyLabel == null) continue;
+                if (row.Input == null || row.KeyLabel == null) continue;
 
                 if (proposed)
                 {
@@ -2054,23 +1003,23 @@ namespace UnityGameTranslator.Core.UI.Panels
                     row.Input.Text = value;
                 }
 
-                UIStyles.SetTagChip(row.TagChip, row.TagLetter, TranslatorCore.GetTranslationTag(key));
+                row.TagChip.Retag(TranslatorCore.GetTranslationTag(key));
                 RefreshRow(row);
             }
 
             switch (outcome)
             {
                 case TranslatorCore.RetranslateOutcome.Replaced:
-                    SetDynamicText(_statusLabel, "New translation proposed — Save to keep it, Revert to drop it");
-                    _statusLabel.color = UIStyles.StatusSuccess;
+                    _statusLabel.Say("New translation proposed — Save to keep it, Revert to drop it");
+                    _statusLabel.Tone = Tone.Success;
                     break;
                 case TranslatorCore.RetranslateOutcome.Unchanged:
-                    SetDynamicText(_statusLabel, "The AI gave the same translation again — nothing changed");
-                    _statusLabel.color = UIStyles.StatusWarning;
+                    _statusLabel.Say("The AI gave the same translation again — nothing changed");
+                    _statusLabel.Tone = Tone.Warning;
                     break;
                 default:
-                    SetDynamicText(_statusLabel, "The AI returned nothing — the line is untouched");
-                    _statusLabel.color = UIStyles.StatusError;
+                    _statusLabel.Say("The AI returned nothing — the line is untouched");
+                    _statusLabel.Tone = Tone.Error;
                     break;
             }
         }

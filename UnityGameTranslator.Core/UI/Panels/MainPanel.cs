@@ -1,7 +1,5 @@
-﻿using UnityEngine;
-using UnityEngine.UI;
+using System;
 using UniverseLib.UI;
-using UniverseLib.UI.Models;
 using UnityGameTranslator.Common;
 using UnityGameTranslator.Core;
 using UnityGameTranslator.Core.UI.Components;
@@ -71,52 +69,52 @@ namespace UnityGameTranslator.Core.UI.Panels
         protected override bool HasFlexibleContent => true;
 
         // UI references - Account section
-        private Text _accountLabel;
-        private ButtonRef _loginLogoutBtn;
+        private LabelHandle _accountLabel;
+        private ButtonHandle _loginLogoutBtn;
 
         // UI references - Translation info section (legacy, hidden when StatusCard is shown)
-        private GameObject _translationInfoSection;
-        private Text _entriesLabel;
-        private Text _targetLabel;
-        private Text _sourceLabel;
-        private Text _roleLabel;
-        private Text _syncStatusLabel;
-        private Text _aiStatusLabel;
+        private Host _translationInfoSection;
+        private LabelHandle _entriesLabel;
+        private LabelHandle _targetLabel;
+        private LabelHandle _sourceLabel;
+        private LabelHandle _roleLabel;
+        private LabelHandle _syncStatusLabel;
+        private LabelHandle _aiStatusLabel;
 
         // UI references - Resources link
-        private GameObject _resourcesLinkSection;
-        private Text _backupsLabel;
-        private Text _resourcesByLabel;
-        private Text _resourcesUrlLabel;
-        private ButtonRef _resourcesLinkBtn;
+        private Host _resourcesLinkSection;
+        private LabelHandle _backupsLabel;
+        private LabelHandle _resourcesByLabel;
+        private LabelHandle _resourcesUrlLabel;
+        private ButtonHandle _resourcesLinkBtn;
 
         // UI references - Actions section
-        private ButtonRef _uploadBtn;
-        private Text _uploadHintLabel;
-        private ButtonRef _reviewOnWebsiteBtn;
-        private ButtonRef _compareWithServerBtn;
-        private ButtonRef _editDetailsBtn;
-        private ButtonRef _updateFromMainBtn;
+        private ButtonHandle _uploadBtn;
+        private LabelHandle _uploadHintLabel;
+        private ButtonHandle _reviewOnWebsiteBtn;
+        private ButtonHandle _compareWithServerBtn;
+        private ButtonHandle _editDetailsBtn;
+        private ButtonHandle _updateFromMainBtn;
         private bool _updateFromMainInFlight;
-        private ButtonRef _forkBtn;
-        private Text _roleActionsHint;
+        private ButtonHandle _forkBtn;
+        private LabelHandle _roleActionsHint;
         private Components.HelpZone _helpZone;
 
         // UI references - Community Translations section
-        private GameObject _communitySection;
-        private Text _communityGameLabel;
-        private ButtonRef _searchBtn;
+        private Host _communitySection;
+        private LabelHandle _communityGameLabel;
+        private ButtonHandle _searchBtn;
         private TranslationList _translationList;
-        private ButtonRef _downloadBtn;
+        private ButtonHandle _downloadBtn;
 
         // UI references - Context-aware sections
         private StatusCard _statusCard;
-        private GameObject _loginCTASection;
-        private ButtonRef _loginCTABtn;
-        private GameObject _statusSection;
+        private Host _loginCTASection;
+        private ButtonHandle _loginCTABtn;
+        private Host _statusSection;
 
         // UI references - the three choices when holding another lineage (GAP 8)
-        private GameObject _lineageChoiceSection;
+        private Host _lineageChoiceSection;
         /// <summary>
         /// The two rows of Actions, held so they can be hidden when nothing in them is showing.
         ///
@@ -126,30 +124,30 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// the space it was standing in.
         /// </summary>
         /// <summary>The three rows and their sentences, so each can say why it is closed.</summary>
-        private GameObject _branchRow;
-        private GameObject _mergeRow;
-        private GameObject _downloadRow;
-        private ButtonRef _mergeWithMainBtn;
-        private Text _mergeDesc;
-        private Text _branchDesc;
-        private Text _downloadDesc;
+        private Host _branchRow;
+        private Host _mergeRow;
+        private Host _downloadRow;
+        private ButtonHandle _mergeWithMainBtn;
+        private LabelHandle _mergeDesc;
+        private LabelHandle _branchDesc;
+        private LabelHandle _downloadDesc;
 
-        private GameObject _syncActionsRow;
-        private GameObject _roleActionsRow;
+        private Host _syncActionsRow;
+        private Host _roleActionsRow;
 
-        private ButtonRef _contributeAsBranchBtn;
-        private ButtonRef _downloadLatestBtn;
-        private ButtonRef _createIndependentBtn;
+        private ButtonHandle _contributeAsBranchBtn;
+        private ButtonHandle _downloadLatestBtn;
+        private ButtonHandle _createIndependentBtn;
 
         // UI references - Guidance messages (GAP 9)
-        private GameObject _guidanceSection;
-        private Text _guidanceLabel;
+        private Host _guidanceSection;
+        private LabelHandle _guidanceLabel;
 
         // UI references - Mod update banner
-        private GameObject _modUpdateBanner;
-        private Text _modUpdateLabel;
-        private ButtonRef _modUpdateBtn;
-        private ButtonRef _modManagerBtn;
+        private Host _modUpdateBanner;
+        private LabelHandle _modUpdateLabel;
+        private ButtonHandle _modUpdateBtn;
+        private ButtonHandle _modManagerBtn;
 
         // Tab system
         private TabBar _tabBar;
@@ -170,20 +168,20 @@ namespace UnityGameTranslator.Core.UI.Panels
             _translationList = new TranslationList();
 
             // Use scrollable layout - content scrolls if needed, buttons stay fixed
-            CreateScrollablePanelLayout(out var scrollContent, out var buttonRow, PanelWidth - 40);
+            Layout(out var scrollContent, out var buttonRow, PanelWidth - 40);
 
             // Contextual help bar between content and footer
             _helpZone = CreateHelpZone(buttonRow, "Hover an element to see what it does");
 
             // === FIXED HEADER (outside the scroll — only tab content scrolls) ===
-            var header = CreateFixedHeader();
+            var header = FixedHeader();
 
             // No big title here — the window title bar already shows the mod name (redundant, wasted height).
 
             // Account Section (compact, inline)
             CreateAccountSection(header);
 
-            UIStyles.CreateSpacer(header, 5);
+            Stacks.Spacer(header, 5);
 
             // Mod Update Banner (between account and tabs, visible only when update available)
             CreateModUpdateBanner(header);
@@ -193,22 +191,16 @@ namespace UnityGameTranslator.Core.UI.Panels
             _tabBar.CreateUI(header, scrollContent);
 
             // Create tab contents - each tab will create its own card
-            var myTranslationTab = _tabBar.AddTab(TAB_MY_TRANSLATION);
-            var communityTab = _tabBar.AddTab(TAB_COMMUNITY);
+            var myTranslationTab = _tabBar.Tab(TAB_MY_TRANSLATION);
+            var communityTab = _tabBar.Tab(TAB_COMMUNITY);
 
-            _helpZone?.Describe(_tabBar.GetTabButton(TAB_MY_TRANSLATION),
+            _helpZone?.Describe(_tabBar.Button(TAB_MY_TRANSLATION),
                 "Your own translation for this game: its sync status, role, and the actions you can take on it.");
-            _helpZone?.Describe(_tabBar.GetTabButton(TAB_COMMUNITY),
+            _helpZone?.Describe(_tabBar.Button(TAB_COMMUNITY),
                 "Translations other players shared for this game. Search and download one to use it.");
 
-            // Register tab texts for localization
-            foreach (var text in _tabBar.GetTabButtonTexts())
-            {
-                RegisterUIText(text);
-            }
-
             // === MY TRANSLATION TAB (content in a stretching card) ===
-            var myTransCard = CreateAdaptiveCard(myTranslationTab, "MyTranslationCard", PanelWidth - 60, stretchVertically: true);
+            var myTransCard = Stacks.Card(myTranslationTab, "MyTranslationCard", PanelWidth - 60, stretchVertically: true);
 
             // Login CTA Section (only visible when not logged in)
             CreateLoginCTASection(myTransCard);
@@ -216,12 +208,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Status Section with StatusCard (visible when logged in + has local)
             CreateStatusSection(myTransCard);
 
-            UIStyles.CreateSpacer(myTransCard, 5);
+            Stacks.Spacer(myTransCard, 5);
 
             // Legacy Translation Info Section (kept for backward compatibility, will be hidden when StatusCard is shown)
             CreateTranslationInfoSection(myTransCard);
 
-            UIStyles.CreateSpacer(myTransCard, 10);
+            Stacks.Spacer(myTransCard, 10);
 
             // Actions Section (context-dependent)
             CreateActionsSection(myTransCard);
@@ -235,28 +227,25 @@ namespace UnityGameTranslator.Core.UI.Panels
             CreateGlossarySection(myTransCard);
 
             // === COMMUNITY TAB (content in a stretching card) ===
-            var communityCard = CreateAdaptiveCard(communityTab, "CommunityCard", PanelWidth - 60, stretchVertically: true);
+            var communityCard = Stacks.Card(communityTab, "CommunityCard", PanelWidth - 60, stretchVertically: true);
             CreateCommunitySection(communityCard);
 
             // Bottom buttons - in fixed footer (outside scroll). These three concern the whole
             // mod and belong to every tab; a tab's own action has no business here — added as a
             // fourth it pushed Close off the edge of the row.
-            var transParamsBtn = CreateSecondaryButton(buttonRow, "TransParamsBtn", "Translation Tools");
-            transParamsBtn.OnClick += () => TranslatorUIManager.TranslationParamsPanel?.SetActive(true);
-            RegisterUIText(transParamsBtn.ButtonText);
-            _helpZone?.Describe(transParamsBtn.Component.gameObject,
+            var transParamsBtn = Buttons.Secondary(buttonRow, "TransParamsBtn", "Translation Tools");
+            transParamsBtn.Clicked += () => TranslatorUIManager.TranslationParamsPanel?.SetActive(true);
+            _helpZone?.Describe(transParamsBtn,
                 "Text editors, exclusions, fonts, images and variables");
 
-            var optionsBtn = CreateSecondaryButton(buttonRow, "OptionsBtn", "Mod Options");
-            optionsBtn.OnClick += () => TranslatorUIManager.OptionsPanel?.SetActive(true);
-            RegisterUIText(optionsBtn.ButtonText);
-            _helpZone?.Describe(optionsBtn.Component.gameObject,
+            var optionsBtn = Buttons.Secondary(buttonRow, "OptionsBtn", "Mod Options");
+            optionsBtn.Clicked += () => TranslatorUIManager.OptionsPanel?.SetActive(true);
+            _helpZone?.Describe(optionsBtn,
                 "General settings: hotkeys, online mode, translation backend");
 
-            var closeBtn = CreatePrimaryButton(buttonRow, "CloseBtn", "Close");
-            closeBtn.OnClick += () => SetActive(false);
-            RegisterUIText(closeBtn.ButtonText);
-            _helpZone?.Describe(closeBtn.Component.gameObject,
+            var closeBtn = Buttons.Primary(buttonRow, "CloseBtn", "Close");
+            closeBtn.Clicked += () => SetActive(false);
+            _helpZone?.Describe(closeBtn,
                 "Close this window. Translation and syncing keep running in the background.");
 
             RefreshUI();
@@ -287,71 +276,54 @@ namespace UnityGameTranslator.Core.UI.Panels
             SelectTab(TAB_MY_TRANSLATION);
         }
 
-        private void CreateAccountSection(GameObject parent)
+        private void CreateAccountSection(Host parent)
         {
-            var sectionTitle = UIStyles.CreateSectionTitle(parent, "AccountSectionLabel", "Account");
-            RegisterUIText(sectionTitle);
+            Labels.Create(parent, "AccountSectionLabel", "Account", TextRole.SectionTitle);
 
             // Grouped in a card (like "Current Translation") so the account block reads as a unit.
-            var accountBox = UIStyles.CreateAdaptiveCard(parent, "AccountBox", PanelWidth - 60);
+            var accountBox = Stacks.Card(parent, "AccountBox", PanelWidth - 60);
 
-            var accountRow = UIStyles.CreateFormRow(accountBox, "AccountRow", UIStyles.RowHeightLarge);
+            var accountRow = Stacks.Row(accountBox, "AccountRow", minHeight: UIStyles.RowHeightLarge);
 
-            _accountLabel = UIFactory.CreateLabel(accountRow, "AccountLabel", "Not connected", TextAnchor.MiddleLeft);
-            _accountLabel.fontStyle = FontStyle.Italic;
-            _accountLabel.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(_accountLabel.gameObject, flexibleWidth: 9999);
-            RegisterExcluded(_accountLabel);
+            _accountLabel = Labels.Create(accountRow, "AccountLabel", "Not connected", TextRole.Body,
+                                          tone: Tone.Secondary, policy: TextPolicy.Dynamic, fill: Fill.Stretch);
+            _accountLabel.Italic = true;
 
-            _loginLogoutBtn = CreateSecondaryButton(accountRow, "LoginLogoutBtn", "Login", 80);
-            _loginLogoutBtn.OnClick += OnLoginLogoutClicked;
-            RegisterExcluded(_loginLogoutBtn.ButtonText);
-            _helpZone?.Describe(_loginLogoutBtn.Component.gameObject,
+            _loginLogoutBtn = Buttons.Secondary(accountRow, "LoginLogoutBtn", "Login", 80, policy: TextPolicy.Dynamic);
+            _loginLogoutBtn.Clicked += OnLoginLogoutClicked;
+            _helpZone?.Describe(_loginLogoutBtn,
                 "An account is only needed to SHARE translations. Downloading and playing work without one.");
         }
 
-        private void CreateModUpdateBanner(GameObject parent)
+        private void CreateModUpdateBanner(Host parent)
         {
             // Mod update banner - colored box at top when update available
-            _modUpdateBanner = UIFactory.CreateHorizontalGroup(parent, "ModUpdateBanner", false, false, true, true, 8);
-            UIFactory.SetLayoutElement(_modUpdateBanner, minHeight: UIStyles.RowHeightLarge, flexibleWidth: 9999);
-            UIStyles.SetBackground(_modUpdateBanner, UIStyles.NotificationSuccess);
+            _modUpdateBanner = Callout.HorizontalBox(parent, "ModUpdateBanner", CalloutTone.Success,
+                                                     spacing: 8, pad: Pad.Of(10, 5),
+                                                     minHeight: UIStyles.RowHeightLarge);
 
-            var padding = _modUpdateBanner.GetComponent<HorizontalLayoutGroup>();
-            if (padding != null)
-            {
-                padding.padding = Compat.MakeRectOffset(10, 10, 5, 5);
-                padding.childAlignment = TextAnchor.MiddleLeft;
-            }
-
-            _modUpdateLabel = UIFactory.CreateLabel(_modUpdateBanner, "ModUpdateLabel", "Update available: v?.?.?", TextAnchor.MiddleLeft);
-            _modUpdateLabel.fontStyle = FontStyle.Bold;
-            _modUpdateLabel.color = Color.white;
-            UIFactory.SetLayoutElement(_modUpdateLabel.gameObject, flexibleWidth: 9999);
-            RegisterExcluded(_modUpdateLabel);
+            _modUpdateLabel = Labels.Create(_modUpdateBanner, "ModUpdateLabel", "Update available: v?.?.?",
+                                            TextRole.Body, policy: TextPolicy.Excluded, fill: Fill.Stretch);
+            _modUpdateLabel.Bold = true;
 
             // ⚠ Before the download button, and it is the only place on this banner where order is
             // a statement: read left to right, the tool that does the whole job comes first and the
             // manual zip stays available beside it. Neither is taken away.
-            _modManagerBtn = UIFactory.CreateButton(_modUpdateBanner, "ModManagerBtn", "Get Manager");
-            UIFactory.SetLayoutElement(_modManagerBtn.Component.gameObject, minWidth: 110, minHeight: UIStyles.RowHeightNormal);
-            UIStyles.SetBackground(_modManagerBtn.Component.gameObject, UIStyles.ButtonSecondary);
-            _modManagerBtn.OnClick += OnModManagerClicked;
-            RegisterExcluded(_modManagerBtn.ButtonText);
-            _helpZone?.Describe(_modManagerBtn.Component.gameObject,
+            _modManagerBtn = Buttons.Compact(_modUpdateBanner, "ModManagerBtn", "Get Manager",
+                                             ButtonTone.Secondary, minWidth: 110, policy: TextPolicy.Excluded);
+            _modManagerBtn.Clicked += OnModManagerClicked;
+            _helpZone?.Describe(_modManagerBtn,
                 "The Manager installs and updates the mod for every game on this machine. "
                 + "Opens it when it is already here, otherwise opens the page to get it.");
 
-            _modUpdateBtn = UIFactory.CreateButton(_modUpdateBanner, "ModUpdateBtn", "Download");
-            UIFactory.SetLayoutElement(_modUpdateBtn.Component.gameObject, minWidth: 90, minHeight: UIStyles.RowHeightNormal);
-            UIStyles.SetBackground(_modUpdateBtn.Component.gameObject, UIStyles.ButtonPrimary);
-            _modUpdateBtn.OnClick += OnModUpdateClicked;
-            RegisterExcluded(_modUpdateBtn.ButtonText);
-            _helpZone?.Describe(_modUpdateBtn.Component.gameObject,
+            _modUpdateBtn = Buttons.Compact(_modUpdateBanner, "ModUpdateBtn", "Download",
+                                            ButtonTone.Primary, minWidth: 90, policy: TextPolicy.Excluded);
+            _modUpdateBtn.Clicked += OnModUpdateClicked;
+            _helpZone?.Describe(_modUpdateBtn,
                 "Get the newer mod version: downloads it if available, otherwise opens the release page in your browser.");
 
             // Start hidden
-            _modUpdateBanner.SetActive(false);
+            _modUpdateBanner.Visible = false;
         }
 
         private void OnModUpdateClicked()
@@ -387,45 +359,35 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
         }
 
-        private void CreateLoginCTASection(GameObject parent)
+        private void CreateLoginCTASection(Host parent)
         {
             // Login CTA - prominent call-to-action for not logged in users
-            _loginCTASection = UIFactory.CreateVerticalGroup(parent, "LoginCTASection", false, false, true, true, UIStyles.SmallSpacing);
-            UIFactory.SetLayoutElement(_loginCTASection, flexibleWidth: 9999);
+            _loginCTASection = Stacks.Vertical(parent, "LoginCTASection", UIStyles.SmallSpacing);
 
-            var ctaCard = UIStyles.CreateAdaptiveCard(_loginCTASection, "CTACard", PanelWidth - 60);
-            UIStyles.SetBackground(ctaCard, UIStyles.CardElevated);  // a prominent CTA — must read as a card, not blend into the panel
+            // a prominent CTA — must read as a card, not blend into the panel
+            var ctaCard = Stacks.Card(_loginCTASection, "CTACard", PanelWidth - 60, surface: Surface.Elevated);
 
-            var ctaTitle = UIFactory.CreateLabel(ctaCard, "CTATitle", "Login to sync your translations", TextAnchor.MiddleCenter);
-            ctaTitle.fontStyle = FontStyle.Bold;
-            ctaTitle.fontSize = UIStyles.FontSizeNormal;
-            ctaTitle.color = UIStyles.TextPrimary;
-            UIFactory.SetLayoutElement(ctaTitle.gameObject, minHeight: UIStyles.RowHeightMedium);
-            RegisterUIText(ctaTitle);
+            var ctaTitle = Labels.Create(ctaCard, "CTATitle", "Login to sync your translations",
+                                         TextRole.Body, centred: true, minHeight: UIStyles.RowHeightMedium);
+            ctaTitle.Bold = true;
 
-            var ctaDesc = UIFactory.CreateLabel(ctaCard, "CTADesc",
+            Labels.Create(ctaCard, "CTADesc",
                 "Sync your work across devices and contribute to community translations.",
-                TextAnchor.MiddleCenter);
-            ctaDesc.fontSize = UIStyles.FontSizeSmall;
-            ctaDesc.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(ctaDesc.gameObject, minHeight: UIStyles.RowHeightMedium);
-            RegisterUIText(ctaDesc);
+                TextRole.Description, minHeight: UIStyles.RowHeightMedium);
 
-            UIStyles.CreateSpacer(ctaCard, 5);
+            Stacks.Spacer(ctaCard, 5);
 
-            var ctaBtnRow = UIStyles.CreateFormRow(ctaCard, "CTABtnRow", UIStyles.RowHeightLarge, 0);
-            var rowLayout = ctaBtnRow.GetComponent<HorizontalLayoutGroup>();
-            if (rowLayout != null) rowLayout.childAlignment = TextAnchor.MiddleCenter;
+            var ctaBtnRow = Stacks.Row(ctaCard, "CTABtnRow", spacing: 0, minHeight: UIStyles.RowHeightLarge,
+                                       placement: Placement.MiddleCenter);
 
-            _loginCTABtn = CreatePrimaryButton(ctaBtnRow, "CTALoginBtn", "Create Account / Login", 200);
-            UIStyles.SetBackground(_loginCTABtn.Component.gameObject, UIStyles.ButtonSuccess);
-            _loginCTABtn.OnClick += () => TranslatorUIManager.LoginPanel?.SetActive(true);
-            RegisterUIText(_loginCTABtn.ButtonText);
-            _helpZone?.Describe(_loginCTABtn.Component.gameObject,
+            _loginCTABtn = Buttons.Primary(ctaBtnRow, "CTALoginBtn", "Create Account / Login", 200);
+            _loginCTABtn.Tone = ButtonTone.Success;
+            _loginCTABtn.Clicked += () => TranslatorUIManager.LoginPanel?.SetActive(true);
+            _helpZone?.Describe(_loginCTABtn,
                 "An account is only needed to SHARE translations. Downloading and playing work without one.");
         }
 
-        private void CreateStatusSection(GameObject parent)
+        private void CreateStatusSection(Host parent)
         {
             // 🔴 **The title goes OUTSIDE the frame, as "Actions" does.** It used to sit inside the
             // section, which carries a background — so one heading was written on the box it names
@@ -435,17 +397,15 @@ namespace UnityGameTranslator.Core.UI.Panels
             // ⚠ Written exactly the way Actions writes it — CreateSectionTitle straight into the
             // parent, no row of its own. The row existed to give the title the left margin of the
             // content BELOW it, which is a problem that only arises inside the frame.
-            var sectionTitle = UIStyles.CreateSectionTitle(parent, "StatusSectionLabel", "Current Translation");
-            RegisterUIText(sectionTitle);
+            Labels.Create(parent, "StatusSectionLabel", "Current Translation", TextRole.SectionTitle);
 
             // Status section - shows sync status using StatusCard widget
-            _statusSection = UIFactory.CreateVerticalGroup(parent, "StatusSection", false, false, true, true, 0);
-            UIFactory.SetLayoutElement(_statusSection, flexibleWidth: 9999);
+            _statusSection = Stacks.Vertical(parent, "StatusSection", 0);
 
             // Create StatusCard widget
             _statusCard = new StatusCard();
             _statusCard.CreateUI(_statusSection);
-            _helpZone?.Describe(_statusCard.Root,
+            _helpZone?.Describe(_statusCard.Handle,
                 "Your translation at a glance: sync state with the website, your role (Main = owner, Branch = contributor), and quality (Human / Validated / AI lines)");
 
             // 🔴 **One line, and a way in — not a section.** Backups are the HISTORY of the very
@@ -455,126 +415,93 @@ namespace UnityGameTranslator.Core.UI.Panels
             //
             // ⚠ Not in "Actions" either: that row is about the world — publishing, comparing,
             // arbitrating, forking. What you keep on your own machine is a different subject.
-            var backupsRow = UIStyles.CreateFormRow(_statusSection, "BackupsRow",
-                                                    UIStyles.RowHeightNormal, 8);
+            var backupsRow = Stacks.Row(_statusSection, "BackupsRow", spacing: 8,
+                                        minHeight: UIStyles.RowHeightNormal);
 
-            _backupsLabel = UIFactory.CreateLabel(backupsRow, "BackupsLabel", "", TextAnchor.MiddleLeft);
-            _backupsLabel.color = UIStyles.TextSecondary;
-            _backupsLabel.fontSize = UIStyles.FontSizeHint;
-            UIFactory.SetLayoutElement(_backupsLabel.gameObject, flexibleWidth: 9999);
-            RegisterExcluded(_backupsLabel);
+            _backupsLabel = Labels.Create(backupsRow, "BackupsLabel", "", TextRole.Hint,
+                                          tone: Tone.Secondary, policy: TextPolicy.Excluded, fill: Fill.Stretch);
 
-            var backupsBtn = CreateSecondaryButton(backupsRow, "BackupsBtn", "Backups…");
-            backupsBtn.OnClick += () => TranslatorUIManager.BackupsPanel?.ShowPanel();
-            RegisterUIText(backupsBtn.ButtonText);
-            _helpZone?.Describe(backupsBtn.Component.gameObject,
+            var backupsBtn = Buttons.Secondary(backupsRow, "BackupsBtn", "Backups…");
+            backupsBtn.Clicked += () => TranslatorUIManager.BackupsPanel?.ShowPanel();
+            _helpZone?.Describe(backupsBtn,
                 "Your translation as it stood at earlier moments — kept here when something "
                 + "replaces it, and whenever you ask.");
 
             // External Resources section (visible only when ResourcesUrl is set)
-            _resourcesLinkSection = UIFactory.CreateVerticalGroup(_statusSection, "ResourcesLinkSection", false, false, true, true, UIStyles.SmallSpacing);
-            UIFactory.SetLayoutElement(_resourcesLinkSection, flexibleWidth: 9999);
-            UIStyles.SetBackground(_resourcesLinkSection, UIStyles.CardElevated);
-            var rlPadding = _resourcesLinkSection.GetComponent<VerticalLayoutGroup>();
-            if (rlPadding != null)
-                rlPadding.padding = Compat.MakeRectOffset(12, 12, 10, 10);
+            _resourcesLinkSection = Stacks.Vertical(_statusSection, "ResourcesLinkSection", UIStyles.SmallSpacing,
+                                                    Pad.Of(12, 10), surface: Surface.Elevated);
 
             // "External Resources uploaded by @username"
-            _resourcesByLabel = UIFactory.CreateLabel(_resourcesLinkSection, "ResourcesByLabel",
-                "External Resources", TextAnchor.MiddleLeft);
-            _resourcesByLabel.fontStyle = FontStyle.Bold;
-            _resourcesByLabel.fontSize = UIStyles.FontSizeSmall;
-            _resourcesByLabel.color = UIStyles.TextPrimary;
-            UIFactory.SetLayoutElement(_resourcesByLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+            _resourcesByLabel = Labels.Create(_resourcesLinkSection, "ResourcesByLabel", "External Resources",
+                                              TextRole.Small, tone: Tone.Plain, policy: TextPolicy.Excluded,
+                                              minHeight: UIStyles.RowHeightSmall);
+            _resourcesByLabel.Bold = true;
 
             // URL displayed in FULL, never shortened: the user must see where the link leads before
             // opening it. A long URL therefore wraps, so the label has to reserve the height it
             // draws — otherwise its second line ran under the button below.
-            _resourcesUrlLabel = UIFactory.CreateLabel(_resourcesLinkSection, "ResourcesUrlLabel",
-                "", TextAnchor.UpperLeft);
-            _resourcesUrlLabel.fontSize = UIStyles.FontSizeHint;
-            _resourcesUrlLabel.color = UIStyles.TextAccent;
-            UIFactory.SetLayoutElement(_resourcesUrlLabel.gameObject, minHeight: UIStyles.RowHeightSmall,
-                flexibleWidth: 9999);
-            UIFactory.ConfigureAutoHeight(_resourcesUrlLabel, UIStyles.SmallSpacing);
+            _resourcesUrlLabel = Labels.Create(_resourcesLinkSection, "ResourcesUrlLabel", "", TextRole.Hint,
+                                               tone: Tone.Accent, policy: TextPolicy.Excluded,
+                                               fill: Fill.Stretch, minHeight: UIStyles.RowHeightSmall,
+                                               autoHeight: true, align: Placement.TopLeft);
 
             // Open button (centered), kept clear of the URL above it
-            var openBtnRow = UIFactory.CreateHorizontalGroup(_resourcesLinkSection, "OpenBtnRow", false, false, true, true, 0);
-            UIFactory.SetLayoutElement(openBtnRow, minHeight: UIStyles.RowHeightLarge, flexibleWidth: 9999);
-            var openBtnLayout = openBtnRow.GetComponent<HorizontalLayoutGroup>();
-            if (openBtnLayout != null)
-            {
-                openBtnLayout.childAlignment = TextAnchor.MiddleCenter;
-                openBtnLayout.padding = Compat.MakeRectOffset(0, 0, UIStyles.SmallSpacing, 0);
-            }
+            var openBtnRow = Stacks.Horizontal(_resourcesLinkSection, "OpenBtnRow", 0,
+                                               new Pad(0, 0, UIStyles.SmallSpacing, 0), Placement.MiddleCenter,
+                                               minHeight: UIStyles.RowHeightLarge);
 
-            _resourcesLinkBtn = CreateSecondaryButton(openBtnRow, "ResourcesOpenBtn", "Open in Browser", 140);
             // Fill the card width (bounded, no floating/overflowing button) and keep a consistent height.
-            UIFactory.SetLayoutElement(_resourcesLinkBtn.Component.gameObject, minWidth: 140, minHeight: UIStyles.ButtonHeight, flexibleWidth: 9999);
-            UIStyles.SetBackground(_resourcesLinkBtn.Component.gameObject, UIStyles.ButtonLink);
-            _resourcesLinkBtn.OnClick += OnResourcesLinkClicked;
-            RegisterUIText(_resourcesLinkBtn.ButtonText);
-            _helpZone?.Describe(_resourcesLinkBtn.Component.gameObject,
+            _resourcesLinkBtn = Buttons.Create(openBtnRow, "ResourcesOpenBtn", "Open in Browser",
+                                               ButtonTone.Link, minWidth: 140, fill: Fill.Stretch);
+            _resourcesLinkBtn.Clicked += OnResourcesLinkClicked;
+            _helpZone?.Describe(_resourcesLinkBtn,
                 "Open the external link the translation's author attached (custom fonts or images). Not hosted by us.");
 
             // Disclaimer
-            var disclaimer = UIFactory.CreateLabel(_resourcesLinkSection, "ResourcesDisclaimer",
+            Labels.Create(_resourcesLinkSection, "ResourcesDisclaimer",
                 "Third-party content. We are not responsible for external links.",
-                TextAnchor.MiddleLeft);
-            disclaimer.fontSize = UIStyles.FontSizeHint;
-            disclaimer.color = UIStyles.TextMuted;
-            UIFactory.SetLayoutElement(disclaimer.gameObject, minHeight: UIStyles.RowHeightSmall);
-            RegisterUIText(disclaimer);
+                TextRole.Hint, tone: Tone.Muted, minHeight: UIStyles.RowHeightSmall);
 
-            _resourcesLinkSection.SetActive(false);
+            _resourcesLinkSection.Visible = false;
         }
 
-        private void CreateTranslationInfoSection(GameObject parent)
+        private void CreateTranslationInfoSection(Host parent)
         {
             // Wrap in container for visibility control (legacy section, hidden when StatusCard is shown)
-            _translationInfoSection = UIFactory.CreateVerticalGroup(parent, "TranslationInfoSection", false, false, true, true, 0);
-            UIFactory.SetLayoutElement(_translationInfoSection, flexibleWidth: 9999);
+            _translationInfoSection = Stacks.Vertical(parent, "TranslationInfoSection", 0);
 
-            var sectionTitle = UIStyles.CreateSectionTitle(_translationInfoSection, "TranslationSectionLabel", "Current Translation");
-            RegisterUIText(sectionTitle);
+            Labels.Create(_translationInfoSection, "TranslationSectionLabel", "Current Translation", TextRole.SectionTitle);
 
-            var infoBox = CreateSection(_translationInfoSection, "TranslationBox");
+            var infoBox = Stacks.Section(_translationInfoSection, "TranslationBox");
 
-            _entriesLabel = UIFactory.CreateLabel(infoBox, "EntriesLabel", "Entries: 0", TextAnchor.MiddleLeft);
-            _entriesLabel.color = UIStyles.TextPrimary;
-            UIFactory.SetLayoutElement(_entriesLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
-            RegisterExcluded(_entriesLabel);
+            _entriesLabel = Labels.Create(infoBox, "EntriesLabel", "Entries: 0", TextRole.Body,
+                                          policy: TextPolicy.Dynamic, minHeight: UIStyles.RowHeightNormal);
 
-            _targetLabel = UIFactory.CreateLabel(infoBox, "TargetLabel", "Target: auto", TextAnchor.MiddleLeft);
-            _targetLabel.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(_targetLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
-            RegisterExcluded(_targetLabel);
+            _targetLabel = Labels.Create(infoBox, "TargetLabel", "Target: auto", TextRole.Body,
+                                         tone: Tone.Secondary, policy: TextPolicy.Excluded,
+                                         minHeight: UIStyles.RowHeightNormal);
 
-            _sourceLabel = UIFactory.CreateLabel(infoBox, "SourceLabel", "Source: Local", TextAnchor.MiddleLeft);
-            _sourceLabel.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(_sourceLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
-            RegisterExcluded(_sourceLabel);
+            _sourceLabel = Labels.Create(infoBox, "SourceLabel", "Source: Local", TextRole.Body,
+                                         tone: Tone.Secondary, policy: TextPolicy.Dynamic,
+                                         minHeight: UIStyles.RowHeightNormal);
 
-            _roleLabel = UIFactory.CreateLabel(infoBox, "RoleLabel", "", TextAnchor.MiddleLeft);
-            _roleLabel.fontStyle = FontStyle.Bold;
-            UIFactory.SetLayoutElement(_roleLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
-            RegisterExcluded(_roleLabel);
+            _roleLabel = Labels.Create(infoBox, "RoleLabel", "", TextRole.Body,
+                                       policy: TextPolicy.Dynamic, minHeight: UIStyles.RowHeightNormal);
+            _roleLabel.Bold = true;
 
-            _syncStatusLabel = UIFactory.CreateLabel(infoBox, "SyncStatusLabel", "", TextAnchor.MiddleLeft);
-            _syncStatusLabel.fontStyle = FontStyle.Bold;
-            UIFactory.SetLayoutElement(_syncStatusLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
-            RegisterExcluded(_syncStatusLabel);
+            _syncStatusLabel = Labels.Create(infoBox, "SyncStatusLabel", "", TextRole.Body,
+                                             policy: TextPolicy.Dynamic, minHeight: UIStyles.RowHeightNormal);
+            _syncStatusLabel.Bold = true;
 
-            _aiStatusLabel = CreateSmallLabel(infoBox, "AIStatusLabel", "");
-            RegisterExcluded(_aiStatusLabel);
+            _aiStatusLabel = Labels.Create(infoBox, "AIStatusLabel", "", TextRole.Small,
+                                           policy: TextPolicy.Excluded);
         }
 
-        private void CreateActionsSection(GameObject parent)
+        private void CreateActionsSection(Host parent)
         {
-            var sectionTitle = UIStyles.CreateSectionTitle(parent, "ActionsSectionLabel", "Actions");
-            RegisterUIText(sectionTitle);
+            Labels.Create(parent, "ActionsSectionLabel", "Actions", TextRole.SectionTitle);
 
-            var actionsBox = CreateSection(parent, "ActionsBox");
+            var actionsBox = Stacks.Section(parent, "ActionsBox");
 
             // Pushing your content and inspecting what you are about to push are the same
             // question, so they share a row. Everything else (reviewing others' work, editing the
@@ -584,10 +511,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             // true on a page, wrong here: each sentence belongs to the button above it, and pulling
             // it to the far left left the block looking pinned to one edge with its captions
             // adrift. Judged on the screen rather than from the rule, which is where it was wrong.
-            _syncActionsRow = UIStyles.CreateFormRow(actionsBox, "SyncActionsRow", UIStyles.RowHeightLarge, UIStyles.SmallSpacing);
-            var syncRow = _syncActionsRow;
-            var syncLayout = syncRow.GetComponent<HorizontalLayoutGroup>();
-            if (syncLayout != null) syncLayout.childAlignment = TextAnchor.MiddleCenter;
+            _syncActionsRow = Stacks.Row(actionsBox, "SyncActionsRow", spacing: UIStyles.SmallSpacing,
+                                         minHeight: UIStyles.RowHeightLarge, placement: Placement.MiddleCenter);
 
             // 🔴 **These are FLOORS for a button with no label yet, nothing more.** What a button
             // ends up wide is measured by ButtonLabelFitter from its label plus whatever shares its
@@ -603,30 +528,28 @@ namespace UnityGameTranslator.Core.UI.Panels
             // ⚠ Stretching IS right elsewhere and stays: a lone button under a description
             // (Contribute as Branch, Open in Browser) fills the card because it answers for the
             // whole block. Two actions side by side do not.
-            _uploadBtn = CreatePrimaryButton(syncRow, "UploadBtn", "Upload Translation", 150);
-            _uploadBtn.OnClick += OnUploadClicked;
             // Publier laisse les deux côtés porteurs du même fichier : c'est Both, pas Server.
             // ⚠ Server voudrait dire « le publié a le résultat, pas cette machine » — ce qui ne
             // peut pas arriver depuis un jeu, puisque le fichier envoyé est celui d'ici.
-            ScopeMarks.Adorn(_uploadBtn, EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: true));
-            RegisterExcluded(_uploadBtn.ButtonText);
-            _helpZone?.Describe(_uploadBtn.Component.gameObject,
+            _uploadBtn = Buttons.Primary(_syncActionsRow, "UploadBtn", "Upload Translation", 150,
+                                         scope: EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: true),
+                                         policy: TextPolicy.Dynamic);
+            _uploadBtn.Clicked += OnUploadClicked;
+            _helpZone?.Describe(_uploadBtn,
                 "Send your local translation to the website so others can use it");
 
             // Compare with Server — belongs next to the push it qualifies
-            _compareWithServerBtn = CreateSecondaryButton(syncRow, "CompareBtn", "Compare", 85);
-            UIStyles.SetBackground(_compareWithServerBtn.Component.gameObject, UIStyles.ButtonSecondary);
-            _compareWithServerBtn.OnClick += OnCompareWithServerClicked;
             // 🔴 **The same word opens this page in both directions, and only the marks say which.**
             // This one is the publishing direction (toLocal: false): what is validated there
             // updates the online version. The Compare in the settings window opens the same screen
             // towards the local file. Nothing else on the button distinguishes them — which is
             // exactly what the scope marks are for, rather than a longer label repeating it.
-            ScopeMarks.Adorn(_compareWithServerBtn,
-                EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: true));
-            RegisterExcluded(_compareWithServerBtn.ButtonText);
+            _compareWithServerBtn = Buttons.Secondary(_syncActionsRow, "CompareBtn", "Compare", 85,
+                                                      scope: EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: true),
+                                                      policy: TextPolicy.Dynamic);
+            _compareWithServerBtn.Clicked += OnCompareWithServerClicked;
             // ⚠ It used to say "See the differences", promising a read. Validating there writes.
-            _helpZone?.Describe(_compareWithServerBtn.Component.gameObject,
+            _helpZone?.Describe(_compareWithServerBtn,
                 "Compare your local file with the published version and choose line by line what to publish");
 
             // 🔴 **The three lineage choices live HERE, in Actions.** They had a section of their
@@ -636,84 +559,75 @@ namespace UnityGameTranslator.Core.UI.Panels
             // button on this card is the size of its own label.
             CreateLineageChoices(actionsBox);
 
-            _uploadHintLabel = UIStyles.CreateHint(actionsBox, "UploadHintLabel", "", centred: true);
-            RegisterExcluded(_uploadHintLabel);
+            _uploadHintLabel = Labels.Create(actionsBox, "UploadHintLabel", "", TextRole.Hint,
+                                             centred: true, policy: TextPolicy.Dynamic);
 
             // Role-specific action buttons row
             // Centred, like the row above it — see there.
-            _roleActionsRow = UIStyles.CreateFormRow(actionsBox, "RoleActionsRow", UIStyles.RowHeightLarge);
-            var roleActionsRow = _roleActionsRow;
-            var rowLayout = roleActionsRow.GetComponent<HorizontalLayoutGroup>();
-            if (rowLayout != null) rowLayout.childAlignment = TextAnchor.MiddleCenter;
+            _roleActionsRow = Stacks.Row(actionsBox, "RoleActionsRow", minHeight: UIStyles.RowHeightLarge,
+                                         placement: Placement.MiddleCenter);
 
             // Review on Website button (Main only) - opens page to review branches
             //
             // ⚠ Carries its count — "Review Branches (3)" — so how many are waiting is read where
-            // the decision is taken. RegisterExcluded, not RegisterUIText: the label is written by
-            // the code on every refresh, and letting the async pipeline write it too would put two
-            // writers on one Text. The pipeline turns the number into a placeholder, so every count
-            // shares one cache entry.
-            _reviewOnWebsiteBtn = CreateSecondaryButton(roleActionsRow, "ReviewBtn", "Review Branches", 105);
-            UIStyles.SetBackground(_reviewOnWebsiteBtn.Component.gameObject, UIStyles.ButtonLink);
-            _reviewOnWebsiteBtn.OnClick += OnReviewOnWebsiteClicked;
+            // the decision is taken. Dynamic, not UiText: the label is written by the code on every
+            // refresh, and letting the async pipeline write it too would put two writers on one
+            // label. The pipeline turns the number into a placeholder, so every count shares one
+            // cache entry.
             // ⚠ Taking in a contribution rewrites the PUBLISHED Main and leaves this machine's file
             // untouched — the one action here whose result never comes back to the game on its own.
             // Marked accordingly: published alone, not both.
-            ScopeMarks.Adorn(_reviewOnWebsiteBtn,
-                EditScope.SideAfter(onThisMachine: false, yourPublishedCopy: true));
-            RegisterExcluded(_reviewOnWebsiteBtn.ButtonText);
-            _helpZone?.Describe(_reviewOnWebsiteBtn.Component.gameObject,
+            _reviewOnWebsiteBtn = Buttons.Secondary(_roleActionsRow, "ReviewBtn", "Review Branches", 105,
+                                                    scope: EditScope.SideAfter(onThisMachine: false, yourPublishedCopy: true),
+                                                    policy: TextPolicy.Dynamic);
+            _reviewOnWebsiteBtn.Tone = ButtonTone.Link;
+            _reviewOnWebsiteBtn.Clicked += OnReviewOnWebsiteClicked;
+            _helpZone?.Describe(_reviewOnWebsiteBtn,
                 "Open the website to accept or reject changes proposed by other players");
 
             // Edit details (owners) — the description and the resources link were only reachable
             // through the upload screen, which is closed once everything is in sync. Fixing a dead
             // link or rewording a description then had no path at all.
-            _editDetailsBtn = CreateSecondaryButton(roleActionsRow, "EditDetailsBtn", "Edit details", 90);
-            UIStyles.SetBackground(_editDetailsBtn.Component.gameObject, UIStyles.ButtonSecondary);
-            _editDetailsBtn.OnClick += OnEditDetailsClicked;
             // ⚠ Opens a panel in the game, where a second confirmation actually sends — the mark
             // says where this ends up, not that it happens on click. Same as Start Text Editor,
             // which is adorned for the file it will eventually write.
-            ScopeMarks.Adorn(_editDetailsBtn,
-                EditScope.SideAfter(onThisMachine: false, yourPublishedCopy: true));
-            RegisterUIText(_editDetailsBtn.ButtonText);
-            _helpZone?.Describe(_editDetailsBtn.Component.gameObject,
+            _editDetailsBtn = Buttons.Secondary(_roleActionsRow, "EditDetailsBtn", "Edit details", 90,
+                                                scope: EditScope.SideAfter(onThisMachine: false, yourPublishedCopy: true));
+            _editDetailsBtn.Clicked += OnEditDetailsClicked;
+            _helpZone?.Describe(_editDetailsBtn,
                 "Change the description and the resources link of your published translation, without waiting for new translated lines");
 
             // Merge with Main (Branch only) — the other direction of the exchange.
             // A branch could publish its work but never take in what the Main had
             // published since: it drifted further apart with every update, without
             // anything ever saying so.
-            _updateFromMainBtn = CreateSecondaryButton(roleActionsRow, "UpdateFromMainBtn", "Merge with Main", 120);
-            UIStyles.SetBackground(_updateFromMainBtn.Component.gameObject, UIStyles.ButtonSuccess);
-            _updateFromMainBtn.OnClick += OnUpdateFromMainClicked;
             // ⚠ Brings the Main INTO this machine's file and publishes nothing — the opposite side
             // from its two neighbours on this row. It sat between two adorned buttons saying
             // nothing, which is the one arrangement that makes a mark look decorative.
-            ScopeMarks.Adorn(_updateFromMainBtn,
-                EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: false));
-            RegisterUIText(_updateFromMainBtn.ButtonText);
-            _helpZone?.Describe(_updateFromMainBtn.Component.gameObject,
+            _updateFromMainBtn = Buttons.Secondary(_roleActionsRow, "UpdateFromMainBtn", "Merge with Main", 120,
+                                                   scope: EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: false));
+            _updateFromMainBtn.Tone = ButtonTone.Success;
+            _updateFromMainBtn.Clicked += OnUpdateFromMainClicked;
+            _helpZone?.Describe(_updateFromMainBtn,
                 "Bring in what the original translation added or corrected since your last update. Your own lines are kept, and you review everything before it applies.");
 
             // Fork button (Branch only) - creates independent fork
-            _forkBtn = CreateSecondaryButton(roleActionsRow, "ForkBtn", "Fork", 80);
-            UIStyles.SetBackground(_forkBtn.Component.gameObject, UIStyles.ButtonDanger);
             // 🔴 **The same handler as "Create Independent" below, because it is the same act.**
             // There were two, and only one of them ever got a correction: this one still said "You
             // will become the Main owner" — which forking does not do, it sends nothing — and
             // opened the upload screen for people who could not use it.
-            _forkBtn.OnClick += OnCreateIndependentClicked;
             // Forker crée une lignée à soi sur le site, à partir du fichier d'ici : après, les deux
             // portent la même chose.
-            ScopeMarks.Adorn(_forkBtn, EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: true));
-            RegisterUIText(_forkBtn.ButtonText);
-            _helpZone?.Describe(_forkBtn.Component.gameObject,
+            _forkBtn = Buttons.Secondary(_roleActionsRow, "ForkBtn", "Fork", 80,
+                                         scope: EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: true));
+            _forkBtn.Tone = ButtonTone.Danger;
+            _forkBtn.Clicked += OnCreateIndependentClicked;
+            _helpZone?.Describe(_forkBtn,
                 "Leave the owner's translation and continue on your own — asks for confirmation first");
 
             // One-line explanation for whichever role buttons are visible
-            _roleActionsHint = UIStyles.CreateHint(actionsBox, "RoleActionsHint", "", centred: true);
-            RegisterExcluded(_roleActionsHint);
+            _roleActionsHint = Labels.Create(actionsBox, "RoleActionsHint", "", TextRole.Hint,
+                                             centred: true, policy: TextPolicy.Excluded);
         }
 
         /// <summary>
@@ -728,56 +642,25 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// on a different screen. Their sentences stay under them: prose starts at the left margin,
         /// buttons sit in the middle — the rule the sync row above already states at length.
         /// </summary>
-        /// <summary>
-        /// Switches a row off when nothing inside it is showing, and back on when something is.
-        ///
-        /// ⚠ Both directions, always. Hiding only would leave the row gone for the rest of the
-        /// session the first time a state emptied it — including the states that fill it again.
-        ///
-        /// ⚠ Manual loop rather than LINQ over the children: this runs on every panel refresh, and
-        /// `foreach` over a Transform does not work on IL2CPP.
-        /// </summary>
-        private static void HideIfEmpty(GameObject row)
+        private void CreateLineageChoices(Host parent)
         {
-            if (row == null) return;
-
-            bool anything = false;
-            for (int i = 0; i < row.transform.childCount; i++)
-            {
-                if (row.transform.GetChild(i).gameObject.activeSelf) { anything = true; break; }
-            }
-
-            if (row.activeSelf != anything) row.SetActive(anything);
-        }
-
-        private void CreateLineageChoices(GameObject parent)
-        {
-            _lineageChoiceSection = UIFactory.CreateVerticalGroup(parent, "LineageChoiceSection",
-                                                                  false, false, true, true,
-                                                                  UIStyles.SmallSpacing);
-            UIFactory.SetLayoutElement(_lineageChoiceSection, flexibleWidth: 9999);
+            _lineageChoiceSection = Stacks.Vertical(parent, "LineageChoiceSection", UIStyles.SmallSpacing);
 
             // Contribute as Branch
-            _branchRow = UIStyles.CreateFormRow(_lineageChoiceSection, "BranchRow",
-                                                   UIStyles.RowHeightLarge, UIStyles.SmallSpacing);
-            var branchRow = _branchRow;
-            var branchLayout = branchRow.GetComponent<HorizontalLayoutGroup>();
-            if (branchLayout != null) branchLayout.childAlignment = TextAnchor.MiddleCenter;
+            _branchRow = Stacks.Row(_lineageChoiceSection, "BranchRow", spacing: UIStyles.SmallSpacing,
+                                    minHeight: UIStyles.RowHeightLarge, placement: Placement.MiddleCenter);
 
-            _contributeAsBranchBtn = CreatePrimaryButton(branchRow, "ContributeBtn", "Contribute as Branch", 180);
-            UIStyles.SetBackground(_contributeAsBranchBtn.Component.gameObject, UIStyles.ButtonSuccess);
-            _contributeAsBranchBtn.OnClick += OnContributeAsBranchClicked;
             // La branche créée porte le fichier d'ici — les deux côtés en step.
-            ScopeMarks.Adorn(_contributeAsBranchBtn,
-                             EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: true));
-            RegisterUIText(_contributeAsBranchBtn.ButtonText);
-            _helpZone?.Describe(_contributeAsBranchBtn.Component.gameObject,
+            _contributeAsBranchBtn = Buttons.Primary(_branchRow, "ContributeBtn", "Contribute as Branch", 180,
+                                                     scope: EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: true));
+            _contributeAsBranchBtn.Tone = ButtonTone.Success;
+            _contributeAsBranchBtn.Clicked += OnContributeAsBranchClicked;
+            _helpZone?.Describe(_contributeAsBranchBtn,
                 "Your changes are sent to the owner, who can merge them into the main translation");
 
-            _branchDesc = UIStyles.CreateHint(_lineageChoiceSection, "BranchDesc",
-                "Your changes will help improve the main translation", centred: true);
-            var branchDesc = _branchDesc;
-            RegisterUIText(branchDesc);
+            _branchDesc = Labels.Create(_lineageChoiceSection, "BranchDesc",
+                "Your changes will help improve the main translation", TextRole.Hint,
+                centred: true, policy: TextPolicy.Dynamic);
 
             // Merge with Main — the safe way to take in what the Main added.
             //
@@ -789,152 +672,114 @@ namespace UnityGameTranslator.Core.UI.Panels
             // ⚠ **Same handler as the Branch's button**, never a second copy of the act: the two
             // are never on screen at once (a Branch has its own row) and one guard helper drives
             // both, so they cannot drift the way the two fork buttons did.
-            _mergeRow = UIStyles.CreateFormRow(_lineageChoiceSection, "MergeRow",
-                                               UIStyles.RowHeightLarge, UIStyles.SmallSpacing);
-            var mergeLayout = _mergeRow.GetComponent<HorizontalLayoutGroup>();
-            if (mergeLayout != null) mergeLayout.childAlignment = TextAnchor.MiddleCenter;
+            _mergeRow = Stacks.Row(_lineageChoiceSection, "MergeRow", spacing: UIStyles.SmallSpacing,
+                                   minHeight: UIStyles.RowHeightLarge, placement: Placement.MiddleCenter);
 
-            _mergeWithMainBtn = CreateSecondaryButton(_mergeRow, "MergeWithMainBtn", "Merge with Main", 150);
-            UIStyles.SetBackground(_mergeWithMainBtn.Component.gameObject, UIStyles.ButtonSuccess);
-            _mergeWithMainBtn.OnClick += OnUpdateFromMainClicked;
             // Brings the Main INTO this machine's file and publishes nothing.
-            ScopeMarks.Adorn(_mergeWithMainBtn,
-                             EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: false));
-            RegisterUIText(_mergeWithMainBtn.ButtonText);
-            _helpZone?.Describe(_mergeWithMainBtn.Component.gameObject,
+            _mergeWithMainBtn = Buttons.Secondary(_mergeRow, "MergeWithMainBtn", "Merge with Main", 150,
+                                                  scope: EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: false));
+            _mergeWithMainBtn.Tone = ButtonTone.Success;
+            _mergeWithMainBtn.Clicked += OnUpdateFromMainClicked;
+            _helpZone?.Describe(_mergeWithMainBtn,
                 "Bring in what the Main added or corrected. Your own lines are kept, and you review everything before it applies.");
 
-            _mergeDesc = UIStyles.CreateHint(_lineageChoiceSection, "MergeDesc",
-                "Take in what the Main added — your own lines are kept", centred: true);
-            RegisterUIText(_mergeDesc);
+            _mergeDesc = Labels.Create(_lineageChoiceSection, "MergeDesc",
+                "Take in what the Main added — your own lines are kept", TextRole.Hint,
+                centred: true, policy: TextPolicy.Dynamic);
 
             // Take Main's version
-            _downloadRow = UIStyles.CreateFormRow(_lineageChoiceSection, "DownloadRow",
-                                                     UIStyles.RowHeightLarge, UIStyles.SmallSpacing);
-            var downloadRow = _downloadRow;
-            var downloadLayout = downloadRow.GetComponent<HorizontalLayoutGroup>();
-            if (downloadLayout != null) downloadLayout.childAlignment = TextAnchor.MiddleCenter;
+            _downloadRow = Stacks.Row(_lineageChoiceSection, "DownloadRow", spacing: UIStyles.SmallSpacing,
+                                      minHeight: UIStyles.RowHeightLarge, placement: Placement.MiddleCenter);
 
-            _downloadLatestBtn = CreateSecondaryButton(downloadRow, "DownloadLatestBtn", "Take Main's version", 150);
-            UIStyles.SetBackground(_downloadLatestBtn.Component.gameObject, UIStyles.ButtonPrimary);
-            _downloadLatestBtn.OnClick += OnDownloadLatestClicked;
             // ⚠ Le côté DÉPEND du rôle, il est donc corrigé à chaque rafraîchissement par
             // SetDownloadLatestState. Construit au plus prudent.
-            ScopeMarks.Adorn(_downloadLatestBtn,
-                             EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: false));
-            RegisterExcluded(_downloadLatestBtn.ButtonText);
-            _helpZone?.Describe(_downloadLatestBtn.Component.gameObject,
+            _downloadLatestBtn = Buttons.Secondary(_downloadRow, "DownloadLatestBtn", "Take Main's version", 150,
+                                                   scope: EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: false),
+                                                   policy: TextPolicy.Excluded);
+            _downloadLatestBtn.Tone = ButtonTone.Primary;
+            _downloadLatestBtn.Clicked += OnDownloadLatestClicked;
+            _helpZone?.Describe(_downloadLatestBtn,
                 "Replace your local file with the owner's latest version from the website");
 
-            _downloadDesc = UIStyles.CreateHint(_lineageChoiceSection, "DownloadDesc",
-                "Get the owner's latest version (replaces your local)", centred: true);
-            var downloadDesc = _downloadDesc;
-            RegisterUIText(downloadDesc);
+            _downloadDesc = Labels.Create(_lineageChoiceSection, "DownloadDesc",
+                "Get the owner's latest version (replaces your local)", TextRole.Hint,
+                centred: true, policy: TextPolicy.Dynamic);
 
             // Create Independent (Fork)
-            var forkRow = UIStyles.CreateFormRow(_lineageChoiceSection, "ForkRow",
-                                                 UIStyles.RowHeightLarge, UIStyles.SmallSpacing);
-            var forkLayout = forkRow.GetComponent<HorizontalLayoutGroup>();
-            if (forkLayout != null) forkLayout.childAlignment = TextAnchor.MiddleCenter;
+            var forkRow = Stacks.Row(_lineageChoiceSection, "ForkRow", spacing: UIStyles.SmallSpacing,
+                                     minHeight: UIStyles.RowHeightLarge, placement: Placement.MiddleCenter);
 
-            _createIndependentBtn = CreateSecondaryButton(forkRow, "CreateIndependentBtn", "Create Independent", 170);
             // ⚠ **Not red.** Red is what this product uses for something wrong or refused, and
             // making a copy of a translation is neither — it is the third of three legitimate
             // answers. It also sat as the loudest thing on the card while being the least common
             // choice, with white text on a bright fill nobody could read comfortably.
-            UIStyles.SetBackground(_createIndependentBtn.Component.gameObject, UIStyles.ButtonSecondary);
-            _createIndependentBtn.OnClick += OnCreateIndependentClicked;
             // Une lignée neuve, faite du fichier d'ici — les deux côtés en step.
-            ScopeMarks.Adorn(_createIndependentBtn,
-                             EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: true));
-            RegisterUIText(_createIndependentBtn.ButtonText);
-            _helpZone?.Describe(_createIndependentBtn.Component.gameObject,
+            _createIndependentBtn = Buttons.Secondary(forkRow, "CreateIndependentBtn", "Create Independent", 170,
+                                                       scope: EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: true));
+            _createIndependentBtn.Clicked += OnCreateIndependentClicked;
+            _helpZone?.Describe(_createIndependentBtn,
                 "Start your own translation from the file in this game — asks for confirmation first");
 
             // ⚠ **Says what it starts FROM.** "Start your own independent translation" left the
             // reader to guess whether it began from nothing or from the lines they have: the
             // difference between losing an afternoon's work and keeping it.
-            var forkDesc = UIStyles.CreateHint(_lineageChoiceSection, "ForkDesc",
+            Labels.Create(_lineageChoiceSection, "ForkDesc",
                 "A copy of this translation as it is now, yours. It keeps the credit to its author, and stops following their updates",
-                centred: true);
-            RegisterUIText(forkDesc);
+                TextRole.Hint, centred: true);
         }
 
         /// <summary>
         /// Collapsed glossary explaining the sharing model vocabulary
         /// (Main / Branch / Fork and the H/V/A quality tags) for first-time users.
         /// </summary>
-        private void CreateGlossarySection(GameObject parent)
+        private void CreateGlossarySection(Host parent)
         {
-            var (container, header, iconLabel, titleLabel, content) =
-                UIStyles.CreateCollapsibleSection(parent, "Glossary", "What do Main, Branch and Fork mean?", initiallyExpanded: false);
-            RegisterUIText(titleLabel);
-            RegisterExcluded(iconLabel);
-            _helpZone?.Describe(header,
+            var glossary = Collapsible.Create(parent, "Glossary", "What do Main, Branch and Fork mean?",
+                                              expanded: false, onToggled: _ => RecalculateSize());
+            _helpZone?.Describe(glossary.Handle,
                 "Expand a short glossary of the sharing terms Main, Branch and Fork and the line quality tags.");
 
-            var headerBtn = header.GetComponent<Button>();
-            bool expanded = false;
-            UIHelpers.AddButtonListener(headerBtn, () =>
-            {
-                expanded = !expanded;
-                UIStyles.SetCollapsibleState(iconLabel, content, expanded);
-                RecalculateSize();
-            });
-
-            var glossaryText = UIFactory.CreateLabel(content, "GlossaryText",
+            Labels.Create(glossary.Body, "GlossaryText",
                 "• Main — the reference translation, owned by its creator and public on the website.\n" +
                 "• Branch — your improvements to someone else's Main; they are sent to the owner for review.\n" +
                 "• Fork — your own independent translation: you become the owner and it is no longer linked to the original.\n\n" +
                 "Line quality tags: H = written by a human, V = AI line validated by a human, A = raw AI.",
-                TextAnchor.UpperLeft);
-            glossaryText.fontSize = UIStyles.FontSizeSmall;
-            glossaryText.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(glossaryText.gameObject, flexibleWidth: 9999, minHeight: UIStyles.MultiLineLarge);
-            RegisterUIText(glossaryText);
+                TextRole.Small, tone: Tone.Secondary, fill: Fill.Stretch, minHeight: UIStyles.MultiLineLarge,
+                align: Placement.TopLeft);
         }
 
         /// <summary>
         /// Creates the guidance section for contextual messages (GAP 9).
         /// </summary>
-        private void CreateGuidanceSection(GameObject parent)
+        private void CreateGuidanceSection(Host parent)
         {
-            _guidanceSection = UIFactory.CreateVerticalGroup(parent, "GuidanceSection", false, false, true, true, UIStyles.SmallSpacing);
-            UIFactory.SetLayoutElement(_guidanceSection, flexibleWidth: 9999);
+            _guidanceSection = Stacks.Vertical(parent, "GuidanceSection", UIStyles.SmallSpacing);
 
-            var guidanceBox = UIStyles.CreateAdaptiveCard(_guidanceSection, "GuidanceBox", PanelWidth - 60);
-            UIStyles.SetBackground(guidanceBox, UIStyles.CardElevated);
+            var guidanceBox = Stacks.Card(_guidanceSection, "GuidanceBox", PanelWidth - 60, surface: Surface.Elevated);
 
-            _guidanceLabel = UIFactory.CreateLabel(guidanceBox, "GuidanceLabel", "", TextAnchor.MiddleCenter);
-            _guidanceLabel.fontSize = UIStyles.FontSizeNormal;
-            _guidanceLabel.color = UIStyles.StatusInfo;
-            UIFactory.SetLayoutElement(_guidanceLabel.gameObject, flexibleWidth: 9999, minHeight: UIStyles.RowHeightLarge);
-            RegisterExcluded(_guidanceLabel);
+            _guidanceLabel = Labels.Create(guidanceBox, "GuidanceLabel", "", TextRole.Body,
+                                           tone: Tone.Info, centred: true, policy: TextPolicy.Dynamic,
+                                           fill: Fill.Stretch, minHeight: UIStyles.RowHeightLarge);
         }
 
-        private void CreateCommunitySection(GameObject parent)
+        private void CreateCommunitySection(Host parent)
         {
             // The heading names the frame, so it sits outside it — same as "Current Translation"
             // and "Actions". See CreateStatusSection for why.
-            var sectionTitle = UIStyles.CreateSectionTitle(parent, "CommunitySectionLabel", "Community Translations");
-            RegisterUIText(sectionTitle);
+            Labels.Create(parent, "CommunitySectionLabel", "Community Translations", TextRole.SectionTitle);
 
             // Community section - now a full tab, no longer collapsible
-            _communitySection = UIFactory.CreateVerticalGroup(parent, "CommunitySection", false, false, true, true, 5);
-            UIFactory.SetLayoutElement(_communitySection, flexibleWidth: 9999, flexibleHeight: 9999);
+            _communitySection = Stacks.Vertical(parent, "CommunitySection", 5, fillHeight: true);
 
             // Game info and search row
-            var searchRow = UIStyles.CreateFormRow(_communitySection, "SearchRow", UIStyles.RowHeightLarge);
+            var searchRow = Stacks.Row(_communitySection, "SearchRow", minHeight: UIStyles.RowHeightLarge);
 
-            _communityGameLabel = UIFactory.CreateLabel(searchRow, "GameLabel", "Game: Unknown", TextAnchor.MiddleLeft);
-            _communityGameLabel.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(_communityGameLabel.gameObject, flexibleWidth: 9999);
-            RegisterExcluded(_communityGameLabel);
+            _communityGameLabel = Labels.Create(searchRow, "GameLabel", "Game: Unknown", TextRole.Body,
+                                                tone: Tone.Secondary, policy: TextPolicy.Dynamic, fill: Fill.Stretch);
 
-            _searchBtn = CreateSecondaryButton(searchRow, "SearchBtn", "Search", 80);
-            _searchBtn.OnClick += OnSearchCommunityClicked;
-            RegisterUIText(_searchBtn.ButtonText);
-            _helpZone?.Describe(_searchBtn.Component.gameObject,
+            _searchBtn = Buttons.Secondary(searchRow, "SearchBtn", "Search", 80);
+            _searchBtn.Clicked += OnSearchCommunityClicked;
+            _helpZone?.Describe(_searchBtn,
                 "Search the translations other players shared for this game");
 
             // Translation list - ensure initialized (larger height for dedicated tab)
@@ -947,34 +792,31 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 if (_downloadBtn != null)
                 {
-                    _downloadBtn.Component.interactable = t != null;
+                    _downloadBtn.Enabled = t != null;
                     SetCommunityDownloadState(t != null);
                 }
             }, help: _helpZone);
 
-            UIStyles.CreateSpacer(_communitySection, 5);
+            Stacks.Spacer(_communitySection, 5);
 
             // The tab's OWN action bar, under its own list. It belongs here and not in the
             // panel footer: that row carries what applies to the whole mod on every tab, and a
             // fourth button pushed Close off its edge. Staying visible is the list's business —
             // the list above takes the spare height and this row keeps its own, which is how
             // every other list-and-action tab in the mod is built.
-            var downloadRow = UIStyles.CreateFormRow(_communitySection, "DownloadRow", UIStyles.RowHeightLarge, 0);
-            var layoutGroup = downloadRow.GetComponent<HorizontalLayoutGroup>();
-            if (layoutGroup != null) layoutGroup.childAlignment = TextAnchor.MiddleCenter;
+            var downloadRow = Stacks.Row(_communitySection, "DownloadRow", spacing: 0,
+                                         minHeight: UIStyles.RowHeightLarge, placement: Placement.MiddleCenter);
 
-            _downloadBtn = CreatePrimaryButton(downloadRow, "DownloadBtn", "Download Selected", 160);
-            UIStyles.SetBackground(_downloadBtn.Component.gameObject, UIStyles.ButtonSuccess);
-            _downloadBtn.OnClick += OnDownloadCommunityClicked;
             // ⚠ Même chose : prendre une traduction de la communauté, c'est presque toujours prendre
             // celle de quelqu'un d'autre — donc Local. RetargetDownloadButtons corrige le seul cas
             // où c'est la nôtre.
-            ScopeMarks.Adorn(_downloadBtn,
-                             EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: false));
-            _downloadBtn.Component.interactable = false;
+            _downloadBtn = Buttons.Primary(downloadRow, "DownloadBtn", "Download Selected", 160,
+                                           scope: EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: false));
+            _downloadBtn.Tone = ButtonTone.Success;
+            _downloadBtn.Clicked += OnDownloadCommunityClicked;
+            _downloadBtn.Enabled = false;
             SetCommunityDownloadState(false);
-            RegisterUIText(_downloadBtn.ButtonText);
-            _helpZone?.Describe(_downloadBtn.Component.gameObject,
+            _helpZone?.Describe(_downloadBtn,
                 "Use the selected translation in your game — the mod asks before replacing anything you changed");
         }
 
@@ -1043,7 +885,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // Enable download button if results found
                 if (_downloadBtn != null)
                 {
-                    _downloadBtn.Component.interactable = _translationList?.SelectedTranslation != null;
+                    _downloadBtn.Enabled = _translationList?.SelectedTranslation != null;
                     SetCommunityDownloadState(_translationList?.SelectedTranslation != null);
                 }
             });
@@ -1134,23 +976,21 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_modUpdateBanner == null) return;
 
             bool showBanner = TranslatorUIManager.HasModUpdate && !TranslatorUIManager.ModUpdateDismissed;
-            _modUpdateBanner.SetActive(showBanner);
+            _modUpdateBanner.Visible = showBanner;
 
             if (showBanner)
             {
                 var info = TranslatorUIManager.ModUpdateInfo;
                 // Version number appended: it is data, and it changes with every release
-                _modUpdateLabel.text = Tr("Mod update available:")
-                    + $" v{info?.LatestVersion ?? "?"}";
+                _modUpdateLabel.Show(Tr("Mod update available:") + $" v{info?.LatestVersion ?? "?"}");
 
                 // Show appropriate button text
                 bool hasDirectDownload = !string.IsNullOrEmpty(info?.DownloadUrl);
-                SetDynamicText(_modUpdateBtn.ButtonText, hasDirectDownload ? "Download" : "View Release");
+                _modUpdateBtn.Label = hasDirectDownload ? "Download" : "View Release";
 
                 // The verb follows what pressing it will do: open what is already on this machine,
                 // or go and fetch it.
-                SetDynamicText(_modManagerBtn.ButtonText,
-                    ManagerLink.IsOnThisMachine ? "Open Manager" : "Get Manager");
+                _modManagerBtn.Label = ManagerLink.IsOnThisMachine ? "Open Manager" : "Get Manager";
             }
         }
 
@@ -1166,12 +1006,12 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             if (_loginCTASection != null)
             {
-                _loginCTASection.SetActive(!isLoggedIn);
+                _loginCTASection.Visible = !isLoggedIn;
 
                 // Disable CTA button when offline
                 if (_loginCTABtn != null)
                 {
-                    _loginCTABtn.Component.interactable = TranslatorCore.Config.online_mode;
+                    _loginCTABtn.Enabled = TranslatorCore.Config.online_mode;
                 }
             }
 
@@ -1182,7 +1022,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Status section with StatusCard - show when logged in and has local content
             if (_statusSection != null)
             {
-                _statusSection.SetActive(showStatusCard);
+                _statusSection.Visible = showStatusCard;
                 if (showStatusCard)
                 {
                     RefreshStatusCard();
@@ -1192,26 +1032,26 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Legacy TranslationInfo section - hide when StatusCard is shown
             if (_translationInfoSection != null)
             {
-                _translationInfoSection.SetActive(!showStatusCard);
+                _translationInfoSection.Visible = !showStatusCard;
             }
 
             // The three choices offered to somebody holding a lineage that is not theirs.
             if (_lineageChoiceSection != null)
             {
                 bool choosing = _currentLayoutState == LayoutState.HoldingAnothersLineage;
-                _lineageChoiceSection.SetActive(choosing);
+                _lineageChoiceSection.Visible = choosing;
 
                 // 🔴 **The upload button steps aside for them.** In this state it reads
                 // "Contribute" and does the same thing as the first of the three below it — two
                 // doors to one act, three inches apart, and the hint under it ("Login required")
                 // answered for a button nobody should have been looking at.
-                if (_uploadBtn != null) _uploadBtn.Component.gameObject.SetActive(!choosing);
-                if (_uploadHintLabel != null) _uploadHintLabel.gameObject.SetActive(!choosing);
+                if (_uploadBtn != null) _uploadBtn.Visible = !choosing;
+                if (_uploadHintLabel != null) _uploadHintLabel.Visible = !choosing;
 
                 // ⚠ **And the rows they were standing in.** Hiding every button in a row leaves the
                 // row, which keeps its RowHeightLarge and shows as an empty band inside the card.
-                HideIfEmpty(_syncActionsRow);
-                HideIfEmpty(_roleActionsRow);
+                _syncActionsRow?.HideIfEmpty();
+                _roleActionsRow?.HideIfEmpty();
 
                 // ⚠ Two of the three need a name, one does not. Taking the main's version again
                 // writes only the local file, so it stays live without an account — that is the
@@ -1239,21 +1079,20 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // it, and unknown is not "no": hiding the button there would take the act away over
                 // a question nobody answered.
                 bool refusesBranches = TranslatorCore.ServerState?.AcceptsBranches == false;
-                if (_branchRow != null) _branchRow.SetActive(!refusesBranches);
-                if (_branchDesc != null) _branchDesc.gameObject.SetActive(!refusesBranches);
+                if (_branchRow != null) _branchRow.Visible = !refusesBranches;
+                if (_branchDesc != null) _branchDesc.Visible = !refusesBranches;
 
                 if (_contributeAsBranchBtn != null && !refusesBranches)
                 {
                     bool canContribute = canReachServer && haveSomethingToOffer;
-                    _contributeAsBranchBtn.Component.interactable = canContribute;
-                    ScopeMarks.Tint(_contributeAsBranchBtn, canContribute);
+                    _contributeAsBranchBtn.Enabled = canContribute;
 
                     // ⚠ **The sentence says why it is closed, or what it does.** Hiding the Actions
                     // row took its "Login required" with it, so a greyed button was left with a
                     // sentence describing an act nobody could take and no reason anywhere.
                     if (_branchDesc != null)
                     {
-                        SetDynamicText(_branchDesc,
+                        _branchDesc.Say(
                             !TranslatorCore.Config.online_mode ? "Offline mode — nothing is sent"
                             : !isLoggedIn ? "Login required"
                             : !haveSomethingToOffer
@@ -1278,12 +1117,11 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 if (_mergeWithMainBtn != null && !_updateFromMainInFlight)
                 {
-                    _mergeWithMainBtn.Component.interactable = upstreamWorthTaking;
-                    ScopeMarks.Tint(_mergeWithMainBtn, upstreamWorthTaking);
+                    _mergeWithMainBtn.Enabled = upstreamWorthTaking;
 
                     if (_mergeDesc != null)
                     {
-                        SetDynamicText(_mergeDesc, upstreamWorthTaking
+                        _mergeDesc.Say(upstreamWorthTaking
                             ? "Take in what the Main added — your own lines are kept"
                             : "Nothing new in the Main to take in");
                     }
@@ -1296,12 +1134,12 @@ namespace UnityGameTranslator.Core.UI.Panels
                 {
                     bool serverMoved = upstreamWorthTaking;
 
-                    _downloadLatestBtn.Component.interactable = serverMoved;
+                    _downloadLatestBtn.Enabled = serverMoved;
                     SetDownloadLatestState(serverMoved);
 
                     if (_downloadDesc != null)
                     {
-                        SetDynamicText(_downloadDesc, serverMoved
+                        _downloadDesc.Say(serverMoved
                             ? "Replaces this file with the Main's — your own lines are dropped"
                             : "You already have the Main's version");
                     }
@@ -1317,8 +1155,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // which nothing about it does.
                 if (_createIndependentBtn != null)
                 {
-                    _createIndependentBtn.Component.interactable = true;
-                    ScopeMarks.Tint(_createIndependentBtn, true);
+                    _createIndependentBtn.Enabled = true;
                 }
             }
 
@@ -1389,14 +1226,15 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Show or hide guidance section based on message
             bool hasMessage = !string.IsNullOrEmpty(message);
-            _guidanceSection.SetActive(hasMessage);
+            _guidanceSection.Visible = hasMessage;
             if (hasMessage)
             {
                 // The HoldingAnothersLineage branch already translated (it appends a username);
                 // the others are plain sentences translated here.
-                _guidanceLabel.text = _currentLayoutState == LayoutState.HoldingAnothersLineage
-                    ? message
-                    : TranslatorCore.TranslateOwnUIDynamic(message, _guidanceLabel);
+                if (_currentLayoutState == LayoutState.HoldingAnothersLineage)
+                    _guidanceLabel.Show(message);
+                else
+                    _guidanceLabel.Say(message);
             }
         }
 
@@ -1424,9 +1262,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 else automatic++;
             }
 
-            _backupsLabel.text = saved == 0 && automatic == 0
+            _backupsLabel.Show(saved == 0 && automatic == 0
                 ? "Backups: none yet"
-                : $"Backups: {saved} of your own, {automatic} automatic";
+                : $"Backups: {saved} of your own, {automatic} automatic");
         }
 
         private void RefreshStatusCard()
@@ -1556,7 +1394,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 string resourcesUrl = serverState?.ResourcesUrl;
                 bool hasResources = !string.IsNullOrEmpty(resourcesUrl);
-                _resourcesLinkSection.SetActive(hasResources);
+                _resourcesLinkSection.Visible = hasResources;
                 if (hasResources)
                 {
                     string uploader = serverState?.Uploader;
@@ -1570,18 +1408,18 @@ namespace UnityGameTranslator.Core.UI.Panels
                     var missing = AssetAvailability.GetMissingResources();
                     if (missing.Any)
                     {
-                        _resourcesByLabel.text = $"{by} — {DescribeMissing(missing)} missing";
-                        _resourcesByLabel.color = UIStyles.StatusWarning;
-                        UIStyles.SetBackground(_resourcesLinkSection, UIStyles.CardElevated);
+                        _resourcesByLabel.Show($"{by} — {DescribeMissing(missing)} missing");
+                        _resourcesByLabel.Tone = Tone.Warning;
+                        Stacks.Retint(_resourcesLinkSection, Surface.Elevated);
                     }
                     else
                     {
-                        _resourcesByLabel.text = by;
-                        _resourcesByLabel.color = UIStyles.TextPrimary;
-                        UIStyles.SetBackground(_resourcesLinkSection, UIStyles.CardBackground);
+                        _resourcesByLabel.Show(by);
+                        _resourcesByLabel.Tone = Tone.Plain;
+                        Stacks.Retint(_resourcesLinkSection, Surface.Card);
                     }
 
-                    _resourcesUrlLabel.text = resourcesUrl;
+                    _resourcesUrlLabel.Show(resourcesUrl);
                 }
             }
         }
@@ -1618,20 +1456,20 @@ namespace UnityGameTranslator.Core.UI.Panels
                 //
                 // ⚠ Absent until the site answers, and absent for good when it cannot be reached.
                 // Nothing here waits, and a code that might be wrong is worse than none.
-                _accountLabel.text = Tr("Connected as")
+                _accountLabel.Show(Tr("Connected as")
                     + $" @{currentUser ?? "Unknown"}"
-                    + (string.IsNullOrEmpty(ApiClient.AccessCode) ? "" : $" · #{ApiClient.AccessCode}");
-                _accountLabel.fontStyle = FontStyle.Normal;
-                SetDynamicText(_loginLogoutBtn.ButtonText, "Logout");
+                    + (string.IsNullOrEmpty(ApiClient.AccessCode) ? "" : $" · #{ApiClient.AccessCode}"));
+                _accountLabel.Italic = false;
+                _loginLogoutBtn.Label = "Logout";
             }
             else
             {
-                SetDynamicText(_accountLabel, "Not connected");
-                _accountLabel.fontStyle = FontStyle.Italic;
-                SetDynamicText(_loginLogoutBtn.ButtonText, "Login");
+                _accountLabel.Say("Not connected");
+                _accountLabel.Italic = true;
+                _loginLogoutBtn.Label = "Login";
 
                 // Disable login if offline mode
-                _loginLogoutBtn.Component.interactable = TranslatorCore.Config.online_mode;
+                _loginLogoutBtn.Enabled = TranslatorCore.Config.online_mode;
             }
         }
 
@@ -1652,14 +1490,14 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Counts stay inside the string: the pipeline turns numbers into placeholders, so every
             // count shares one cache entry. Languages, usernames and ids are concatenated instead.
-            SetDynamicText(_entriesLabel, $"Entries: {entryCount}");
-            _targetLabel.text = Tr("Target:") + $" {targetLang}";
+            _entriesLabel.Say($"Entries: {entryCount}");
+            _targetLabel.Show(Tr("Target:") + $" {targetLang}");
 
             if (existsOnServer)
             {
-                _sourceLabel.text = Tr("Source:")
+                _sourceLabel.Show(Tr("Source:")
                     + $" {People.MentionOf(serverState.Uploader, TranslatorCore.Config.api_user)}"
-                    + $" (#{serverState.SiteId})";
+                    + $" (#{serverState.SiteId})");
 
                 // Role indicator.
                 //
@@ -1675,23 +1513,23 @@ namespace UnityGameTranslator.Core.UI.Panels
                     case LineageRole.Main:
                         if (serverState.BranchesCount > 0)
                         {
-                            SetDynamicText(_roleLabel, $"[MAIN] {serverState.BranchesCount} contribution(s) from other players");
+                            _roleLabel.Say($"[MAIN] {serverState.BranchesCount} contribution(s) from other players");
                         }
                         else
                         {
-                            SetDynamicText(_roleLabel, "[MAIN] You own this translation");
+                            _roleLabel.Say("[MAIN] You own this translation");
                         }
-                        _roleLabel.color = UIStyles.StatusSuccess;
+                        _roleLabel.Tone = Tone.Success;
                         break;
                     case LineageRole.Branch:
-                        _roleLabel.text = "[BRANCH] "
+                        _roleLabel.Show("[BRANCH] "
                             + Tr("Your changes are reviewed by")
                             + " " + People.MentionOf(serverState.MainUsername ?? serverState.Uploader,
-                                                        TranslatorCore.Config.api_user);
-                        _roleLabel.color = UIStyles.StatusWarning;
+                                                        TranslatorCore.Config.api_user));
+                        _roleLabel.Tone = Tone.Warning;
                         break;
                     default:
-                        _roleLabel.text = "";
+                        _roleLabel.Show("");
                         break;
                 }
 
@@ -1701,52 +1539,52 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 if (sync == SyncDirection.Merge)
                 {
-                    SetDynamicText(_syncStatusLabel, $"SYNC NEEDED - Both local ({localChanges}) and server changed");
-                    _syncStatusLabel.color = UIStyles.StatusWarning;
+                    _syncStatusLabel.Say($"SYNC NEEDED - Both local ({localChanges}) and server changed");
+                    _syncStatusLabel.Tone = Tone.Warning;
                 }
                 else if (sync == SyncDirection.Upload)
                 {
-                    SetDynamicText(_syncStatusLabel, $"OUT OF SYNC - {localChanges} local changes to upload");
-                    _syncStatusLabel.color = UIStyles.StatusWarning;
+                    _syncStatusLabel.Say($"OUT OF SYNC - {localChanges} local changes to upload");
+                    _syncStatusLabel.Tone = Tone.Warning;
                 }
                 else if (sync == SyncDirection.Download)
                 {
                     int serverLines = TranslatorUIManager.PendingUpdateInfo?.LineCount ?? 0;
-                    SetDynamicText(_syncStatusLabel, $"OUT OF SYNC - Server has update ({serverLines} lines)");
-                    _syncStatusLabel.color = UIStyles.StatusWarning;
+                    _syncStatusLabel.Say($"OUT OF SYNC - Server has update ({serverLines} lines)");
+                    _syncStatusLabel.Tone = Tone.Warning;
                 }
                 else
                 {
-                    SetDynamicText(_syncStatusLabel, "SYNCED with server");
-                    _syncStatusLabel.color = UIStyles.StatusSuccess;
+                    _syncStatusLabel.Say("SYNCED with server");
+                    _syncStatusLabel.Tone = Tone.Success;
                 }
             }
             else
             {
                 // Not on server - clear role label
-                _roleLabel.text = "";
+                _roleLabel.Show("");
 
                 if (serverState != null && serverState.Checked)
                 {
-                    SetDynamicText(_sourceLabel, "Source: Local only (not on server)");
-                    SetDynamicText(_syncStatusLabel, $"All {entryCount} entries are local");
-                    _syncStatusLabel.color = UIStyles.TextMuted;
+                    _sourceLabel.Say("Source: Local only (not on server)");
+                    _syncStatusLabel.Say($"All {entryCount} entries are local");
+                    _syncStatusLabel.Tone = Tone.Muted;
                 }
                 else if (!TranslatorCore.Config.online_mode)
                 {
-                    SetDynamicText(_sourceLabel, "Source: Local (offline mode)");
-                    _syncStatusLabel.text = "";
+                    _sourceLabel.Say("Source: Local (offline mode)");
+                    _syncStatusLabel.Show("");
                 }
                 else if (string.IsNullOrEmpty(TranslatorCore.Config.api_token))
                 {
                     // Online mode but not logged in - can't check server state
-                    SetDynamicText(_sourceLabel, "Source: Local (login to sync)");
-                    _syncStatusLabel.text = "";
+                    _sourceLabel.Say("Source: Local (login to sync)");
+                    _syncStatusLabel.Show("");
                 }
                 else
                 {
-                    SetDynamicText(_sourceLabel, "Source: Local (checking...)");
-                    _syncStatusLabel.text = "";
+                    _sourceLabel.Say("Source: Local (checking...)");
+                    _syncStatusLabel.Show("");
                 }
             }
 
@@ -1757,13 +1595,13 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // Backend name is a brand, kept out of the translated part
                 string backendLabel = TranslatorCore.Config.translation_backend == "llm" ? "AI" :
                     TranslatorCore.Config.translation_backend == "google" ? "Google" : "DeepL";
-                _aiStatusLabel.text = $"{backendLabel}: " + (queueCount > 0
+                _aiStatusLabel.Show($"{backendLabel}: " + (queueCount > 0
                     ? Tr($"{queueCount} in queue")
-                    : Tr("Ready"));
+                    : Tr("Ready")));
             }
             else
             {
-                _aiStatusLabel.text = "";
+                _aiStatusLabel.Show("");
             }
         }
 
@@ -1838,7 +1676,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 uploadHint = Tr("Create a new translation");
             }
 
-            SetDynamicText(_uploadBtn.ButtonText, uploadAction);
+            _uploadBtn.Label = uploadAction;
 
             // 🔴 **A fork that has not been touched holds somebody else's file, line for line.**
             // Publishing it puts a second identical entry on the site under a new name — the two
@@ -1875,13 +1713,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
 
             bool canUpload = closed == null;
-            _uploadBtn.Component.interactable = canUpload;
-            ScopeMarks.Tint(_uploadBtn, canUpload);
+            _uploadBtn.Enabled = canUpload;
 
             if (closed != null)
-                SetDynamicText(_uploadHintLabel, closed);
+                _uploadHintLabel.Say(closed);
             else
-                _uploadHintLabel.text = uploadHint; // already translated above
+                _uploadHintLabel.Show(uploadHint); // already translated above
 
             // Role-specific buttons visibility
             if (_reviewOnWebsiteBtn != null && _compareWithServerBtn != null && _forkBtn != null)
@@ -1891,7 +1728,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 bool hasBranches = state != null && state.BranchesCount > 0;
 
                 // Review Branches - only for Main role when there are branches to review
-                _reviewOnWebsiteBtn.Component.gameObject.SetActive(isMain && hasBranches);
+                _reviewOnWebsiteBtn.Visible = isMain && hasBranches;
                 if (isMain && hasBranches)
                 {
                     // 🔴 The count is what is WAITING — not been through, and holding something —
@@ -1904,26 +1741,24 @@ namespace UnityGameTranslator.Core.UI.Panels
                     // when nothing is waiting — the convention this project uses everywhere.
                     int? waiting = state.BranchesWithWork;
 
-                    SetDynamicText(_reviewOnWebsiteBtn.ButtonText,
-                                   waiting.HasValue
-                                       ? (waiting.Value > 0
-                                           ? $"Review Branches ({waiting.Value})"
-                                           : "Review Branches")
-                                       // An older site could not say: the raw count is all there
-                                       // is, and it is better than a silence that reads as zero.
-                                       : $"Review Branches ({state.BranchesCount})");
+                    _reviewOnWebsiteBtn.Label = waiting.HasValue
+                        ? (waiting.Value > 0
+                            ? $"Review Branches ({waiting.Value})"
+                            : "Review Branches")
+                        // An older site could not say: the raw count is all there
+                        // is, and it is better than a silence that reads as zero.
+                        : $"Review Branches ({state.BranchesCount})";
                 }
 
                 // Compare with Server - only for owners (Main or Branch) who have uploaded
                 // Non-owners can't compare because they don't have a server version to compare against
                 bool canCompare = existsOnServer && state.IsOwner && hasLocalChanges;
-                _compareWithServerBtn.Component.gameObject.SetActive(canCompare);
+                _compareWithServerBtn.Visible = canCompare;
                 if (canCompare)
                 {
-                    _compareWithServerBtn.Component.interactable = isLoggedIn;
+                    _compareWithServerBtn.Enabled = isLoggedIn;
                     // How many lines the comparison is about, on the button that opens it.
-                    SetDynamicText(_compareWithServerBtn.ButtonText,
-                                   $"Compare ({TranslatorCore.LocalChangesCount})");
+                    _compareWithServerBtn.Label = $"Compare ({TranslatorCore.LocalChangesCount})";
                 }
 
                 // Edit details — for owners of a published translation, whatever the sync state.
@@ -1931,9 +1766,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 bool canEditDetails = existsOnServer && state.IsOwner;
                 if (_editDetailsBtn != null)
                 {
-                    _editDetailsBtn.Component.gameObject.SetActive(canEditDetails);
+                    _editDetailsBtn.Visible = canEditDetails;
                     if (canEditDetails)
-                        _editDetailsBtn.Component.interactable = isLoggedIn && TranslatorCore.Config.online_mode;
+                        _editDetailsBtn.Enabled = isLoggedIn && TranslatorCore.Config.online_mode;
                 }
 
                 // Merge with Main — a branch only. Shown even when nothing new is
@@ -1942,15 +1777,15 @@ namespace UnityGameTranslator.Core.UI.Panels
                 if (_updateFromMainBtn != null)
                 {
                     bool canUpdateFromMain = isBranch && state.MainSiteId.HasValue;
-                    _updateFromMainBtn.Component.gameObject.SetActive(canUpdateFromMain);
+                    _updateFromMainBtn.Visible = canUpdateFromMain;
                     if (canUpdateFromMain && !_updateFromMainInFlight)
                     {
-                        _updateFromMainBtn.Component.interactable = isLoggedIn && TranslatorCore.Config.online_mode;
+                        _updateFromMainBtn.Enabled = isLoggedIn && TranslatorCore.Config.online_mode;
                     }
                 }
 
                 // Fork button - only for Branch role
-                _forkBtn.Component.gameObject.SetActive(isBranch);
+                _forkBtn.Visible = isBranch;
 
                 // ⚠ Never gated on an account: forking is local from end to end (a new lineage on
                 // this machine, nothing sent), and it is publishing that needs a name. This asked
@@ -1958,8 +1793,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // act, two doors, two rules (decided 2026-09-07).
                 if (isBranch)
                 {
-                    _forkBtn.Component.interactable = true;
-                    ScopeMarks.Tint(_forkBtn, true);
+                    _forkBtn.Enabled = true;
                 }
 
                 // Explain the visible buttons in plain words
@@ -1976,8 +1810,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                         hint = Tr("Review Branches opens the website to accept or reject contributions");
                     else if (canCompare)
                         hint = Tr("Compare shows your changes against the website version");
-                    _roleActionsHint.text = hint;
-                    _roleActionsHint.gameObject.SetActive(!string.IsNullOrEmpty(hint));
+                    _roleActionsHint.Show(hint);
+                    _roleActionsHint.Visible = !string.IsNullOrEmpty(hint);
                 }
             }
         }
@@ -2147,13 +1981,17 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             foreach (var button in new[] { _updateFromMainBtn, _mergeWithMainBtn })
             {
-                if (button?.Component == null) continue;
+                if (button == null) continue;
 
-                button.Component.interactable = !busy;
-                ScopeMarks.Tint(button, !busy);
-
-                if (button.ButtonText != null)
-                    SetDynamicText(button.ButtonText, busy ? "Fetching..." : "Merge with Main");
+                if (busy)
+                {
+                    button.Busy("Fetching...");
+                }
+                else
+                {
+                    button.Enabled = true;
+                    button.Label = "Merge with Main";
+                }
             }
         }
 
@@ -2219,10 +2057,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_downloadLatestBtn == null) return;
 
             var state = TranslatorCore.ServerState;
-            ScopeMarks.Retarget(_downloadLatestBtn,
+            _downloadLatestBtn.Retarget(
                 EditScope.SideAfter(onThisMachine: true,
                                     yourPublishedCopy: state != null && state.IsOwner));
-            ScopeMarks.Tint(_downloadLatestBtn, interactable);
+            _downloadLatestBtn.Enabled = interactable;
         }
 
         /// <summary>
@@ -2235,10 +2073,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (_downloadBtn == null) return;
 
-            ScopeMarks.Retarget(_downloadBtn,
+            _downloadBtn.Retarget(
                 EditScope.SideAfter(onThisMachine: true,
                                     yourPublishedCopy: PublishedByUs(_translationList?.SelectedTranslation)));
-            ScopeMarks.Tint(_downloadBtn, interactable);
+            _downloadBtn.Enabled = interactable;
         }
 
         /// <summary>
@@ -2259,9 +2097,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Disable buttons while downloading
             if (_downloadLatestBtn != null)
             {
-                _downloadLatestBtn.Component.interactable = false;
+                _downloadLatestBtn.Busy("Downloading...");
                 SetDownloadLatestState(false);
-                SetDynamicText(_downloadLatestBtn.ButtonText, "Downloading...");
             }
 
             try
@@ -2290,9 +2127,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                     // Re-enable button
                     if (_downloadLatestBtn != null)
                     {
-                        _downloadLatestBtn.Component.interactable = true;
+                        _downloadLatestBtn.Label = "Take Main's version";
                         SetDownloadLatestState(true);
-                        SetDynamicText(_downloadLatestBtn.ButtonText, "Take Main's version");
                     }
                 });
             }
@@ -2301,9 +2137,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TranslatorCore.LogWarning($"[MainPanel] Download error: {e.Message}");
                 if (_downloadLatestBtn != null)
                 {
-                    _downloadLatestBtn.Component.interactable = true;
+                    _downloadLatestBtn.Label = "Take Main's version";
                     SetDownloadLatestState(true);
-                    SetDynamicText(_downloadLatestBtn.ButtonText, "Take Main's version");
                 }
             }
         }
@@ -2331,8 +2166,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Disable button while loading
             if (_compareWithServerBtn != null)
             {
-                _compareWithServerBtn.Component.interactable = false;
-                SetDynamicText(_compareWithServerBtn.ButtonText, "Loading...");
+                _compareWithServerBtn.Busy("Loading...");
             }
 
             // Capture values for closure
@@ -2347,8 +2181,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 {
                     if (_compareWithServerBtn != null)
                     {
-                        _compareWithServerBtn.Component.interactable = true;
-                        SetDynamicText(_compareWithServerBtn.ButtonText, "Compare");
+                        _compareWithServerBtn.Enabled = true;
+                        _compareWithServerBtn.Label = "Compare";
                     }
                 });
             }
@@ -2362,8 +2196,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                     // Re-enable button
                     if (_compareWithServerBtn != null)
                     {
-                        _compareWithServerBtn.Component.interactable = true;
-                        SetDynamicText(_compareWithServerBtn.ButtonText, "Compare");
+                        _compareWithServerBtn.Enabled = true;
+                        _compareWithServerBtn.Label = "Compare";
                     }
                 });
             }
@@ -2380,9 +2214,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             var game = TranslatorCore.CurrentGame;
             if (!isOnline)
             {
-                SetDynamicText(_communityGameLabel, "Offline mode - enable Online Mode in Mod Options");
-                _communityGameLabel.color = UIStyles.StatusWarning;
-                _searchBtn.Component.interactable = false;
+                _communityGameLabel.Say("Offline mode - enable Online Mode in Mod Options");
+                _communityGameLabel.Tone = Tone.Warning;
+                _searchBtn.Enabled = false;
 
                 // Clear previous search results - can't download in offline mode
                 _translationList?.Clear();
@@ -2391,16 +2225,15 @@ namespace UnityGameTranslator.Core.UI.Panels
             else if (game != null && !string.IsNullOrEmpty(game.name))
             {
                 // Game name is data — never translated
-                _communityGameLabel.text = Tr("Game:")
-                    + $" {game.name}";
-                _communityGameLabel.color = UIStyles.TextSecondary;
-                _searchBtn.Component.interactable = true;
+                _communityGameLabel.Show(Tr("Game:") + $" {game.name}");
+                _communityGameLabel.Tone = Tone.Secondary;
+                _searchBtn.Enabled = true;
             }
             else
             {
-                SetDynamicText(_communityGameLabel, "Game: Not detected");
-                _communityGameLabel.color = UIStyles.TextSecondary;
-                _searchBtn.Component.interactable = false;
+                _communityGameLabel.Say("Game: Not detected");
+                _communityGameLabel.Tone = Tone.Secondary;
+                _searchBtn.Enabled = false;
             }
 
             // Refresh list display (e.g., after login status change)
@@ -2414,7 +2247,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             var game = TranslatorCore.CurrentGame;
             if (game == null)
             {
-                _translationList.SetStatus("No game detected", UIStyles.StatusWarning);
+                _translationList.SetStatus("No game detected", Tone.Warning);
                 return;
             }
 
@@ -2475,24 +2308,24 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private async System.Threading.Tasks.Task PerformDownload(TranslationInfo translation)
         {
-            _downloadBtn.Component.interactable = false;
+            _downloadBtn.Enabled = false;
             SetCommunityDownloadState(false);
-            _translationList.SetStatus("Downloading...", UIStyles.StatusWarning);
+            _translationList.SetStatus("Downloading...", Tone.Warning);
 
             await TranslatorUIManager.DownloadTranslation(translation, (success, message) =>
             {
                 if (success)
                 {
                     int count = TranslatorCore.TranslationCache.Count;
-                    _translationList.SetStatus($"Downloaded {count} entries!", UIStyles.StatusSuccess);
+                    _translationList.SetStatus($"Downloaded {count} entries!", Tone.Success);
                     RefreshUI();
                 }
                 else
                 {
-                    _translationList.SetStatus($"Error: {message}", UIStyles.StatusError);
+                    _translationList.SetStatus($"Error: {message}", Tone.Error);
                 }
 
-                _downloadBtn.Component.interactable = _translationList?.SelectedTranslation != null;
+                _downloadBtn.Enabled = _translationList?.SelectedTranslation != null;
                 SetCommunityDownloadState(_translationList?.SelectedTranslation != null);
             });
         }

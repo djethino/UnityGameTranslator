@@ -149,6 +149,11 @@ namespace UnityGameTranslator.Core.UI.Components
             btn.ButtonText.fontSize = UIStyles.FontSizeNormal;
             btn.ButtonText.color = UIStyles.TextSecondary;
 
+            // ⚠ Registered HERE rather than left to the caller: a panel that holds only handles
+            // has no raw Text left to hand to the translation pipeline. Idempotent (the pipeline
+            // keys on instance id in a set), so a caller still doing it by hand costs nothing.
+            TranslatorCore.RegisterUIText(btn.ButtonText);
+
             // Create content panel (hidden by default)
             // TabContentBackground with no padding (thin border effect)
             var content = UIFactory.CreateVerticalGroup(_contentContainer, $"TabContent_{name}",

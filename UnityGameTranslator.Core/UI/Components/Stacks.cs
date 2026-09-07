@@ -77,6 +77,12 @@ namespace UnityGameTranslator.Core.UI.Components
             return new Host(UIStyles.CreateSection(parent.Object, name, minHeight));
         }
 
+        /// <summary>One row of a list: dense, on the item surface, edged in accent when selected.</summary>
+        public static Host ListItem(Host parent, string name, bool selected = false, int? minHeight = null)
+        {
+            return new Host(UIStyles.CreateListItem(parent.Object, name, minHeight ?? 0, selected));
+        }
+
         /// <summary>A fixed gap.</summary>
         public static Host Spacer(Host parent, int height, string name = "Spacer")
         {

@@ -385,6 +385,7 @@ namespace UnityGameTranslator.Core.UI
         public static readonly Color NotificationSuccess = Of(Theme.CalloutSuccess, 0.95f);
         public static readonly Color NotificationWarning = Of(Theme.CalloutWarning, 0.95f);
         public static readonly Color NotificationInfo = Of(Theme.CalloutInfo, 0.95f);
+        public static readonly Color NotificationError = Of(Theme.CalloutError, 0.95f);
 
         // Toasts sit in a corner OVER THE GAME rather than inside a panel, so they are tinted
         // harder than a callout — they have to be read at a glance against scenery nobody chose.

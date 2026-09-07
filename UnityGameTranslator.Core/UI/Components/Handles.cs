@@ -418,10 +418,16 @@ namespace UnityGameTranslator.Core.UI.Components
         public void OnChanged(Action<bool> handler) { UIHelpers.AddToggleListener(Toggle, handler); }
     }
 
-    /// <summary>The colours behind the tones — one table, read by every component.</summary>
+    /// <summary>
+    /// The colours behind the tones — one table, read by every component.
+    ///
+    /// ⚠ Every member `internal`, not merely the class: the frontier check reads `public` as a
+    /// word, and a public member of an internal class is the kind of thing that becomes public
+    /// the day somebody changes the class.
+    /// </summary>
     internal static class Tones
     {
-        public static Color Colour(Tone tone)
+        internal static Color Colour(Tone tone)
         {
             switch (tone)
             {
@@ -437,7 +443,7 @@ namespace UnityGameTranslator.Core.UI.Components
             }
         }
 
-        public static Color ButtonFill(ButtonTone tone)
+        internal static Color ButtonFill(ButtonTone tone)
         {
             switch (tone)
             {
@@ -450,7 +456,7 @@ namespace UnityGameTranslator.Core.UI.Components
             }
         }
 
-        public static TextAnchor Anchor(Placement placement)
+        internal static TextAnchor Anchor(Placement placement)
         {
             switch (placement)
             {

@@ -47,6 +47,7 @@ namespace UnityGameTranslator.Core.Checks
             HowATargetIsNamed();
             WhereTheModsInterfaceGoes();
             WhatSitsBesideTheTranslation();
+            WhereThePanelsStop();
             HowAStringIsShaped();
             WhatADownloadedFileMayAskFor();
 
@@ -113,6 +114,13 @@ namespace UnityGameTranslator.Core.Checks
         {
             Section("Companion files (ancestors, images)");
             CompanionFilesChecks.Run(Check);
+        }
+
+        /// <summary>The frontier: a panel names nothing of the engine, a component lets no engine type through.</summary>
+        private static void WhereThePanelsStop()
+        {
+            Section("UI frontier (panels hold handles only)");
+            UiBoundaryChecks.Run(Check);
         }
 
         /// <summary>Which strings trigger the presentation pass, and what shaping makes of them.</summary>

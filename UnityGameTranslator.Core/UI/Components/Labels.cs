@@ -68,11 +68,11 @@ namespace UnityGameTranslator.Core.UI.Components
 
         private struct RoleSpec
         {
-            public int Size;
-            public FontStyle Style;
-            public Tone Tone;
-            public bool Centred;
-            public int MinHeight;
+            internal int Size;
+            internal FontStyle Style;
+            internal Tone Tone;
+            internal bool Centred;
+            internal int MinHeight;
         }
 
         private static RoleSpec Spec(TextRole role)

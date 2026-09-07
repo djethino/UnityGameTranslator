@@ -93,6 +93,30 @@ namespace UnityGameTranslator.Core.UI.Components
             _contentScrollRect = FindScrollRectInParents(_contentContainer.transform.parent);
         }
 
+        /// <summary>Create the tab bar in a host, its contents in another (or the same).</summary>
+        public void CreateUI(Host parent, Host contentParent = null, int tabRowHeight = 32)
+            => CreateUI(parent.Object, contentParent?.Object, tabRowHeight);
+
+        /// <summary>Add a tab and get the host its content goes into.</summary>
+        public Host Tab(string name) => new Host(AddTab(name));
+
+        /// <summary>The host of a tab's content, by name.</summary>
+        public Host Content(string name)
+        {
+            var content = GetTabContent(name);
+            return content != null ? new Host(content) : null;
+        }
+
+        /// <summary>A tab's button, to describe it.</summary>
+        public Host Button(string name)
+        {
+            var button = GetTabButton(name);
+            return button != null ? new Host(button) : null;
+        }
+
+        /// <summary>The container holding every tab's content.</summary>
+        public Host Contents => new Host(_contentContainer);
+
         private static ScrollRect FindScrollRectInParents(Transform transform)
         {
             while (transform != null)

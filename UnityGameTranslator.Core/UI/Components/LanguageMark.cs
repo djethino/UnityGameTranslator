@@ -58,6 +58,16 @@ namespace UnityGameTranslator.Core.UI.Components
         /// selected line of a picker writes it in its own label, so the mark draws the flag alone
         /// and must still not add a chip.
         /// </param>
+        public static Host Create(Host parent, string name, string languageName,
+                                  bool withName = false, Tone? nameTone = null,
+                                  bool nameElsewhere = false)
+        {
+            var row = Create(parent.Object, name, languageName, withName,
+                             nameTone.HasValue ? Tones.Colour(nameTone.Value) : (Color?)null,
+                             nameElsewhere);
+            return row != null ? new Host(row) : null;
+        }
+
         public static GameObject Create(GameObject parent, string name, string languageName,
                                         bool withName = false, Color? nameColour = null,
                                         bool nameElsewhere = false)

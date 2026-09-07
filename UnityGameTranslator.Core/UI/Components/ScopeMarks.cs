@@ -48,6 +48,15 @@ namespace UnityGameTranslator.Core.UI.Components
             Retarget(button.Component.gameObject, side);
         }
 
+        /// <summary>Same, for a button a panel holds.</summary>
+        public static void Retarget(ButtonHandle button, EditSide side) => Retarget(button?.Ref, side);
+
+        /// <summary>Puts the three marks on a button a panel holds.</summary>
+        public static void Adorn(ButtonHandle button, EditSide side) => Adorn(button?.Ref, side);
+
+        /// <summary>Recolours a button a panel holds.</summary>
+        public static void Tint(ButtonHandle button, bool interactable) => Tint(button?.Ref, interactable);
+
         /// <summary>Same, for a button held as a GameObject.</summary>
         public static void Retarget(GameObject buttonObj, EditSide side)
         {

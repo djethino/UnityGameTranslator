@@ -40,6 +40,20 @@ namespace UnityGameTranslator.Core.UI.Components
         private readonly List<Entry> _entries = new List<Entry>();
 
         /// <summary>A value that is either as it was or changed: amber when <paramref name="changed"/> says so.</summary>
+        public void Track(Handle target, Func<bool> changed, string group = null)
+        {
+            if (target == null) return;
+            Track(target.Object, changed, group);
+        }
+
+        /// <summary>A row or card that can be added, changed or removed as a whole.</summary>
+        public void TrackState(Handle target, Func<PendingState> state, string group = null)
+        {
+            if (target == null) return;
+            TrackState(target.Object, state, group);
+        }
+
+        /// <summary>A value that is either as it was or changed: amber when <paramref name="changed"/> says so.</summary>
         public void Track(GameObject target, Func<bool> changed, string group = null)
         {
             if (target == null || changed == null) return;

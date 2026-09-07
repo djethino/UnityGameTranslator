@@ -45,6 +45,10 @@ namespace UnityGameTranslator.Core.UI.Components
         /// current-translation card. Also used for one's own translation, which the server
         /// refuses to let its author vote on: an arrow that can only answer 403 is worse than
         /// no arrow.</param>
+        /// <summary>Create the vote buttons in a host.</summary>
+        public Host Create(Host parent, int translationId, int voteCount, Action<int, int, int?> onVoteChanged = null, int? userVote = null, bool interactive = true)
+            => new Host(Create(parent.Object, translationId, voteCount, onVoteChanged, userVote, interactive));
+
         public GameObject Create(GameObject parent, int translationId, int voteCount, Action<int, int, int?> onVoteChanged = null, int? userVote = null, bool interactive = true)
         {
             _translationId = translationId;

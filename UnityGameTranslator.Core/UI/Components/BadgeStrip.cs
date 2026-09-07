@@ -54,6 +54,9 @@ namespace UnityGameTranslator.Core.UI.Components
         /// leave an empty band behind, and the caller is the only one that knows whether its card
         /// has other rows to fall back on.
         /// </summary>
+        public static Host Create(Host parent, string name, List<Badge> badges, float availableWidth)
+            => new Host(Create(parent.Object, name, badges, availableWidth));
+
         public static GameObject Create(GameObject parent, string name, List<Badge> badges,
                                         float availableWidth)
         {

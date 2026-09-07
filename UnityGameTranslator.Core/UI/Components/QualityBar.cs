@@ -57,6 +57,12 @@ namespace UnityGameTranslator.Core.UI.Components
         /// <summary>The bar container. Null until CreateUI has run.</summary>
         public GameObject Root => _root;
 
+        /// <summary>The bar, as a panel holds it.</summary>
+        public Host Bar => new Host(_root);
+
+        /// <summary>Build the bar inside a host.</summary>
+        public void CreateUI(Host parent, int height = DefaultHeight) => CreateUI(parent.Object, height);
+
         /// <summary>
         /// Build the bar inside <paramref name="parent"/>. It takes all available width and the
         /// requested height, and nothing else.

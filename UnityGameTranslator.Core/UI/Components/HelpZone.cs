@@ -97,6 +97,19 @@ namespace UnityGameTranslator.Core.UI.Components
         /// <summary>The root GameObject of the bar (for sibling reordering / visibility).</summary>
         public GameObject Root => _root;
 
+        /// <summary>The bar, as a panel holds it.</summary>
+        public Host Bar => new Host(_root);
+
+        /// <summary>Create the help bar inside a host.</summary>
+        public void CreateUI(Host parent, string defaultText = "") => CreateUI(parent.Object, defaultText);
+
+        /// <summary>Attach a help text to anything a panel holds.</summary>
+        public void Describe(Handle control, string helpText, bool composed = false)
+        {
+            if (control == null) return;
+            Describe(control.Object, helpText, composed);
+        }
+
         /// <summary>
         /// Attach a help text to a control: hovering the control shows the text in this zone.
         /// The control needs a RectTransform (every uGUI element has one).

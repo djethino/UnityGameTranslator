@@ -1633,30 +1633,6 @@ namespace UnityGameTranslator.Core.UI.Panels
             return differs(pending, initial);
         }
 
-        // Scale dropdown helpers
-        private static readonly string[] _scaleOptions = { "50%", "60%", "70%", "80%", "90%", "100%", "110%", "120%", "130%", "140%", "150%", "175%", "200%" };
-        private static readonly float[] _scaleValues = { 0.5f, 0.6f, 0.7f, 0.8f, 0.9f, 1.0f, 1.1f, 1.2f, 1.3f, 1.4f, 1.5f, 1.75f, 2.0f };
-
-        private static string ScaleToString(float scale)
-        {
-            for (int i = 0; i < _scaleValues.Length; i++)
-            {
-                if (Math.Abs(_scaleValues[i] - scale) < 0.01f)
-                    return _scaleOptions[i];
-            }
-            return "100%";
-        }
-
-        private static float StringToScale(string scaleStr)
-        {
-            for (int i = 0; i < _scaleOptions.Length; i++)
-            {
-                if (_scaleOptions[i] == scaleStr)
-                    return _scaleValues[i];
-            }
-            return 1.0f;
-        }
-
         /// <summary>
         /// Toggle font highlight: click to show, click again (or click another) to clear.
         /// </summary>

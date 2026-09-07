@@ -1,10 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using UnityEngine;
-using UnityEngine.UI;
 using UniverseLib.UI;
-using UniverseLib.UI.Models;
 using UnityGameTranslator.Common;
 using UnityGameTranslator.Core.UI.Components;
 
@@ -37,22 +34,22 @@ namespace UnityGameTranslator.Core.UI.Panels
         private Action<GameInfo, string, string> _onSetupComplete;
 
         // Game UI
-        private Text _gameDisplayLabel;
-        private Text _gameSourceLabel;
-        private InputFieldRef _gameSearchInput;
-        private ButtonRef _gameSearchBtn;
-        private GameObject _gameResultsContent;
-        private Text _gameSearchStatus;
+        private LabelHandle _gameDisplayLabel;
+        private LabelHandle _gameSourceLabel;
+        private FieldHandle _gameSearchInput;
+        private ButtonHandle _gameSearchBtn;
+        private ScrollList _resultsList;
+        private LabelHandle _gameSearchStatus;
 
         // Validation
-        private Text _validationLabel;
-        private ButtonRef _continueBtn;
+        private LabelHandle _validationLabel;
+        private ButtonHandle _continueBtn;
 
         // Under the target dropdown, saying why it does not open once the file holds lines
-        private Text _targetSettledHint;
+        private LabelHandle _targetSettledHint;
 
         // Contextual help
-        private Components.HelpZone _helpZone;
+        private HelpZone _helpZone;
 
         public UploadSetupPanel(UIBase owner) : base(owner)
         {
@@ -71,17 +68,17 @@ namespace UnityGameTranslator.Core.UI.Panels
         }
 
         /// <summary>
-        /// Get background color based on confidence score. The thresholds are the socle's, the
-        /// same lines that decide the ★ and ☆ marks.
+        /// Which tone a search result's button takes. The thresholds are the socle's, the same
+        /// lines that decide the ★ and ☆ marks.
         /// </summary>
-        private Color GetConfidenceColor(int score)
+        private ButtonTone ConfidenceTone(int score)
         {
             if (score >= GameCandidates.BestMatch)
-                return UIStyles.StatusSuccess; // Green - high confidence
+                return ButtonTone.Success; // high confidence
             else if (score >= GameCandidates.LikelyMatch)
-                return UIStyles.StatusWarning; // Yellow - medium confidence
+                return ButtonTone.Warning; // medium confidence
             else
-                return UIStyles.ItemBackground; // Default - low confidence
+                return ButtonTone.Secondary; // low confidence
         }
 
         /// <summary>
@@ -135,11 +132,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
 
             _targetDropdown.SetInteractable(!targetSettled);
-            if (_targetSettledHint != null) _targetSettledHint.gameObject.SetActive(targetSettled);
+            if (_targetSettledHint != null) _targetSettledHint.Visible = targetSettled;
 
             // Reset search state
             _gameSearchResults = null;
-            ClearGameResults();
+            _resultsList?.Clear();
 
             RefreshGameDisplay();
             UpdateValidation();
@@ -173,135 +170,101 @@ namespace UnityGameTranslator.Core.UI.Panels
             _sourceDropdown = new SearchableDropdown("Source", languages, "", popupHeight: 250, showSearch: true);
             _targetDropdown = new SearchableDropdown("Target", languages, "", popupHeight: 250, showSearch: true);
 
-            CreateScrollablePanelLayout(out var scrollContent, out var buttonRow, PanelWidth - 40);
+            Layout(out var scrollContent, out var buttonRow, PanelWidth - 40);
 
             // Contextual help bar between content and footer
             _helpZone = CreateHelpZone(buttonRow, "Hover an element to see what it does");
 
-            var card = CreateAdaptiveCard(scrollContent, "SetupCard", PanelWidth - 40);
+            var card = Stacks.Card(scrollContent, "SetupCard", PanelWidth - 40);
 
-            var title = CreateTitle(card, "Title", "New Upload Setup");
-            RegisterUIText(title);
+            Labels.Create(card, "Title", "New Upload Setup", TextRole.Title);
 
-            var instructions = CreateSmallLabel(card, "Instructions", "Configure your translation before uploading:");
-            RegisterUIText(instructions);
+            Labels.Create(card, "Instructions", "Configure your translation before uploading:", TextRole.Small);
 
-            UIStyles.CreateSpacer(card, 10);
+            Stacks.Spacer(card, 10);
 
             // === GAME SECTION ===
-            var gameTitle = UIStyles.CreateSectionTitle(card, "GameTitle", "1. Game");
-            RegisterUIText(gameTitle);
+            Labels.Create(card, "GameTitle", "1. Game", TextRole.SectionTitle);
 
-            var gameBox = CreateSection(card, "GameBox");
+            var gameBox = Stacks.Section(card, "GameBox");
 
             // Current game display
-            var gameRow = UIStyles.CreateFormRow(gameBox, "GameRow", UIStyles.RowHeightNormal, 5);
+            var gameRow = Stacks.Row(gameBox, "GameRow", spacing: 5, minHeight: UIStyles.RowHeightNormal);
 
-            _gameDisplayLabel = UIFactory.CreateLabel(gameRow, "GameName", "Unknown", TextAnchor.MiddleLeft);
-            _gameDisplayLabel.fontStyle = FontStyle.Bold;
-            _gameDisplayLabel.color = UIStyles.TextPrimary;
-            UIFactory.SetLayoutElement(_gameDisplayLabel.gameObject, flexibleWidth: 9999);
-            RegisterExcluded(_gameDisplayLabel); // Game names should not be translated
+            _gameDisplayLabel = Labels.Create(gameRow, "GameName", "Unknown", TextRole.Body,
+                                              policy: TextPolicy.Dynamic, fill: Fill.Stretch);
+            _gameDisplayLabel.Bold = true;
 
-            _gameSourceLabel = UIFactory.CreateLabel(gameRow, "GameSource", "(auto-detected)", TextAnchor.MiddleRight);
-            _gameSourceLabel.fontStyle = FontStyle.Italic;
-            _gameSourceLabel.fontSize = UIStyles.FontSizeSmall;
-            _gameSourceLabel.color = UIStyles.TextMuted;
-            UIFactory.SetLayoutElement(_gameSourceLabel.gameObject, minWidth: 100);
-            RegisterExcluded(_gameSourceLabel);
+            // ⚠ Right-anchored in the original (TextAnchor.MiddleRight) rather than the role's own
+            // left anchor: the vocabulary's `align:` always stretches the label to reach that edge,
+            // which here would fight the name label above for the row's flexible space. Left
+            // alignment is kept instead — see the migration report.
+            _gameSourceLabel = Labels.Create(gameRow, "GameSource", "(auto-detected)", TextRole.Small,
+                                             policy: TextPolicy.Excluded, minWidth: 100,
+                                             align: Placement.MiddleRight);
+            _gameSourceLabel.Italic = true;
 
             // Game search row
-            var searchRow = UIStyles.CreateFormRow(gameBox, "SearchRow", UIStyles.RowHeightLarge, 5);
+            var searchRow = Stacks.Row(gameBox, "SearchRow", spacing: 5, minHeight: UIStyles.RowHeightLarge);
 
-            _gameSearchInput = UIFactory.CreateInputField(searchRow, "GameSearchInput", "Search for a game...");
-            UIFactory.SetLayoutElement(_gameSearchInput.Component.gameObject, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
-            UIStyles.SetBackground(_gameSearchInput.Component.gameObject, UIStyles.InputBackground);
-            _helpZone?.Describe(_gameSearchInput.Component.gameObject,
+            _gameSearchInput = Fields.Create(searchRow, "GameSearchInput", "Search for a game...",
+                                             minHeight: UIStyles.InputHeight);
+            _helpZone?.Describe(_gameSearchInput,
                 "Type a game title to find it in the catalog and online databases. Use this if the detected game is wrong or missing.");
 
-            _gameSearchBtn = UIFactory.CreateButton(searchRow, "SearchBtn", "Search");
-            UIFactory.SetLayoutElement(_gameSearchBtn.Component.gameObject, minWidth: 70, minHeight: UIStyles.InputHeight);
-            UIStyles.SetBackground(_gameSearchBtn.Component.gameObject, UIStyles.ButtonPrimary);
-            _gameSearchBtn.OnClick += PerformGameSearch;
-            RegisterUIText(_gameSearchBtn.ButtonText);
-            _helpZone?.Describe(_gameSearchBtn.Component.gameObject,
+            // As tall as the field it sits beside.
+            _gameSearchBtn = Buttons.Create(searchRow, "SearchBtn", "Search", ButtonTone.Primary,
+                                            ButtonSize.Field, minWidth: 70);
+            _gameSearchBtn.Clicked += PerformGameSearch;
+            _helpZone?.Describe(_gameSearchBtn,
                 "Run the search for the title you typed and list the matching games below.");
 
             // Search status
-            _gameSearchStatus = UIFactory.CreateLabel(gameBox, "SearchStatus", "", TextAnchor.MiddleLeft);
-            _gameSearchStatus.fontSize = UIStyles.FontSizeSmall;
-            _gameSearchStatus.color = UIStyles.TextMuted;
-            UIFactory.SetLayoutElement(_gameSearchStatus.gameObject, minHeight: UIStyles.RowHeightSmall);
-            RegisterExcluded(_gameSearchStatus);
+            _gameSearchStatus = Labels.Create(gameBox, "SearchStatus", "", TextRole.Small, policy: TextPolicy.Dynamic);
 
             // Legend for the search result markers
-            var resultsLegend = UIStyles.CreateHint(gameBox, "ResultsLegend", GameCandidates.Legend);
-            RegisterUIText(resultsLegend);
+            Labels.Create(gameBox, "ResultsLegend", GameCandidates.Legend, TextRole.Hint);
 
-            // Search results scroll
-            var resultsScroll = UIFactory.CreateScrollView(gameBox, "ResultsScroll", out _gameResultsContent, out _);
-            UIFactory.SetLayoutElement(resultsScroll, minHeight: 80, flexibleHeight: 0);
-            UIStyles.ConfigureScrollViewNoScrollbar(resultsScroll);
+            // Search results scroll. Padding was 2px on every side by hand; ScrollList's own is
+            // 5px — see the migration report.
+            _resultsList = ScrollList.Create(gameBox, "ResultsScroll", minHeight: 80, fillHeight: false,
+                                             spacing: 2, padding: 2);
 
-            if (_gameResultsContent != null)
-            {
-                var resultsLayout = _gameResultsContent.GetComponent<VerticalLayoutGroup>()
-                    ?? _gameResultsContent.AddComponent<VerticalLayoutGroup>();
-                resultsLayout.spacing = 2;
-                resultsLayout.childControlHeight = true;
-                resultsLayout.childForceExpandHeight = false;
-                resultsLayout.padding = Compat.MakeRectOffset(2, 2, 2, 2);
-
-                var resultsFitter = _gameResultsContent.GetComponent<ContentSizeFitter>()
-                    ?? _gameResultsContent.AddComponent<ContentSizeFitter>();
-                resultsFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
-            }
-
-            UIStyles.SetBackground(resultsScroll, UIStyles.ViewportBackground);  // recessed list area, distinct from the card it sits in
-
-            UIStyles.CreateSpacer(card, 10);
+            Stacks.Spacer(card, 10);
 
             // === SOURCE LANGUAGE SECTION ===
-            var sourceTitle = UIStyles.CreateSectionTitle(card, "SourceTitle", "2. Source Language (original game language)");
-            RegisterUIText(sourceTitle);
-            var srcObj = _sourceDropdown.CreateUI(card, (lang) => UpdateValidation(), width: 200);
-            _helpZone?.Describe(srcObj,
+            Labels.Create(card, "SourceTitle", "2. Source Language (original game language)", TextRole.SectionTitle);
+            var srcHost = _sourceDropdown.CreateUI(card, (lang) => UpdateValidation(), width: 200);
+            _helpZone?.Describe(srcHost,
                 "The language the game is written in. Pick the original text language, not your translation.");
 
-            UIStyles.CreateSpacer(card, 10);
+            Stacks.Spacer(card, 10);
 
             // === TARGET LANGUAGE SECTION ===
-            var targetTitle = UIStyles.CreateSectionTitle(card, "TargetTitle", "3. Target Language (your translation)");
-            RegisterUIText(targetTitle);
-            var tgtObj = _targetDropdown.CreateUI(card, (lang) => UpdateValidation(), width: 200);
-            _helpZone?.Describe(tgtObj,
+            Labels.Create(card, "TargetTitle", "3. Target Language (your translation)", TextRole.SectionTitle);
+            var tgtHost = _targetDropdown.CreateUI(card, (lang) => UpdateValidation(), width: 200);
+            _helpZone?.Describe(tgtHost,
                 "The language this translation is written in. Settled with its first line — clear the translation to change it.");
 
             // Why the dropdown above does not open, in the words Options uses for the same lock.
             // Shown only while it is true (ShowForSetup), which on a publishable file is always.
-            _targetSettledHint = UIStyles.CreateHint(card, "TargetSettled",
-                "Settled: this file already holds lines in this language.");
-            RegisterUIText(_targetSettledHint);
+            _targetSettledHint = Labels.Create(card, "TargetSettled",
+                "Settled: this file already holds lines in this language.", TextRole.Hint);
 
-            UIStyles.CreateSpacer(card, 10);
+            Stacks.Spacer(card, 10);
 
             // === VALIDATION ===
-            _validationLabel = UIFactory.CreateLabel(card, "Validation", "", TextAnchor.MiddleCenter);
-            _validationLabel.fontSize = UIStyles.FontSizeNormal;
-            _validationLabel.fontStyle = FontStyle.Bold;
-            UIFactory.SetLayoutElement(_validationLabel.gameObject, minHeight: UIStyles.RowHeightLarge);
-            RegisterExcluded(_validationLabel); // Contains game/language names
+            _validationLabel = Labels.Create(card, "Validation", "", TextRole.Body, policy: TextPolicy.Dynamic,
+                                             centred: true, minHeight: UIStyles.RowHeightLarge);
+            _validationLabel.Bold = true;
 
             // === BUTTONS ===
-            var cancelBtn = CreateSecondaryButton(buttonRow, "CancelBtn", "Cancel");
-            cancelBtn.OnClick += () => SetActive(false);
-            RegisterUIText(cancelBtn.ButtonText);
+            var cancelBtn = Buttons.Secondary(buttonRow, "CancelBtn", "Cancel");
+            cancelBtn.Clicked += () => SetActive(false);
 
-            _continueBtn = CreatePrimaryButton(buttonRow, "ContinueBtn", "Continue to Upload");
-            UIStyles.SetBackground(_continueBtn.Component.gameObject, UIStyles.ButtonSuccess);
-            _continueBtn.OnClick += OnContinue;
-            RegisterUIText(_continueBtn.ButtonText);
-            _helpZone?.Describe(_continueBtn.Component.gameObject,
+            _continueBtn = Buttons.Primary(buttonRow, "ContinueBtn", "Continue to Upload");
+            _continueBtn.Clicked += OnContinue;
+            _helpZone?.Describe(_continueBtn,
                 "Confirm the game and languages and move on to the upload step. Enabled once all fields are valid.");
 
             // Initial population
@@ -316,10 +279,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_selectedGame != null && !string.IsNullOrEmpty(_selectedGame.name))
             {
                 // Game confirmed by user selection
-                _gameDisplayLabel.text = _selectedGame.name;
-                _gameDisplayLabel.color = UIStyles.StatusSuccess;
-                _gameSourceLabel.text = "✓ " + Tr("confirmed");
-                _gameSourceLabel.color = UIStyles.StatusSuccess;
+                _gameDisplayLabel.Show(_selectedGame.name);
+                _gameDisplayLabel.Tone = Tone.Success;
+                _gameSourceLabel.Show("✓ " + Tr("confirmed"));
+                _gameSourceLabel.Tone = Tone.Success;
             }
             else
             {
@@ -327,17 +290,17 @@ namespace UnityGameTranslator.Core.UI.Panels
                 var detected = TranslatorCore.CurrentGame;
                 if (detected != null && !string.IsNullOrEmpty(detected.name))
                 {
-                    _gameDisplayLabel.text = detected.name;
-                    _gameDisplayLabel.color = UIStyles.StatusWarning;
-                    _gameSourceLabel.text = "⚠ " + Tr("confirm below");
-                    _gameSourceLabel.color = UIStyles.StatusWarning;
+                    _gameDisplayLabel.Show(detected.name);
+                    _gameDisplayLabel.Tone = Tone.Warning;
+                    _gameSourceLabel.Show("⚠ " + Tr("confirm below"));
+                    _gameSourceLabel.Tone = Tone.Warning;
                 }
                 else
                 {
-                    SetDynamicText(_gameDisplayLabel, "No game detected");
-                    _gameDisplayLabel.color = UIStyles.StatusWarning;
-                    _gameSourceLabel.text = "- " + Tr("please search");
-                    _gameSourceLabel.color = UIStyles.TextMuted;
+                    _gameDisplayLabel.Say("No game detected");
+                    _gameDisplayLabel.Tone = Tone.Warning;
+                    _gameSourceLabel.Show("- " + Tr("please search"));
+                    _gameSourceLabel.Tone = Tone.Muted;
                 }
             }
 
@@ -391,17 +354,17 @@ namespace UnityGameTranslator.Core.UI.Panels
             string query = _gameSearchInput?.Text?.Trim();
             if (string.IsNullOrEmpty(query) || query.Length < 2)
             {
-                SetDynamicText(_gameSearchStatus, "Enter at least 2 characters");
-                _gameSearchStatus.color = UIStyles.StatusWarning;
+                _gameSearchStatus.Say("Enter at least 2 characters");
+                _gameSearchStatus.Tone = Tone.Warning;
                 return;
             }
 
-            _gameSearchBtn.Component.interactable = false;
-            SetDynamicText(_gameSearchStatus, "Searching...");
-            _gameSearchStatus.color = UIStyles.TextMuted;
+            _gameSearchBtn.Enabled = false;
+            _gameSearchStatus.Say("Searching...");
+            _gameSearchStatus.Tone = Tone.Muted;
 
             // Clear previous results
-            ClearGameResults();
+            _resultsList?.Clear();
 
             try
             {
@@ -417,23 +380,23 @@ namespace UnityGameTranslator.Core.UI.Panels
                     if (success && games != null && games.Count > 0)
                     {
                         _gameSearchResults = games;
-                        SetDynamicText(_gameSearchStatus, $"Found {games.Count} game(s)");
-                        _gameSearchStatus.color = UIStyles.StatusSuccess;
+                        _gameSearchStatus.Say($"Found {games.Count} game(s)");
+                        _gameSearchStatus.Tone = Tone.Success;
 
                         PopulateGameResults();
                     }
                     else if (success)
                     {
-                        SetDynamicText(_gameSearchStatus, "No games found");
-                        _gameSearchStatus.color = UIStyles.TextMuted;
+                        _gameSearchStatus.Say("No games found");
+                        _gameSearchStatus.Tone = Tone.Muted;
                     }
                     else
                     {
-                        _gameSearchStatus.text = $"Error: {error}";
-                        _gameSearchStatus.color = UIStyles.StatusError;
+                        _gameSearchStatus.Show($"Error: {error}");
+                        _gameSearchStatus.Tone = Tone.Error;
                     }
 
-                    _gameSearchBtn.Component.interactable = true;
+                    _gameSearchBtn.Enabled = true;
                 });
             }
             catch (Exception e)
@@ -442,28 +405,18 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TranslatorUIManager.RunOnMainThread(() =>
                 {
                     TranslatorCore.LogWarning($"[UploadSetup] Game search error: {errorMsg}");
-                    _gameSearchStatus.text = $"Error: {errorMsg}";
-                    _gameSearchStatus.color = UIStyles.StatusError;
-                    _gameSearchBtn.Component.interactable = true;
+                    _gameSearchStatus.Show($"Error: {errorMsg}");
+                    _gameSearchStatus.Tone = Tone.Error;
+                    _gameSearchBtn.Enabled = true;
                 });
-            }
-        }
-
-        private void ClearGameResults()
-        {
-            if (_gameResultsContent == null) return;
-
-            for (int i = _gameResultsContent.transform.childCount - 1; i >= 0; i--)
-            {
-                UnityEngine.Object.Destroy(_gameResultsContent.transform.GetChild(i).gameObject);
             }
         }
 
         private void PopulateGameResults()
         {
-            ClearGameResults();
+            _resultsList?.Clear();
 
-            if (_gameSearchResults == null || _gameResultsContent == null) return;
+            if (_gameSearchResults == null || _resultsList == null) return;
 
             // Calculate confidence for each result and sort by confidence (highest first)
             var sortedResults = _gameSearchResults
@@ -476,20 +429,18 @@ namespace UnityGameTranslator.Core.UI.Panels
                 var game = item.Game;
                 int confidence = item.Confidence;
 
-                var btn = UIFactory.CreateButton(_gameResultsContent, $"Game_{game.Id}", game.Name);
-                UIFactory.SetLayoutElement(btn.Component.gameObject, minHeight: UIStyles.RowHeightNormal, flexibleWidth: 9999);
-
-                // Use confidence-based background color
-                Color bgColor = GetConfidenceColor(confidence);
-                UIStyles.SetBackground(btn.Component.gameObject, bgColor);
-
                 // Name, source in brackets, mark — the socle's row, the same one the Manager lists.
-                btn.ButtonText.text = GameCandidates.Row(game.Name, game.Source, confidence);
+                var btn = Buttons.Create(_resultsList.Rows, $"Game_{game.Id}",
+                                         GameCandidates.Row(game.Name, game.Source, confidence),
+                                         tone: ConfidenceTone(confidence), size: ButtonSize.Compact,
+                                         fill: Fill.Stretch, policy: TextPolicy.Excluded);
 
                 // Capture game in closure
                 var capturedGame = game;
-                btn.OnClick += () => OnGameSelected(capturedGame);
+                btn.Clicked += () => OnGameSelected(capturedGame);
             }
+
+            _resultsList.Filled();
         }
 
         private void OnGameSelected(GameApiInfo gameApi)
@@ -503,8 +454,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Clear search
             _gameSearchResults = null;
             _gameSearchInput.Text = "";
-            _gameSearchStatus.text = "";
-            ClearGameResults();
+            _gameSearchStatus.Show("");
+            _resultsList?.Clear();
 
             RefreshGameDisplay();
         }
@@ -527,33 +478,33 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             if (!hasGame)
             {
-                SetDynamicText(_validationLabel, "Please select a game");
-                _validationLabel.color = UIStyles.StatusWarning;
-                _continueBtn.Component.interactable = false;
+                _validationLabel.Say("Please select a game");
+                _validationLabel.Tone = Tone.Warning;
+                _continueBtn.Enabled = false;
             }
             else if (!hasValidSource)
             {
-                SetDynamicText(_validationLabel, "Please select a source language (original game language)");
-                _validationLabel.color = UIStyles.StatusWarning;
-                _continueBtn.Component.interactable = false;
+                _validationLabel.Say("Please select a source language (original game language)");
+                _validationLabel.Tone = Tone.Warning;
+                _continueBtn.Enabled = false;
             }
             else if (!hasValidTarget)
             {
-                SetDynamicText(_validationLabel, "Please select a target language");
-                _validationLabel.color = UIStyles.StatusWarning;
-                _continueBtn.Component.interactable = false;
+                _validationLabel.Say("Please select a target language");
+                _validationLabel.Tone = Tone.Warning;
+                _continueBtn.Enabled = false;
             }
             else if (!differentLangs)
             {
-                SetDynamicText(_validationLabel, "Source and target must be different!");
-                _validationLabel.color = UIStyles.StatusError;
-                _continueBtn.Component.interactable = false;
+                _validationLabel.Say("Source and target must be different!");
+                _validationLabel.Tone = Tone.Error;
+                _continueBtn.Enabled = false;
             }
             else
             {
-                _validationLabel.text = $"{game.name}: {source} -> {target}";
-                _validationLabel.color = UIStyles.StatusSuccess;
-                _continueBtn.Component.interactable = true;
+                _validationLabel.Show($"{game.name}: {source} -> {target}");
+                _validationLabel.Tone = Tone.Success;
+                _continueBtn.Enabled = true;
             }
         }
 

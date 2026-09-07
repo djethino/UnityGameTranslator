@@ -51,6 +51,12 @@ namespace UnityGameTranslator.Core.UI.Components
         {
             set { foreach (var b in _buttons) b.Enabled = value; }
         }
+
+        /// <summary>
+        /// One option's own button — to attach a help text distinct from its neighbour's, or
+        /// describe one option on its own. Null outside the range.
+        /// </summary>
+        public ButtonHandle Option(int index) => index >= 0 && index < _buttons.Count ? _buttons[index] : null;
     }
 
     /// <summary>
@@ -60,10 +66,14 @@ namespace UnityGameTranslator.Core.UI.Components
     public static class Choices
     {
         /// <param name="onChosen">The person chose. Not called when <see cref="ChoiceHandle.Selected"/> is set from code.</param>
+        /// <param name="initial">The option chosen at creation; -1 for none yet.</param>
+        /// <param name="spacing">Between two options.</param>
+        /// <param name="minWidth">Of each option; null takes the size's own.</param>
         public static ChoiceHandle Create(Host parent, string name, string[] options, int initial = 0,
-                                          Action<int> onChosen = null, ButtonSize size = ButtonSize.Compact)
+                                          Action<int> onChosen = null, ButtonSize size = ButtonSize.Compact,
+                                          int spacing = 4, int? minWidth = null)
         {
-            var row = Stacks.Horizontal(parent, name, spacing: 4, placement: Placement.MiddleLeft,
+            var row = Stacks.Horizontal(parent, name, spacing: spacing, placement: Placement.MiddleLeft,
                                         fill: Fill.Content);
             var buttons = new List<ButtonHandle>();
             ChoiceHandle handle = null;
@@ -71,7 +81,7 @@ namespace UnityGameTranslator.Core.UI.Components
             for (int i = 0; i < options.Length; i++)
             {
                 int index = i;
-                var button = Buttons.Create(row, name + i, options[i], ButtonTone.Secondary, size);
+                var button = Buttons.Create(row, name + i, options[i], ButtonTone.Secondary, size, minWidth);
                 button.Clicked += () => handle?.Choose(index);
                 buttons.Add(button);
             }

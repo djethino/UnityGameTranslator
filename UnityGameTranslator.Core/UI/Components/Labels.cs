@@ -64,7 +64,10 @@ namespace UnityGameTranslator.Core.UI.Components
             // ⚠ Null, not 0, when it is not stretched: SetLayoutElement's parameters are nullable
             // and null means "leave it alone". Writing 0 would turn a field nobody had set into an
             // override on every label in the mod.
-            bool stretch = centre || fill == Fill.Stretch || (align.HasValue && !IsLeft(align.Value));
+            // A label with a minimum width has room to align its words in; one without would
+            // align them inside a box exactly as wide as they are, so it is stretched instead.
+            bool stretch = centre || fill == Fill.Stretch
+                           || (align.HasValue && !IsLeft(align.Value) && !minWidth.HasValue);
             UIFactory.SetLayoutElement(label.gameObject, minWidth: minWidth, minHeight: minHeight ?? spec.MinHeight,
                                        flexibleWidth: stretch ? (int?)9999 : null);
 

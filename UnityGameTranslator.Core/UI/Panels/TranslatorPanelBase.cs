@@ -741,9 +741,22 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// <summary>A fixed header between the title bar and the scroll area, as a host.</summary>
         protected Host FixedHeader(string name = "FixedHeader") => new Host(CreateFixedHeader(name));
 
-        /// <summary>A title with the scope switch beside it, as a label a panel may hold.</summary>
-        protected LabelHandle ScopedTitle(Host parent, string name, string text, EditSide side)
-            => new LabelHandle(CreateScopedTitle(parent.Object, name, text, side), TextPolicy.UiText);
+        /// <summary>
+        /// A title with the scope switch beside it, as a label a panel may hold.
+        /// </summary>
+        /// <param name="policy">
+        /// UiText for a title fixed at construction; Dynamic (or Excluded) for one the code
+        /// rewrites afterwards (a mode announced in the title itself) — <see cref="LabelHandle.Say"/>
+        /// throws on a UiText label, so a title that changes must not be created as one.
+        /// </param>
+        protected LabelHandle ScopedTitle(Host parent, string name, string text, EditSide side,
+                                          TextPolicy policy = TextPolicy.UiText)
+        {
+            var title = CreateScopedTitle(parent.Object, name, text, side);
+            if (policy == TextPolicy.UiText) RegisterUIText(title);
+            else RegisterExcluded(title);
+            return new LabelHandle(title, policy);
+        }
 
         /// <summary>
         /// Creates a contextual help bar pinned between the scroll area and the footer

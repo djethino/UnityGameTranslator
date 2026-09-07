@@ -1,10 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
-using UnityEngine;
-using UnityEngine.UI;
 using UniverseLib.UI;
-using UniverseLib.UI.Models;
 using UnityGameTranslator.Common;
 using UnityGameTranslator.Core.UI.Components;
 
@@ -34,14 +31,14 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private Dictionary<string, ConflictResolution> _resolutions = new Dictionary<string, ConflictResolution>();
         private string _serverHash;
-        private GameObject _conflictListContent;
-        private Text _summaryLabel;
+        private ScrollList _conflictList;
+        private LabelHandle _summaryLabel;
 
-        // Button references for dynamic state
-        private ButtonRef _applyBtn;
-        private ButtonRef _keepMineBtn;
-        private ButtonRef _takeServerBtn;
-        private ButtonRef _reviewBtn;
+        // Button/choice references for dynamic state
+        private ButtonHandle _applyBtn;
+        private Host _bulkChoiceHost;
+        private ChoiceHandle _bulkChoice;
+        private ButtonHandle _reviewBtn;
         // Upstream merge (Main -> branch): separate ancestor and separate hash from
         // this translation's own line on the site — see ApplyMerge
         private bool _isUpstreamMerge;
@@ -55,7 +52,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private TranslationSettings _ancestorSettingsBefore;
         private string _settingsSourceLabel;
         private bool _settingsExplicitRequest;
-        private Components.HelpZone _helpZone;
+        private HelpZone _helpZone;
         private bool _userMadeChoice = false;
         // True while the review page round trip is in flight (see OpenReviewPage)
         private bool _reviewInFlight;
@@ -88,7 +85,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             _settingsSourceLabel = null;
             _settingsExplicitRequest = false;
             SetApplyButtonEnabled(false);
-            ResetBulkButtonStyles();
+            // The bulk choice starts unselected too: RefreshConflictList below rebuilds it fresh,
+            // the same state a brand new merge starts in — see RebuildBulkChoice.
 
             // 🔴 Pre-selected as the socle's own verdict, conflict by conflict — the same first
             // answer as the Manager and the site for the same line (decided 2026-09-07). This
@@ -108,127 +106,116 @@ namespace UnityGameTranslator.Core.UI.Panels
         protected override void ConstructPanelContent()
         {
             // Use scrollable layout - content scrolls if needed, buttons stay fixed
-            CreateScrollablePanelLayout(out var scrollContent, out var buttonRow, PanelWidth - 40);
+            Layout(out var scrollContent, out var buttonRow, PanelWidth - 40);
 
             // Contextual help bar between content and footer
             _helpZone = CreateHelpZone(buttonRow, "Hover a button to see what it does");
 
             // Adaptive card for merge conflicts — stretchVertically so the inner conflict list
             // can absorb the extra space when the user enlarges the panel.
-            var card = CreateAdaptiveCard(scrollContent, "MergeCard", PanelWidth - 40, stretchVertically: true);
+            var card = Stacks.Card(scrollContent, "MergeCard", PanelWidth - 40, stretchVertically: true);
 
-            var title = CreateScopedTitle(card, "Title", "Merge Conflicts", EditSide.Local);
-            RegisterUIText(title);
+            ScopedTitle(card, "Title", "Merge Conflicts", EditSide.Local);
 
-            UIStyles.CreateSpacer(card, 5);
+            Stacks.Spacer(card, 5);
 
             // Explanation
-            var explanationLabel = UIFactory.CreateLabel(card, "Explanation",
+            Labels.Create(card, "Explanation",
                 "Both you and the server made changes. Choose which version to keep for each conflict:",
-                TextAnchor.MiddleLeft);
-            explanationLabel.fontSize = UIStyles.FontSizeSmall;
-            explanationLabel.color = UIStyles.TextMuted;
-            UIFactory.SetLayoutElement(explanationLabel.gameObject, minHeight: UIStyles.RowHeightMedium);
-            RegisterUIText(explanationLabel);
+                TextRole.Small, minHeight: UIStyles.RowHeightMedium, fill: Fill.Stretch);
 
-            UIStyles.CreateSpacer(card, 3);
+            Stacks.Spacer(card, 3);
 
             // Summary
-            _summaryLabel = UIFactory.CreateLabel(card, "Summary", "Conflicts to resolve:", TextAnchor.MiddleLeft);
-            _summaryLabel.fontSize = UIStyles.FontSizeNormal;
-            _summaryLabel.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(_summaryLabel.gameObject, minHeight: UIStyles.RowHeightMedium);
-            RegisterExcluded(_summaryLabel);
+            _summaryLabel = Labels.Create(card, "Summary", "Conflicts to resolve:", TextRole.Info,
+                                          policy: TextPolicy.Excluded, minHeight: UIStyles.RowHeightMedium,
+                                          fill: Fill.Stretch);
 
             // Conflict list scroll view
-            var scrollObj = UIFactory.CreateScrollView(card, "ConflictScroll", out _conflictListContent, out _);
             // See TranslatorPanelBase.ScrollingListHeightRule: without a preferred height this
             // list is weighed at its minimum when the panel adds up what it needs, so anything
             // below it is never budgeted for.
-            UIFactory.SetLayoutElement(scrollObj, minHeight: 240, preferredHeight: 240,
-                flexibleHeight: 9999, flexibleWidth: 9999);
-            UIFactory.SetLayoutGroup<VerticalLayoutGroup>(_conflictListContent, false, false, true, true, 5, 5, 5, 5, 5);
-            UIStyles.SetBackground(scrollObj, UIStyles.TroughBackground);
-            UIStyles.ConfigureScrollViewNoScrollbar(scrollObj);
+            _conflictList = ScrollList.Create(card, "ConflictScroll", minHeight: 240, preferredHeight: 240, spacing: 5);
 
-            UIStyles.CreateSpacer(card, 10);
+            Stacks.Spacer(card, 10);
 
             // Bulk action row
-            var bulkRow = UIStyles.CreateFormRow(card, "BulkRow", UIStyles.RowHeightXLarge);
-            var bulkLayout = bulkRow.GetComponent<HorizontalLayoutGroup>();
-            if (bulkLayout != null) bulkLayout.childAlignment = TextAnchor.MiddleCenter;
+            var bulkRow = Stacks.Row(card, "BulkRow", minHeight: UIStyles.RowHeightXLarge, placement: Placement.MiddleCenter);
 
-            // All button callbacks use the static singleton to avoid IL2CPP 'this' capture issues
-            _keepMineBtn = CreateSecondaryButton(bulkRow, "UseAllLocalBtn", "Keep My Changes", 120);
-            _keepMineBtn.OnClick += () => TranslatorUIManager.MergePanel?.UseAllLocal();
-            RegisterUIText(_keepMineBtn.ButtonText);
-            _helpZone?.Describe(_keepMineBtn.Component.gameObject,
-                "Resolve every conflict with YOUR version of the line");
-
-            _takeServerBtn = CreateSecondaryButton(bulkRow, "UseAllRemoteBtn", "Take Server", 100);
-            _takeServerBtn.OnClick += () => TranslatorUIManager.MergePanel?.UseAllRemote();
-            RegisterUIText(_takeServerBtn.ButtonText);
-            _helpZone?.Describe(_takeServerBtn.Component.gameObject,
-                "Resolve every conflict with the website's version of the line");
+            _bulkChoiceHost = Stacks.Horizontal(bulkRow, "BulkChoiceHost", fill: Fill.Content);
+            RebuildBulkChoice();
 
             // Apply Merge - starts disabled until user makes a choice
-            _applyBtn = CreatePrimaryButton(bulkRow, "ApplyBtn", "Apply Merge");
+            _applyBtn = Buttons.Primary(bulkRow, "ApplyBtn", "Apply Merge",
+                scope: EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: false));
             // ⚠ Writes this machine's translation and publishes nothing — the whole merge panel
             // settles a local file. Marked so the three buttons of this row say the same thing.
-            ScopeMarks.Adorn(_applyBtn, EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: false));
-            _applyBtn.OnClick += () => TranslatorUIManager.MergePanel?.ApplyMerge();
-            RegisterUIText(_applyBtn.ButtonText);
+            _applyBtn.Clicked += () => TranslatorUIManager.MergePanel?.ApplyMerge();
             SetApplyButtonEnabled(false);
-            _helpZone?.Describe(_applyBtn.Component.gameObject,
+            _helpZone?.Describe(_applyBtn,
                 "Save the merged result: non-conflicting changes from both sides plus your choices above");
 
             // Bottom buttons - in fixed footer (outside scroll)
-            var cancelBtn = CreateSecondaryButton(buttonRow, "CancelBtn", "Cancel");
-            cancelBtn.OnClick += () => TranslatorUIManager.MergePanel?.CancelMerge();
-            RegisterUIText(cancelBtn.ButtonText);
-            _helpZone?.Describe(cancelBtn.Component.gameObject,
-                "Close without changing anything — you can merge later");
+            var cancelBtn = Buttons.Secondary(buttonRow, "CancelBtn", "Cancel");
+            cancelBtn.Clicked += () => TranslatorUIManager.MergePanel?.CancelMerge();
+            _helpZone?.Describe(cancelBtn, "Close without changing anything — you can merge later");
 
-            var replaceBtn = CreateSecondaryButton(buttonRow, "ReplaceBtn", "Replace with Server", 130);
-            UIStyles.SetBackground(replaceBtn.Component.gameObject, UIStyles.ButtonDanger);
             // ⚠ Overwrites the local file with the online one. The most destructive act on this
             // row, and it was the one saying nothing about where it lands.
-            ScopeMarks.Adorn(replaceBtn, EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: false));
-            replaceBtn.OnClick += () => TranslatorUIManager.MergePanel?.ReplaceWithRemote();
-            RegisterUIText(replaceBtn.ButtonText);
-            _helpZone?.Describe(replaceBtn.Component.gameObject,
-                "Throw away ALL your local changes and take the website's version as-is");
+            var replaceBtn = Buttons.Create(buttonRow, "ReplaceBtn", "Replace with Server", ButtonTone.Danger,
+                minWidth: 130, scope: EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: false));
+            replaceBtn.Clicked += () => TranslatorUIManager.MergePanel?.ReplaceWithRemote();
+            _helpZone?.Describe(replaceBtn, "Throw away ALL your local changes and take the website's version as-is");
 
             // Review on Website in the footer (secondary action)
-            _reviewBtn = CreateSecondaryButton(buttonRow, "ReviewBtn", "Review on Website", 115);
-            var reviewBtn = _reviewBtn;
-            UIStyles.SetBackground(reviewBtn.Component.gameObject, UIStyles.ButtonLink);
             // ⚠ The same act as the main panel's Review Branches: it rewrites the PUBLISHED Main
             // and never comes back here on its own.
-            ScopeMarks.Adorn(reviewBtn, EditScope.SideAfter(onThisMachine: false, yourPublishedCopy: true));
-            reviewBtn.OnClick += () => TranslatorUIManager.MergePanel?.OpenReviewPage();
-            RegisterUIText(reviewBtn.ButtonText);
-            _helpZone?.Describe(reviewBtn.Component.gameObject,
+            _reviewBtn = Buttons.Create(buttonRow, "ReviewBtn", "Review on Website", ButtonTone.Link,
+                minWidth: 115, scope: EditScope.SideAfter(onThisMachine: false, yourPublishedCopy: true));
+            _reviewBtn.Clicked += () => TranslatorUIManager.MergePanel?.OpenReviewPage();
+            _helpZone?.Describe(_reviewBtn,
                 "Open this merge in your browser: bigger screen, search, and line-by-line tools");
+        }
+
+        /// <summary>
+        /// The two bulk buttons, freshly built and unselected. A <see cref="ChoiceHandle"/> cannot
+        /// be told back to "nothing chosen" once one of its options was picked — only recreated —
+        /// so a new merge, or a fresh resolution list, gets a new one instead of a reset call.
+        /// </summary>
+        private void RebuildBulkChoice()
+        {
+            _bulkChoiceHost.Clear();
+
+            // All button callbacks use the static singleton to avoid IL2CPP 'this' capture issues
+            _bulkChoice = Choices.Create(_bulkChoiceHost, "BulkChoice",
+                new[] { "Keep My Changes", "Take Server" }, initial: -1, spacing: 10, onChosen: index =>
+                {
+                    var self = TranslatorUIManager.MergePanel;
+                    if (self == null) return;
+                    if (index == 0) self.UseAllLocal();
+                    else self.UseAllRemote();
+                });
+
+            _helpZone?.Describe(_bulkChoice.Option(0),
+                "Resolve every conflict with YOUR version of the line");
+            _helpZone?.Describe(_bulkChoice.Option(1),
+                "Resolve every conflict with the website's version of the line");
         }
 
         private void RefreshConflictList()
         {
-            if (_conflictListContent == null) return;
+            if (_conflictList == null) return;
             if (_pendingMergeWithTags == null) return;
 
-            // Clear existing items (manual iteration for IL2CPP compatibility)
-            for (int i = _conflictListContent.transform.childCount - 1; i >= 0; i--)
-            {
-                UnityEngine.Object.Destroy(_conflictListContent.transform.GetChild(i).gameObject);
-            }
+            _conflictList.Clear();
+            RebuildBulkChoice();
 
             var stats = _pendingMergeWithTags.Statistics;
             int conflictCount = _pendingMergeWithTags.Conflicts.Count;
 
-            _summaryLabel.text = conflictCount > 0
+            _summaryLabel.Show(conflictCount > 0
                 ? Tr($"{conflictCount} conflict(s) to resolve") + $"  |  {stats.GetSummary()}"
-                : Tr("No conflicts! All changes merged automatically.") + $"  |  {stats.GetSummary()}";
+                : Tr("No conflicts! All changes merged automatically.") + $"  |  {stats.GetSummary()}");
 
             var conflicts = _pendingMergeWithTags.Conflicts;
             for (int i = 0; i < conflicts.Count; i++)
@@ -260,21 +247,19 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private void CreateConflictRowInternal(string key, string localValue, string localTag, string remoteValue, string remoteTag)
         {
-            var row = UIFactory.CreateVerticalGroup(_conflictListContent, $"Conflict_{key}", false, false, true, true, 3);
-            UIFactory.SetLayoutElement(row, minHeight: UIStyles.MultiLineMedium, flexibleWidth: 9999);
+            var rowHost = Stacks.Vertical(_conflictList.Rows, $"Conflict_{key}", spacing: 3,
+                                          minHeight: UIStyles.MultiLineMedium);
 
             // Key label
-            var keyLabel = UIFactory.CreateLabel(row, "Key", $"Key: {key}", TextAnchor.MiddleLeft);
-            keyLabel.fontStyle = FontStyle.Bold;
-            UIFactory.SetLayoutElement(keyLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+            var keyLabel = Labels.Create(rowHost, "Key", $"Key: {key}", TextRole.Body,
+                                         policy: TextPolicy.Excluded, minHeight: UIStyles.RowHeightSmall);
+            keyLabel.Bold = true;
 
             // Values row
-            var valuesRow = UIFactory.CreateHorizontalGroup(row, "Values", false, false, true, true, 10);
-            UIFactory.SetLayoutElement(valuesRow, minHeight: UIStyles.CodeDisplayHeight);
+            var valuesRow = Stacks.Horizontal(rowHost, "Values", spacing: 10, minHeight: UIStyles.CodeDisplayHeight);
 
             // Local value
-            var localGroup = UIFactory.CreateVerticalGroup(valuesRow, "Local", false, false, true, true, 2);
-            UIFactory.SetLayoutElement(localGroup, flexibleWidth: 9999);
+            var localGroup = Stacks.Vertical(valuesRow, "Local", spacing: 2);
 
             // 🔴 The tag as the CHIP the website draws, not as "[AI]" in coloured words.
             //
@@ -283,92 +268,41 @@ namespace UnityGameTranslator.Core.UI.Panels
             // in the bar three inches away. The chip is the same square in all three, from the
             // same library. Side and tag also stop competing for one label's colour: the side is
             // told in plain text, the tag by its own mark.
-            var localHead = UIFactory.CreateHorizontalGroup(localGroup, "LocalHead", false, false, true, true, 6,
-                                                            default, default, TextAnchor.MiddleLeft);
-            UIFactory.SetLayoutElement(localHead, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999);
+            var localHead = Stacks.Horizontal(localGroup, "LocalHead", spacing: 6, minHeight: UIStyles.RowHeightSmall);
 
-            var localLbl = UIFactory.CreateLabel(localHead, "LocalLabel", "Local:", TextAnchor.MiddleLeft);
-            localLbl.fontSize = UIStyles.FontSizeSmall;
-            localLbl.color = UIStyles.TextSecondary;
-            if (localTag != null) UIStyles.CreateTagChip(localHead, localTag, out _);
+            Labels.Create(localHead, "LocalLabel", "Local:", TextRole.Small, tone: Tone.Secondary);
+            if (localTag != null) TagChips.Create(localHead, localTag);
 
-            var localValueLbl = UIFactory.CreateLabel(localGroup, "LocalValue", localValue, TextAnchor.MiddleLeft);
-            localValueLbl.fontSize = UIStyles.FontSizeSmall;
-            localValueLbl.color = UIStyles.TextAccent;
+            Labels.Create(localGroup, "LocalValue", localValue, TextRole.Small, tone: Tone.Accent,
+                          policy: TextPolicy.Excluded, fill: Fill.Stretch);
 
             // Remote value
-            var remoteGroup = UIFactory.CreateVerticalGroup(valuesRow, "Remote", false, false, true, true, 2);
-            UIFactory.SetLayoutElement(remoteGroup, flexibleWidth: 9999);
+            var remoteGroup = Stacks.Vertical(valuesRow, "Remote", spacing: 2);
 
-            var remoteHead = UIFactory.CreateHorizontalGroup(remoteGroup, "RemoteHead", false, false, true, true, 6,
-                                                             default, default, TextAnchor.MiddleLeft);
-            UIFactory.SetLayoutElement(remoteHead, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999);
+            var remoteHead = Stacks.Horizontal(remoteGroup, "RemoteHead", spacing: 6, minHeight: UIStyles.RowHeightSmall);
 
-            var remoteLbl = UIFactory.CreateLabel(remoteHead, "RemoteLabel", "Server:", TextAnchor.MiddleLeft);
-            remoteLbl.fontSize = UIStyles.FontSizeSmall;
-            remoteLbl.color = UIStyles.TextSecondary;
-            if (remoteTag != null) UIStyles.CreateTagChip(remoteHead, remoteTag, out _);
+            Labels.Create(remoteHead, "RemoteLabel", "Server:", TextRole.Small, tone: Tone.Secondary);
+            if (remoteTag != null) TagChips.Create(remoteHead, remoteTag);
 
-            var remoteValueLbl = UIFactory.CreateLabel(remoteGroup, "RemoteValue", remoteValue, TextAnchor.MiddleLeft);
-            remoteValueLbl.fontSize = UIStyles.FontSizeSmall;
-            remoteValueLbl.color = UIStyles.StatusSuccess;
+            Labels.Create(remoteGroup, "RemoteValue", remoteValue, TextRole.Small, tone: Tone.Success,
+                          policy: TextPolicy.Excluded, fill: Fill.Stretch);
 
             // Choice buttons (using ButtonRef instead of Toggle for IL2CPP compatibility)
-            var choiceRow = UIFactory.CreateHorizontalGroup(row, "Choices", false, false, true, true, 10);
-            UIFactory.SetLayoutElement(choiceRow, minHeight: UIStyles.RowHeightMedium);
+            var choiceRow = Stacks.Horizontal(rowHost, "Choices", spacing: 10, minHeight: UIStyles.RowHeightMedium);
 
             bool isLocal = _resolutions.TryGetValue(key, out var res) && res == ConflictResolution.KeepLocal;
-
-            var localBtn = UIFactory.CreateButton(choiceRow, "UseLocalBtn", "Use Local");
-            UIFactory.SetLayoutElement(localBtn.Component.gameObject, minWidth: 100, minHeight: UIStyles.RowHeightNormal);
-
-            var remoteBtn = UIFactory.CreateButton(choiceRow, "UseRemoteBtn", "Use Server");
-            UIFactory.SetLayoutElement(remoteBtn.Component.gameObject, minWidth: 100, minHeight: UIStyles.RowHeightNormal);
-
-            // Style the active button
-            UpdateChoiceButtonStyles(localBtn, remoteBtn, isLocal);
 
             // Capture key by value for closures
             string capturedKey = key;
 
-            localBtn.OnClick += () =>
-            {
-                var self = TranslatorUIManager.MergePanel;
-                if (self == null) return;
-                self._resolutions[capturedKey] = ConflictResolution.KeepLocal;
-                self.UpdateChoiceButtonStyles(localBtn, remoteBtn, true);
-                self.OnUserMadeChoice();
-            };
-
-            remoteBtn.OnClick += () =>
-            {
-                var self = TranslatorUIManager.MergePanel;
-                if (self == null) return;
-                self._resolutions[capturedKey] = ConflictResolution.TakeRemote;
-                self.UpdateChoiceButtonStyles(localBtn, remoteBtn, false);
-                self.OnUserMadeChoice();
-            };
-        }
-
-        /// <summary>
-        /// Update visual styling for choice buttons to show which is selected.
-        /// </summary>
-        private void UpdateChoiceButtonStyles(ButtonRef localBtn, ButtonRef remoteBtn, bool isLocalSelected)
-        {
-            if (isLocalSelected)
-            {
-                UIStyles.SetBackground(localBtn.Component.gameObject, UIStyles.TextAccent);
-                localBtn.ButtonText.fontStyle = FontStyle.Bold;
-                UIStyles.SetBackground(remoteBtn.Component.gameObject, UIStyles.InputBackground);
-                remoteBtn.ButtonText.fontStyle = FontStyle.Normal;
-            }
-            else
-            {
-                UIStyles.SetBackground(localBtn.Component.gameObject, UIStyles.InputBackground);
-                localBtn.ButtonText.fontStyle = FontStyle.Normal;
-                UIStyles.SetBackground(remoteBtn.Component.gameObject, UIStyles.StatusSuccess);
-                remoteBtn.ButtonText.fontStyle = FontStyle.Bold;
-            }
+            Choices.Create(choiceRow, "Choice", new[] { "Use Local", "Use Server" },
+                initial: isLocal ? 0 : 1, spacing: 10, minWidth: 100, onChosen: index =>
+                {
+                    var self = TranslatorUIManager.MergePanel;
+                    if (self == null) return;
+                    self._resolutions[capturedKey] = index == 0 ? ConflictResolution.KeepLocal : ConflictResolution.TakeRemote;
+                    self.OnUserMadeChoice();
+                });
         }
 
         internal void UseAllLocal()
@@ -412,46 +346,17 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void SetApplyButtonEnabled(bool enabled)
         {
             if (_applyBtn == null) return;
-            if (enabled)
-            {
-                UIStyles.SetBackground(_applyBtn.Component.gameObject, UIStyles.ButtonSuccess);
-                _applyBtn.ButtonText.color = Color.white;
-            }
-            else
-            {
-                UIStyles.SetBackground(_applyBtn.Component.gameObject, UIStyles.InputBackground);
-                _applyBtn.ButtonText.color = UIStyles.TextMuted;
-            }
+            _applyBtn.Enabled = enabled;
         }
 
-        private void ResetBulkButtonStyles()
-        {
-            if (_keepMineBtn != null)
-            {
-                UIStyles.SetBackground(_keepMineBtn.Component.gameObject, UIStyles.ButtonSecondary);
-                _keepMineBtn.ButtonText.fontStyle = FontStyle.Normal;
-            }
-            if (_takeServerBtn != null)
-            {
-                UIStyles.SetBackground(_takeServerBtn.Component.gameObject, UIStyles.ButtonSecondary);
-                _takeServerBtn.ButtonText.fontStyle = FontStyle.Normal;
-            }
-        }
-
+        /// <summary>
+        /// Restyle the bulk choice after RefreshConflictList rebuilt it unselected — setting
+        /// <see cref="ChoiceHandle.Selected"/> from code restyles without calling back, so this
+        /// cannot loop into UseAllLocal/UseAllRemote a second time.
+        /// </summary>
         private void HighlightBulkButton(bool isLocal)
         {
-            if (_keepMineBtn != null)
-            {
-                UIStyles.SetBackground(_keepMineBtn.Component.gameObject,
-                    isLocal ? UIStyles.TextAccent : UIStyles.ButtonSecondary);
-                _keepMineBtn.ButtonText.fontStyle = isLocal ? FontStyle.Bold : FontStyle.Normal;
-            }
-            if (_takeServerBtn != null)
-            {
-                UIStyles.SetBackground(_takeServerBtn.Component.gameObject,
-                    !isLocal ? UIStyles.StatusSuccess : UIStyles.ButtonSecondary);
-                _takeServerBtn.ButtonText.fontStyle = !isLocal ? FontStyle.Bold : FontStyle.Normal;
-            }
+            if (_bulkChoice != null) _bulkChoice.Selected = isLocal ? 0 : 1;
             OnUserMadeChoice();
         }
 
@@ -678,11 +583,17 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             _reviewInFlight = busy;
 
-            if (_reviewBtn?.Component != null)
-                _reviewBtn.Component.interactable = !busy;
+            if (_reviewBtn == null) return;
 
-            if (_reviewBtn?.ButtonText != null)
-                SetDynamicText(_reviewBtn.ButtonText, busy ? "Opening..." : "Review on Website");
+            if (busy)
+            {
+                _reviewBtn.Busy("Opening...");
+            }
+            else
+            {
+                _reviewBtn.Enabled = true;
+                _reviewBtn.Label = "Review on Website";
+            }
         }
 
         private async void PerformOpenReviewPage(int translationId)

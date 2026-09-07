@@ -26,8 +26,10 @@ namespace UnityGameTranslator.Core.UI.Components
         {
             var btn = UIFactory.CreateButton(parent.Object, name, text ?? "");
 
-            int height = size == ButtonSize.Compact ? UIStyles.RowHeightNormal : UIStyles.ButtonHeight;
-            int width = minWidth ?? (size == ButtonSize.Compact ? UIStyles.SmallButtonWidth
+            int height = size == ButtonSize.Compact ? UIStyles.RowHeightNormal
+                       : size == ButtonSize.Field ? UIStyles.InputHeight
+                       : UIStyles.ButtonHeight;
+            int width = minWidth ?? (size != ButtonSize.Normal ? UIStyles.SmallButtonWidth
                                      : tone == ButtonTone.Primary ? 130 : 110);
 
             UIFactory.SetLayoutElement(btn.Component.gameObject, minWidth: width, minHeight: height,

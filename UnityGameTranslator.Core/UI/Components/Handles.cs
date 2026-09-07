@@ -111,8 +111,8 @@ namespace UnityGameTranslator.Core.UI.Components
     /// <summary>What a button is for, which decides its colour.</summary>
     public enum ButtonTone { Primary, Secondary, Success, Warning, Danger, Link }
 
-    /// <summary>A button's height: the ordinary one, or the one that fits a dense row.</summary>
-    public enum ButtonSize { Normal, Compact }
+    /// <summary>A button's height: the ordinary one, the one that fits a dense row, or the one that sits beside a field.</summary>
+    public enum ButtonSize { Normal, Compact, Field }
 
     /// <summary>Room between an edge and what sits inside it.</summary>
     public readonly struct Pad

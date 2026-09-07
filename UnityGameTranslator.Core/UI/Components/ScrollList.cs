@@ -27,13 +27,16 @@ namespace UnityGameTranslator.Core.UI.Components
         /// <param name="minHeight">The least room it takes.</param>
         /// <param name="fillHeight">Grow with the panel — the list is what should grow when the window does.</param>
         /// <param name="emptyText">Shown alone while the list holds no row; null for no such sentence.</param>
+        /// <param name="padding">Room between the trough's edge and its rows, on all four sides.</param>
         public static ScrollList Create(Host parent, string name, int minHeight, int? preferredHeight = null,
-                                        bool fillHeight = true, string emptyText = null, int spacing = 5)
+                                        bool fillHeight = true, string emptyText = null, int spacing = 5,
+                                        int padding = 5)
         {
             var scroll = UIFactory.CreateScrollView(parent.Object, name, out GameObject rows, out _);
             UIFactory.SetLayoutElement(scroll, minHeight: minHeight, preferredHeight: preferredHeight ?? minHeight,
                                        flexibleHeight: fillHeight ? 9999 : 0, flexibleWidth: 9999);
-            UIFactory.SetLayoutGroup<VerticalLayoutGroup>(rows, false, false, true, true, spacing, 5, 5, 5, 5);
+            UIFactory.SetLayoutGroup<VerticalLayoutGroup>(rows, false, false, true, true, spacing,
+                                                          padding, padding, padding, padding);
 
             // The trough, not a field: rows painted the colour of what they sit on vanish into it.
             UIStyles.SetBackground(scroll, UIStyles.TroughBackground);

@@ -1,9 +1,5 @@
-﻿using System;
-using UnityEngine;
-using UnityEngine.UI;
-using UniverseLib;
+using System;
 using UniverseLib.UI;
-using UniverseLib.UI.Models;
 using UnityGameTranslator.Core.UI.Components;
 using UnityGameTranslator.Common;
 
@@ -32,27 +28,27 @@ namespace UnityGameTranslator.Core.UI.Panels
         protected override int MinPanelHeight => 300;
 
         // UI elements
-        private Text _titleLabel;
-        private Text _gameLabel;
-        private Text _entriesLabel;
-        private Text _modeInfoLabel;
-        private Text _statusLabel;
-        private InputFieldRef _notesInput;
-        private InputFieldRef _resourcesUrlInput;
-        private ButtonRef _backBtn;
-        private ButtonRef _uploadBtn;
+        private LabelHandle _titleLabel;
+        private LabelHandle _gameLabel;
+        private LabelHandle _entriesLabel;
+        private LabelHandle _modeInfoLabel;
+        private StatusLine _status;
+        private FieldHandle _notesInput;
+        private FieldHandle _resourcesUrlInput;
+        private ButtonHandle _backBtn;
+        private ButtonHandle _uploadBtn;
 
         /// <summary>The author's "this is finished". Hidden for a Branch, which inherits.</summary>
-        private Toggle _statusToggle;
+        private ToggleHandle _statusToggle;
 
         /// <summary>
         /// The Main's decision on contributions. A Branch never sees it, and an older server
         /// never answers about it — so every read of it is guarded.
         /// </summary>
-        private Toggle _acceptBranchesToggle;
+        private ToggleHandle _acceptBranchesToggle;
 
         /// <summary>Says what a Branch inherits, in place of the toggle it may not use.</summary>
-        private Text _statusInherited;
+        private LabelHandle _statusInherited;
         private Components.HelpZone _helpZone;
 
         // State
@@ -73,51 +69,44 @@ namespace UnityGameTranslator.Core.UI.Panels
         protected override void ConstructPanelContent()
         {
             // Use scrollable layout - content scrolls if needed, buttons stay fixed
-            CreateScrollablePanelLayout(out var scrollContent, out var buttonRow, PanelWidth - 40);
+            Layout(out var scrollContent, out var buttonRow, PanelWidth - 40);
 
             // Contextual help bar between content and footer
             _helpZone = CreateHelpZone(buttonRow, "Hover an element to see what it does");
 
             // Adaptive card - sizes to content (PanelWidth - 2*PanelPadding)
-            var card = CreateAdaptiveCard(scrollContent, "UploadCard", PanelWidth - 40);
+            var card = Stacks.Card(scrollContent, "UploadCard", PanelWidth - 40);
 
             // Title
             // ⚠ Both, not Server. What this screen sends is the file from here, so afterwards the
             // published translation and this machine carry the same thing — which is the question
             // the strip answers, rather than "which file does it write".
-            _titleLabel = CreateScopedTitle(card, "TitleLabel", "Upload Translation",
-                                            EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: true));
-            RegisterExcluded(_titleLabel);
+            _titleLabel = ScopedTitle(card, "TitleLabel", "Upload Translation",
+                                      EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: true),
+                                      TextPolicy.Dynamic);
 
-            UIStyles.CreateSpacer(card, 5);
+            Stacks.Spacer(card, 5);
 
             // Info section
-            var infoBox = CreateSection(card, "InfoBox");
+            var infoBox = Stacks.Section(card, "InfoBox");
 
-            _entriesLabel = UIFactory.CreateLabel(infoBox, "EntriesLabel", "Entries: 0", TextAnchor.MiddleLeft);
-            _entriesLabel.color = UIStyles.TextPrimary;
-            UIFactory.SetLayoutElement(_entriesLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
-            RegisterExcluded(_entriesLabel);
+            _entriesLabel = Labels.Create(infoBox, "EntriesLabel", "Entries: 0", TextRole.Body,
+                                          policy: TextPolicy.Dynamic);
 
-            _gameLabel = UIFactory.CreateLabel(infoBox, "GameLabel", "Game: Unknown", TextAnchor.MiddleLeft);
-            _gameLabel.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(_gameLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
-            RegisterExcluded(_gameLabel);
+            _gameLabel = Labels.Create(infoBox, "GameLabel", "Game: Unknown", TextRole.Info,
+                                       policy: TextPolicy.Excluded);
 
             // Top-aligned and wrapping, with no fixed height: in Branch mode this says two things
             // — who receives the work, and that players will not be able to download it — and a
             // single-row minHeight would have cut the second line off. Same rule as the quality
             // legend: the label reports the height its wrapped text needs at the width it is
             // given, and the row takes it.
-            _modeInfoLabel = UIFactory.CreateLabel(infoBox, "ModeInfoLabel", "", TextAnchor.UpperLeft);
-            _modeInfoLabel.fontStyle = FontStyle.Italic;
-            _modeInfoLabel.fontSize = UIStyles.FontSizeSmall;
-            _modeInfoLabel.color = UIStyles.TextMuted;
-            _modeInfoLabel.horizontalOverflow = HorizontalWrapMode.Wrap;
-            UIFactory.SetLayoutElement(_modeInfoLabel.gameObject, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999);
-            RegisterExcluded(_modeInfoLabel);
+            _modeInfoLabel = Labels.Create(infoBox, "ModeInfoLabel", "", TextRole.Small,
+                                           policy: TextPolicy.Excluded, wrap: true, fill: Fill.Stretch,
+                                           align: Placement.TopLeft);
+            _modeInfoLabel.Italic = true;
 
-            UIStyles.CreateSpacer(card, 10);
+            Stacks.Spacer(card, 10);
 
             // 🔴 **Whether this translation is finished — the author's own word.** The mod posted
             // "in_progress" unconditionally, so it had two effects and both were wrong: nobody
@@ -126,19 +115,16 @@ namespace UnityGameTranslator.Core.UI.Panels
             //
             // ⚠ Same shape as the site's own screen, deliberately: a Main owner chooses, a Branch
             // inherits its Main's and is told so rather than shown a control that does nothing.
-            var statusBox = CreateSection(card, "StatusBox");
+            var statusBox = Stacks.Section(card, "StatusBox");
 
-            var (statusRow, statusToggle) = UIStyles.CreateStyledToggle(
-                statusBox, "StatusToggle", "Mark this translation as complete");
-            _statusToggle = statusToggle;
-            _helpZone?.Describe(statusRow,
+            _statusToggle = CheckBoxes.Create(statusBox, "StatusToggle", "Mark this translation as complete");
+            _helpZone?.Describe(_statusToggle,
                 "Your own declaration that this translation is finished. Players see it on the "
                 + "listing, and it is what separates a translation you can play with from one still "
                 + "being written.");
 
-            _statusInherited = CreateSmallLabel(statusBox, "StatusInherited", "");
-            _statusInherited.color = UIStyles.TextMuted;
-            RegisterExcluded(_statusInherited);
+            _statusInherited = Labels.Create(statusBox, "StatusInherited", "", TextRole.Small,
+                                             policy: TextPolicy.Dynamic);
 
             // 🔴 **Whether anybody may contribute — the Main's other declaration.** Beside the
             // first for the same reason: only a Main can take it, only a Main is shown it, and it
@@ -148,10 +134,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             // ⚠ The reminder says what a contribution IS. Somebody publishing their first
             // translation has no idea, and a checkbox whose subject is unknown gets left alone —
             // which happens to be the safe answer here, but for the wrong reason.
-            var (branchesRow, branchesToggle) = UIStyles.CreateStyledToggle(
-                statusBox, "AcceptBranchesToggle", "Let others contribute to this translation");
-            _acceptBranchesToggle = branchesToggle;
-            _helpZone?.Describe(branchesRow,
+            _acceptBranchesToggle = CheckBoxes.Create(statusBox, "AcceptBranchesToggle", "Let others contribute to this translation");
+            _helpZone?.Describe(_acceptBranchesToggle,
                 "A contribution is a copy of your work with someone else's changes, sent to you to "
                 + "accept or not. Leave this off to work alone — others can still publish their "
                 + "own version of it.");
@@ -160,51 +144,48 @@ namespace UnityGameTranslator.Core.UI.Panels
             // (Human/Validated/AI/System/Missing percentages in the file)
 
             // Notes
-            var notesLabel = CreateSmallLabel(card, "NotesLabel", "Notes (optional):");
-            RegisterUIText(notesLabel);
+            var notesLabel = Labels.Create(card, "NotesLabel", "Notes (optional):", TextRole.Small);
 
-            _notesInput = CreateStyledInputField(card, "NotesInput", "Add any notes about this translation...", UIStyles.MultiLineSmall);
-            _helpZone?.Describe(_notesInput.Component.gameObject,
+            _notesInput = Fields.Create(card, "NotesInput", "Add any notes about this translation...",
+                                       minHeight: UIStyles.MultiLineSmall);
+            _helpZone?.Describe(_notesInput,
                 "Shown to other players on the website next to your translation");
 
             // Resources URL
-            var urlLabel = CreateSmallLabel(card, "UrlLabel", "Resources URL (optional):");
-            RegisterUIText(urlLabel);
+            var urlLabel = Labels.Create(card, "UrlLabel", "Resources URL (optional):", TextRole.Small);
 
-            _resourcesUrlInput = CreateStyledInputField(card, "ResourcesUrlInput", "https://... (link to fonts/images)");
-            _helpZone?.Describe(_resourcesUrlInput.Component.gameObject,
+            _resourcesUrlInput = Fields.Create(card, "ResourcesUrlInput", "https://... (link to fonts/images)");
+            _helpZone?.Describe(_resourcesUrlInput,
                 "Optional public link to the fonts and images pack players need for text to render correctly. Shown to anyone who downloads this translation.");
 
-            var urlHint = UIStyles.CreateHint(card, "UrlHint", "External link to custom fonts or replacement images. Not hosted by us.");
-            RegisterUIText(urlHint);
+            var urlHint = Labels.Create(card, "UrlHint",
+                "External link to custom fonts or replacement images. Not hosted by us.", TextRole.Hint);
 
             // Status
-            _statusLabel = CreateStatusLabel(card, "Status");
-            RegisterExcluded(_statusLabel);
+            _status = StatusLine.Create(card, "Status");
 
             // Buttons - in fixed footer (outside scroll)
-            var cancelBtn = CreateSecondaryButton(buttonRow, "CancelBtn", "Cancel");
-            cancelBtn.OnClick += () =>
+            var cancelBtn = Buttons.Secondary(buttonRow, "CancelBtn", "Cancel");
+            cancelBtn.Clicked += () =>
             {
                 // Clear fork context when cancelling
                 TranslatorCore.PendingFork = null;
                 SetActive(false);
             };
-            RegisterUIText(cancelBtn.ButtonText);
 
             // Back button - only visible for NEW mode to go back to setup
-            _backBtn = CreateSecondaryButton(buttonRow, "BackBtn", "← Back");
-            _backBtn.OnClick += OnBackToSetup;
-            _backBtn.Component.gameObject.SetActive(false); // Hidden by default
-            RegisterUIText(_backBtn.ButtonText);
+            _backBtn = Buttons.Secondary(buttonRow, "BackBtn", "← Back");
+            _backBtn.Clicked += OnBackToSetup;
+            _backBtn.Visible = false; // Hidden by default
 
             // 🔴 **This is the button that actually publishes.** The main panel's Upload
             // Translation and Edit details only lead here, and both were adorned while the act
             // itself said nothing — the destination announced along the way and dropped at the
             // moment it happens.
-            _uploadBtn = CreatePrimaryButton(buttonRow, "UploadBtn", "Upload");
-            ScopeMarks.Adorn(_uploadBtn, EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: true));
-            _uploadBtn.OnClick += () =>
+            _uploadBtn = Buttons.Primary(buttonRow, "UploadBtn", "Upload",
+                                         scope: EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: true),
+                                         policy: TextPolicy.Dynamic);
+            _uploadBtn.Clicked += () =>
             {
                 try
                 {
@@ -216,7 +197,6 @@ namespace UnityGameTranslator.Core.UI.Panels
                     TranslatorCore.LogError($"[UploadPanel] Exception in click handler: {e}");
                 }
             };
-            RegisterExcluded(_uploadBtn.ButtonText);
             DescribeUploadButton("Publish this translation online so others can find and download it for this game");
         }
 
@@ -227,7 +207,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void DescribeUploadButton(string helpText)
         {
             if (_uploadBtn != null)
-                _helpZone?.Describe(_uploadBtn.Component.gameObject, helpText);
+                _helpZone?.Describe(_uploadBtn, helpText);
         }
 
         private void OnBackToSetup()
@@ -276,17 +256,17 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Update display
             _uploadMode = UploadMode.New;
             RefreshStatusControl();
-            SetDynamicText(_titleLabel, "Upload Translation");
-            _modeInfoLabel.text = Tr("Languages:") + $" {sourceLanguage} -> {targetLanguage}";
-            SetDynamicText(_uploadBtn.ButtonText, "Upload");
-            _statusLabel.text = "";
+            _titleLabel.Say("Upload Translation");
+            _modeInfoLabel.Show(Tr("Languages:") + $" {sourceLanguage} -> {targetLanguage}");
+            _uploadBtn.Label = "Upload";
+            _status.Clear();
 
             // Enable upload button (we're ready to upload after setup)
             _isChecking = false;
-            _uploadBtn.Component.interactable = true;
+            _uploadBtn.Enabled = true;
 
             // Show back button for NEW mode (user can go back to change game/languages)
-            _backBtn.Component.gameObject.SetActive(true);
+            _backBtn.Visible = true;
 
             RefreshInfo();
 
@@ -298,12 +278,11 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             TranslatorCore.LogInfo("[UploadPanel] CheckUploadMode started");
             _isChecking = true;
-            SetDynamicText(_statusLabel, "Checking...");
-            _statusLabel.color = UIStyles.StatusWarning;
-            _uploadBtn.Component.interactable = false;
+            _status.Say("Checking...", Tone.Warning);
+            _uploadBtn.Enabled = false;
 
             // Hide back button (only shown for NEW mode after setup)
-            _backBtn.Component.gameObject.SetActive(false);
+            _backBtn.Visible = false;
 
             RefreshInfo();
 
@@ -322,10 +301,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                     var errorMsg = result.Error;
                     TranslatorUIManager.RunOnMainThread(() =>
                     {
-                        _statusLabel.text = Tr("Error:") + $" {errorMsg}";
-                        _statusLabel.color = UIStyles.StatusError;
+                        _status.Show(Tr("Error:") + $" {errorMsg}", Tone.Error);
                         _isChecking = false;
-                        _uploadBtn.Component.interactable = false;
+                        _uploadBtn.Enabled = false;
                     });
                     return;
                 }
@@ -381,13 +359,13 @@ namespace UnityGameTranslator.Core.UI.Panels
                             {
                                 _uploadMode = UploadMode.Update;
                                 RefreshStatusControl();
-                                SetDynamicText(_titleLabel, "This contribution can no longer be sent");
-                                _modeInfoLabel.text = ownWall;
-                                SetDynamicText(_uploadBtn.ButtonText, Uploads.Verb(UploadAct.Update));
+                                _titleLabel.Say("This contribution can no longer be sent");
+                                _modeInfoLabel.Show(ownWall);
+                                _uploadBtn.Label = Uploads.Verb(UploadAct.Update);
                                 DescribeUploadButton("This can no longer be sent as a contribution. Fork instead — it keeps your lines and publishes them under your own name.");
-                                _statusLabel.text = "";
+                                _status.Clear();
                                 _isChecking = false;
-                                _uploadBtn.Component.interactable = false;
+                                _uploadBtn.Enabled = false;
                             });
 
                             return;
@@ -407,9 +385,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                         {
                             _uploadMode = UploadMode.Update;
                             RefreshStatusControl();
-                            SetDynamicText(_titleLabel, "Update Translation");
-                            SetDynamicText(_modeInfoLabel, $"Updating: ID #{siteId}");
-                            SetDynamicText(_uploadBtn.ButtonText, Uploads.Verb(UploadAct.Update));
+                            _titleLabel.Say("Update Translation");
+                            _modeInfoLabel.Say($"Updating: ID #{siteId}");
+                            _uploadBtn.Label = Uploads.Verb(UploadAct.Update);
                             DescribeUploadButton("Replace your published version with your current local file");
 
                             // Note: Type is now auto-calculated by server from HVASM tags
@@ -417,9 +395,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                             if (_resourcesUrlInput != null)
                                 _resourcesUrlInput.Text = existingUrl;
 
-                            _statusLabel.text = "";
+                            _status.Clear();
                             _isChecking = false;
-                            _uploadBtn.Component.interactable = true;
+                            _uploadBtn.Enabled = true;
                             TranslatorCore.LogInfo($"[UploadPanel] UPDATE mode ready");
                         });
                     }
@@ -475,13 +453,13 @@ namespace UnityGameTranslator.Core.UI.Panels
                             {
                                 _uploadMode = UploadMode.Branch;
                                 RefreshStatusControl();
-                                SetDynamicText(_titleLabel, "This translation cannot take a contribution");
-                                _modeInfoLabel.text = wall;
-                                SetDynamicText(_uploadBtn.ButtonText, Uploads.Verb(UploadAct.Contribute));
+                                _titleLabel.Say("This translation cannot take a contribution");
+                                _modeInfoLabel.Show(wall);
+                                _uploadBtn.Label = Uploads.Verb(UploadAct.Contribute);
                                 DescribeUploadButton("This translation does not take contributions. Fork instead — it keeps your lines and publishes them under your own name.");
-                                _statusLabel.text = "";
+                                _status.Clear();
                                 _isChecking = false;
-                                _uploadBtn.Component.interactable = false;
+                                _uploadBtn.Enabled = false;
                             });
 
                             return;
@@ -491,7 +469,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                         {
                             _uploadMode = UploadMode.Branch;
                             RefreshStatusControl();
-                            SetDynamicText(_titleLabel, "Contribute as Branch");
+                            _titleLabel.Say("Contribute as Branch");
                             // What a branch IS, said before sending rather than discovered after.
                             // The panel announced the role and never the visibility: players
                             // cannot download a branch, and someone expecting their work to reach
@@ -499,15 +477,15 @@ namespace UnityGameTranslator.Core.UI.Panels
                             // would be the easy phrasing and it is not true — the game page shows
                             // that the contribution exists, under its author's name; it is the
                             // CONTENT that stays private.
-                            _modeInfoLabel.text = Tr("Contributing to:") + " @" + uploader + "\n"
-                                + Tr("Only they can open and merge it. Players cannot download a branch.");
-                            SetDynamicText(_uploadBtn.ButtonText, Uploads.Verb(UploadAct.Contribute));
+                            _modeInfoLabel.Show(Tr("Contributing to:") + " @" + uploader + "\n"
+                                + Tr("Only they can open and merge it. Players cannot download a branch."));
+                            _uploadBtn.Label = Uploads.Verb(UploadAct.Contribute);
                             RefreshStatusControl();
                             DescribeUploadButton($"Send your changes to @{uploader} for review — they can merge them into the main translation. To publish a translation players can install, make yours independent instead");
                             // Note: Type is now auto-calculated by server from HVASM tags
-                            _statusLabel.text = "";
+                            _status.Clear();
                             _isChecking = false;
-                            _uploadBtn.Component.interactable = true;
+                            _uploadBtn.Enabled = true;
                         });
                     }
                 }
@@ -535,16 +513,16 @@ namespace UnityGameTranslator.Core.UI.Panels
                             _selectedTargetLanguage = forkTargetLang;
                             _setupComplete = true;
 
-                            SetDynamicText(_titleLabel, "Upload Fork");
-                            _modeInfoLabel.text = Tr("Languages:") + $" {forkSourceLang} -> {forkTargetLang} " + Tr("(from forked translation)");
-                            SetDynamicText(_uploadBtn.ButtonText, Uploads.Verb(UploadAct.Upload));
+                            _titleLabel.Say("Upload Fork");
+                            _modeInfoLabel.Show(Tr("Languages:") + $" {forkSourceLang} -> {forkTargetLang} " + Tr("(from forked translation)"));
+                            _uploadBtn.Label = Uploads.Verb(UploadAct.Upload);
                             DescribeUploadButton("Publish your independent translation — you become its owner on the website");
-                            _statusLabel.text = "";
+                            _status.Clear();
                             _isChecking = false;
-                            _uploadBtn.Component.interactable = true;
+                            _uploadBtn.Enabled = true;
 
                             // Don't show back button - fork context is fixed
-                            _backBtn.Component.gameObject.SetActive(false);
+                            _backBtn.Visible = false;
 
                             RefreshInfo();
                         });
@@ -573,10 +551,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 var errorMsg = e.Message;
                 TranslatorUIManager.RunOnMainThread(() =>
                 {
-                    _statusLabel.text = Tr("Error:") + $" {errorMsg}";
-                    _statusLabel.color = UIStyles.StatusError;
+                    _status.Show(Tr("Error:") + $" {errorMsg}", Tone.Error);
                     _isChecking = false;
-                    _uploadBtn.Component.interactable = true;
+                    _uploadBtn.Enabled = true;
                 });
             }
         }
@@ -585,16 +562,16 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (_entriesLabel == null) return;
 
-            SetDynamicText(_entriesLabel, $"Entries: {TranslatorCore.TranslationCache.Count}");
+            _entriesLabel.Say($"Entries: {TranslatorCore.TranslationCache.Count}");
 
             // Same label, same treatment as the main panel and the wizard: the word is
             // translated, the game's name is data and stays as it is. Written raw here, this
             // was the one screen of the three that showed "Game:" in English whatever the
             // player had chosen.
             var gameInfo = TranslatorCore.CurrentGame;
-            _gameLabel.text = gameInfo != null
+            _gameLabel.Show(gameInfo != null
                 ? Tr("Game:") + $" {gameInfo.name}"
-                : Tr("Game: Unknown");
+                : Tr("Game: Unknown"));
         }
 
         /// <summary>
@@ -663,38 +640,32 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             bool branch = WritingOnABranch;
 
-            _statusToggle.gameObject.SetActive(!branch);
-            if (_statusToggle.transform.parent != null)
-                _statusToggle.transform.parent.gameObject.SetActive(!branch);
-
-            _statusInherited.gameObject.SetActive(branch);
+            _statusToggle.Visible = !branch;
+            _statusInherited.Visible = branch;
 
             // The Main's other declaration follows the same rule: shown to a Main, hidden from a
             // contributor. Hidden rather than disabled — a control a branch may never use is not
             // a choice greyed out, it is a question that is not theirs.
             if (_acceptBranchesToggle != null)
             {
-                _acceptBranchesToggle.gameObject.SetActive(!branch);
-                if (_acceptBranchesToggle.transform.parent != null)
-                    _acceptBranchesToggle.transform.parent.gameObject.SetActive(!branch);
+                _acceptBranchesToggle.Visible = !branch;
             }
 
             if (branch)
             {
-                _statusInherited.text = TranslatorCore.TranslateOwnUIDynamic(
-                    "Whether this is finished is the Main's to say — your contribution inherits it.");
+                _statusInherited.Say("Whether this is finished is the Main's to say — your contribution inherits it.");
                 return;
             }
 
             var published = TranslatorCore.ServerState?.Status;
-            _statusToggle.isOn =
+            _statusToggle.IsOn =
                 string.Equals(published, "complete", StringComparison.OrdinalIgnoreCase);
 
             // ⚠ Only when the server answered. Null means it never said, and forcing the box off
             // there would show "solo work" as this translation's state on the strength of a
             // missing field — then write it back on the next upload.
             if (_acceptBranchesToggle != null && TranslatorCore.ServerState?.AcceptsBranches is bool open)
-                _acceptBranchesToggle.isOn = open;
+                _acceptBranchesToggle.IsOn = open;
         }
 
         private void ConfirmThenUpload()
@@ -743,8 +714,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (string.IsNullOrEmpty(TranslatorCore.Config.api_token))
             {
                 TranslatorCore.LogWarning("[UploadPanel] DoUpload blocked - no API token");
-                SetDynamicText(_statusLabel, "Please login first");
-                _statusLabel.color = UIStyles.StatusError;
+                _status.Say("Please login first", Tone.Error);
                 return;
             }
 
@@ -769,18 +739,16 @@ namespace UnityGameTranslator.Core.UI.Panels
                     TranslatorCore.ServerState?.SourceLanguage, TranslatorCore.ServerState?.TargetLanguage);
 
                 TranslatorCore.LogWarning($"[UploadPanel] Refused: {why}");
-                SetDynamicText(_statusLabel, why);
-                _statusLabel.color = UIStyles.StatusError;
+                _status.Show(why, Tone.Error);
                 return;
             }
 
             _isUploading = true;
-            _uploadBtn.Component.interactable = false;
+            _uploadBtn.Enabled = false;
 
             string actionText = _uploadMode == UploadMode.Update ? "Updating..." :
                                (_uploadMode == UploadMode.Branch ? "Contributing..." : "Uploading...");
-            SetDynamicText(_statusLabel, actionText);
-            _statusLabel.color = UIStyles.StatusWarning;
+            _status.Say(actionText, Tone.Warning);
 
             // Capture values before async (for use in RunOnMainThread callbacks)
             var uploadMode = _uploadMode;
@@ -822,7 +790,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     // value would be this client deciding something it has no say in.
                     Status = WritingOnABranch
                         ? null
-                        : (_statusToggle != null && _statusToggle.isOn ? "complete" : "in_progress"),
+                        : (_statusToggle != null && _statusToggle.IsOn ? "complete" : "in_progress"),
 
                     // ⚠ Null on a branch, for the same reason as Status: the decision belongs to
                     // the Main of the lineage, and a contributor sending it would be answering for
@@ -836,7 +804,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     // so the unticked box is the answer, and closed is the default.
                     AcceptsBranches = ContributionsUnknownHere
                         ? (bool?) null
-                        : (_acceptBranchesToggle != null && _acceptBranchesToggle.isOn),
+                        : (_acceptBranchesToggle != null && _acceptBranchesToggle.IsOn),
                     Content = BuildTranslationContent(),
                     Notes = notes,
                     ResourcesUrl = string.IsNullOrEmpty(resourcesUrl) ? null : resourcesUrl
@@ -870,7 +838,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                         // above applies: unknown stays unknown rather than becoming "solo work".
                         AcceptsBranches = ContributionsUnknownHere
                             ? (bool?) null
-                            : (_acceptBranchesToggle != null && _acceptBranchesToggle.isOn)
+                            : (_acceptBranchesToggle != null && _acceptBranchesToggle.IsOn)
                     };
                     TranslatorCore.LastSyncedHash = result.FileHash;
 
@@ -923,8 +891,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     // Update UI on main thread
                     TranslatorUIManager.RunOnMainThread(() =>
                     {
-                        _statusLabel.text = Tr(successMsg + "!") + $" ID: {translationId}";
-                        _statusLabel.color = UIStyles.StatusSuccess;
+                        _status.Show(Tr(successMsg + "!") + $" ID: {translationId}", Tone.Success);
                     });
 
                     await System.Threading.Tasks.Task.Delay(2000);
@@ -933,7 +900,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     TranslatorUIManager.RunOnMainThread(() =>
                     {
                         _isUploading = false;
-                        _uploadBtn.Component.interactable = true;
+                        _uploadBtn.Enabled = true;
                         SetActive(false);
                         TranslatorUIManager.MainPanel?.RefreshUI();
                     });
@@ -944,10 +911,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                     var errorMsg = result.Error;
                     TranslatorUIManager.RunOnMainThread(() =>
                     {
-                        _statusLabel.text = Tr("Error:") + $" {errorMsg}";
-                        _statusLabel.color = UIStyles.StatusError;
+                        _status.Show(Tr("Error:") + $" {errorMsg}", Tone.Error);
                         _isUploading = false;
-                        _uploadBtn.Component.interactable = true;
+                        _uploadBtn.Enabled = true;
                     });
                     return;
                 }
@@ -957,10 +923,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 var errorMsg = e.Message;
                 TranslatorUIManager.RunOnMainThread(() =>
                 {
-                    _statusLabel.text = Tr("Error:") + $" {errorMsg}";
-                    _statusLabel.color = UIStyles.StatusError;
+                    _status.Show(Tr("Error:") + $" {errorMsg}", Tone.Error);
                     _isUploading = false;
-                    _uploadBtn.Component.interactable = true;
+                    _uploadBtn.Enabled = true;
                 });
             }
         }

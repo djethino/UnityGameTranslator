@@ -32,12 +32,9 @@ namespace UnityGameTranslator.Core.Checks
         {
             "InspectorPanel.cs",
             "MainPanel.cs",
-            "MergePanel.cs",
             "OptionsPanel.cs",
             "StatusOverlay.cs",
             "TranslationParametersPanel.cs",
-            "UploadPanel.cs",
-            "UploadSetupPanel.cs",
             "WizardPanel.cs",
             // The base carries the rendering half of every panel — sizing, persistence, the
             // scroll skeleton — and will keep Unity on purpose. It moves to a whitelist of its

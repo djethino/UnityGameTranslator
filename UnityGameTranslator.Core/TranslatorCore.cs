@@ -8595,8 +8595,18 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public bool? BranchFrozen { get; set; }
 
-        /// <summary>User's role for this translation</summary>
-        public TranslationRole Role { get; set; } = TranslationRole.None;
+        /// <summary>
+        /// THIS ACCOUNT's role in the lineage — the row published under its name.
+        ///
+        /// 🔴 <see cref="LineageRole.None"/> unless <see cref="IsOwner"/>, always. The mod's own
+        /// enum used to carry two meanings: the server's "branch" (this account's row is a
+        /// contribution) and, from one writer, "holding somebody else's lineage without having
+        /// published" — which its own comment said was NOT a branch. Five screens read the role
+        /// without IsOwner and confused the two; one becomes a Branch by uploading, and only then.
+        /// Since 2026-09-07 the role is the socle's <see cref="LineageRole"/>, and every writer
+        /// leaves it None for somebody who has no row.
+        /// </summary>
+        public LineageRole Role { get; set; } = LineageRole.None;
 
         /// <summary>If Branch, the username of the Main owner</summary>
         public string MainUsername { get; set; }
@@ -8726,23 +8736,8 @@ namespace UnityGameTranslator.Core
         public GameInfo Game { get; set; }
     }
 
-    /// <summary>
-    /// User role relative to a translation on the server.
-    /// Determined by comparing UUID and user identity.
-    /// </summary>
-    public enum TranslationRole
-    {
-        /// <summary>Not yet uploaded / UUID unknown on server</summary>
-        None,
-        /// <summary>Owner of this translation (same UUID + same user)</summary>
-        Main,
-        /// <summary>Holding someone else's lineage: same UUID, different user. NOT a Branch — one becomes a Branch by uploading.</summary>
-        Branch
-    }
-
-    /// <summary>
-    /// Type of text being translated, used to optimize prompts.
-    /// </summary>
+    // ⚠ The mod's own `TranslationRole` enum lived here until 2026-09-07. It is the socle's
+    // LineageRole now — same members, one meaning: this account's row, None when there is none.
 
 
     // TranslationEntry moved to TranslationEntry.cs — it has to be reachable from the checks

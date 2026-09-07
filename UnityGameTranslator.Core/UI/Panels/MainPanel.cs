@@ -1081,7 +1081,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 if (serverState.IsOwner)
                 {
                     // User owns this translation
-                    return serverState.Role == TranslationRole.Main
+                    return serverState.Role == LineageRole.Main
                         ? LayoutState.OwnerMain
                         : LayoutState.OwnerBranch;
                 }
@@ -1466,9 +1466,10 @@ namespace UnityGameTranslator.Core.UI.Panels
                     ? AccountStanding.Anonymous
                     : AccountStanding.Ours,
 
-                Role = _currentLayoutState == LayoutState.OwnerMain ? LineageRole.Main
-                     : _currentLayoutState == LayoutState.OwnerBranch ? LineageRole.Branch
-                     : LineageRole.None,
+                // The server state's role IS this account's role, None when it has no row —
+                // the invariant every writer keeps since 2026-09-07. No need to rebuild it from
+                // the layout state, which was a second reading of the same fact.
+                Role = serverState?.Role ?? LineageRole.None,
 
                 // ⚠ What is actually WAITING, not how many people contribute. Falls back to the raw
                 // count only when the site could not answer: unknown is not zero, and showing
@@ -1669,9 +1670,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // card, which does consult IsOwner, correctly offered them the Branch/Fork choice.
                 // Two blocks of the same panel contradicting each other on the same state.
                 // See analyse/false-branch-role-after-download.md.
-                switch (serverState.IsOwner ? serverState.Role : TranslationRole.None)
+                switch (serverState.IsOwner ? serverState.Role : LineageRole.None)
                 {
-                    case TranslationRole.Main:
+                    case LineageRole.Main:
                         if (serverState.BranchesCount > 0)
                         {
                             SetDynamicText(_roleLabel, $"[MAIN] {serverState.BranchesCount} contribution(s) from other players");
@@ -1682,7 +1683,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                         }
                         _roleLabel.color = UIStyles.StatusSuccess;
                         break;
-                    case TranslationRole.Branch:
+                    case LineageRole.Branch:
                         _roleLabel.text = "[BRANCH] "
                             + Tr("Your changes are reviewed by")
                             + " " + People.MentionOf(serverState.MainUsername ?? serverState.Uploader,
@@ -1789,7 +1790,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             var publication = Publications.Of(hereOnDisk: TranslatorCore.TranslationCache.Count > 0,
                                               onTheSite: existsOnServer,
                                               yours: existsOnServer ? state.IsOwner : (bool?)null);
-            bool onABranch = existsOnServer && state.IsOwner && state.Role == TranslationRole.Branch;
+            bool onABranch = existsOnServer && state.IsOwner && state.Role == LineageRole.Branch;
             _uploadAct = Uploads.ActOf(publication, onABranch, state?.AcceptsBranches,
                                        state?.MainMissing, state?.MainAbandoned, state?.BranchFrozen);
             var act = _uploadAct ?? UploadAct.Upload;
@@ -1885,8 +1886,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Role-specific buttons visibility
             if (_reviewOnWebsiteBtn != null && _compareWithServerBtn != null && _forkBtn != null)
             {
-                bool isMain = existsOnServer && state.Role == TranslationRole.Main;
-                bool isBranch = existsOnServer && state.Role == TranslationRole.Branch;
+                bool isMain = existsOnServer && state.Role == LineageRole.Main;
+                bool isBranch = existsOnServer && state.Role == LineageRole.Branch;
                 bool hasBranches = state != null && state.BranchesCount > 0;
 
                 // Review Branches - only for Main role when there are branches to review

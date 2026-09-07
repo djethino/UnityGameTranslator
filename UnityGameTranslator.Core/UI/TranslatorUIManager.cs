@@ -1978,7 +1978,7 @@ namespace UnityGameTranslator.Core.UI
                     state.Checked = true;
                     state.Exists = true;
                     state.IsOwner = false;
-                    state.Role = TranslationRole.None;
+                    state.Role = LineageRole.None;
                     state.SiteId = siteId;
 
                     // Nothing came back but the confirmation that nothing moved. Writing the
@@ -2059,8 +2059,8 @@ namespace UnityGameTranslator.Core.UI
             if (_streamDecided) return;
             if (!TranslatorCore.Config.sync.realtime_own_translation) return;
 
-            var role = TranslatorCore.ServerState?.Role ?? TranslationRole.None;
-            bool ours = role == TranslationRole.Main || role == TranslationRole.Branch;
+            var role = TranslatorCore.ServerState?.Role ?? LineageRole.None;
+            bool ours = role == LineageRole.Main || role == LineageRole.Branch;
 
             _streamDecided = true;
 
@@ -2097,7 +2097,7 @@ namespace UnityGameTranslator.Core.UI
         public static bool HasMainUpdate()
         {
             var state = TranslatorCore.ServerState;
-            if (state == null || state.Role != TranslationRole.Branch) return false;
+            if (state == null || state.Role != LineageRole.Branch) return false;
             if (string.IsNullOrEmpty(state.MainHash)) return false;
 
             // Never merged from upstream: nothing to compare, so nothing to claim.
@@ -2212,7 +2212,7 @@ namespace UnityGameTranslator.Core.UI
                 // took it — exactly the baseline this merge wants. It is used only while
                 // .mainancestor is empty, which is the first merge and only that one.
                 if (upstreamAncestor.Count == 0
-                    && TranslatorCore.ServerState?.Role != TranslationRole.Branch
+                    && TranslatorCore.ServerState?.Role != LineageRole.Branch
                     && TranslatorCore.AncestorCache.Count > 0)
                 {
                     upstreamAncestor = TranslatorCore.AncestorCache;
@@ -2581,12 +2581,12 @@ namespace UnityGameTranslator.Core.UI
                     ? data["branches_count"].Value<int>()
                     : (previous?.BranchesCount ?? 0);
 
-                TranslationRole role;
+                LineageRole role;
                 switch (roleStr)
                 {
-                    case "main": role = TranslationRole.Main; break;
-                    case "branch": role = TranslationRole.Branch; break;
-                    default: role = TranslationRole.None; break;
+                    case "main": role = LineageRole.Main; break;
+                    case "branch": role = LineageRole.Branch; break;
+                    default: role = LineageRole.None; break;
                 }
 
                 var translation = data["translation"];
@@ -2597,7 +2597,7 @@ namespace UnityGameTranslator.Core.UI
                 {
                     Checked = true,
                     Exists = exists,
-                    IsOwner = role == TranslationRole.Main || role == TranslationRole.Branch,
+                    IsOwner = role == LineageRole.Main || role == LineageRole.Branch,
                     Role = role,
                     BranchesCount = branchesCount,
                     // Absent from an older site: stays null, which reads as "unknown" and never
@@ -2701,7 +2701,7 @@ namespace UnityGameTranslator.Core.UI
                     // lineage, so a stream leaves it out — and dropping it here would take
                     // "Update from Main" and the owner's name off the screen a second after the
                     // startup call had put them there.
-                    if (role == TranslationRole.Branch)
+                    if (role == LineageRole.Branch)
                     {
                         if (main != null && main.Type != JTokenType.Null)
                         {

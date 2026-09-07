@@ -694,7 +694,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 var direction = TranslatorUIManager.PendingUpdateDirection;
 
                 // Get role for role-specific messages
-                bool isBranch = serverState?.Role == TranslationRole.Branch;
+                bool isBranch = serverState?.Role == LineageRole.Branch;
                 bool isOwner = serverState?.IsOwner == true;
 
                 // Default: hide Branch/Fork buttons, show Action button

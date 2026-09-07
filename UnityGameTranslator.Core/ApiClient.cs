@@ -1126,17 +1126,17 @@ namespace UnityGameTranslator.Core
 
                 // Parse role first to derive IsOwner
                 string roleStr = data["role"]?.Value<string>();
-                TranslationRole role;
+                LineageRole role;
                 switch (roleStr)
                 {
                     case "main":
-                        role = TranslationRole.Main;
+                        role = LineageRole.Main;
                         break;
                     case "branch":
-                        role = TranslationRole.Branch;
+                        role = LineageRole.Branch;
                         break;
                     default:
-                        role = TranslationRole.None;
+                        role = LineageRole.None;
                         break;
                 }
 
@@ -1145,7 +1145,7 @@ namespace UnityGameTranslator.Core
                     Success = true,
                     Exists = data["exists"]?.Value<bool>() ?? false,
                     // IsOwner = user has a translation (role is main or branch)
-                    IsOwner = role == TranslationRole.Main || role == TranslationRole.Branch,
+                    IsOwner = role == LineageRole.Main || role == LineageRole.Branch,
                     Role = role,
                     // MainUsername is in main.uploader when role is none and main exists
                     MainUsername = data["main"]?["uploader"]?.Value<string>(),
@@ -1849,17 +1849,17 @@ namespace UnityGameTranslator.Core
 
                 // Parse role from API response
                 string roleStr = translation?["role"]?.Value<string>();
-                TranslationRole role;
+                LineageRole role;
                 switch (roleStr)
                 {
                     case "main":
-                        role = TranslationRole.Main;
+                        role = LineageRole.Main;
                         break;
                     case "branch":
-                        role = TranslationRole.Branch;
+                        role = LineageRole.Branch;
                         break;
                     default:
-                        role = TranslationRole.None;
+                        role = LineageRole.None;
                         break;
                 }
 
@@ -2663,7 +2663,7 @@ namespace UnityGameTranslator.Core
         public string FileHash { get; set; }
         public int LineCount { get; set; }
         /// <summary>Role assigned by the server (Main for public, Branch for contributor)</summary>
-        public TranslationRole Role { get; set; } = TranslationRole.None;
+        public LineageRole Role { get; set; } = LineageRole.None;
         public string WebUrl { get; set; }
     }
 
@@ -2674,7 +2674,7 @@ namespace UnityGameTranslator.Core
         public bool Exists { get; set; }
         public bool IsOwner { get; set; }
         /// <summary>Detected role: Main (owner), Branch (contributor), or None (new)</summary>
-        public TranslationRole Role { get; set; } = TranslationRole.None;
+        public LineageRole Role { get; set; } = LineageRole.None;
         /// <summary>Username of the Main translation owner (if this is a Branch)</summary>
         public string MainUsername { get; set; }
 

@@ -365,7 +365,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                         // sent the file, and let the server refuse it: the one thing this check
                         // exists to avoid. The sentence is the socle's, the same as the main
                         // panel's button and the Manager.
-                        bool ownRowIsABranch = result.Role == TranslationRole.Branch;
+                        bool ownRowIsABranch = result.Role == LineageRole.Branch;
                         var ownAct = Uploads.ActOf(Publication.Published, ownRowIsABranch,
                                                    result.AcceptsBranches, result.MainMissing,
                                                    result.MainAbandoned, result.BranchFrozen);
@@ -431,7 +431,11 @@ namespace UnityGameTranslator.Core.UI.Panels
                             Checked = true,
                             Exists = true,
                             IsOwner = false,
-                            Role = TranslationRole.Branch,
+                            // 🔴 None, not Branch: this account has no row in the lineage yet. One
+                            // becomes a Branch by uploading, and this screen is where that is about
+                            // to happen. Writing Branch here is what taught five readers that
+                            // "Role == Branch" could mean somebody who had never sent anything.
+                            Role = LineageRole.None,
                             MainUsername = result.MainUsername,
                             SiteId = result.OriginalTranslation?.Id,
                             Uploader = result.OriginalTranslation?.Uploader,
@@ -628,7 +632,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         private bool WritingOnABranch =>
             _uploadMode == UploadMode.Branch
-            || TranslatorCore.ServerState?.Role == TranslationRole.Branch;
+            || TranslatorCore.ServerState?.Role == LineageRole.Branch;
 
         /// <summary>
         /// Whether this upload must say NOTHING about contributions.

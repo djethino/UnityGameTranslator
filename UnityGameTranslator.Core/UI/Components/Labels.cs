@@ -22,17 +22,34 @@ namespace UnityGameTranslator.Core.UI.Components
         /// <param name="fill">Stretch to the row, or as wide as the text. A centred label is always stretched: centring a label that is only as wide as its words changes nothing.</param>
         /// <param name="minHeight">Null takes the role's own.</param>
         /// <param name="richText">Whether &lt;color&gt; and friends are interpreted. Off for anything a player or a file could have written.</param>
+        /// <param name="autoHeight">
+        /// Grows to the height its text draws — a paragraph that wraps, a URL shown in full. Labels
+        /// render with vertical overflow, so a wrapped line is otherwise drawn past its row, over
+        /// whatever follows. <paramref name="minHeight"/> stays the floor. Anchored at its TOP, since
+        /// that is where it grows from; pair it with <see cref="Fill.Stretch"/> so it has a width to
+        /// wrap to.
+        /// </param>
+        /// <param name="minWidth">The least width it keeps — a heading that the note beside it must not squeeze. Null leaves it to its words.</param>
+        /// <param name="align">
+        /// Where the words sit inside the label, when neither left nor centred will do — a note
+        /// right-aligned beside a heading. Null takes <paramref name="centred"/> and the role.
+        /// Anything but a left placement stretches the label, for the same reason a centred one does.
+        /// </param>
         public static LabelHandle Create(Host parent, string name, string text,
                                          TextRole role = TextRole.Body, Tone? tone = null,
                                          bool? centred = null, TextPolicy policy = TextPolicy.UiText,
                                          bool wrap = true, Fill fill = Fill.Content, int? minHeight = null,
-                                         bool richText = true)
+                                         bool richText = true, bool autoHeight = false,
+                                         int? minWidth = null, Placement? align = null)
         {
             var spec = Spec(role);
             bool centre = centred ?? spec.Centred;
 
-            var label = UIFactory.CreateLabel(parent.Object, name, text ?? "",
-                                              centre ? TextAnchor.MiddleCenter : TextAnchor.MiddleLeft,
+            TextAnchor anchor = align.HasValue ? Tones.Anchor(align.Value)
+                              : autoHeight
+                                  ? (centre ? TextAnchor.UpperCenter : TextAnchor.UpperLeft)
+                                  : (centre ? TextAnchor.MiddleCenter : TextAnchor.MiddleLeft);
+            var label = UIFactory.CreateLabel(parent.Object, name, text ?? "", anchor,
                                               supportRichText: richText);
             label.fontSize = spec.Size;
             label.fontStyle = spec.Style;
@@ -47,9 +64,13 @@ namespace UnityGameTranslator.Core.UI.Components
             // ⚠ Null, not 0, when it is not stretched: SetLayoutElement's parameters are nullable
             // and null means "leave it alone". Writing 0 would turn a field nobody had set into an
             // override on every label in the mod.
-            bool stretch = centre || fill == Fill.Stretch;
-            UIFactory.SetLayoutElement(label.gameObject, minHeight: minHeight ?? spec.MinHeight,
+            bool stretch = centre || fill == Fill.Stretch || (align.HasValue && !IsLeft(align.Value));
+            UIFactory.SetLayoutElement(label.gameObject, minWidth: minWidth, minHeight: minHeight ?? spec.MinHeight,
                                        flexibleWidth: stretch ? (int?)9999 : null);
+
+            // The fitter reads the minHeight just set as its floor, then keeps the label at what
+            // its text needs for the current width, plus a small breath below the last line.
+            if (autoHeight) UIFactory.ConfigureAutoHeight(label, UIStyles.SmallSpacing);
 
             switch (policy)
             {
@@ -64,6 +85,12 @@ namespace UnityGameTranslator.Core.UI.Components
         public static LabelHandle Status(Host parent, string name, bool centred = true)
         {
             return Create(parent, name, "", TextRole.Status, policy: TextPolicy.Dynamic, centred: centred);
+        }
+
+        /// <summary>Whether the words start at the left edge — the one placement a content-wide label can honour.</summary>
+        private static bool IsLeft(Placement placement)
+        {
+            return placement == Placement.TopLeft || placement == Placement.MiddleLeft || placement == Placement.BottomLeft;
         }
 
         private struct RoleSpec
@@ -91,8 +118,15 @@ namespace UnityGameTranslator.Core.UI.Components
                     return new RoleSpec { Size = UIStyles.FontSizeSmall, Style = FontStyle.Normal, Tone = Tone.Muted, Centred = false, MinHeight = UIStyles.RowHeightSmall };
                 case TextRole.Hint:
                     return new RoleSpec { Size = UIStyles.FontSizeHint, Style = FontStyle.Italic, Tone = Tone.Muted, Centred = false, MinHeight = UIStyles.RowHeightSmall };
+                case TextRole.Caption:
+                    return new RoleSpec { Size = UIStyles.FontSizeHint, Style = FontStyle.Normal, Tone = Tone.Muted, Centred = false, MinHeight = UIStyles.RowHeightSmall };
                 case TextRole.Status:
                     return new RoleSpec { Size = UIStyles.FontSizeNormal, Style = FontStyle.Normal, Tone = Tone.Plain, Centred = true, MinHeight = UIStyles.RowHeightMedium };
+                case TextRole.Code:
+                    // ⚠ MinHeight below what the glyphs need on purpose: the row holding a code
+                    // already states its own height (CodeDisplayHeight), and a label asking for
+                    // as much again on top of the row's padding would push that row taller.
+                    return new RoleSpec { Size = UIStyles.CodeDisplayFontSize, Style = FontStyle.Bold, Tone = Tone.Accent, Centred = true, MinHeight = UIStyles.LabelHeight };
                 default:
                     return new RoleSpec { Size = UIStyles.FontSizeNormal, Style = FontStyle.Normal, Tone = Tone.Plain, Centred = false, MinHeight = UIStyles.RowHeightNormal };
             }

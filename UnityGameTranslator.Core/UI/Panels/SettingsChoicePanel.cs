@@ -1,9 +1,6 @@
 using System;
 using System.Collections.Generic;
-using UnityEngine;
-using UnityEngine.UI;
 using UniverseLib.UI;
-using UniverseLib.UI.Models;
 using UnityGameTranslator.Common;
 using UnityGameTranslator.Core.UI.Components;
 
@@ -32,16 +29,15 @@ namespace UnityGameTranslator.Core.UI.Panels
         protected override int MinPanelHeight => 220;
         protected override bool PersistWindowPreferences => false;
 
-        private Text _titleLabel;
-        private Text _introLabel;
-        private Text _backupLabel;
-        private GameObject _sectionsHost;
-        private ButtonRef _applyBtn;
-        private ButtonRef _compareBtn;
-        private ButtonRef _cancelBtn;
+        private LabelHandle _introLabel;
+        private LabelHandle _backupLabel;
+        private Host _sectionsHost;
+        private ButtonHandle _applyBtn;
+        private ButtonHandle _compareBtn;
+        private ButtonHandle _cancelBtn;
 
         // Section name -> its toggle. Ticked means "replace mine with theirs".
-        private readonly Dictionary<string, Toggle> _toggles = new Dictionary<string, Toggle>();
+        private readonly Dictionary<string, ToggleHandle> _toggles = new Dictionary<string, ToggleHandle>();
 
         private Action<List<string>> _onApply;
         private Action _onCompare;
@@ -79,7 +75,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // sides had changed, which is right for a conflict but wrong for a download the
             // player asked for (where any difference is submitted) and wrong again when they
             // deliberately come to take the online settings back.
-            SetDynamicText(_introLabel,
+            _introLabel.Say(
                 $"These settings differ between your version and {sourceLabel}.\n"
                 + $"Tick what you want to replace with the settings from {sourceLabel}. "
                 + "Anything left unticked keeps your own setting.");
@@ -87,66 +83,51 @@ namespace UnityGameTranslator.Core.UI.Panels
             BuildSectionRows(decisions);
 
             // The button is only honest when there is somewhere to go
-            _compareBtn?.Component?.gameObject?.SetActive(onCompare != null);
-            _backupLabel?.gameObject?.SetActive(fileWasBackedUp);
+            _compareBtn.Visible = onCompare != null;
+            _backupLabel.Visible = fileWasBackedUp;
 
             SetActive(true);
         }
 
         protected override void ConstructPanelContent()
         {
-            CreateScrollablePanelLayout(out var scrollContent, out var buttonRow, PanelWidth - 40);
+            Layout(out var body, out var footer, PanelWidth - 40);
 
-            var card = CreateAdaptiveCard(scrollContent, "SettingsChoiceCard", PanelWidth - 60);
+            var card = Stacks.Card(body, "SettingsChoiceCard", PanelWidth - 60);
 
-            _titleLabel = UIFactory.CreateLabel(card, "Title", "Settings differ", TextAnchor.MiddleLeft);
-            _titleLabel.fontSize = UIStyles.FontSizeTitle;
-            _titleLabel.fontStyle = FontStyle.Bold;
-            _titleLabel.color = UIStyles.TextPrimary;
-            UIFactory.SetLayoutElement(_titleLabel.gameObject, minHeight: UIStyles.TitleHeight);
-            RegisterUIText(_titleLabel);
+            Labels.Create(card, "Title", "Settings differ", TextRole.Title, centred: false);
 
-            _introLabel = UIFactory.CreateLabel(card, "Intro", "", TextAnchor.UpperLeft);
-            _introLabel.fontSize = UIStyles.FontSizeSmall;
-            _introLabel.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(_introLabel.gameObject, minHeight: UIStyles.MultiLineSmall, flexibleWidth: 9999);
-            UIFactory.ConfigureAutoHeight(_introLabel, UIStyles.SmallSpacing);
-            RegisterExcluded(_introLabel);
+            // Written by Show, so Dynamic; a paragraph that wraps, so it grows to what it draws.
+            _introLabel = Labels.Create(card, "Intro", "", TextRole.Small, tone: Tone.Secondary,
+                                        policy: TextPolicy.Dynamic, fill: Fill.Stretch,
+                                        minHeight: UIStyles.MultiLineSmall, autoHeight: true);
 
-            UIStyles.CreateSpacer(card, 8);
+            Stacks.Spacer(card, 8);
 
             // One row per section, rebuilt on every Show
-            _sectionsHost = UIFactory.CreateVerticalGroup(card, "Sections", false, false, true, true, UIStyles.SmallSpacing);
-            UIFactory.SetLayoutElement(_sectionsHost, flexibleWidth: 9999);
+            _sectionsHost = Stacks.Vertical(card, "Sections", spacing: UIStyles.SmallSpacing);
 
-            UIStyles.CreateSpacer(card, 8);
+            Stacks.Spacer(card, 8);
 
-            _backupLabel = UIFactory.CreateLabel(card, "BackupNote",
-                "Your current file is backed up before anything is replaced.", TextAnchor.MiddleLeft);
-            _backupLabel.fontSize = UIStyles.FontSizeHint;
-            _backupLabel.color = UIStyles.TextMuted;
-            UIFactory.SetLayoutElement(_backupLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
-            RegisterUIText(_backupLabel);
+            _backupLabel = Labels.Create(card, "BackupNote",
+                "Your current file is backed up before anything is replaced.", TextRole.Hint);
+            _backupLabel.Italic = false;
 
-            _cancelBtn = CreateSecondaryButton(buttonRow, "CancelBtn", "Keep mine");
-            _cancelBtn.OnClick += OnCancelClicked;
-            RegisterUIText(_cancelBtn.ButtonText);
+            _cancelBtn = Buttons.Secondary(footer, "CancelBtn", "Keep mine");
+            _cancelBtn.Clicked += OnCancelClicked;
 
-            _compareBtn = CreateSecondaryButton(buttonRow, "CompareBtn", "Compare");
-            _compareBtn.OnClick += OnCompareClicked;
             // 🔴 **The same word as the main panel's Compare, opening the same page the OTHER way
             // round.** This one is `toLocal: true` — what is validated there comes back into the
             // file on this machine and publishes nothing. Two buttons that read identically and
             // write to opposite sides: the marks are the only thing separating them, which is
             // precisely their job (see name-things-in-ui: the scope tells where it writes, the
             // label carries the verb).
-            ScopeMarks.Adorn(_compareBtn,
-                EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: false));
-            RegisterUIText(_compareBtn.ButtonText);
+            _compareBtn = Buttons.Secondary(footer, "CompareBtn", "Compare",
+                scope: EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: false));
+            _compareBtn.Clicked += OnCompareClicked;
 
-            _applyBtn = CreatePrimaryButton(buttonRow, "ApplyBtn", "Apply");
-            _applyBtn.OnClick += OnApplyClicked;
-            RegisterUIText(_applyBtn.ButtonText);
+            _applyBtn = Buttons.Primary(footer, "ApplyBtn", "Apply");
+            _applyBtn.Clicked += OnApplyClicked;
         }
 
         private void BuildSectionRows(List<SettingsSectionPlan> decisions)
@@ -154,50 +135,30 @@ namespace UnityGameTranslator.Core.UI.Panels
             _toggles.Clear();
             if (_sectionsHost == null) return;
 
-            for (int i = _sectionsHost.transform.childCount - 1; i >= 0; i--)
-            {
-                GameObject.Destroy(_sectionsHost.transform.GetChild(i).gameObject);
-            }
+            _sectionsHost.Clear();
 
             if (decisions == null) return;
 
             foreach (var plan in decisions)
             {
-                var row = UIFactory.CreateHorizontalGroup(_sectionsHost, $"Row_{plan.Section}",
-                    false, false, true, true, 8);
-                UIFactory.SetLayoutElement(row, minHeight: UIStyles.RowHeightLarge, flexibleWidth: 9999);
-                UIStyles.SetBackground(row, UIStyles.CardElevated);
-                var rowLayout = row.GetComponent<HorizontalLayoutGroup>();
-                if (rowLayout != null)
-                {
-                    rowLayout.padding = Compat.MakeRectOffset(10, 10, 6, 6);
-                    rowLayout.childAlignment = TextAnchor.MiddleLeft;
-                }
+                var row = Stacks.Horizontal(_sectionsHost, $"Row_{plan.Section}", spacing: 8,
+                                            pad: Pad.Of(10, 6), placement: Placement.MiddleLeft,
+                                            surface: Surface.Elevated, minHeight: UIStyles.RowHeightLarge);
 
-                var toggleObj = UIFactory.CreateToggle(row, $"Toggle_{plan.Section}", out var toggle, out var _);
                 // Ticked by default: the downloaded version is the one the
                 // player just asked for, and their own settings are recoverable
-                toggle.isOn = true;
-                UIFactory.SetLayoutElement(toggleObj, minWidth: UIStyles.ToggleControlWidth);
-                _toggles[plan.Section] = toggle;
+                _toggles[plan.Section] = CheckBoxes.Bare(row, $"Toggle_{plan.Section}", initial: true);
 
-                var infoCol = UIFactory.CreateVerticalGroup(row, "Info", false, false, true, true, 2);
-                UIFactory.SetLayoutElement(infoCol, flexibleWidth: 9999);
+                var infoCol = Stacks.Vertical(row, "Info", spacing: 2);
 
-                var nameLabel = UIFactory.CreateLabel(infoCol, "Name",
+                var nameLabel = Labels.Create(infoCol, "Name",
                     $"{plan.DisplayName}  ({plan.OursCount} here / {plan.TheirsCount} downloaded)",
-                    TextAnchor.MiddleLeft);
-                nameLabel.fontStyle = FontStyle.Bold;
-                nameLabel.fontSize = UIStyles.FontSizeNormal;
-                nameLabel.color = UIStyles.TextPrimary;
-                UIFactory.SetLayoutElement(nameLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
-                RegisterExcluded(nameLabel);
+                    TextRole.Body, policy: TextPolicy.Excluded, minHeight: UIStyles.RowHeightSmall);
+                nameLabel.Bold = true;
 
-                var descLabel = UIFactory.CreateLabel(infoCol, "Desc", plan.Description, TextAnchor.MiddleLeft);
-                descLabel.fontSize = UIStyles.FontSizeHint;
-                descLabel.color = UIStyles.TextMuted;
-                UIFactory.SetLayoutElement(descLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
-                RegisterExcluded(descLabel);
+                var descLabel = Labels.Create(infoCol, "Desc", plan.Description, TextRole.Hint,
+                                              policy: TextPolicy.Excluded);
+                descLabel.Italic = false;
             }
         }
 
@@ -206,7 +167,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             var chosen = new List<string>();
             foreach (var kvp in _toggles)
             {
-                if (kvp.Value != null && kvp.Value.isOn)
+                if (kvp.Value != null && kvp.Value.IsOn)
                 {
                     chosen.Add(kvp.Key);
                 }

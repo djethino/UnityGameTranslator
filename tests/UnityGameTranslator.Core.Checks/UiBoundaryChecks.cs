@@ -30,13 +30,10 @@ namespace UnityGameTranslator.Core.Checks
         /// <summary>Panels still written against UniverseLib. Remove one when it moves.</summary>
         private static readonly HashSet<string> PanelsStillOpen = new HashSet<string>(StringComparer.Ordinal)
         {
-            "BackupsPanel.cs",
             "InspectorPanel.cs",
-            "LoginPanel.cs",
             "MainPanel.cs",
             "MergePanel.cs",
             "OptionsPanel.cs",
-            "SettingsChoicePanel.cs",
             "StatusOverlay.cs",
             "TranslationParametersPanel.cs",
             "UploadPanel.cs",

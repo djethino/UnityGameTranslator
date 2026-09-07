@@ -63,8 +63,16 @@ namespace UnityGameTranslator.Core.UI.Components
         Small,
         /// <summary>A hint in italics, muted.</summary>
         Hint,
+        /// <summary>
+        /// A caption: hint-sized, upright, muted — a note beside a title, a line under a row.
+        /// ⚠ Sixteen labels of the mod are this and not <see cref="Hint"/>; without this role a
+        /// migration had to choose between an italic it never had and a size it never had.
+        /// </summary>
+        Caption,
         /// <summary>A status line the code writes, centred.</summary>
         Status,
+        /// <summary>A code to read off the screen and type elsewhere — large, bold, accent, centred.</summary>
+        Code,
     }
 
     /// <summary>

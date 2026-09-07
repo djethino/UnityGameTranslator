@@ -34,5 +34,28 @@ namespace UnityGameTranslator.Core.UI.Components
             if (onChanged != null) handle.OnChanged(onChanged);
             return handle;
         }
+
+        /// <summary>
+        /// A box with no words: the words are elsewhere on the row — a name and a description in
+        /// a column beside it, a list's line. It keeps the width of a control so the column next
+        /// to it starts at the same place on every row. <see cref="ToggleHandle.Text"/> is null.
+        /// </summary>
+        /// <param name="initial">On or off at creation. Set BEFORE the listener is attached, so creating it fires nothing.</param>
+        /// <param name="onChanged">Flipped by the person — never by <see cref="ToggleHandle.IsOn"/> from code.</param>
+        public static ToggleHandle Bare(Host parent, string name, bool initial = false, Action<bool> onChanged = null)
+        {
+            var row = UIFactory.CreateToggle(parent.Object, name, out Toggle toggle, out Text text);
+            UIFactory.SetLayoutElement(row, minWidth: UIStyles.ToggleControlWidth);
+
+            // The factory creates it ON; the value is put right before anybody listens.
+            toggle.isOn = initial;
+
+            // The factory makes an empty label anyway; excluded, so no pipeline ever writes into it.
+            TranslatorCore.RegisterExcluded(text);
+
+            var handle = new ToggleHandle(row, toggle, null);
+            if (onChanged != null) handle.OnChanged(onChanged);
+            return handle;
+        }
     }
 }

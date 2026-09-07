@@ -1,10 +1,7 @@
-﻿using System;
-using System.Collections.Generic;
+using System;
 using Newtonsoft.Json.Linq;
-using UnityEngine;
-using UnityEngine.UI;
 using UniverseLib.UI;
-using UniverseLib.UI.Models;
+using UnityGameTranslator.Core.UI.Components;
 
 namespace UnityGameTranslator.Core.UI.Panels
 {
@@ -21,17 +18,22 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         protected override int MinPanelHeight => 200;
 
-        private Text _instructionLabel;
-        private Text _codeLabel;
-        private Text _statusLabel;
-        private ButtonRef _startLoginBtn;
-        private ButtonRef _openWebsiteBtn;
-        private ButtonRef _copyCodeBtn;
-        private GameObject _codeRow;
+        private LabelHandle _instructions;
+        private LabelHandle _code;
+        private StatusLine _status;
+        private ButtonHandle _startLoginBtn;
+        private ButtonHandle _openWebsiteBtn;
+        private ButtonHandle _copyCodeBtn;
+        private Host _codeRow;
         private string _verificationUri;
         private SseClient _sseClient;
         private string _deviceCode;
         private string _userCode;
+
+        /// <summary>What the panel says before a code has been asked for — and again after a reset.</summary>
+        private const string StartInstructions =
+            "Click the button below to start the login process.\n" +
+            "You will receive a code to enter on the website.";
 
         public LoginPanel(UIBase owner) : base(owner)
         {
@@ -40,67 +42,56 @@ namespace UnityGameTranslator.Core.UI.Panels
         protected override void ConstructPanelContent()
         {
             // Use scrollable layout - content scrolls if needed, buttons stay fixed
-            CreateScrollablePanelLayout(out var scrollContent, out var buttonRow, PanelWidth - 40);
+            Layout(out var body, out var footer, PanelWidth - 40);
 
             // Adaptive card - sizes to content
-            var card = CreateAdaptiveCard(scrollContent, "LoginCard", PanelWidth - 40);
+            var card = Stacks.Card(body, "LoginCard", PanelWidth - 40);
 
-            var title = CreateTitle(card, "Title", "Connect Account");
-            RegisterUIText(title);
+            Labels.Create(card, "Title", "Connect Account", TextRole.Title);
 
-            UIStyles.CreateSpacer(card, 10);
+            Stacks.Spacer(card, 10);
 
-            // Instructions
-            _instructionLabel = UIFactory.CreateLabel(card, "Instructions",
-                "Click the button below to start the login process.\n" +
-                "You will receive a code to enter on the website.",
-                TextAnchor.MiddleCenter);
-            _instructionLabel.fontSize = UIStyles.FontSizeNormal;
-            _instructionLabel.color = UIStyles.TextSecondary;
-            UIFactory.SetLayoutElement(_instructionLabel.gameObject, minHeight: UIStyles.MultiLineSmall);
-            RegisterExcluded(_instructionLabel);
+            // Instructions — rewritten by the code as the flow advances, so Dynamic.
+            _instructions = Labels.Create(card, "Instructions", StartInstructions, TextRole.Description,
+                                          policy: TextPolicy.Dynamic, minHeight: UIStyles.MultiLineSmall);
 
-            UIStyles.CreateSpacer(card, 10);
+            Stacks.Spacer(card, 10);
 
             // Code display row (initially hidden) - Excluded: device code, not translatable
-            _codeRow = UIFactory.CreateHorizontalGroup(card, "CodeRow", false, false, true, true, 8,
-                new Vector4(0, 0, 0, 0), Color.clear, TextAnchor.MiddleCenter);
-            UIFactory.SetLayoutElement(_codeRow, minHeight: UIStyles.CodeDisplayHeight);
-            _codeRow.SetActive(false);
+            //
+            // ⚠ Trough surface and small padding, as wide as its content: that is what this row has
+            // always shown. It was asked for transparent with no padding, but the factory reads a
+            // clear colour and a zero padding as "nothing given" and paints its defaults — the
+            // viewport colour, five pixels each side. Stated here so the screen does not change;
+            // whether the band is wanted is a decision for another day (see the report).
+            _codeRow = Stacks.Horizontal(card, "CodeRow", spacing: 8, pad: Pad.All(UIStyles.SmallSpacing),
+                                         placement: Placement.MiddleCenter, surface: Surface.Trough,
+                                         fill: Fill.Content, minHeight: UIStyles.CodeDisplayHeight);
+            _codeRow.Visible = false;
 
-            _codeLabel = UIFactory.CreateLabel(_codeRow, "CodeLabel", "", TextAnchor.MiddleCenter);
-            _codeLabel.fontSize = UIStyles.CodeDisplayFontSize;
-            _codeLabel.fontStyle = FontStyle.Bold;
-            _codeLabel.color = UIStyles.TextAccent;
-            UIFactory.SetLayoutElement(_codeLabel.gameObject, flexibleWidth: 1);
-            RegisterExcluded(_codeLabel);
+            _code = Labels.Create(_codeRow, "CodeLabel", "", TextRole.Code, policy: TextPolicy.Excluded);
 
             // Copy button
-            _copyCodeBtn = CreateSecondaryButton(_codeRow, "CopyCodeBtn", "Copy", 60);
-            _copyCodeBtn.OnClick += CopyCodeToClipboard;
-            RegisterExcluded(_copyCodeBtn.ButtonText);
+            _copyCodeBtn = Buttons.Secondary(_codeRow, "CopyCodeBtn", "Copy", minWidth: 60, policy: TextPolicy.Dynamic);
+            _copyCodeBtn.Clicked += CopyCodeToClipboard;
 
             // Open website button (initially hidden)
-            _openWebsiteBtn = CreatePrimaryButton(card, "OpenWebsiteBtn", "Open Website", 200);
-            UIFactory.SetLayoutElement(_openWebsiteBtn.Component.gameObject, flexibleWidth: 9999);
-            _openWebsiteBtn.OnClick += OpenVerificationUrl;
-            _openWebsiteBtn.Component.gameObject.SetActive(false);
-            RegisterUIText(_openWebsiteBtn.ButtonText);
+            _openWebsiteBtn = Buttons.Create(card, "OpenWebsiteBtn", "Open Website", ButtonTone.Primary,
+                                             minWidth: 200, fill: Fill.Stretch);
+            _openWebsiteBtn.Clicked += OpenVerificationUrl;
+            _openWebsiteBtn.Visible = false;
 
             // Status label
-            _statusLabel = CreateStatusLabel(card, "Status");
-            RegisterExcluded(_statusLabel);
+            _status = StatusLine.Create(card, "Status");
 
             // Start login button
-            _startLoginBtn = CreatePrimaryButton(card, "StartLoginBtn", "Start Login", 200);
-            UIFactory.SetLayoutElement(_startLoginBtn.Component.gameObject, flexibleWidth: 9999);
-            _startLoginBtn.OnClick += StartLogin;
-            RegisterUIText(_startLoginBtn.ButtonText);
+            _startLoginBtn = Buttons.Create(card, "StartLoginBtn", "Start Login", ButtonTone.Primary,
+                                            minWidth: 200, fill: Fill.Stretch);
+            _startLoginBtn.Clicked += StartLogin;
 
             // Cancel button - in fixed footer (outside scroll)
-            var cancelBtn = CreateSecondaryButton(buttonRow, "CancelBtn", "Cancel");
-            cancelBtn.OnClick += CancelLogin;
-            RegisterUIText(cancelBtn.ButtonText);
+            var cancelBtn = Buttons.Secondary(footer, "CancelBtn", "Cancel");
+            cancelBtn.Clicked += CancelLogin;
         }
 
         public override void SetActive(bool active)
@@ -119,14 +110,12 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             if (!TranslatorCore.Config.online_mode)
             {
-                SetDynamicText(_statusLabel, "Offline mode - enable Online Mode in Mod Options first");
-                _statusLabel.color = UIStyles.StatusError;
+                _status.Say("Offline mode - enable Online Mode in Mod Options first", Tone.Error);
                 return;
             }
 
-            _startLoginBtn.Component.interactable = false;
-            SetDynamicText(_statusLabel, "Requesting code...");
-            _statusLabel.color = UIStyles.StatusWarning;
+            _startLoginBtn.Enabled = false;
+            _status.Say("Requesting code...", Tone.Warning);
 
             try
             {
@@ -148,15 +137,14 @@ namespace UnityGameTranslator.Core.UI.Panels
                         _userCode = userCode;
                         _verificationUri = verificationUri;
 
-                        _codeLabel.text = _userCode;
-                        _codeRow.SetActive(true);
+                        _code.Show(_userCode);
+                        _codeRow.Visible = true;
 
-                        _openWebsiteBtn.Component.gameObject.SetActive(true);
-                        _startLoginBtn.Component.gameObject.SetActive(false);
+                        _openWebsiteBtn.Visible = true;
+                        _startLoginBtn.Visible = false;
 
-                        SetDynamicText(_instructionLabel, "Click the button below to open the website,\nthen enter this code:");
-                        SetDynamicText(_statusLabel, "Waiting for authorization...");
-                        _statusLabel.color = UIStyles.StatusInfo;
+                        _instructions.Say("Click the button below to open the website,\nthen enter this code:");
+                        _status.Say("Waiting for authorization...", Tone.Info);
 
                         // Recalculate size after content changed
                         RecalculateSize();
@@ -165,9 +153,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                     }
                     else
                     {
-                        _statusLabel.text = Tr("Error:") + $" {error}";
-                        _statusLabel.color = UIStyles.StatusError;
-                        _startLoginBtn.Component.interactable = true;
+                        _status.Show(Tr("Error:") + $" {error}", Tone.Error);
+                        _startLoginBtn.Enabled = true;
                     }
                 });
             }
@@ -176,9 +163,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 var errorMsg = e.Message;
                 TranslatorUIManager.RunOnMainThread(() =>
                 {
-                    _statusLabel.text = Tr("Error:") + $" {errorMsg}";
-                    _statusLabel.color = UIStyles.StatusError;
-                    _startLoginBtn.Component.interactable = true;
+                    _status.Show(Tr("Error:") + $" {errorMsg}", Tone.Error);
+                    _startLoginBtn.Enabled = true;
                 });
             }
         }
@@ -218,12 +204,10 @@ namespace UnityGameTranslator.Core.UI.Panels
                     switch (state)
                     {
                         case SseConnectionState.Reconnecting:
-                            SetDynamicText(_statusLabel, "Connection lost, reconnecting...");
-                            _statusLabel.color = UIStyles.StatusWarning;
+                            _status.Say("Connection lost, reconnecting...", Tone.Warning);
                             break;
                         case SseConnectionState.Connected:
-                            SetDynamicText(_statusLabel, "Waiting for authorization...");
-                            _statusLabel.color = UIStyles.StatusInfo;
+                            _status.Say("Waiting for authorization...", Tone.Info);
                             break;
                     }
                 });
@@ -234,8 +218,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 var errorMsg = error;
                 TranslatorUIManager.RunOnMainThread(() =>
                 {
-                    _statusLabel.text = Tr("Error:") + $" {errorMsg}";
-                    _statusLabel.color = UIStyles.StatusError;
+                    _status.Show(Tr("Error:") + $" {errorMsg}", Tone.Error);
                     _sseClient = null;
                     ResetUI();
                 });
@@ -266,8 +249,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // by the account row when it lands.
                 _ = ApiClient.RefreshAccessCodeAsync();
 
-                _statusLabel.text = Tr("Logged in as") + $" {userName}!";
-                _statusLabel.color = UIStyles.StatusSuccess;
+                _status.Show(Tr("Logged in as") + $" {userName}!", Tone.Success);
 
                 // Refresh panels that show login status
                 TranslatorUIManager.WizardPanel?.UpdateAccountStatus();
@@ -284,8 +266,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             catch (Exception e)
             {
                 TranslatorCore.LogError($"[Login] Error handling auth response: {e.Message}");
-                SetDynamicText(_statusLabel, "Login succeeded but error processing response");
-                _statusLabel.color = UIStyles.StatusError;
+                _status.Say("Login succeeded but error processing response", Tone.Error);
             }
         }
 
@@ -293,8 +274,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             _sseClient?.Disconnect();
             _sseClient = null;
-            SetDynamicText(_statusLabel, "Code expired. Please try again.");
-            _statusLabel.color = UIStyles.StatusError;
+            _status.Say("Code expired. Please try again.", Tone.Error);
             ResetUI();
         }
 
@@ -304,13 +284,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 var data = ApiClient.ParseJsonSafe(jsonData);
                 string error = data["error"]?.Value<string>() ?? "Unknown error";
-                _statusLabel.text = error;
+                _status.Show(error, Tone.Error);
             }
             catch
             {
-                SetDynamicText(_statusLabel, "Connection error");
+                _status.Say("Connection error", Tone.Error);
             }
-            _statusLabel.color = UIStyles.StatusError;
             _sseClient?.Disconnect();
             _sseClient = null;
             ResetUI();
@@ -337,28 +316,27 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (!string.IsNullOrEmpty(_userCode))
             {
-                GUIUtility.systemCopyBuffer = _userCode;
-                SetDynamicText(_copyCodeBtn.ButtonText, "Copied!");
+                Platform.CopyToClipboard(_userCode);
+                _copyCodeBtn.Label = "Copied!";
 
                 // Reset button text after 2 seconds
                 TranslatorUIManager.RunDelayed(2f, () =>
                 {
-                    if (_copyCodeBtn?.ButtonText != null)
-                        SetDynamicText(_copyCodeBtn.ButtonText, "Copy");
+                    if (_copyCodeBtn != null)
+                        _copyCodeBtn.Label = "Copy";
                 });
             }
         }
 
         private void ResetUI()
         {
-            _startLoginBtn.Component.interactable = true;
-            _startLoginBtn.Component.gameObject.SetActive(true);
-            _openWebsiteBtn.Component.gameObject.SetActive(false);
-            _codeRow.SetActive(false);
-            SetDynamicText(_copyCodeBtn.ButtonText, "Copy");
-            _instructionLabel.text = "Click the button below to start the login process.\n" +
-                                      "You will receive a code to enter on the website.";
-            _statusLabel.text = "";
+            _startLoginBtn.Enabled = true;
+            _startLoginBtn.Visible = true;
+            _openWebsiteBtn.Visible = false;
+            _codeRow.Visible = false;
+            _copyCodeBtn.Label = "Copy";
+            _instructions.Show(StartInstructions);
+            _status.Clear();
             _verificationUri = null;
 
             // Recalculate size after content changed

@@ -126,8 +126,16 @@ namespace UnityGameTranslator.Core.UI.Components
         /// <param name="width">Width of the dropdown button</param>
         /// <returns>The root GameObject of the dropdown</returns>
         /// <summary>Build the dropdown in a host, and get it back as one — to describe or place it.</summary>
-        public Host CreateUI(Host parent, Action<string> onValueChanged = null, int width = 200)
-            => new Host(CreateUI(parent.Object, onValueChanged, width));
+        /// <param name="stretch">
+        /// Fill the row's width and raise the height to an ordinary field's, for a dropdown
+        /// standing alone on its own line rather than sized to its own text.
+        /// </param>
+        public Host CreateUI(Host parent, Action<string> onValueChanged = null, int width = 200, bool stretch = false)
+        {
+            var obj = CreateUI(parent.Object, onValueChanged, width);
+            if (stretch) UIFactory.SetLayoutElement(obj, flexibleWidth: 9999, minHeight: UIStyles.InputHeight);
+            return new Host(obj);
+        }
 
         /// <summary>The dropdown, as a panel holds it.</summary>
         public Host Handle => new Host(_rootObject);

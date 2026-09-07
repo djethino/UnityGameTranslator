@@ -1,9 +1,7 @@
-using UnityEngine;
+using System;
 using UnityGameTranslator.Common;
-using UnityEngine.UI;
-using UniverseLib;
 using UniverseLib.UI;
-using UniverseLib.UI.Models;
+using UnityGameTranslator.Core.UI.Components;
 
 namespace UnityGameTranslator.Core.UI.Panels
 {
@@ -23,10 +21,6 @@ namespace UnityGameTranslator.Core.UI.Panels
         public override int PanelWidth => 350;
         public override int PanelHeight => 180;
 
-        // Override anchors - actual position set dynamically via ApplyPositionFromConfig()
-        public override Vector2 DefaultAnchorMin => new(1f, 1f);
-        public override Vector2 DefaultAnchorMax => new(1f, 1f);
-
         // We don't want drag/resize for this overlay
         public override bool CanDragAndResize => false;
 
@@ -42,50 +36,38 @@ namespace UnityGameTranslator.Core.UI.Panels
         protected override bool UsesCenterAnchors => false;
 
         // UI elements - Mod update notification
-        private GameObject _modUpdateBox;
-        private Text _modUpdateLabel;
-        private Text _modManagerHint;
-        private ButtonRef _modUpdateBtn;
-        private ButtonRef _modManagerBtn;
-        private ButtonRef _modIgnoreBtn;
+        private Host _modUpdateBox;
+        private LabelHandle _modUpdateLabel;
+        private LabelHandle _modManagerHint;
+        private ButtonHandle _modUpdateBtn;
+        private ButtonHandle _modManagerBtn;
 
         // UI elements - Translation sync notification
-        private GameObject _syncBox;
-        private Text _syncLabel;
-        private Text _syncHintLabel;
+        private Host _syncBox;
+        private LabelHandle _syncLabel;
+        private LabelHandle _syncHintLabel;
+        private ButtonHandle _syncBranchBtn;    // Branch option (contribute, green)
+        private ButtonHandle _syncForkBtn;      // Fork option (independent, red)
+        private ButtonHandle _syncActionBtn;    // Generic action (Download/Update/Merge)
 
         // UI elements - Website notifications relay
-        private GameObject _webNotifBox;
-        private Text _webNotifLabel;
-        private ButtonRef _webNotifViewBtn;
-        private ButtonRef _webNotifDismissBtn;
-        private ButtonRef _syncBranchBtn;    // Branch option (contribute, green)
-        private ButtonRef _syncForkBtn;      // Fork option (independent, red)
-        private ButtonRef _syncActionBtn;    // Generic action (Download/Update/Merge)
-        private ButtonRef _syncSettingsBtn;
-        private ButtonRef _syncIgnoreBtn;
+        private Callout _webNotif;
 
         // UI elements - AI queue status
-        private GameObject _aiBox;
-        private Text _aiStatusLabel;
-        private Text _aiQueueLabel;
+        private Host _aiBox;
+        private LabelHandle _aiStatusLabel;
+        private LabelHandle _aiQueueLabel;
 
         // UI elements - SSE connection indicator
-        private GameObject _connectionBox;
-        private Text _connectionLabel;
+        private Host _connectionBox;
+        private LabelHandle _connectionLabel;
 
         // UI elements - Hotkey feedback toast (short-lived visual notification)
         // When the toast is active, the other boxes (mod update, sync, AI queue, connection)
         // are hidden to avoid confusion: the overlay becomes a single-purpose hotkey feedback.
-        private GameObject _toastBox;
-        private Text _toastLabel;
+        private Toasts _toast;
         private float _toastHideTime = 0f;
         private const float TOAST_DURATION = 1.8f;
-
-        // Toast tone colors (distinct from mod update / sync / AI notifications) — from the palette.
-        private static readonly Color ToastOnBg     = UIStyles.ToastSuccessBg;
-        private static readonly Color ToastOffBg    = UIStyles.ToastErrorBg;
-        private static readonly Color ToastInfoBg   = UIStyles.ToastInfoBg;
 
         // State - whether main panels are open (affects which boxes are shown)
         private bool _panelsOpenMode = false;
@@ -182,11 +164,6 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Translation sync notification
             var pending = PendingSyncWork.Current();
-            var serverState = pending.ServerState;
-            bool hasLocalChanges = pending.HasLocalChanges;
-            bool hasMetadataChanges = pending.HasMetadataChanges;
-            bool hasServerUpdate = pending.HasServerUpdate;
-            bool needsMerge = pending.NeedsMerge;
             bool showSyncNotification = pending.Any && !TranslatorUIManager.NotificationDismissed;
 
             return showModUpdate || showSyncNotification;
@@ -194,7 +171,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         public override void SetDefaultSizeAndPosition()
         {
-            Rect.sizeDelta = new Vector2(PanelWidth, PanelHeight);
+            Overlays.SetSize(Window, PanelWidth, PanelHeight);
             ApplyPositionFromConfig();
             EnsureValidPosition();
         }
@@ -205,86 +182,39 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         public void ApplyPositionFromConfig()
         {
-            if (Rect == null) return;
-
             string position = TranslatorCore.Config?.sync?.notification_position ?? "top-right";
-            float anchorX, anchorY, pivotX, pivotY, posX, posY;
-
-            switch (position)
-            {
-                case "top-left":
-                    anchorX = 0f; anchorY = 1f;
-                    pivotX = 0f; pivotY = 1f;
-                    posX = 10f; posY = -10f;
-                    break;
-                case "bottom-right":
-                    anchorX = 1f; anchorY = 0f;
-                    pivotX = 1f; pivotY = 0f;
-                    posX = -10f; posY = 10f;
-                    break;
-                case "bottom-left":
-                    anchorX = 0f; anchorY = 0f;
-                    pivotX = 0f; pivotY = 0f;
-                    posX = 10f; posY = 10f;
-                    break;
-                default: // "top-right"
-                    anchorX = 1f; anchorY = 1f;
-                    pivotX = 1f; pivotY = 1f;
-                    posX = -10f; posY = -10f;
-                    break;
-            }
-
-            Rect.anchorMin = new Vector2(anchorX, anchorY);
-            Rect.anchorMax = new Vector2(anchorX, anchorY);
-            Rect.pivot = new Vector2(pivotX, pivotY);
-            Rect.anchoredPosition = new Vector2(posX, posY);
+            Overlays.PinToCorner(Window, position);
         }
 
         protected override void ConstructPanelContent()
         {
             // Remove default title bar for this overlay
-            TitleBar?.gameObject.SetActive(false);
+            TitleBarHost.Visible = false;
 
-            UIFactory.SetLayoutGroup<VerticalLayoutGroup>(ContentRoot, false, false, true, true, 5, 5, 5, 5, 5);
+            var stack = Stacks.Vertical(Content, "OverlayStack", spacing: 5, pad: Pad.All(5));
 
             // Mod Update Notification Box
-            CreateModUpdateBox();
+            CreateModUpdateBox(stack);
 
             // Translation Sync Notification Box
-            CreateSyncBox();
+            CreateSyncBox(stack);
 
             // AI Queue Status Box
-            CreateAIBox();
+            CreateAIBox(stack);
 
             // SSE Connection Indicator
-            CreateConnectionBox();
+            CreateConnectionBox(stack);
 
             // Hotkey feedback toast
-            CreateToastBox();
+            CreateToastBox(stack);
 
             // Start hidden and with update
             RefreshOverlay();
         }
 
-        private void CreateToastBox()
+        private void CreateToastBox(Host stack)
         {
-            _toastBox = UIFactory.CreateVerticalGroup(ContentRoot, "ToastBox", false, false, true, true, 0);
-            UIFactory.SetLayoutElement(_toastBox, minHeight: UIStyles.RowHeightLarge, flexibleWidth: 9999);
-            SetBackgroundColor(_toastBox, ToastInfoBg);
-
-            var padding = _toastBox.GetComponent<VerticalLayoutGroup>();
-            if (padding != null)
-            {
-                padding.padding = Compat.MakeRectOffset(12, 12, 8, 8);
-            }
-
-            _toastLabel = UIFactory.CreateLabel(_toastBox, "ToastLabel", "", TextAnchor.MiddleCenter);
-            _toastLabel.fontStyle = FontStyle.Bold;
-            _toastLabel.fontSize = UIStyles.FontSizeSectionTitle;
-            _toastLabel.color = Color.white;
-            UIFactory.SetLayoutElement(_toastLabel.gameObject, minHeight: UIStyles.RowHeightMedium);
-
-            _toastBox.SetActive(false);
+            _toast = Toasts.Create(stack, "ToastBox");
         }
 
         public enum ToastTone { Info, On, Off }
@@ -320,7 +250,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         public void ShowToast(string message, ToastTone tone = ToastTone.Info)
         {
-            if (_toastBox == null || _toastLabel == null) return;
+            if (_toast == null) return;
 
             // Force overlay visibility regardless of the user's "notifications_enabled" preference:
             // an explicit hotkey action deserves immediate visual feedback.
@@ -332,27 +262,21 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Hide all other boxes so the toast is the only thing visible.
             HideNonToastBoxes();
 
-            // Color by tone for fast visual read (green = ON, red = OFF, purple = neutral info).
-            Color bg;
-            switch (tone)
-            {
-                case ToastTone.On:  bg = ToastOnBg; break;
-                case ToastTone.Off: bg = ToastOffBg; break;
-                default:             bg = ToastInfoBg; break;
-            }
-            SetBackgroundColor(_toastBox, bg);
+            // Colour by tone for fast visual read (green = ON, red = OFF, purple = neutral info).
+            Tone paletteTone = tone == ToastTone.On ? Tone.Success
+                              : tone == ToastTone.Off ? Tone.Error
+                              : Tone.Info;
+            _toast.Show(message, paletteTone);
 
-            _toastLabel.text = message;
-            _toastBox.SetActive(true);
-            _toastHideTime = Time.realtimeSinceStartup + TOAST_DURATION;
+            _toastHideTime = Clock.Now + TOAST_DURATION;
         }
 
         private void HideNonToastBoxes()
         {
-            if (_modUpdateBox != null) _modUpdateBox.SetActive(false);
-            if (_syncBox != null) _syncBox.SetActive(false);
-            if (_aiBox != null) _aiBox.SetActive(false);
-            if (_connectionBox != null) _connectionBox.SetActive(false);
+            if (_modUpdateBox != null) _modUpdateBox.Visible = false;
+            if (_syncBox != null) _syncBox.Visible = false;
+            if (_aiBox != null) _aiBox.Visible = false;
+            if (_connectionBox != null) _connectionBox.Visible = false;
         }
 
         /// <summary>
@@ -360,7 +284,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// The owning UIManager should skip RefreshOverlay() during this time
         /// so the toast stays visible without being overwritten by the regular boxes.
         /// </summary>
-        public bool IsToastActive => _toastBox != null && _toastBox.activeSelf;
+        public bool IsToastActive => _toast != null && _toast.Visible;
 
         /// <summary>
         /// Called from the UI update loop to expire the toast after its duration.
@@ -368,165 +292,112 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         public void TickToast()
         {
-            if (_toastBox == null || !_toastBox.activeSelf) return;
-            if (Time.realtimeSinceStartup >= _toastHideTime)
+            if (_toast == null || !_toast.Visible) return;
+            if (Clock.Now >= _toastHideTime)
             {
-                _toastBox.SetActive(false);
+                _toast.Visible = false;
                 // Trigger a refresh so the normal boxes come back immediately.
                 RefreshOverlay();
             }
         }
 
-        private void CreateModUpdateBox()
+        private void CreateModUpdateBox(Host stack)
         {
-            _modUpdateBox = UIFactory.CreateVerticalGroup(ContentRoot, "ModUpdateBox", false, false, true, true, 5);
-            UIFactory.SetLayoutElement(_modUpdateBox, minHeight: UIStyles.NotificationBoxHeight, flexibleWidth: 9999);
-            SetBackgroundColor(_modUpdateBox, UIStyles.NotificationSuccess);
+            _modUpdateBox = Callout.Box(stack, "ModUpdateBox", CalloutTone.Success,
+                                        pad: new Pad(8, 8, 5, 5));
 
-            var padding = _modUpdateBox.GetComponent<VerticalLayoutGroup>();
-            if (padding != null)
-            {
-                padding.padding = Compat.MakeRectOffset(8, 8, 5, 5);
-            }
-
-            _modUpdateLabel = UIFactory.CreateLabel(_modUpdateBox, "ModUpdateLabel", "Mod update available: v?.?.?", TextAnchor.MiddleLeft);
-            _modUpdateLabel.fontStyle = FontStyle.Bold;
-            UIFactory.SetLayoutElement(_modUpdateLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
-            RegisterExcluded(_modUpdateLabel);
+            _modUpdateLabel = Labels.Create(_modUpdateBox, "ModUpdateLabel",
+                                            "Mod update available: v?.?.?", TextRole.Body,
+                                            policy: TextPolicy.Excluded);
+            _modUpdateLabel.Bold = true;
 
             // ⚠ Only shown when the Manager has to be fetched. "Open Manager" is a verb that
             // explains itself; "Get Manager" is an offer, and an offer with no reason beside it is
             // one nobody takes.
-            _modManagerHint = UIFactory.CreateLabel(_modUpdateBox, "ModManagerHint",
-                "Or let the Manager keep it up to date", TextAnchor.MiddleLeft);
-            _modManagerHint.fontSize = UIStyles.FontSizeSmall;
-            UIFactory.SetLayoutElement(_modManagerHint.gameObject, minHeight: UIStyles.RowHeightSmall);
-            RegisterUIText(_modManagerHint);
+            _modManagerHint = Labels.Create(_modUpdateBox, "ModManagerHint",
+                "Or let the Manager keep it up to date", TextRole.Small);
 
-            var btnRow = UIStyles.CreateFormRow(_modUpdateBox, "ModBtnRow", UIStyles.RowHeightMedium, 5);
+            var btnRow = Stacks.Row(_modUpdateBox, "ModBtnRow", spacing: 5);
 
-            _modUpdateBtn = UIFactory.CreateButton(btnRow, "ModDownloadBtn", "Download");
-            UIFactory.SetLayoutElement(_modUpdateBtn.Component.gameObject, minWidth: 80, minHeight: UIStyles.RowHeightNormal);
-            UIStyles.SetBackground(_modUpdateBtn.Component.gameObject, UIStyles.ButtonPrimary);
-            _modUpdateBtn.OnClick += OnModUpdateClicked;
-            RegisterExcluded(_modUpdateBtn.ButtonText);
+            _modUpdateBtn = Buttons.Compact(btnRow, "ModDownloadBtn", "Download", ButtonTone.Primary,
+                                            minWidth: 80, policy: TextPolicy.Excluded);
+            _modUpdateBtn.Clicked += OnModUpdateClicked;
 
             // The other way to update, beside the manual one rather than in place of it. Secondary
             // on purpose: whoever came here to grab a zip should still find the zip first.
-            _modManagerBtn = UIFactory.CreateButton(btnRow, "ModManagerBtn", "Get Manager");
-            UIFactory.SetLayoutElement(_modManagerBtn.Component.gameObject, minWidth: 100, minHeight: UIStyles.RowHeightNormal);
-            UIStyles.SetBackground(_modManagerBtn.Component.gameObject, UIStyles.ButtonSecondary);
-            _modManagerBtn.OnClick += OnModManagerClicked;
-            RegisterExcluded(_modManagerBtn.ButtonText);
+            _modManagerBtn = Buttons.Compact(btnRow, "ModManagerBtn", "Get Manager", ButtonTone.Secondary,
+                                             minWidth: 100, policy: TextPolicy.Excluded);
+            _modManagerBtn.Clicked += OnModManagerClicked;
 
-            _modIgnoreBtn = UIFactory.CreateButton(btnRow, "ModIgnoreBtn", "Ignore");
-            UIFactory.SetLayoutElement(_modIgnoreBtn.Component.gameObject, minWidth: 60, minHeight: UIStyles.RowHeightNormal);
-            UIStyles.SetBackground(_modIgnoreBtn.Component.gameObject, UIStyles.ButtonSecondary);
-            _modIgnoreBtn.OnClick += OnModIgnoreClicked;
-            RegisterUIText(_modIgnoreBtn.ButtonText);
+            var modIgnoreBtn = Buttons.Compact(btnRow, "ModIgnoreBtn", "Ignore", ButtonTone.Secondary,
+                                               minWidth: 60);
+            modIgnoreBtn.Clicked += OnModIgnoreClicked;
 
-            _modUpdateBox.SetActive(false);
+            _modUpdateBox.Visible = false;
         }
 
-        private void CreateSyncBox()
+        private void CreateSyncBox(Host stack)
         {
-            _syncBox = UIFactory.CreateVerticalGroup(ContentRoot, "SyncBox", false, false, true, true, 5);
-            UIFactory.SetLayoutElement(_syncBox, minHeight: UIStyles.NotificationBoxHeight, flexibleWidth: 9999);
-            SetBackgroundColor(_syncBox, UIStyles.NotificationWarning);
+            _syncBox = Callout.Box(stack, "SyncBox", CalloutTone.Warning, pad: new Pad(8, 8, 5, 5));
 
-            var padding = _syncBox.GetComponent<VerticalLayoutGroup>();
-            if (padding != null)
-            {
-                padding.padding = Compat.MakeRectOffset(8, 8, 5, 5);
-            }
+            _syncLabel = Labels.Create(_syncBox, "SyncLabel", "Sync status", TextRole.Body,
+                                       policy: TextPolicy.Excluded);
+            _syncLabel.Bold = true;
 
-            _syncLabel = UIFactory.CreateLabel(_syncBox, "SyncLabel", "Sync status", TextAnchor.MiddleLeft);
-            _syncLabel.fontStyle = FontStyle.Bold;
-            UIFactory.SetLayoutElement(_syncLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
-            RegisterExcluded(_syncLabel);
-
-            var syncBtnRow = UIStyles.CreateFormRow(_syncBox, "SyncBtnRow", UIStyles.RowHeightMedium, 3);
+            var syncBtnRow = Stacks.Row(_syncBox, "SyncBtnRow", spacing: 3);
 
             // Branch button (green) - contribute to main, shown for non-owners with local changes
-            _syncBranchBtn = UIFactory.CreateButton(syncBtnRow, "SyncBranchBtn", "Branch");
-            UIFactory.SetLayoutElement(_syncBranchBtn.Component.gameObject, minWidth: 65, minHeight: UIStyles.RowHeightNormal);
-            UIStyles.SetBackground(_syncBranchBtn.Component.gameObject, UIStyles.ButtonSuccess);
-            _syncBranchBtn.OnClick += OnSyncBranchClicked;
-            RegisterUIText(_syncBranchBtn.ButtonText);
+            _syncBranchBtn = Buttons.Compact(syncBtnRow, "SyncBranchBtn", "Branch", ButtonTone.Success,
+                                             minWidth: 65);
+            _syncBranchBtn.Clicked += OnSyncBranchClicked;
 
             // Fork button (red) - create independent copy, shown for non-owners with local changes
-            _syncForkBtn = UIFactory.CreateButton(syncBtnRow, "SyncForkBtn", "Fork");
-            UIFactory.SetLayoutElement(_syncForkBtn.Component.gameObject, minWidth: 55, minHeight: UIStyles.RowHeightNormal);
-            UIStyles.SetBackground(_syncForkBtn.Component.gameObject, UIStyles.ButtonDanger);
-            _syncForkBtn.OnClick += OnSyncForkClicked;
-            RegisterUIText(_syncForkBtn.ButtonText);
+            _syncForkBtn = Buttons.Compact(syncBtnRow, "SyncForkBtn", "Fork", ButtonTone.Danger,
+                                           minWidth: 55);
+            _syncForkBtn.Clicked += OnSyncForkClicked;
 
             // Generic action button (Download/Update/Merge) - for other scenarios
-            _syncActionBtn = UIFactory.CreateButton(syncBtnRow, "SyncActionBtn", "Action");
-            UIFactory.SetLayoutElement(_syncActionBtn.Component.gameObject, minWidth: 75, minHeight: UIStyles.RowHeightNormal);
-            UIStyles.SetBackground(_syncActionBtn.Component.gameObject, UIStyles.ButtonPrimary);
-            _syncActionBtn.OnClick += OnSyncActionClicked;
-            RegisterExcluded(_syncActionBtn.ButtonText);
+            _syncActionBtn = Buttons.Compact(syncBtnRow, "SyncActionBtn", "Action", ButtonTone.Primary,
+                                             minWidth: 75, policy: TextPolicy.Excluded);
+            _syncActionBtn.Clicked += OnSyncActionClicked;
 
             // Settings button
-            _syncSettingsBtn = UIFactory.CreateButton(syncBtnRow, "SyncSettingsBtn", "Settings");
-            UIFactory.SetLayoutElement(_syncSettingsBtn.Component.gameObject, minWidth: 65, minHeight: UIStyles.RowHeightNormal);
-            UIStyles.SetBackground(_syncSettingsBtn.Component.gameObject, UIStyles.ButtonSecondary);
-            _syncSettingsBtn.OnClick += OnSyncSettingsClicked;
-            RegisterUIText(_syncSettingsBtn.ButtonText);
+            var syncSettingsBtn = Buttons.Compact(syncBtnRow, "SyncSettingsBtn", "Settings",
+                                                  ButtonTone.Secondary, minWidth: 65);
+            syncSettingsBtn.Clicked += OnSyncSettingsClicked;
 
             // Ignore button (last)
-            _syncIgnoreBtn = UIFactory.CreateButton(syncBtnRow, "SyncIgnoreBtn", "Ignore");
-            UIFactory.SetLayoutElement(_syncIgnoreBtn.Component.gameObject, minWidth: 55, minHeight: UIStyles.RowHeightNormal);
-            UIStyles.SetBackground(_syncIgnoreBtn.Component.gameObject, UIStyles.ButtonSecondary);
-            _syncIgnoreBtn.OnClick += OnSyncIgnoreClicked;
-            RegisterUIText(_syncIgnoreBtn.ButtonText);
+            var syncIgnoreBtn = Buttons.Compact(syncBtnRow, "SyncIgnoreBtn", "Ignore",
+                                                ButtonTone.Secondary, minWidth: 55);
+            syncIgnoreBtn.Clicked += OnSyncIgnoreClicked;
 
             // Plain-words explanation of the Branch/Fork choice (only shown with those buttons)
-            _syncHintLabel = UIStyles.CreateHint(_syncBox, "SyncHintLabel", "");
-            RegisterExcluded(_syncHintLabel);
+            _syncHintLabel = Labels.Create(_syncBox, "SyncHintLabel", "", TextRole.Hint,
+                                           policy: TextPolicy.Excluded);
 
-            _syncBox.SetActive(false);
+            _syncBox.Visible = false;
 
-            CreateWebNotifBox();
+            CreateWebNotifBox(stack);
         }
 
         /// <summary>
         /// Website notifications relay: contributions to review, announcements.
         /// Discreet corner box with the first notification's summary.
         /// </summary>
-        private void CreateWebNotifBox()
+        private void CreateWebNotifBox(Host stack)
         {
-            _webNotifBox = UIFactory.CreateVerticalGroup(ContentRoot, "WebNotifBox", false, false, true, true, 5);
-            UIFactory.SetLayoutElement(_webNotifBox, minHeight: UIStyles.NotificationBoxHeight, flexibleWidth: 9999);
-            SetBackgroundColor(_webNotifBox, UIStyles.NotificationInfo);
+            _webNotif = Callout.Create(stack, "WebNotifBox", CalloutTone.Info, "",
+                                       policy: TextPolicy.Excluded);
 
-            var padding = _webNotifBox.GetComponent<VerticalLayoutGroup>();
-            if (padding != null)
-            {
-                padding.padding = Compat.MakeRectOffset(8, 8, 5, 5);
-            }
+            var viewBtn = Buttons.Compact(_webNotif.Actions, "WebNotifViewBtn", "View",
+                                          ButtonTone.Primary, minWidth: 65);
+            viewBtn.Clicked += OnWebNotifViewClicked;
 
-            _webNotifLabel = UIFactory.CreateLabel(_webNotifBox, "WebNotifLabel", "", TextAnchor.MiddleLeft);
-            _webNotifLabel.fontStyle = FontStyle.Bold;
-            UIFactory.SetLayoutElement(_webNotifLabel.gameObject, minHeight: UIStyles.RowHeightNormal);
-            RegisterExcluded(_webNotifLabel);
+            var dismissBtn = Buttons.Compact(_webNotif.Actions, "WebNotifDismissBtn", "Dismiss",
+                                             ButtonTone.Secondary, minWidth: 70);
+            dismissBtn.Clicked += OnWebNotifDismissClicked;
 
-            var notifBtnRow = UIStyles.CreateFormRow(_webNotifBox, "WebNotifBtnRow", UIStyles.RowHeightMedium, 3);
-
-            _webNotifViewBtn = UIFactory.CreateButton(notifBtnRow, "WebNotifViewBtn", "View");
-            UIFactory.SetLayoutElement(_webNotifViewBtn.Component.gameObject, minWidth: 65, minHeight: UIStyles.RowHeightNormal);
-            UIStyles.SetBackground(_webNotifViewBtn.Component.gameObject, UIStyles.ButtonPrimary);
-            _webNotifViewBtn.OnClick += OnWebNotifViewClicked;
-            RegisterUIText(_webNotifViewBtn.ButtonText);
-
-            _webNotifDismissBtn = UIFactory.CreateButton(notifBtnRow, "WebNotifDismissBtn", "Dismiss");
-            UIFactory.SetLayoutElement(_webNotifDismissBtn.Component.gameObject, minWidth: 70, minHeight: UIStyles.RowHeightNormal);
-            UIStyles.SetBackground(_webNotifDismissBtn.Component.gameObject, UIStyles.ButtonSecondary);
-            _webNotifDismissBtn.OnClick += OnWebNotifDismissClicked;
-            RegisterUIText(_webNotifDismissBtn.ButtonText);
-
-            _webNotifBox.SetActive(false);
+            _webNotif.Visible = false;
         }
 
         /// <summary>
@@ -534,13 +405,13 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         public void RefreshNotificationsBox()
         {
-            if (_webNotifBox == null) return;
+            if (_webNotif == null) return;
 
             var result = TranslatorUIManager.WebsiteNotifications;
             bool show = !TranslatorUIManager.WebsiteNotificationsDismissed &&
                         result != null && result.Unread > 0 && result.Items.Count > 0;
 
-            _webNotifBox.SetActive(show);
+            _webNotif.Visible = show;
             if (show)
             {
                 // Comes from the website, so it may carry line breaks — same one-line rule
@@ -549,7 +420,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 {
                     text += " " + Tr($"(+{result.Unread - 1} more)");
                 }
-                _webNotifLabel.text = text;
+                _webNotif.Title.Show(text);
             }
         }
 
@@ -563,46 +434,35 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void OnWebNotifDismissClicked()
         {
             TranslatorUIManager.MarkWebsiteNotificationsRead();
-            _webNotifBox?.SetActive(false);
+            if (_webNotif != null) _webNotif.Visible = false;
         }
 
-        private void CreateAIBox()
+        private void CreateAIBox(Host stack)
         {
-            _aiBox = UIFactory.CreateVerticalGroup(ContentRoot, "AIBox", false, false, true, true, 3);
-            UIFactory.SetLayoutElement(_aiBox, minHeight: UIStyles.MultiLineSmall, flexibleWidth: 9999);
-            SetBackgroundColor(_aiBox, UIStyles.NotificationInfo);
+            _aiBox = Callout.Box(stack, "AIBox", CalloutTone.Info, spacing: 3,
+                                 pad: new Pad(8, 8, 5, 5), minHeight: UIStyles.MultiLineSmall);
 
-            var padding = _aiBox.GetComponent<VerticalLayoutGroup>();
-            if (padding != null)
-            {
-                padding.padding = Compat.MakeRectOffset(8, 8, 5, 5);
-            }
+            _aiStatusLabel = Labels.Create(_aiBox, "AIStatusLabel", "Translating...", TextRole.Body,
+                                           policy: TextPolicy.Excluded, minHeight: UIStyles.RowHeightSmall);
 
-            _aiStatusLabel = UIFactory.CreateLabel(_aiBox, "AIStatusLabel", "Translating...", TextAnchor.MiddleLeft);
-            UIFactory.SetLayoutElement(_aiStatusLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
-
-            _aiQueueLabel = UIFactory.CreateLabel(_aiBox, "AIQueueLabel", "Queue: 0 pending", TextAnchor.MiddleLeft);
-            _aiQueueLabel.fontSize = UIStyles.FontSizeSmall;
-            UIFactory.SetLayoutElement(_aiQueueLabel.gameObject, minHeight: UIStyles.RowHeightSmall);
+            _aiQueueLabel = Labels.Create(_aiBox, "AIQueueLabel", "Queue: 0 pending", TextRole.Small,
+                                          policy: TextPolicy.Excluded);
             // Exclude dynamic status labels from translation (they contain truncated game text!)
-            RegisterExcluded(_aiStatusLabel);
-            RegisterExcluded(_aiQueueLabel);
+            // (their creation above already registers them Excluded)
 
-            _aiBox.SetActive(false);
+            _aiBox.Visible = false;
         }
 
-        private void CreateConnectionBox()
+        private void CreateConnectionBox(Host stack)
         {
-            _connectionBox = UIFactory.CreateHorizontalGroup(ContentRoot, "ConnectionBox", false, false, true, true, 5,
-                new Vector4(8, 8, 3, 3), Color.clear, TextAnchor.MiddleRight);
-            UIFactory.SetLayoutElement(_connectionBox, minHeight: UIStyles.RowHeightSmall, flexibleWidth: 9999);
+            _connectionBox = Stacks.Horizontal(stack, "ConnectionBox", spacing: 5,
+                                               pad: new Pad(8, 8, 3, 3), placement: Placement.MiddleRight,
+                                               minHeight: UIStyles.RowHeightSmall);
 
-            _connectionLabel = UIFactory.CreateLabel(_connectionBox, "ConnectionLabel", "", TextAnchor.MiddleRight);
-            _connectionLabel.fontSize = UIStyles.FontSizeSmall;
-            UIFactory.SetLayoutElement(_connectionLabel.gameObject, flexibleWidth: 9999);
-            RegisterExcluded(_connectionLabel);
+            _connectionLabel = Labels.Create(_connectionBox, "ConnectionLabel", "", TextRole.Small,
+                                             policy: TextPolicy.Excluded, align: Placement.MiddleRight);
 
-            _connectionBox.SetActive(false);
+            _connectionBox.Visible = false;
         }
 
         /// <summary>
@@ -616,11 +476,6 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // 2. Translation sync notification
             var pending = PendingSyncWork.Current();
-            var serverState = pending.ServerState;
-            bool hasLocalChanges = pending.HasLocalChanges;
-            bool hasMetadataChanges = pending.HasMetadataChanges;
-            bool hasServerUpdate = pending.HasServerUpdate;
-            bool needsMerge = pending.NeedsMerge;
             bool showSyncNotification = pending.Any && !TranslatorUIManager.NotificationDismissed;
 
             // 3. AI queue status
@@ -651,27 +506,27 @@ namespace UnityGameTranslator.Core.UI.Panels
                                  !TranslatorUIManager.ModUpdateDismissed;
             if (showModUpdate && _modUpdateBox != null)
             {
-                _modUpdateBox.SetActive(true);
+                _modUpdateBox.Visible = true;
                 var info = TranslatorUIManager.ModUpdateInfo;
                 string kind = info?.IsPrerelease == true ? " " + Tr("(beta)")
                     : info?.IsMajorUpdate == true ? " " + Tr("(major)") : "";
                 // Version number is data, appended after the translated part
-                _modUpdateLabel.text = Tr("Mod update available:") + $" v{info?.LatestVersion ?? "?"}{kind}";
+                _modUpdateLabel.Show(Tr("Mod update available:") + $" v{info?.LatestVersion ?? "?"}{kind}");
 
                 // Show appropriate button
                 bool hasDirectDownload = !string.IsNullOrEmpty(info?.DownloadUrl);
-                SetDynamicText(_modUpdateBtn.ButtonText, hasDirectDownload ? "Download" : "View Release");
+                _modUpdateBtn.Label = hasDirectDownload ? "Download" : "View Release";
 
                 // The verb follows what pressing it will actually do — open the Manager already on
                 // this machine, or go and fetch it. Naming the wrong one is how a button that
                 // launches a program reads as a download, and the other way round.
                 bool managerHere = ManagerLink.IsOnThisMachine;
-                SetDynamicText(_modManagerBtn.ButtonText, managerHere ? "Open Manager" : "Get Manager");
-                _modManagerHint?.gameObject.SetActive(!managerHere);
+                _modManagerBtn.Label = managerHere ? "Open Manager" : "Get Manager";
+                if (_modManagerHint != null) _modManagerHint.Visible = !managerHere;
             }
             else
             {
-                _modUpdateBox?.SetActive(false);
+                if (_modUpdateBox != null) _modUpdateBox.Visible = false;
             }
 
             // 2. Translation sync notification (hidden when panels open - shown in MainPanel instead)
@@ -687,7 +542,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             if (showSyncNotification && _syncBox != null)
             {
-                _syncBox.SetActive(true);
+                _syncBox.Visible = true;
 
                 // Determine message and button visibility based on context
                 string message;
@@ -798,20 +653,20 @@ namespace UnityGameTranslator.Core.UI.Panels
                     actionText = "Sync";
                 }
 
-                _syncLabel.text = message;
+                _syncLabel.Show(message);
 
                 // Show/hide buttons based on context
-                _syncBranchBtn?.Component.gameObject.SetActive(showBranchFork);
-                _syncForkBtn?.Component.gameObject.SetActive(showBranchFork);
-                _syncActionBtn?.Component.gameObject.SetActive(showAction);
+                if (_syncBranchBtn != null) _syncBranchBtn.Visible = showBranchFork;
+                if (_syncForkBtn != null) _syncForkBtn.Visible = showBranchFork;
+                if (_syncActionBtn != null) _syncActionBtn.Visible = showAction;
 
                 if (_syncHintLabel != null)
                 {
-                    _syncHintLabel.text = showBranchFork
+                    _syncHintLabel.Show(showBranchFork
                         ? Tr("Branch: send them for review to") + $" @{ownerName} • "
                           + Tr("Fork: start your own independent translation")
-                        : "";
-                    _syncHintLabel.gameObject.SetActive(showBranchFork);
+                        : "");
+                    _syncHintLabel.Visible = showBranchFork;
                 }
 
                 _syncActionIsUpstream = actionIsUpstream;
@@ -819,12 +674,12 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 if (showAction)
                 {
-                    SetDynamicText(_syncActionBtn.ButtonText, actionText);
+                    _syncActionBtn.Label = actionText;
                 }
             }
             else
             {
-                _syncBox?.SetActive(false);
+                if (_syncBox != null) _syncBox.Visible = false;
             }
 
             // 3. AI queue status
@@ -835,7 +690,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             if (showAI && _aiBox != null)
             {
-                _aiBox.SetActive(true);
+                _aiBox.Visible = true;
 
                 if (isTranslating)
                 {
@@ -847,34 +702,34 @@ namespace UnityGameTranslator.Core.UI.Panels
                     // mod translating itself ("Translating: Translating:").
                     if (TranslatorCore.CurrentTextIsOwnUI)
                     {
-                        SetDynamicText(_aiStatusLabel, "Translating the interface...");
+                        _aiStatusLabel.Say("Translating the interface...");
                     }
                     else
                     {
                         string text = Flatten(TranslatorCore.CurrentText);
                         if (text.Length > 25) text = text.Substring(0, 25) + "...";
-                        _aiStatusLabel.text = Tr("Translating:") + $" {text}";
+                        _aiStatusLabel.Show(Tr("Translating:") + $" {text}");
                     }
-                    _aiStatusLabel.gameObject.SetActive(true);
+                    _aiStatusLabel.Visible = true;
                 }
                 else
                 {
-                    _aiStatusLabel.gameObject.SetActive(false);
+                    _aiStatusLabel.Visible = false;
                 }
 
                 if (queueCount > 0)
                 {
-                    SetDynamicText(_aiQueueLabel, $"Queue: {queueCount} pending");
-                    _aiQueueLabel.gameObject.SetActive(true);
+                    _aiQueueLabel.Say($"Queue: {queueCount} pending");
+                    _aiQueueLabel.Visible = true;
                 }
                 else
                 {
-                    _aiQueueLabel.gameObject.SetActive(false);
+                    _aiQueueLabel.Visible = false;
                 }
             }
             else
             {
-                _aiBox?.SetActive(false);
+                if (_aiBox != null) _aiBox.Visible = false;
             }
 
             // 4. SSE Connection indicator (compact, shown when overlay is visible)
@@ -888,24 +743,24 @@ namespace UnityGameTranslator.Core.UI.Panels
                         showConnection = true;
                         if (_connectionLabel != null)
                         {
-                            SetDynamicText(_connectionLabel, "Connected");
-                            _connectionLabel.color = UIStyles.StatusSuccess;
+                            _connectionLabel.Say("Connected");
+                            _connectionLabel.Tone = Tone.Success;
                         }
                         break;
                     case SseConnectionState.Connecting:
                         showConnection = true;
                         if (_connectionLabel != null)
                         {
-                            SetDynamicText(_connectionLabel, "Connecting...");
-                            _connectionLabel.color = UIStyles.StatusWarning;
+                            _connectionLabel.Say("Connecting...");
+                            _connectionLabel.Tone = Tone.Warning;
                         }
                         break;
                     case SseConnectionState.Reconnecting:
                         showConnection = true;
                         if (_connectionLabel != null)
                         {
-                            SetDynamicText(_connectionLabel, "Reconnecting...");
-                            _connectionLabel.color = UIStyles.StatusWarning;
+                            _connectionLabel.Say("Reconnecting...");
+                            _connectionLabel.Tone = Tone.Warning;
                         }
                         break;
                     default:
@@ -913,7 +768,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                         break;
                 }
             }
-            _connectionBox?.SetActive(showConnection);
+            if (_connectionBox != null) _connectionBox.Visible = showConnection;
 
             // Adjust panel height based on visible content
             AdjustHeight();
@@ -926,16 +781,16 @@ namespace UnityGameTranslator.Core.UI.Panels
             // ⚠ The mod box grew a line: the hint under the headline, which is only there while the
             // Manager still has to be fetched. Counted for what is actually on screen — a fixed 80
             // would leave a gap under the box for everybody who already has it.
-            if (_modUpdateBox != null && _modUpdateBox.activeSelf)
+            if (_modUpdateBox != null && _modUpdateBox.Visible)
             {
                 height += 60;
-                if (_modManagerHint != null && _modManagerHint.gameObject.activeSelf) height += 18;
+                if (_modManagerHint != null && _modManagerHint.Visible) height += 18;
             }
-            if (_syncBox != null && _syncBox.activeSelf) height += 60;
-            if (_aiBox != null && _aiBox.activeSelf) height += 50;
-            if (_connectionBox != null && _connectionBox.activeSelf) height += 20;
+            if (_syncBox != null && _syncBox.Visible) height += 60;
+            if (_aiBox != null && _aiBox.Visible) height += 50;
+            if (_connectionBox != null && _connectionBox.Visible) height += 20;
 
-            Rect.sizeDelta = new Vector2(PanelWidth, Mathf.Max(50, height));
+            Overlays.SetSize(Window, PanelWidth, Math.Max(50, height));
         }
 
         #region Button Handlers

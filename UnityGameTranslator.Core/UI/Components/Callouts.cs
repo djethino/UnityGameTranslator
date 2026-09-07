@@ -72,5 +72,20 @@ namespace UnityGameTranslator.Core.UI.Components
                 default: return UIStyles.NotificationInfo;
             }
         }
+
+        /// <summary>
+        /// A tone-tinted box with none of <see cref="Create"/>'s fixed shape: no title, no forced
+        /// bold, no text-then-actions order. For a box whose own parts need individual roles or
+        /// policies, or whose actions come before its trailing line rather than after it — the
+        /// overlay's sync box builds its five buttons first and an italic hint last.
+        /// </summary>
+        public static Host Box(Host parent, string name, CalloutTone tone, int spacing = 5,
+                               Pad? pad = null, int minHeight = 0)
+        {
+            var body = Stacks.Vertical(parent, name, spacing: spacing, pad: pad ?? Pad.Of(8, 5),
+                                       minHeight: minHeight > 0 ? minHeight : UIStyles.NotificationBoxHeight);
+            UIStyles.SetBackground(body.Object, Fill(tone));
+            return body;
+        }
     }
 }

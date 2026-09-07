@@ -83,6 +83,18 @@ namespace UnityGameTranslator.Core.UI.Components
             return new Host(UIStyles.CreateListItem(parent.Object, name, minHeight ?? 0, selected));
         }
 
+        /// <summary>
+        /// Repaints a stack already on screen between the plain and chosen tint of a list item,
+        /// without rebuilding it — for a choice too rich for a button, where a box holds a
+        /// checkbox and its own description and exactly one of a few such boxes is highlighted.
+        /// The wizard's online/offline pair is the first of these.
+        /// </summary>
+        public static void Highlight(Host host, bool chosen)
+        {
+            if (host?.Object == null) return;
+            UIStyles.SetBackground(host.Object, chosen ? UIStyles.ItemBackgroundSelected : UIStyles.ItemBackground);
+        }
+
         /// <summary>A fixed gap.</summary>
         public static Host Spacer(Host parent, int height, string name = "Spacer")
         {

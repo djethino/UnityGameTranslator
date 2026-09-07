@@ -726,6 +726,16 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// <summary>The panel's own content root, as a host.</summary>
         protected Host Content => new Host(ContentRoot);
 
+        /// <summary>
+        /// The panel window itself, as a host — for the one thing a panel that positions its own
+        /// window (a corner overlay, never the ordinary centred kind) still has to reach: its own
+        /// RectTransform, through <see cref="Components.Overlays"/> rather than by naming it.
+        /// </summary>
+        protected Host Window => new Host(UIRoot);
+
+        /// <summary>The title bar, as a host — so a panel with none of its own (the overlay) can hide it.</summary>
+        protected Host TitleBarHost => new Host(TitleBar);
+
         /// <summary>The scrollable body and the fixed footer, as hosts.</summary>
         protected void Layout(out Host scrollContent, out Host buttonRow, int cardWidth = 420)
         {

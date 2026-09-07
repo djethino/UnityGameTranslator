@@ -27,7 +27,7 @@ namespace UnityGameTranslator.Core.UI.Components
         /// <summary>A described control: its rect, owning canvas (for camera resolution) and help.</summary>
         private class Entry
         {
-            public RectTransform Rect;
+            internal RectTransform Rect;
             public Canvas Canvas;
             public HelpZone Zone;
             public string Text;
@@ -67,7 +67,7 @@ namespace UnityGameTranslator.Core.UI.Components
         /// Create the help bar inside <paramref name="parent"/>.
         /// Use SetSiblingIndex to pin it above a footer.
         /// </summary>
-        public void CreateUI(GameObject parent, string defaultText = "")
+        internal void CreateUI(GameObject parent, string defaultText = "")
         {
             _defaultText = defaultText ?? "";
 
@@ -95,7 +95,7 @@ namespace UnityGameTranslator.Core.UI.Components
         }
 
         /// <summary>The root GameObject of the bar (for sibling reordering / visibility).</summary>
-        public GameObject Root => _root;
+        internal GameObject Root => _root;
 
         /// <summary>The bar, as a panel holds it.</summary>
         public Host Bar => new Host(_root);
@@ -118,7 +118,7 @@ namespace UnityGameTranslator.Core.UI.Components
         /// True when the text was built from pieces that are already translated — see
         /// <see cref="Entry.Composed"/>. Leave false for anything written as a plain sentence here.
         /// </param>
-        public void Describe(GameObject control, string helpText, bool composed = false)
+        internal void Describe(GameObject control, string helpText, bool composed = false)
         {
             if (control == null || string.IsNullOrEmpty(helpText)) return;
 

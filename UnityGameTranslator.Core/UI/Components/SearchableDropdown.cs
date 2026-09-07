@@ -76,7 +76,7 @@ namespace UnityGameTranslator.Core.UI.Components
         public event Action<string> OnSelectionChanged;
 
         /// <summary>The closed field's container, once <see cref="CreateUI"/> has run — what a mark or a help description attaches to.</summary>
-        public GameObject Root => _rootObject;
+        internal GameObject Root => _rootObject;
 
         /// <summary>
         /// Optional: the language a row stands for, so its flag is drawn beside the name.
@@ -118,19 +118,11 @@ namespace UnityGameTranslator.Core.UI.Components
             _showSearch = showSearch;
         }
 
-        /// <summary>
-        /// Create the dropdown UI in the given parent.
-        /// </summary>
-        /// <param name="parent">Parent GameObject</param>
-        /// <param name="onValueChanged">Callback when selection changes</param>
-        /// <param name="width">Width of the dropdown button</param>
-        /// <returns>The root GameObject of the dropdown</returns>
         /// <summary>Build the dropdown in a host, and get it back as one — to describe or place it.</summary>
         /// <param name="stretch">
         /// Fill the row's width and raise the height to an ordinary field's, for a dropdown
         /// standing alone on its own line rather than sized to its own text.
         /// </param>
-        /// <param name="stretch">Fill the row, at a field's height.</param>
         /// <param name="minHeight">A fixed-width dropdown that still sits at a field's height —
         /// beside a caption on a form row, where its neighbours are fields. Null keeps the
         /// dropdown's own 25 px; <paramref name="stretch"/> already implies a field's height.</param>
@@ -147,7 +139,15 @@ namespace UnityGameTranslator.Core.UI.Components
         /// <summary>The dropdown, as a panel holds it.</summary>
         public Host Handle => new Host(_rootObject);
 
-        public GameObject CreateUI(GameObject parent, Action<string> onValueChanged = null, int width = 200)
+        /// <summary>
+        /// Create the dropdown UI in the given parent — the rendering half, reached by the
+        /// components that build on a dropdown; a panel goes through the Host overload.
+        /// </summary>
+        /// <param name="parent">Parent GameObject</param>
+        /// <param name="onValueChanged">Callback when selection changes</param>
+        /// <param name="width">Width of the dropdown button</param>
+        /// <returns>The root GameObject of the dropdown</returns>
+        internal GameObject CreateUI(GameObject parent, Action<string> onValueChanged = null, int width = 200)
         {
             _onValueChanged = onValueChanged;
 

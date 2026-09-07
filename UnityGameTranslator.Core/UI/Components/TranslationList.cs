@@ -69,7 +69,7 @@ namespace UnityGameTranslator.Core.UI.Components
         /// The scroll view hosting the list. Use it to attach a help description covering
         /// the whole list area (individual rows are generated dynamically and not described).
         /// </summary>
-        public GameObject Root => _root;
+        internal GameObject Root => _root;
 
         /// <summary>
         /// Create a new translation list component.
@@ -101,7 +101,7 @@ namespace UnityGameTranslator.Core.UI.Components
         /// <summary>Set the status message, in a tone.</summary>
         public void SetStatus(string message, Tone tone) => SetStatus(message, Tones.Colour(tone));
 
-        public void CreateUI(GameObject parent, int listHeight, Action<TranslationInfo> onSelectionChanged = null,
+        internal void CreateUI(GameObject parent, int listHeight, Action<TranslationInfo> onSelectionChanged = null,
             HelpZone help = null)
         {
             _onSelectionChanged = onSelectionChanged;
@@ -136,7 +136,7 @@ namespace UnityGameTranslator.Core.UI.Components
         /// <summary>
         /// Set the status message.
         /// </summary>
-        public void SetStatus(string message, Color color)
+        private void SetStatus(string message, Color color)
         {
             if (_statusLabel != null)
             {

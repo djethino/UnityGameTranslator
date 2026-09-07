@@ -57,7 +57,7 @@ namespace UnityGameTranslator.Core.UI.Components
         public static Host Create(Host parent, string name, List<Badge> badges, float availableWidth)
             => new Host(Create(parent.Object, name, badges, availableWidth));
 
-        public static GameObject Create(GameObject parent, string name, List<Badge> badges,
+        internal static GameObject Create(GameObject parent, string name, List<Badge> badges,
                                         float availableWidth)
         {
             var strip = UIFactory.CreateVerticalGroup(parent, name, false, false, true, true, 3,

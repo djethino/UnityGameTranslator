@@ -49,7 +49,7 @@ namespace UnityGameTranslator.Core.UI.Components
         public Host Create(Host parent, int translationId, int voteCount, Action<int, int, int?> onVoteChanged = null, int? userVote = null, bool interactive = true)
             => new Host(Create(parent.Object, translationId, voteCount, onVoteChanged, userVote, interactive));
 
-        public GameObject Create(GameObject parent, int translationId, int voteCount, Action<int, int, int?> onVoteChanged = null, int? userVote = null, bool interactive = true)
+        internal GameObject Create(GameObject parent, int translationId, int voteCount, Action<int, int, int?> onVoteChanged = null, int? userVote = null, bool interactive = true)
         {
             _translationId = translationId;
             _currentVoteCount = voteCount;

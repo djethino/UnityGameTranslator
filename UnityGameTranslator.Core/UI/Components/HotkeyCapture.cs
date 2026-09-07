@@ -48,7 +48,7 @@ namespace UnityGameTranslator.Core.UI.Components
         /// description: hovering anywhere over the hotkey control shows the help, since the
         /// child toggles/buttons are not described themselves.
         /// </summary>
-        public GameObject Root => _root;
+        internal GameObject Root => _root;
 
         /// <summary>
         /// Sentinel label shown on the key button when the hotkey is disabled (no key set).
@@ -91,7 +91,7 @@ namespace UnityGameTranslator.Core.UI.Components
         /// <summary>The control, as a panel holds it.</summary>
         public Host Handle => new Host(_root);
 
-        public void CreateUI(GameObject parent, Action<string> onHotkeyChanged = null, bool includeDisplayLabel = true)
+        internal void CreateUI(GameObject parent, Action<string> onHotkeyChanged = null, bool includeDisplayLabel = true)
         {
             _onHotkeyChanged = onHotkeyChanged;
 

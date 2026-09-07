@@ -19,9 +19,9 @@ namespace UnityGameTranslator.Core.UI.Components
         private class TabInfo
         {
             public string Name;
-            public ButtonRef Button;
-            public GameObject Content;
-            public Text ButtonText;
+            internal ButtonRef Button;
+            internal GameObject Content;
+            internal Text ButtonText;
         }
 
         // UI elements
@@ -72,7 +72,7 @@ namespace UnityGameTranslator.Core.UI.Components
         /// e.g. a scroll area while the buttons stay fixed above it. Null = same as the
         /// button row (legacy layout).</param>
         /// <param name="tabRowHeight">Height of the tab button row</param>
-        public void CreateUI(GameObject parent, GameObject contentParent = null, int tabRowHeight = 32)
+        internal void CreateUI(GameObject parent, GameObject contentParent = null, int tabRowHeight = 32)
         {
             // Tab button row
             _tabRow = UIFactory.CreateHorizontalGroup(parent, "TabRow", false, false, true, true, 2,
@@ -134,7 +134,7 @@ namespace UnityGameTranslator.Core.UI.Components
         /// </summary>
         /// <param name="name">Tab name (displayed on button)</param>
         /// <returns>Content GameObject for this tab</returns>
-        public GameObject AddTab(string name)
+        internal GameObject AddTab(string name)
         {
             int tabIndex = _tabs.Count;
 
@@ -236,19 +236,9 @@ namespace UnityGameTranslator.Core.UI.Components
         }
 
         /// <summary>
-        /// Get the content GameObject for a tab by index.
-        /// </summary>
-        public GameObject GetTabContent(int index)
-        {
-            if (index < 0 || index >= _tabs.Count)
-                return null;
-            return _tabs[index].Content;
-        }
-
-        /// <summary>
         /// Get the content GameObject for a tab by name.
         /// </summary>
-        public GameObject GetTabContent(string name)
+        internal GameObject GetTabContent(string name)
         {
             for (int i = 0; i < _tabs.Count; i++)
             {
@@ -301,23 +291,9 @@ namespace UnityGameTranslator.Core.UI.Components
         }
 
         /// <summary>
-        /// Get all tab button Text components for localization registration.
-        /// </summary>
-        public List<Text> GetTabButtonTexts()
-        {
-            var texts = new List<Text>();
-            for (int i = 0; i < _tabs.Count; i++)
-            {
-                if (_tabs[i].ButtonText != null)
-                    texts.Add(_tabs[i].ButtonText);
-            }
-            return texts;
-        }
-
-        /// <summary>
         /// Get a tab button's GameObject by tab name (e.g. to attach help descriptions).
         /// </summary>
-        public GameObject GetTabButton(string name)
+        internal GameObject GetTabButton(string name)
         {
             for (int i = 0; i < _tabs.Count; i++)
             {
@@ -440,6 +416,6 @@ namespace UnityGameTranslator.Core.UI.Components
         /// Gets the content container that holds all tab contents.
         /// Useful for setting a fixed height based on max tab content.
         /// </summary>
-        public GameObject ContentContainer => _contentContainer;
+        internal GameObject ContentContainer => _contentContainer;
     }
 }

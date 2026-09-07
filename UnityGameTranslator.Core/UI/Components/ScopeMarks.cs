@@ -42,7 +42,7 @@ namespace UnityGameTranslator.Core.UI.Components
         /// button that was never adorned: a caller retargeting an ordinary button has made a
         /// mistake, and inventing marks for it would hide the mistake rather than the button.
         /// </summary>
-        public static void Retarget(ButtonRef button, EditSide side)
+        internal static void Retarget(ButtonRef button, EditSide side)
         {
             if (button?.Component == null) return;
             Retarget(button.Component.gameObject, side);
@@ -58,7 +58,7 @@ namespace UnityGameTranslator.Core.UI.Components
         public static void Tint(ButtonHandle button, bool interactable) => Tint(button?.Ref, interactable);
 
         /// <summary>Same, for a button held as a GameObject.</summary>
-        public static void Retarget(GameObject buttonObj, EditSide side)
+        internal static void Retarget(GameObject buttonObj, EditSide side)
         {
             if (buttonObj == null) return;
 
@@ -131,7 +131,7 @@ namespace UnityGameTranslator.Core.UI.Components
         /// them, all constants of this file — so the caller never has to know about them, and
         /// nothing has to walk the children to add them up.
         /// </summary>
-        public static void Fit(GameObject buttonObj)
+        internal static void Fit(GameObject buttonObj)
         {
             if (buttonObj == null) return;
 
@@ -183,14 +183,14 @@ namespace UnityGameTranslator.Core.UI.Components
         /// <summary>
         /// Puts the three marks on a button that already exists.
         /// </summary>
-        public static void Adorn(ButtonRef button, EditSide side)
+        internal static void Adorn(ButtonRef button, EditSide side)
         {
             if (button?.Component == null) return;
             Adorn(button.Component.gameObject, side);
         }
 
         /// <summary>Same, for a button held as a GameObject.</summary>
-        public static void Adorn(GameObject buttonObj, EditSide side)
+        internal static void Adorn(GameObject buttonObj, EditSide side)
         {
             if (buttonObj == null) return;
 
@@ -358,14 +358,14 @@ namespace UnityGameTranslator.Core.UI.Components
         /// kept text as white as a live one, so it was told apart only by a slightly different grey
         /// behind it. Text carries far more weight than a background shade.
         /// </summary>
-        public static void Tint(ButtonRef button, bool interactable)
+        internal static void Tint(ButtonRef button, bool interactable)
         {
             if (button?.Component == null) return;
             Tint(button.Component.gameObject, interactable);
         }
 
         /// <summary>Same, for a button held as a GameObject.</summary>
-        public static void Tint(GameObject buttonObj, bool interactable)
+        internal static void Tint(GameObject buttonObj, bool interactable)
         {
             if (buttonObj == null) return;
 

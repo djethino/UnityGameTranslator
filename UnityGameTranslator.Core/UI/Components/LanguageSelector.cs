@@ -75,7 +75,7 @@ namespace UnityGameTranslator.Core.UI.Components
         public void CreateUI(Host parent, Action<string> onLanguageChanged = null)
             => CreateUI(parent.Object, onLanguageChanged);
 
-        public void CreateUI(GameObject parent, Action<string> onLanguageChanged = null)
+        internal void CreateUI(GameObject parent, Action<string> onLanguageChanged = null)
         {
             _onLanguageChanged = onLanguageChanged;
 

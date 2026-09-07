@@ -31,7 +31,7 @@ namespace UnityGameTranslator.Core.UI.Components
     {
         private sealed class Entry
         {
-            public GameObject Target;
+            internal GameObject Target;
             public Func<PendingState> State;
             public string Group;
             public PendingState Shown;   // what is drawn right now — redraw only on change
@@ -54,14 +54,14 @@ namespace UnityGameTranslator.Core.UI.Components
         }
 
         /// <summary>A value that is either as it was or changed: amber when <paramref name="changed"/> says so.</summary>
-        public void Track(GameObject target, Func<bool> changed, string group = null)
+        private void Track(GameObject target, Func<bool> changed, string group = null)
         {
             if (target == null || changed == null) return;
             TrackState(target, () => changed() ? PendingState.Modified : PendingState.None, group);
         }
 
         /// <summary>A row or card that can be added, changed or removed as a whole.</summary>
-        public void TrackState(GameObject target, Func<PendingState> state, string group = null)
+        private void TrackState(GameObject target, Func<PendingState> state, string group = null)
         {
             if (target == null || state == null) return;
             for (int i = 0; i < _entries.Count; i++)

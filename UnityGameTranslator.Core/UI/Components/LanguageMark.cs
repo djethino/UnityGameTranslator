@@ -68,7 +68,7 @@ namespace UnityGameTranslator.Core.UI.Components
             return row != null ? new Host(row) : null;
         }
 
-        public static GameObject Create(GameObject parent, string name, string languageName,
+        internal static GameObject Create(GameObject parent, string name, string languageName,
                                         bool withName = false, Color? nameColour = null,
                                         bool nameElsewhere = false)
         {

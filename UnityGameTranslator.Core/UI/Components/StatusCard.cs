@@ -97,7 +97,7 @@ namespace UnityGameTranslator.Core.UI.Components
         /// <summary>
         /// The root GameObject of the status card.
         /// </summary>
-        public GameObject Root => _root;
+        internal GameObject Root => _root;
 
         /// <summary>
         /// Create the status card UI in the given parent.
@@ -110,7 +110,7 @@ namespace UnityGameTranslator.Core.UI.Components
         /// <summary>The card, as a panel holds it.</summary>
         public Host Handle => new Host(_root);
 
-        public void CreateUI(GameObject parent, int width = 0)
+        internal void CreateUI(GameObject parent, int width = 0)
         {
             // Main card container - use flexible width if not specified
             if (width > 0)

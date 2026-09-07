@@ -39,9 +39,8 @@ namespace UnityGameTranslator.Core.Checks
         /// <summary>Components whose public surface still speaks Unity. Remove one when it moves.</summary>
         private static readonly HashSet<string> ComponentsStillOpen = new HashSet<string>(StringComparer.Ordinal)
         {
-            "BadgeStrip.cs", "HelpZone.cs", "HotkeyCapture.cs", "LanguageMark.cs", "LanguageSelector.cs",
-            "PendingMarks.cs", "QualityBar.cs", "ScopeMarks.cs", "SearchableDropdown.cs", "StatusCard.cs",
-            "TabBar.cs", "TranslationList.cs", "VoteButtons.cs",
+            // Emptied 2026-09-08: the thirteen legacy components keep their engine-typed members
+            // for each other and for the base, as `internal` — what a panel receives is a handle.
         };
 
         /// <summary>What a panel may not name. Each entry: the pattern, and what it catches.</summary>

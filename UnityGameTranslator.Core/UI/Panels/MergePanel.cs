@@ -90,10 +90,16 @@ namespace UnityGameTranslator.Core.UI.Panels
             SetApplyButtonEnabled(false);
             ResetBulkButtonStyles();
 
-            // Initialize resolutions to use remote by default
+            // 🔴 Pre-selected as the socle's own verdict, conflict by conflict — the same first
+            // answer as the Manager and the site for the same line (decided 2026-09-07). This
+            // forced "take the remote" on every conflict, including a line changed here and
+            // deleted there, where the rule keeps the local one; a person who applied without
+            // reading each line lost their own correction to a deletion.
             foreach (var conflict in mergeResult.Conflicts)
             {
-                _resolutions[conflict.Key] = ConflictResolution.TakeRemote;
+                _resolutions[conflict.Key] = conflict.Suggested == MergeVerdict.TakeLocal
+                    ? ConflictResolution.KeepLocal
+                    : ConflictResolution.TakeRemote;
             }
 
             RefreshConflictList();

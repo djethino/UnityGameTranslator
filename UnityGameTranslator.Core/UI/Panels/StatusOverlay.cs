@@ -1078,35 +1078,13 @@ namespace UnityGameTranslator.Core.UI.Panels
         }
 
         /// <summary>
-        /// Handler for Fork button - create independent copy with new UUID.
-        /// Shows warning dialog before proceeding.
+        /// Fork button: the same door as the main panel's, <see cref="TranslatorUIManager.OfferFork"/>.
+        /// This overlay carried its own copy of the confirmation, and it was the stale one — it
+        /// presumed the publishing and opened the upload screen over an untouched copy.
         /// </summary>
         private void OnSyncForkClicked()
         {
-            var serverState = TranslatorCore.ServerState;
-            string ownerName = People.MentionOf(serverState?.Uploader,
-                                                TranslatorCore.Config.api_user);
-
-            // Show warning dialog before forking (destructive action)
-            TranslatorUIManager.ConfirmationPanel?.Show(
-                "Create Independent Fork?",
-                $"This will create a new independent translation, no longer linked to the original.\n\n" +
-                $"You will become the owner of this new translation.\n\n" +
-                $"You will no longer be able to contribute to @{ownerName}'s translation.\n\n" +
-                "This action cannot be undone.",
-                "Fork",
-                () =>
-                {
-                    // Create fork: generate new UUID and reset server state
-                    TranslatorCore.CreateFork();
-
-                    // Open upload panel to push the forked translation
-                    TranslatorUIManager.UploadPanel?.SetActive(true);
-
-                    RefreshOverlay();
-                },
-                isDanger: true
-            );
+            TranslatorUIManager.OfferFork(RefreshOverlay);
         }
 
         #endregion

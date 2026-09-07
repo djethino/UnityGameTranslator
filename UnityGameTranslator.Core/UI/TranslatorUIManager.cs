@@ -2108,6 +2108,53 @@ namespace UnityGameTranslator.Core.UI
         }
 
         /// <summary>
+        /// Offer to leave the lineage: the ONE door to a fork, whichever screen shows it.
+        ///
+        /// 🔴 Two screens used to carry their own copy of this confirmation, and only one of them
+        /// had been corrected: the overlay still said "You will become the owner", which presumed
+        /// the publishing, and opened the upload screen whatever the file held. A fork sends
+        /// nothing — it is this file leaving a lineage, here, now — so the sentence says what is
+        /// given up at that instant, and the upload screen opens only when there is something of
+        /// one's own to publish (a fork made from an untouched file is somebody else's work line
+        /// for line, and sending it would put a second identical entry on the site).
+        ///
+        /// ⚠ No account, no network: forking is local from end to end (decided 2026-09-07, and it
+        /// aligns with the Manager, which never takes this act — "decided in the game"). Publishing
+        /// the fork is the act that needs a name, and it is a separate one.
+        /// </summary>
+        /// <param name="afterwards">Run on the main thread once the fork exists — the caller's refresh.</param>
+        public static void OfferFork(Action afterwards)
+        {
+            var serverState = TranslatorCore.ServerState;
+
+            // The person being left, not the person signed in. Uploader is the row this file
+            // matches — which IS the Main's owner for somebody holding another's lineage, and is
+            // ONESELF for a branch author, whose own row is their branch.
+            string ownerName = !string.IsNullOrEmpty(serverState?.MainUsername)
+                ? serverState.MainUsername
+                : (serverState?.Uploader ?? "the original owner");
+
+            ConfirmationPanel?.Show(
+                "Make an independent copy?",
+                "A copy of @" + ownerName + "'s translation, starting from the file in this game as "
+                + "it is now. It becomes yours."
+                + "\n\nNothing is sent to the site. Publish it when you want to, or never."
+                + "\n\nYou will no longer be told when @" + ownerName + "'s version changes, and "
+                + "you can no longer merge with it. That part cannot be undone.",
+                "Create Independent",
+                () =>
+                {
+                    TranslatorCore.CreateFork();
+                    afterwards?.Invoke();
+
+                    if (!TranslatorCore.ForkIsStillTheCopy)
+                        UploadPanel?.SetActive(true);
+                },
+                isDanger: true
+            );
+        }
+
+        /// <summary>
         /// Pull the Main into this branch: download it, merge it in, and ALWAYS
         /// let the player look before anything is written.
         ///
@@ -3715,7 +3762,8 @@ namespace UnityGameTranslator.Core.UI
                         TranslatorCore.LogInfo("[EditSSE] Edit session ended from the browser");
                         StopEditSessionListener();
                         ClearPersistedEditSession();
-                        TranslationParamsPanel?.OnEditSessionEnded("Session ended from the browser.");
+                        TranslationParamsPanel?.OnEditSessionEnded(
+                            EditSessions.Describe(EditSessionStage.Finished, 0));
                     }
                     else if (eventType == "browser_left")
                     {

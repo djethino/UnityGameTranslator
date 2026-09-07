@@ -645,10 +645,9 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             _actionButtonsRow.SetActive(true);
 
-            // Check if selected remote is owned by current user
-            bool isOwnRemote = isLoggedIn && selected != null &&
-                !string.IsNullOrEmpty(currentUser) &&
-                selected.Uploader.Equals(currentUser, StringComparison.OrdinalIgnoreCase);
+            // Is the selected translation published under this account — the socle's one test.
+            // (The old inline version called .Equals on an Uploader that can be null.)
+            bool isOwnRemote = isLoggedIn && People.IsYou(selected?.Uploader, currentUser);
 
             int remoteCount = selected?.LineCount ?? 0;
 

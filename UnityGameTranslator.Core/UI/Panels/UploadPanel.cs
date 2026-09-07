@@ -350,8 +350,48 @@ namespace UnityGameTranslator.Core.UI.Panels
                             Hash = result.ExistingTranslation?.FileHash,
                             ResourcesUrl = result.ExistingTranslation?.ResourcesUrl,
                             Status = result.ExistingTranslation?.Status,
-                            AcceptsBranches = result.AcceptsBranches
+                            AcceptsBranches = result.AcceptsBranches,
+                            // ⚠ Carried over like AcceptsBranches, or this rebuild WIPED them and
+                            // the card lost the notice about a Main gone or closed.
+                            MainUsername = result.MainUsername,
+                            MainMissing = result.MainMissing,
+                            MainAbandoned = result.MainAbandoned,
+                            BranchFrozen = result.BranchFrozen
                         };
+
+                        // 🔴 **A branch whose road has ended cannot be updated, only left.** The
+                        // socle says so from the walls the server reported — the Main gone, its
+                        // account erased, contributions closed since. This announced "Update",
+                        // sent the file, and let the server refuse it: the one thing this check
+                        // exists to avoid. The sentence is the socle's, the same as the main
+                        // panel's button and the Manager.
+                        bool ownRowIsABranch = result.Role == TranslationRole.Branch;
+                        var ownAct = Uploads.ActOf(Publication.Published, ownRowIsABranch,
+                                                   result.AcceptsBranches, result.MainMissing,
+                                                   result.MainAbandoned, result.BranchFrozen);
+                        if (ownAct == UploadAct.Fork)
+                        {
+                            string ownWall = Uploads.Wall(Publication.Published, ownRowIsABranch,
+                                                          result.MainUsername, result.AcceptsBranches,
+                                                          result.MainMissing, result.MainAbandoned,
+                                                          result.BranchFrozen)
+                                             ?? "This contribution can no longer be sent. Fork to carry on.";
+
+                            TranslatorUIManager.RunOnMainThread(() =>
+                            {
+                                _uploadMode = UploadMode.Update;
+                                RefreshStatusControl();
+                                SetDynamicText(_titleLabel, "This contribution can no longer be sent");
+                                _modeInfoLabel.text = ownWall;
+                                SetDynamicText(_uploadBtn.ButtonText, Uploads.Verb(UploadAct.Update));
+                                DescribeUploadButton("This can no longer be sent as a contribution. Fork instead — it keeps your lines and publishes them under your own name.");
+                                _statusLabel.text = "";
+                                _isChecking = false;
+                                _uploadBtn.Component.interactable = false;
+                            });
+
+                            return;
+                        }
 
                         // Capture for closure
                         var siteId = TranslatorCore.ServerState.SiteId;
@@ -369,7 +409,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                             RefreshStatusControl();
                             SetDynamicText(_titleLabel, "Update Translation");
                             SetDynamicText(_modeInfoLabel, $"Updating: ID #{siteId}");
-                            SetDynamicText(_uploadBtn.ButtonText, "Update");
+                            SetDynamicText(_uploadBtn.ButtonText, Uploads.Verb(UploadAct.Update));
                             DescribeUploadButton("Replace your published version with your current local file");
 
                             // Note: Type is now auto-calculated by server from HVASM tags
@@ -418,18 +458,22 @@ namespace UnityGameTranslator.Core.UI.Panels
                         // predates the field, and null means "not asked" — behaving as a refusal
                         // there would put words in an author's mouth. The socle weighs it, so the
                         // wall reads the same here, on the main panel and in the Manager.
-                        string wall = Uploads.Wall(Publication.NotYours, false, uploader,
-                                                   result.AcceptsBranches, result.MainMissing,
-                                                   result.MainAbandoned, null);
-                        if (wall != null)
+                        var act = Uploads.ActOf(Publication.NotYours, false, result.AcceptsBranches,
+                                                result.MainMissing, result.MainAbandoned, null);
+                        if (act == UploadAct.Fork)
                         {
+                            string wall = Uploads.Wall(Publication.NotYours, false, uploader,
+                                                       result.AcceptsBranches, result.MainMissing,
+                                                       result.MainAbandoned, null)
+                                          ?? "This translation cannot take a contribution. Fork to carry on.";
+
                             TranslatorUIManager.RunOnMainThread(() =>
                             {
                                 _uploadMode = UploadMode.Branch;
                                 RefreshStatusControl();
                                 SetDynamicText(_titleLabel, "This translation cannot take a contribution");
                                 _modeInfoLabel.text = wall;
-                                SetDynamicText(_uploadBtn.ButtonText, "Contribute");
+                                SetDynamicText(_uploadBtn.ButtonText, Uploads.Verb(UploadAct.Contribute));
                                 DescribeUploadButton("This translation does not take contributions. Fork instead — it keeps your lines and publishes them under your own name.");
                                 _statusLabel.text = "";
                                 _isChecking = false;
@@ -453,7 +497,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                             // CONTENT that stays private.
                             _modeInfoLabel.text = Tr("Contributing to:") + " @" + uploader + "\n"
                                 + Tr("Only they can open and merge it. Players cannot download a branch.");
-                            SetDynamicText(_uploadBtn.ButtonText, "Contribute");
+                            SetDynamicText(_uploadBtn.ButtonText, Uploads.Verb(UploadAct.Contribute));
                             RefreshStatusControl();
                             DescribeUploadButton($"Send your changes to @{uploader} for review — they can merge them into the main translation. To publish a translation players can install, make yours independent instead");
                             // Note: Type is now auto-calculated by server from HVASM tags
@@ -489,7 +533,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                             SetDynamicText(_titleLabel, "Upload Fork");
                             _modeInfoLabel.text = Tr("Languages:") + $" {forkSourceLang} -> {forkTargetLang} " + Tr("(from forked translation)");
-                            SetDynamicText(_uploadBtn.ButtonText, "Upload");
+                            SetDynamicText(_uploadBtn.ButtonText, Uploads.Verb(UploadAct.Upload));
                             DescribeUploadButton("Publish your independent translation — you become its owner on the website");
                             _statusLabel.text = "";
                             _isChecking = false;

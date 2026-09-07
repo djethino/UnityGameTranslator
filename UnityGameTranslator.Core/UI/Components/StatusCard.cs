@@ -400,9 +400,14 @@ namespace UnityGameTranslator.Core.UI.Components
             bool signedIn = !string.IsNullOrEmpty(TranslatorCore.Config?.api_token);
             bool playedEnough = TranslatorCore.HasUsedTranslationEnoughToRate;
 
-            // The server decides who may vote (no self-votes, public only). The mod only adds
-            // the one condition the server cannot see: has this player actually used it.
-            bool interactive = vote.CanVote && playedEnough;
+            // 🔴 The socle decides who may vote and why not — the same four refusals, in the same
+            // order, as the Manager. This card used to redo the rule with its own words; the one
+            // thing it still adds is the server's own veto, kept as a last guard because the server
+            // may know a reason this machine does not.
+            var block = Voting.Rating(signedIn, published: true,
+                                      isYourOwn: role == LineageRole.Main,
+                                      hasUsedIt: playedEnough);
+            bool interactive = block == RateBlock.None && vote.CanVote;
 
             // Rebuilt rather than toggled: a greyed-out arrow is a dead end, and the reason it
             // is dead belongs in words next to it.
@@ -419,18 +424,14 @@ namespace UnityGameTranslator.Core.UI.Components
                 _voteButtons.UpdateVoteCount(vote.Count, vote.UserVote);
             }
 
-            // ⚠ **"Vote", not "rate" — the website's verb.** It counts votes, its buttons say
-            // Upvote and Downvote, and it refuses with "You cannot vote on your own translation".
-            // The mod said "rate" for the same act on the same object: one ecosystem, one word.
+            // The refusal in the socle's words ("vote", the website's verb, everywhere since
+            // 2026-09-07); the invitation when there is none. Nothing when the server alone vetoed:
+            // there is no sentence for a reason it did not give.
             string hint;
             if (interactive)
                 hint = "Vote on this translation";
-            else if (!signedIn)
-                hint = "Sign in to vote on this translation";
-            else if (role == LineageRole.Main)
-                hint = "You cannot vote on your own translation";
-            else if (!playedEnough)
-                hint = "Play with it a little, then vote";
+            else if (block != RateBlock.None)
+                hint = Voting.Explain(block);
             else
                 hint = null;
 

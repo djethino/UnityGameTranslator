@@ -77,7 +77,8 @@ namespace UnityGameTranslator.Core
                         Local = localEntry,
                         Remote = remoteEntry,
                         Ancestor = ancestorEntry,
-                        Type = decision.ConflictType
+                        Type = decision.ConflictType,
+                        Suggested = decision.Verdict
                     });
                     // Default to higher priority value, or remote if same priority
                     result.Merged[key] = decision.FinalEntry ?? remoteEntry ?? localEntry ?? new TranslationEntry();
@@ -208,6 +209,7 @@ namespace UnityGameTranslator.Core
                 FinalEntry = chosen,
                 HasConflict = decision.IsConflict,
                 ConflictType = Translate(decision.Conflict),
+                Verdict = decision.Verdict,
             };
         }
 
@@ -231,6 +233,7 @@ namespace UnityGameTranslator.Core
             public TranslationEntry FinalEntry { get; set; }
             public bool HasConflict { get; set; }
             public ConflictType ConflictType { get; set; }
+            public MergeVerdict Verdict { get; set; }
         }
     }
 
@@ -275,6 +278,13 @@ namespace UnityGameTranslator.Core
         public TranslationEntry Remote { get; set; }
         public TranslationEntry Ancestor { get; set; }
         public ConflictType Type { get; set; }
+
+        /// <summary>
+        /// The side the shared rule would show while somebody decides — what the merged set holds
+        /// meanwhile, and what the merge screen pre-selects. The rule keeps the local line when it
+        /// was changed here and deleted there; it shows the remote when no ancestor can say who moved.
+        /// </summary>
+        public MergeVerdict Suggested { get; set; }
     }
 
     public class MergeStatistics

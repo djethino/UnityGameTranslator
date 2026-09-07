@@ -1269,8 +1269,12 @@ namespace UnityGameTranslator.Core.UI.Panels
                 //
                 // ⚠ Kept in step with the Branch's own Merge with Main by sharing its handler AND
                 // its busy state, never by repeating the rule here.
-                bool upstreamWorthTaking = TranslatorUIManager.HasPendingUpdate
-                    && TranslatorUIManager.PendingUpdateDirection != UpdateDirection.Upload;
+                // The socle's verdict, the same one the card shows: the published version moved
+                // (Download), or both did (Merge). Reading the manager's summary here was one
+                // more derivation of the same fact.
+                var upstream = CurrentSync(TranslatorCore.ServerState);
+                bool upstreamWorthTaking = upstream == SyncDirection.Download
+                                           || upstream == SyncDirection.Merge;
 
                 if (_mergeWithMainBtn != null && !_updateFromMainInFlight)
                 {
@@ -1437,27 +1441,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             int localChanges = TranslatorCore.LocalChangesCount;
 
             // Where this translation stands, on the four questions the socle keeps apart.
-            Standing standing;
-            bool needsMerge = TranslatorUIManager.HasPendingUpdate &&
-                TranslatorUIManager.PendingUpdateDirection == UpdateDirection.Merge;
-            bool hasServerUpdate = TranslatorUIManager.HasPendingUpdate &&
-                TranslatorUIManager.PendingUpdateDirection == UpdateDirection.Download;
+            //
+            // ⚠ **The direction is kept.** "OutOfSync" said only that the two differed; which side
+            // had moved decides whether the answer is to take an update or to publish. The verdict
+            // is the socle's, on the facts, shared with the Actions row — see CurrentSync.
+            SyncDirection? sync = CurrentSync(serverState);
 
-            // ⚠ **The direction is kept now.** "OutOfSync" said only that the two differed; which
-            // side had moved decides whether the answer is to take an update or to publish, and
-            // the reader had to work it out from the buttons.
-            SyncDirection? sync;
-            if (serverState == null || !serverState.Exists) sync = null;
-            else if (needsMerge) sync = SyncDirection.Merge;
-            else if (hasServerUpdate && localChanges > 0) sync = SyncDirection.Merge;
-            else if (hasServerUpdate) sync = SyncDirection.Download;
-
-            // Metadata counts: settings edited but not pushed are still something to send.
-            // Leaving it out showed "up to date" next to a button offering an update.
-            else if (localChanges > 0 || TranslatorCore.MetadataDirty) sync = SyncDirection.Upload;
-            else sync = SyncDirection.InSync;
-
-            standing = new Standing
+            var standing = new Standing
             {
                 // ⚠ `yours` decides between two sentences that describe opposite acts: publishing
                 // your own updates it, publishing into somebody else's lineage contributes to it.
@@ -1704,24 +1694,21 @@ namespace UnityGameTranslator.Core.UI.Panels
                         break;
                 }
 
-                // Sync status
+                // Sync status — the socle's verdict, the same one the card and the Actions row show
                 int localChanges = TranslatorCore.LocalChangesCount;
-                bool hasServerUpdate = TranslatorUIManager.HasPendingUpdate &&
-                    TranslatorUIManager.PendingUpdateDirection == UpdateDirection.Download;
-                bool needsMerge = TranslatorUIManager.HasPendingUpdate &&
-                    TranslatorUIManager.PendingUpdateDirection == UpdateDirection.Merge;
+                var sync = CurrentSync(serverState);
 
-                if (needsMerge)
+                if (sync == SyncDirection.Merge)
                 {
                     SetDynamicText(_syncStatusLabel, $"SYNC NEEDED - Both local ({localChanges}) and server changed");
                     _syncStatusLabel.color = UIStyles.StatusWarning;
                 }
-                else if (localChanges > 0)
+                else if (sync == SyncDirection.Upload)
                 {
                     SetDynamicText(_syncStatusLabel, $"OUT OF SYNC - {localChanges} local changes to upload");
                     _syncStatusLabel.color = UIStyles.StatusWarning;
                 }
-                else if (hasServerUpdate)
+                else if (sync == SyncDirection.Download)
                 {
                     int serverLines = TranslatorUIManager.PendingUpdateInfo?.LineCount ?? 0;
                     SetDynamicText(_syncStatusLabel, $"OUT OF SYNC - Server has update ({serverLines} lines)");
@@ -1787,45 +1774,50 @@ namespace UnityGameTranslator.Core.UI.Panels
             var state = TranslatorCore.ServerState;
             bool existsOnServer = state != null && state.Exists && state.SiteId.HasValue;
             bool hasLocalChanges = TranslatorCore.LocalChangesCount > 0;
-
-            // Settings that travel with the translation — replacement fonts, images, exclusions,
-            // variables, the interface font — can change without a single new translated line.
-            // Sync used to be judged on line count alone, so those edits had no way out: the
-            // upload button stayed disabled on "Up to date" and the work stayed on the machine.
-            // That also blocked editing the resources link, which is entered on the upload screen.
             bool hasMetadataChanges = TranslatorCore.MetadataDirty;
 
-            // In sync means nothing left to push: neither lines NOR settings
-            bool isInSync = existsOnServer && state.IsOwner && !hasLocalChanges && !hasMetadataChanges &&
-                           !string.IsNullOrEmpty(state.Hash) &&
-                           state.Hash == TranslatorCore.LastSyncedHash;
+            // One verdict, the socle's, shared with the card — see CurrentSync.
+            var sync = CurrentSync(state);
+            bool needsMerge = sync == SyncDirection.Merge;
+            bool isInSync = sync == SyncDirection.InSync;
 
-            // Determine upload action text
-            string uploadAction;
+            // 🔴 **What the button DOES is the socle's to say**, from where the file stands, whether
+            // this account's row is a branch, and the walls the server reported. It used to be
+            // asked only about somebody else's lineage: a branch whose Main had closed still read
+            // "Update" here, opened the upload screen, and was refused after the upload. The word
+            // on the button is the act that can actually be taken, and the button then does it.
+            var publication = Publications.Of(hereOnDisk: TranslatorCore.TranslationCache.Count > 0,
+                                              onTheSite: existsOnServer,
+                                              yours: existsOnServer ? state.IsOwner : (bool?)null);
+            bool onABranch = existsOnServer && state.IsOwner && state.Role == TranslationRole.Branch;
+            _uploadAct = Uploads.ActOf(publication, onABranch, state?.AcceptsBranches,
+                                       state?.MainMissing, state?.MainAbandoned, state?.BranchFrozen);
+            var act = _uploadAct ?? UploadAct.Upload;
+
+            // ⚠ One word, the socle's, on every product's button (decided 2026-09-07): the screen
+            // already names the subject. "Sync" is the mod's own — not an upload act but the
+            // exchange that settles both sides — and the overlay says the same word.
+            string uploadAction = needsMerge ? "Sync" : Uploads.Verb(act);
             string uploadHint;
-            _uploadAct = null;
-
-            // Check for merge conflict first (highest priority action)
-            bool needsMerge = TranslatorUIManager.HasPendingUpdate &&
-                TranslatorUIManager.PendingUpdateDirection == UpdateDirection.Merge;
 
             // Hints are translated as they are built: counts and ids stay inline (the pipeline
             // placeholders numbers), usernames are appended so they never reach the translator.
             if (needsMerge)
             {
-                // Merge needed - show sync button with clear explanation
-                uploadAction = "Sync Translation";
                 uploadHint = Tr($"Both local ({TranslatorCore.LocalChangesCount} changes) and server were updated. Click to sync.");
             }
-            else if (isInSync)
+            else if (act == UploadAct.Fork)
             {
-                // In sync - no need to show upload button
-                uploadAction = "Up to date";
-                uploadHint = Tr("Your translation is synchronized with the server");
+                // The wall in the socle's words — the sentence the card and the Manager show —
+                // followed by the way on, which this button now is.
+                uploadHint = Uploads.Wall(publication, onABranch,
+                                          state?.MainUsername ?? state?.Uploader,
+                                          state?.AcceptsBranches, state?.MainMissing,
+                                          state?.MainAbandoned, state?.BranchFrozen)
+                             ?? Tr("Leave this translation and publish your lines as your own");
             }
-            else if (existsOnServer && state.IsOwner)
+            else if (act == UploadAct.Update)
             {
-                uploadAction = "Update Translation";
                 // Say WHICH kind of change is pending, otherwise an update offered after a mere
                 // font or exclusion edit looks like the mod lost track of what was synced.
                 if (hasLocalChanges)
@@ -1835,111 +1827,60 @@ namespace UnityGameTranslator.Core.UI.Panels
                 else
                     uploadHint = Tr($"Update your translation #{state.SiteId}");
             }
-            else if (existsOnServer && !state.IsOwner)
+            else if (act == UploadAct.Contribute)
             {
-                // 🔴 **The socle says whether a contribution can land here at all.** This said
-                // "Contribute" whatever the Main had decided, opened the upload screen, and the
-                // server refused after the upload. The word on the button is the act that can
-                // actually be taken — Fork, when the Main works alone or the lineage has lost its
-                // head — and the button then does that act (see OnUploadClicked).
-                _uploadAct = Uploads.ActOf(Publication.NotYours, false, state.AcceptsBranches,
-                                           state.MainMissing, state.MainAbandoned, null)
-                             ?? UploadAct.Contribute;
-                uploadAction = Uploads.Verb(_uploadAct.Value);
-                uploadHint = _uploadAct == UploadAct.Fork
-                    ? Tr("Leave this translation and publish your lines as your own")
-                    : Tr("Contribute as a branch to")
-                      + " " + People.MentionOf(state.Uploader, TranslatorCore.Config.api_user);
+                uploadHint = Tr("Contribute as a branch to")
+                             + " " + People.MentionOf(state.Uploader, TranslatorCore.Config.api_user);
             }
             else
             {
-                uploadAction = "Upload Translation";
                 uploadHint = Tr("Create a new translation");
             }
 
             SetDynamicText(_uploadBtn.ButtonText, uploadAction);
 
-            // Enable/disable based on conditions
-            // Disable if in sync (nothing to upload) or other conditions not met
             // 🔴 **A fork that has not been touched holds somebody else's file, line for line.**
             // Publishing it puts a second identical entry on the site under a new name — the two
             // then compete for the same readers, and the work is one person's. CreateFork counts
             // every entry as a local change (from the new lineage's point of view nothing has ever
             // been published, which is true), so nothing else here could tell the difference.
             //
-            // ⚠ This is a CONTENT condition, and the only one: a fork publishes whenever it wants,
-            // signed in or not, the same day or a year later. What it may not do is publish a copy.
-            //
             // ⚠ **Only while it has never been published.** The marker travels inside the file, so
             // whoever downloads a fork carries it too — and they are in a lineage, where "nothing
-            // to contribute" is the question and other rules answer it. Reading it there would put
-            // a sentence about publishing a copy in front of somebody offering a correction.
+            // to contribute" is the question and other rules answer it.
             bool stillTheCopy = !existsOnServer && TranslatorCore.ForkIsStillTheCopy;
 
-            // 🔴 **A lineage nobody can answer for, refused here rather than by the server.**
-            // The status card has said so in red for a while; this button stayed lit all the same,
-            // so somebody could read the warning, work on regardless, press publish and be told no
-            // after the upload had run. A warning is worth nothing while the door it describes
-            // stays open.
+            // Why the button is closed, or null when it may act — said under the button, because a
+            // control that cannot act must say why right there. The card says it at more length;
+            // this is the line somebody reads while wondering what happened to the button.
             //
-            // ⚠ `== true` on each: null is what an older site sends, and it means "not asked".
-            // Treating silence as a refusal would lock people out of a site that never spoke.
-            //
-            // ⚠ The server still refuses these on its own, and must keep doing so: this stops the
-            // people running today's build, not the ones running last year's.
-            var lineage = TranslatorCore.ServerState;
-            bool lineageIsDead = lineage != null
-                                 && (lineage.MainMissing == true || lineage.MainAbandoned == true);
+            // ⚠ A fork asks for neither the network nor an account: it is local from end to end,
+            // and the walls that made it the only way on (a Main gone, closed or headless) are
+            // exactly what it answers. So the sending conditions apply to sending only. A dead
+            // lineage no longer needs its own refusal here: the socle has already turned the
+            // button into Fork, and the wall above says why.
+            string closed = null;
+            if (TranslatorCore.TranslationCache.Count == 0)
+                closed = "No translations to upload";
+            else if (stillTheCopy)
+                // The fact, then the way out. Naming the author would need a lookup the mod does
+                // not have after a fork — the lineage is gone — and the sentence works without it.
+                closed = "This copy is unchanged. Translate or correct a line to publish it as yours.";
+            else if (act != UploadAct.Fork)
+            {
+                if (!TranslatorCore.Config.online_mode) closed = "Offline mode - upload disabled";
+                else if (!isLoggedIn) closed = "Login required";
+                else if (isInSync) closed = "Up to date — nothing to send";
+            }
 
-            // ⚠ A dead lineage closes the SEND, not the way out: when the socle has turned this
-            // button into Fork, forking is precisely what a dead lineage calls for, and greying it
-            // under a hint saying "Fork to carry on" would be a door and its own refusal.
-            bool canUpload = isLoggedIn && TranslatorCore.Config.online_mode &&
-                            TranslatorCore.TranslationCache.Count > 0 && !isInSync && !stillTheCopy
-                            && (!lineageIsDead || _uploadAct == UploadAct.Fork);
+            bool canUpload = closed == null;
             _uploadBtn.Component.interactable = canUpload;
             ScopeMarks.Tint(_uploadBtn, canUpload);
 
-            // Update hint
-            if (!TranslatorCore.Config.online_mode)
-            {
-                SetDynamicText(_uploadHintLabel, "Offline mode - upload disabled");
-            }
-            else if (!isLoggedIn)
-            {
-                SetDynamicText(_uploadHintLabel, "Login required");
-            }
-            else if (TranslatorCore.TranslationCache.Count == 0)
-            {
-                SetDynamicText(_uploadHintLabel, "No translations to upload");
-            }
-            else if (stillTheCopy)
-            {
-                // The fact, then the way out. Naming the author would need a lookup the mod does
-                // not have after a fork — the lineage is gone — and the sentence works without it.
-                SetDynamicText(_uploadHintLabel,
-                    "This copy is unchanged. Translate or correct a line to publish it as yours.");
-            }
-            // ⚠ Under the button that is now grey, because a control that cannot act must say why
-            // right there. The status card says the same thing at more length; this is the one line
-            // somebody reads while wondering what happened to the button.
-            //
-            // The two are kept apart: whether the translation they built on is still published is
-            // the next thing anybody asks.
-            else if (lineage?.MainMissing == true)
-            {
-                SetDynamicText(_uploadHintLabel,
-                    "The translation you contribute to is gone. Fork to carry on.");
-            }
-            else if (lineage?.MainAbandoned == true)
-            {
-                SetDynamicText(_uploadHintLabel,
-                    "Its owner deleted their account, so nobody can take this in. Fork to carry on.");
-            }
+            if (closed != null)
+                SetDynamicText(_uploadHintLabel, closed);
             else
-            {
                 _uploadHintLabel.text = uploadHint; // already translated above
-            }
 
             // Role-specific buttons visibility
             if (_reviewOnWebsiteBtn != null && _compareWithServerBtn != null && _forkBtn != null)
@@ -2010,11 +1951,14 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // Fork button - only for Branch role
                 _forkBtn.Component.gameObject.SetActive(isBranch);
 
-                // Fork button enabled only when logged in
+                // ⚠ Never gated on an account: forking is local from end to end (a new lineage on
+                // this machine, nothing sent), and it is publishing that needs a name. This asked
+                // to be signed in while "Create Independent" three inches away did not — the same
+                // act, two doors, two rules (decided 2026-09-07).
                 if (isBranch)
                 {
-                    _forkBtn.Component.interactable = isLoggedIn;
-                    ScopeMarks.Tint(_forkBtn, isLoggedIn);
+                    _forkBtn.Component.interactable = true;
+                    ScopeMarks.Tint(_forkBtn, true);
                 }
 
                 // Explain the visible buttons in plain words
@@ -2082,26 +2026,47 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         /// <summary>
         /// What the Actions-row upload button would do, as the socle read it on the last refresh.
-        /// Null everywhere the button is not about somebody else's lineage.
+        /// Null when there is nothing on this machine to send.
         /// </summary>
         private UploadAct? _uploadAct;
 
+        /// <summary>
+        /// Where this file stands against the published one — the socle's verdict on the four
+        /// facts it asks for, and nothing else.
+        ///
+        /// 🔴 ONE derivation for the card and the buttons. This panel had four: the card read the
+        /// manager's summary, the Actions row compared hashes itself, the merge test read the
+        /// summary again, and a dead section did it a fourth way. Four readings of one fact are
+        /// four chances to disagree with the chip on the card, which the socle already decides.
+        /// Settings that travel with the translation count as local work: an upload offered after
+        /// a font edit is not the mod losing track, it is work that has not left the machine.
+        /// </summary>
+        private static SyncDirection? CurrentSync(ServerTranslationState state)
+        {
+            if (state == null || !state.Exists) return null;
+
+            bool hasLocalWork = TranslatorCore.LocalChangesCount > 0 || TranslatorCore.MetadataDirty;
+            return Sync.Decide(TranslatorCore.ComputeContentHash(), state.Hash,
+                               TranslatorCore.LastSyncedHash, hasLocalWork);
+        }
+
         private async void OnUploadClicked()
         {
+            // The button says Fork, so it forks — the same door as the Fork button of the role
+            // row and as "Create Independent". Local from end to end: neither the network nor an
+            // account is asked for here.
+            if (_uploadAct == UploadAct.Fork)
+            {
+                OnCreateIndependentClicked();
+                return;
+            }
+
             if (!TranslatorCore.Config.online_mode) return;
 
-            // Check if merge is needed - open MergePanel instead of UploadPanel
-            if (TranslatorUIManager.HasPendingUpdate &&
-                TranslatorUIManager.PendingUpdateDirection == UpdateDirection.Merge)
+            // Both sides moved: settle them first, on the same verdict the button was labelled from
+            if (CurrentSync(TranslatorCore.ServerState) == SyncDirection.Merge)
             {
-                // Start merge flow - download remote and show merge panel
                 await TranslatorUIManager.DownloadForMerge();
-            }
-            else if (_uploadAct == UploadAct.Fork)
-            {
-                // The button says Fork, so it forks — the same act, the same confirmation, as the
-                // Fork button of the role row. Opening the upload screen here showed a refusal.
-                OnCreateIndependentClicked();
             }
             else
             {
@@ -2284,11 +2249,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         private static bool PublishedByUs(TranslationInfo translation)
         {
-            var us = TranslatorCore.Config.api_user;
-
-            return translation != null
-                && !string.IsNullOrEmpty(us)
-                && string.Equals(translation.Uploader, us, System.StringComparison.OrdinalIgnoreCase);
+            // The one test for "is this name mine", the socle's — three screens had their own.
+            return People.IsYou(translation?.Uploader, TranslatorCore.Config.api_user);
         }
 
         private async System.Threading.Tasks.Task PerformDownloadLatest(ServerTranslationState serverState)
@@ -2346,54 +2308,13 @@ namespace UnityGameTranslator.Core.UI.Panels
         }
 
         /// <summary>
-        /// Handler for "Create Independent" button (GAP 8).
-        /// Creates a fork with new UUID, making the user the Main owner of a new lineage.
+        /// "Create Independent" and "Fork" both lead here: the one door to a fork is
+        /// <see cref="TranslatorUIManager.OfferFork"/>, which carries the confirmation, the act and
+        /// the rule about opening the upload screen. Two copies of that text drifted apart once.
         /// </summary>
         private void OnCreateIndependentClicked()
         {
-            var serverState = TranslatorCore.ServerState;
-
-            // 🔴 **The person being left, not the person signed in.** Uploader is the row this file
-            // matches — which IS the Main's owner for somebody holding another's lineage, and is
-            // ONESELF for a branch author, whose own row is their branch. Reading it alone made the
-            // Fork button on that screen say "a copy of @you's translation".
-            string ownerName = !string.IsNullOrEmpty(serverState?.MainUsername)
-                ? serverState.MainUsername
-                : (serverState?.Uploader ?? "the original owner");
-
-            // ⚠ **It said "You will become the Main owner", which presumed the publishing.** Forking
-            // sends nothing: it is this file leaving a lineage, here, now. Somebody with no account
-            // may do it, and publish the day they have one — or never. What IS given up happens
-            // immediately, so that is what this says.
-            TranslatorUIManager.ConfirmationPanel?.Show(
-                "Make an independent copy?",
-                "A copy of @" + ownerName + "'s translation, starting from the file in this game as "
-                + "it is now. It becomes yours."
-                + "\n\nNothing is sent to the site. Publish it when you want to, or never."
-                + "\n\nYou will no longer be told when @" + ownerName + "'s version changes, and "
-                + "you can no longer merge with it. That part cannot be undone.",
-                "Create Independent",
-                () =>
-                {
-                    // Create fork: generate new UUID and reset server state
-                    TranslatorCore.CreateFork();
-                    RefreshUI();
-
-                    // 🔴 **Offered only when there is something of one's own to publish.** A fork
-                    // made from a file one has not touched is, line for line, somebody else's
-                    // work: sending it puts a second identical entry on the site under a new name,
-                    // and that is not sharing. It is the CONTENT that decides, never the account —
-                    // a fork publishes whenever it wants to, signed in or not, now or in a year.
-                    //
-                    // ⚠ The card behind carries the publish action either way, so nothing is taken
-                    // away: this only decides whether the screen opens by itself.
-                    if (!TranslatorCore.ForkIsStillTheCopy)
-                    {
-                        TranslatorUIManager.UploadPanel?.SetActive(true);
-                    }
-                },
-                isDanger: true
-            );
+            TranslatorUIManager.OfferFork(RefreshUI);
         }
 
         private async void OnCompareWithServerClicked()

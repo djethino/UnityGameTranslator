@@ -47,6 +47,7 @@ namespace UnityGameTranslator.Core.Checks
             HowANumberedSentenceIsRecognised();
             WhatSomebodyAskedToLeaveAlone();
             WhichFontARuleAsksFor();
+            WhichLanguagesATranslationIsIn();
             HowTextChanges();
             WhenTextMayBeTyping();
             HowATargetIsNamed();
@@ -93,6 +94,13 @@ namespace UnityGameTranslator.Core.Checks
         {
             Section("Font rules, across a whole sequence");
             FontRulesChecks.Run(Check);
+        }
+
+        /// <summary>Which languages a translation is in, across the launch that decides it.</summary>
+        private static void WhichLanguagesATranslationIsIn()
+        {
+            Section("Languages, across a whole launch");
+            LanguageStateChecks.Run(Check);
         }
 
         /// <summary>How a sentence carrying live numbers is read as the pattern it was cached from.</summary>

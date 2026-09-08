@@ -383,250 +383,102 @@ namespace UnityGameTranslator.Core
         private static void EnsureProviderQuirks() =>
             _negotiation.ForgetIfChanged($"{Config?.ai_url}|{Config?.ai_model}");
 
-        /// <summary>
-        /// The languages `translations.json` states for itself, or null when it states none.
-        ///
-        /// 🔴 **The file, not the preference.** `config.json` says what somebody wants; these say
-        /// what this translation IS. They are what survives a backup restore, a copy to another
-        /// machine, and a mod that never looks at the configuration — see
-        /// <see cref="TranslationLanguages"/> for which of the three answers wins.
-        ///
-        /// ⚠ Null on every file written before the mod stamped them, which is most of them today.
-        /// Null means "this file does not say", never "this file has no language".
-        /// </summary>
-        public static string FileSourceLanguage { get; private set; }
+        // Which languages this translation is in, and what happens when the file, the machine and
+        // the server disagree. ⚠ The sequence lives in LanguageState, with its log sinks handed in,
+        // so a restored backup or a late server answer can be replayed without a game.
+        private static readonly LanguageState _languages = new LanguageState
+        {
+            Info = message => Adapter?.LogInfo(message),
+            Warning = message => Adapter?.LogWarning(message),
+        };
 
-        /// <inheritdoc cref="FileSourceLanguage"/>
-        public static string FileTargetLanguage { get; private set; }
+        /// <inheritdoc cref="LanguageState.FileSource"/>
+        public static string FileSourceLanguage => _languages.FileSource;
+
+        /// <inheritdoc cref="LanguageState.FileTarget"/>
+        public static string FileTargetLanguage => _languages.FileTarget;
 
         /// <summary>
         /// The languages in force for this translation, resolved from the server, then the file,
         /// then the configuration. Null on either side when nobody has settled it yet.
         /// </summary>
-        public static string EffectiveSourceLanguage => TranslationLanguages.Resolve(
-            ServerState?.SourceLanguage, FileSourceLanguage, Config?.source_language);
+        public static string EffectiveSourceLanguage =>
+            _languages.EffectiveSource(ServerState?.SourceLanguage, Config?.source_language);
 
         /// <inheritdoc cref="EffectiveSourceLanguage"/>
-        public static string EffectiveTargetLanguage => TranslationLanguages.Resolve(
-            ServerState?.TargetLanguage, FileTargetLanguage, Config?.target_language);
+        public static string EffectiveTargetLanguage =>
+            _languages.EffectiveTarget(ServerState?.TargetLanguage, Config?.target_language);
 
-        /// <summary>
-        /// Write back what the resolution settled, so the three places stop drifting apart.
-        ///
-        /// 🔴 **The server makes it true, and nothing here may argue.** A lineage's languages are
-        /// frozen at publication and the server ignores any sent with an update; a local value that
-        /// differs is not an opinion, it is a copy that was never brought up to date. The commonest
-        /// case by far is a source left at "auto" — written back only by an upload made from THIS
-        /// machine, so every translation somebody downloaded still has none, and the mod has been
-        /// asking the model to translate without saying from what.
-        ///
-        /// ⚠ Called wherever the server answers about this lineage — the sync stream, a download,
-        /// an upload — and silent when it has not.
-        /// </summary>
-        public static void AlignLanguagesFromServer()
-        {
-            if (Config == null || ServerState == null || !ServerState.Exists) return;
+        /// <inheritdoc cref="LanguageState.Conflict"/>
+        public static string LanguageConflict => _languages.Conflict;
 
-            bool changed = false;
-
-            if (Languages.IsSettled(ServerState.SourceLanguage)
-                && !string.Equals(Config.source_language, ServerState.SourceLanguage, StringComparison.OrdinalIgnoreCase))
-            {
-                Adapter?.LogInfo($"[Languages] Source: '{Config.source_language ?? "(unset)"}' → "
-                                 + $"'{ServerState.SourceLanguage}', as this translation is published.");
-                Config.source_language = ServerState.SourceLanguage;
-                changed = true;
-            }
-
-            if (Languages.IsSettled(ServerState.TargetLanguage)
-                && !string.Equals(Config.target_language, ServerState.TargetLanguage, StringComparison.OrdinalIgnoreCase))
-            {
-                Adapter?.LogInfo($"[Languages] Target: '{Config.target_language ?? "(unset)"}' → "
-                                 + $"'{ServerState.TargetLanguage}', as this translation is published.");
-                Config.target_language = ServerState.TargetLanguage;
-                changed = true;
-            }
-
-            // The file says the same thing from now on, so it still knows once it is offline.
-            //
-            // 🔴 **Only when it says nothing yet.** Overwriting a stated language with the
-            // server's would make the file claim to be in a language its LINES are not — and it
-            // would erase the one piece of evidence that says so, leaving the upload refusal below
-            // with nothing to detect. A file that states another language is not this lineage's;
-            // that is a fact to surface, not to tidy away.
-            if (Languages.IsSettled(ServerState.SourceLanguage) && !Languages.IsSettled(FileSourceLanguage))
-            {
-                FileSourceLanguage = ServerState.SourceLanguage;
-                cacheModified = true;
-            }
-            if (Languages.IsSettled(ServerState.TargetLanguage) && !Languages.IsSettled(FileTargetLanguage))
-            {
-                FileTargetLanguage = ServerState.TargetLanguage;
-                cacheModified = true;
-            }
-
-            if (changed) SaveConfig();
-
-            NoteLanguageConflict();
-        }
-
-        /// <summary>
-        /// What this translation says it is, against what the lineage it belongs to was published
-        /// as. Null while the two agree — or while either side has not said.
-        ///
-        /// 🔴 **Set, nothing new is translated.** The file's lines are in one language and the
-        /// lineage is declared in another: writing more in the file's language grows something that
-        /// can never be published, and writing in the lineage's mixes two languages in one file.
-        /// There is no safe third answer, so the mod stops producing and says so — the lines
-        /// already in the file keep being applied, and the game stays playable and translated.
-        ///
-        /// ⚠ It takes a deliberate act to get here: restoring a backup from a time the game was
-        /// played in another language, or editing translations.json by hand. The way out is the
-        /// same act undone, or Fork — a new lineage, free to say what it likes.
-        /// </summary>
-        public static string LanguageConflict { get; private set; }
-
-        /// <summary>Refusals already logged, so a scanner pass does not repeat one every frame.</summary>
-        private static int _languageConflictRefusals;
-
-        private static void NoteLanguageConflict()
-        {
-            var side = TranslationLanguages.PublicationConflict(
-                FileSourceLanguage, FileTargetLanguage,
-                ServerState?.SourceLanguage, ServerState?.TargetLanguage);
-
-            string explained = TranslationLanguages.ExplainConflict(side,
-                FileSourceLanguage, FileTargetLanguage,
-                ServerState?.SourceLanguage, ServerState?.TargetLanguage);
-
-            if (explained == LanguageConflict) return;
-
-            LanguageConflict = explained;
-            _languageConflictRefusals = 0;
-
-            if (explained != null)
-            {
-                Adapter?.LogWarning($"[Languages] {explained} Nothing new will be translated until "
-                                    + "this is settled; what the file already holds is still applied.");
-            }
-            else
-            {
-                Adapter?.LogInfo("[Languages] This translation matches the lineage it belongs to again.");
-            }
-        }
-
-        /// <summary>
-        /// Reconcile what the file says with what the machine is set to, at load, with no network.
-        ///
-        /// 🔴 **The file wins, and it settles this before a single line is translated.** That is
-        /// the whole answer to "will a restored backup mix two languages": the contradiction is
-        /// visible the instant the file is read — a file stating Thai beside a machine set to
-        /// French — and it needs no server to be SEEN, only to be arbitrated. Waiting for one would
-        /// have cost every launch a delay, and refusing to translate meanwhile would lose the lines
-        /// that pass once and never come back: a toast, a line of dialogue, a typewriter reveal.
-        ///
-        /// ⚠ The server still outranks the file (see <see cref="AlignLanguagesFromServer"/>), and
-        /// it answers a second later. It cannot contradict this quietly: a published lineage that
-        /// disagrees raises <see cref="LanguageConflict"/> instead of overwriting anything.
-        ///
-        /// ⚠ A file that states nothing adopts the machine's setting — the only answer available —
-        /// but ONLY when this lineage was never published. Where it was, the server knows and will
-        /// say; guessing first would freeze a wrong answer into the file before the truth arrives.
-        /// </summary>
-        private static void SettleLanguagesFromFile()
-        {
-            if (Config == null || TranslationCache.Count == 0) return;
-
-            bool everPublished = SourceSiteId.HasValue || !string.IsNullOrEmpty(LastSyncedHash);
-
-            if (Languages.Disagree(FileTargetLanguage, Config.target_language))
-            {
-                Adapter.LogWarning($"[Languages] This translation is in {FileTargetLanguage} and this "
-                                   + $"game was set to {Config.target_language}. The translation decides: "
-                                   + "the setting follows it.");
-                Config.target_language = FileTargetLanguage;
-                SaveConfig();
-            }
-            else if (!Languages.IsSettled(FileTargetLanguage)
-                     && !everPublished
-                     && Languages.IsSettled(Config.target_language))
-            {
-                FileTargetLanguage = Config.target_language;
-                cacheModified = true;
-                Adapter.LogInfo($"[Languages] This translation now states its target: '{FileTargetLanguage}'"
-                                + " — taken from this machine's setting, the only answer available for a"
-                                + " file written before it said so.");
-            }
-
-            // The source, same ladder. ⚠ Never invented: "auto" here means "detect", which is a
-            // working mode and not an answer, so an unset source stays unset until somebody
-            // declares one at upload or the server states it.
-            if (Languages.Disagree(FileSourceLanguage, Config.source_language))
-            {
-                Adapter.LogWarning($"[Languages] This translation is written from {FileSourceLanguage} "
-                                   + $"and this game was set to {Config.source_language}. The translation "
-                                   + "decides: the setting follows it.");
-                Config.source_language = FileSourceLanguage;
-                SaveConfig();
-            }
-            else if (!Languages.IsSettled(FileSourceLanguage)
-                     && !everPublished
-                     && Languages.IsSettled(Config.source_language))
-            {
-                FileSourceLanguage = Config.source_language;
-                cacheModified = true;
-            }
-        }
-
-        /// <summary>
-        /// Settle the target language the moment this translation acquires its first line.
-        ///
-        /// 🔴 **"auto" resolves at every read, which is not the same as being settled.** A file
-        /// whose configuration still says "auto" aims at whatever language the machine is set to,
-        /// so the same file targets French here and German on the next machine — and follows the
-        /// player's system language if they ever change it, retargeting lines already written.
-        /// A target settles when the first line is written; from then on it is a value, not a mode.
-        ///
-        /// ⚠ The SOURCE is deliberately not settled here. "auto" there means "detect", which is a
-        /// working mode with no resolved value to write; it settles when the person declares one at
-        /// upload, or when the server states it (see <see cref="AlignLanguagesFromServer"/>).
-        /// </summary>
-        private static void SettleTargetLanguageOnFirstLine()
-        {
-            if (Config == null || Languages.IsSettled(Config.target_language)) return;
-
-            string resolved = Config.GetTargetLanguage();
-            if (!Languages.IsSettled(resolved)) return;
-
-            Config.target_language = resolved;
-            FileTargetLanguage = resolved;
-            SaveConfig();
-            Adapter?.LogInfo($"[Languages] Target settled as '{resolved}' with this translation's "
-                             + "first line — it no longer follows the system language.");
-        }
-
-        /// <summary>
-        /// Whether the source and target languages may still be changed.
-        ///
-        /// Two reasons they may not, and the second was missing:
-        ///
-        /// · **published** — the server keeps the languages a translation was published with and
-        ///   ignores any sent with an update, so nothing here could move them anyway;
-        ///
-        /// · 🔴 **this file already holds lines.** A target language is not a preference, it is
-        ///   what the file IS: retargeting a file that already carries lines leaves every one of
-        ///   them written in a language the game is no longer asking for, and the next captures
-        ///   arrive in the new one. One file, two languages, and nothing said so. Captured lines
-        ///   count — they are the ones that would be orphaned.
-        ///
-        /// The way to change it is to clear the translation first, which is what the panel says.
-        /// The manager applies the same rule on its own screens.
-        /// </summary>
+        /// <inheritdoc cref="LanguageState.Locked"/>
         public static bool AreLanguagesLocked =>
-            (ServerState != null && ServerState.Exists) || TranslationCache.Count > 0;
+            LanguageState.Locked(ServerState != null && ServerState.Exists, TranslationCache.Count);
 
         /// <summary>Which of the two reasons applies, so the panel can say the right one.</summary>
         public static bool LanguagesLockedByPublishing => ServerState != null && ServerState.Exists;
+
+        /// <inheritdoc cref="LanguageState.AlignFromServer"/>
+        public static void AlignLanguagesFromServer()
+        {
+            if (Config == null) return;
+
+            var write = _languages.AlignFromServer(
+                ServerState?.SourceLanguage, ServerState?.TargetLanguage,
+                ServerState != null && ServerState.Exists,
+                Config.source_language, Config.target_language);
+
+            ApplyLanguageWriteBack(write);
+        }
+
+        /// <summary>
+        /// Take what the decision settled into the configuration and the translation file.
+        ///
+        /// ⚠ One place, because forgetting either half is silent: an unsaved configuration reverts
+        /// at the next launch, and an unflagged file keeps stating what it no longer holds.
+        /// </summary>
+        private static void ApplyLanguageWriteBack(LanguageWriteBack write)
+        {
+            if (write.ConfigChanged)
+            {
+                Config.source_language = write.Source;
+                Config.target_language = write.Target;
+                SaveConfig();
+            }
+
+            if (_languages.FileChanged)
+            {
+                cacheModified = true;
+                _languages.FileWritten();
+            }
+        }
+
+        /// <inheritdoc cref="LanguageState.SettleFromFile"/>
+        private static void SettleLanguagesFromFile()
+        {
+            if (Config == null) return;
+
+            bool everPublished = SourceSiteId.HasValue || !string.IsNullOrEmpty(LastSyncedHash);
+            ApplyLanguageWriteBack(_languages.SettleFromFile(
+                Config.source_language, Config.target_language,
+                TranslationCache.Count, everPublished));
+        }
+
+        /// <inheritdoc cref="LanguageState.SettleTargetOnFirstLine"/>
+        private static void SettleTargetLanguageOnFirstLine()
+        {
+            if (Config == null) return;
+
+            ApplyLanguageWriteBack(_languages.SettleTargetOnFirstLine(
+                Config.source_language, Config.target_language, Config.GetTargetLanguage()));
+        }
+
+        /// <inheritdoc cref="LanguageState.NoteConflict"/>
+        private static void NoteLanguageConflict()
+        {
+            _languages.NoteConflict(ServerState?.SourceLanguage, ServerState?.TargetLanguage);
+        }
 
         /// <summary>
         /// Returns true if a remote translation's UUID matches our local FileUuid.
@@ -2591,12 +2443,9 @@ namespace UnityGameTranslator.Core
 
             // Re-derived from the file being loaded, like everything else here: a reload may land
             // on a file that states no language, and keeping the previous one would let a restored
-            // backup inherit the languages of the file it replaced.
-            FileSourceLanguage = null;
-            FileTargetLanguage = null;
-            // Re-derived below from the file that is about to be read: a download that resolves the
-            // disagreement must not leave the previous file's verdict standing.
-            LanguageConflict = null;
+            // backup inherit the languages of the file it replaced. The verdict goes with them —
+            // a download that resolves the disagreement must not leave the old one standing.
+            _languages.Reset();
 
             // The mod's own interface lives in its own file and is read first: the game file below
             // may still carry interface lines (written before the split, or arrived with somebody
@@ -2664,12 +2513,12 @@ namespace UnityGameTranslator.Core
                         // an older mod, or a hand edit — states nothing, and reading it as an
                         // answer would let a mode outrank the server.
                         string stated = prop.Value.ToString();
-                        if (Languages.IsSettled(stated)) FileSourceLanguage = stated;
+                        _languages.StateSource(stated);
                     }
                     else if (prop.Name == "_target_language")
                     {
                         string stated = prop.Value.ToString();
-                        if (Languages.IsSettled(stated)) FileTargetLanguage = stated;
+                        _languages.StateTarget(stated);
                     }
                     else if (prop.Name == "_local_changes")
                     {
@@ -6342,7 +6191,7 @@ namespace UnityGameTranslator.Core
             // mode, which would otherwise fill the file with keys belonging to neither language.
             if (LanguageConflict != null)
             {
-                if (_languageConflictRefusals++ < 3)
+                if (_languages.ShouldSayRefusal())
                     Adapter?.LogWarning($"[Languages] Not translating: {LanguageConflict}");
                 return false;
             }

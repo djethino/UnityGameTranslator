@@ -142,6 +142,56 @@ namespace UnityGameTranslator.Core
             if (normalizedKey != key) NeedsRewrite = true;
         }
 
+        /// <summary>How many lines were given an index they did not have.</summary>
+        public int Backfilled { get; private set; }
+
+        /// <summary>
+        /// Give a capture-order index to every line that has none, and say what the next one is.
+        ///
+        /// 🔴 **Deterministic, and that is the whole requirement.** Two machines reading the same
+        /// file must produce the same indices, or the editors list the same translation in two
+        /// different orders and a line moves whenever somebody else opens it. So the lines with no
+        /// index are sorted by their KEY, ordinal — not by whatever order a dictionary happened to
+        /// hand them over, which is not a promise any runtime makes.
+        ///
+        /// ⚠ **It costs nothing in sync**: `i` is excluded from the content hash, on the mod and on
+        /// the site alike. Backfilling a thousand lines does not make a file look changed to the
+        /// server — but it DOES have to be written, or the same thousand are backfilled again at
+        /// the next launch.
+        ///
+        /// ⚠ New indices start above the highest one already there, never at one: an index is a
+        /// position in the order lines were captured, and reusing a number would put a new line
+        /// where an old one already sits.
+        /// </summary>
+        public long AssignMissingIndices()
+        {
+            long highest = 0;
+            List<string> missing = null;
+
+            foreach (var entry in Entries)
+            {
+                if (entry.Value.Index.HasValue)
+                {
+                    if (entry.Value.Index.Value > highest) highest = entry.Value.Index.Value;
+                }
+                else
+                {
+                    if (missing == null) missing = new List<string>();
+                    missing.Add(entry.Key);
+                }
+            }
+
+            long next = highest + 1;
+            if (missing == null) return next;
+
+            missing.Sort(System.StringComparer.Ordinal);
+            foreach (string key in missing) Entries[key].Index = next++;
+
+            Backfilled = missing.Count;
+            NeedsRewrite = true;
+            return next;
+        }
+
         /// <summary>Human over validated over anything a model produced.</summary>
         private static int Priority(string tag) => tag == "H" ? 3 : tag == "V" ? 2 : 1;
 

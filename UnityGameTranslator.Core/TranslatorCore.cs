@@ -2543,7 +2543,6 @@ namespace UnityGameTranslator.Core
                 TranslationCache = entriesRead.Entries;
                 // Interface lines found where they no longer belong — see the migration below.
                 Dictionary<string, TranslationEntry> strandedModUi = entriesRead.StrandedModUi;
-                if (entriesRead.NeedsRewrite) cacheModified = true;
 
                 // Generate UUID if not present
                 if (string.IsNullOrEmpty(FileUuid))
@@ -2553,39 +2552,17 @@ namespace UnityGameTranslator.Core
                     LogDebug($"Legacy cache file, generated UUID: {FileUuid}");
                 }
 
-                // Capture-order index: recompute the counter from the file, then
-                // backfill entries without one (legacy files, older mod versions,
-                // web-editor-created keys) in ALPHABETICAL key order — deterministic,
-                // so every device produces identical indices from the same file.
-                // "i" is excluded from the content hash on both mod and website,
-                // so this never affects sync/update detection.
-                long highestIndex = 0;
-                List<string> keysWithoutIndex = null;
-                foreach (var kvp in TranslationCache)
-                {
-                    if (kvp.Value.Index.HasValue)
-                    {
-                        if (kvp.Value.Index.Value > highestIndex)
-                            highestIndex = kvp.Value.Index.Value;
-                    }
-                    else
-                    {
-                        if (keysWithoutIndex == null)
-                            keysWithoutIndex = new List<string>();
-                        keysWithoutIndex.Add(kvp.Key);
-                    }
-                }
-                long nextIndex = highestIndex + 1;
-                if (keysWithoutIndex != null)
-                {
-                    keysWithoutIndex.Sort(StringComparer.Ordinal);
-                    foreach (var key in keysWithoutIndex)
-                    {
-                        TranslationCache[key].Index = nextIndex++;
-                    }
-                    cacheModified = true;
-                    LogDebug($"[LoadCache] Backfilled capture-order index on {keysWithoutIndex.Count} entries");
-                }
+                // Capture-order index: the counter is recomputed from the file and lines without
+                // one are given one, deterministically — see TranslationFileEntries for why the
+                // order has to be the key's and what it costs in sync (nothing).
+                long nextIndex = entriesRead.AssignMissingIndices();
+                if (entriesRead.Backfilled > 0)
+                    LogDebug($"[LoadCache] Backfilled capture-order index on {entriesRead.Backfilled} entries");
+
+                // Everything reading could change about what this file should hold, taken up once:
+                // a legacy shape, a key normalised, an interface line taken out, an index filled in.
+                if (entriesRead.NeedsRewrite) cacheModified = true;
+
                 lock (lockObj)
                 {
                     nextTranslationIndex = nextIndex;

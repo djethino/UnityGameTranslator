@@ -29,6 +29,7 @@ namespace UnityGameTranslator.Core.Checks
             WhenTwoKeysCollide(check);
             WhereAnInterfaceLineGoes(check);
             TheCaptureOrder(check);
+            GivingAnIndexToWhatHasNone(check);
             WhenTheFileMustBeWritten(check);
         }
 
@@ -152,6 +153,62 @@ namespace UnityGameTranslator.Core.Checks
             check(TranslationFileEntries.MaxOrderIndex == 9007199254740991L,
                 "the ceiling is what a browser can still count exactly",
                 "the site reads this file too; above this an index silently becomes a different one");
+        }
+
+        private static void GivingAnIndexToWhatHasNone(Action<bool, string, string> check)
+        {
+            // 🔴 The requirement is not "an index" but "the SAME index on every machine". Two
+            // devices reading one file must agree, or the editors list the same translation in two
+            // different orders and a line moves whenever somebody else opens it.
+            var read = Read(@"{""Zebra"":""z"",""Apple"":""a"",""Mango"":""m""}");
+            long next = read.AssignMissingIndices();
+
+            check(read.Entries["Apple"].Index == 1 && read.Entries["Mango"].Index == 2
+                  && read.Entries["Zebra"].Index == 3,
+                "lines with no index are numbered in key order, not in file order",
+                "a dictionary promises no order; two machines would number the same file differently");
+
+            check(next == 4 && read.Backfilled == 3,
+                "and the counter carries on from there",
+                "the next line the game shows takes the next number, so the order keeps meaning capture order");
+
+            // ⚠ New numbers start ABOVE what is already there.
+            var partial = Read(@"{""Old"":{""v"":""o"",""t"":""A"",""i"":50},""New"":""n""}");
+            long after = partial.AssignMissingIndices();
+            check(partial.Entries["New"].Index == 51 && after == 52,
+                "and above the highest one already in the file",
+                "reusing a number would put a new line where an old one already sits");
+
+            check(partial.Entries["Old"].Index == 50,
+                "a line that already has one keeps it",
+                "the index is where it was captured; renumbering it moves somebody's line for no reason");
+
+            var complete = Read(@"{""Play"":{""v"":""p"",""t"":""A"",""i"":3}}");
+            long unchanged = complete.AssignMissingIndices();
+            check(complete.Backfilled == 0 && !complete.NeedsRewrite && unchanged == 4,
+                "a file where every line is numbered is not rewritten",
+                "rewriting for nothing changes nothing on the server but costs a write at every launch");
+
+            check(Read(@"{""Play"":""p""}").AssignMissingIndices() == 2,
+                "and an unnumbered file starts at one",
+                "not at zero: the index is a position, and the whole mod reads 1 as the first");
+
+            // ⚠ In the CURRENT shape, missing only the index — a legacy string would already have
+            // asked for a rewrite by itself, and the case would pass without the backfill doing
+            // anything. It did, and only breaking the rule on purpose showed it.
+            var backfilled = Read(@"{""Play"":{""v"":""p"",""t"":""A""}}");
+            check(!backfilled.NeedsRewrite,
+                "a file whose only fault is a missing index asks for nothing yet",
+                "so what the next line proves is the backfill, and not something the reading already decided");
+
+            backfilled.AssignMissingIndices();
+            check(backfilled.NeedsRewrite,
+                "and backfilling is what makes it have to be written back",
+                "the index is left out of the content hash, so this costs nothing in sync — but unwritten, the same lines are backfilled at every launch");
+
+            check(new TranslationFileEntries().AssignMissingIndices() == 1,
+                "an empty file starts at one too",
+                "a fresh translation numbers its first captured line 1, like every other");
         }
 
         private static void WhenTheFileMustBeWritten(Action<bool, string, string> check)

@@ -174,6 +174,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             _sseClient?.Disconnect();
             _sseClient = new SseClient(ApiClient.GetSseHttpClient());
 
+            // ⚠ One event and the server closes the stream — authorized, expired or error, any of
+            // them ends the device flow. Saying so here is what stops a deliberate close from
+            // being read as a loss and written over the success message.
+            _sseClient.StopAfterFirstEvent = true;
+
             _sseClient.OnEvent += (evt) =>
             {
                 // Capture values before RunOnMainThread (IL2CPP safety)

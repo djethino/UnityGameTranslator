@@ -59,6 +59,27 @@ namespace UnityGameTranslator.Core
         /// <summary>Current connection state.</summary>
         public SseConnectionState State { get; private set; } = SseConnectionState.Disconnected;
 
+        /// <summary>
+        /// This stream delivers ONE event and is then closed by the server on purpose. Set before
+        /// <see cref="Connect"/>; the loop then stops on that event instead of treating the close
+        /// as a connection to win back.
+        ///
+        /// 🔴 **Because a deliberate end and a lost connection look identical from here.** The
+        /// device-flow endpoint emits `authorized` (or `expired`, or `error`) and calls res.end()
+        /// in the same breath — see sse-server/server.js. The reader saw the stream finish, the
+        /// loop announced Reconnecting, and the login panel wrote "Connection lost, reconnecting…"
+        /// over the success it was about to show: the account WAS linked, and the mod said it had
+        /// lost the connection. Cancelling from the event handler does not fix it — the handler is
+        /// queued to the main thread and lands a frame later, by which time the loop has already
+        /// spoken.
+        ///
+        /// ⚠ Off by default: the sync stream is long-lived, and an end there really is a loss.
+        /// </summary>
+        public bool StopAfterFirstEvent { get; set; }
+
+        /// <summary>Set when <see cref="StopAfterFirstEvent"/> has been honoured, so the loop leaves quietly.</summary>
+        private bool _finished;
+
         /// <summary>Fired when connection state changes. Handler runs on background thread — use RunOnMainThread.</summary>
         public event Action<SseConnectionState> OnStateChanged;
 
@@ -83,6 +104,7 @@ namespace UnityGameTranslator.Core
             if (_disposed) throw new ObjectDisposedException(nameof(SseClient));
 
             Disconnect();
+            _finished = false;
             _cts = new CancellationTokenSource();
             var token = _cts.Token;
             Task.Run(() => ConnectLoop(url, headers, token));
@@ -105,13 +127,19 @@ namespace UnityGameTranslator.Core
 
         private async Task ConnectLoop(string url, Dictionary<string, string> headers, CancellationToken ct)
         {
+            // ⚠ Whether this attempt is a RECONNECTION, which is not the same question as whether
+            // an event has been seen. It was read from _lastEventId, so an attempt that had never
+            // reached the server still announced itself as a reconnection — and a screen showing
+            // that state writes "Connection lost", about a connection nobody ever had.
+            bool everConnected = false;
+
             while (!ct.IsCancellationRequested)
             {
                 try
                 {
-                    SetState(_lastEventId == null
-                        ? SseConnectionState.Connecting
-                        : SseConnectionState.Reconnecting);
+                    SetState(everConnected
+                        ? SseConnectionState.Reconnecting
+                        : SseConnectionState.Connecting);
 
                     var request = new HttpRequestMessage(HttpMethod.Get, url);
                     request.Headers.Add("Accept", "text/event-stream");
@@ -158,6 +186,7 @@ namespace UnityGameTranslator.Core
 
                         // Connected successfully
                         SetState(SseConnectionState.Connected);
+                        everConnected = true;
                         _reconnectDelayMs = 3000; // Reset backoff
                         _lastDataReceived = DateTime.UtcNow;
 
@@ -165,6 +194,15 @@ namespace UnityGameTranslator.Core
                         using (var reader = new StreamReader(stream, Encoding.UTF8))
                         {
                             await ParseEventStream(reader, ct);
+                        }
+
+                        // The stream did what it was opened for. Leaving here rather than falling
+                        // through to the backoff is what keeps a deliberate close from being
+                        // announced as a loss.
+                        if (_finished)
+                        {
+                            SetState(SseConnectionState.Disconnected);
+                            return;
                         }
                     }
                 }
@@ -186,8 +224,11 @@ namespace UnityGameTranslator.Core
 
                 if (ct.IsCancellationRequested) return;
 
-                // Exponential backoff before reconnection
-                SetState(SseConnectionState.Reconnecting);
+                // Exponential backoff before trying again. Called a reconnection only when there
+                // was a connection to lose — see everConnected above.
+                SetState(everConnected
+                    ? SseConnectionState.Reconnecting
+                    : SseConnectionState.Connecting);
                 try
                 {
                     await Task.Delay(_reconnectDelayMs, ct);
@@ -299,6 +340,13 @@ namespace UnityGameTranslator.Core
                         catch (Exception ex)
                         {
                             TranslatorCore.LogError($"[SSE] Event handler error: {ex.Message}");
+                        }
+
+                        // Handed over, and this stream was only ever going to carry the one.
+                        if (StopAfterFirstEvent)
+                        {
+                            _finished = true;
+                            return;
                         }
                     }
 

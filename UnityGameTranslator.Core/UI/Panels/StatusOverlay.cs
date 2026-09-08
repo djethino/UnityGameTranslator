@@ -838,23 +838,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Nothing could be measured at all — a first frame, before any layout pass.
             if (shown == 0) height = FloorHeight();
 
-            // ⚠ **A probe, not a rule.** The hint under the buttons is cut again and the queue box
-            // is nowhere, and three explanations fit: the stack answers too small, it answers zero
-            // and the floor is used, or the height is right and a BOX clips its own content. This
-            // says which. Only when the number moves — this runs twice a second.
-            if (height != _lastLoggedHeight)
-            {
-                _lastLoggedHeight = height;
-                TranslatorCore.LogInfo($"[Overlay] height={height} (floor {FloorHeight()})"
-                    + $" | stack[{_stack?.SizeReport}]"
-                    + $" | sync[{Measured(_syncBox)}] hint[{(_syncHintLabel != null && _syncHintLabel.Visible ? _syncHintLabel.SizeReport : "off")}]"
-                    + $" | ai[{Measured(_aiBox)}] conn[{Measured(_connectionBox)}]");
-            }
-
             Overlays.SetSize(Window, PanelWidth, Math.Max(50, height));
         }
-
-        private int _lastLoggedHeight = -1;
 
         // What the stack costs around its boxes, and between them.
         //
@@ -865,13 +850,6 @@ namespace UnityGameTranslator.Core.UI.Panels
         private const int StackPadding = 10;   // above the first box and below the last, together
         private const int StackSpacing = 5;    // between each pair
 
-        /// <summary>One box, for the probe: hidden, or everything it can say about its size.</summary>
-        private static string Measured(Host box)
-        {
-            if (box == null) return "-";
-            if (!box.Visible) return "off";
-            return box.SizeReport;
-        }
 
         /// <summary>
         /// What the overlay was worth before anything could be measured — the numbers it used from

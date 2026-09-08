@@ -147,32 +147,6 @@ namespace UnityGameTranslator.Core.UI.Components
             set { if (Object != null) Object.SetActive(value); }
         }
 
-        /// <summary>
-        /// Everything this handle can say about its own size, for a probe. Never throws.
-        ///
-        /// ⚠ Three numbers because they fail differently: a layout group answers a preferred
-        /// height only once its input is calculated (0 before that), a rect answers what was last
-        /// laid out (0 if nothing ever sized it), and a child count says whether there is anything
-        /// to size at all. One of them being real is what tells a caller where to read.
-        /// </summary>
-        public string SizeReport
-        {
-            get
-            {
-                if (Object == null) return "(none)";
-                var rect = Object.GetComponent<RectTransform>();
-                if (rect == null) return "(no rect)";
-
-                string preferred, actual;
-                try { preferred = UnityEngine.UI.LayoutUtility.GetPreferredHeight(rect).ToString("0.#"); }
-                catch { preferred = "err"; }
-                try { actual = rect.rect.height.ToString("0.#"); }
-                catch { actual = "err"; }
-
-                return $"want={preferred} is={actual} kids={rect.childCount}";
-            }
-        }
-
         /// <summary>Its name in the hierarchy — the name it was created with.</summary>
         public string Name => Object != null ? Object.name : "";
 

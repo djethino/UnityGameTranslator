@@ -732,16 +732,24 @@ namespace UnityGameTranslator.Core
                     var prop = component.GetType().GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance);
                     if (prop == null || prop.SetMethod == null) continue;
 
-                    // ⚠ **A probe, not a rule.** "Restored 1 original image(s)" was in the log while
-                    // the replacement was still on screen, and those two cannot both be true. This
-                    // says which component, what it held, what is being written back, and what it
-                    // holds afterwards — so the next report answers it in one run instead of three.
-                    // Once per reload, over one or two components: it costs nothing.
-                    string before = Describe(Read(prop, component));
-                    prop.SetValue(component, originalValue, null);
-                    string after = Describe(Read(prop, component));
-                    TranslatorCore.LogInfo($"[ImageReplacer] Restore {NameOf(component)}.{propertyName}: "
-                                           + $"{before} → wrote {Describe(originalValue)} → now {after}");
+                    // ⚠ **Kept, where verbose lines belong.** "Restored 1 original image(s)" was in
+                    // the log while the replacement was still on screen, and those two cannot both
+                    // be true — the count says a write happened, never what came of it. Naming the
+                    // component, what it held, what was written and what it holds afterwards is
+                    // what told the two apart, and it is the only reading that can.
+                    if (TranslatorCore.DebugMode)
+                    {
+                        string before = Describe(Read(prop, component));
+                        prop.SetValue(component, originalValue, null);
+                        TranslatorCore.LogDebug($"[ImageReplacer] Restore {NameOf(component)}.{propertyName}: "
+                                                + $"{before} → wrote {Describe(originalValue)} "
+                                                + $"→ now {Describe(Read(prop, component))}");
+                    }
+                    else
+                    {
+                        prop.SetValue(component, originalValue, null);
+                    }
+
                     restored++;
                 }
                 catch (Exception ex)

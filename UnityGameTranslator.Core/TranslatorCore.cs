@@ -4149,29 +4149,27 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Validate that an edited translation keeps every frozen token of its key
-        /// ([!v*N], [!t*N], [!STR*N], [!nl]). Returns null when valid, otherwise a
-        /// short error message listing the problem tokens.
+        /// What is wrong with a translation somebody just typed, or null when nothing is.
+        ///
+        /// 🔴 **The socle's rule, not a looser one of ours.** This checked missing and unknown
+        /// tokens and nothing else, so a person could DUPLICATE a placeholder — or drop the
+        /// bracket the game wrapped around one — and save it, where a model doing the same was
+        /// refused three times and then given up on. The game substitutes at runtime and does not
+        /// care who was at the keyboard.
+        ///
+        /// ⚠ <see cref="Placeholders.AcceptsEdit"/> and not <see cref="Placeholders.Accepts"/>:
+        /// the one check left out is the count of brackets over the whole text, which would refuse
+        /// "Save" → "Save [F5]". That is somebody's own addition and it breaks nothing.
         /// </summary>
         public static string ValidateEditedPlaceholders(string key, string newValue)
         {
-            var keyTokens = Placeholders.Tally(key ?? "");
-            var valueTokens = Placeholders.Tally(newValue ?? "");
+            string source = key ?? "";
+            string edited = newValue ?? "";
 
-            var problems = new List<string>();
-            foreach (var kv in keyTokens)
-            {
-                valueTokens.TryGetValue(kv.Key, out int found);
-                if (found < kv.Value)
-                    problems.Add($"missing {kv.Key}");
-            }
-            foreach (var kv in valueTokens)
-            {
-                if (!keyTokens.ContainsKey(kv.Key))
-                    problems.Add($"unknown {kv.Key}");
-            }
+            if (Placeholders.AcceptsEdit(source, edited, Placeholders.FrozenSequences(source), out var errors))
+                return null;
 
-            return problems.Count == 0 ? null : string.Join(", ", problems);
+            return string.Join("; ", errors);
         }
 
         /// <summary>

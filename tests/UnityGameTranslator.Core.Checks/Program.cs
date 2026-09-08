@@ -51,6 +51,7 @@ namespace UnityGameTranslator.Core.Checks
             WhatWaitsForABackend();
             WhatAConfigFileStillMeans();
             HowAnEventStreamIsRead();
+            WhatABackendIsHandedAndGivesBack();
             HowTextChanges();
             WhenTextMayBeTyping();
             HowATargetIsNamed();
@@ -117,6 +118,12 @@ namespace UnityGameTranslator.Core.Checks
         private static void HowAnEventStreamIsRead()
         {
             Section("Server-sent events, across a whole stream", SseStreamChecks.Run);
+        }
+
+        /// <summary>What a backend is handed, and what is made of what comes back.</summary>
+        private static void WhatABackendIsHandedAndGivesBack()
+        {
+            Section("Backends: taking a text apart and putting the answer back", BackendsChecks.Run);
         }
 
         /// <summary>How a sentence carrying live numbers is read as the pattern it was cached from.</summary>

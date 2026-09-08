@@ -90,6 +90,12 @@
     -->
     <Compile Include="../../UnityGameTranslator.Core/Engine/SseStream.cs" />
     <!--
+      What every backend does to a text before sending it and to the answer before believing it.
+      The ORDER is the rule in both directions, it was written twice (once per backend family), and
+      it is what a second engine's Core has to reproduce exactly.
+    -->
+    <Compile Include="../../UnityGameTranslator.Core/Engine/Backends.cs" />
+    <!--
       What lets one cached sentence serve every value the game puts in it. A pattern that stops
       matching costs one call per number, for ever; one that matches too much shows a sentence
       about something else.

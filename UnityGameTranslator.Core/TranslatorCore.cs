@@ -5236,35 +5236,20 @@ namespace UnityGameTranslator.Core
                 string textToTranslate = textWithPlaceholders;
                 TextType textType = Prompts.Classify(textToTranslate);
 
-                // === PRE-PROCESS text before prompt building ===
-                // Replace structural elements with placeholders so the AI only sees translatable text.
-                // 1. Line breaks → [!nl]
-                string textForAI = textToTranslate.Replace("\n", "[!nl]");
-                // 2. Markup tags (<color=...>, </b>, etc.) → [!t*N]
-                List<string> extractedTags = null;
-                textForAI = ExtractMarkupTags(textForAI, out extractedTags);
-                // 3. Trim leading/trailing whitespace (visual padding confuses AI)
-                string leadingWS = "";
-                string trailingWS = "";
-                string trimmed = textForAI.TrimStart();
-                if (trimmed.Length < textForAI.Length)
-                {
-                    leadingWS = textForAI.Substring(0, textForAI.Length - trimmed.Length);
-                    textForAI = trimmed;
-                }
-                trimmed = textForAI.TrimEnd();
-                if (trimmed.Length < textForAI.Length)
-                {
-                    trailingWS = textForAI.Substring(trimmed.Length);
-                    textForAI = trimmed;
-                }
+                // Structure into tokens, padding held back — the same preparation the
+                // translation-API path uses, and the order in it is the rule. See Engine/Backends.
+                var prepared = Backends.Prepare(textToTranslate);
+                if (prepared.NothingToSend) return null;
 
-                if (Config.debug_ai && extractedTags != null && extractedTags.Count > 0)
+                string textForAI = prepared.ToSend;
+                List<string> extractedTags = prepared.Tags;
+
+                if (Config.debug_ai && extractedTags.Count > 0)
                     Adapter?.LogInfo($"[AI] Extracted {extractedTags.Count} markup tags from text");
 
                 // Detect which placeholder types are in the PROCESSED text
-                bool hasNlPlaceholders = textForAI.Contains("[!nl]");
-                bool hasTagPlaceholders = extractedTags != null && extractedTags.Count > 0;
+                bool hasNlPlaceholders = textForAI.Contains(Backends.LineBreak);
+                bool hasTagPlaceholders = extractedTags.Count > 0;
                 bool hasNumberPlaceholders = extractedNumbers != null && extractedNumbers.Count > 0;
                 // Presence in THIS text, not "variables exist somewhere": announcing a placeholder
                 // the text does not contain invites the model to invent one — small models answered
@@ -5437,23 +5422,12 @@ namespace UnityGameTranslator.Core
                     return null;
                 }
 
-                if (!string.IsNullOrEmpty(translation))
-                {
-                    // Restore placeholders in reverse order of extraction:
-                    // 1. Markup tags [!t*N] → original tags
-                    translation = RestoreMarkupTags(translation, extractedTags);
-                    // 2. Line breaks [!nl] → \n
-                    translation = translation.Replace("[!nl]", "\n");
-                    // 3. Clean AI artifacts (removes quotes, thinking blocks, etc.)
-                    translation = Answers.Clean(translation);
-                    // 4. Restore leading/trailing whitespace AFTER clean (clean does Trim)
-                    if (leadingWS.Length > 0 || trailingWS.Length > 0)
-                        translation = leadingWS + translation + trailingWS;
-                    if (Config.debug_ai)
-                    {
-                        Adapter?.LogInfo($"[AI Clean] {translation?.Substring(0, Math.Min(80, translation?.Length ?? 0))}");
-                    }
-                }
+                // Markup, line breaks, the model's chatter, then the padding — that order,
+                // for the reasons written where it lives.
+                translation = Backends.Restore(prepared, translation, AnswerFrom.Model);
+
+                if (Config.debug_ai && !string.IsNullOrEmpty(translation))
+                    Adapter?.LogInfo($"[AI Clean] {translation.Substring(0, Math.Min(80, translation.Length))}");
 
                 return translation;
             }
@@ -5723,31 +5697,11 @@ namespace UnityGameTranslator.Core
             {
                 string textToTranslate = textWithPlaceholders;
 
-                // === PRE-PROCESS: same placeholder extraction as LLM ===
-                // 1. Line breaks → [!nl]
-                string textForAPI = textToTranslate.Replace("\n", "[!nl]");
-                // 2. Markup tags → [!t*N]
-                List<string> extractedTags = null;
-                textForAPI = ExtractMarkupTags(textForAPI, out extractedTags);
-                // 3. Trim whitespace
-                string leadingWS = "";
-                string trailingWS = "";
-                string trimmed = textForAPI.TrimStart();
-                if (trimmed.Length < textForAPI.Length)
-                {
-                    leadingWS = textForAPI.Substring(0, textForAPI.Length - trimmed.Length);
-                    textForAPI = trimmed;
-                }
-                trimmed = textForAPI.TrimEnd();
-                if (trimmed.Length < textForAPI.Length)
-                {
-                    trailingWS = textForAPI.Substring(trimmed.Length);
-                    textForAPI = trimmed;
-                }
+                // The same preparation the model path uses, written once. See Engine/Backends.
+                var prepared = Backends.Prepare(textToTranslate);
+                if (prepared.NothingToSend) return null;
 
-                // Skip empty text after pre-processing
-                if (string.IsNullOrWhiteSpace(textForAPI))
-                    return null;
+                string textForAPI = prepared.ToSend;
 
                 // === CALL THE API ===
                 string translation = null;
@@ -5787,18 +5741,9 @@ namespace UnityGameTranslator.Core
                     }
                 }
 
-                // === POST-PROCESS: restore placeholders ===
-                // Restore markup tags
-                if (extractedTags != null && extractedTags.Count > 0)
-                {
-                    translation = RestoreMarkupTags(translation, extractedTags);
-                }
-                // Restore [!nl] → \n
-                translation = translation.Replace("[!nl]", "\n");
-                // Restore whitespace
-                translation = leadingWS + translation + trailingWS;
-
-                return translation;
+                // Same restoration, minus the one step that does not apply: these services take
+                // no instructions, so there is no chatter to remove and anything removed is text.
+                return Backends.Restore(prepared, translation, AnswerFrom.TranslationApi);
             }
             catch (Exception e)
             {

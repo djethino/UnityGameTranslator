@@ -180,6 +180,32 @@ namespace UnityGameTranslator.Core.UI.Components
         /// <summary>How many children it holds, active or not.</summary>
         public int ChildCount => _object != null ? _object.transform.childCount : 0;
 
+        /// <summary>
+        /// How tall this box wants to be, in pixels, for everything it currently holds.
+        ///
+        /// 🔴 **A number, never an engine type** — the frontier stands. What crosses it is a
+        /// height, which is what a caller sizing a window needs; the layout that produces it stays
+        /// on this side.
+        ///
+        /// ⚠ **Why it exists.** The notification overlay has added a fixed pixel count per visible
+        /// box since 2025-12-27 — 60 for one, 60 for another, 50 for a third. That held while every
+        /// box was one headline and a row of buttons. It stopped holding the day one of them gained
+        /// a line of explanation that wraps: the box needs about ninety and is given sixty, so its
+        /// last line is cut across the middle and whatever comes next is placed over it.
+        ///
+        /// ⚠ Zero when there is nothing to measure, so a caller can fall back on what it knows.
+        /// </summary>
+        public float WantedHeight
+        {
+            get
+            {
+                if (_object == null) return 0f;
+                var rect = _object.transform as RectTransform;
+                if (rect == null) return 0f;
+                return UnityEngine.UI.LayoutUtility.GetPreferredHeight(rect);
+            }
+        }
+
         /// <summary>Put this host last among its siblings — drawn on top, laid out last.</summary>
         public void ToBack() { _object?.transform.SetAsLastSibling(); }
 

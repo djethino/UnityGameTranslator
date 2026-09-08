@@ -774,23 +774,44 @@ namespace UnityGameTranslator.Core.UI.Panels
             AdjustHeight();
         }
 
+        /// <summary>
+        /// Size the overlay to what its boxes actually need.
+        ///
+        /// 🔴 **It used to add a fixed count of pixels per visible box** — 60, 60, 50, 20 — and had
+        /// done so since the overlay was written (2025-12-27). That held while every box was a
+        /// headline and a row of buttons, all the same height. It stopped holding the day one of
+        /// them gained a line of explanation long enough to wrap: the box wants about ninety, is
+        /// given sixty, and the difference is what a reader sees — a line cut across the middle,
+        /// with the next notification drawn over what is left of it.
+        ///
+        /// ⚠ **A fixed number per box cannot be right**, because none of them has a fixed height:
+        /// the hint under the sync box grows with the owner's name, the connection line wraps on a
+        /// long reason, and the mod box already needed a second number bolted on for its own hint.
+        /// Each box is asked instead.
+        ///
+        /// ⚠ The old numbers stay as the floor. A box is measured through the engine's layout,
+        /// which answers 0 for a frame that has not been laid out yet — and a first frame at the
+        /// wrong size is exactly the jump this method exists to avoid.
+        /// </summary>
         private void AdjustHeight()
         {
             int height = 10; // padding
 
-            // ⚠ The mod box grew a line: the hint under the headline, which is only there while the
-            // Manager still has to be fetched. Counted for what is actually on screen — a fixed 80
-            // would leave a gap under the box for everybody who already has it.
-            if (_modUpdateBox != null && _modUpdateBox.Visible)
-            {
-                height += 60;
-                if (_modManagerHint != null && _modManagerHint.Visible) height += 18;
-            }
-            if (_syncBox != null && _syncBox.Visible) height += 60;
-            if (_aiBox != null && _aiBox.Visible) height += 50;
-            if (_connectionBox != null && _connectionBox.Visible) height += 20;
+            height += HeightOf(_modUpdateBox, atLeast: 60);
+            height += HeightOf(_syncBox, atLeast: 60);
+            height += HeightOf(_aiBox, atLeast: 50);
+            height += HeightOf(_connectionBox, atLeast: 20);
 
             Overlays.SetSize(Window, PanelWidth, Math.Max(50, height));
+        }
+
+        /// <summary>What one box costs: nothing when hidden, what it wants when it can say.</summary>
+        private static int HeightOf(Host box, int atLeast)
+        {
+            if (box == null || !box.Visible) return 0;
+
+            float wanted = box.WantedHeight;
+            return wanted > atLeast ? (int)Math.Ceiling(wanted) : atLeast;
         }
 
         #region Button Handlers

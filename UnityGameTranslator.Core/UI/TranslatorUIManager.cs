@@ -3498,6 +3498,23 @@ namespace UnityGameTranslator.Core.UI
         }
 
         /// <summary>
+        /// The translation on disk has been read again — a download, a merge, a backup put back —
+        /// so what is on screen describes a file that is no longer there.
+        ///
+        /// 🔴 **Called from ReloadCache rather than from its callers.** Of the five ways to reload,
+        /// one refreshed; the four that did not included putting a backup back, where the main
+        /// panel went on showing the previous translation's languages while the options screen —
+        /// which re-reads whenever it opens — showed the new ones. Whoever adds a sixth way will
+        /// not have to remember.
+        ///
+        /// ⚠ Null-safe on purpose: the first load happens before any panel exists.
+        /// </summary>
+        public static void NotifyTranslationReloaded()
+        {
+            MainPanel?.RefreshUI();
+        }
+
+        /// <summary>
         /// Per-frame housekeeping for the live edit session (called from
         /// DrainMainThreadQueue): debounced local-file pushes and the
         /// browser-absence grace timer.

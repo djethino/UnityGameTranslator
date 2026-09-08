@@ -1175,8 +1175,33 @@ namespace UnityGameTranslator.Core
         /// </summary>
         internal static void AfterSettingsSectionsChanged(IEnumerable<string> sections)
         {
-            var changed = new HashSet<string>(sections ?? Enumerable.Empty<string>());
-            if (changed.Count == 0) return;
+            if (!InvalidateForSections(sections, out var changed)) return;
+
+            SetMetadataDirty();
+
+            LogInfo($"[Settings] Replaced sections: {string.Join(", ", changed.ToArray())}");
+        }
+
+        /// <summary>
+        /// Drop what these sections govern, so the game is re-read against what they now say.
+        ///
+        /// 🔴 **Separate from <see cref="AfterSettingsSectionsChanged"/> because a RELOAD is not an
+        /// edit.** Replacing a section from a screen changes what this install decided, and has to
+        /// be recorded as unsynced; loading a different translation file changes the same things
+        /// and records nothing — the file IS what it says.
+        ///
+        /// ⚠ **A reload is every section at once, and it did not say so.** ReloadCache loaded a new
+        /// fonts section and dropped only the TEXT caches, so components kept the font the previous
+        /// translation asked for. Seen on a real install (2026-09-08): restoring a Thai translation
+        /// over a French one loaded its `_fonts` — Alatsi→Tahoma against the French Alatsi→Birch Std
+        /// — and nothing in the font machinery ran. The game stayed on Birch Std until the fallback
+        /// was toggled by hand in the Fonts tab, which goes through the other door.
+        /// </summary>
+        /// <returns>False when there was nothing to invalidate.</returns>
+        private static bool InvalidateForSections(IEnumerable<string> sections, out HashSet<string> changed)
+        {
+            changed = new HashSet<string>(sections ?? Enumerable.Empty<string>());
+            if (changed.Count == 0) return false;
 
             if (changed.Contains(SettingsSections.Fonts) || changed.Contains(SettingsSections.FontRules))
             {
@@ -1196,10 +1221,8 @@ namespace UnityGameTranslator.Core
                 ImageReplacer.LoadAllReplacements();
             }
 
-            SetMetadataDirty();
             ClearProcessingCaches();
-
-            LogInfo($"[Settings] Replaced sections: {string.Join(", ", changed.ToArray())}");
+            return true;
         }
 
         #endregion
@@ -2953,8 +2976,19 @@ namespace UnityGameTranslator.Core
 
             LoadCache();
 
-            // Clear processing caches so scanner re-evaluates all text with new translations
-            ClearProcessingCaches();
+            // 🔴 **Every section at once, because that is what a reload is.** The file just read
+            // carries its own fonts, rules, images and settings, and what depends on them has to be
+            // dropped exactly as it is when one of them is replaced from a screen — this used to
+            // clear the text caches alone, so a restored translation kept the previous one's font.
+            //
+            // ⚠ Through InvalidateForSections and not AfterSettingsSectionsChanged: the second one
+            // also records that this install changed something, which a reload has not.
+            InvalidateForSections(SettingsSections.All, out _);
+
+            // What is on screen still describes the file that was there a moment ago. Said HERE
+            // and not by the callers: it was one of five, and the four that forgot included
+            // putting a backup back.
+            UI.TranslatorUIManager.NotifyTranslationReloaded();
         }
 
         // ── Upstream ancestor (branches only) ────────────────────────────────

@@ -142,6 +142,45 @@ namespace UnityGameTranslator.Core
             if (normalizedKey != key) NeedsRewrite = true;
         }
 
+        /// <summary>
+        /// Write the lines into a file being built, after whatever metadata it already carries.
+        ///
+        /// 🔴 **The mirror of <see cref="ReadAll"/>, and the pair is what has to hold.** Anything
+        /// this writes that reading does not give back is work lost the next time the file is
+        /// opened — silently, since nothing compares the two.
+        ///
+        /// ⚠ **Sorted by key**, so two saves of the same content produce the same bytes. The file
+        /// is diffed by people, merged, and its hash is compared with the server's; a dictionary's
+        /// order would make every save look like a change.
+        ///
+        /// ⚠ **An absent index is OMITTED, never written as null.** The website refuses `"i": null`
+        /// outright, so a file carrying one cannot be published at all — and the person is told
+        /// their upload is invalid, not that a line has no capture order.
+        /// </summary>
+        public static void WriteInto(JObject output, IDictionary<string, TranslationEntry> entries)
+        {
+            if (output == null || entries == null) return;
+
+            var keys = new List<string>(entries.Keys);
+            keys.Sort(System.StringComparer.Ordinal);
+
+            foreach (string key in keys)
+            {
+                var entry = entries[key];
+                var line = new JObject
+                {
+                    ["v"] = entry.Value,
+                    // The cache always carries a tag; without one a line is machine output, which
+                    // is what every line was before tags existed.
+                    ["t"] = entry.Tag ?? "A",
+                };
+
+                if (entry.Index.HasValue) line["i"] = entry.Index.Value;
+
+                output[key] = line;
+            }
+        }
+
         /// <summary>How many lines were given an index they did not have.</summary>
         public int Backfilled { get; private set; }
 

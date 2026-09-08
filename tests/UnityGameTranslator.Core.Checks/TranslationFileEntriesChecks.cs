@@ -31,6 +31,7 @@ namespace UnityGameTranslator.Core.Checks
             TheCaptureOrder(check);
             GivingAnIndexToWhatHasNone(check);
             WhenTheFileMustBeWritten(check);
+            WritingThemBackOut(check);
         }
 
         private static TranslationFileEntries Read(string json)
@@ -209,6 +210,79 @@ namespace UnityGameTranslator.Core.Checks
             check(new TranslationFileEntries().AssignMissingIndices() == 1,
                 "an empty file starts at one too",
                 "a fresh translation numbers its first captured line 1, like every other");
+        }
+
+        private static void WritingThemBackOut(Action<bool, string, string> check)
+        {
+            // 🔴 The property that matters more than any single rule: what is written is what
+            // comes back. Anything lost here is lost the next time the file is opened, silently,
+            // because nothing anywhere compares the two.
+            var original = Read(@"{""Zebra"":{""v"":""z"",""t"":""H"",""i"":9},"
+                                + @"""Apple"":{""v"":""a"",""t"":""V"",""i"":2},"
+                                + @"""Mango"":{""v"":""m"",""t"":""A""}}");
+
+            var written = new JObject();
+            TranslationFileEntries.WriteInto(written, original.Entries);
+            var reread = TranslationFileEntries.ReadAll(written);
+
+            bool identical = reread.Entries.Count == original.Entries.Count;
+            foreach (var line in original.Entries)
+            {
+                if (!reread.Entries.TryGetValue(line.Key, out var back)
+                    || back.Value != line.Value.Value
+                    || back.Tag != line.Value.Tag
+                    || back.Index != line.Value.Index)
+                {
+                    identical = false;
+                }
+            }
+
+            check(identical,
+                "what is written comes back as itself",
+                "anything lost here is lost the next time the file is opened, and nothing compares the two");
+
+            check(!reread.NeedsRewrite,
+                "and comes back asking for nothing",
+                "a file this build just wrote must not need repairing by this build — that is a save on every launch, for ever");
+
+            // ⚠ Sorted: two saves of the same content must produce the same bytes. The file is
+            // diffed by people, merged, and its hash compared with the server's.
+            var order = new JObject();
+            TranslationFileEntries.WriteInto(order, Read(@"{""Zebra"":""z"",""Apple"":""a""}").Entries);
+            var names = new System.Collections.Generic.List<string>();
+            foreach (var property in order.Properties()) names.Add(property.Name);
+            check(names.Count == 2 && names[0] == "Apple" && names[1] == "Zebra",
+                "lines are written in key order",
+                "a dictionary's order would make every save look like a change to whoever diffs or merges the file");
+
+            // 🔴 Never "i": null — the website refuses it outright, so such a file cannot be
+            // published at all and the person is told their upload is invalid.
+            var noIndex = new JObject();
+            TranslationFileEntries.WriteInto(noIndex, Read(@"{""Play"":{""v"":""p"",""t"":""A""}}").Entries);
+            check(!((JObject)noIndex["Play"]).ContainsKey("i"),
+                "a line with no capture order carries no 'i' at all",
+                "the site refuses a null there, so the file cannot be published and the person is told their upload is invalid");
+
+            // ⚠ Built rather than read: reading always assigns a tag, so a case going through it
+            // would pass with this rule broken. Breaking it on purpose is what showed that — and
+            // what it guards is a line whose tag was explicitly cleared, which no caller does
+            // today. Same convention as ContentHash, which reads an absent tag the same way.
+            var untagged = new System.Collections.Generic.Dictionary<string, TranslationEntry>
+            {
+                ["Play"] = new TranslationEntry { Value = "p", Tag = null },
+            };
+            var tagged = new JObject();
+            TranslationFileEntries.WriteInto(tagged, untagged);
+            check(tagged["Play"]["t"].ToString() == "A",
+                "a line whose tag was cleared is written as a model's",
+                "the site and the quality score both read it; a line without one is a line nobody can attribute");
+
+            var nothing = new JObject { ["_uuid"] = "abc" };
+            TranslationFileEntries.WriteInto(nothing,
+                new System.Collections.Generic.Dictionary<string, TranslationEntry>());
+            check(nothing.Count == 1 && nothing["_uuid"] != null,
+                "writing no lines leaves the metadata alone",
+                "an empty translation is still a file with a lineage, and losing its uuid starts a new one");
         }
 
         private static void WhenTheFileMustBeWritten(Action<bool, string, string> check)

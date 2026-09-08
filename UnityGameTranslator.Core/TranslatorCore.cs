@@ -6785,31 +6785,16 @@ namespace UnityGameTranslator.Core
                         }
                     }
 
-                    // Sorted translations with new format {"v": "value", "t": "tag", "i": index}
-                    var sortedKeys = TranslationCache.Keys.OrderBy(k => k).ToList();
-                    foreach (var key in sortedKeys)
-                    {
-                        var entry = TranslationCache[key];
-                        var obj = new JObject
-                        {
-                            ["v"] = entry.Value,
-                            ["t"] = entry.Tag ?? "A"
-                        };
-                        // Capture-order index — omitted when absent (never "i": null,
-                        // the website validation would reject it)
-                        if (entry.Index.HasValue)
-                        {
-                            obj["i"] = entry.Index.Value;
-                        }
-                        output[key] = obj;
-                    }
+                    // The lines, sorted, in the shape reading gives back — the two are written
+                    // together in Engine/TranslationFileEntries so the round trip can be checked.
+                    TranslationFileEntries.WriteInto(output, TranslationCache);
 
                     string json = output.ToString(Formatting.Indented);
                     File.WriteAllText(CachePath, json);
                     cacheModified = false;
 
                     if (DebugMode)
-                        Adapter?.LogInfo($"Saved {sortedKeys.Count} cache entries with UUID: {FileUuid}");
+                        Adapter?.LogInfo($"Saved {TranslationCache.Count} cache entries with UUID: {FileUuid}");
                 }
                 catch (Exception e)
                 {

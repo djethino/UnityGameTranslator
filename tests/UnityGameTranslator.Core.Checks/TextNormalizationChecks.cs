@@ -142,6 +142,21 @@ namespace UnityGameTranslator.Core.Checks
             check(!TextNormalization.IsNaturalIdentity("Level [!v*0]"),
                 "one word is enough to make it a sentence",
                 "otherwise a real line would be dropped for carrying a number");
+
+            // 🔴 Where the two answers to "is there a letter" actually diverge, frozen so the
+            // divergence is a fact rather than an impression. A private-use codepoint is one of
+            // OUR shaped glyphs: NormalizeForReadbackMatch counts it as a letter (that is what
+            // lets a shaped word be recognised coming back), and this one does not — it is in no
+            // range listed and char.IsLetter says no. A word rendered ENTIRELY as ligatures would
+            // therefore be refused at every door into translation, before the readback path ever
+            // sees it. Undecided on purpose: changing it changes what four guards let through.
+            check(TextNormalization.IsNumericOrSymbol(""),
+                "a text of nothing but shaped glyphs reads as symbols here",
+                "while the readback form counts the same codepoints as letters — the one place the two disagree");
+
+            check(TextNormalization.NormalizeForReadbackMatch("") != null,
+                "and the readback form gives it one",
+                "a conjunct IS letters, which is what makes a shaped word recognisable when the game hands it back");
         }
 
         private static void ReadbackForm(Action<bool, string, string> check)

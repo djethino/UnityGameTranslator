@@ -53,6 +53,7 @@ namespace UnityGameTranslator.Core.Checks
             HowAnEventStreamIsRead();
             WhatABackendIsHandedAndGivesBack();
             WhatATranslationFileYields();
+            HowContentIsFingerprinted();
             HowTextChanges();
             WhenTextMayBeTyping();
             HowATargetIsNamed();
@@ -131,6 +132,12 @@ namespace UnityGameTranslator.Core.Checks
         private static void WhatATranslationFileYields()
         {
             Section("Reading a translation file", TranslationFileEntriesChecks.Run);
+        }
+
+        /// <summary>Writing JSON the same way every time, so the same content fingerprints the same.</summary>
+        private static void HowContentIsFingerprinted()
+        {
+            Section("Canonical JSON (the fork fingerprint)", CanonicalJsonChecks.Run);
         }
 
         /// <summary>How a sentence carrying live numbers is read as the pattern it was cached from.</summary>

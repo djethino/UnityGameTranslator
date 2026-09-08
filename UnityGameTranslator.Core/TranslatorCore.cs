@@ -3461,9 +3461,10 @@ namespace UnityGameTranslator.Core
         /// one serialise floats and unicode however Newtonsoft does, with no cross-language byte
         /// agreement to maintain (a size multiplier of 1.0 alone would break one).
         ///
-        /// ⚠ Property names sorted, list order kept. A section is rebuilt from dictionaries whose
-        /// order is not promised across insertions, while a font-rule list is applied in sequence —
-        /// so order is noise in one and content in the other.
+        /// ⚠ Property names sorted, list order kept — see <see cref="CanonicalJson"/>, where that
+        /// rule lives with its cases. A section is rebuilt from dictionaries whose order is not
+        /// promised across insertions, while a font-rule list is applied in sequence, so order is
+        /// noise in one and content in the other.
         /// </summary>
         private static string ComputeContentFingerprint()
         {
@@ -3486,7 +3487,7 @@ namespace UnityGameTranslator.Core
                     var container = token as JContainer;
                     if (container == null || !container.HasValues) continue;
 
-                    document.Append('|').Append(section).Append(':').Append(Canonical(token));
+                    document.Append('|').Append(section).Append(':').Append(CanonicalJson.Of(token));
                 }
 
                 using (var sha = SHA256.Create())
@@ -3502,43 +3503,6 @@ namespace UnityGameTranslator.Core
                 Adapter?.LogWarning($"[Hash] Failed to fingerprint content: {e.Message}");
                 return null;
             }
-        }
-
-        /// <summary>One JSON token, written the same way every time. See ComputeContentFingerprint.</summary>
-        private static string Canonical(JToken token)
-        {
-            if (token == null || token.Type == JTokenType.Null) return "null";
-
-            var obj = token as JObject;
-            if (obj != null)
-            {
-                var names = new List<string>();
-                foreach (var property in obj.Properties()) names.Add(property.Name);
-                names.Sort(StringComparer.Ordinal);
-
-                var sb = new StringBuilder("{");
-                for (int i = 0; i < names.Count; i++)
-                {
-                    if (i > 0) sb.Append(',');
-                    sb.Append(JsonConvert.ToString(names[i])).Append(':').Append(Canonical(obj[names[i]]));
-                }
-                return sb.Append('}').ToString();
-            }
-
-            var array = token as JArray;
-            if (array != null)
-            {
-                var sb = new StringBuilder("[");
-                for (int i = 0; i < array.Count; i++)
-                {
-                    if (i > 0) sb.Append(',');
-                    sb.Append(Canonical(array[i]));
-                }
-                return sb.Append(']').ToString();
-            }
-
-            var value = token as JValue;
-            return value == null ? "null" : JsonConvert.ToString(value.Value);
         }
 
         public static void BuildPatternEntries()

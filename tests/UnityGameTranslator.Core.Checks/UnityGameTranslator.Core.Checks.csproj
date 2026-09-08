@@ -54,6 +54,12 @@
     -->
     <Compile Include="../../UnityGameTranslator.Core/Engine/ExclusionRules.cs" />
     <!--
+      The font rules, same family: order, memory, and the two verdicts a downloaded pattern can
+      earn for a whole run. The log is an injected sink rather than a call into the mod's, so a
+      check can read what was said and how often — "once" is half that rule.
+    -->
+    <Compile Include="../../UnityGameTranslator.Core/Engine/FontRules.cs" />
+    <!--
       What lets one cached sentence serve every value the game puts in it. A pattern that stops
       matching costs one call per number, for ever; one that matches too much shows a sentence
       about something else.

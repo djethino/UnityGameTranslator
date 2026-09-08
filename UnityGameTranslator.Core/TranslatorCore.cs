@@ -987,15 +987,16 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static IReadOnlyList<string> UserExclusions => userExclusions.Patterns;
 
-        // Font overrides (per-pattern font/size rules) - stored in translations.json as _font_overrides
-        private static List<FontOverrideRule> fontOverrides = new List<FontOverrideRule>();
-        // Long, like the exclusion memory and the routing state: one id space for every framework.
-        private static Dictionary<long, FontOverrideRule> fontOverrideCache = new Dictionary<long, FontOverrideRule>();
+        // Font overrides (per-pattern font/size rules) - stored in translations.json as _font_overrides.
+        // ⚠ The rules, what has been decided per target, AND the per-session verdicts on a pattern
+        // that will not compile or will not finish — see FontRules for why they travel together.
+        // The log is handed in rather than reached for, so a whole sequence replays without a game.
+        private static readonly FontRules fontOverrides = new FontRules { Warn = LogWarning };
 
         /// <summary>
         /// Current font override rules. Read-only access for UI.
         /// </summary>
-        public static IReadOnlyList<FontOverrideRule> FontOverrides => fontOverrides;
+        public static IReadOnlyList<FontOverrideRule> FontOverrides => fontOverrides.Rules;
 
         /// <summary>
         /// Find the first matching font override rule for a component.
@@ -1007,24 +1008,7 @@ namespace UnityGameTranslator.Core
         /// <param name="textContent">Current text content</param>
         public static FontOverrideRule FindFontOverride(long componentId, string gameObjectPath, string fontName, string textContent)
         {
-            // Check cache first
-            if (fontOverrideCache.TryGetValue(componentId, out var cached))
-                return cached;
-
-            FontOverrideRule matched = null;
-            for (int i = 0; i < fontOverrides.Count; i++)
-            {
-                var rule = fontOverrides[i];
-                if (!rule.enabled || rule.SwitchedOffThisSession) continue;
-                if (MatchesFontOverride(rule, gameObjectPath, fontName, textContent))
-                {
-                    matched = rule;
-                    break; // First match wins
-                }
-            }
-
-            fontOverrideCache[componentId] = matched;
-            return matched;
+            return fontOverrides.Find(componentId, gameObjectPath, fontName, textContent);
         }
 
         /// <summary>
@@ -1039,7 +1023,7 @@ namespace UnityGameTranslator.Core
         public static void ForgetTargetCaches(long id)
         {
             userExclusions.Forget(id);
-            fontOverrideCache.Remove(id);
+            fontOverrides.Forget(id);
         }
 
         /// <summary>
@@ -1081,83 +1065,12 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Test if a font override rule matches the given context.
-        /// </summary>
-        private static bool MatchesFontOverride(FontOverrideRule rule, string path, string fontName, string text)
-        {
-            string match = rule.match;
-            if (string.IsNullOrEmpty(match)) return false;
-
-            // Prefix-based matching
-            if (match.StartsWith("path:", StringComparison.OrdinalIgnoreCase))
-            {
-                string pattern = match.Substring(5);
-                return !string.IsNullOrEmpty(path) && ExclusionPatterns.Matches(path, pattern);
-            }
-            if (match.StartsWith("font:", StringComparison.OrdinalIgnoreCase))
-            {
-                string pattern = match.Substring(5);
-                return !string.IsNullOrEmpty(fontName) &&
-                       string.Equals(fontName, pattern, StringComparison.OrdinalIgnoreCase);
-            }
-            if (match.StartsWith("text:", StringComparison.OrdinalIgnoreCase))
-            {
-                string pattern = match.Substring(5);
-                if (string.IsNullOrEmpty(text)) return false;
-                // Regex if wrapped in /.../
-                if (pattern.StartsWith("/") && pattern.EndsWith("/") && pattern.Length > 2)
-                {
-                    // 🔴 Compiled once per rule, matched under TextRule's budget. This used to call
-                    // Regex.IsMatch on every component with no limit: a pattern from a downloaded
-                    // file built to backtrack froze the game on the main thread, and an invalid one
-                    // was swallowed without a word. Both are now said once, naming the rule, and the
-                    // rule is left out for the rest of the session — never written back to the file:
-                    // `enabled` belongs to the author, this is a verdict on one run.
-                    if (!rule.TextRegexCompiled)
-                    {
-                        rule.TextRegexCompiled = true;
-                        rule.TextRegex = TextRule.Compile(pattern.Substring(1, pattern.Length - 2));
-                        if (rule.TextRegex == null)
-                        {
-                            rule.SwitchedOffThisSession = true;
-                            LogWarning($"[FontOverride] Rule \"{match}\" is not a valid pattern; ignored. Check it in the Fonts tab.");
-                        }
-                    }
-                    if (rule.TextRegex == null) return false;
-
-                    switch (TextRule.Match(rule.TextRegex, text))
-                    {
-                        case TextRule.Outcome.Matched:
-                            return true;
-                        case TextRule.Outcome.TimedOut:
-                            rule.SwitchedOffThisSession = true;
-                            LogWarning($"[FontOverride] Rule \"{match}\" took more than {TextRule.Budget.TotalSeconds:0} s on one text and is switched off until the next launch. Check the pattern in the Fonts tab.");
-                            return false;
-                        default:
-                            return false;
-                    }
-                }
-                return text.IndexOf(pattern, StringComparison.OrdinalIgnoreCase) >= 0;
-            }
-
-            // No prefix: try path first, then text substring
-            if (!string.IsNullOrEmpty(path) && ExclusionPatterns.Matches(path, match))
-                return true;
-            if (!string.IsNullOrEmpty(text) && text.IndexOf(match, StringComparison.OrdinalIgnoreCase) >= 0)
-                return true;
-
-            return false;
-        }
-
-        /// <summary>
         /// Replace all font override rules at once (called by Apply in UI).
         /// Marks metadata dirty but does NOT save — caller should save after all changes.
         /// </summary>
         public static void SetFontOverrides(List<FontOverrideRule> rules)
         {
-            fontOverrides.Clear();
-            fontOverrides.AddRange(rules);
-            fontOverrideCache.Clear();
+            fontOverrides.Load(rules);
             FontManager.ClearComponentScaleOverrides();
             // Clear font size caches so ApplyFontScale re-reads from true originals
             TranslatorPatches.ClearFontSizeCache();
@@ -1233,10 +1146,10 @@ namespace UnityGameTranslator.Core
 
         private static JArray BuildFontOverridesSection()
         {
-            if (fontOverrides.Count == 0) return null;
+            if (!fontOverrides.Any) return null;
 
             var overridesArray = new JArray();
-            foreach (var rule in fontOverrides)
+            foreach (var rule in fontOverrides.Rules)
             {
                 var ruleObj = new JObject { ["match"] = rule.match };
                 if (!string.IsNullOrEmpty(rule.replacement))
@@ -1401,8 +1314,7 @@ namespace UnityGameTranslator.Core
                     break;
 
                 case SettingsSections.FontRules:
-                    fontOverrides.Clear();
-                    fontOverrides.AddRange(ParseFontOverridesSection(token));
+                    fontOverrides.Load(ParseFontOverridesSection(token));
                     break;
 
                 case SettingsSections.Images:
@@ -1484,7 +1396,9 @@ namespace UnityGameTranslator.Core
 
             if (changed.Contains(SettingsSections.Fonts) || changed.Contains(SettingsSections.FontRules))
             {
-                fontOverrideCache.Clear();
+                // ⚠ Not the rules moving — Load does that itself. This is the FONTS moving, and a
+                // decision that matched on a font name is about a font that has just changed.
+                fontOverrides.ForgetAll();
                 FontManager.ClearComponentScaleOverrides();
                 // Font sizes are read from true originals again
                 TranslatorPatches.ClearFontSizeCache();
@@ -1511,7 +1425,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static void ClearFontOverrideCache()
         {
-            fontOverrideCache.Clear();
+            fontOverrides.ForgetAll();
         }
 
         // Panel construction mode: when true, all translations are skipped
@@ -2818,10 +2732,8 @@ namespace UnityGameTranslator.Core
                     }
                     else if (prop.Name == "_font_overrides" && prop.Value.Type == JTokenType.Array)
                     {
-                        fontOverrides.Clear();
-                        fontOverrideCache.Clear();
-                        fontOverrides.AddRange(ParseFontOverridesSection(prop.Value));
-                        LogDebug($"[LoadCache] Loaded {fontOverrides.Count} font override rules");
+                        fontOverrides.Load(ParseFontOverridesSection(prop.Value));
+                        LogDebug($"[LoadCache] Loaded {fontOverrides.Rules.Count} font override rules");
                     }
                     else if (prop.Name == "_settings" && prop.Value.Type == JTokenType.Object)
                     {
@@ -8287,65 +8199,6 @@ namespace UnityGameTranslator.Core
         /// How the steam_id was detected: "steam_appid.txt", "appmanifest", or null if not detected
         /// </summary>
         public string detection_method { get; set; }
-    }
-
-    /// <summary>
-    /// Per-font settings for translation control and fallback fonts.
-    /// Stored in translations.json as _font_overrides.
-    /// Rules are evaluated in order — first match wins.
-    /// </summary>
-    public class FontOverrideRule
-    {
-        /// <summary>
-        /// Pattern to match. Prefixes: "path:" (hierarchy glob), "font:" (font name), "text:" (content, regex if /.../).
-        /// Without prefix: tries path first, then text substring.
-        /// </summary>
-        public string match { get; set; }
-
-        // ── Runtime state, never part of the file ────────────────────────────────────────────
-        // Internal fields, so no serializer writes them and the parser does not read them: a rule
-        // object is rebuilt from the file on every load and by the Fonts tab on every edit, which
-        // is exactly when this state should start over.
-
-        /// <summary>The compiled <c>text:/…/</c> pattern, once TextRegexCompiled is set; null if invalid.</summary>
-        internal System.Text.RegularExpressions.Regex TextRegex;
-        internal bool TextRegexCompiled;
-
-        /// <summary>
-        /// Left out for the rest of this run — an invalid pattern, or one that ran past
-        /// TextRule.Budget. Distinct from <see cref="enabled"/> on purpose: that one is the author's
-        /// choice and is saved; this is a verdict on one session and never is.
-        /// </summary>
-        internal bool SwitchedOffThisSession;
-
-        /// <summary>
-        /// Replacement font name. Null = keep current font (only override size).
-        /// </summary>
-        public string replacement { get; set; }
-
-        /// <summary>
-        /// Size multiplier override. 0 = don't override (use global setting).
-        /// Example: 1.0 = original size, 1.5 = 150%, 0.7 = 70%.
-        /// </summary>
-        public float size_multiplier { get; set; } = 0f;
-
-        /// <summary>
-        /// Whether this rule is active.
-        /// </summary>
-        public bool enabled { get; set; } = true;
-
-        /// <summary>
-        /// User comment for identifying the rule purpose.
-        /// </summary>
-        public string comment { get; set; }
-
-        /// <summary>
-        /// RTL alignment behaviour for the matched components: null = inherit the font's
-        /// setting, "mirror" or "keep". Exists because one game mixes both needs (a description
-        /// pane that mirrors fine next to buttons whose boxes were built for one side —
-        /// user-arbitrated on the bench).
-        /// </summary>
-        public string rtl_alignment { get; set; }
     }
 
     /// <summary>

@@ -46,6 +46,7 @@ namespace UnityGameTranslator.Core.Checks
             WhatAPatternCovers();
             HowANumberedSentenceIsRecognised();
             WhatSomebodyAskedToLeaveAlone();
+            WhichFontARuleAsksFor();
             HowTextChanges();
             WhenTextMayBeTyping();
             HowATargetIsNamed();
@@ -85,6 +86,13 @@ namespace UnityGameTranslator.Core.Checks
         {
             Section("Exclusion rules, across a whole sequence");
             ExclusionRulesChecks.Run(Check);
+        }
+
+        /// <summary>Which font rule applies to a label, and what survives being decided.</summary>
+        private static void WhichFontARuleAsksFor()
+        {
+            Section("Font rules, across a whole sequence");
+            FontRulesChecks.Run(Check);
         }
 
         /// <summary>How a sentence carrying live numbers is read as the pattern it was cached from.</summary>

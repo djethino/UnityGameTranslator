@@ -46,6 +46,16 @@ namespace UnityGameTranslator.Core
         private const int MAX_RECONNECT_DELAY_MS = 30000;
         private const int HEARTBEAT_TIMEOUT_MS = 60000;
 
+        /// <summary>
+        /// How often the reader wakes up on a silent stream, only to ask whether
+        /// <see cref="HEARTBEAT_TIMEOUT_MS"/> has passed.
+        ///
+        /// ⚠ Deliberately well under the relay's own heartbeat rather than equal to it. It used to
+        /// be fifteen seconds against a fifteen-second beat — see ParseEventStream for what that
+        /// cost. It is a tick, not a deadline: nothing is given up when it fires.
+        /// </summary>
+        private const int ReadTickMs = 5000;
+
         /// <summary>Current connection state.</summary>
         public SseConnectionState State { get; private set; } = SseConnectionState.Disconnected;
 
@@ -164,8 +174,14 @@ namespace UnityGameTranslator.Core
                 }
                 catch (Exception ex)
                 {
-                    // "stream already in use" is normal during reconnection, not a real error
-                    TranslatorCore.LogDebug($"[SSE] Connection error: {ex.Message}");
+                    // ⚠ **A warning, and it used to be a debug line excused by its own comment**
+                    // ("stream already in use is normal during reconnection, not a real error").
+                    // It was not normal and it was not a reconnection artefact: it was this client
+                    // dropping its own connection every fifteen seconds, and saying so where
+                    // nobody looks — which is why somebody had to read a game log to find out why
+                    // signing in never completed. A connection that keeps dying is worth a line
+                    // anybody can see.
+                    TranslatorCore.LogWarning($"[SSE] Connection lost, will retry: {ex.Message}");
                 }
 
                 if (ct.IsCancellationRequested) return;
@@ -194,6 +210,24 @@ namespace UnityGameTranslator.Core
             var dataLines = new List<string>();
             string eventId = null;
 
+            // 🔴 **ONE read at a time, and that is the whole reason this lives outside the loop.**
+            // ReadLineAsync must not be called again while a previous call is still pending on the
+            // same stream: .NET answers "The stream is currently in use by a previous operation on
+            // the stream", the connection dies, and every reconnection meets the same wall.
+            //
+            // It WAS called again — every time the tick below won the race, the loop abandoned a
+            // pending read and started another. And the tick was fifteen seconds while the relay's
+            // heartbeat is also fifteen (sse-server/server.js, HEARTBEAT_INTERVAL_MS), two numbers
+            // chosen independently and landing on the same one, so the race was a dead heat and the
+            // loser was the connection. What it cost: device-flow authorisation never arrived. The
+            // site said the game was linked and the game sat on "Waiting for authorization" for
+            // ever, with the reason logged as debug and excused in a comment as normal.
+            //
+            // ⚠ The tick is now well under the heartbeat, so waking up finds data waiting rather
+            // than racing it — but that is comfort, not the fix. The fix is that a tick which wins
+            // KEEPS the pending read instead of replacing it.
+            Task<string> readTask = null;
+
             while (!ct.IsCancellationRequested)
             {
                 // Check heartbeat timeout
@@ -206,18 +240,24 @@ namespace UnityGameTranslator.Core
                 string line;
                 try
                 {
-                    // ReadLineAsync will block until data arrives or stream closes
-                    var readTask = reader.ReadLineAsync();
+                    // Started only when there is no read in flight. ReadLineAsync waits for data,
+                    // for the end of the stream, or for the connection to drop.
+                    if (readTask == null) readTask = reader.ReadLineAsync();
 
-                    // Use a timeout so we can check heartbeat periodically
-                    var completedTask = await Task.WhenAny(readTask, Task.Delay(15000, ct));
+                    // A tick, so the heartbeat timeout above is reached even on a silent stream.
+                    var completedTask = await Task.WhenAny(readTask, Task.Delay(ReadTickMs, ct));
                     if (completedTask != readTask)
                     {
-                        // Timeout — no data in 15s, loop to check heartbeat timeout
+                        // Nothing yet. The read stays pending and is picked up again next time
+                        // round — replacing it is what broke this.
                         continue;
                     }
 
-                    line = readTask.Result;
+                    // Awaited rather than read through .Result: a faulted read hands back its own
+                    // exception here, where the catches below can recognise it, instead of an
+                    // AggregateException that matches none of them.
+                    line = await readTask;
+                    readTask = null;
                 }
                 catch (OperationCanceledException)
                 {

@@ -161,9 +161,30 @@ namespace UnityGameTranslator.Core.Checks
                 "an emoji is a symbol, not a word",
                 "judged by code point, so a surrogate pair is read whole rather than as two halves of nothing");
 
-            check(!TextNormalization.IsNumericOrSymbol("𐌰𐌱"),
-                "and a letter outside the basic plane is still a letter",
-                "the same pair-aware reading, from the other side");
+            // 🔴 **The second answer that changed, and it is a gain.** Measured 2026-09-08: read
+            // by UTF-16 unit, a letter outside the basic plane is two surrogates and neither is a
+            // letter, so the earlier version answered "nothing to translate" — for CJK extension B
+            // among others, which is rare Han that real games do carry.
+            check(!TextNormalization.IsNumericOrSymbol("𠀀𠀁") && !TextNormalization.IsNumericOrSymbol("𐌰𐌱"),
+                "a letter outside the basic plane is still a letter",
+                "rare Han and every archaic script used to read as symbols, because each was judged as two halves of nothing");
+
+            // ⚠ **Four families that changed the other way, and they are the same decision, not a
+            // loss.** Measured 2026-09-08: the earlier version translated these because its script
+            // ranges happened to swallow the digit and punctuation blocks that sit beside those
+            // letters. A digit is a digit and a full stop is a full stop, whatever the script —
+            // which is exactly what asking by category rather than by block buys.
+            check(TextNormalization.IsNumericOrSymbol("٣٤") && TextNormalization.IsNumericOrSymbol("०१"),
+                "Arabic-Indic and Devanagari digits are digits",
+                "Western digits were always ignored here; these were translated only by accident of a block");
+
+            check(TextNormalization.IsNumericOrSymbol("।") && TextNormalization.IsNumericOrSymbol("。、"),
+                "and a danda or an ideographic comma is punctuation",
+                "the same accident, on the punctuation that sits in those blocks");
+
+            check(TextNormalization.IsNumericOrSymbol("〇"),
+                "and the ideographic zero is a number",
+                "alone it is a digit; inside a date it travels with the characters around it, which are letters");
 
             check(TextNormalization.IsNaturalIdentity("[!v*0] / [!v*1]"),
                 "a line of nothing but slots is the same in every language",
@@ -187,6 +208,12 @@ namespace UnityGameTranslator.Core.Checks
                 "a text of nothing but shaped glyphs reads as symbols here",
                 "while the readback form counts the same codepoints as letters — the one place the two disagree");
 
+
+            // ⚠ **A known limitation, pinned so it is a decision rather than a surprise.** A game
+            // whose font maps its whole alphabet into the private-use area — some do, with custom
+            // encodings — shows text this reads as symbols throughout, so nothing of it is ever
+            // translated. Unchanged by the move to categories: the seven ranges did not cover that
+            // area either. Telling our own glyphs from a game's needs more than a codepoint.
             check(TextNormalization.NormalizeForReadbackMatch("") != null,
                 "and the readback form gives it one",
                 "a conjunct IS letters, which is what makes a shaped word recognisable when the game hands it back");

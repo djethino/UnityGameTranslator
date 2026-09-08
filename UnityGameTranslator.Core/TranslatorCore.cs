@@ -977,21 +977,19 @@ namespace UnityGameTranslator.Core
         private static HashSet<int> ownUITranslatable = new HashSet<int>();  // Translate with UI-specific prompt
         private static HashSet<int> ownUIPanelRoots = new HashSet<int>();    // Root GameObjects of our panels (for hierarchy check)
 
-        // User exclusions (chat windows, player names, etc.) - stored in translations.json as _exclusions
-        private static List<string> userExclusions = new List<string>();
-        // ⚠ Keyed by long, like every other per-target map: uGUI passes an instance id, UI Toolkit
-        // passes an id from beyond the int range. The widening from int is implicit, so nothing
-        // that used to pass a component id had to change.
-        private static Dictionary<long, bool> userExclusionCache = new Dictionary<long, bool>();
+        // User exclusions (chat windows, player names, etc.) - stored in translations.json as _exclusions.
+        // ⚠ The patterns AND what has already been decided for each target — see ExclusionRules for
+        // why the memory travels with them rather than sitting here beside them.
+        private static readonly ExclusionRules userExclusions = new ExclusionRules();
 
         /// <summary>
         /// Current user exclusion patterns. Read-only access for UI.
         /// </summary>
-        public static IReadOnlyList<string> UserExclusions => userExclusions;
+        public static IReadOnlyList<string> UserExclusions => userExclusions.Patterns;
 
         // Font overrides (per-pattern font/size rules) - stored in translations.json as _font_overrides
         private static List<FontOverrideRule> fontOverrides = new List<FontOverrideRule>();
-        // Long, like userExclusionCache and the routing state: one id space for every framework.
+        // Long, like the exclusion memory and the routing state: one id space for every framework.
         private static Dictionary<long, FontOverrideRule> fontOverrideCache = new Dictionary<long, FontOverrideRule>();
 
         /// <summary>
@@ -1040,7 +1038,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static void ForgetTargetCaches(long id)
         {
-            userExclusionCache.Remove(id);
+            userExclusions.Forget(id);
             fontOverrideCache.Remove(id);
         }
 
@@ -1261,10 +1259,10 @@ namespace UnityGameTranslator.Core
 
         private static JArray BuildExclusionsSection()
         {
-            if (userExclusions.Count == 0) return null;
+            if (!userExclusions.Any) return null;
 
             var exclusionsArray = new JArray();
-            foreach (var pattern in userExclusions)
+            foreach (var pattern in userExclusions.Patterns)
             {
                 exclusionsArray.Add(pattern);
             }
@@ -1412,8 +1410,7 @@ namespace UnityGameTranslator.Core
                     break;
 
                 case SettingsSections.Exclusions:
-                    userExclusions.Clear();
-                    userExclusions.AddRange(ParseExclusionsSection(token));
+                    userExclusions.Load(ParseExclusionsSection(token));
                     break;
 
                 case SettingsSections.Variables:
@@ -1494,11 +1491,6 @@ namespace UnityGameTranslator.Core
                 // Without this, the "already translated" check returns early and
                 // never reaches the font scale
                 TranslatorPatches.ClearLastTranslatedCache();
-            }
-
-            if (changed.Contains(SettingsSections.Exclusions))
-            {
-                userExclusionCache.Clear();
             }
 
             if (changed.Contains(SettingsSections.Images))
@@ -1672,7 +1664,7 @@ namespace UnityGameTranslator.Core
         {
             // Before the instance id: this runs on every text write, and reading an id off an
             // IL2CPP proxy is not free when nobody has written a single pattern.
-            if (component == null || userExclusions.Count == 0) return false;
+            if (component == null || !userExclusions.Any) return false;
 
             long id = component.GetInstanceID();
             if (TryCachedExclusion(id, out bool cached)) return cached;
@@ -1681,55 +1673,28 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>True when any patterns exist at all. Ask before building a path.</summary>
-        public static bool HasExclusionPatterns => userExclusions.Count > 0;
+        public static bool HasExclusionPatterns => userExclusions.Any;
 
-        /// <summary>
-        /// The answer already known for this target, if there is one.
-        ///
-        /// 🔴 Split from <see cref="RememberExclusion"/> so a caller can check the cache BEFORE
-        /// building a path. Walking a hierarchy on every text write, only to hit a cache, is the
-        /// kind of cost that does not show up anywhere and never goes away — and a version taking
-        /// the path as a callback was worse: it allocated a closure per call for anyone who had
-        /// written a single pattern.
-        /// </summary>
+        /// <summary>The answer already known for this target, if there is one.</summary>
         public static bool TryCachedExclusion(long id, out bool excluded)
         {
-            return userExclusionCache.TryGetValue(id, out excluded);
+            return userExclusions.TryRecall(id, out excluded);
         }
 
         /// <summary>
-        /// Decide, and remember, whether this path is excluded.
+        /// Decide, and remember, whether this path is excluded — and say so in the log.
         ///
-        /// 🔴 The decision itself, shared by every framework: only the PATH is theirs. A second
-        /// set of exclusion rules would mean one written pattern meaning two different things
-        /// depending on what the label happens to be made of.
+        /// ⚠ The log line is what stays HERE: the rule itself has no logger, on purpose, so that a
+        /// whole sequence of it can be replayed without a game.
         /// </summary>
         public static bool RememberExclusion(long id, string path)
         {
-            if (userExclusions.Count == 0) return false;
-
-            string resolved = path ?? "";
-            bool excluded = MatchesAnyExclusionPattern(resolved);
-            userExclusionCache[id] = excluded;
+            bool excluded = userExclusions.Decide(id, path);
 
             if (excluded)
-                LogDebug($"[Exclusion] Matched: {resolved}");
+                LogDebug("[Exclusion] Matched: " + (path ?? ""));
 
             return excluded;
-        }
-
-        /// <summary>
-        /// Check if a path matches any exclusion pattern.
-        /// Supports: ** (any depth), * (single level), exact match.
-        /// </summary>
-        private static bool MatchesAnyExclusionPattern(string path)
-        {
-            foreach (var pattern in userExclusions)
-            {
-                if (ExclusionPatterns.Matches(path, pattern))
-                    return true;
-            }
-            return false;
         }
 
 
@@ -1759,16 +1724,13 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static void AddExclusion(string pattern)
         {
-            if (string.IsNullOrEmpty(pattern)) return;
-            pattern = pattern.Trim();
-
-            if (!userExclusions.Contains(pattern))
+            // ⚠ Only when something was actually written: saving on a duplicate would rewrite the
+            // translation and mark the metadata dirty for nothing.
+            if (userExclusions.Add(pattern))
             {
-                userExclusions.Add(pattern);
-                userExclusionCache.Clear();
                 SetMetadataDirty();
                 SaveCache();
-                LogDebug($"[Exclusion] Added: {pattern}");
+                LogDebug("[Exclusion] Added: " + pattern.Trim());
             }
         }
 
@@ -1779,7 +1741,6 @@ namespace UnityGameTranslator.Core
         {
             if (userExclusions.Remove(pattern))
             {
-                userExclusionCache.Clear();
                 SetMetadataDirty();
                 SaveCache();
                 LogDebug($"[Exclusion] Removed: {pattern}");
@@ -1794,7 +1755,6 @@ namespace UnityGameTranslator.Core
         public static void ClearExclusions()
         {
             userExclusions.Clear();
-            userExclusionCache.Clear();
             SaveCache();
             LogDebug("[Exclusion] Cleared all exclusions");
         }
@@ -1804,7 +1764,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static void ClearUserExclusionCache()
         {
-            userExclusionCache.Clear();
+            userExclusions.ForgetAll();
         }
 
         #endregion
@@ -2831,9 +2791,8 @@ namespace UnityGameTranslator.Core
                     }
                     else if (prop.Name == "_exclusions" && prop.Value.Type == JTokenType.Array)
                     {
-                        userExclusions.Clear();
-                        userExclusions.AddRange(ParseExclusionsSection(prop.Value));
-                        LogDebug($"[LoadCache] Loaded {userExclusions.Count} user exclusions");
+                        userExclusions.Load(ParseExclusionsSection(prop.Value));
+                        LogDebug($"[LoadCache] Loaded {userExclusions.Patterns.Count} user exclusions");
                     }
                     else if (prop.Name == "_image_replacements")
                     {

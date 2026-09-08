@@ -45,6 +45,7 @@ namespace UnityGameTranslator.Core.Checks
             HowATextIsNormalized();
             WhatAPatternCovers();
             HowANumberedSentenceIsRecognised();
+            WhatSomebodyAskedToLeaveAlone();
             HowTextChanges();
             WhenTextMayBeTyping();
             HowATargetIsNamed();
@@ -77,6 +78,13 @@ namespace UnityGameTranslator.Core.Checks
         {
             Section("Exclusion patterns");
             ExclusionPatternChecks.Run(Check);
+        }
+
+        /// <summary>What somebody's exclusion patterns keep out, across a whole sequence.</summary>
+        private static void WhatSomebodyAskedToLeaveAlone()
+        {
+            Section("Exclusion rules, across a whole sequence");
+            ExclusionRulesChecks.Run(Check);
         }
 
         /// <summary>How a sentence carrying live numbers is read as the pattern it was cached from.</summary>

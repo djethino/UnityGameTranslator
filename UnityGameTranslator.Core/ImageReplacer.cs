@@ -731,7 +731,17 @@ namespace UnityGameTranslator.Core
 
                     var prop = component.GetType().GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance);
                     if (prop == null || prop.SetMethod == null) continue;
+
+                    // ⚠ **A probe, not a rule.** "Restored 1 original image(s)" was in the log while
+                    // the replacement was still on screen, and those two cannot both be true. This
+                    // says which component, what it held, what is being written back, and what it
+                    // holds afterwards — so the next report answers it in one run instead of three.
+                    // Once per reload, over one or two components: it costs nothing.
+                    string before = Describe(Read(prop, component));
                     prop.SetValue(component, originalValue, null);
+                    string after = Describe(Read(prop, component));
+                    TranslatorCore.LogInfo($"[ImageReplacer] Restore {NameOf(component)}.{propertyName}: "
+                                           + $"{before} → wrote {Describe(originalValue)} → now {after}");
                     restored++;
                 }
                 catch (Exception ex)
@@ -741,6 +751,36 @@ namespace UnityGameTranslator.Core
             }
             _replacedComponents.Clear();
             TranslatorCore.LogInfo($"[ImageReplacer] Restored {restored} original image(s).");
+        }
+
+        /// <summary>What a property holds right now, or null when it cannot be read.</summary>
+        private static object Read(PropertyInfo prop, object component)
+        {
+            try { return prop.GetMethod != null ? prop.GetValue(component, null) : null; }
+            catch { return null; }
+        }
+
+        /// <summary>A sprite or texture named, for the probe above. Never throws.</summary>
+        private static string Describe(object value)
+        {
+            if (value == null) return "(none)";
+            try
+            {
+                var named = value as UnityEngine.Object;
+                return named != null ? $"'{named.name}'" : value.GetType().Name;
+            }
+            catch { return "(unreadable)"; }
+        }
+
+        /// <inheritdoc cref="Describe"/>
+        private static string NameOf(object component)
+        {
+            try
+            {
+                var obj = component as UnityEngine.Object;
+                return obj != null ? obj.name : "(unnamed)";
+            }
+            catch { return "(unnamed)"; }
         }
 
         /// <summary>

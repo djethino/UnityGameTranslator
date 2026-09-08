@@ -811,7 +811,29 @@ namespace UnityGameTranslator.Core.UI.Panels
                 ? (int)Math.Ceiling(wanted)
                 : FloorHeight();
 
+            // ⚠ **A probe, not a rule.** The hint under the buttons is cut again and the queue box
+            // is nowhere, and three explanations fit: the stack answers too small, it answers zero
+            // and the floor is used, or the height is right and a BOX clips its own content. This
+            // says which. Only when the number moves — this runs twice a second.
+            if (height != _lastLoggedHeight)
+            {
+                _lastLoggedHeight = height;
+                TranslatorCore.LogInfo($"[Overlay] height={height} (stack said {wanted:0.#}, floor {FloorHeight()})"
+                    + $" | mod={Measured(_modUpdateBox)} sync={Measured(_syncBox)}"
+                    + $" ai={Measured(_aiBox)} conn={Measured(_connectionBox)}");
+            }
+
             Overlays.SetSize(Window, PanelWidth, Math.Max(50, height));
+        }
+
+        private int _lastLoggedHeight = -1;
+
+        /// <summary>One box, for the probe: hidden, or what it says it wants.</summary>
+        private static string Measured(Host box)
+        {
+            if (box == null) return "-";
+            if (!box.Visible) return "off";
+            return box.WantedHeight.ToString("0.#");
         }
 
         /// <summary>

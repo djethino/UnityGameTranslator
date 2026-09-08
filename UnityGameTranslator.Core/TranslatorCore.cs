@@ -4175,29 +4175,6 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// List the placeholder tokens an AI answer contains but its source text never had.
-        /// Returns null when nothing was invented. A token absent from the source can only be
-        /// a hallucination — small models have answered a bare "[!STR*0]", or appended one to
-        /// an otherwise correct sentence — and such an entry would both replace the text on
-        /// screen and be shared with the community on upload.
-        /// </summary>
-        private static string FindInventedPlaceholders(string source, string answer)
-        {
-            // Fast path: no token syntax at all in the answer (the overwhelming majority).
-            if (string.IsNullOrEmpty(answer) || answer.IndexOf("[!", StringComparison.Ordinal) < 0)
-                return null;
-
-            List<string> invented = null;
-            foreach (string token in Placeholders.Tokens(answer))
-            {
-                if (source != null && source.Contains(token)) continue;
-                if (invented == null) invented = new List<string>();
-                if (!invented.Contains(token)) invented.Add(token);
-            }
-            return invented == null ? null : string.Join(", ", invented);
-        }
-
-        /// <summary>
         /// Create or update a translation entry from the in-game text editor.
         /// Keeps the reverse cache in sync, rebuilds pattern entries when the key contains
         /// placeholders, and persists the cache.
@@ -4548,7 +4525,7 @@ namespace UnityGameTranslator.Core
                     continue;
                 }
 
-                if (FindInventedPlaceholders(normalizedKey, candidate) != null)
+                if (Placeholders.Invented(normalizedKey, candidate).Count > 0)
                     continue;
 
                 if (request.HadEntry && string.Equals(candidate, request.PreviousValue, StringComparison.Ordinal))
@@ -5521,13 +5498,13 @@ namespace UnityGameTranslator.Core
                             // all, so nothing is cached and nothing reaches the screen.
                             if (!string.IsNullOrEmpty(translation))
                             {
-                                string invented = FindInventedPlaceholders(normalizedOriginal, translation);
-                                if (invented != null)
+                                var inventedTokens = Placeholders.Invented(normalizedOriginal, translation);
+                                if (inventedTokens.Count > 0)
                                 {
                                     string badPreview = normalizedOriginal.Length > 40
                                         ? normalizedOriginal.Substring(0, 40) + "..."
                                         : normalizedOriginal;
-                                    Adapter?.LogWarning($"[Worker] Discarded answer inventing {invented} (absent from source): '{badPreview}'");
+                                    Adapter?.LogWarning($"[Worker] Discarded answer inventing {string.Join(", ", inventedTokens)} (absent from source): '{badPreview}'");
                                     translation = null;
                                 }
                             }

@@ -42,6 +42,12 @@
     -->
     <Compile Include="../../UnityGameTranslator.Core/Engine/TextNormalization.cs" />
     <!--
+      The path matcher both exclusions and font rules read, cut out the same day. What a pattern
+      means is a promise to whoever wrote it: an exclusion that quietly stops matching is text
+      going to a model that somebody asked to be left alone.
+    -->
+    <Compile Include="../../UnityGameTranslator.Core/Engine/ExclusionPatterns.cs" />
+    <!--
       What a downloaded translation may ask of the disk and of the main thread. Both are pure by
       construction — a string in, an answer out — and both exist as files of their own so that the
       refusals AND the acceptances can be proved here rather than in a game.

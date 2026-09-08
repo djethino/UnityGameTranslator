@@ -43,6 +43,7 @@ namespace UnityGameTranslator.Core.Checks
             }
 
             HowATextIsNormalized();
+            WhatAPatternCovers();
             HowTextChanges();
             WhenTextMayBeTyping();
             HowATargetIsNamed();
@@ -63,7 +64,6 @@ namespace UnityGameTranslator.Core.Checks
             return 1;
         }
 
-        /// <summary>What a component's new text is, relative to the one it held a moment ago.</summary>
         /// <summary>What a text looks like once its decoration is set aside — slots, tags, letters.</summary>
         private static void HowATextIsNormalized()
         {
@@ -71,6 +71,14 @@ namespace UnityGameTranslator.Core.Checks
             TextNormalizationChecks.Run(Check);
         }
 
+        /// <summary>Which paths a written pattern covers — for an exclusion or for a font rule.</summary>
+        private static void WhatAPatternCovers()
+        {
+            Section("Exclusion patterns");
+            ExclusionPatternChecks.Run(Check);
+        }
+
+        /// <summary>What a component's new text is, relative to the one it held a moment ago.</summary>
         private static void HowTextChanges()
         {
             Section("Text relations");

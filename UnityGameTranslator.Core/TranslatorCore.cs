@@ -1094,7 +1094,7 @@ namespace UnityGameTranslator.Core
             if (match.StartsWith("path:", StringComparison.OrdinalIgnoreCase))
             {
                 string pattern = match.Substring(5);
-                return !string.IsNullOrEmpty(path) && MatchesExclusionPattern(path, pattern);
+                return !string.IsNullOrEmpty(path) && ExclusionPatterns.Matches(path, pattern);
             }
             if (match.StartsWith("font:", StringComparison.OrdinalIgnoreCase))
             {
@@ -1143,7 +1143,7 @@ namespace UnityGameTranslator.Core
             }
 
             // No prefix: try path first, then text substring
-            if (!string.IsNullOrEmpty(path) && MatchesExclusionPattern(path, match))
+            if (!string.IsNullOrEmpty(path) && ExclusionPatterns.Matches(path, match))
                 return true;
             if (!string.IsNullOrEmpty(text) && text.IndexOf(match, StringComparison.OrdinalIgnoreCase) >= 0)
                 return true;
@@ -1726,94 +1726,12 @@ namespace UnityGameTranslator.Core
         {
             foreach (var pattern in userExclusions)
             {
-                if (MatchesExclusionPattern(path, pattern))
+                if (ExclusionPatterns.Matches(path, pattern))
                     return true;
             }
             return false;
         }
 
-        /// <summary>
-        /// Match a path against an exclusion pattern.
-        /// Patterns: "Canvas/Chat/**" matches any child, "**/PlayerName" matches at any depth.
-        /// An exact path also matches all children (excluding "Canvas/Panel" excludes "Canvas/Panel/Text").
-        /// </summary>
-        public static bool MatchesExclusionPattern(string path, string pattern)
-        {
-            if (string.IsNullOrEmpty(pattern)) return false;
-
-            // Exact path exclusions implicitly exclude all children:
-            // Pattern "Canvas/Panel" should match "Canvas/Panel", "Canvas/Panel/Child", "Canvas/Panel/Child/Text"
-            // Only apply this when pattern has no wildcards (pure path exclusion)
-            if (!pattern.Contains("*"))
-            {
-                if (string.Equals(path, pattern, StringComparison.OrdinalIgnoreCase))
-                    return true;
-                // Check if path is a child of the excluded path
-                if (path.Length > pattern.Length && path[pattern.Length] == '/' &&
-                    path.StartsWith(pattern, StringComparison.OrdinalIgnoreCase))
-                    return true;
-                return false;
-            }
-
-            // Wildcard pattern matching
-            // ** = any number of path segments (including zero)
-            // * = any single path segment name
-
-            // Split both into segments
-            var pathParts = path.Split('/');
-            var patternParts = pattern.Split('/');
-
-            return MatchPatternRecursive(pathParts, 0, patternParts, 0);
-        }
-
-        private static bool MatchPatternRecursive(string[] path, int pathIdx, string[] pattern, int patternIdx)
-        {
-            // Base cases
-            if (patternIdx >= pattern.Length)
-                return pathIdx >= path.Length;
-
-            string patternPart = pattern[patternIdx];
-
-            if (patternPart == "**")
-            {
-                // ** matches zero or more path segments
-                // Try matching rest of pattern at every remaining position
-                for (int i = pathIdx; i <= path.Length; i++)
-                {
-                    if (MatchPatternRecursive(path, i, pattern, patternIdx + 1))
-                        return true;
-                }
-                return false;
-            }
-
-            if (pathIdx >= path.Length)
-                return false;
-
-            string pathPart = path[pathIdx];
-
-            if (patternPart == "*")
-            {
-                // * matches exactly one segment (any name)
-                return MatchPatternRecursive(path, pathIdx + 1, pattern, patternIdx + 1);
-            }
-
-            // Check if pattern part contains * as wildcard within the name
-            if (patternPart.Contains("*"))
-            {
-                // Convert to simple wildcard matching (e.g., "Chat*" matches "ChatWindow")
-                string regexPattern = "^" + Regex.Escape(patternPart).Replace("\\*", ".*") + "$";
-                if (!Regex.IsMatch(pathPart, regexPattern, RegexOptions.IgnoreCase))
-                    return false;
-            }
-            else
-            {
-                // Exact match (case-insensitive)
-                if (!string.Equals(pathPart, patternPart, StringComparison.OrdinalIgnoreCase))
-                    return false;
-            }
-
-            return MatchPatternRecursive(path, pathIdx + 1, pattern, patternIdx + 1);
-        }
 
         /// <summary>
         /// Mark metadata as modified (fonts, images, exclusions).

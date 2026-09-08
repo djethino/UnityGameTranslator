@@ -121,16 +121,49 @@ namespace UnityGameTranslator.Core.Checks
             check(!TextNormalization.IsNumericOrSymbol("Play"),
                 "a Latin word does", "the ordinary case, and the one everything else is measured against");
 
-            // 🔴 The ranges are spelled out because char.IsLetter has been seen answering wrongly
-            // for these on some IL2CPP runtimes — and a wrong "no letters here" is a game left
-            // untranslated with nothing said.
             check(!TextNormalization.IsNumericOrSymbol("遊ぶ") && !TextNormalization.IsNumericOrSymbol("한국"),
                 "and so do Japanese and Korean", "the games that most need translating are these ones");
 
             check(!TextNormalization.IsNumericOrSymbol("Привет") && !TextNormalization.IsNumericOrSymbol("مرحبا")
-                  && !TextNormalization.IsNumericOrSymbol("नमस्ते") && !TextNormalization.IsNumericOrSymbol("สวัสดี"),
+                  && !TextNormalization.IsNumericOrSymbol("नमस्ते") && !TextNormalization.IsNumericOrSymbol("สวัสดी"),
                 "Cyrillic, Arabic, Devanagari and Thai too",
-                "each is a range written out on purpose, and each was a language the mod would have skipped");
+                "four of the scripts an earlier version also listed by hand, as a belt against a runtime that misclassifies");
+
+            // ⚠ **These pass on a healthy runtime whichever way the question is asked** — measured
+            // 2026-09-08, and worth saying plainly: the earlier version answered correctly for all
+            // of them too, because the categories it fell back on do know them. What they pin is
+            // that no script needs naming for this to work, so nobody has to notice the next one.
+            check(!TextNormalization.IsNumericOrSymbol("שלום") && !TextNormalization.IsNumericOrSymbol("Παίξε")
+                  && !TextNormalization.IsNumericOrSymbol("Խաղալ") && !TextNormalization.IsNumericOrSymbol("თამაში"),
+                "Hebrew, Greek, Armenian and Georgian are words",
+                "none of the four was in the hand-written belt; if the belt were ever needed, they are what it did not cover");
+
+            check(!TextNormalization.IsNumericOrSymbol("খেলা") && !TextNormalization.IsNumericOrSymbol("விளையாட")
+                  && !TextNormalization.IsNumericOrSymbol("ಆಟ") && !TextNormalization.IsNumericOrSymbol("കളി"),
+                "and so are Bengali, Tamil, Kannada and Malayalam",
+                "the belt held Devanagari and none of its neighbours — one alphabet of India out of a dozen");
+
+            check(!TextNormalization.IsNumericOrSymbol("ຫຼິ້ນ") && !TextNormalization.IsNumericOrSymbol("លេង")
+                  && !TextNormalization.IsNumericOrSymbol("ကစား") && !TextNormalization.IsNumericOrSymbol("ጫወታ"),
+                "and Lao, Khmer, Burmese and Ethiopic",
+                "it held Thai and none of its neighbours either, for no reason anybody wrote down");
+
+            // 🔴 **The one answer that actually changed, and the reason the question is now asked
+            // the other way round.** Measured on 2026-09-08: the earlier version answered "nothing
+            // to translate" here, and that is where its shape gave way — anything it could not
+            // recognise fell towards silence. What cannot be classified must fall towards spending
+            // a call instead, because one wasted call is visible and a skipped sentence is not.
+            check(!TextNormalization.IsNumericOrSymbol("͸"),
+                "a codepoint the runtime cannot classify counts as a letter",
+                "a stripped Unicode table then costs calls instead of leaving a game untranslated with nothing said");
+
+            check(TextNormalization.IsNumericOrSymbol("😀🎮"),
+                "an emoji is a symbol, not a word",
+                "judged by code point, so a surrogate pair is read whole rather than as two halves of nothing");
+
+            check(!TextNormalization.IsNumericOrSymbol("𐌰𐌱"),
+                "and a letter outside the basic plane is still a letter",
+                "the same pair-aware reading, from the other side");
 
             check(TextNormalization.IsNaturalIdentity("[!v*0] / [!v*1]"),
                 "a line of nothing but slots is the same in every language",

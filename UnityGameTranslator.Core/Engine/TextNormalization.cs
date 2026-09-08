@@ -21,13 +21,14 @@ namespace UnityGameTranslator.Core
     /// broke them (Common.Placeholders), the manager scores models against the same rule, and a
     /// translation file on disk holds them. Changing a spelling is a migration.
     ///
-    /// ⚠ **Two answers to "is there a letter here" live side by side, and neither is dead.**
-    /// <see cref="IsNumericOrSymbol"/> asks it of a whole text through explicit Unicode ranges,
-    /// because char.IsLetter has been seen failing for CJK on some IL2CPP runtimes;
-    /// <see cref="IsWordCategory"/> asks it of one code point through its Unicode category, and
-    /// deliberately counts what IsLetter does not — a combining vowel sign, a tone mark, a
-    /// private-use codepoint naming a shaped glyph. Merging them would change what each caller
-    /// gets, so they are frozen apart here, with cases on both, until somebody decides.
+    /// ⚠ **Two questions about letters live side by side, and they are not the same question.**
+    /// <see cref="IsNumericOrSymbol"/> asks of a whole text "is there nothing to translate here",
+    /// at the four doors into translation; <see cref="IsWordCategory"/> asks of one code point "is
+    /// this part of a word", to decide whether a text can be recognised when the game hands it
+    /// back. Both now read Unicode categories rather than lists of scripts, and they differ in
+    /// exactly ONE place, on purpose: a private-use codepoint is one of our own shaped glyphs, so
+    /// the readback form counts it as a letter (that is how it recognises our output) and the door
+    /// does not (so our own output is never sent to a model).
     ///
     /// Moved out of TranslatorCore on 2026-09-08 (step 6 of analyse/plan-prealables-couches.md),
     /// verbatim: same code, same comments, same answers.
@@ -425,30 +426,106 @@ namespace UnityGameTranslator.Core
             return IsNumericOrSymbol(stripped.ToString());
         }
 
+        /// <summary>
+        /// Does this text carry no word at all — only digits, punctuation, symbols and spacing —
+        /// so that it reads the same in every language and there is nothing to ask a model?
+        ///
+        /// 🔴 **Asked the other way round on purpose, and this is the whole rule.** What is
+        /// enumerated below is what is CERTAINLY not a letter; anything else counts as one. The
+        /// two mistakes are not worth the same: answering "there are letters" about "123" spends
+        /// one call, which is visible and recoverable, while answering "no letters" about a real
+        /// sentence leaves it untranslated for ever, in silence, with nothing to read anywhere. So
+        /// the unknown case has to fall on the side of translating.
+        ///
+        /// 🔴 **It used to enumerate the letters instead, and by SCRIPT** — char.IsLetter, then
+        /// CJK, hangul, kana, Cyrillic, Arabic, Devanagari and Thai as seven blocks written out by
+        /// hand, with everything unlisted falling into "no letters". The seven were a belt against
+        /// a suspicion — char.IsLetter failing for CJK on some IL2CPP runtime — that is documented
+        /// nowhere and was never measured.
+        ///
+        /// ⚠ **On a healthy runtime the two shapes agree about every script**, measured on
+        /// 2026-09-08: Hebrew, Greek, Armenian, Georgian, Bengali, Tamil, Kannada, Malayalam, Lao,
+        /// Khmer, Burmese and Ethiopic all read as words under both. The belt was never load-
+        /// bearing there. What it WAS is incomplete — it covered four scripts and left eighteen
+        /// out, so on the runtime it was written for it would have protected Devanagari and not
+        /// Bengali, Thai and not Lao, for no reason anybody wrote down. And a list of scripts is
+        /// the one thing this codebase forbids itself: no logic specific to a language or a
+        /// writing system.
+        ///
+        /// 🔴 **The answer that did change is the unclassifiable one.** A codepoint the runtime
+        /// cannot place used to read as "nothing to translate"; it now reads as a letter, because
+        /// OtherNotAssigned is deliberately absent from the list below. A stripped or broken table
+        /// therefore makes this translate too much rather than go quiet — which is the whole point
+        /// of asking the question this way round.
+        ///
+        /// ⚠ **PrivateUse is listed, so our own shaped glyphs are not letters here.** That keeps
+        /// what the seven ranges did by accident: a word rendered entirely in our ligatures is not
+        /// sent to a model, because it is already a translation of ours.
+        /// <see cref="IsWordCategory"/> makes the opposite call for the same codepoints, and that
+        /// is the one difference between the two — its job is to RECOGNISE our own output coming
+        /// back through the game.
+        /// </summary>
         public static bool IsNumericOrSymbol(string text)
         {
-            foreach (char c in text.Trim())
+            string trimmed = text.Trim();
+
+            for (int i = 0; i < trimmed.Length; i++)
             {
-                // char.IsLetter may fail for CJK characters on some IL2CPP runtimes.
-                // Explicitly check Unicode ranges for letters and CJK ideographs.
-                if (char.IsLetter(c))
-                    return false;
-                if (c >= 0x2E80 && c <= 0x9FFF)  // CJK radicals, kangxi, ideographs
-                    return false;
-                if (c >= 0xAC00 && c <= 0xD7AF)  // Korean Hangul syllables
-                    return false;
-                if (c >= 0x3040 && c <= 0x30FF)  // Japanese Hiragana + Katakana
-                    return false;
-                if (c >= 0x0400 && c <= 0x04FF)  // Cyrillic
-                    return false;
-                if (c >= 0x0600 && c <= 0x06FF)  // Arabic
-                    return false;
-                if (c >= 0x0900 && c <= 0x097F)  // Devanagari (Hindi)
-                    return false;
-                if (c >= 0x0E00 && c <= 0x0E7F)  // Thai
+                // By code point: a letter outside the basic plane arrives as a surrogate pair, and
+                // judging its halves separately would read an emoji and an astral letter alike.
+                var category = System.Globalization.CharUnicodeInfo.GetUnicodeCategory(trimmed, i);
+                if (char.IsHighSurrogate(trimmed[i]) && i + 1 < trimmed.Length
+                    && char.IsLowSurrogate(trimmed[i + 1])) i++;
+
+                if (!IsCertainlyNotALetter(category)) return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// The closed list: numbers, punctuation, symbols, separators, and the four kinds of
+        /// non-character. Everything absent from it — every letter category, every mark, and
+        /// anything the runtime could not classify — counts as a letter.
+        /// </summary>
+        internal static bool IsCertainlyNotALetter(System.Globalization.UnicodeCategory category)
+        {
+            switch (category)
+            {
+                case System.Globalization.UnicodeCategory.DecimalDigitNumber:
+                case System.Globalization.UnicodeCategory.LetterNumber:
+                case System.Globalization.UnicodeCategory.OtherNumber:
+
+                case System.Globalization.UnicodeCategory.ConnectorPunctuation:
+                case System.Globalization.UnicodeCategory.DashPunctuation:
+                case System.Globalization.UnicodeCategory.OpenPunctuation:
+                case System.Globalization.UnicodeCategory.ClosePunctuation:
+                case System.Globalization.UnicodeCategory.InitialQuotePunctuation:
+                case System.Globalization.UnicodeCategory.FinalQuotePunctuation:
+                case System.Globalization.UnicodeCategory.OtherPunctuation:
+
+                case System.Globalization.UnicodeCategory.MathSymbol:
+                case System.Globalization.UnicodeCategory.CurrencySymbol:
+                case System.Globalization.UnicodeCategory.ModifierSymbol:
+                case System.Globalization.UnicodeCategory.OtherSymbol:
+
+                case System.Globalization.UnicodeCategory.SpaceSeparator:
+                case System.Globalization.UnicodeCategory.LineSeparator:
+                case System.Globalization.UnicodeCategory.ParagraphSeparator:
+
+                case System.Globalization.UnicodeCategory.Control:
+                case System.Globalization.UnicodeCategory.Format:
+                case System.Globalization.UnicodeCategory.Surrogate:
+
+                // ⚠ Ours, not a script — see the note on the method above.
+                case System.Globalization.UnicodeCategory.PrivateUse:
+                    return true;
+
+                // ⚠ OtherNotAssigned is NOT here, and its absence is the safety net: a runtime
+                // that cannot classify a character makes this translate, never go quiet.
+                default:
                     return false;
             }
-            return true;
         }
     }
 }

@@ -1218,7 +1218,22 @@ namespace UnityGameTranslator.Core
 
             if (changed.Contains(SettingsSections.Images))
             {
+                // 🔴 **Loading a replacement is not wearing it**, and the loader says so itself:
+                // "we don't call ApplyToScene() here automatically". The pair that does both is
+                // what a scene change runs — and a reload is the same event for these components,
+                // since the file that named their images has just been replaced.
+                //
+                // ⚠ The old ones come off FIRST. A translation replacing fewer images than the one
+                // before it would otherwise leave components wearing pictures the file now on disk
+                // never mentions — the same shape as the font transition above.
+                //
+                // ⚠ Seen on a real install (2026-09-08): the definitions were read and the sprite
+                // imported, and nothing appeared. Only "Loaded N replacement definitions" and
+                // "Loaded N replacement sprites" were in the log; no apply pass followed, because
+                // none was asked for.
+                ImageReplacer.RestoreAllOriginalImages();
                 ImageReplacer.LoadAllReplacements();
+                ImageReplacer.ApplyToScene();
             }
 
             if (changed.Contains(SettingsSections.Variables))

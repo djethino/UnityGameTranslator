@@ -842,7 +842,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     // for a UI Toolkit element — the edit would be written to the file and never
                     // appear, which reads as the save having failed.
                     TextTargets.Write(capturedComponent,
-                        TranslatorCore.RestoreNumbersFromPlaceholders(newValue, capturedNumbers));
+                        TextNormalization.RestoreNumbersFromPlaceholders(newValue, capturedNumbers));
                 }
                 catch { }
 
@@ -930,7 +930,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 {
                     // The only place in this row where markup is meant to be interpreted. Numbers
                     // are put back too, so this is the line as the game would draw it right now.
-                    row.PreviewLabel.Show(TranslatorCore.RestoreNumbersFromPlaceholders(field, row.LiveNumbers));
+                    row.PreviewLabel.Show(TextNormalization.RestoreNumbersFromPlaceholders(field, row.LiveNumbers));
                 }
             }
         }

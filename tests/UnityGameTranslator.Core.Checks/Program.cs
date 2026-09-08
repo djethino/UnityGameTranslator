@@ -42,6 +42,7 @@ namespace UnityGameTranslator.Core.Checks
                 return 0;
             }
 
+            HowATextIsNormalized();
             HowTextChanges();
             WhenTextMayBeTyping();
             HowATargetIsNamed();
@@ -63,6 +64,13 @@ namespace UnityGameTranslator.Core.Checks
         }
 
         /// <summary>What a component's new text is, relative to the one it held a moment ago.</summary>
+        /// <summary>What a text looks like once its decoration is set aside — slots, tags, letters.</summary>
+        private static void HowATextIsNormalized()
+        {
+            Section("Text normalization");
+            TextNormalizationChecks.Run(Check);
+        }
+
         private static void HowTextChanges()
         {
             Section("Text relations");

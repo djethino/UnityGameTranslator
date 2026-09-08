@@ -35,6 +35,13 @@
     <Compile Include="../../UnityGameTranslator.Core/InputEcho.cs" />
     <Compile Include="../../UnityGameTranslator.Core/TargetPath.cs" />
     <!--
+      The first of TranslatorCore's cuts (2026-09-08). What a text looks like once the decoration
+      is set aside: line endings made one, numbers and markup lifted into placeholders and put
+      back, and the two questions about letters. It was ~390 lines scattered through a 9000-line
+      file where nothing could ask it anything without a game, a disk and a network.
+    -->
+    <Compile Include="../../UnityGameTranslator.Core/Engine/TextNormalization.cs" />
+    <!--
       What a downloaded translation may ask of the disk and of the main thread. Both are pure by
       construction — a string in, an answer out — and both exist as files of their own so that the
       refusals AND the acceptances can be proved here rather than in a game.

@@ -1777,7 +1777,7 @@ namespace UnityGameTranslator.Core
         {
             if (string.IsNullOrEmpty(text)) return false;
 
-            string candidate = TranslatorCore.StripMarkupTags(text).Trim();
+            string candidate = TextNormalization.StripMarkupTags(text).Trim();
             if (candidate.Length == 0) return false;
 
             // Internal mirror. Structural: it only matches a component that lives INSIDE the input

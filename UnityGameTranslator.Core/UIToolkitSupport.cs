@@ -644,7 +644,7 @@ namespace UnityGameTranslator.Core
             string focused = FocusedText(element);
             if (string.IsNullOrEmpty(focused)) return false;
 
-            string candidate = TranslatorCore.StripMarkupTags(text).Trim();
+            string candidate = TextNormalization.StripMarkupTags(text).Trim();
             if (candidate.Length == 0) return false;
             if (!string.Equals(candidate, focused.Trim(), StringComparison.Ordinal)) return false;
 

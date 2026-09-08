@@ -464,11 +464,21 @@ namespace UnityGameTranslator.Core.UI
         #region Dimensions
 
         // Padding & Margins
-        public static readonly int PanelPadding = 15;
-        public static readonly int CardPadding = 20;
-        public static readonly int SectionPadding = 12;
-        public static readonly int ElementSpacing = 10;
-        public static readonly int SmallSpacing = 5;
+        //
+        // ⚠ **Tightened on 2026-09-08, and the reason is what the cards now carry.** These have not
+        // moved since the interface was written (2025-12-27), and they were right for a card of
+        // four or five lines. "Current Translation" holds a dozen — languages, the badges, the
+        // count, the review bar, the tally, the ownership line, the vote, the backups, the external
+        // resources — so ten pixels between each and twenty all round put the Actions section below
+        // the fold on an ordinary screen, and gave that panel a scrollbar it never used to need.
+        //
+        // ⚠ Reduced, not removed: a dense panel that reads as one block is worse than a tall one.
+        // What is kept is enough to still see where a line ends and the next begins.
+        public static readonly int PanelPadding = 12;
+        public static readonly int CardPadding = 14;
+        public static readonly int SectionPadding = 10;
+        public static readonly int ElementSpacing = 7;
+        public static readonly int SmallSpacing = 4;
 
         // Component heights
         public static readonly int TitleHeight = 40;

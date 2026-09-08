@@ -22,6 +22,20 @@ namespace UnityGameTranslator.Core
         private const string LegacyPrefix = "ugt_";
 
         /// <summary>
+        /// Where the two lines below go. Assigned by TranslatorCore at its own static
+        /// initialisation, which always runs before a config is read.
+        ///
+        /// ⚠ Handed in rather than reached for: naming the mod's log here would tie this file —
+        /// and with it the config.json contract that carries its converter — to UnityEngine, and
+        /// neither could then be checked outside a game. What the class comment above says stays
+        /// true: the logging belongs to the mod. It is now the mod that provides it.
+        /// </summary>
+        public static Action<string> Info { get; set; }
+
+        /// <inheritdoc cref="Info"/>
+        public static Action<string> Warning { get; set; }
+
+        /// <summary>
         /// Encrypt a token for storage in the config file. Null for nothing to store — callers
         /// have always relied on that rather than on an empty string.
         /// </summary>
@@ -49,14 +63,14 @@ namespace UnityGameTranslator.Core
             // rewrites it, and a line in the log is what makes that traceable afterwards.
             if (storedToken.StartsWith(LegacyPrefix))
             {
-                TranslatorCore.LogInfo("[TokenProtection] Legacy plaintext token detected, will be encrypted on next save");
+                Info?.Invoke("[TokenProtection] Legacy plaintext token detected, will be encrypted on next save");
                 return storedToken;
             }
 
             if (Secrets.TryUnprotect(storedToken, out string plain, out string failure))
                 return plain;
 
-            TranslatorCore.LogWarning($"[TokenProtection] Decryption failed: {failure}");
+            Warning?.Invoke($"[TokenProtection] Decryption failed: {failure}");
             return null;
         }
 

@@ -72,6 +72,17 @@
     -->
     <Compile Include="../../UnityGameTranslator.Core/Engine/TranslationQueue.cs" />
     <!--
+      The config.json contract and its migrations — a format shared with the Manager, so every key
+      is an agreement between two programs. A retired value read as the default takes somebody's
+      choice away in silence, which is the only kind of defect this file can have.
+
+      ⚠ TokenProtection comes with it, not as an extra: ModConfig's secrets carry
+      [JsonConverter(typeof(EncryptedTokenConverter))] in an attribute, so the converter has to
+      compile here for the contract to be checkable at all. It gained its two log sinks for that.
+    -->
+    <Compile Include="../../UnityGameTranslator.Core/Engine/ModConfig.cs" />
+    <Compile Include="../../UnityGameTranslator.Core/TokenProtection.cs" />
+    <!--
       What lets one cached sentence serve every value the game puts in it. A pattern that stops
       matching costs one call per number, for ever; one that matches too much shows a sentence
       about something else.

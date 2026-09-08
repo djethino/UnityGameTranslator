@@ -49,6 +49,7 @@ namespace UnityGameTranslator.Core.Checks
             WhichFontARuleAsksFor();
             WhichLanguagesATranslationIsIn();
             WhatWaitsForABackend();
+            WhatAConfigFileStillMeans();
             HowTextChanges();
             WhenTextMayBeTyping();
             HowATargetIsNamed();
@@ -109,6 +110,13 @@ namespace UnityGameTranslator.Core.Checks
         {
             Section("The translation queue, across a whole sequence");
             TranslationQueueChecks.Run(Check);
+        }
+
+        /// <summary>What a config.json written by an older build still means today.</summary>
+        private static void WhatAConfigFileStillMeans()
+        {
+            Section("The config.json contract and its migrations");
+            ModConfigChecks.Run(Check);
         }
 
         /// <summary>How a sentence carrying live numbers is read as the pattern it was cached from.</summary>

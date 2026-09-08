@@ -1328,6 +1328,18 @@ namespace UnityGameTranslator.Core.UI.Panels
                     : null,
             };
 
+            // ⚠ **A probe, not a rule.** The log says the server answered "this lineage exists and
+            // is not yours", the Manager reads the same answer and names its owner, and the card
+            // said "Never published" — three readings of one fact that cannot all be right. This
+            // prints what the card DECIDED and what it decided it from, so the next report says
+            // which of them is lying. Once per refresh.
+            TranslatorCore.LogInfo($"[Card] {Publications.Name(standing.Publication)}"
+                + $" | role={standing.Role} owner={standing.MainOwner ?? "(none)"}"
+                + $" | from: exists={serverState?.Exists.ToString() ?? "(no state)"}"
+                + $" checked={serverState?.Checked.ToString() ?? "-"}"
+                + $" isOwner={serverState?.IsOwner.ToString() ?? "-"}"
+                + $" site={serverState?.SiteId?.ToString() ?? "-"} lines={entryCount}");
+
             // Identity leads the card: which languages, whatever the mode
             _statusCard.SetIdentity(TranslatorCore.Config.GetSourceLanguage(), targetLang);
 

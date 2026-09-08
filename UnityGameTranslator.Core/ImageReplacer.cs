@@ -760,14 +760,29 @@ namespace UnityGameTranslator.Core
             catch { return null; }
         }
 
-        /// <summary>A sprite or texture named, for the probe above. Never throws.</summary>
+        /// <summary>
+        /// A sprite named AND identified, for the probe above. Never throws.
+        ///
+        /// ⚠ **The name alone says nothing here, and the first run proved it.** Our replacement is
+        /// built from a PNG called after the sprite it replaces, so both are called the same thing:
+        /// `'标题' → wrote '标题' → now '标题'` could equally mean "the original went back" or "the
+        /// replacement was written over itself". The instance id tells two Unity objects apart
+        /// whatever they are called, and the pixel size says which is the imported one.
+        /// </summary>
         private static string Describe(object value)
         {
             if (value == null) return "(none)";
             try
             {
-                var named = value as UnityEngine.Object;
-                return named != null ? $"'{named.name}'" : value.GetType().Name;
+                var obj = value as UnityEngine.Object;
+                if (obj == null) return value.GetType().Name;
+
+                string size = "";
+                var sprite = value as Sprite;
+                if (sprite != null && sprite.texture != null)
+                    size = $" {sprite.texture.width}x{sprite.texture.height}";
+
+                return $"'{obj.name}'#{obj.GetInstanceID()}{size}";
             }
             catch { return "(unreadable)"; }
         }

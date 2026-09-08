@@ -806,25 +806,17 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // and refuses anyway — a greyed button is a hint, not a guarantee.
                 if (!HasUnsavedEdit(capturedKey, newValue)) return;
 
-                // Refuse edits that drop or invent placeholders — they would break
-                // dynamic numbers for every future value
-                string placeholderError = TranslatorCore.ValidateEditedPlaceholders(capturedKey, newValue);
-                if (placeholderError != null)
-                {
-                    _statusLabel.Show($"Not saved — {placeholderError}");
-                    _statusLabel.Tone = Tone.Error;
-                    return;
-                }
+                // ⚠ A belt. The button is already grey while a placeholder is broken and the line
+                // under the field says which one, so this is unreachable through the interface —
+                // and it stays, because a greyed button is a hint and not a guarantee. It says
+                // nothing on screen: the row said it while the text was being typed.
+                if (TranslatorCore.ValidateEditedPlaceholders(capturedKey, newValue) != null) return;
 
-                // A key in presentation forms is the RTL pipeline's display output read back —
-                // saving it would file a key no source text can ever match (D8). The write door
-                // in TranslatorCore refuses it too; this one says WHY on screen.
-                if (TextShaping.RtlText.ContainsPresentationForms(capturedKey))
-                {
-                    _statusLabel.Show("Not saved — this row's key is display-shaped text, not a source text");
-                    _statusLabel.Tone = Tone.Error;
-                    return;
-                }
+                // ⚠ The same belt, for the same reason: a key in presentation forms is the RTL
+                // pipeline's display output read back, and saving it would file a key no source
+                // text can ever match (D8). Known from the key alone, so the row says it and greys
+                // Save before anything is typed; the write door in TranslatorCore refuses it too.
+                if (TextShaping.RtlText.ContainsPresentationForms(capturedKey)) return;
 
                 // Who wrote what is being saved. Accepting an AI proposal untouched files it as A:
                 // stamping H would claim a review nobody performed, and that tag drives the
@@ -899,20 +891,36 @@ namespace UnityGameTranslator.Core.UI.Panels
         }
 
         /// <summary>
-        /// Grey out what would do nothing — Save and Revert while the field matches the file,
-        /// Retranslate while an answer for that line is already on its way — and keep the rendered
-        /// preview in step with what is being typed.
+        /// Grey out what would do nothing — Save while the field matches the file or holds a
+        /// broken placeholder, Retranslate while an answer for that line is already on its way —
+        /// and keep the line under the field in step with what is being typed.
         /// </summary>
         private void RefreshRow(TextEditRowState row)
         {
             if (row?.Input == null) return;
 
+            string field = row.Input.Text ?? "";
             bool changed = HasUnsavedEdit(row.Key, row.Input.Text);
 
-            if (row.SaveBtn != null) row.SaveBtn.Enabled = changed;
+            // 🔴 **Said while it is being typed, not after the click.** A placeholder dropped or
+            // duplicated cannot be saved — so the button goes grey the moment it happens and the
+            // line under the field says which token and how many times. Making somebody press a
+            // button to be told a refusal we already knew is the shape this project forbids: what
+            // is known before the click is said before the click.
+            //
+            // ⚠ The first of the two is known from the KEY alone, before a character is typed: a
+            // row whose key is the RTL pipeline's own display output can never be saved, whatever
+            // is put in the field. It said so after the click, on a status line at the other end of
+            // the panel; it now says so on the row, from the moment the row exists.
+            string problem = TextShaping.RtlText.ContainsPresentationForms(row.Key)
+                ? "this row's key is display-shaped text, not a source text — nothing typed here can be saved"
+                : changed ? TranslatorCore.ValidateEditedPlaceholders(row.Key, field) : null;
 
-            // Revert answers the same question as Save, from the other side: there is something to
-            // undo exactly when there is something to save.
+            if (row.SaveBtn != null) row.SaveBtn.Enabled = changed && problem == null;
+
+            // ⚠ Revert stays live on ANY change, broken text included: undoing is exactly what
+            // somebody wants when they have just broken something, and greying it here would leave
+            // them stuck with a field they cannot save and cannot put back.
             if (row.RevertBtn != null) row.RevertBtn.Enabled = changed;
 
             if (row.RetranslateBtn != null)
@@ -920,10 +928,22 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             if (row.PreviewLabel != null)
             {
-                string field = row.Input.Text ?? "";
+                // One line under the field, two things it can say — and the problem wins, because
+                // there is nothing useful to preview about a line the game would break on. A row of
+                // its own for each would cost height per entry in a list that routinely holds a
+                // dozen, and this panel was reported as too short.
+                if (problem != null)
+                {
+                    row.PreviewLabel.Visible = true;
+                    row.PreviewLabel.Tone = Tone.Error;
+                    row.PreviewLabel.Show(problem);
+                    return;
+                }
+
+                row.PreviewLabel.Tone = Tone.Secondary;
+
                 // Shown only when there is markup to interpret. On a plain line the preview would
-                // repeat the field word for word, costing a row of height per entry in a list that
-                // routinely holds a dozen — and this panel was reported as too short.
+                // repeat the field word for word.
                 bool worthShowing = field.IndexOf('<') >= 0 && field.IndexOf('>') >= 0;
                 row.PreviewLabel.Visible = worthShowing;
                 if (worthShowing)

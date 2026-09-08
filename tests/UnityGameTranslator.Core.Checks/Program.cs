@@ -53,6 +53,7 @@ namespace UnityGameTranslator.Core.Checks
             HowAnEventStreamIsRead();
             WhatABackendIsHandedAndGivesBack();
             WhatATranslationFileYields();
+            WhatALoadedFileSaysAboutItself();
             HowContentIsFingerprinted();
             HowTextChanges();
             WhenTextMayBeTyping();
@@ -138,6 +139,12 @@ namespace UnityGameTranslator.Core.Checks
         private static void HowContentIsFingerprinted()
         {
             Section("Canonical JSON (the fork fingerprint)", CanonicalJsonChecks.Run);
+        }
+
+        /// <summary>What a file says about ITSELF is re-derived from it, never inherited.</summary>
+        private static void WhatALoadedFileSaysAboutItself()
+        {
+            Section("A translation's own identity, on loading", LoadedIdentityChecks.Run);
         }
 
         /// <summary>How a sentence carrying live numbers is read as the pattern it was cached from.</summary>

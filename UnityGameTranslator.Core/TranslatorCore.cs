@@ -2400,6 +2400,42 @@ namespace UnityGameTranslator.Core
             MetadataDirty = false;
             LocalChangesCount = 0;
 
+            // 🔴 **Who this translation IS, and what it has to do with the server — re-derived from
+            // the file, never inherited from the one loaded before it.**
+            //
+            // Every block below is written only when it has something to say, so a file that says
+            // nothing left the previous file's answer standing: the branches that read them simply
+            // never ran. Somebody switching between translations in one session — restoring a
+            // backup, downloading somebody else's to look at it, going back to their own — carried
+            // one file's identity onto the next.
+            //
+            // ⚠ **Observed, not deduced** (2026-09-08, on a real install): a published English→French
+            // translation, then a never-published English→Thai backup restored over it. The Thai
+            // file came out of the mod carrying `_source: { hash: 57881c8a…, site_id: 12 }` — the
+            // FRENCH translation's row and content hash — written to its own file on disk. From
+            // then on the Thai content was compared against the French translation's server hash,
+            // so the sync verdict disagreed permanently and nothing could settle it.
+            //
+            // ⚠ It only ever bit WITHIN a session: on a fresh launch these start empty, which is
+            // why a file could look clean until the moment somebody switched.
+            //
+            // 🔴 FileUuid included, and it is the worst of them: a file with no `_uuid` — an old
+            // one, or one edited by hand — kept the previous LINEAGE's identity and had it written
+            // back, instead of the fresh one the block further down exists to give it.
+            //
+            // The fourth defect of this family (game settings, then _local_changes and
+            // _metadata_dirty, then these). See analyse/plan-prealables-couches.md 6r: the shape
+            // that ends the family is a record with a value for every field, where "the previous
+            // one survives" stops being expressible.
+            FileUuid = null;
+            LastSyncedHash = null;
+            LastMergedMainHash = null;
+            SourceSiteId = null;
+            ForkedFromSiteId = null;
+            ForkedFromHash = null;
+            ForkedFromResolvedLines = null;
+            ForkedFromContentHash = null;
+
             if (!File.Exists(CachePath))
             {
                 // Generate UUID for new translation file

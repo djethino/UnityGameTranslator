@@ -9,16 +9,6 @@ using System.Threading.Tasks;
 namespace UnityGameTranslator.Core
 {
     /// <summary>
-    /// Represents a parsed SSE event.
-    /// </summary>
-    public class SseEvent
-    {
-        public string Id { get; set; }
-        public string EventType { get; set; }
-        public string Data { get; set; }
-    }
-
-    /// <summary>
     /// SSE connection state for UI feedback.
     /// </summary>
     public enum SseConnectionState
@@ -40,7 +30,6 @@ namespace UnityGameTranslator.Core
         private CancellationTokenSource _cts;
         private string _lastEventId;
         private int _reconnectDelayMs = 3000;
-        private DateTime _lastDataReceived = DateTime.UtcNow;
         private bool _disposed;
 
         private const int MAX_RECONNECT_DELAY_MS = 30000;
@@ -51,8 +40,8 @@ namespace UnityGameTranslator.Core
         /// <see cref="HEARTBEAT_TIMEOUT_MS"/> has passed.
         ///
         /// ⚠ Deliberately well under the relay's own heartbeat rather than equal to it. It used to
-        /// be fifteen seconds against a fifteen-second beat — see ParseEventStream for what that
-        /// cost. It is a tick, not a deadline: nothing is given up when it fires.
+        /// be fifteen seconds against a fifteen-second beat — see <see cref="SseStream"/> for what
+        /// that cost. It is a tick, not a deadline: nothing is given up when it fires.
         /// </summary>
         private const int ReadTickMs = 5000;
 
@@ -188,12 +177,27 @@ namespace UnityGameTranslator.Core
                         SetState(SseConnectionState.Connected);
                         everConnected = true;
                         _reconnectDelayMs = 3000; // Reset backoff
-                        _lastDataReceived = DateTime.UtcNow;
 
                         using (var stream = await response.Content.ReadAsStreamAsync())
                         using (var reader = new StreamReader(stream, Encoding.UTF8))
                         {
-                            await ParseEventStream(reader, ct);
+                            // ⚠ The reading itself is SseStream's — see it for the defect that
+                            // separated the two. What stays here is the socket: connecting,
+                            // reconnecting, and what the last id and the retry hint are for.
+                            var sse = new SseStream(reader)
+                            {
+                                TickMs = ReadTickMs,
+                                HeartbeatTimeoutMs = HEARTBEAT_TIMEOUT_MS,
+                                StopAfterFirstEvent = StopAfterFirstEvent,
+                                OnEvent = evt => OnEvent?.Invoke(evt),
+                                Warning = TranslatorCore.LogWarning,
+                            };
+
+                            var stopped = await sse.Run(ct);
+
+                            if (sse.LastEventId != null) _lastEventId = sse.LastEventId;
+                            if (sse.RetryDelayMs.HasValue) _reconnectDelayMs = sse.RetryDelayMs.Value;
+                            _finished = stopped == SseStopReason.Delivered;
                         }
 
                         // The stream did what it was opened for. Leaving here rather than falling
@@ -238,172 +242,6 @@ namespace UnityGameTranslator.Core
                     return;
                 }
                 _reconnectDelayMs = Math.Min(_reconnectDelayMs * 2, MAX_RECONNECT_DELAY_MS);
-            }
-        }
-
-        /// <summary>
-        /// Parse the SSE event stream line by line, per the SSE specification.
-        /// https://html.spec.whatwg.org/multipage/server-sent-events.html#event-stream-interpretation
-        /// </summary>
-        private async Task ParseEventStream(StreamReader reader, CancellationToken ct)
-        {
-            string eventType = null;
-            var dataLines = new List<string>();
-            string eventId = null;
-
-            // 🔴 **ONE read at a time, and that is the whole reason this lives outside the loop.**
-            // ReadLineAsync must not be called again while a previous call is still pending on the
-            // same stream: .NET answers "The stream is currently in use by a previous operation on
-            // the stream", the connection dies, and every reconnection meets the same wall.
-            //
-            // It WAS called again — every time the tick below won the race, the loop abandoned a
-            // pending read and started another. And the tick was fifteen seconds while the relay's
-            // heartbeat is also fifteen (sse-server/server.js, HEARTBEAT_INTERVAL_MS), two numbers
-            // chosen independently and landing on the same one, so the race was a dead heat and the
-            // loser was the connection. What it cost: device-flow authorisation never arrived. The
-            // site said the game was linked and the game sat on "Waiting for authorization" for
-            // ever, with the reason logged as debug and excused in a comment as normal.
-            //
-            // ⚠ The tick is now well under the heartbeat, so waking up finds data waiting rather
-            // than racing it — but that is comfort, not the fix. The fix is that a tick which wins
-            // KEEPS the pending read instead of replacing it.
-            Task<string> readTask = null;
-
-            while (!ct.IsCancellationRequested)
-            {
-                // Check heartbeat timeout
-                if ((DateTime.UtcNow - _lastDataReceived).TotalMilliseconds > HEARTBEAT_TIMEOUT_MS)
-                {
-                    TranslatorCore.LogWarning("[SSE] Heartbeat timeout, reconnecting...");
-                    return; // Exit to trigger reconnection
-                }
-
-                string line;
-                try
-                {
-                    // Started only when there is no read in flight. ReadLineAsync waits for data,
-                    // for the end of the stream, or for the connection to drop.
-                    if (readTask == null) readTask = reader.ReadLineAsync();
-
-                    // A tick, so the heartbeat timeout above is reached even on a silent stream.
-                    var completedTask = await Task.WhenAny(readTask, Task.Delay(ReadTickMs, ct));
-                    if (completedTask != readTask)
-                    {
-                        // Nothing yet. The read stays pending and is picked up again next time
-                        // round — replacing it is what broke this.
-                        continue;
-                    }
-
-                    // Awaited rather than read through .Result: a faulted read hands back its own
-                    // exception here, where the catches below can recognise it, instead of an
-                    // AggregateException that matches none of them.
-                    line = await readTask;
-                    readTask = null;
-                }
-                catch (OperationCanceledException)
-                {
-                    return;
-                }
-                catch (IOException)
-                {
-                    return; // Stream closed, will trigger reconnection
-                }
-
-                if (line == null)
-                {
-                    return; // End of stream, will trigger reconnection
-                }
-
-                _lastDataReceived = DateTime.UtcNow;
-
-                // Empty line = dispatch event
-                if (line.Length == 0)
-                {
-                    if (dataLines.Count > 0)
-                    {
-                        var evt = new SseEvent
-                        {
-                            Id = eventId,
-                            EventType = eventType ?? "message",
-                            Data = string.Join("\n", dataLines)
-                        };
-
-                        if (!string.IsNullOrEmpty(eventId))
-                        {
-                            _lastEventId = eventId;
-                        }
-
-                        try
-                        {
-                            OnEvent?.Invoke(evt);
-                        }
-                        catch (Exception ex)
-                        {
-                            TranslatorCore.LogError($"[SSE] Event handler error: {ex.Message}");
-                        }
-
-                        // Handed over, and this stream was only ever going to carry the one.
-                        if (StopAfterFirstEvent)
-                        {
-                            _finished = true;
-                            return;
-                        }
-                    }
-
-                    // Reset for next event
-                    eventType = null;
-                    dataLines.Clear();
-                    eventId = null;
-                    continue;
-                }
-
-                // Comment line (heartbeat)
-                if (line[0] == ':')
-                {
-                    continue;
-                }
-
-                // Parse field:value
-                int colonIndex = line.IndexOf(':');
-                string field, value;
-                if (colonIndex >= 0)
-                {
-                    field = line.Substring(0, colonIndex);
-                    value = colonIndex + 1 < line.Length ? line.Substring(colonIndex + 1) : "";
-                    // Remove single leading space after colon (per spec)
-                    if (value.Length > 0 && value[0] == ' ')
-                    {
-                        value = value.Substring(1);
-                    }
-                }
-                else
-                {
-                    field = line;
-                    value = "";
-                }
-
-                switch (field)
-                {
-                    case "event":
-                        eventType = value;
-                        break;
-                    case "data":
-                        dataLines.Add(value);
-                        break;
-                    case "id":
-                        // Ignore IDs containing null (per spec)
-                        if (!value.Contains("\0"))
-                        {
-                            eventId = value;
-                        }
-                        break;
-                    case "retry":
-                        if (int.TryParse(value, out int retryMs) && retryMs >= 0)
-                        {
-                            _reconnectDelayMs = retryMs;
-                        }
-                        break;
-                }
             }
         }
 

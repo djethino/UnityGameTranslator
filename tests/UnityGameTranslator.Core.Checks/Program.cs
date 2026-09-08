@@ -50,6 +50,7 @@ namespace UnityGameTranslator.Core.Checks
             WhichLanguagesATranslationIsIn();
             WhatWaitsForABackend();
             WhatAConfigFileStillMeans();
+            HowAnEventStreamIsRead();
             HowTextChanges();
             WhenTextMayBeTyping();
             HowATargetIsNamed();
@@ -73,78 +74,73 @@ namespace UnityGameTranslator.Core.Checks
         /// <summary>What a text looks like once its decoration is set aside — slots, tags, letters.</summary>
         private static void HowATextIsNormalized()
         {
-            Section("Text normalization");
-            TextNormalizationChecks.Run(Check);
+            Section("Text normalization", TextNormalizationChecks.Run);
         }
 
         /// <summary>Which paths a written pattern covers — for an exclusion or for a font rule.</summary>
         private static void WhatAPatternCovers()
         {
-            Section("Exclusion patterns");
-            ExclusionPatternChecks.Run(Check);
+            Section("Exclusion patterns", ExclusionPatternChecks.Run);
         }
 
         /// <summary>What somebody's exclusion patterns keep out, across a whole sequence.</summary>
         private static void WhatSomebodyAskedToLeaveAlone()
         {
-            Section("Exclusion rules, across a whole sequence");
-            ExclusionRulesChecks.Run(Check);
+            Section("Exclusion rules, across a whole sequence", ExclusionRulesChecks.Run);
         }
 
         /// <summary>Which font rule applies to a label, and what survives being decided.</summary>
         private static void WhichFontARuleAsksFor()
         {
-            Section("Font rules, across a whole sequence");
-            FontRulesChecks.Run(Check);
+            Section("Font rules, across a whole sequence", FontRulesChecks.Run);
         }
 
         /// <summary>Which languages a translation is in, across the launch that decides it.</summary>
         private static void WhichLanguagesATranslationIsIn()
         {
-            Section("Languages, across a whole launch");
-            LanguageStateChecks.Run(Check);
+            Section("Languages, across a whole launch", LanguageStateChecks.Run);
         }
 
         /// <summary>The texts waiting for a backend, across the sequence that empties them.</summary>
         private static void WhatWaitsForABackend()
         {
-            Section("The translation queue, across a whole sequence");
-            TranslationQueueChecks.Run(Check);
+            Section("The translation queue, across a whole sequence", TranslationQueueChecks.Run);
         }
 
         /// <summary>What a config.json written by an older build still means today.</summary>
         private static void WhatAConfigFileStillMeans()
         {
-            Section("The config.json contract and its migrations");
-            ModConfigChecks.Run(Check);
+            Section("The config.json contract and its migrations", ModConfigChecks.Run);
+        }
+
+        /// <summary>Reading one server-sent event stream: the grammar, and the loop pulling the lines.</summary>
+        private static void HowAnEventStreamIsRead()
+        {
+            Section("Server-sent events, across a whole stream", SseStreamChecks.Run);
         }
 
         /// <summary>How a sentence carrying live numbers is read as the pattern it was cached from.</summary>
         private static void HowANumberedSentenceIsRecognised()
         {
-            Section("Number patterns");
-            NumberPatternChecks.Run(Check);
+            Section("Number patterns", NumberPatternChecks.Run);
         }
 
         /// <summary>What a component's new text is, relative to the one it held a moment ago.</summary>
         private static void HowTextChanges()
         {
-            Section("Text relations");
-            TextRelationsChecks.Run(Check);
+            Section("Text relations", TextRelationsChecks.Run);
         }
 
         /// <summary>When a text on screen may be read as an echo of the keyboard.</summary>
         private static void WhenTextMayBeTyping()
         {
-            Section("Input echo");
-            InputEchoChecks.Run(Check);
+            Section("Input echo", InputEchoChecks.Run);
         }
 
         /// <summary>How one step of a hierarchy path is named when the thing has no name.</summary>
         private static void HowATargetIsNamed()
         {
-            Section("Target path");
-            TargetPathChecks.Run(Check);
+            Section("Target path", TargetPathChecks.Run);
         }
 
         /// <summary>
@@ -153,11 +149,9 @@ namespace UnityGameTranslator.Core.Checks
         /// </summary>
         private static void WhatADownloadedFileMayAskFor()
         {
-            Section("Plain file names");
-            PlainFileNameChecks.Run(Check);
+            Section("Plain file names", PlainFileNameChecks.Run);
 
-            Section("Text rules under a budget");
-            TextRuleChecks.Run(Check);
+            Section("Text rules under a budget", TextRuleChecks.Run);
         }
 
         /// <summary>Which interface lines leave a game translation, and which the hash still counts.</summary>
@@ -167,50 +161,39 @@ namespace UnityGameTranslator.Core.Checks
             // on 2026-09-05 (TranslationLanguages); ModUiMigration followed on 2026-09-08, and its
             // cases are corpus/rules/mod_ui_migration.json. Both run in Common.Checks now.
 
-            Section("The interface file, across a whole sequence");
-            ModUiStoreChecks.Run(Check);
+            Section("The interface file, across a whole sequence", ModUiStoreChecks.Run);
         }
 
         /// <summary>The ancestors a fork drops and the images a backup carries — on real files, by their real names.</summary>
         private static void WhatSitsBesideTheTranslation()
         {
-            Section("Companion files (ancestors, images)");
-            CompanionFilesChecks.Run(Check);
+            Section("Companion files (ancestors, images)", CompanionFilesChecks.Run);
         }
 
         /// <summary>The frontier: a panel names nothing of the engine, a component lets no engine type through.</summary>
         private static void WhereThePanelsStop()
         {
-            Section("UI frontier (panels hold handles only)");
-            UiBoundaryChecks.Run(Check);
+            Section("UI frontier (panels hold handles only)", UiBoundaryChecks.Run);
         }
 
         /// <summary>Which strings trigger the presentation pass, and what shaping makes of them.</summary>
         private static void HowAStringIsShaped()
         {
-            Section("Text shaping");
-            TextShapingChecks.Run(Check);
+            Section("Text shaping", TextShapingChecks.Run);
 
-            Section("Rich text index map (UI.Text line slicing)");
-            RichTextIndexMapChecks.Run(Check);
+            Section("Rich text index map (UI.Text line slicing)", RichTextIndexMapChecks.Run);
 
-            Section("Indic reordering (pre-base vowel signs)");
-            IndicReorderChecks.Run(Check);
+            Section("Indic reordering (pre-base vowel signs)", IndicReorderChecks.Run);
 
-            Section("Word breaking (Thai, Lao, Khmer, Myanmar)");
-            WordBreakerChecks.Run(Check);
+            Section("Word breaking (Thai, Lao, Khmer, Myanmar)", WordBreakerChecks.Run);
 
-            Section("Bidi conformance (Unicode suite)");
-            BidiConformanceChecks.Run(Check);
+            Section("Bidi conformance (Unicode suite)", BidiConformanceChecks.Run);
 
-            Section("OpenType layout (GSUB/GPOS/GDEF on a real font)");
-            OpenTypeLayoutChecks.Run(Check);
+            Section("OpenType layout (GSUB/GPOS/GDEF on a real font)", OpenTypeLayoutChecks.Run);
 
-            Section("Indic shaper (against HarfBuzz, word by word)");
-            IndicShaperChecks.Run(Check);
+            Section("Indic shaper (against HarfBuzz, word by word)", IndicShaperChecks.Run);
 
-            Section("OpenType text (runs and glyph naming)");
-            OpenTypeTextChecks.Run(Check);
+            Section("OpenType text (runs and glyph naming)", OpenTypeTextChecks.Run);
         }
 
         private static void Check(bool passed, string what, string why)
@@ -219,11 +202,35 @@ namespace UnityGameTranslator.Core.Checks
             Console.WriteLine($"  {(passed ? "ok  " : "FAIL")}  {what,-52}  {why}");
         }
 
-        private static void Section(string title)
+        /// <summary>
+        /// Print a section heading and run its cases.
+        ///
+        /// 🔴 **The catch is not defensive, it is the alarm working.** A case that throws ends the
+        /// method it is in, so every case after it goes UNRUN — and the output looks merely
+        /// shorter, which is indistinguishable from a section that was always that long. That cost
+        /// a wrong conclusion twice on 2026-09-08: three deliberately broken rules showed one red,
+        /// which reads exactly like two cases that prove nothing. They had simply never run.
+        ///
+        /// ⚠ So the throw is reported as a FAILED case, named, with what is lost said out loud.
+        /// Nothing is swallowed and the exit code still turns non-zero — see
+        /// analyse/pieges-projet.md §9.
+        /// </summary>
+        private static void Section(string title, Action<Action<bool, string, string>> run)
         {
             Console.WriteLine();
             Console.WriteLine(title);
             Console.WriteLine(new string('-', title.Length));
+
+            try
+            {
+                run(Check);
+            }
+            catch (Exception ex)
+            {
+                _failures++;
+                Console.WriteLine($"  FAIL  {"the section stopped here",-52}  "
+                                  + $"{ex.GetType().Name}: {ex.Message} — every case below it went UNRUN");
+            }
         }
     }
 }

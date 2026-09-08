@@ -1314,17 +1314,17 @@ namespace UnityGameTranslator.Core
         {
             switch (section)
             {
-                case SettingsSection.Fonts:
+                case SettingsSections.Fonts:
                     return BuildFontsSection();
-                case SettingsSection.FontRules:
+                case SettingsSections.FontRules:
                     return BuildFontOverridesSection();
-                case SettingsSection.Images:
+                case SettingsSections.Images:
                     return ImageReplacer.SaveToJson();
-                case SettingsSection.Exclusions:
+                case SettingsSections.Exclusions:
                     return BuildExclusionsSection();
-                case SettingsSection.Variables:
+                case SettingsSections.Variables:
                     return VariableManager.SaveToJson();
-                case SettingsSection.GameSettings:
+                case SettingsSections.GameSettings:
                     return BuildGameSettingsSection();
                 default:
                     return null;
@@ -1528,29 +1528,29 @@ namespace UnityGameTranslator.Core
         {
             switch (section)
             {
-                case SettingsSection.Fonts:
+                case SettingsSections.Fonts:
                     ApplyFontsSectionPreservingInventory(token);
                     break;
 
-                case SettingsSection.FontRules:
+                case SettingsSections.FontRules:
                     fontOverrides.Clear();
                     fontOverrides.AddRange(ParseFontOverridesSection(token));
                     break;
 
-                case SettingsSection.Images:
+                case SettingsSections.Images:
                     ImageReplacer.LoadFromJson(token);
                     break;
 
-                case SettingsSection.Exclusions:
+                case SettingsSections.Exclusions:
                     userExclusions.Clear();
                     userExclusions.AddRange(ParseExclusionsSection(token));
                     break;
 
-                case SettingsSection.Variables:
+                case SettingsSections.Variables:
                     VariableManager.LoadFromJson(token);
                     break;
 
-                case SettingsSection.GameSettings:
+                case SettingsSections.GameSettings:
                     ApplyGameSettingsSection(token);
                     break;
             }
@@ -1615,7 +1615,7 @@ namespace UnityGameTranslator.Core
             var changed = new HashSet<string>(sections ?? Enumerable.Empty<string>());
             if (changed.Count == 0) return;
 
-            if (changed.Contains(SettingsSection.Fonts) || changed.Contains(SettingsSection.FontRules))
+            if (changed.Contains(SettingsSections.Fonts) || changed.Contains(SettingsSections.FontRules))
             {
                 fontOverrideCache.Clear();
                 FontManager.ClearComponentScaleOverrides();
@@ -1626,12 +1626,12 @@ namespace UnityGameTranslator.Core
                 TranslatorPatches.ClearLastTranslatedCache();
             }
 
-            if (changed.Contains(SettingsSection.Exclusions))
+            if (changed.Contains(SettingsSections.Exclusions))
             {
                 userExclusionCache.Clear();
             }
 
-            if (changed.Contains(SettingsSection.Images))
+            if (changed.Contains(SettingsSections.Images))
             {
                 ImageReplacer.LoadAllReplacements();
             }
@@ -4132,7 +4132,7 @@ namespace UnityGameTranslator.Core
 
                 var document = new StringBuilder(ContentHash.Of(lines, string.Empty));
 
-                foreach (var section in SettingsSection.All)
+                foreach (var section in SettingsSections.All)
                 {
                     // Null when the section is empty — which is what SaveCache writes, so an
                     // emptied section and one that never existed fingerprint alike.
@@ -7827,12 +7827,12 @@ namespace UnityGameTranslator.Core
                     // Settings sections, built by the same code that reads and
                     // replaces them (see the "Settings sections" region). An
                     // empty section is omitted: its absence means "nothing set".
-                    foreach (var section in SettingsSection.All)
+                    foreach (var section in SettingsSections.All)
                     {
                         var token = BuildSettingsSection(section);
                         if (token != null)
                         {
-                            output[SettingsSection.JsonKey(section)] = token;
+                            output[SettingsSections.JsonKey(section)] = token;
                         }
                     }
 

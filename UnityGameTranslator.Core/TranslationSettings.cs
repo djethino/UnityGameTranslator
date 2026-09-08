@@ -2,80 +2,19 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Newtonsoft.Json.Linq;
+using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core
 {
-    /// <summary>
-    /// The settings sections that travel inside translations.json alongside the
-    /// lines: fonts, font rules, image replacements, exclusions, variables and
-    /// game settings.
-    ///
-    /// Section names match the website's Translation::SETTINGS_SECTIONS so both
-    /// sides name the same things in the same order.
-    /// </summary>
-    public static class SettingsSection
-    {
-        public const string Fonts = "fonts";
-        public const string FontRules = "font_rules";
-        public const string Images = "images";
-        public const string Exclusions = "exclusions";
-        public const string Variables = "variables";
-        public const string GameSettings = "game_settings";
-
-        public static readonly string[] All =
-        {
-            Fonts, FontRules, Images, Exclusions, Variables, GameSettings
-        };
-
-        /// <summary>The key this section uses inside translations.json.</summary>
-        public static string JsonKey(string section)
-        {
-            switch (section)
-            {
-                case Fonts: return "_fonts";
-                case FontRules: return "_font_overrides";
-                case Images: return "_image_replacements";
-                case Exclusions: return "_exclusions";
-                case Variables: return "_variables";
-                case GameSettings: return "_settings";
-                default: return null;
-            }
-        }
-
-        /// <summary>Short label shown to the player.</summary>
-        public static string DisplayName(string section)
-        {
-            switch (section)
-            {
-                case Fonts: return "Fonts";
-                case FontRules: return "Font rules";
-                case Images: return "Image replacements";
-                case Exclusions: return "Exclusions";
-                case Variables: return "Variables";
-                case GameSettings: return "Game settings";
-                default: return section;
-            }
-        }
-
-        /// <summary>
-        /// One line explaining what the player loses or gains by replacing this
-        /// section. Shown next to each checkbox — a section name alone does not
-        /// let anyone decide.
-        /// </summary>
-        public static string Description(string section)
-        {
-            switch (section)
-            {
-                case Fonts: return "Which fonts are translated, their fallback and their size";
-                case FontRules: return "Font substitutions applied by pattern";
-                case Images: return "Images swapped in-game (the PNG files stay on your disk)";
-                case Exclusions: return "Text left in the game's original language";
-                case Variables: return "Game values inserted into translated sentences";
-                case GameSettings: return "Per-game options such as typewriter detection";
-                default: return string.Empty;
-            }
-        }
-    }
+    // The six sections themselves — their names, their order, the key each one uses in the file,
+    // what they are called on screen and what becomes of one when both sides have moved — live in
+    // Common.SettingsSections. They were here, in C#, while the website held the same list in PHP,
+    // with a comment asking whoever touched one to remember the other.
+    //
+    // What stays here is everything that needs the DOCUMENT: reading a section out of a JObject,
+    // comparing two of them, counting what they hold. The socle has no way to hold JSON, on
+    // purpose — so the comparing is done here and its answers are handed to Common.SettingsSections
+    // .Classify, which is the rule.
 
     /// <summary>
     /// The online settings a translation can be put back to, and how far it has drifted from
@@ -105,28 +44,6 @@ namespace UnityGameTranslator.Core
         }
     }
 
-    /// <summary>What happened to one settings section since the last sync.</summary>
-    public enum SettingsSectionState
-    {
-        /// <summary>Both sides hold the same thing. Nothing to decide.</summary>
-        Same,
-
-        /// <summary>Only the incoming side moved. Take it, silently.</summary>
-        TheirsChanged,
-
-        /// <summary>Only we moved. Keep ours, silently.</summary>
-        OursChanged,
-
-        /// <summary>Both moved since the shared baseline. Only the player can decide.</summary>
-        BothChanged,
-
-        /// <summary>
-        /// They differ and there is no shared baseline to attribute the change
-        /// to. Indistinguishable from BothChanged in practice — ask.
-        /// </summary>
-        Unknown,
-    }
-
     /// <summary>One section's situation, ready to be shown in a list.</summary>
     public class SettingsSectionPlan
     {
@@ -138,23 +55,22 @@ namespace UnityGameTranslator.Core
         /// <summary>Does this one need the player? Everything else decides itself.</summary>
         public bool NeedsDecision
         {
-            get { return State == SettingsSectionState.BothChanged || State == SettingsSectionState.Unknown; }
+            get { return SettingsSections.NeedsDecision(State); }
         }
 
-        public string DisplayName { get { return SettingsSection.DisplayName(Section); } }
-        public string Description { get { return SettingsSection.Description(Section); } }
+        public string DisplayName { get { return SettingsSections.Name(Section); } }
+        public string Description { get { return SettingsSections.Description(Section); } }
     }
 
     /// <summary>
     /// What should happen to each settings section when incoming content is
-    /// about to replace ours.
+    /// about to replace ours: the three documents compared, section by section,
+    /// and each comparison handed to the socle to be read.
     ///
-    /// The point is to ask RARELY. A section only reaches the player when both
-    /// sides moved since the last common state (or when there is no common
-    /// state to compare against). Everything else is decided here: an untouched
-    /// section takes the incoming value, and a section only we changed keeps
-    /// ours. Without this, every download would either ask about six sections or
-    /// silently overwrite them — which is what it did before.
+    /// ⚠ The RULE — what "both moved" and "no baseline" mean, and which of the
+    /// five answers has to reach the player — is
+    /// <see cref="SettingsSections.Classify"/>. What is here is the comparing,
+    /// which needs a JSON document the socle cannot hold.
     /// </summary>
     public class SettingsSyncPlan
     {
@@ -195,7 +111,7 @@ namespace UnityGameTranslator.Core
             theirs = theirs ?? TranslationSettings.Empty();
 
             var plans = new List<SettingsSectionPlan>();
-            foreach (var section in SettingsSection.All)
+            foreach (var section in SettingsSections.All)
             {
                 var plan = new SettingsSectionPlan
                 {
@@ -210,30 +126,23 @@ namespace UnityGameTranslator.Core
             return new SettingsSyncPlan(plans);
         }
 
+        /// <summary>
+        /// The three comparisons this program can make, handed to the socle to be read.
+        ///
+        /// ⚠ The ancestor's comparisons are only asked when there IS one; with none, what they
+        /// would have answered is not merely unknown, it is unanswerable, and Classify is told so
+        /// rather than being given a made-up false.
+        /// </summary>
         private static SettingsSectionState Classify(
             TranslationSettings ours, TranslationSettings theirs, TranslationSettings ancestor, string section)
         {
-            if (ours.SameSectionAs(theirs, section))
-            {
-                return SettingsSectionState.Same;
-            }
+            bool hasAncestor = ancestor != null;
 
-            if (ancestor == null)
-            {
-                return SettingsSectionState.Unknown;
-            }
-
-            bool weMoved = !ours.SameSectionAs(ancestor, section);
-            bool theyMoved = !theirs.SameSectionAs(ancestor, section);
-
-            if (weMoved && theyMoved) return SettingsSectionState.BothChanged;
-            if (theyMoved) return SettingsSectionState.TheirsChanged;
-            if (weMoved) return SettingsSectionState.OursChanged;
-
-            // They differ from each other yet neither differs from the ancestor:
-            // impossible unless the comparison is inconsistent. Ask rather than
-            // pick a side on a contradiction.
-            return SettingsSectionState.Unknown;
+            return SettingsSections.Classify(
+                oursMatchesTheirs: ours.SameSectionAs(theirs, section),
+                hasAncestor: hasAncestor,
+                oursMatchesAncestor: hasAncestor && ours.SameSectionAs(ancestor, section),
+                theirsMatchesAncestor: hasAncestor && theirs.SameSectionAs(ancestor, section));
         }
     }
 
@@ -269,9 +178,9 @@ namespace UnityGameTranslator.Core
             var sections = new Dictionary<string, JToken>();
             if (file != null)
             {
-                foreach (var section in SettingsSection.All)
+                foreach (var section in SettingsSections.All)
                 {
-                    var token = file[SettingsSection.JsonKey(section)];
+                    var token = file[SettingsSections.JsonKey(section)];
                     if (!IsEmptyToken(token))
                     {
                         sections[section] = token.DeepClone();
@@ -300,7 +209,7 @@ namespace UnityGameTranslator.Core
         public static TranslationSettings FromCurrentState()
         {
             var sections = new Dictionary<string, JToken>();
-            foreach (var section in SettingsSection.All)
+            foreach (var section in SettingsSections.All)
             {
                 var token = TranslatorCore.BuildSettingsSection(section);
                 if (!IsEmptyToken(token))
@@ -334,7 +243,7 @@ namespace UnityGameTranslator.Core
             var token = Section(section);
             if (token == null) return 0;
 
-            if (section == SettingsSection.Fonts)
+            if (section == SettingsSections.Fonts)
             {
                 return DeliberateFonts(token as JObject).Count;
             }
@@ -358,7 +267,7 @@ namespace UnityGameTranslator.Core
         /// <summary>Sections that differ, in display order.</summary>
         public List<string> SectionsDifferingFrom(TranslationSettings other)
         {
-            return SettingsSection.All.Where(s => !SameSectionAs(other, s)).ToList();
+            return SettingsSections.All.Where(s => !SameSectionAs(other, s)).ToList();
         }
 
         /// <summary>
@@ -369,9 +278,9 @@ namespace UnityGameTranslator.Core
         {
             if (target == null) return;
 
-            foreach (var section in SettingsSection.All)
+            foreach (var section in SettingsSections.All)
             {
-                string key = SettingsSection.JsonKey(section);
+                string key = SettingsSections.JsonKey(section);
                 var token = Section(section);
                 if (token == null)
                 {
@@ -396,7 +305,7 @@ namespace UnityGameTranslator.Core
             var applied = new List<string>();
             foreach (var section in sections)
             {
-                if (Array.IndexOf(SettingsSection.All, section) < 0)
+                if (Array.IndexOf(SettingsSections.All, section) < 0)
                 {
                     TranslatorCore.LogWarning($"[Settings] Ignoring unknown section '{section}'");
                     continue;
@@ -422,7 +331,7 @@ namespace UnityGameTranslator.Core
         {
             if (IsEmptyToken(token)) return string.Empty;
 
-            if (section == SettingsSection.Fonts)
+            if (section == SettingsSections.Fonts)
             {
                 // Compare deliberate settings only (see CountOf)
                 var deliberate = new JObject();
@@ -435,7 +344,7 @@ namespace UnityGameTranslator.Core
 
             // Font rules are matched first-wins, so their order IS the setting
             // and must not be sorted away. Every other list is a set.
-            bool orderMatters = section == SettingsSection.FontRules;
+            bool orderMatters = section == SettingsSections.FontRules;
 
             return Sort(token, sortArrays: !orderMatters).ToString(Newtonsoft.Json.Formatting.None);
         }

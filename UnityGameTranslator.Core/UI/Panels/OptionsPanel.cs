@@ -1430,7 +1430,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             int count = reference.DifferingSections.Count;
             string what = string.Join(", ", reference.DifferingSections
-                .Select(SettingsSection.DisplayName).ToArray());
+                .Select(SettingsSections.Name).ToArray());
 
             // Names the sections rather than counting them: "2 sections differ" tells nobody
             // whether their fonts or their exclusions are the ones that moved.

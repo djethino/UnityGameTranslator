@@ -34,7 +34,6 @@
     <Compile Include="../../UnityGameTranslator.Core/TextRelations.cs" />
     <Compile Include="../../UnityGameTranslator.Core/InputEcho.cs" />
     <Compile Include="../../UnityGameTranslator.Core/TargetPath.cs" />
-    <Compile Include="../../UnityGameTranslator.Core/ModUiMigration.cs" />
     <!--
       What a downloaded translation may ask of the disk and of the main thread. Both are pure by
       construction — a string in, an answer out — and both exist as files of their own so that the

@@ -99,11 +99,9 @@ namespace UnityGameTranslator.Core.Checks
         /// <summary>Which interface lines leave a game translation, and which the hash still counts.</summary>
         private static void WhereTheModsInterfaceGoes()
         {
-            Section("Mod interface migration");
-            ModUiMigrationChecks.Run(Check);
-
-            // ⚠ "The language of a translation" left with its rule: TranslationLanguages lives in
-            // the socle since 2026-09-05, and its cases run in Common.Checks.
+            // ⚠ Two rules left with their cases. "The language of a translation" went to the socle
+            // on 2026-09-05 (TranslationLanguages); ModUiMigration followed on 2026-09-08, and its
+            // cases are corpus/rules/mod_ui_migration.json. Both run in Common.Checks now.
 
             Section("The interface file, across a whole sequence");
             ModUiStoreChecks.Run(Check);

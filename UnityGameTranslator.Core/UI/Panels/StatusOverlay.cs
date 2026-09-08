@@ -841,8 +841,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 _lastLoggedHeight = height;
                 TranslatorCore.LogInfo($"[Overlay] height={height} (floor {FloorHeight()})"
-                    + $" | mod={Measured(_modUpdateBox)} sync={Measured(_syncBox)}"
-                    + $" ai={Measured(_aiBox)} conn={Measured(_connectionBox)}");
+                    + $" | stack[{_stack?.SizeReport}]"
+                    + $" | sync[{Measured(_syncBox)}] hint[{(_syncHintLabel != null && _syncHintLabel.Visible ? _syncHintLabel.SizeReport : "off")}]"
+                    + $" | ai[{Measured(_aiBox)}] conn[{Measured(_connectionBox)}]");
             }
 
             Overlays.SetSize(Window, PanelWidth, Math.Max(50, height));
@@ -859,12 +860,12 @@ namespace UnityGameTranslator.Core.UI.Panels
         private const int StackPadding = 10;   // above the first box and below the last, together
         private const int StackSpacing = 5;    // between each pair
 
-        /// <summary>One box, for the probe: hidden, or what it says it wants.</summary>
+        /// <summary>One box, for the probe: hidden, or everything it can say about its size.</summary>
         private static string Measured(Host box)
         {
             if (box == null) return "-";
             if (!box.Visible) return "off";
-            return box.WantedHeight.ToString("0.#");
+            return box.SizeReport;
         }
 
         /// <summary>

@@ -32,9 +32,23 @@ namespace UnityGameTranslator.Core
     /// </summary>
     public sealed class QueuedText
     {
-        public QueuedText(string text) { Text = text; }
+        public QueuedText(string text, int generation) { Text = text; Generation = generation; }
 
         public readonly string Text;
+
+        /// <summary>
+        /// Which loaded translation this was asked for.
+        ///
+        /// 🔴 **A backend takes seconds, and the file can be replaced in between.** Emptying the
+        /// queue takes care of what has not left yet; the item already handed to a backend is gone
+        /// from both containers and comes back with an answer that belongs to a file nobody holds
+        /// any more. Written, it adds a line the restored translation never had, marks it changed,
+        /// and paints it onto components whose text was just put back.
+        ///
+        /// ⚠ A number rather than a name: what matters is only whether it is still the same one,
+        /// and the queue is the one thing that sees every load.
+        /// </summary>
+        public readonly int Generation;
 
         /// <summary>Things displaying it, to be updated when the answer arrives.</summary>
         public readonly List<object> Targets = new List<object>();
@@ -99,6 +113,10 @@ namespace UnityGameTranslator.Core
 
         private readonly object _lock = new object();
 
+        // Bumped every time the queue is emptied, which is what a translation being replaced does.
+        // See QueuedText.Generation and IsCurrent.
+        private int _generation;
+
         // ⚠ The two containers are emptied together, always. See QueuedText for what happened when
         // they were four and one survived.
         private readonly Dictionary<QueueKey, QueuedText> _waiting = new Dictionary<QueueKey, QueuedText>();
@@ -142,7 +160,7 @@ namespace UnityGameTranslator.Core
                 isNew = !_waiting.TryGetValue(key, out var item);
                 if (isNew)
                 {
-                    item = new QueuedText(text) { FromOwnUI = ownUi };
+                    item = new QueuedText(text, _generation) { FromOwnUI = ownUi };
                     _waiting[key] = item;
                     _order.Enqueue(item);
                 }
@@ -222,8 +240,24 @@ namespace UnityGameTranslator.Core
                 int count = _order.Count;
                 _order.Clear();
                 _waiting.Clear();
+
+                // ⚠ After the two containers, never instead of them: this only concerns what has
+                // ALREADY left, and everything still here is being dropped on the line above.
+                _generation++;
                 return count;
             }
+        }
+
+        /// <summary>
+        /// Whether this answer is still about the translation that is loaded.
+        ///
+        /// ⚠ Asked by whoever is about to WRITE the answer, not by whoever took the item: the
+        /// whole point is the time spent in between.
+        /// </summary>
+        public bool IsCurrent(QueuedText item)
+        {
+            if (item == null) return false;
+            lock (_lock) { return item.Generation == _generation; }
         }
 
         /// <summary>

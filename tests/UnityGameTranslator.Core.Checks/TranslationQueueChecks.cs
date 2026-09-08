@@ -24,6 +24,7 @@ namespace UnityGameTranslator.Core.Checks
             TargetsTravelWithIt(check);
             TakingAndPuttingBack(check);
             Emptying(check);
+            AnAnswerToAFileThatIsGone(check);
             TheTwoThrottles(check);
         }
 
@@ -163,6 +164,46 @@ namespace UnityGameTranslator.Core.Checks
             check(new TranslationQueue().Clear() == 0,
                 "clearing an empty queue drops nothing",
                 "and says so, so nothing is written about work that never existed");
+        }
+
+        /// <summary>
+        /// An item handed to a backend before the translation was replaced must not be written
+        /// into the one that replaced it.
+        ///
+        /// 🔴 **Emptying the queue cannot settle this on its own, and that is the whole case.**
+        /// The item is already OUT of both containers when the file changes — a backend takes
+        /// seconds — so it comes back with an answer belonging to a translation nobody holds. Left
+        /// alone it adds a line the restored file never had, in the previous target language, and
+        /// counts as a local change nobody made.
+        /// </summary>
+        private static void AnAnswerToAFileThatIsGone(Action<bool, string, string> check)
+        {
+            var queue = new TranslationQueue();
+
+            queue.Submit("Continue", new object(), ownUi: false, isNew: out _, waiting: out _);
+            var inFlight = queue.Take();
+
+            check(queue.IsCurrent(inFlight),
+                "an answer to the translation that is loaded is written",
+                "the ordinary case: nothing happened while the backend was thinking");
+
+            // A translation is put back, downloaded or merged: the reload empties the queue.
+            queue.Clear();
+
+            check(!queue.IsCurrent(inFlight),
+                "an answer asked before the translation was replaced is not",
+                "it would add a line the restored file never had, in the previous target language, and mark it changed");
+
+            queue.Submit("Continue", new object(), ownUi: false, isNew: out _, waiting: out _);
+            var after = queue.Take();
+
+            check(queue.IsCurrent(after),
+                "and what is asked afterwards is written again",
+                "the guard is about one moment, not a queue that stops working");
+
+            check(!queue.IsCurrent(null),
+                "nothing is not current",
+                "the caller asks about what Take gave it, which can be nothing at all");
         }
 
         private static void TheTwoThrottles(Action<bool, string, string> check)

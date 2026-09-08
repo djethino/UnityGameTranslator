@@ -56,6 +56,9 @@ namespace UnityGameTranslator.Core.Checks
                 ("LoadCache()",
                  "without it a reload reloads nothing"),
 
+                ("ClearQueue()",
+                 "what was queued was read from the file being replaced: written afterwards it adds lines the new one never had, in the previous target language"),
+
                 ("InvalidateForSections(SettingsSections.All",
                  "ALL of them: a subset is how a restored translation kept the previous one's font, and later its image"),
 
@@ -87,6 +90,9 @@ namespace UnityGameTranslator.Core.Checks
 
                 ("RewatchIfLineageChanged()",
                  "the online half is bound to a lineage and has no other way of hearing the translation changed — the stream stayed open on the one that was left and rewrote the card back to it"),
+
+                ("RebaseEditSession()",
+                 "a browser session merges against a snapshot taken when it opened: left alone it puts the old translation's lines back and the file becomes a mixture of two"),
             };
 
             foreach (var link in screens)
@@ -95,6 +101,23 @@ namespace UnityGameTranslator.Core.Checks
                     $"a reload runs {link.Call}",
                     link.Cost);
             }
+
+            // ── The interface file is per LANGUAGE, and the language is settled halfway. ──
+            //
+            // ⚠ It is read at the top of LoadCache because the migration needs to know what it
+            // already holds — and at that point the target language is still the PREVIOUS
+            // translation's. Reading it a second time is the only way it can be right.
+            string load = BodyOf(File.ReadAllText(coreFile), "private static void LoadCache()");
+            check(load != null && load.Contains("SettleLanguagesFromFile();", StringComparison.Ordinal),
+                "the load settles the languages from the file",
+                "everything below depends on knowing which language this translation is in");
+
+            int settle = load == null ? -1 : load.IndexOf("SettleLanguagesFromFile();", StringComparison.Ordinal);
+            int reread = load == null ? -1 : load.IndexOf("LoadModUiCache();", settle < 0 ? 0 : settle, StringComparison.Ordinal);
+
+            check(settle >= 0 && reread > settle,
+                "and reads the interface file again once it knows",
+                "the French interface stayed loaded on an English translation, and the English one stayed set aside where nothing looked for it");
 
             // ── And the watch remembers what it is a watch OF. ──
             //

@@ -2700,6 +2700,23 @@ namespace UnityGameTranslator.Core
                 // ── The language this file states about itself ────────────────────────
                 SettleLanguagesFromFile();
 
+                // 🔴 **The interface file is per LANGUAGE, and until here we did not know which
+                // one.** It is read at the top of this method because the migration below needs to
+                // know what it already holds — but at that point the target language is still the
+                // PREVIOUS translation's, so a reload that changes language put the wrong one in
+                // place: the French interface stayed loaded on an English translation, and the
+                // English one stayed set aside where it could not be found.
+                //
+                // ⚠ Asked again rather than moved: both readings are needed, and only the second
+                // one can be right about the language.
+                if (!ModUiStore.SameLanguage(_modUiLoadedFor, Config?.GetTargetLanguage()))
+                {
+                    LogDebug($"[ModUI] The file settled on {Config?.GetTargetLanguage() ?? "no language"}; "
+                             + $"the interface was read for {_modUiLoadedFor ?? "no language"}");
+                    SaveModUiCacheIfDirty();
+                    LoadModUiCache();
+                }
+
                 // Same move for the font that interface asked for: it described the MOD from
                 // inside the GAME's file. Taken over only when nothing local already answers,
                 // and never taken from a file that came from the server.
@@ -2806,6 +2823,15 @@ namespace UnityGameTranslator.Core
             {
                 Adapter.LogError($"Failed to load cache: {e.Message}");
                 TranslationCache = new Dictionary<string, TranslationEntry>();
+
+                // ⚠ The reverse indexes with it. They are built from the cache in the success path
+                // and answer "have we already written this line"; kept beside an EMPTY cache they
+                // go on answering about a file that could not be read.
+                translatedTexts.Clear();
+                readbackTranslations.Clear();
+                presentedToLogical.Clear();
+                _readbackSkipLogCount = 0;
+
                 // Fresh cache: allow own-UI labels that failed once to be submitted again.
                 _queue.ForgetOwnUiSubmitted();
                 FileUuid = Guid.NewGuid().ToString();
@@ -2920,12 +2946,17 @@ namespace UnityGameTranslator.Core
         /// to that language finds the file again, because the set-aside name is derived from the
         /// language and not remembered anywhere.
         /// </summary>
+        // Which target language the interface store was last read for. The file it reads is per
+        // language, and inside LoadCache the answer changes halfway through — see the second call.
+        private static string _modUiLoadedFor;
+
         private static void LoadModUiCache()
         {
             _modUi.Info = m => Adapter?.LogInfo(m);
             _modUi.Warn = m => Adapter?.LogWarning(m);
 
-            _modUi.Load(ModFolder, Config?.GetTargetLanguage());
+            _modUiLoadedFor = Config?.GetTargetLanguage();
+            _modUi.Load(ModFolder, _modUiLoadedFor);
             ModUiCache = _modUi.Entries;
 
             // Rebuilt from what was just read, exactly as LoadCache does for the game's: a language
@@ -3028,6 +3059,17 @@ namespace UnityGameTranslator.Core
             // so the scanner doesn't see stale translated text from the old JSON
             // and try to re-translate it
             TranslatorScanner.RestoreAllOriginals();
+
+            // 🔴 **What was queued was queued for the file being replaced.** Every one of those
+            // texts was read from a component whose text has just been put back, and would be
+            // filed into the translation now loaded — in the previous one's target language, and
+            // counted as a local change nobody made. They cost nothing to lose: the scanner sees
+            // the same components again on its next pass and asks for whatever the new file does
+            // not already answer.
+            //
+            // ⚠ This settles what has not left yet. What has is settled by the generation the
+            // queue stamps on each item — see QueuedText.Generation.
+            ClearQueue();
 
             LoadCache();
 
@@ -5189,6 +5231,19 @@ namespace UnityGameTranslator.Core
                                     Adapter?.LogWarning($"[Worker] Discarded answer inventing {string.Join(", ", inventedTokens)} (absent from source): '{badPreview}'");
                                     translation = null;
                                 }
+                            }
+
+                            // 🔴 **An answer asked for a translation that has since been replaced
+                            // is not an answer.** ReloadCache empties the queue, which settles
+                            // everything still waiting — but this item left before that and comes
+                            // back seconds later. Written, it adds to the restored file a line it
+                            // never had, in the language of the one before it, marks the file
+                            // changed, and paints it onto components whose own text was just put
+                            // back. Dropped the same way as an answer inventing a token above.
+                            if (!string.IsNullOrEmpty(translation) && !_queue.IsCurrent(queued))
+                            {
+                                Adapter?.LogInfo("[Worker] Dropped an answer asked before the translation was replaced");
+                                translation = null;
                             }
 
                             if (!string.IsNullOrEmpty(translation))

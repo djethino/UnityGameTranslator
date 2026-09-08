@@ -3581,6 +3581,35 @@ namespace UnityGameTranslator.Core.UI
 
             // And the online half, which is bound to a lineage and had no way of hearing about it.
             RewatchIfLineageChanged();
+            RebaseEditSession();
+        }
+
+        /// <summary>
+        /// Tell an open browser edit session that the file underneath it has been replaced.
+        ///
+        /// 🔴 **The session compares against a snapshot, and the snapshot was of the file that is
+        /// gone.** A browser save is merged three ways: what the browser sends, what the mod holds
+        /// now, and <c>_editSessionAncestor</c> — taken when the session opened. Replace the
+        /// translation underneath it and that third one describes neither side: every line of the
+        /// old translation the new one does not have reads as "captured in the game since", so the
+        /// merge puts them back, and the file ends up a mixture of two translations.
+        ///
+        /// ⚠ **The session is kept rather than ended**, because nothing is wrong with it: it edits
+        /// this game's local translation, and that is still what it edits. What was wrong was the
+        /// baseline. So it is taken again from the file just read, the two dedup hashes are
+        /// dropped — they are about content nobody holds any more — and the new content is pushed,
+        /// so what the browser shows is what the game shows.
+        /// </summary>
+        private static void RebaseEditSession()
+        {
+            if (_editSessionSseClient == null) return;
+
+            _editSessionAncestor = SnapshotTranslationCache();
+            _sessionContentHash = null;
+            _lastAppliedSaveHash = null;
+            _pendingLocalPush = true;
+
+            TranslatorCore.LogInfo("[EditSSE] The translation was replaced - the editor is being sent the new one");
         }
 
         /// <summary>

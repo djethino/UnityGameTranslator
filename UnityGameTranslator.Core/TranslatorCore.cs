@@ -496,93 +496,14 @@ namespace UnityGameTranslator.Core
         private static int aiTranslationCount = 0;
         private static int cacheHitCount = 0;
         private static Dictionary<int, string> lastSeenText = new Dictionary<int, string>();
-        /// <summary>
-        /// One text waiting for a backend, with everything the answer will need.
-        ///
-        /// 🔴 **One object, because four parallel structures could not be emptied together.** The
-        /// queue used to be a `Queue&lt;string&gt;` beside a set of pending texts, a map of waiting
-        /// components and a set of "this one is ours" — four containers describing one item, filled
-        /// and drained in different places. Every defect it produced is the same defect:
-        ///
-        ///  · a rate-limited text was re-queued into two of the four, so the second attempt had
-        ///    neither its components nor its origin: a mod-UI label came back as a GAME line;
-        ///  · <see cref="ClearQueue"/> emptied three of the four, and the surviving set of strings
-        ///    made a later GAME text tagged as the mod's interface — the mirror of the same fault;
-        ///  · the origin was consumed at dequeue, so it could not be consulted twice.
-        ///
-        /// ⚠ **The origin is decided ONCE, at the moment of queuing**, which is the only moment the
-        /// component still exists to be asked (<see cref="IsOwnUI(Component)"/> answers on a
-        /// component; past the dequeue there is only a string). It then travels with the item —
-        /// which is also what tells <see cref="AddToCache"/> which file the answer belongs in.
-        ///
-        /// ⚠ Deliberately NOT a string-keyed lookup of "is this text ours": that existed once and
-        /// was removed for false positives when a game's text happened to equal one of our labels.
-        /// The component is the authority; this only carries what it said.
-        /// </summary>
-        private sealed class QueuedText
-        {
-            public QueuedText(string text) { Text = text; }
+        // The texts waiting for a backend. ⚠ It carries its OWN lock — it used to share lockObj
+        // with the caches, the order counter and the retranslation requests; no critical section
+        // ever spanned both sides, so the split changes no ordering and lets the queue be replayed
+        // on its own.
+        private static readonly TranslationQueue _queue = new TranslationQueue();
 
-            public readonly string Text;
-
-            /// <summary>Components displaying it, to be updated when the answer arrives.</summary>
-            public readonly List<object> Components = new List<object>();
-
-            /// <summary>Whether this is the mod's own interface rather than the game's text.</summary>
-            public bool FromOwnUI;
-        }
-
-        /// <summary>
-        /// What identifies one waiting item: the text AND whose text it is.
-        ///
-        /// 🔴 **The two are not one queue entry.** "Options", "Cancel", "Close" belong to a game
-        /// and to us alike, and they are two different jobs: two files, two prompts — the game's
-        /// carries its name, its context and its source language, ours says the source is always
-        /// English and names this tool's vocabulary. Keyed by text alone, one of the two would win
-        /// and the other would get an answer produced for a question nobody asked about it.
-        ///
-        /// ⚠ It costs one extra request for a string that is genuinely shared, which is rare, and
-        /// buys the property somebody would expect anyway: the game's "Options" may become "Salut"
-        /// while the interface's becomes "Bonsoir", each in its own file, neither aware of the other.
-        /// </summary>
-        private readonly struct QueueKey : IEquatable<QueueKey>
-        {
-            public QueueKey(string text, bool ownUi) { Text = text; OwnUi = ownUi; }
-
-            public readonly string Text;
-            public readonly bool OwnUi;
-
-            public bool Equals(QueueKey other) =>
-                OwnUi == other.OwnUi && string.Equals(Text, other.Text, StringComparison.Ordinal);
-
-            public override bool Equals(object obj) => obj is QueueKey other && Equals(other);
-
-            // ⚠ Hand-written rather than tuple-derived: this runs on IL2CPP, where a value type's
-            // default hashing has cost this project surprises before. One shift is not clever, and
-            // it is one thing fewer to depend on.
-            public override int GetHashCode() =>
-                ((Text != null ? Text.GetHashCode() : 0) << 1) ^ (OwnUi ? 1 : 0);
-        }
-
-        // Guarded by lockObj, both of them, always together.
-        private static readonly Dictionary<QueueKey, QueuedText> pendingTranslations = new Dictionary<QueueKey, QueuedText>();
-        private static readonly Queue<QueuedText> translationQueue = new Queue<QueuedText>();
-
-        /// <summary>
-        /// Texts already refused for being longer than any backend accepts, so the warning is
-        /// logged once instead of on every scan. In memory only: nothing about a refusal belongs
-        /// in the translation file.
-        /// </summary>
-        private static readonly HashSet<string> tooLongTexts = new HashSet<string>();
-        // Own-UI texts already submitted in this session, so a label rewritten every frame is
-        // submitted once even when the answer never produces a cache entry. Cleared on cache reload.
-        //
-        // ⚠ This is a THROTTLE, never an identity: it answers "have we asked for this already",
-        // and nothing reads it to decide whether a text belongs to the mod. Which file a text
-        // belongs in is settled at the moment it is queued and carried on the item itself
-        // (see QueueKey) — a string-keyed identity existed once and was removed for false
-        // positives when a game's text matched one of our labels.
-        private static readonly HashSet<string> ownUISubmitted = new HashSet<string>();
+        // ⚠ What lockObj still guards: the translation caches, the capture-order counter and the
+        // retranslation requests. The queue is no longer among them.
         private static object lockObj = new object();
         private static bool cacheModified = false;
         // Next capture-order index "i" to assign (monotonic, per lineage).
@@ -815,7 +736,7 @@ namespace UnityGameTranslator.Core
         // Queue status for UI overlay
         private static bool isTranslating = false;
         private static string currentlyTranslating = null;
-        public static int QueueCount { get { lock (lockObj) { return translationQueue.Count; } } }
+        public static int QueueCount => _queue.Count;
         public static bool IsTranslating => isTranslating;
         public static string CurrentText => currentlyTranslating;
         /// <summary>True while the text being translated belongs to the mod's own interface.
@@ -2487,7 +2408,7 @@ namespace UnityGameTranslator.Core
                 var parsed = JObject.Parse(json);
                 TranslationCache = new Dictionary<string, TranslationEntry>();
                 // Fresh cache: allow own-UI labels that failed once to be submitted again.
-                lock (lockObj) { ownUISubmitted.Clear(); }
+                _queue.ForgetOwnUiSubmitted();
 
                 // Track saved _game.steam_id to compare with current detection
                 string savedSteamId = null;
@@ -2881,7 +2802,7 @@ namespace UnityGameTranslator.Core
                 Adapter.LogError($"Failed to load cache: {e.Message}");
                 TranslationCache = new Dictionary<string, TranslationEntry>();
                 // Fresh cache: allow own-UI labels that failed once to be submitted again.
-                lock (lockObj) { ownUISubmitted.Clear(); }
+                _queue.ForgetOwnUiSubmitted();
                 FileUuid = Guid.NewGuid().ToString();
                 lock (lockObj)
                 {
@@ -3006,7 +2927,7 @@ namespace UnityGameTranslator.Core
             // set aside leaves its translations in here otherwise, answering about a file they left.
             modUiTranslatedTexts.Clear();
             modUiReadbackTranslations.Clear();
-            lock (lockObj) { ownUISubmitted.Clear(); }
+            _queue.ForgetOwnUiSubmitted();
 
             // Its translated forms go into the INTERFACE's reverse index — its own, never the
             // game's. It is the anti-loop device that stops one of our labels, read back from a
@@ -4531,18 +4452,11 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static void ClearQueue()
         {
-            lock (lockObj)
-            {
-                int count = translationQueue.Count;
-                translationQueue.Clear();
-                pendingTranslations.Clear();
-                isTranslating = false;
-                currentlyTranslating = null;
-                if (count > 0)
-                {
-                    LogDebug($"[TranslatorCore] Cleared {count} items from translation queue");
-                }
-            }
+            int count = _queue.Clear();
+            isTranslating = false;
+            currentlyTranslating = null;
+            if (count > 0)
+                LogDebug($"[TranslatorCore] Cleared {count} items from translation queue");
         }
 
         private static void PreloadModel()
@@ -4997,29 +4911,22 @@ namespace UnityGameTranslator.Core
                 List<object> componentsToUpdate = null;
                 bool queuedAsOwnUI = false;
 
-                lock (lockObj)
+                // The item carries its targets AND its origin, so nothing has to be looked up
+                // from the text — and nothing can be lost by looking up one of the two and
+                // forgetting the other, which is what a re-queue used to do.
+                queued = _queue.Take();
+                if (queued != null)
                 {
-                    if (translationQueue.Count > 0)
+                    textToTranslate = queued.Text;
+                    componentsToUpdate = queued.Targets.Count > 0 ? queued.Targets : null;
+                    queuedAsOwnUI = queued.FromOwnUI;
+
+                    if (Config.debug_ai)
                     {
-                        // The item carries its components AND its origin, so nothing has to be
-                        // looked up from the text — and nothing can be lost by looking up one of
-                        // the two and forgetting the other, which is what a re-queue used to do.
-                        queued = translationQueue.Dequeue();
-                        textToTranslate = queued.Text;
-                        componentsToUpdate = queued.Components.Count > 0 ? queued.Components : null;
-                        queuedAsOwnUI = queued.FromOwnUI;
-
-                        // Out of the pending map so the same text can be queued afresh; the item
-                        // stays alive in `queued`, which is what a rate-limit re-queue puts back.
-                        pendingTranslations.Remove(new QueueKey(textToTranslate, queued.FromOwnUI));
-
-                        if (Config.debug_ai)
-                        {
-                            Adapter?.LogInfo(componentsToUpdate != null
-                                ? $"[Worker] Found {componentsToUpdate.Count} components for text"
-                                : "[Worker] NO components found for text!");
-                            Adapter?.LogInfo($"[Worker] Dequeued: {textToTranslate?.Substring(0, Math.Min(30, textToTranslate?.Length ?? 0))}...");
-                        }
+                        Adapter?.LogInfo(componentsToUpdate != null
+                            ? $"[Worker] Found {componentsToUpdate.Count} components for text"
+                            : "[Worker] NO components found for text!");
+                        Adapter?.LogInfo($"[Worker] Dequeued: {textToTranslate?.Substring(0, Math.Min(30, textToTranslate?.Length ?? 0))}...");
                     }
                 }
 
@@ -5029,7 +4936,7 @@ namespace UnityGameTranslator.Core
                     if (Config.debug_ai)
                     {
                         string workerPreview = textToTranslate.Length > 40 ? textToTranslate.Substring(0, 40) + "..." : textToTranslate;
-                        Adapter?.LogInfo($"[Worker] Processing: {workerPreview} (queue remaining: {translationQueue.Count})");
+                        Adapter?.LogInfo($"[Worker] Processing: {workerPreview} (queue remaining: {_queue.Count})");
                     }
                     isTranslating = true;
                     currentlyTranslating = textToTranslate.Length > 50 ? textToTranslate.Substring(0, 50) + "..." : textToTranslate;
@@ -5160,17 +5067,9 @@ namespace UnityGameTranslator.Core
                             if (translation == null && _apiRateLimited)
                             {
                                 _apiRateLimited = false;
-                                lock (lockObj)
-                                {
-                                    var requeue = new QueueKey(originalText, queued?.FromOwnUI ?? false);
-                                    if (queued != null && !pendingTranslations.ContainsKey(requeue))
-                                    {
-                                        pendingTranslations[requeue] = queued;
-                                        translationQueue.Enqueue(queued);
-                                    }
-                                }
+                                _queue.PutBack(queued);
                                 float delaySec = Math.Max(0.1f, Config.rate_limit_retry_delay);
-                                Adapter?.LogWarning($"[Worker] Rate limited — re-queued, backing off {delaySec:F1}s ({translationQueue.Count} pending)");
+                                Adapter?.LogWarning($"[Worker] Rate limited — re-queued, backing off {delaySec:F1}s ({_queue.Count} pending)");
                                 // Backoff: wait before retrying (in small increments to respond to shutdown)
                                 int delayMs = (int)(delaySec * 1000);
                                 for (int i = 0; i < delayMs && !ShuttingDown; i += 100)
@@ -6234,14 +6133,11 @@ namespace UnityGameTranslator.Core
             // turns back here on every pass — nothing queued, nothing sent.
             if (text.Length > MaxAITextLength)
             {
-                lock (lockObj)
-                {
-                    // Once per text: this runs on every scan, and a warning repeated forever is
-                    // noise. Silence would be worse — a line that never gets translated has to
-                    // say why somewhere.
-                    if (tooLongTexts.Add(text))
-                        Adapter?.LogWarning($"[Queue] Text too long ({text.Length} chars, limit {MaxAITextLength}), left untranslated");
-                }
+                // Once per text: this runs on every scan, and a warning repeated forever is
+                // noise. Silence would be worse — a line that never gets translated has to say
+                // why somewhere.
+                if (_queue.NoteTooLong(text))
+                    Adapter?.LogWarning($"[Queue] Text too long ({text.Length} chars, limit {MaxAITextLength}), left untranslated");
                 return false;
             }
             // Last line of defence, here rather than only at the call sites: this is the single door
@@ -6256,39 +6152,12 @@ namespace UnityGameTranslator.Core
             // "already in the target language" and keep it out of the file for good.
             if (!isOwnUI && IsAlreadyTargetText(text)) return false;
 
-            lock (lockObj)
+            _queue.Submit(text, component, isOwnUI, out bool isNew, out int queueSize);
+
+            if (isNew && (DebugMode || Config.debug_ai))
             {
-                // One item per waiting text AND per origin: the game's "Options" and ours are two
-                // jobs, asked with two different prompts and filed in two different files.
-                var key = new QueueKey(text, isOwnUI);
-                bool isNew = !pendingTranslations.TryGetValue(key, out var item);
-                if (isNew)
-                {
-                    item = new QueuedText(text) { FromOwnUI = isOwnUI };
-                    pendingTranslations[key] = item;
-                    translationQueue.Enqueue(item);
-                }
-
-                if (component != null)
-                {
-                    // Same reference, one entry. Without this, a component whose text waits long
-                    // in the queue is re-added on every scan cycle — a UI Toolkit element (whose
-                    // GetInstanceID is -1) reached 137 strong references for ONE label, i.e. 136
-                    // useless apply iterations and that many elements pinned against collection.
-                    // (Reference equality: two IL2CPP proxies of one native object still slip
-                    // through — bounded by proxy caching, and harmless beyond a wasted slot.)
-                    if (!item.Components.Contains(component)) item.Components.Add(component);
-                }
-
-                if (!isNew) return true;
-
-                // Log first queued item always, then every 10th
-                int queueSize = translationQueue.Count;
-                if (DebugMode || Config.debug_ai)
-                {
-                    string preview = text.Length > 40 ? text.Substring(0, 40) + "..." : text;
-                    LogDebug($"[Queue] #{queueSize}: {preview}{(isOwnUI ? " (UI)" : "")}");
-                }
+                string preview = text.Length > 40 ? text.Substring(0, 40) + "..." : text;
+                LogDebug($"[Queue] #{queueSize}: {preview}{(isOwnUI ? " (UI)" : "")}");
             }
 
             return true;
@@ -6481,7 +6350,7 @@ namespace UnityGameTranslator.Core
             if (result == englishText && !IsOwnUITextKnown(englishText))
             {
                 bool firstSubmission;
-                lock (lockObj) { firstSubmission = ownUISubmitted.Add(englishText); }
+                firstSubmission = _queue.NoteOwnUiSubmitted(englishText);
                 if (firstSubmission)
                     QueueForTranslation(englishText, component, isOwnUI: true);
             }

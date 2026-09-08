@@ -48,6 +48,7 @@ namespace UnityGameTranslator.Core.Checks
             WhatSomebodyAskedToLeaveAlone();
             WhichFontARuleAsksFor();
             WhichLanguagesATranslationIsIn();
+            WhatWaitsForABackend();
             HowTextChanges();
             WhenTextMayBeTyping();
             HowATargetIsNamed();
@@ -101,6 +102,13 @@ namespace UnityGameTranslator.Core.Checks
         {
             Section("Languages, across a whole launch");
             LanguageStateChecks.Run(Check);
+        }
+
+        /// <summary>The texts waiting for a backend, across the sequence that empties them.</summary>
+        private static void WhatWaitsForABackend()
+        {
+            Section("The translation queue, across a whole sequence");
+            TranslationQueueChecks.Run(Check);
         }
 
         /// <summary>How a sentence carrying live numbers is read as the pattern it was cached from.</summary>

@@ -66,6 +66,12 @@
     -->
     <Compile Include="../../UnityGameTranslator.Core/Engine/LanguageState.cs" />
     <!--
+      The texts waiting for a backend. Its whole defect history is one defect — four parallel
+      containers describing one item, one of them moving without the others — so every case here
+      is a sequence, and the targets it carries are opaque objects it never dereferences.
+    -->
+    <Compile Include="../../UnityGameTranslator.Core/Engine/TranslationQueue.cs" />
+    <!--
       What lets one cached sentence serve every value the game puts in it. A pattern that stops
       matching costs one call per number, for ever; one that matches too much shows a sentence
       about something else.

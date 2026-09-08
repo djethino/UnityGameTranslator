@@ -229,6 +229,37 @@ namespace UnityGameTranslator.Core.UI.Components
         /// </summary>
         private static bool _rebuildComplained;
 
+        /// <summary>
+        /// Work out this handle's layout, and everything under it, right now.
+        ///
+        /// 🔴 **Called on the PARENT, before reading the children.** A layout is settled outside in:
+        /// a box learns its width from the stack holding it, and only then can a line of text say
+        /// how many lines it takes. Settling each box on its own instead measures it at whatever
+        /// width it happens to have — nothing, on the frame it appears — and a wrapping label then
+        /// asks for one line per character.
+        ///
+        /// ⚠ It costs one pass over the subtree, so it belongs where something is about to be
+        /// measured, not on every frame.
+        /// </summary>
+        public void SettleLayout()
+        {
+            if (Object == null) return;
+            var rect = Object.GetComponent<RectTransform>();
+            if (rect == null) return;
+
+            try
+            {
+                UnityEngine.UI.LayoutRebuilder.ForceRebuildLayoutImmediate(rect);
+            }
+            catch (System.Exception e)
+            {
+                if (_rebuildComplained) return;
+                _rebuildComplained = true;
+                TranslatorCore.LogWarning($"[Layout] Cannot settle '{Object.name}': "
+                                          + $"{e.GetType().Name}: {e.Message}");
+            }
+        }
+
         public float WantedHeight
         {
             get
@@ -245,33 +276,13 @@ namespace UnityGameTranslator.Core.UI.Components
                 var rect = _object.GetComponent<RectTransform>();
                 if (rect == null) return 0f;
 
-                // ⚠ **Nothing is swallowed here.** The first version caught this and said nothing,
-                // and the reading below then answered 0 for every box that had anything in it —
-                // which read exactly like "no measurement available" and sent the caller back to
-                // the numbers this was written to replace. A failure has to be visible.
-                try
-                {
-                    UnityEngine.UI.LayoutRebuilder.ForceRebuildLayoutImmediate(rect);
-                }
-                catch (System.Exception e)
-                {
-                    if (!_rebuildComplained)
-                    {
-                        _rebuildComplained = true;
-                        TranslatorCore.LogWarning($"[Layout] Cannot settle '{_object.name}' before "
-                                                  + $"measuring it: {e.GetType().Name}: {e.Message}");
-                    }
-                }
-
-                float preferred = UnityEngine.UI.LayoutUtility.GetPreferredHeight(rect);
-                if (preferred > 0f) return preferred;
-
-                // 🔴 **What it IS, when what it WANTS cannot be had.** A layout group only reports a
-                // preferred height once its input has been calculated; until then it answers 0, and
-                // 0 is indistinguishable from "empty". The rect's own height is what the engine
-                // last laid out — a refresh behind at worst, which is what a caller reading this
-                // twice a second can live with, and far better than a number from 2025.
-                return rect.rect.height;
+                // ⚠ **Reads, never rebuilds.** Settling one box on its own computes its height
+                // against the width it has AT THAT MOMENT — which, on the frame it is first shown,
+                // is nothing: a line of text then wraps at every character and the box asks for
+                // 1541 pixels where it wants 99. Whoever reads several of these settles their
+                // common parent first, once, so the widths are there before any height is asked
+                // (see SettleLayout).
+                return UnityEngine.UI.LayoutUtility.GetPreferredHeight(rect);
             }
         }
 

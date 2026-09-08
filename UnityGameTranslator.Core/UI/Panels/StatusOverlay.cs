@@ -815,6 +815,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             // ⚠ A box CAN answer, because the stack sizes it from its content. What it wants is
             // read first; when the layout has not been calculated yet that comes back as 0, and
             // then what it currently IS is read instead — see Host.WantedHeight.
+            // ⚠ **The parent first, once.** Widths travel down; heights are read back up. Asking a
+            // box before its width exists is what made one ask for 1541 pixels on the frame it
+            // appeared, and the overlay open at the height of the screen before settling twice.
+            _stack?.SettleLayout();
+
             int height = StackPadding;
             int shown = 0;
 

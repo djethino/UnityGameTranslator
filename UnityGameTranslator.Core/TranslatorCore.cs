@@ -1221,6 +1221,14 @@ namespace UnityGameTranslator.Core
                 ImageReplacer.LoadAllReplacements();
             }
 
+            if (changed.Contains(SettingsSections.Variables))
+            {
+                // The definitions have changed, so the values read through the old ones describe
+                // fields this file never named. Flagged rather than read now: the instances may
+                // not exist yet — the same reason a scene change flags instead of reading.
+                VariableManager.MarkNeedsRefresh();
+            }
+
             ClearProcessingCaches();
             return true;
         }
@@ -2969,6 +2977,23 @@ namespace UnityGameTranslator.Core
             // text as a key)
             BuildStaleTranslationSnapshot();
 
+            // 🔴 **What the fonts say NOW, because loading is about to overwrite it in silence.**
+            // Replacing a font on a live component is a TRANSITION — take the old one off these
+            // components, put the new one on — and the only code that performs it is
+            // FontManager.UpdateFontSettings, which acts on the difference between what the map
+            // holds and what it is being told. A load replaces the map wholesale, so by the time
+            // anybody could ask, the difference is gone and nothing ever runs.
+            var fontsBefore = new Dictionary<string, FontSettings>(StringComparer.OrdinalIgnoreCase);
+            foreach (var kvp in FontSettingsMap)
+            {
+                fontsBefore[kvp.Key] = new FontSettings
+                {
+                    enabled = kvp.Value.enabled,
+                    fallback = kvp.Value.fallback,
+                    type = kvp.Value.type,
+                };
+            }
+
             // Restore all displayed text to originals BEFORE loading new cache,
             // so the scanner doesn't see stale translated text from the old JSON
             // and try to re-translate it
@@ -2984,11 +3009,71 @@ namespace UnityGameTranslator.Core
             // ⚠ Through InvalidateForSections and not AfterSettingsSectionsChanged: the second one
             // also records that this install changed something, which a reload has not.
             InvalidateForSections(SettingsSections.All, out _);
+            ReapplyFontSettings(fontsBefore);
 
             // What is on screen still describes the file that was there a moment ago. Said HERE
             // and not by the callers: it was one of five, and the four that forgot included
             // putting a backup back.
             UI.TranslatorUIManager.NotifyTranslationReloaded();
+        }
+
+        /// <summary>
+        /// Walk the fonts from what they were to what the file just read says, through the one door
+        /// that knows how to change a font on components already showing text.
+        ///
+        /// 🔴 **Why the transition has to be replayed rather than simply applied.**
+        /// <see cref="FontManager.UpdateFontSettings"/> takes the OLD replacement off the components
+        /// wearing it before putting the new one on, and it works out what to take off from the map
+        /// it is about to change. A load overwrites that map first, so the door sees no change and
+        /// does nothing at all — the components keep wearing what the previous translation asked
+        /// for, for the rest of the session.
+        ///
+        /// ⚠ Observed on a real install (2026-09-08): a French translation replacing Alatsi with
+        /// Birch Std on 171 components, then a Thai one restored over it asking for Tahoma. The log
+        /// shows its fonts section loaded and then nothing whatsoever; the game stayed on Birch Std
+        /// until the fallback was toggled by hand in the Fonts tab, which goes through this door.
+        ///
+        /// ⚠ **A font the new file does not mention is a font with no replacement**, not a font to
+        /// leave alone: its components are wearing something the translation now on disk never
+        /// asked for. Its detected type is carried over — the other player may simply never have
+        /// met that font.
+        /// </summary>
+        private static void ReapplyFontSettings(Dictionary<string, FontSettings> before)
+        {
+            if (before == null) return;
+
+            var names = new HashSet<string>(before.Keys, StringComparer.OrdinalIgnoreCase);
+            foreach (var name in FontSettingsMap.Keys) names.Add(name);
+
+            foreach (var name in names)
+            {
+                FontSettings was;
+                if (!before.TryGetValue(name, out was)) was = null;
+
+                FontSettings now;
+                if (!FontSettingsMap.TryGetValue(name, out now)) now = null;
+
+                bool wasEnabled = was == null || was.enabled;
+                string wasFallback = was?.fallback;
+                bool nowEnabled = now == null || now.enabled;
+                string nowFallback = now?.fallback;
+
+                if (wasEnabled == nowEnabled
+                    && string.Equals(wasFallback, nowFallback, StringComparison.Ordinal))
+                    continue;
+
+                // The door reads the map to know what to undo, so it has to find the old answer
+                // there — the load has already put the new one in its place.
+                if (now == null)
+                {
+                    now = new FontSettings { type = was?.type ?? "Unknown" };
+                    FontSettingsMap[name] = now;
+                }
+                now.enabled = wasEnabled;
+                now.fallback = wasFallback;
+
+                FontManager.UpdateFontSettings(name, nowEnabled, nowFallback);
+            }
         }
 
         // ── Upstream ancestor (branches only) ────────────────────────────────

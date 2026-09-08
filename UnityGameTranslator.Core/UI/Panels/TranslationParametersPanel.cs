@@ -2132,6 +2132,29 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// Called externally when a hotkey flips the config flag, so the panel stays in sync.
         /// Also resets the dirty-tracking snapshot (the hotkey already saved the config).
         /// </summary>
+        /// <summary>
+        /// Rebuild everything this panel shows, because the translation under it has been replaced.
+        ///
+        /// 🔴 **Each list is otherwise built when ITS tab is opened, and never again.** So a
+        /// download, a merge or a backup put back left whatever was on screen describing a file
+        /// that is no longer there — and the lists are the fonts, the font rules, the exclusions,
+        /// the images and the variables, which is to say everything a translation carries besides
+        /// its lines.
+        ///
+        /// ⚠ Seen on a real install (2026-09-08): a Chinese→English translation restored over a
+        /// Chinese→French one. The game was right — the log says the image was taken back off the
+        /// scene — and the Images tab went on listing it, because nobody had told the panel.
+        /// </summary>
+        public void RefreshFromTranslation()
+        {
+            RefreshFromConfig();
+            RefreshFontsList();
+            RefreshFontOverridesList();
+            RefreshExclusionsList();
+            RefreshImageReplacementsList();
+            RefreshVariablesList();
+        }
+
         public void RefreshFromConfig()
         {
             if (_enableFontReplacementToggle != null)

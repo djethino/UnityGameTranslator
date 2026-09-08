@@ -3512,6 +3512,16 @@ namespace UnityGameTranslator.Core.UI
         public static void NotifyTranslationReloaded()
         {
             MainPanel?.RefreshUI();
+
+            // ⚠ Not the main panel alone. Everything a translation carries besides its lines — its
+            // fonts, its rules, its exclusions, its images, its variables — is shown by the
+            // parameters panel, whose lists are otherwise built when their tab is opened and never
+            // again. That panel went on listing an image the game had already taken back off.
+            TranslationParamsPanel?.RefreshFromTranslation();
+
+            // The options screen reads the configuration, which the load may have moved: the file
+            // decides the languages, and the setting follows it.
+            OptionsPanel?.RefreshFromConfig();
         }
 
         /// <summary>

@@ -2431,13 +2431,28 @@ namespace UnityGameTranslator.Core
             SaveModUiCacheIfDirty();
             LoadModUiCache();
 
-            // Game settings are written only when they leave their default, so a
-            // file WITHOUT the section means "everything default" — not "keep
-            // whatever the previous file set". Only ui_font was being reset here,
-            // so after loading a translation that disabled nothing, typewriting
-            // and concat detection stayed off from the previous one. Same
-            // reasoning as MetadataDirty/LocalChangesCount just below.
+            // 🔴 **Every section, emptied — because a section a file does not carry means "this
+            // translation has none", never "keep the last one's".**
+            //
+            // Each branch that reads a section only runs when its key is present, so an absent
+            // section left the PREVIOUS translation's answer in place, and the next save wrote it
+            // into the file that never had it. Only the game settings were reset here; the other
+            // five were not.
+            //
+            // ⚠ Observed on a real install (2026-09-08), and it is what a backup is for: a
+            // Chinese→English translation restored over a Chinese→French one came back carrying the
+            // French one's replacement image, its two exclusions and its variables. Its own backup
+            // has none of the three. The image then showed on a translation nobody had put it in,
+            // and an upload would have published all of it.
+            //
+            // ⚠ Fonts included, inventory and all: the file is the whole truth at load, and what a
+            // font is called on this machine rebuilds itself as the game is played.
             ApplyGameSettingsSection(null);
+            FontSettingsMap.Clear();
+            fontOverrides.Load(null);
+            userExclusions.Load(null);
+            ImageReplacer.LoadFromJson(null);
+            VariableManager.LoadFromJson(null);
             // Both are written only when non-default, so their ABSENCE from the file means "clean".
             // Without resetting them here the parse below simply never assigns, and the in-memory
             // value survives the reload: after downloading the server's copy — which carries

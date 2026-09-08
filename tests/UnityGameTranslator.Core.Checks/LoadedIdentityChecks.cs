@@ -102,6 +102,30 @@ namespace UnityGameTranslator.Core.Checks
                     $"{field} is cleared by name",
                     "each of these was, or would have been, one file's identity written into another's");
             }
+
+            // 🔴 A SECTION is not read by assigning a field — it is handed to whoever owns it. So
+            // the rule above could not see five of them, and they carried the same defect: a
+            // Chinese→English translation came back wearing a Chinese→French one's replacement
+            // image, its exclusions and its variables, none of which its own backup held.
+            //
+            // ⚠ Each is named with what emptying it looks like, so the check fails on the thing
+            // that matters — the emptying — rather than on a mention of the owner anywhere.
+            var sections = new (string What, string Emptied)[]
+            {
+                ("the game settings", "ApplyGameSettingsSection(null)"),
+                ("the fonts",         "FontSettingsMap.Clear()"),
+                ("the font rules",    "fontOverrides.Load(null)"),
+                ("the exclusions",    "userExclusions.Load(null)"),
+                ("the images",        "ImageReplacer.LoadFromJson(null)"),
+                ("the variables",     "VariableManager.LoadFromJson(null)"),
+            };
+
+            foreach (var section in sections)
+            {
+                check(clearedRegion.Contains(section.Emptied, StringComparison.Ordinal),
+                    $"{section.What} start empty",
+                    "a section a file does not carry means this translation has none, never keep the last one's — and the next save writes it into the file that never had it");
+            }
         }
 
         private static string FindCore()

@@ -160,7 +160,7 @@ namespace UnityGameTranslator.Core.UI.Components
             get
             {
                 if (Object == null) return "(none)";
-                var rect = Object.transform as RectTransform;
+                var rect = Object.GetComponent<RectTransform>();
                 if (rect == null) return "(no rect)";
 
                 string preferred, actual;
@@ -234,7 +234,15 @@ namespace UnityGameTranslator.Core.UI.Components
             get
             {
                 if (_object == null) return 0f;
-                var rect = _object.transform as RectTransform;
+
+                // 🔴 **GetComponent, never `transform as RectTransform`.** On IL2CPP that cast is a
+                // MANAGED type check against a proxy whose declared type is Transform — so it
+                // answers null for an object that is a RectTransform natively, and it does so
+                // INTERMITTENTLY, depending on which proxy happens to be cached. Written that way
+                // on 2026-09-08, it made every measurement here return 0 while looking correct,
+                // and three rounds of fixes above it chased a layout that was never asked.
+                // Everything else in this layer already uses GetComponent; this did not.
+                var rect = _object.GetComponent<RectTransform>();
                 if (rect == null) return 0f;
 
                 // ⚠ **Nothing is swallowed here.** The first version caught this and said nothing,

@@ -201,6 +201,8 @@ namespace UnityGameTranslator.Core.UI.Components
         ///
         /// ⚠ Zero when there is nothing to measure, so a caller can fall back on what it knows.
         /// </summary>
+        private static bool _rebuildComplained;
+
         public float WantedHeight
         {
             get
@@ -209,10 +211,33 @@ namespace UnityGameTranslator.Core.UI.Components
                 var rect = _object.transform as RectTransform;
                 if (rect == null) return 0f;
 
-                try { UnityEngine.UI.LayoutRebuilder.ForceRebuildLayoutImmediate(rect); }
-                catch { /* not laid out yet: the reading below simply answers 0 */ }
+                // ⚠ **Nothing is swallowed here.** The first version caught this and said nothing,
+                // and the reading below then answered 0 for every box that had anything in it —
+                // which read exactly like "no measurement available" and sent the caller back to
+                // the numbers this was written to replace. A failure has to be visible.
+                try
+                {
+                    UnityEngine.UI.LayoutRebuilder.ForceRebuildLayoutImmediate(rect);
+                }
+                catch (System.Exception e)
+                {
+                    if (!_rebuildComplained)
+                    {
+                        _rebuildComplained = true;
+                        TranslatorCore.LogWarning($"[Layout] Cannot settle '{_object.name}' before "
+                                                  + $"measuring it: {e.GetType().Name}: {e.Message}");
+                    }
+                }
 
-                return UnityEngine.UI.LayoutUtility.GetPreferredHeight(rect);
+                float preferred = UnityEngine.UI.LayoutUtility.GetPreferredHeight(rect);
+                if (preferred > 0f) return preferred;
+
+                // 🔴 **What it IS, when what it WANTS cannot be had.** A layout group only reports a
+                // preferred height once its input has been calculated; until then it answers 0, and
+                // 0 is indistinguishable from "empty". The rect's own height is what the engine
+                // last laid out — a refresh behind at worst, which is what a caller reading this
+                // twice a second can live with, and far better than a number from 2025.
+                return rect.rect.height;
             }
         }
 

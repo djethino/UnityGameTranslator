@@ -194,7 +194,8 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // ⚠ Kept: it is the only thing that knows how tall the overlay has to be, spacing
             // and padding included. See AdjustHeight.
-            _stack = Stacks.Vertical(Content, "OverlayStack", spacing: 5, pad: Pad.All(5));
+            _stack = Stacks.Vertical(Content, "OverlayStack",
+                                     spacing: StackSpacing, pad: Pad.All(StackPadding / 2));
             var stack = _stack;
 
             // Mod Update Notification Box
@@ -805,11 +806,32 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         private void AdjustHeight()
         {
-            float wanted = _stack != null ? _stack.WantedHeight : 0f;
+            // 🔴 **The boxes, not the stack — and the stack cannot answer, by construction.** It is
+            // stretched to the window it is inside, so its own height IS the window's: asking it
+            // how tall the window should be is asking the window. Measured on a real install
+            // (2026-09-08): empty it answered 10, its padding; with one box visible it answered 0,
+            // and the caller fell back on the numbers this was written to replace.
+            //
+            // ⚠ A box CAN answer, because the stack sizes it from its content. What it wants is
+            // read first; when the layout has not been calculated yet that comes back as 0, and
+            // then what it currently IS is read instead — see Host.WantedHeight.
+            int height = StackPadding;
+            int shown = 0;
 
-            int height = wanted > 1f
-                ? (int)Math.Ceiling(wanted)
-                : FloorHeight();
+            foreach (var box in new[] { _modUpdateBox, _syncBox, _aiBox, _connectionBox })
+            {
+                if (box == null || !box.Visible) continue;
+
+                float boxHeight = box.WantedHeight;
+                if (boxHeight <= 0f) continue;
+
+                if (shown > 0) height += StackSpacing;
+                height += (int)Math.Ceiling(boxHeight);
+                shown++;
+            }
+
+            // Nothing could be measured at all — a first frame, before any layout pass.
+            if (shown == 0) height = FloorHeight();
 
             // ⚠ **A probe, not a rule.** The hint under the buttons is cut again and the queue box
             // is nowhere, and three explanations fit: the stack answers too small, it answers zero
@@ -818,7 +840,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (height != _lastLoggedHeight)
             {
                 _lastLoggedHeight = height;
-                TranslatorCore.LogInfo($"[Overlay] height={height} (stack said {wanted:0.#}, floor {FloorHeight()})"
+                TranslatorCore.LogInfo($"[Overlay] height={height} (floor {FloorHeight()})"
                     + $" | mod={Measured(_modUpdateBox)} sync={Measured(_syncBox)}"
                     + $" ai={Measured(_aiBox)} conn={Measured(_connectionBox)}");
             }
@@ -827,6 +849,15 @@ namespace UnityGameTranslator.Core.UI.Panels
         }
 
         private int _lastLoggedHeight = -1;
+
+        // What the stack costs around its boxes, and between them.
+        //
+        // 🔴 **Declared here and READ by the stack**, rather than written twice. AdjustHeight has
+        // to know them to size the window, and the first attempt kept its own copy — which said
+        // ten and forgot the five between each pair, so three notifications came out ten pixels
+        // short and the last line of one was cut across the middle.
+        private const int StackPadding = 10;   // above the first box and below the last, together
+        private const int StackSpacing = 5;    // between each pair
 
         /// <summary>One box, for the probe: hidden, or what it says it wants.</summary>
         private static string Measured(Host box)

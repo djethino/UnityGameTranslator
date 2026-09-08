@@ -955,7 +955,10 @@ namespace UnityGameTranslator.Core
 
         private static TranslationInfo ParseTranslationInfo(JToken t)
         {
-            var game = t["game"];
+            // ⚠ `as JObject`, like every other reader here: a key the server sends as null comes
+            // back as a JValue, which `?.` lets through to an indexer that throws. The cast turns
+            // "not an object" into a C# null, which is what the null-conditional below expects.
+            var game = t["game"] as JObject;
             return new TranslationInfo
             {
                 Id = t["id"]?.Value<int>() ?? 0,
@@ -1845,7 +1848,11 @@ namespace UnityGameTranslator.Core
                     };
                 }
 
-                var translation = data["translation"];
+                // 🔴 **Null here is the ORDINARY case, not an edge one**: this is check-uuid, and
+                // a lineage this account holds no row in answers `"translation": null`. Read
+                // without the cast, `translation?["role"]` reached an indexer on a JValue and threw
+                // — on precisely the translations that belong to somebody else.
+                var translation = data["translation"] as JObject;
 
                 // Parse role from API response
                 string roleStr = translation?["role"]?.Value<string>();

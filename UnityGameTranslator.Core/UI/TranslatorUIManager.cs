@@ -2792,10 +2792,17 @@ namespace UnityGameTranslator.Core.UI
 
                 if (hasUpdate && wantsUpdateNotices)
                 {
-                    int lineCount = translation?["line_count"]?.Value<int>()
-                                    ?? main?["line_count"]?.Value<int>()
+                    // 🔴 **`?.` does not guard a JSON null**, and this is where that cost a state.
+                    // `data["translation"]` on a lineage this account holds no row in comes back as
+                    // a JValue of type Null — not a C# null — so `?.` passes it straight to the
+                    // indexer, which throws "Cannot access child value on JValue". The catch below
+                    // then replaced the state THIS event had just established correctly, and the
+                    // card fell back to "Never published" over somebody else's published work.
+                    // The two blocks above already ask the right question; this one did not.
+                    int lineCount = Field(translation, "line_count")?.Value<int>()
+                                    ?? Field(main, "line_count")?.Value<int>()
                                     ?? 0;
-                    int voteCount = translation?["vote_count"]?.Value<int>() ?? 0;
+                    int voteCount = Field(translation, "vote_count")?.Value<int>() ?? 0;
 
                     TranslatorCore.LogInfo($"[SyncSSE] Update detected: serverHash={serverHash?.Substring(0, 16)}..., localHash={localHash?.Substring(0, 16)}...");
                     DetermineAndApplyUpdateDirection(serverHash, lineCount, voteCount);
@@ -2812,9 +2819,34 @@ namespace UnityGameTranslator.Core.UI
             catch (Exception e)
             {
                 TranslatorCore.LogError($"[SyncSSE] Error handling state event: {e.Message}");
-                TranslatorCore.ServerState = new ServerTranslationState { Checked = true };
+
+                // 🔴 **Only when nothing was established.** This used to overwrite the state this
+                // very event had already applied a few lines above, so a failure in the part that
+                // merely decides whether to ANNOUNCE an update threw away who owns the lineage:
+                // the card went from "Not yours · @Cheetah" to "Never published" three seconds
+                // after saying the truth, and the offer to branch or fork went with it.
+                //
+                // ⚠ The empty "checked" state is still installed when there is none, so a parse
+                // that failed outright stops the screen waiting for an answer that never comes.
+                if (TranslatorCore.ServerState == null)
+                    TranslatorCore.ServerState = new ServerTranslationState { Checked = true };
+
                 MainPanel?.RefreshUI();
             }
+        }
+
+        /// <summary>
+        /// A named field of a JSON object, or null when there is no object to read it from.
+        ///
+        /// 🔴 **Because `token?["name"]` is not that.** A key the server sends as null comes back
+        /// as a JValue whose Type is Null — an object, in C# terms — so the null-conditional lets
+        /// it through and the indexer throws. Every other reader in this handler asks
+        /// `Type != JTokenType.Null` by hand; this is that question, written once.
+        /// </summary>
+        private static JToken Field(JToken token, string name)
+        {
+            if (token == null || token.Type != JTokenType.Object) return null;
+            return token[name];
         }
 
         /// <summary>

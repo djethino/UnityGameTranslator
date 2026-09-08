@@ -941,6 +941,8 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static void LoadFromJson(JToken token)
         {
+            // ⚠ The definitions only. What is LOADED is dropped by DropReplacements, which has to
+            // put the components back before it destroys anything — see the order written there.
             _replacements.Clear();
 
             if (token == null || token.Type != JTokenType.Array) return;
@@ -1035,6 +1037,57 @@ namespace UnityGameTranslator.Core
         /// <summary>
         /// Full cleanup: destroy all created textures and sprites.
         /// </summary>
+        /// <summary>
+        /// Take every replacement back off the game: stop substituting, put the originals back,
+        /// then destroy what was built.
+        ///
+        /// 🔴 **The order is the whole thing, and each step is there because the other two fail
+        /// without it.**
+        ///
+        /// ① The lookup is emptied FIRST. The patch on the sprite setter matches by NAME, and our
+        /// replacement is built from a PNG named after the sprite it replaces — so the two share a
+        /// name, and writing the ORIGINAL back triggers the patch, which recognises the name and
+        /// swaps ours straight back in. Measured (2026-09-08): the restore wrote the game's own
+        /// sprite, '标题'#13320 2048x2048, and reading it back in the same breath gave
+        /// '标题'#-184 926x262 — ours. Nothing could put an image back while the lookup held it.
+        ///
+        /// ② Then the components are put back, while the sprites still exist.
+        ///
+        /// ③ Only then are they destroyed. Destroying a sprite a component is still wearing leaves
+        /// that component wearing a destroyed object, which is not a picture at all.
+        ///
+        /// ⚠ Destroyed rather than merely forgotten: they are objects this mod created, and
+        /// dropping the last reference to one leaves it in the game's memory until it quits.
+        /// </summary>
+        public static void DropReplacements()
+        {
+            if (_loadedSprites == null || _loadedSprites.Count == 0)
+            {
+                RestoreAllOriginalImages();
+                return;
+            }
+
+            var built = new List<Sprite>(_loadedSprites.Values);
+            _loadedSprites.Clear();          // ① nothing left to substitute
+            RestoreAllOriginalImages();      // ② the game gets its own pictures back
+
+            foreach (var sprite in built)    // ③ and only now is ours thrown away
+            {
+                if (sprite == null) continue;
+                try { UnityEngine.Object.Destroy(sprite); }
+                catch { }
+            }
+
+            if (_createdTextures == null) return;
+            foreach (var texture in _createdTextures)
+            {
+                if (texture == null) continue;
+                try { UnityEngine.Object.Destroy(texture); }
+                catch { }
+            }
+            _createdTextures.Clear();
+        }
+
         public static void Cleanup()
         {
             foreach (var kvp in _loadedSprites)

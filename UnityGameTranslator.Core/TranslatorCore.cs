@@ -1231,7 +1231,7 @@ namespace UnityGameTranslator.Core
                 // imported, and nothing appeared. Only "Loaded N replacement definitions" and
                 // "Loaded N replacement sprites" were in the log; no apply pass followed, because
                 // none was asked for.
-                ImageReplacer.RestoreAllOriginalImages();
+                ImageReplacer.DropReplacements();
                 ImageReplacer.LoadAllReplacements();
                 ImageReplacer.ApplyToScene();
             }

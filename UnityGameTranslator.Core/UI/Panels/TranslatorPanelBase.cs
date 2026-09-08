@@ -124,8 +124,10 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private bool _panelRootRegistered = false;
 
+        // ⚠ The measurement itself is the state. A companion flag recorded that it had been taken
+        // and was never read by anything — the height being above zero says the same thing, and
+        // said it correctly, so the flag was a second answer to a question already answered.
         private float _tallestTabContentHeight;
-        private bool _tabHeightMeasured;
 
         /// <summary>The rendering half of <see cref="KeepPanelHeightAcrossTabs"/>: the wait is a coroutine.</summary>
         private void StartMeasuringTallestTab(TabBar tabBar)
@@ -151,7 +153,6 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (tallest <= _tallestTabContentHeight) yield break;
 
             _tallestTabContentHeight = tallest;
-            _tabHeightMeasured = true;
             RecalculateSize();
         }
 

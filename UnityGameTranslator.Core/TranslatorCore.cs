@@ -2598,34 +2598,7 @@ namespace UnityGameTranslator.Core
                 // configuration: a translations.json restored from a Thai-era backup while the
                 // machine is set to French would otherwise be read as French and its Thai labels
                 // declared a match. That is precisely how 28 of them landed in a French interface.
-                if (strandedModUi != null)
-                {
-                    int kept = 0, dropped = 0;
-                    foreach (var kvp in strandedModUi)
-                    {
-                        var verdict = ModUiMigration.Decide(
-                            inAncestor: AncestorCache.ContainsKey(kvp.Key),
-                            alreadyHeld: ModUiCache.ContainsKey(kvp.Key),
-                            isEmpty: kvp.Value.IsEmpty,
-                            lineLanguage: FileTargetLanguage,
-                            interfaceLanguage: ModUiLanguage);
-
-                        if (verdict == ModUiMigration.Verdict.Drop)
-                        {
-                            dropped++;
-                            continue;
-                        }
-
-                        ModUiCache[kvp.Key] = kvp.Value;
-                        IndexTranslatedValue(kvp.Key, kvp.Value.Value, ownUi: true);
-                        kept++;
-                    }
-
-                    if (kept > 0) modUiCacheModified = true;
-                    Adapter.LogInfo($"[ModUI] translations.json carried {strandedModUi.Count} interface line(s): "
-                                    + $"{kept} moved to {ModUi.FileName}, {dropped} dropped "
-                                    + "(published, already held, of another language, or empty).");
-                }
+                AdoptStrandedInterfaceLines(strandedModUi, TranslationFiles.Name);
 
                 // ── The language this file states about itself ────────────────────────
                 SettleLanguagesFromFile();
@@ -3344,54 +3317,97 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Parse JSON content into Dictionary of TranslationEntry.
-        /// Handles both new format ({"v": "value", "t": "tag"}) and legacy format (string).
+        /// Take somebody else's translation apart, by exactly the rules this mod's own file is read
+        /// by — see <see cref="TranslationFileEntries"/>.
+        ///
+        /// 🔴 **It used to have rules of its own, and that was a regression rather than a choice.**
+        /// The line-ending fix of 2025-12-30 was applied to both sides; the remote half lived inline
+        /// in the caller, on the string-based reader it used then, and went with it when that reader
+        /// was rightly deleted on 2026-07-28. From then on a downloaded key kept its CRLF while the
+        /// local cache and the ancestor had theirs collapsed — so a three-way merge read one key as
+        /// deleted locally and added remotely, both at once.
+        ///
+        /// ⚠ And normalising the keys is what MAKES two of them collide, so the collision rule
+        /// (a person's line over a review's over a model's) has to arrive with it or the fix opens
+        /// the hole it closes. Both come from reading the file the one way it is read.
+        ///
+        /// ⚠ **The interface lines it finds are put BACK, on purpose.** They have exactly one
+        /// door — <see cref="TranslationMerger.MergeWithTags"/>, which drops them from the result
+        /// whichever side they came from — and the note above ReloadCache says why there must not
+        /// be a second: a suppression here would pre-empt that door silently and make its own
+        /// count of what it dropped read zero. What this method owes the merge is the file as it
+        /// stands; what to keep is the merge's to decide.
         /// </summary>
         /// <param name="jsonContent">Raw JSON string from file or API</param>
-        /// <returns>Dictionary with translation entries including tags</returns>
         public static Dictionary<string, TranslationEntry> ParseTranslationsFromJson(string jsonContent)
         {
-            var result = new Dictionary<string, TranslationEntry>();
-
             try
             {
-                // Normalize line endings for consistent key handling
-                jsonContent = jsonContent.Replace("\r\n", "\n");
-                var parsed = JObject.Parse(jsonContent);
+                // The file's own line endings first; the keys and values inside are normalized by
+                // the reader, which is where that rule belongs.
+                var read = TranslationFileEntries.ReadAll(
+                    JObject.Parse(jsonContent.Replace("\r\n", "\n")));
 
-                foreach (var prop in parsed.Properties())
+                if (read.StrandedModUi != null)
                 {
-                    // Skip metadata keys
-                    if (prop.Name.StartsWith("_")) continue;
-
-                    if (prop.Value.Type == JTokenType.Object)
-                    {
-                        // New format: {"v": "value", "t": "A", "i": 123}
-                        var obj = prop.Value as JObject;
-                        result[prop.Name] = new TranslationEntry
-                        {
-                            Value = obj?["v"]?.ToString() ?? "",
-                            Tag = obj?["t"]?.ToString() ?? "A",
-                            Index = ParseTranslationIndex(obj?["i"])
-                        };
-                    }
-                    else if (prop.Value.Type == JTokenType.String)
-                    {
-                        // Legacy format: string value - default to AI tag
-                        result[prop.Name] = new TranslationEntry
-                        {
-                            Value = prop.Value.ToString(),
-                            Tag = "A"
-                        };
-                    }
+                    foreach (var line in read.StrandedModUi) read.Entries[line.Key] = line.Value;
                 }
+
+                return read.Entries;
             }
             catch (Exception e)
             {
                 Adapter?.LogWarning($"Failed to parse translations from JSON: {e.Message}");
+                return new Dictionary<string, TranslationEntry>();
+            }
+        }
+
+        /// <summary>
+        /// Interface lines found in the game translation ON DISK, sent where they belong.
+        ///
+        /// 🔴 **Only ever this file, and that is the design rather than a limitation.** A line
+        /// arriving from the network is stopped by <see cref="TranslationMerger.MergeWithTags"/>,
+        /// which drops it from the result whichever side it came from — see the note above
+        /// ReloadCache, which names the two doors and warns that a third would be the parallel
+        /// path the split exists to remove. This is the second of those two, named and nothing
+        /// more; calling it from anywhere else would make it the third.
+        ///
+        /// ⚠ The language compared is the one the FILE states, never one derived from the
+        /// configuration: a translation restored from a Thai-era backup while the machine is set to
+        /// French would otherwise be read as French and its Thai labels declared a match. That is
+        /// precisely how 28 of them landed in a French interface.
+        /// </summary>
+        /// <param name="lines">What was found, or null when there was none.</param>
+        /// <param name="source">Where they were found, for the line that says what happened.</param>
+        internal static void AdoptStrandedInterfaceLines(Dictionary<string, TranslationEntry> lines, string source)
+        {
+            if (lines == null || lines.Count == 0) return;
+
+            int kept = 0, dropped = 0;
+            foreach (var kvp in lines)
+            {
+                var verdict = ModUiMigration.Decide(
+                    inAncestor: AncestorCache.ContainsKey(kvp.Key),
+                    alreadyHeld: ModUiCache.ContainsKey(kvp.Key),
+                    isEmpty: kvp.Value.IsEmpty,
+                    lineLanguage: FileTargetLanguage,
+                    interfaceLanguage: ModUiLanguage);
+
+                if (verdict == ModUiMigration.Verdict.Drop)
+                {
+                    dropped++;
+                    continue;
+                }
+
+                ModUiCache[kvp.Key] = kvp.Value;
+                IndexTranslatedValue(kvp.Key, kvp.Value.Value, ownUi: true);
+                kept++;
             }
 
-            return result;
+            if (kept > 0) modUiCacheModified = true;
+            Adapter?.LogInfo($"[ModUI] {source} carried {lines.Count} interface line(s): "
+                             + $"{kept} moved to {ModUi.FileName}, {dropped} dropped "
+                             + "(published, already held, of another language, or empty).");
         }
 
         /// <summary>

@@ -1022,21 +1022,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (variables != null)
                 output["_variables"] = variables;
 
-            // Use same format as SaveCache: {"v": "value", "t": "tag", "i": index}
-            // ("i" omitted when absent — the server validation rejects "i": null)
-            foreach (var kv in TranslatorCore.TranslationCache)
-            {
-                var entryObj = new System.Collections.Generic.Dictionary<string, object>
-                {
-                    ["v"] = kv.Value.Value,
-                    ["t"] = kv.Value.Tag ?? "A"
-                };
-                if (kv.Value.Index.HasValue)
-                {
-                    entryObj["i"] = kv.Value.Index.Value;
-                }
-                output[kv.Key] = entryObj;
-            }
+            // 🔴 The SAME writer the file is saved with, not a copy of it. This was a fourth
+            // transcription of {"v","t","i"} — and the one that reaches the server, so a rule
+            // corrected in the other three and not here is a rule corrected for nobody.
+            var lines = new Newtonsoft.Json.Linq.JObject();
+            TranslationFileEntries.WriteInto(lines, TranslatorCore.TranslationCache);
+            foreach (var line in lines.Properties()) output[line.Name] = line.Value;
 
             return Newtonsoft.Json.JsonConvert.SerializeObject(output, Newtonsoft.Json.Formatting.None);
         }

@@ -193,6 +193,12 @@ namespace UnityGameTranslator.Core.UI.Components
         /// a line of explanation that wraps: the box needs about ninety and is given sixty, so its
         /// last line is cut across the middle and whatever comes next is placed over it.
         ///
+        /// ⚠ **The layout is settled first, and that is not an optimisation.** A group answers with
+        /// what it worked out on its last pass, so a box asked in the same breath as its content
+        /// changed answers for the content it had BEFORE. The caller that sizes a window from it
+        /// would then be one refresh behind — half a second, on the overlay, of a box drawn at the
+        /// previous size. It costs one pass over a handful of rows.
+        ///
         /// ⚠ Zero when there is nothing to measure, so a caller can fall back on what it knows.
         /// </summary>
         public float WantedHeight
@@ -202,6 +208,10 @@ namespace UnityGameTranslator.Core.UI.Components
                 if (_object == null) return 0f;
                 var rect = _object.transform as RectTransform;
                 if (rect == null) return 0f;
+
+                try { UnityEngine.UI.LayoutRebuilder.ForceRebuildLayoutImmediate(rect); }
+                catch { /* not laid out yet: the reading below simply answers 0 */ }
+
                 return UnityEngine.UI.LayoutUtility.GetPreferredHeight(rect);
             }
         }

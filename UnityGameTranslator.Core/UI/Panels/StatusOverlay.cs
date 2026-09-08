@@ -43,6 +43,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private ButtonHandle _modManagerBtn;
 
         // UI elements - Translation sync notification
+        private Host _stack;
         private Host _syncBox;
         private LabelHandle _syncLabel;
         private LabelHandle _syncHintLabel;
@@ -191,7 +192,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Remove default title bar for this overlay
             TitleBarHost.Visible = false;
 
-            var stack = Stacks.Vertical(Content, "OverlayStack", spacing: 5, pad: Pad.All(5));
+            // ⚠ Kept: it is the only thing that knows how tall the overlay has to be, spacing
+            // and padding included. See AdjustHeight.
+            _stack = Stacks.Vertical(Content, "OverlayStack", spacing: 5, pad: Pad.All(5));
+            var stack = _stack;
 
             // Mod Update Notification Box
             CreateModUpdateBox(stack);
@@ -706,8 +710,13 @@ namespace UnityGameTranslator.Core.UI.Panels
                     }
                     else
                     {
-                        string text = Flatten(TranslatorCore.CurrentText);
-                        if (text.Length > 25) text = text.Substring(0, 25) + "...";
+                        // ⚠ Markup out FIRST. A game line arrives as
+                        // `…建议您<b><color=#FF0000>` and the tags were shown as they stood — they
+                        // say nothing to a reader and they ate most of the twenty-five characters
+                        // this excerpt is allowed, so the notification quoted punctuation instead
+                        // of words. Stripping is the socle's, shared with the translation path.
+                        string text = Flatten(TextNormalization.StripMarkupTags(TranslatorCore.CurrentText));
+                        if (text.Length > 25) text = text.Substring(0, 25) + "…";
                         _aiStatusLabel.Show(Tr("Translating:") + $" {text}");
                     }
                     _aiStatusLabel.Visible = true;
@@ -775,7 +784,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         }
 
         /// <summary>
-        /// Size the overlay to what its boxes actually need.
+        /// Size the overlay to what it is actually showing.
         ///
         /// 🔴 **It used to add a fixed count of pixels per visible box** — 60, 60, 50, 20 — and had
         /// done so since the overlay was written (2025-12-27). That held while every box was a
@@ -784,34 +793,42 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// given sixty, and the difference is what a reader sees — a line cut across the middle,
         /// with the next notification drawn over what is left of it.
         ///
-        /// ⚠ **A fixed number per box cannot be right**, because none of them has a fixed height:
-        /// the hint under the sync box grows with the owner's name, the connection line wraps on a
-        /// long reason, and the mod box already needed a second number bolted on for its own hint.
-        /// Each box is asked instead.
+        /// 🔴 **The STACK is asked, not the boxes one by one**, and that is the difference between
+        /// a fix and an answer. Adding up the boxes still leaves the caller keeping a private copy
+        /// of the layout: the five pixels between each pair and the five around the whole — which
+        /// the first version of this fix got wrong, by ten pixels, with three notifications up. The
+        /// stack holds its children, its spacing and its padding; asked once, it cannot drift, and a
+        /// sixth box added later needs nothing here.
         ///
-        /// ⚠ The old numbers stay as the floor. A box is measured through the engine's layout,
-        /// which answers 0 for a frame that has not been laid out yet — and a first frame at the
-        /// wrong size is exactly the jump this method exists to avoid.
+        /// ⚠ The old numbers survive as a floor, and only for the frame the engine has not laid out
+        /// yet — it answers 0 then, and an overlay one frame tall is the jump this exists to avoid.
         /// </summary>
         private void AdjustHeight()
         {
-            int height = 10; // padding
+            float wanted = _stack != null ? _stack.WantedHeight : 0f;
 
-            height += HeightOf(_modUpdateBox, atLeast: 60);
-            height += HeightOf(_syncBox, atLeast: 60);
-            height += HeightOf(_aiBox, atLeast: 50);
-            height += HeightOf(_connectionBox, atLeast: 20);
+            int height = wanted > 1f
+                ? (int)Math.Ceiling(wanted)
+                : FloorHeight();
 
             Overlays.SetSize(Window, PanelWidth, Math.Max(50, height));
         }
 
-        /// <summary>What one box costs: nothing when hidden, what it wants when it can say.</summary>
-        private static int HeightOf(Host box, int atLeast)
+        /// <summary>
+        /// What the overlay was worth before anything could be measured — the numbers it used from
+        /// 2025 until this was written.
+        ///
+        /// ⚠ Reached on the first frame only, and deliberately not tuned: its job is to be roughly
+        /// right for one frame, not to be a second layout nobody remembers to update.
+        /// </summary>
+        private int FloorHeight()
         {
-            if (box == null || !box.Visible) return 0;
-
-            float wanted = box.WantedHeight;
-            return wanted > atLeast ? (int)Math.Ceiling(wanted) : atLeast;
+            int height = 10;
+            if (_modUpdateBox != null && _modUpdateBox.Visible) height += 60;
+            if (_syncBox != null && _syncBox.Visible) height += 60;
+            if (_aiBox != null && _aiBox.Visible) height += 50;
+            if (_connectionBox != null && _connectionBox.Visible) height += 20;
+            return height;
         }
 
         #region Button Handlers

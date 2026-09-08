@@ -48,6 +48,12 @@
     -->
     <Compile Include="../../UnityGameTranslator.Core/Engine/ExclusionPatterns.cs" />
     <!--
+      What lets one cached sentence serve every value the game puts in it. A pattern that stops
+      matching costs one call per number, for ever; one that matches too much shows a sentence
+      about something else.
+    -->
+    <Compile Include="../../UnityGameTranslator.Core/Engine/NumberPatterns.cs" />
+    <!--
       What a downloaded translation may ask of the disk and of the main thread. Both are pure by
       construction — a string in, an answer out — and both exist as files of their own so that the
       refusals AND the acceptances can be proved here rather than in a game.

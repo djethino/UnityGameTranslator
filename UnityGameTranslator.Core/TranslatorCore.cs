@@ -3986,7 +3986,7 @@ namespace UnityGameTranslator.Core
                 // Skip if key equals value (no translation)
                 if (kv.Key == kv.Value.Value) continue;
 
-                var matchRegex = BuildPatternRegex(kv.Key, out var placeholderIndices, compiled: true);
+                var matchRegex = NumberPatterns.BuildPatternRegex(kv.Key, out var placeholderIndices, compiled: true);
                 if (matchRegex == null) continue;
 
                 newEntries.Add(new PatternEntry
@@ -4005,41 +4005,6 @@ namespace UnityGameTranslator.Core
                 Adapter?.LogInfo($"Built {PatternEntries.Count} pattern entries");
         }
 
-        // Matches [!v*N] and captures its index
-        private static readonly Regex PlaceholderIndexPattern = new Regex(@"\[!v\*(\d+)\]", RegexOptions.Compiled);
-
-        /// <summary>
-        /// Build a regex matching a placeholder pattern against text with concrete numbers.
-        /// Each [!v*N] becomes a number-capture group; capture group i+1 corresponds to
-        /// placeholderIndices[i]. Works on original keys AND on translated values (which
-        /// may reorder the placeholders). Returns null if the pattern has no placeholders.
-        /// </summary>
-        private static Regex BuildPatternRegex(string patternText, out List<int> placeholderIndices, bool compiled = false)
-        {
-            placeholderIndices = new List<int>();
-            if (string.IsNullOrEmpty(patternText)) return null;
-
-            var matches = PlaceholderIndexPattern.Matches(patternText);
-            if (matches.Count == 0) return null;
-
-            try
-            {
-                string pattern = Regex.Escape(patternText);
-                foreach (Match match in matches)
-                {
-                    placeholderIndices.Add(int.Parse(match.Groups[1].Value));
-                    string placeholder = Regex.Escape(match.Value);
-                    // Replace one occurrence at a time so capture group order
-                    // follows appearance order even with duplicated indices
-                    int idx = pattern.IndexOf(placeholder, StringComparison.Ordinal);
-                    if (idx < 0) return null;
-                    pattern = pattern.Substring(0, idx) + @"(-?\d+(?:[.,]\d+)?%?)"
-                        + pattern.Substring(idx + placeholder.Length);
-                }
-                return new Regex("^" + pattern + "$", compiled ? RegexOptions.Compiled : RegexOptions.None);
-            }
-            catch { return null; }
-        }
 
         #region In-Game Text Editor support
 
@@ -4127,7 +4092,7 @@ namespace UnityGameTranslator.Core
             {
                 foreach (var pe in patterns)
                 {
-                    var reverseRegex = BuildPatternRegex(pe.TranslatedPattern, out var groupPlaceholders);
+                    var reverseRegex = NumberPatterns.BuildPatternRegex(pe.TranslatedPattern, out var groupPlaceholders);
                     if (reverseRegex == null) continue;
                     var m = reverseRegex.Match(trimmed);
                     if (!m.Success) continue;
@@ -4700,7 +4665,7 @@ namespace UnityGameTranslator.Core
                 // matched by the normalized-value lookup — keep a regex for them
                 if (value.Contains(PlaceholderPrefix))
                 {
-                    var regex = BuildPatternRegex(value, out var indices);
+                    var regex = NumberPatterns.BuildPatternRegex(value, out var indices);
                     if (regex == null) continue;
                     bool inAppearanceOrder = true;
                     for (int i = 0; i < indices.Count; i++)

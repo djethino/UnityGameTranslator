@@ -44,6 +44,7 @@ namespace UnityGameTranslator.Core.Checks
 
             HowATextIsNormalized();
             WhatAPatternCovers();
+            HowANumberedSentenceIsRecognised();
             HowTextChanges();
             WhenTextMayBeTyping();
             HowATargetIsNamed();
@@ -76,6 +77,13 @@ namespace UnityGameTranslator.Core.Checks
         {
             Section("Exclusion patterns");
             ExclusionPatternChecks.Run(Check);
+        }
+
+        /// <summary>How a sentence carrying live numbers is read as the pattern it was cached from.</summary>
+        private static void HowANumberedSentenceIsRecognised()
+        {
+            Section("Number patterns");
+            NumberPatternChecks.Run(Check);
         }
 
         /// <summary>What a component's new text is, relative to the one it held a moment ago.</summary>

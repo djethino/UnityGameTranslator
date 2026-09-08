@@ -484,6 +484,108 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Every code point of this text is one of ours or a game's shaped glyph — nothing that
+        /// carries meaning on its own.
+        ///
+        /// ⚠ Exists to be COUNTED, not to decide anything. A game whose font maps its whole
+        /// alphabet into the private-use area — an older CJK encoding, a game doing its own
+        /// Arabic or Indic shaping, a subsetted font that renumbered — shows text that reads as
+        /// symbols throughout, so nothing of it is ever translated and nothing says why. This is
+        /// what lets a startup line say so instead of leaving somebody with an empty screen and no
+        /// explanation.
+        ///
+        /// ⚠ A pictogram typed inside a sentence does NOT count: that text carries letters too,
+        /// and is translated normally. Only a text made of nothing else is a signal.
+        /// </summary>
+        public static bool IsPrivateUseOnly(string text)
+        {
+            string trimmed = (text ?? "").Trim();
+            if (trimmed.Length == 0) return false;
+
+            bool anyPrivate = false;
+            for (int i = 0; i < trimmed.Length; i++)
+            {
+                var category = System.Globalization.CharUnicodeInfo.GetUnicodeCategory(trimmed, i);
+                if (char.IsHighSurrogate(trimmed[i]) && i + 1 < trimmed.Length
+                    && char.IsLowSurrogate(trimmed[i + 1])) i++;
+
+                if (category == System.Globalization.UnicodeCategory.PrivateUse) { anyPrivate = true; continue; }
+
+                // Spacing and punctuation ride along with anything; a letter or a digit does not.
+                if (category == System.Globalization.UnicodeCategory.SpaceSeparator
+                    || category == System.Globalization.UnicodeCategory.Control
+                    || category == System.Globalization.UnicodeCategory.Format) continue;
+
+                return false;
+            }
+
+            return anyPrivate;
+        }
+
+        /// <summary>
+        /// Whether this runtime classifies characters the way the Unicode tables say, in one line
+        /// fit for the startup log: "ok" or what it got wrong.
+        ///
+        /// 🔴 **Because a whole family of this file's answers rests on a table nobody has ever
+        /// checked is there.** An earlier version of <see cref="IsNumericOrSymbol"/> carried seven
+        /// Unicode blocks written out by hand, against a suspicion that char.IsLetter fails for CJK
+        /// on some IL2CPP runtime — documented nowhere, measured never. The suspicion is not
+        /// absurd: this project has already met a game shipping a corlib trimmed to half its size,
+        /// missing members every mod loader needs (Beacon Pines, see CLAUDE.md). A runtime that
+        /// ships without its character tables would answer wrongly here, in
+        /// <see cref="NormalizeForReadbackMatch"/>, and in every shaper that asks what a code point
+        /// is — quietly, everywhere at once.
+        ///
+        /// ⚠ Pure, so its own answers are checked here rather than trusted. It reports; it decides
+        /// nothing. The shape of <see cref="IsNumericOrSymbol"/> already survives a broken table by
+        /// translating too much rather than going quiet.
+        /// </summary>
+        public static string DescribeUnicodeSupport()
+        {
+            // One per family this file actually leans on, with the answer the standard gives.
+            var expected = new (int codePoint, System.Globalization.UnicodeCategory category, string what)[]
+            {
+                ('A', System.Globalization.UnicodeCategory.UppercaseLetter, "Latin"),
+                ('7', System.Globalization.UnicodeCategory.DecimalDigitNumber, "digit"),
+                (0x4E2D, System.Globalization.UnicodeCategory.OtherLetter, "Han"),
+                (0x3042, System.Globalization.UnicodeCategory.OtherLetter, "kana"),
+                (0xD55C, System.Globalization.UnicodeCategory.OtherLetter, "hangul"),
+                (0x0416, System.Globalization.UnicodeCategory.UppercaseLetter, "Cyrillic"),
+                (0x0627, System.Globalization.UnicodeCategory.OtherLetter, "Arabic"),
+                (0x05D0, System.Globalization.UnicodeCategory.OtherLetter, "Hebrew"),
+                (0x0915, System.Globalization.UnicodeCategory.OtherLetter, "Devanagari"),
+                (0x0E01, System.Globalization.UnicodeCategory.OtherLetter, "Thai"),
+                (0x093F, System.Globalization.UnicodeCategory.SpacingCombiningMark, "Indic vowel sign"),
+                (0x0E49, System.Globalization.UnicodeCategory.NonSpacingMark, "Thai tone mark"),
+                (0xE000, System.Globalization.UnicodeCategory.PrivateUse, "private use"),
+                (0x20000, System.Globalization.UnicodeCategory.OtherLetter, "Han beyond the basic plane"),
+            };
+
+            var wrong = new List<string>();
+            foreach (var probe in expected)
+            {
+                System.Globalization.UnicodeCategory got;
+                try
+                {
+                    got = probe.codePoint <= 0xFFFF
+                        ? System.Globalization.CharUnicodeInfo.GetUnicodeCategory((char)probe.codePoint)
+                        : System.Globalization.CharUnicodeInfo.GetUnicodeCategory(char.ConvertFromUtf32(probe.codePoint), 0);
+                }
+                catch (Exception e)
+                {
+                    wrong.Add($"{probe.what} threw {e.GetType().Name}");
+                    continue;
+                }
+
+                if (got != probe.category) wrong.Add($"{probe.what} read as {got}");
+            }
+
+            return wrong.Count == 0
+                ? $"ok ({expected.Length} checked)"
+                : $"{wrong.Count} of {expected.Length} misread — {string.Join(", ", wrong.ToArray())}";
+        }
+
+        /// <summary>
         /// The closed list: numbers, punctuation, symbols, separators, and the four kinds of
         /// non-character. Everything absent from it — every letter category, every mark, and
         /// anything the runtime could not classify — counts as a letter.

@@ -25,6 +25,49 @@ namespace UnityGameTranslator.Core.Checks
             Markup(check);
             Letters(check);
             ReadbackForm(check);
+            Probes(check);
+        }
+
+        /// <summary>
+        /// The two things the mod now says out loud at startup, because nobody had ever looked.
+        /// Neither decides anything; both exist to turn a suspicion into a line in a log.
+        /// </summary>
+        private static void Probes(Action<bool, string, string> check)
+        {
+            // ── Is a game's alphabet hidden in a private area ─────────────────
+            check(TextNormalization.IsPrivateUseOnly("\uE000\uE001\uE002"),
+                "a text of nothing but private code points is one",
+                "such a game shows nothing translated, and until now nothing said why");
+
+            check(TextNormalization.IsPrivateUseOnly("\uE000 \uE001  \uE002"),
+                "spacing rides along with them",
+                "a line of icons separated by spaces is still a line of icons");
+
+            // 🔴 The case that keeps this from crying wolf. Icon fonts are ordinary and common:
+            // a button pictogram typed inside a sentence is not a game hiding its alphabet.
+            check(!TextNormalization.IsPrivateUseOnly("Press \uE010 to jump"),
+                "a pictogram inside a sentence is not",
+                "that text carries letters and is translated normally — counting it would make every game look afflicted");
+
+            check(!TextNormalization.IsPrivateUseOnly("Play") && !TextNormalization.IsPrivateUseOnly("123")
+                  && !TextNormalization.IsPrivateUseOnly("") && !TextNormalization.IsPrivateUseOnly("   "),
+                "and neither is a word, a number, nothing, or blanks",
+                "only the presence of a private code point AND the absence of anything else is a signal");
+
+            // ── Does this runtime have its character tables ───────────────────
+            //
+            // ⚠ On a healthy runtime this says so. What it is FOR is the other case: this project
+            // has already met a game shipping a corlib trimmed to half its size, and a runtime
+            // without its character tables would answer wrongly here, in the readback form, and in
+            // every shaper — quietly, everywhere at once.
+            string support = TextNormalization.DescribeUnicodeSupport();
+            check(support.StartsWith("ok ("),
+                "this runtime classifies every character the mod leans on",
+                "said as " + support + " — a game whose runtime does not will now say so in its own log");
+
+            check(!string.IsNullOrEmpty(support) && support.Length < 400,
+                "and says it in one line",
+                "it goes into the startup block a player pastes into an issue, not into a wall of text");
         }
 
         private static void LineEndings(Action<bool, string, string> check)
@@ -204,7 +247,7 @@ namespace UnityGameTranslator.Core.Checks
             // range listed and char.IsLetter says no. A word rendered ENTIRELY as ligatures would
             // therefore be refused at every door into translation, before the readback path ever
             // sees it. Undecided on purpose: changing it changes what four guards let through.
-            check(TextNormalization.IsNumericOrSymbol(""),
+            check(TextNormalization.IsNumericOrSymbol("\uE000\uE001"),
                 "a text of nothing but shaped glyphs reads as symbols here",
                 "while the readback form counts the same codepoints as letters — the one place the two disagree");
 
@@ -214,7 +257,7 @@ namespace UnityGameTranslator.Core.Checks
             // encodings — shows text this reads as symbols throughout, so nothing of it is ever
             // translated. Unchanged by the move to categories: the seven ranges did not cover that
             // area either. Telling our own glyphs from a game's needs more than a codepoint.
-            check(TextNormalization.NormalizeForReadbackMatch("") != null,
+            check(TextNormalization.NormalizeForReadbackMatch("\uE000\uE001") != null,
                 "and the readback form gives it one",
                 "a conjunct IS letters, which is what makes a shaped word recognisable when the game hands it back");
         }

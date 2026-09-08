@@ -2452,6 +2452,54 @@ namespace UnityGameTranslator.Core
         ///  - OS: name, processor, RAM
         ///  - GPU: name, memory, API/driver version, maxTextureSize
         /// </summary>
+        // How much of what this game shows is nothing but private-use code points. Counted at the
+        // single door, reported once, and read by nobody else.
+        private static int _textsSeenAtDoor;
+        private static int _privateUseOnlyTexts;
+        private static bool _privateUseReported;
+
+        /// <summary>
+        /// Say once, out loud, when a game's text turns out to be written in a private area.
+        ///
+        /// 🔴 **Because that game shows nothing translated and nothing says why.** Some fonts map
+        /// a whole alphabet into the private-use area — an older CJK encoding, a game doing its own
+        /// Arabic or Indic shaping, a subsetted font that renumbered. Every one of those texts
+        /// reads as symbols, is refused at this door, and the player is left with an untouched
+        /// screen and no explanation. Never hiding a legitimate failure is the rule; this is what
+        /// it costs to keep it here.
+        ///
+        /// ⚠ It reports, it never decides: the refusal above is unchanged. Recovering such a text
+        /// would mean reading the game's own font to learn what its private code points draw —
+        /// possible with what this repository already parses, and a piece of work in its own right.
+        /// Whether it is worth doing is exactly what this line exists to find out.
+        ///
+        /// ⚠ A pictogram inside a sentence is not this: that text carries letters and goes through
+        /// normally. Only a text of nothing else counts, and only a large share of them is a
+        /// signal — a handful is an icon font behaving as icon fonts do.
+        /// </summary>
+        private static void NotePrivateUseShare(string text)
+        {
+            if (_privateUseReported) return;
+
+            _textsSeenAtDoor++;
+            if (TextNormalization.IsPrivateUseOnly(text)) _privateUseOnlyTexts++;
+
+            // Enough to be a shape rather than a coincidence, and early enough to be read in a
+            // log somebody pastes into an issue.
+            const int Enough = 200;
+            if (_textsSeenAtDoor < Enough) return;
+
+            _privateUseReported = true;
+
+            int percent = _privateUseOnlyTexts * 100 / _textsSeenAtDoor;
+            if (percent < 50) return;
+
+            LogWarning($"[Text] {percent}% of the first {Enough} texts this game showed are private-use "
+                     + "code points only — its font very likely encodes its own alphabet there. Nothing of "
+                     + "that is translatable as it stands: a private code point says which glyph to draw "
+                     + "and not which character it is. Please report the game, this is worth measuring.");
+        }
+
         private static void LogRuntimeEnvironment()
         {
             string Safe(Func<string> fn)
@@ -2471,6 +2519,13 @@ namespace UnityGameTranslator.Core
             sb.AppendLine($"[Env]  GPU: {Safe(() => UnityEngine.SystemInfo.graphicsDeviceName)}  VRAM={Safe(() => UnityEngine.SystemInfo.graphicsMemorySize.ToString())} MB  api={Safe(() => UnityEngine.SystemInfo.graphicsDeviceVersion)}");
             sb.AppendLine($"[Env]  maxTextureSize={Safe(() => UnityEngine.SystemInfo.maxTextureSize.ToString())}  supportsAlpha8={Safe(() => UnityEngine.SystemInfo.SupportsTextureFormat(UnityEngine.TextureFormat.Alpha8).ToString())}  supportsRGBA32={Safe(() => UnityEngine.SystemInfo.SupportsTextureFormat(UnityEngine.TextureFormat.RGBA32).ToString())}");
             sb.AppendLine($"[Env]  Culture: {Safe(() => System.Globalization.CultureInfo.CurrentCulture.Name)}  Encoding: {Safe(() => System.Text.Encoding.Default.WebName)}");
+
+            // ⚠ Reported because nobody had ever looked. A whole family of decisions — which texts
+            // are worth translating, which are ours coming back, what a shaper makes of a syllable
+            // — rests on this runtime's character tables, and this project has already met a game
+            // shipping a corlib trimmed to half its size. One line, once, settles it per game
+            // instead of leaving it a suspicion. See TextNormalization.DescribeUnicodeSupport.
+            sb.AppendLine($"[Env]  Unicode tables: {Safe(TextNormalization.DescribeUnicodeSupport)}");
             sb.Append("[Env] ============================");
             LogInfo(sb.ToString());
         }
@@ -6580,6 +6635,11 @@ namespace UnityGameTranslator.Core
             // Google/DeepL require online mode
             if (Config.ActiveBackendRequiresOnline && !Config.online_mode) return false;
             if (string.IsNullOrEmpty(text)) return false;
+
+            // ⚠ Counted BEFORE the refusal below, so the tally covers every text this door meets
+            // rather than only the ones it lets through. See NotePrivateUseShare.
+            NotePrivateUseShare(text);
+
             if (IsNumericOrSymbol(text)) return false;
 
             // Longer than any backend will accept. Refused HERE, at the single door, rather than

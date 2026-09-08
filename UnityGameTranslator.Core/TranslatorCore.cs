@@ -2417,6 +2417,11 @@ namespace UnityGameTranslator.Core
 
                 // Parse as JObject to handle metadata
                 var parsed = JObject.Parse(json);
+                // ⚠ Emptied HERE and filled at the end, not built in place. The worker thread
+                // reads this map while the file is being read, and it has always seen an empty one
+                // during that window — leaving the previous translation visible instead would be a
+                // change to a concurrency window nobody designed, in the method that already cost
+                // data once.
                 TranslationCache = new Dictionary<string, TranslationEntry>();
                 // Fresh cache: allow own-UI labels that failed once to be submitted again.
                 _queue.ForgetOwnUiSubmitted();
@@ -2424,8 +2429,7 @@ namespace UnityGameTranslator.Core
                 // Track saved _game.steam_id to compare with current detection
                 string savedSteamId = null;
                 int engineVersion = 0;
-                // Interface lines found where they no longer belong — see the migration below.
-                Dictionary<string, TranslationEntry> strandedModUi = null;
+                var entriesRead = new TranslationFileEntries();
                 string strandedUiFont = null;
 
                 // Extract metadata and translations
@@ -2529,74 +2533,17 @@ namespace UnityGameTranslator.Core
                     }
                     else if (!prop.Name.StartsWith("_"))
                     {
-                        // Normalize key line endings for cross-platform consistency
-                        string normalizedKey = NormalizeLineEndings(prop.Name);
-
-                        // Handle both new format (object with v/t/i) and legacy format (string)
-                        TranslationEntry newEntry;
-                        if (prop.Value.Type == JTokenType.Object)
-                        {
-                            // New format: {"v": "value", "t": "A", "i": 123}
-                            var obj = prop.Value as JObject;
-                            newEntry = new TranslationEntry
-                            {
-                                // Normalize value line endings too
-                                Value = NormalizeLineEndings(obj?["v"]?.ToString() ?? ""),
-                                Tag = obj?["t"]?.ToString() ?? "A",
-                                Index = ParseTranslationIndex(obj?["i"])
-                            };
-                        }
-                        else if (prop.Value.Type == JTokenType.String)
-                        {
-                            // Legacy format: string value - convert to AI tag
-                            newEntry = new TranslationEntry
-                            {
-                                Value = NormalizeLineEndings(prop.Value.ToString()),
-                                Tag = "A"  // Default to AI for legacy data
-                            };
-                            cacheModified = true;  // Will save in new format
-                        }
-                        else
-                        {
-                            continue;
-                        }
-
-                        // 🔴 An interface line has no business in this file any more. It is taken
-                        // out here — before anything counts, hashes or merges it — and what
-                        // becomes of it is settled below, once the ancestor is known.
-                        if (newEntry.Tag == ModUi.Tag)
-                        {
-                            if (strandedModUi == null) strandedModUi = new Dictionary<string, TranslationEntry>();
-                            strandedModUi[normalizedKey] = newEntry;
-                            cacheModified = true;   // the file will be rewritten without it
-                            continue;
-                        }
-
-                        // Handle duplicates after normalization (e.g., "LB\r\n" and "LB\n" become same key)
-                        if (TranslationCache.TryGetValue(normalizedKey, out var existingEntry))
-                        {
-                            // Tag priority: H > V > A (Human > Validated > AI)
-                            int GetPriority(string tag) => tag == "H" ? 3 : tag == "V" ? 2 : 1;
-
-                            if (GetPriority(newEntry.Tag) > GetPriority(existingEntry.Tag))
-                            {
-                                TranslationCache[normalizedKey] = newEntry;
-                                cacheModified = true;
-                            }
-                            // Otherwise keep existing (higher or same priority)
-                        }
-                        else
-                        {
-                            TranslationCache[normalizedKey] = newEntry;
-                        }
-
-                        // Mark modified if key was normalized
-                        if (normalizedKey != prop.Name)
-                        {
-                            cacheModified = true;
-                        }
+                        // Which line wins a collision, which one has no business in this file, and
+                        // whether reading changed what the file should hold — see
+                        // Engine/TranslationFileEntries, where it can be replayed without a game.
+                        entriesRead.Read(prop.Name, prop.Value);
                     }
                 }
+
+                TranslationCache = entriesRead.Entries;
+                // Interface lines found where they no longer belong — see the migration below.
+                Dictionary<string, TranslationEntry> strandedModUi = entriesRead.StrandedModUi;
+                if (entriesRead.NeedsRewrite) cacheModified = true;
 
                 // Generate UUID if not present
                 if (string.IsNullOrEmpty(FileUuid))

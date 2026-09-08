@@ -96,6 +96,12 @@
     -->
     <Compile Include="../../UnityGameTranslator.Core/Engine/Backends.cs" />
     <!--
+      What a translations.json yields when it is read — the first slice of separating READING the
+      translation file from APPLYING it. Every branch in it can lose a translation without a word,
+      and the collision rule (a person over a review over a model) is invisible from anywhere else.
+    -->
+    <Compile Include="../../UnityGameTranslator.Core/Engine/TranslationFileEntries.cs" />
+    <!--
       What lets one cached sentence serve every value the game puts in it. A pattern that stops
       matching costs one call per number, for ever; one that matches too much shows a sentence
       about something else.

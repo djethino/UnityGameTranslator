@@ -52,6 +52,7 @@ namespace UnityGameTranslator.Core.Checks
             WhatAConfigFileStillMeans();
             HowAnEventStreamIsRead();
             WhatABackendIsHandedAndGivesBack();
+            WhatATranslationFileYields();
             HowTextChanges();
             WhenTextMayBeTyping();
             HowATargetIsNamed();
@@ -124,6 +125,12 @@ namespace UnityGameTranslator.Core.Checks
         private static void WhatABackendIsHandedAndGivesBack()
         {
             Section("Backends: taking a text apart and putting the answer back", BackendsChecks.Run);
+        }
+
+        /// <summary>What a translations.json yields, and what reading it says about the file.</summary>
+        private static void WhatATranslationFileYields()
+        {
+            Section("Reading a translation file", TranslationFileEntriesChecks.Run);
         }
 
         /// <summary>How a sentence carrying live numbers is read as the pattern it was cached from.</summary>

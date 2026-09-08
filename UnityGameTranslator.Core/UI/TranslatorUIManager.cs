@@ -1803,6 +1803,12 @@ namespace UnityGameTranslator.Core.UI
         // the very stream it arrived on.
         private static bool _streamDecided;
 
+        // Which translation this watch is a watch OF - the lineage, and the row it was downloaded
+        // from for somebody with no account. Same reasoning as _publicCheckETagSiteId just below:
+        // an answer means nothing away from the thing it is an answer about.
+        private static string _watchedUuid;
+        private static int? _watchedSiteId;
+
         // The periodic tick serves two different calls: the authenticated sync
         // state, or the public check for someone with no account
         private static bool _publicWatchActive;
@@ -1843,6 +1849,11 @@ namespace UnityGameTranslator.Core.UI
             _nextSyncCheckTime = 0f;
             _streamDecided = false;
             _publicWatchActive = false;
+
+            // Noted before anything else is decided: this is the translation everything below is
+            // about, and RewatchIfLineageChanged compares against it.
+            _watchedUuid = TranslatorCore.FileUuid;
+            _watchedSiteId = TranslatorCore.SourceSiteId;
 
             // Starting over: the failures of the watch being replaced are not this one's, and the
             // branches below may well decide not to watch at all.
@@ -2464,6 +2475,19 @@ namespace UnityGameTranslator.Core.UI
 
                 RunOnMainThread(() =>
                 {
+                    // 🔴 **An event about a translation the mod no longer holds is not news - it is
+                    // the previous one still talking.** RewatchIfLineageChanged closes this stream
+                    // when the lineage changes, but the closing and this callback are not the same
+                    // moment: the event was handed to the main thread queue before the stream was
+                    // disposed, and it runs afterwards regardless. Applied, it writes the old
+                    // lineage's role and ownership over the card of the one now loaded.
+                    if (!string.Equals(uuid, TranslatorCore.FileUuid, StringComparison.Ordinal))
+                    {
+                        TranslatorCore.LogInfo(
+                            $"[SyncSSE] Ignoring '{eventType}': it is about the translation we left");
+                        return;
+                    }
+
                     switch (eventType)
                     {
                         case "state":
@@ -3554,6 +3578,49 @@ namespace UnityGameTranslator.Core.UI
             // The options screen reads the configuration, which the load may have moved: the file
             // decides the languages, and the setting follows it.
             OptionsPanel?.RefreshFromConfig();
+
+            // And the online half, which is bound to a lineage and had no way of hearing about it.
+            RewatchIfLineageChanged();
+        }
+
+        /// <summary>
+        /// Point the watch at the translation that is actually loaded.
+        ///
+        /// 🔴 **A watch is bound to a LINEAGE, and nothing was re-pointing it.** Three latches are
+        /// set once per watch and never revisited - <c>_streamDecided</c>, <c>_publicWatchActive</c>
+        /// and the stream's own URL, which carries the uuid it was opened with. So loading a
+        /// different translation left every one of them describing the previous one, for the rest
+        /// of the session.
+        ///
+        /// 🔴 **Both directions were observed on a real install (2026-09-09), and they look like
+        /// two unrelated defects:**
+        ///
+        /// - starting on somebody else's translation settles "nothing of our own, no stream", so
+        ///   switching to one's own published Main afterwards opened nothing and the overlay never
+        ///   said Connected again;
+        /// - starting on one's own opens a stream on THAT uuid, and it stays open across the
+        ///   switch - so a state event for the translation that was left arrived minutes later and
+        ///   rewrote the card back to it, while the game went on showing the other one's lines.
+        ///
+        /// ⚠ **Only a different lineage restarts anything**, which is the same test LoadCache
+        /// already applies to the server state it keeps aside: reloading the SAME translation - the
+        /// ordinary case, an update pulled and applied - has learned nothing new about the server,
+        /// and tearing the stream down would show Connecting... to somebody who never left.
+        ///
+        /// ⚠ The site row is compared too, not only the uuid: a branch and the Main it contributes
+        /// to share a lineage and are two different rows, and the channel for somebody with no
+        /// account is keyed by the row alone.
+        /// </summary>
+        private static void RewatchIfLineageChanged()
+        {
+            bool sameLineage =
+                string.Equals(_watchedUuid, TranslatorCore.FileUuid, StringComparison.Ordinal)
+                && _watchedSiteId == TranslatorCore.SourceSiteId;
+
+            if (sameLineage) return;
+
+            TranslatorCore.LogInfo("[Sync] A different translation is loaded - watching that one instead");
+            StartSyncWatch();
         }
 
         /// <summary>

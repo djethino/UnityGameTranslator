@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.RegularExpressions;
+using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core.Checks
 {
@@ -108,24 +109,44 @@ namespace UnityGameTranslator.Core.Checks
             // Chinese→English translation came back wearing a Chinese→French one's replacement
             // image, its exclusions and its variables, none of which its own backup held.
             //
-            // ⚠ Each is named with what emptying it looks like, so the check fails on the thing
-            // that matters — the emptying — rather than on a mention of the owner anywhere.
-            var sections = new (string What, string Emptied)[]
-            {
-                ("the game settings", "ApplyGameSettingsSection(null)"),
-                ("the fonts",         "FontSettingsMap.Clear()"),
-                ("the font rules",    "fontOverrides.Load(null)"),
-                ("the exclusions",    "userExclusions.Load(null)"),
-                ("the images",        "ImageReplacer.LoadFromJson(null)"),
-                ("the variables",     "VariableManager.LoadFromJson(null)"),
-            };
+            // 🔴 **This used to name the six emptying calls one by one, which made it blind to a
+            // SEVENTH section** — its own weakness, and the reason the reading is now driven by the
+            // socle's table instead (2026-09-09). Both halves walk that table, so these cases walk
+            // it too: a section added to SettingsSections is covered the day it is named, in the
+            // one place where every product already learns about it.
+            check(clearedRegion.Contains("foreach (string section in SettingsSections.All)", StringComparison.Ordinal),
+                "every section the socle names is emptied before the file is read",
+                "a section a file does not carry means this translation has none, never keep the last one's — and the next save writes it into the file that never had it");
 
-            foreach (var section in sections)
+            check(clearedRegion.Contains("ApplySectionAtLoad(section, null)", StringComparison.Ordinal),
+                "and emptied through the same door that fills it",
+                "two doors is how emptying and reading came to disagree about what a section even is");
+
+            check(readRegion.Contains("SettingsSections.SectionOf(prop.Name)", StringComparison.Ordinal),
+                "and the file's keys are named back by that same table",
+                "matching them by hand is a second copy of the list, which nothing compares to the first");
+
+            check(readRegion.Contains("ApplySectionAtLoad(section, prop.Value)", StringComparison.Ordinal),
+                "and applied through it",
+                "the door is what makes the fonts' exception a named decision rather than two places that happen to differ");
+
+            // 🔴 The strong one: no section key spelled out anywhere in either region. It catches a
+            // hand-written branch coming back, and it covers a seventh section without being told.
+            var spelledOut = new List<string>();
+            foreach (string section in SettingsSections.All)
             {
-                check(clearedRegion.Contains(section.Emptied, StringComparison.Ordinal),
-                    $"{section.What} start empty",
-                    "a section a file does not carry means this translation has none, never keep the last one's — and the next save writes it into the file that never had it");
+                string key = SettingsSections.JsonKey(section);
+                if (key == null) continue;
+                if (clearedRegion.Contains("\"" + key + "\"", StringComparison.Ordinal)
+                    || readRegion.Contains("\"" + key + "\"", StringComparison.Ordinal))
+                    spelledOut.Add(key);
             }
+
+            check(spelledOut.Count == 0,
+                spelledOut.Count == 0
+                    ? $"and none of the {SettingsSections.All.Length} keys is written out here"
+                    : "SPELLED OUT INSTEAD OF ASKED: " + string.Join(", ", spelledOut),
+                "a key written here is a branch the socle's table does not know about, so adding a section leaves it unread");
         }
 
         private static string FindCore()

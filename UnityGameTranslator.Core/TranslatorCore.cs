@@ -1120,6 +1120,47 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Put one settings section into memory AS LOADING A FILE DOES IT — the single door
+        /// LoadCache uses, both to empty a section before reading and to fill it from what it read.
+        ///
+        /// 🔴 **It exists because loading was the one act that had never joined this region.** The
+        /// comment at the top says building and applying live here "in ONE place, so that loading a
+        /// file, saving it, and replacing a single section can never drift apart" — and loading did
+        /// exactly that: six hand-written branches matching six keys, a second copy of a list
+        /// nothing compared to the first. Saving already walks
+        /// <see cref="SettingsSections.All"/>, so a seventh section would have been written by
+        /// every product and read back by nobody, in silence.
+        ///
+        /// 🔴 **Fonts are the one real exception, and naming it is the point of this method.** At
+        /// LOAD the file is the whole truth, discovery inventory included: what a font is called on
+        /// this machine rebuilds itself as the game is played. When the PLAYER replaces the section
+        /// from a download the answer is the opposite — see
+        /// <see cref="ApplyFontsSectionPreservingInventory"/>. Two acts, deliberately, and the
+        /// difference now has a name instead of living in two places that happened to differ.
+        ///
+        /// ⚠ **A null token empties the section**, which is what every one of the six already did:
+        /// each parser is `as JObject` / `as JArray` and yields nothing on anything else, and
+        /// <c>Load(null)</c> is <c>Load(empty)</c> for both rule sets. That is also why no type
+        /// guard is needed here — a malformed section leaves the section empty, and nothing throws.
+        /// Throwing would matter: LoadCache's catch empties the translation cache and mints a new
+        /// UUID.
+        /// </summary>
+        private static void ApplySectionAtLoad(string section, JToken token)
+        {
+            if (section == SettingsSections.Fonts)
+            {
+                FontSettingsMap.Clear();
+                foreach (var kvp in ParseFontsSection(token))
+                {
+                    FontSettingsMap[kvp.Key] = kvp.Value;
+                }
+                return;
+            }
+
+            ApplySettingsSection(section, token);
+        }
+
+        /// <summary>
         /// Replace the font SETTINGS while keeping the discovery inventory.
         ///
         /// FontSettingsMap holds two different things: what the translator
@@ -2447,12 +2488,14 @@ namespace UnityGameTranslator.Core
             //
             // ⚠ Fonts included, inventory and all: the file is the whole truth at load, and what a
             // font is called on this machine rebuilds itself as the game is played.
-            ApplyGameSettingsSection(null);
-            FontSettingsMap.Clear();
-            fontOverrides.Load(null);
-            userExclusions.Load(null);
-            ImageReplacer.LoadFromJson(null);
-            VariableManager.LoadFromJson(null);
+            //
+            // ⚠ **The socle's list, not a copy of it.** These were six calls written out by hand,
+            // beside six branches further down that read the same six keys by hand — so emptying
+            // and reading could disagree, and a seventh section would have been in neither.
+            foreach (string section in SettingsSections.All)
+            {
+                ApplySectionAtLoad(section, null);
+            }
             // Both are written only when non-default, so their ABSENCE from the file means "clean".
             // Without resetting them here the parse below simply never assigns, and the in-memory
             // value survives the reload: after downloading the server's copy — which carries
@@ -2585,48 +2628,46 @@ namespace UnityGameTranslator.Core
                         var game = prop.Value as JObject;
                         savedSteamId = game?["steam_id"]?.Value<string>();
                     }
-                    else if (prop.Name == "_exclusions" && prop.Value.Type == JTokenType.Array)
+                    // 🔴 **One branch for the six settings sections, and the socle says which they
+                    // are.** They were six branches naming six keys — the same list SaveCache
+                    // walks from SettingsSections.All, written out a second time where nothing
+                    // compared the two. A section added to the table was written by every product
+                    // and read back by nobody.
+                    //
+                    // ⚠ No type guard, and it changes nothing: three of the six had one and three
+                    // did not, while the download path (ApplySettingsSection) has none at all.
+                    // Every parser is `as JObject` / `as JArray` and yields nothing on anything
+                    // else, so a malformed section leaves that section empty — exactly what
+                    // skipping the branch did, now that emptying happens before the loop.
+                    else if (SettingsSections.SectionOf(prop.Name) != null)
                     {
-                        userExclusions.Load(ParseExclusionsSection(prop.Value));
-                        LogDebug($"[LoadCache] Loaded {userExclusions.Patterns.Count} user exclusions");
-                    }
-                    else if (prop.Name == "_image_replacements")
-                    {
-                        ImageReplacer.LoadFromJson(prop.Value);
-                    }
-                    else if (prop.Name == "_variables")
-                    {
-                        VariableManager.LoadFromJson(prop.Value);
-                    }
-                    else if (prop.Name == "_fonts" && prop.Value.Type == JTokenType.Object)
-                    {
-                        // Loading a FILE replaces the map wholesale, inventory
-                        // included: the file is the whole truth at startup, and
-                        // the inventory rebuilds itself as the player plays.
-                        // (Replacing this section on the player's request is a
-                        // different move — see ApplyFontsSectionPreservingInventory.)
-                        FontSettingsMap.Clear();
-                        foreach (var kvp in ParseFontsSection(prop.Value))
-                        {
-                            FontSettingsMap[kvp.Key] = kvp.Value;
-                        }
-                        LogDebug($"[LoadCache] Loaded {FontSettingsMap.Count} font settings");
-                    }
-                    else if (prop.Name == "_font_overrides" && prop.Value.Type == JTokenType.Array)
-                    {
-                        fontOverrides.Load(ParseFontOverridesSection(prop.Value));
-                        LogDebug($"[LoadCache] Loaded {fontOverrides.Rules.Count} font override rules");
-                    }
-                    else if (prop.Name == "_settings" && prop.Value.Type == JTokenType.Object)
-                    {
-                        // ui_font described the MOD's interface from inside the GAME's file. It is
-                        // read here only to be carried over to the interface file once, then never
-                        // written back — see the migration below.
-                        strandedUiFont = (prop.Value as JObject)?["ui_font"]?.Value<string>();
-                        if (!string.IsNullOrEmpty(strandedUiFont)) cacheModified = true;
+                        string section = SettingsSections.SectionOf(prop.Name);
 
-                        ApplyGameSettingsSection(prop.Value);
-                        LogDebug($"[LoadCache] Loaded settings: DisableEventSystemOverride={DisableEventSystemOverride}, TW={TypewritingDetection}, Concat={ConcatDetection}");
+                        // ⚠ Lifted out BEFORE the section is applied, and it is not part of it:
+                        // ui_font described the MOD's interface from inside the GAME's file. Read
+                        // once, carried to the interface file by the migration below, never
+                        // written back here.
+                        if (section == SettingsSections.GameSettings)
+                        {
+                            strandedUiFont = (prop.Value as JObject)?["ui_font"]?.Value<string>();
+                            if (!string.IsNullOrEmpty(strandedUiFont)) cacheModified = true;
+                        }
+
+                        ApplySectionAtLoad(section, prop.Value);
+
+                        // What the section HOLDS once read, not what the file offered: an entry
+                        // the owner refused (a rule with no pattern, an image with no sprite) is
+                        // the kind of thing worth seeing in a log from a game we do not have.
+                        if (DebugMode)
+                        {
+                            var held = BuildSettingsSection(section);
+                            var heldArray = held as JArray;
+                            var heldObject = held as JObject;
+                            int kept = heldArray != null ? heldArray.Count
+                                     : heldObject != null ? heldObject.Count
+                                     : 0;
+                            LogDebug($"[LoadCache] {SettingsSections.Name(section)}: {kept} kept");
+                        }
                     }
                     else if (!prop.Name.StartsWith("_"))
                     {

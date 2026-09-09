@@ -1280,6 +1280,38 @@ namespace UnityGameTranslator.Core.UI.Panels
                 : $"Backups: {saved} of your own, {automatic} automatic");
         }
 
+        /// <summary>
+        /// What the card was last told the translation holds. -1 until it has been told anything.
+        /// </summary>
+        private int _shownLineCount = -1;
+
+        /// <summary>
+        /// Follow the translation growing under the card.
+        ///
+        /// 🔴 **Lines arrive from a thread that knows nothing about screens.** The worker stores a
+        /// captured or translated line and moves on; no event reaches any panel. So the card showed
+        /// whatever the count happened to be when something ELSE refreshed it, and stayed there —
+        /// reported from a game where the panel read 98 while the file held 145, and the Manager,
+        /// which reads the file, read 145 too.
+        ///
+        /// ⚠ **Ticked rather than pushed**, deliberately: pushing would mean the worker calling
+        /// into the interface for every line, on the wrong thread, hundreds of times a second while
+        /// capture runs. Asking costs one integer compare per tick and answers nothing the rest of
+        /// the time.
+        ///
+        /// ⚠ The whole card is refreshed, not the count alone: the same lines move
+        /// <c>LocalChangesCount</c>, and a card saying "145 lines" beside "98 unpublished changes"
+        /// would be a second way of being wrong.
+        /// </summary>
+        internal void RefreshCountIfChanged()
+        {
+            if (!Enabled || _statusCard == null) return;
+
+            if (TranslatorCore.TranslationCache.Count == _shownLineCount) return;
+
+            RefreshStatusCard();
+        }
+
         private void RefreshStatusCard()
         {
             if (_statusCard == null) return;
@@ -1290,6 +1322,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             int entryCount = TranslatorCore.TranslationCache.Count;
             string targetLang = TranslatorCore.Config.GetTargetLanguage();
             int localChanges = TranslatorCore.LocalChangesCount;
+
+            // Recorded here rather than by the caller, so a refresh from ANY door leaves the tick
+            // with the truth — see RefreshCountIfChanged.
+            _shownLineCount = entryCount;
 
             // Where this translation stands, on the four questions the socle keeps apart.
             //

@@ -1247,6 +1247,16 @@ namespace UnityGameTranslator.Core.UI
                     // The scope strips follow the width of the panel holding them, live.
                     TickResponsiveStrips();
 
+                    // 🔴 And the card follows the translation growing under it. Lines arrive from
+                    // the worker thread, which knows nothing about screens, so nothing was telling
+                    // the card — it showed whatever the count was when something else happened to
+                    // refresh it, and stayed there while capture ran on. Reported from a game where
+                    // the panel read 98 and the file held 145.
+                    //
+                    // ⚠ Same shape as the strips above: the tick asks, the panel answers with one
+                    // integer compare and returns.
+                    MainPanel?.RefreshCountIfChanged();
+
                     // And every themed button's label follows whether it can be pressed. See
                     // ButtonStates for why this is a registry ticked here rather than a component.
                     ButtonStates.Tick();

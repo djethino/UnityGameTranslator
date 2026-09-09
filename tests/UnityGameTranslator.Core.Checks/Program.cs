@@ -150,6 +150,7 @@ namespace UnityGameTranslator.Core.Checks
             Section("Who the server was asked as", AccountVerdictChecks.Run);
             Section("Which publishing act a screen offers", UploadOfferChecks.Run);
             Section("One comparison, one way out, on every screen", ComparisonDoorChecks.Run);
+            Section("A card that follows the translation growing under it", LiveCountChecks.Run);
         }
 
         /// <summary>How a sentence carrying live numbers is read as the pattern it was cached from.</summary>

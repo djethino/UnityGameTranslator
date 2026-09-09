@@ -2657,6 +2657,9 @@ namespace UnityGameTranslator.Core.UI
                 var translation = data["translation"];
                 var main = data["main"];
 
+                // ⚠ `as JObject` once, read three times below — see the note there.
+                var linesWaiting = data["lines_waiting"] as JObject;
+
                 // Build ServerState (replaces FetchServerState logic)
                 var serverState = new ServerTranslationState
                 {
@@ -2712,14 +2715,20 @@ namespace UnityGameTranslator.Core.UI
 
                     // The other axis, carried the same way as the total above and kept from the
                     // previous state for the same reason: a stream leaves it out by design.
-                    LinesToReview = data["lines_waiting"] != null
-                        ? data["lines_waiting"]["review"].ToObject<int?>()
+                    //
+                    // 🔴 **Read through `linesWaiting`, and that is not a tidy-up.** `!= null` was
+                    // true for a key the server sends as JSON null — a JValue is not a C# null —
+                    // so the indexer on the next line threw "Cannot access child value on JValue"
+                    // and took the whole handler with it, on every state event, for a lineage with
+                    // nothing waiting. Third time this trap has been paid for in this file.
+                    LinesToReview = linesWaiting != null
+                        ? linesWaiting["review"]?.ToObject<int?>()
                         : previous?.LinesToReview,
-                    LinesNew = data["lines_waiting"] != null
-                        ? ApiClient.TallyOf(data["lines_waiting"],"new")
+                    LinesNew = linesWaiting != null
+                        ? ApiClient.TallyOf(linesWaiting, "new")
                         : (previous?.LinesNew ?? default(TagTally)),
-                    LinesDiffering = data["lines_waiting"] != null
-                        ? ApiClient.TallyOf(data["lines_waiting"],"differing")
+                    LinesDiffering = linesWaiting != null
+                        ? ApiClient.TallyOf(linesWaiting, "differing")
                         : (previous?.LinesDiffering ?? default(TagTally)),
 
                     LinesOffered = data["lines_offered"] != null

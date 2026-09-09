@@ -926,7 +926,10 @@ namespace UnityGameTranslator.Core
         /// </summary>
         internal static TagTally TallyOf(JToken waiting, string side)
         {
-            var tags = waiting?[side];
+            // ⚠ `as JObject`, like every other reader here: `lines_waiting` comes back as JSON
+            // null on a lineage with nothing waiting, and `?.` lets a JValue through to an indexer
+            // that throws. The cast turns "not an object" into a C# null.
+            var tags = (waiting as JObject)?[side];
             if (tags == null || tags.Type != JTokenType.Object) return default(TagTally);
 
             return new TagTally

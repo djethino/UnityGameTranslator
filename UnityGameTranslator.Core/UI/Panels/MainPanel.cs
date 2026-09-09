@@ -1759,27 +1759,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // Non-owners can't compare because they don't have a server version to compare against
                 // ⚠ From the manager, because the sync notification offers the same button and
                 // the two must refuse in the same cases. See TranslatorUIManager.CanCompareWithServer.
-                // 🔴 **One button, two verbs — the shape "Edit in browser" already uses.** A
-                // comparison opened from here lives in a browser tab, and the game had no way to
-                // let go of it: closing the tab leaves the token alive until it expires, and the
-                // mod goes on waiting for a result nobody is going to send. The way out belongs on
-                // the control that opened it, not on a second one.
-                bool comparing = TranslatorUIManager.IsComparisonOpen;
-                bool canCompare = TranslatorUIManager.CanCompareWithServer;
-
-                _compareWithServerBtn.Visible = canCompare || comparing;
-                if (comparing)
-                {
-                    // ⚠ Named, not "Stop": three buttons on this row could be stopped.
-                    _compareWithServerBtn.Enabled = true;
-                    _compareWithServerBtn.Label = "Stop comparison";
-                }
-                else if (canCompare)
-                {
-                    _compareWithServerBtn.Enabled = isLoggedIn;
-                    // How many lines the comparison is about, on the button that opens it.
-                    _compareWithServerBtn.Label = $"Compare ({TranslatorCore.LocalChangesCount})";
-                }
+                RefreshCompareButton(isLoggedIn);
 
                 // Edit details — for owners of a published translation, whatever the sync state.
                 // That is the point: it exists precisely for when there is nothing else to push.
@@ -1828,7 +1808,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                                                            TranslatorCore.Config.api_user);
                     else if (isMain && hasBranches)
                         hint = Tr("Review Branches opens the website to accept or reject contributions");
-                    else if (canCompare)
+                    else if (TranslatorUIManager.CanCompareWithServer)
                         hint = Tr("Compare shows your changes against the website version");
                     _roleActionsHint.Show(hint);
                     _roleActionsHint.Visible = !string.IsNullOrEmpty(hint);
@@ -2018,6 +1998,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             // window is up", which would light both and say the wrong thing about one of them.
             if (_uploadBtn != null) _uploadBtn.Showing = upload?.IsShowingUpload == true;
             if (_editDetailsBtn != null) _editDetailsBtn.Showing = upload?.IsShowingDetails == true;
+
+            // ⚠ The comparison lives in a BROWSER, so nothing in this window is told when it opens,
+            // ends, or is closed from the page. Asked here for the same reason as the rest.
+            RefreshCompareButton(!string.IsNullOrEmpty(TranslatorCore.Config.api_token));
         }
 
         private void OnReviewOnWebsiteClicked()
@@ -2248,6 +2232,43 @@ namespace UnityGameTranslator.Core.UI.Panels
             TranslatorUIManager.OfferFork(RefreshUI);
         }
 
+        /// <summary>
+        /// What the Compare button says and whether it may act.
+        ///
+        /// 🔴 **One button, two verbs — the shape "Edit in browser" already uses.** A comparison
+        /// opened from here lives in a browser tab, and the game had no way to let go of it:
+        /// closing the tab leaves the token alive until it expires, and the mod goes on waiting for
+        /// a result nobody is going to send. The way out belongs on the control that opened it.
+        ///
+        /// 🔴 **Written HERE and nowhere else, because the click used to write it too.** The
+        /// browser having been opened, the callback restored the label with a literal "Compare" —
+        /// so the button went straight past the verb it should have taken, and stayed on the wrong
+        /// one until something happened to refresh the whole panel. Two authors for one label, and
+        /// the one that ran last knew the least.
+        /// </summary>
+        private void RefreshCompareButton(bool isLoggedIn)
+        {
+            if (_compareWithServerBtn == null) return;
+
+            bool comparing = TranslatorUIManager.IsComparisonOpen;
+            bool canCompare = TranslatorUIManager.CanCompareWithServer;
+
+            _compareWithServerBtn.Visible = canCompare || comparing;
+
+            if (comparing)
+            {
+                // ⚠ Named, not "Stop": three buttons on this row could be stopped.
+                _compareWithServerBtn.Enabled = true;
+                _compareWithServerBtn.Label = "Stop comparison";
+            }
+            else if (canCompare)
+            {
+                _compareWithServerBtn.Enabled = isLoggedIn;
+                // How many lines the comparison is about, on the button that opens it.
+                _compareWithServerBtn.Label = $"Compare ({TranslatorCore.LocalChangesCount})";
+            }
+        }
+
         private async void OnCompareWithServerClicked()
         {
             // The button says Stop, so it stops — the same door the reload path uses, which ends
@@ -2280,14 +2301,11 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // Publishing comparison: this is our own translation, and validating it there
                 // updates the online version. Shared with the settings dialog's Compare, which
                 // opens the same page in the other direction.
-                await TranslatorUIManager.OpenComparison(siteId, toLocal: false, onFinished: () =>
-                {
-                    if (_compareWithServerBtn != null)
-                    {
-                        _compareWithServerBtn.Enabled = true;
-                        _compareWithServerBtn.Label = "Compare";
-                    }
-                });
+                // ⚠ Asks rather than writes: by the time the browser is up, the comparison is in
+                // flight and the verb has changed. Writing "Compare" here is what put the button
+                // back on the verb it had just left.
+                await TranslatorUIManager.OpenComparison(siteId, toLocal: false,
+                    onFinished: () => RefreshCompareButton(isLoggedIn: true));
             }
             catch (System.Exception e)
             {
@@ -2295,13 +2313,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TranslatorUIManager.RunOnMainThread(() =>
                 {
                     TranslatorCore.LogWarning($"[MainPanel] Compare error: {errorMsg}");
-
-                    // Re-enable button
-                    if (_compareWithServerBtn != null)
-                    {
-                        _compareWithServerBtn.Enabled = true;
-                        _compareWithServerBtn.Label = "Compare";
-                    }
+                    RefreshCompareButton(isLoggedIn: true);
                 });
             }
         }

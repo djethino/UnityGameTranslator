@@ -1,4 +1,5 @@
 using System;
+using System.Threading.Tasks;
 using UniverseLib.UI;
 using UnityGameTranslator.Core.UI.Components;
 using UnityGameTranslator.Common;
@@ -61,6 +62,20 @@ namespace UnityGameTranslator.Core.UI.Panels
         private string _selectedSourceLanguage;
         private string _selectedTargetLanguage;
         private bool _setupComplete = false;
+
+        /// <summary>
+        /// Opened to change what the translation SAYS about itself, not to send it.
+        ///
+        /// 🔴 **The same window served both acts and announced only one of them.** "Edit details"
+        /// opened this screen, which titled itself "Update Translation" and carried the mark for
+        /// "both sides end up carrying this" — while the button that opened it carried the mark for
+        /// "only your published copy changes". Two marks for one click, and the honest one was on
+        /// the button.
+        ///
+        /// ⚠ Now it is also TRUE: details go through PATCH /details and the file is not sent. The
+        /// comment that justified re-sending said the route did not exist; it does.
+        /// </summary>
+        private bool _detailsOnly;
 
         public UploadPanel(UIBase owner) : base(owner)
         {
@@ -240,6 +255,12 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _setupComplete = false;
                 _selectedSourceLanguage = null;
                 _selectedTargetLanguage = null;
+
+                // What THIS opening is for. Read once and consumed, so every other way in — the
+                // Upload button, a Contribute, a Fork — opens the ordinary screen.
+                _detailsOnly = _openingForDetails;
+                _openingForDetails = false;
+
                 CheckUploadMode();
             }
         }
@@ -247,6 +268,22 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// <summary>
         /// Called by UploadSetupPanel when user completes setup for NEW upload.
         /// </summary>
+        /// <summary>
+        /// Open this screen for the sole purpose of changing the description and the resources
+        /// link of an already published translation.
+        /// </summary>
+        public void OpenForDetails()
+        {
+            _openingForDetails = true;
+            SetActive(true);
+        }
+
+        // ⚠ Pending, not the flag itself: SetActive settles what this opening is FOR, and it runs
+        // after this. Set directly, the reset inside SetActive would clear it before anything read
+        // it — and worse, the flag would survive into the NEXT opening, so an ordinary Upload would
+        // silently become a details edit.
+        private bool _openingForDetails;
+
         public void ContinueAfterSetup(GameInfo game, string sourceLanguage, string targetLanguage)
         {
             _selectedSourceLanguage = sourceLanguage;
@@ -387,10 +424,27 @@ namespace UnityGameTranslator.Core.UI.Panels
                         {
                             _uploadMode = UploadMode.Update;
                             RefreshStatusControl();
-                            _titleLabel.Say("Update Translation");
-                            _modeInfoLabel.Say($"Updating: ID #{siteId}");
-                            _uploadBtn.Label = Uploads.Verb(UploadAct.Update);
-                            DescribeUploadButton("Replace your published version with your current local file");
+
+                            // ⚠ Two acts, two identities. The details act sends no translation, so
+                            // it says so — in its title, in its mark, and on its button.
+                            if (_detailsOnly)
+                            {
+                                _titleLabel.Say("Edit details");
+                                AskTitleScope(EditScope.SideAfter(onThisMachine: false,
+                                                                  yourPublishedCopy: true));
+                                _modeInfoLabel.Say($"Translation #{siteId} — the translation itself is not sent");
+                                _uploadBtn.Label = "Save";
+                                DescribeUploadButton("Change what your published translation says about itself. The translation is not sent.");
+                            }
+                            else
+                            {
+                                _titleLabel.Say("Update Translation");
+                                AskTitleScope(EditScope.SideAfter(onThisMachine: true,
+                                                                  yourPublishedCopy: true));
+                                _modeInfoLabel.Say($"Updating: ID #{siteId}");
+                                _uploadBtn.Label = Uploads.Verb(UploadAct.Update);
+                                DescribeUploadButton("Replace your published version with your current local file");
+                            }
 
                             // Note: Type is now auto-calculated by server from HVASM tags
                             _notesInput.Text = existingNotes;
@@ -750,6 +804,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             _isUploading = true;
             _uploadBtn.Enabled = false;
 
+            // 🔴 **Details go their own way, and send no translation.** Everything below builds and
+            // sends the file; this act changes two fields on a row that already exists.
+            if (_detailsOnly)
+            {
+                await SaveDetailsOnly();
+                return;
+            }
+
             string actionText = _uploadMode == UploadMode.Update ? "Updating..." :
                                (_uploadMode == UploadMode.Branch ? "Contributing..." : "Uploading...");
             _status.Say(actionText, Tone.Warning);
@@ -934,6 +996,51 @@ namespace UnityGameTranslator.Core.UI.Panels
                     _uploadBtn.Enabled = true;
                 });
             }
+        }
+
+        /// <summary>
+        /// Send the description and the resources link, and nothing else.
+        ///
+        /// ⚠ The site is the only place these live, so there is nothing local to write afterwards
+        /// — which is exactly what the window's mark says: the published copy carries the result,
+        /// this machine does not.
+        /// </summary>
+        private async Task SaveDetailsOnly()
+        {
+            int? siteId = TranslatorCore.ServerState?.SiteId;
+            if (siteId == null)
+            {
+                _isUploading = false;
+                _uploadBtn.Enabled = true;
+                _status.Show(Tr("This translation is not published, so it has no details to change."),
+                             Tone.Error);
+                return;
+            }
+
+            _status.Say("Saving...", Tone.Warning);
+
+            string notes = _notesInput.Text;
+            string resourcesUrl = _resourcesUrlInput?.Text?.Trim();
+
+            var result = await ApiClient.UpdateDetails(siteId.Value, notes, resourcesUrl);
+
+            TranslatorUIManager.RunOnMainThread(() =>
+            {
+                _isUploading = false;
+                _uploadBtn.Enabled = true;
+
+                if (!result.Success)
+                {
+                    _status.Show(Tr("Error:") + $" {result.Error}", Tone.Error);
+                    return;
+                }
+
+                _status.Show(Tr("Saved."), Tone.Success);
+
+                // The settings that travel with a translation are unchanged by this, so nothing
+                // local is dirty — but the screens read the notes from the server state.
+                TranslatorUIManager.MainPanel?.RefreshUI();
+            });
         }
 
         private string BuildTranslationContent()

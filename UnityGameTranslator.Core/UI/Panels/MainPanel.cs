@@ -1908,15 +1908,21 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// its notes and its resources link. Both are prefilled from the published version, so the
         /// user edits rather than retypes.
         ///
-        /// Deliberately reuses the upload path instead of a dedicated call: publishing metadata
-        /// alone would need a server route that does not exist. The cost is that the file is sent
-        /// again unchanged — acceptable for an action taken once in a while, and it keeps the
-        /// server as the single source of truth for what a published translation contains.
+        /// ⚠ **It shares the SCREEN, not the act.** The upload window already holds both fields,
+        /// prefilled from the published version, so a second panel would be the same form twice —
+        /// but it is opened for this purpose, says so in its title and its mark, and sends the two
+        /// fields through PATCH /details rather than the whole translation.
+        ///
+        /// 🔴 The comment that used to live here said a metadata route did not exist and that the
+        /// file was therefore re-sent unchanged. The route exists. Re-sending was not merely
+        /// wasteful: it made this button and Upload the same act, so the window could not say which
+        /// one had been asked for, and the two carried contradictory marks for where the result
+        /// lands.
         /// </summary>
         private void OnEditDetailsClicked()
         {
             if (!TranslatorCore.Config.online_mode) return;
-            TranslatorUIManager.UploadPanel?.SetActive(true);
+            TranslatorUIManager.UploadPanel?.OpenForDetails();
         }
 
         private void OnReviewOnWebsiteClicked()

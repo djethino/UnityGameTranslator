@@ -48,6 +48,17 @@ namespace UnityGameTranslator.Core.UI.Components
         /// leaving its cell free lets the layout squeeze the cell and crush the word inside it.
         /// </summary>
         private readonly List<GameObject> _scopeCells = new List<GameObject>();
+
+        // Kept so the strip can be lit again — see Relight. The mark is half of what "lit" looks
+        // like, so re-colouring the word alone would leave the picture saying the opposite.
+        private readonly List<Image> _scopeMarks = new List<Image>();
+
+        // What the panel asked for, kept because the ANSWER depends on facts that arrive later.
+        private EditSide _scopeAsked;
+
+        // What was last painted: the lit side, and which sides were available. Compared rather than
+        // repainted, because Refresh runs on every frame of every visible panel.
+        private string _scopePainted;
         private EditSide _scopeLit;
         private StripTier _scopeTier = StripTier.Mini;
         private float _scopeFull, _scopeMedium, _scopeMini, _scopeTitleWidth;
@@ -195,6 +206,8 @@ namespace UnityGameTranslator.Core.UI.Components
 
             bar._scopeTitleWidth = text.Length * UIStyles.FontSizeSectionTitle * 0.62f;
             bar._scopeLit = lit;
+            bar._scopeAsked = side;
+            bar._scopePainted = PaintKey(sides, lit);
 
             // Built at the floor so the strip only grows into room it certainly has; the first
             // refresh, once everything exists and can be measured, decides for real.
@@ -236,8 +249,8 @@ namespace UnityGameTranslator.Core.UI.Components
                 UIStyles.SetBackground(cell,
                     selected ? UIStyles.ItemBackgroundSelected : UIStyles.ItemBackground);
 
-                AddScopeMark(cell, name + standing.Side + "Mark",
-                             EditScope.Mark(standing.Side), markColour);
+                var markImage = AddScopeMark(cell, name + standing.Side + "Mark",
+                                             EditScope.Mark(standing.Side), markColour);
 
                 // ⚠ Always CREATED, shown or hidden according to the tier. Creating them only when
                 // they fit would mean rebuilding the row to get them back on a resize — and the
@@ -272,6 +285,7 @@ namespace UnityGameTranslator.Core.UI.Components
                 bar._scopeWords.Add(chip);
                 bar._scopeOrder.Add(standing.Side);
                 bar._scopeCells.Add(cell);
+                bar._scopeMarks.Add(markImage);
 
                 // The stand-in until the real thing can be read. Every word is created ACTIVE, so
                 // the measurement below sees all three before any of them is hidden.
@@ -454,6 +468,8 @@ namespace UnityGameTranslator.Core.UI.Components
         {
             if (_scopeWords.Count == 0) return;
 
+            Relight();
+
             // 🔴 **The ROW's width, not the panel's.** This row lives inside a card inside a
             // section, each with its own padding, so it is far narrower than the window around it —
             // by fifty pixels or more. Measuring the panel told the strip it had room it did not
@@ -603,10 +619,10 @@ namespace UnityGameTranslator.Core.UI.Components
         /// one must not take the label with it. The words alone still say everything; the pictures
         /// are what makes the control recognisable elsewhere, not what makes it legible here.
         /// </summary>
-        private static void AddScopeMark(GameObject parent, string name, string mark, Color colour)
+        private static Image AddScopeMark(GameObject parent, string name, string mark, Color colour)
         {
             var sprite = Icons.Get(mark);
-            if (sprite == null) return;
+            if (sprite == null) return null;
 
             // ⚠ A FIXED square, not a share of the row. Given only a minimum, the mark took the
             // full height of its cell and a matching width — three of those beside a title is most
@@ -621,12 +637,82 @@ namespace UnityGameTranslator.Core.UI.Components
             image.color = colour;
             image.preserveAspect = true;
             image.raycastTarget = false;
+
+            // Handed back so the strip can re-colour it when the lit side changes — see Relight.
+            return image;
         }
 
         /// <summary>
         /// What is reachable from inside a running game: the file here always, the published
         /// version once signed in and leading its lineage.
         /// </summary>
+        /// <summary>
+        /// Light the strip from what is known NOW.
+        ///
+        /// 🔴 **It was decided once, at construction — before anything was known.** Panels are
+        /// built when the mod starts, and <see cref="ScopeSides"/> asks whether this account has
+        /// published this lineage: at that moment <c>ServerState</c> is null, so the published side
+        /// reads as unavailable, <c>Both</c> with it, and <see cref="EditScope.Default"/> falls back
+        /// to <c>Local</c> — deliberately, since falling towards publishing would be worse. The
+        /// answer arrives seconds later from check-uuid and nothing ever asked again.
+        ///
+        /// So the upload screen sat under a title saying "Update Translation" with the LOCAL mark
+        /// lit, and the button that opened it carried a different mark from the window it opened.
+        /// Same family as the sync watch and the interface file: settled once, never re-derived.
+        ///
+        /// ⚠ **Compared before painting**, because Refresh runs every frame on every visible panel.
+        /// The key is the lit side plus which sides are available — the two things that decide what
+        /// this looks like.
+        /// </summary>
+        /// <summary>
+        /// Change which side this screen is about — for a window that serves two acts.
+        ///
+        /// ⚠ Only the ASKED side moves; whether it can be lit is still availability's answer, and
+        /// Relight repaints on the next frame like any other change.
+        /// </summary>
+        public void Ask(EditSide side)
+        {
+            _scopeAsked = side;
+            Relight();
+        }
+
+        private void Relight()
+        {
+            var sides = ScopeSides(_scopeAsked);
+            var lit = EditScope.Default(sides, _scopeAsked);
+
+            string key = PaintKey(sides, lit);
+            if (key == _scopePainted) return;
+
+            _scopePainted = key;
+            _scopeLit = lit;
+
+            for (int i = 0; i < sides.Length && i < _scopeCells.Count; i++)
+            {
+                bool selected = sides[i].Side == lit && sides[i].Available;
+
+                UIStyles.SetBackground(_scopeCells[i],
+                    selected ? UIStyles.ItemBackgroundSelected : UIStyles.ItemBackground);
+
+                if (i < _scopeWords.Count && _scopeWords[i] != null)
+                {
+                    _scopeWords[i].color = selected ? UIStyles.TextPrimary : UIStyles.TextMuted;
+                    _scopeWords[i].fontStyle = selected ? FontStyle.Bold : FontStyle.Normal;
+                }
+
+                if (i < _scopeMarks.Count && _scopeMarks[i] != null)
+                    _scopeMarks[i].color = selected ? UIStyles.MarkLit : UIStyles.TextMuted;
+            }
+        }
+
+        /// <summary>What the strip looks like, in one comparable value.</summary>
+        private static string PaintKey(SideStanding[] sides, EditSide lit)
+        {
+            var key = new System.Text.StringBuilder().Append((int)lit);
+            foreach (var side in sides) key.Append(side.Available ? '1' : '0');
+            return key.ToString();
+        }
+
         private static SideStanding[] ScopeSides(EditSide side)
         {
             bool signedIn = !string.IsNullOrEmpty(TranslatorCore.Config?.api_token);

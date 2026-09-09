@@ -810,10 +810,14 @@ namespace UnityGameTranslator.Core.UI.Panels
                                            serverState?.AcceptsBranches, serverState?.MainMissing,
                                            serverState?.MainAbandoned, serverState?.BranchFrozen);
 
+                        // ⚠ The reason is prefixed with the button it is ABOUT. On its own,
+                        // "Login required" reads as a statement of fact beside a greyed button —
+                        // it never says that signing in is what turns that button back on. The
+                        // other half already names itself the same way.
                         string branchHalf = wall != null
                             ? Tr(wall)
                             : branchClosed != null
-                                ? Tr(branchClosed)
+                                ? Tr("Branch:") + " " + Tr(branchClosed)
                                 : Tr("Branch: send them for review to") + $" @{ownerName}";
 
                         hint = branchHalf + " • "
@@ -914,8 +918,18 @@ namespace UnityGameTranslator.Core.UI.Panels
                         say = "Connecting..."; tone = Tone.Warning; break;
                     case SseConnectionState.Reconnecting:
                         say = "Reconnecting..."; tone = Tone.Warning; break;
+                    // ⚠ **What it says moves, because something is happening.** A link that
+                    // dropped and is waiting for its next try used to read "Reconnecting…" and
+                    // never change — for hours, if the network stayed down — so a dead stream and
+                    // a slow one looked identical. The countdown is the difference, and it is the
+                    // one thing that says the mod has not given up.
                     default:
-                        if (TranslatorUIManager.SyncStreamWanted) { say = "Disconnected"; tone = Tone.Error; }
+                        if (TranslatorUIManager.SyncStreamWanted)
+                        {
+                            int wait = TranslatorUIManager.SyncRetryInSeconds;
+                            say = wait > 0 ? $"Retrying in {wait}s" : "Disconnected";
+                            tone = Tone.Error;
+                        }
                         break;
                 }
 

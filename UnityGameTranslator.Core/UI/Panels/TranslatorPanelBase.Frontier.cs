@@ -204,6 +204,12 @@ namespace UnityGameTranslator.Core.UI.Panels
         public void RefreshScopeStrip() => _scopedTitle?.Refresh();
 
         /// <summary>
+        /// Say which side this window is about now — for a screen that serves two acts and must
+        /// carry the mark of whichever one opened it.
+        /// </summary>
+        protected void AskTitleScope(EditSide side) => _scopedTitle?.Ask(side);
+
+        /// <summary>
         /// Forget the strip's measurements and take them again — after the interface font changes.
         /// Without this a font change leaves the strip reasoning with the OLD font's metrics until
         /// somebody happens to resize the window.

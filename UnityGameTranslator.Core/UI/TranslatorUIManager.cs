@@ -85,6 +85,14 @@ namespace UnityGameTranslator.Core.UI
         public static bool SyncStreamWanted => _syncSseClient != null;
 
         /// <summary>
+        /// Seconds until the stream tries again, while it is between two attempts.
+        ///
+        /// ⚠ Zero when there is nothing to wait for — no stream, or one that is up. The screen uses
+        /// it to say which of two moments a dropped link is in; see SseClient.NextAttemptUtc.
+        /// </summary>
+        public static int SyncRetryInSeconds => _syncSseClient?.RetryInSeconds ?? 0;
+
+        /// <summary>
         /// Whether comparing this file with its published version is something that can be done.
         ///
         /// 🔴 **One condition, read by both screens that offer it.** The main panel and the sync

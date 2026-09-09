@@ -33,6 +33,26 @@ namespace UnityGameTranslator.Core
         private bool _disposed;
 
         private const int MAX_RECONNECT_DELAY_MS = 30000;
+
+        /// <summary>
+        /// When the next attempt is due, in <see cref="DateTime.UtcNow"/> terms, while the state is
+        /// <see cref="SseConnectionState.Disconnected"/> between two tries. Default otherwise.
+        ///
+        /// 🔴 **Because "Reconnecting…" for six minutes says nothing.** The state used to stay on
+        /// Reconnecting through the WAIT as well as through the attempt, so a stream that could not
+        /// come back showed one unchanging amber line for as long as the game ran — no way to tell
+        /// a slow reconnection from a dead one, and nothing moving to suggest anything was still
+        /// being tried. Observed by turning a firewall on.
+        ///
+        /// ⚠ It does not stop retrying, and that is deliberate: the game is running, the network
+        /// comes back, and the periodic channel is the one that gives up (three tries, then the
+        /// chosen rhythm). What this adds is honesty about which of the two moments we are in.
+        /// </summary>
+        public DateTime NextAttemptUtc { get; private set; }
+
+        /// <summary>Seconds until the next attempt, floored at zero. Only meaningful while Disconnected.</summary>
+        public int RetryInSeconds =>
+            Math.Max(0, (int)Math.Ceiling((NextAttemptUtc - DateTime.UtcNow).TotalSeconds));
         private const int HEARTBEAT_TIMEOUT_MS = 60000;
 
         /// <summary>
@@ -228,11 +248,12 @@ namespace UnityGameTranslator.Core
 
                 if (ct.IsCancellationRequested) return;
 
-                // Exponential backoff before trying again. Called a reconnection only when there
-                // was a connection to lose — see everConnected above.
-                SetState(everConnected
-                    ? SseConnectionState.Reconnecting
-                    : SseConnectionState.Connecting);
+                // ⚠ **Disconnected while WAITING, not Reconnecting.** The two are different
+                // moments and only one of them is an attempt: saying "Reconnecting…" through a
+                // thirty-second wait made a dead link and a slow one look identical, for hours.
+                // The attempt itself sets Reconnecting at the top of the loop.
+                NextAttemptUtc = DateTime.UtcNow.AddMilliseconds(_reconnectDelayMs);
+                SetState(SseConnectionState.Disconnected);
                 try
                 {
                     await Task.Delay(_reconnectDelayMs, ct);

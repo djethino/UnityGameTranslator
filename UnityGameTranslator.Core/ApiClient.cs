@@ -2300,6 +2300,65 @@ namespace UnityGameTranslator.Core
             public int PendingChanges { get; set; }
         }
 
+        /// <summary>What came of asking the site to change what a translation says about itself.</summary>
+        public class DetailsResult
+        {
+            public bool Success;
+            public string Error;
+        }
+
+        /// <summary>
+        /// Change what a published translation SAYS about itself — its description, its resources
+        /// link — without sending the translation again.
+        ///
+        /// 🔴 **The mod used to re-upload the whole file for this**, with a comment explaining that
+        /// a metadata route did not exist. It does: `PATCH /translations/{id}/details`, and it
+        /// writes only the fields it is sent. Re-sending was not merely wasteful — it made "Edit
+        /// details" and "Upload" the same act, so the screen could not honestly say which one the
+        /// person had asked for, and the two carried contradictory marks for where the result lands.
+        ///
+        /// ⚠ Only what is being changed is sent. An absent field means "no opinion" on this route —
+        /// the opposite of the upload's rule — so a client fixing a link never restates a
+        /// description it may not have read.
+        /// </summary>
+        public static async Task<DetailsResult> UpdateDetails(int translationId, string notes,
+                                                              string resourcesUrl)
+        {
+            try
+            {
+                var body = new JObject
+                {
+                    ["notes"] = notes ?? "",
+                    ["resources_url"] = string.IsNullOrWhiteSpace(resourcesUrl) ? null : resourcesUrl,
+                };
+
+                var content = new StringContent(body.ToString(), Encoding.UTF8, "application/json");
+                var request = new HttpRequestMessage(new HttpMethod("PATCH"),
+                    $"{DefaultBaseUrl}/translations/{translationId}/details") { Content = content };
+
+                var response = await client.SendAsync(request);
+                string answer = await response.Content.ReadAsStringAsync();
+
+                if (response.IsSuccessStatusCode) return new DetailsResult { Success = true };
+
+                // The site says why in words meant to be shown; falling back to the status code is
+                // better than "something went wrong" and worse than what it wrote.
+                var parsed = ParseJsonSafe(answer);
+                return new DetailsResult
+                {
+                    Success = false,
+                    Error = parsed?["message"]?.Value<string>()
+                            ?? parsed?["error"]?.Value<string>()
+                            ?? $"HTTP {(int)response.StatusCode}",
+                };
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogWarning($"[ApiClient] Details update error: {e.Message}");
+                return new DetailsResult { Success = false, Error = e.Message };
+            }
+        }
+
         /// <summary>
         /// End the edit session server-side (user clicked Stop in the mod,
         /// the browser page was closed past the grace period, or the game is

@@ -760,18 +760,13 @@ namespace UnityGameTranslator.Core.UI.Panels
                 if (_syncForkBtn != null) _syncForkBtn.Visible = showBranchFork;
                 if (_syncActionBtn != null) _syncActionBtn.Visible = showAction;
 
-                // ⚠ **Absent while one is in flight**, where the main panel turns into "Stop
-                // comparison": this row has six controls and no room to explain a second verb, and
-                // offering Compare again would open a SECOND token while abandoning the first. The
-                // way out lives on the screen that has room for it.
-                bool canCompare = TranslatorUIManager.CanCompareWithServer
-                                  && !TranslatorUIManager.IsComparisonOpen;
-                if (_syncCompareBtn != null)
-                {
-                    _syncCompareBtn.Visible = canCompare;
-                    // The same label as on the main panel: how many lines the comparison is about.
-                    if (canCompare) _syncCompareBtn.Label = $"Compare ({TranslatorCore.LocalChangesCount})";
-                }
+                // 🔴 **It turns into the way out, it does not go away.** It used to be hidden while
+                // a comparison was in flight, on the reasoning that this row is crowded and the way
+                // out could live on the main panel. Two things were wrong with that: a control
+                // vanishing at the moment it is clicked reads as the click having failed, and the
+                // same fact then said two different things on two screens — which is the one thing
+                // an ecosystem may not do. Whoever opened it from here closes it from here.
+                RefreshCompareButton();
 
                 // 🔴 **The refusal is said before the click, not after the form.** This button
                 // opened the upload window whatever the state of the account, so somebody with no
@@ -1167,6 +1162,15 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         private async void OnSyncCompareClicked()
         {
+            // The button says Stop, so it stops — the same door the main panel and the reload path
+            // use, which ends the token on the site so the browser tab is told rather than left
+            // hanging until it expires.
+            if (TranslatorUIManager.IsComparisonOpen)
+            {
+                TranslatorUIManager.EndComparison("stopped from the notification");
+                return;
+            }
+
             var siteId = TranslatorCore.ServerState?.SiteId;
             if (siteId == null) return;
 
@@ -1174,8 +1178,9 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             try
             {
-                await TranslatorUIManager.OpenComparison(siteId.Value, toLocal: false,
-                    onFinished: RestoreCompareButton);
+                // ⚠ Nothing is passed back for the label: by the time the browser is up the verb
+                // has changed, and OpenComparison tells both screens itself.
+                await TranslatorUIManager.OpenComparison(siteId.Value, toLocal: false);
             }
             catch (System.Exception e)
             {
@@ -1183,16 +1188,37 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TranslatorUIManager.RunOnMainThread(() =>
                 {
                     TranslatorCore.LogWarning($"[StatusOverlay] Compare error: {errorMsg}");
-                    RestoreCompareButton();
+                    RefreshCompareButton();
                 });
             }
         }
 
-        private void RestoreCompareButton()
+        /// <summary>
+        /// What the Compare button says here — the only place that writes it, as on the main panel
+        /// and for the same reason: two authors for one label, and the one that ran last knew the
+        /// least.
+        /// </summary>
+        private void RefreshCompareButton()
         {
             if (_syncCompareBtn == null) return;
-            _syncCompareBtn.Enabled = true;
-            _syncCompareBtn.Label = $"Compare ({TranslatorCore.LocalChangesCount})";
+
+            bool comparing = TranslatorUIManager.IsComparisonOpen;
+            bool canCompare = TranslatorUIManager.CanCompareWithServer;
+
+            _syncCompareBtn.Visible = canCompare || comparing;
+
+            if (comparing)
+            {
+                // ⚠ Named, not "Stop": this row carries six controls that could all be stopped.
+                _syncCompareBtn.Enabled = true;
+                _syncCompareBtn.Label = "Stop comparison";
+            }
+            else if (canCompare)
+            {
+                _syncCompareBtn.Enabled = true;
+                // The same label as on the main panel: how many lines the comparison is about.
+                _syncCompareBtn.Label = $"Compare ({TranslatorCore.LocalChangesCount})";
+            }
         }
 
         private void OnSyncSettingsClicked()

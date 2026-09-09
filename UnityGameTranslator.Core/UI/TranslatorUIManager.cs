@@ -3170,8 +3170,15 @@ namespace UnityGameTranslator.Core.UI
         /// bringing the online one back into our own file without publishing anything. The second
         /// is the only mode that works against a translation we do not own — a branch measuring
         /// itself against its Main.
+        ///
+        /// 🔴 **This is where the screens learn a comparison has started, exactly as
+        /// <see cref="EndComparison"/> is where they learn it is over.** They used to learn it from
+        /// a callback each caller passed for its OWN button, so whichever screen was not clicked
+        /// went on showing the verb it had just left — and there is no such thing as "the screen
+        /// that opened it": the corner notification and the main panel carry the same button, about
+        /// the same comparison.
         /// </summary>
-        public static async Task OpenComparison(int translationId, bool toLocal, Action onFinished = null)
+        public static async Task OpenComparison(int translationId, bool toLocal)
         {
             var result = await ApiClient.InitMergePreview(translationId, TranslatorCore.TranslationCache, toLocal);
 
@@ -3201,7 +3208,10 @@ namespace UnityGameTranslator.Core.UI
                         Panels.StatusOverlay.ToastTone.Off);
                 }
 
-                onFinished?.Invoke();
+                // Both screens, both outcomes — the same pair EndComparison uses. On success they
+                // take the way out; on failure they come off "Loading..." and back to the offer.
+                MainPanel?.RefreshUI();
+                StatusOverlay?.RefreshOverlay();
             });
         }
 

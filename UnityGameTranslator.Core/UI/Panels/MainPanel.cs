@@ -2301,11 +2301,10 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // Publishing comparison: this is our own translation, and validating it there
                 // updates the online version. Shared with the settings dialog's Compare, which
                 // opens the same page in the other direction.
-                // ⚠ Asks rather than writes: by the time the browser is up, the comparison is in
-                // flight and the verb has changed. Writing "Compare" here is what put the button
-                // back on the verb it had just left.
-                await TranslatorUIManager.OpenComparison(siteId, toLocal: false,
-                    onFinished: () => RefreshCompareButton(isLoggedIn: true));
+                // ⚠ Nothing is passed back for the label: by the time the browser is up, the
+                // comparison is in flight and the verb has changed. OpenComparison refreshes this
+                // screen AND the corner notification, which carries the same button.
+                await TranslatorUIManager.OpenComparison(siteId, toLocal: false);
             }
             catch (System.Exception e)
             {

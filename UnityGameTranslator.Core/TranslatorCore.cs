@@ -5204,14 +5204,17 @@ namespace UnityGameTranslator.Core
                         // would have no editor, no destination and nothing to become.
                         else if (Config.capture_keys_only)
                         {
-                            if (isOwnUI)
+                            // The socle decides, here as below: Answers.Capture is the same rule a
+                            // Core in another language has to reach, and it is checked there.
+                            var filed = Answers.Capture(isOwnUI);
+                            if (filed == Filing.Nothing)
                             {
                                 if (Config.debug_ai)
                                     Adapter?.LogInfo("[Worker] Interface label not captured: capture mode collects the game's text.");
                             }
                             else
                             {
-                                AddToCache(normalizedOriginal, "", "H");
+                                AddToCache(normalizedOriginal, "", Answers.TagOf(filed));
                                 if (Config.debug_ai)
                                     Adapter?.LogInfo($"[Worker] Captured key (no translation): {normalizedOriginal.Substring(0, Math.Min(30, normalizedOriginal.Length))}...");
                             }
@@ -5291,27 +5294,27 @@ namespace UnityGameTranslator.Core
                             {
                                 // Check if AI returned the skip marker (text not in expected source language)
                                 // Note: Google/DeepL don't return skip markers, so this only applies to LLM
-                                bool isSkipped = Answers.Read(translation) == AnswerKind.Skip;
+                                // ⚠ Read ONCE: the kind decides what is filed just below, and the
+                                // same answer read twice is one call away from being read two ways.
+                                AnswerKind answerKind = Answers.Read(translation);
+                                bool isSkipped = answerKind == AnswerKind.Skip;
 
-                                // 🔴 **Where a line comes from outranks what happened to it.** The
-                                // skip marker used to win over the origin, so a refused interface
-                                // label was filed "S" — a tag that means "a person ruled this line
-                                // must stay as it is", in the GAME's file, counted and merged like
-                                // any game line. An interface line is an interface line whatever
-                                // the model answered.
-                                //
-                                // ⚠ And a REFUSED one is not stored at all: the source of our own
-                                // labels is always English, so a skip here is the model declining a
-                                // job it was given wrongly, not a decision worth recording.
-                                if (isOwnUI && isSkipped)
+                                // 🔴 **Where a line comes from outranks what happened to it, and the
+                                // socle is what says so.** The rule lived here as three conditions
+                                // and four spelled-out letters; it is Answers.Store now, where a
+                                // Core in another language reads the same one and where every case
+                                // — including the two this cost — can be replayed.
+                                var filed = Answers.Store(isOwnUI, answerKind);
+                                if (filed == Filing.Nothing)
                                 {
                                     if (Config.debug_ai)
                                         Adapter?.LogInfo("[Worker] The model declined an interface label; left in English, nothing stored.");
                                 }
                                 else
                                 {
-                                    string tag = isOwnUI ? ModUi.Tag : (isSkipped ? "S" : "A");
-                                    AddToCache(normalizedOriginal, isSkipped ? normalizedOriginal : translation, tag);
+                                    AddToCache(normalizedOriginal,
+                                        Answers.StoresTheSource(filed) ? normalizedOriginal : translation,
+                                        Answers.TagOf(filed));
                                 }
 
                                 if (!isSkipped && translation != normalizedOriginal)

@@ -147,6 +147,7 @@ namespace UnityGameTranslator.Core.Checks
             Section("A translation's own identity, on loading", LoadedIdentityChecks.Run);
             Section("Everything a reload has to re-run", ReloadChainChecks.Run);
             Section("Who the server was asked as", AccountVerdictChecks.Run);
+            Section("Which publishing act a screen offers", UploadOfferChecks.Run);
         }
 
         /// <summary>How a sentence carrying live numbers is read as the pattern it was cached from.</summary>

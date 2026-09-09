@@ -625,6 +625,29 @@ namespace UnityGameTranslator.Core.UI.Panels
                 bool isBranch = serverState?.Role == LineageRole.Branch;
                 bool isOwner = serverState?.IsOwner == true;
 
+                // 🔴 **Whether a contribution can be made at all is the socle's to say**, from the
+                // walls the server reported: a Main marked solo work takes none, and neither does
+                // one whose author has removed it or erased their account. Offered anyway, the
+                // button names an act the server will refuse — and the hint beside it promised to
+                // send the lines "for review to @somebody" who had asked for no such thing.
+                //
+                // ⚠ The main panel and the upload screen already ask this; this corner did not,
+                // which is the same defect the panel's own comment records having paid for once.
+                bool existsOnServer = serverState != null && serverState.Exists
+                                      && serverState.SiteId.HasValue;
+                var publication = Publications.Of(hereOnDisk: TranslatorCore.TranslationCache.Count > 0,
+                                                  onTheSite: existsOnServer,
+                                                  yours: existsOnServer ? serverState.IsOwner : (bool?)null);
+                bool onABranch = existsOnServer && serverState.IsOwner
+                                 && serverState.Role == LineageRole.Branch;
+                var offered = Uploads.ActOf(publication, onABranch, serverState?.AcceptsBranches,
+                                            serverState?.MainMissing, serverState?.MainAbandoned,
+                                            serverState?.BranchFrozen);
+
+                // A lineage that takes no contribution leaves one way on, and it is the one the
+                // socle names: forking.
+                bool canBranch = offered == UploadAct.Contribute;
+
                 // Default: hide Branch/Fork buttons, show Action button
                 bool showBranchFork = false;
                 bool showAction = true;
@@ -729,7 +752,11 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _syncLabel.Show(message);
 
                 // Show/hide buttons based on context
-                if (_syncBranchBtn != null) _syncBranchBtn.Visible = showBranchFork;
+                // ⚠ Absent rather than greyed, and the two are decided differently on purpose:
+                // greyed says "later" — sign in, come back online — while a lineage that refuses
+                // contributions is not a "later", it is a road that does not exist. The hint below
+                // says which wall it is, in the socle's words.
+                if (_syncBranchBtn != null) _syncBranchBtn.Visible = showBranchFork && canBranch;
                 if (_syncForkBtn != null) _syncForkBtn.Visible = showBranchFork;
                 if (_syncActionBtn != null) _syncActionBtn.Visible = showAction;
 
@@ -762,7 +789,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     forkClosed = Uploads.ClosedReason(UploadAct.Fork, lines, untouchedCopy,
                                                       online, signedIn, inSync: false);
 
-                    if (_syncBranchBtn != null) _syncBranchBtn.Enabled = branchClosed == null;
+                    if (_syncBranchBtn != null && canBranch) _syncBranchBtn.Enabled = branchClosed == null;
                     if (_syncForkBtn != null) _syncForkBtn.Enabled = forkClosed == null;
                 }
 
@@ -774,10 +801,22 @@ namespace UnityGameTranslator.Core.UI.Panels
                     string hint = "";
                     if (showBranchFork)
                     {
-                        hint = (branchClosed != null
-                                   ? Tr(branchClosed)
-                                   : Tr("Branch: send them for review to") + $" @{ownerName}")
-                               + " • "
+                        // The wall first when there is one — it is why the Branch button is not
+                        // there — then whatever is left to say about the way on.
+                        string wall = canBranch
+                            ? null
+                            : Uploads.Wall(publication, onABranch,
+                                           serverState?.MainUsername ?? serverState?.Uploader,
+                                           serverState?.AcceptsBranches, serverState?.MainMissing,
+                                           serverState?.MainAbandoned, serverState?.BranchFrozen);
+
+                        string branchHalf = wall != null
+                            ? Tr(wall)
+                            : branchClosed != null
+                                ? Tr(branchClosed)
+                                : Tr("Branch: send them for review to") + $" @{ownerName}";
+
+                        hint = branchHalf + " • "
                                + (forkClosed != null
                                    ? Tr(forkClosed)
                                    : Tr("Fork: start your own independent translation"));

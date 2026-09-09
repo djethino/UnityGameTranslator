@@ -1397,6 +1397,23 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static void ProcessComponentForType(object component, RegisteredTextType type)
         {
+            // 🔴 The batch phase was measured as a whole and nothing inside it was — 861 ms of
+            // batch per 5 s window on a real game, 3 959 ms at worst, single frames at 3.6 s, and
+            // no counter able to say whether that is one component or a thousand. This says which,
+            // and names the worst one rather than only timing it.
+            long tProcess = Perf.Start();
+            try
+            {
+                ProcessOneComponent(component, type);
+            }
+            finally
+            {
+                Perf.StopProcessed(tProcess, component);
+            }
+        }
+
+        private static void ProcessOneComponent(object component, RegisteredTextType type)
+        {
             try
             {
                 var comp = component as Component;
@@ -1433,7 +1450,12 @@ namespace UnityGameTranslator.Core
                     return;
                 }
 
-                string currentText = GetTextForType(component, type);
+                // ...of which: reading the text. On IL2CPP this crosses into the runtime for every
+                // component of every pass, so it is the first suspect whenever the batch stalls.
+                long tText = Perf.Start();
+                string currentText;
+                try { currentText = GetTextForType(component, type); }
+                finally { Perf.Stop(Perf.ScanText, tText); }
 
                 if (string.IsNullOrEmpty(currentText) || currentText.Length < 2) return;
 

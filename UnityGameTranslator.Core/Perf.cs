@@ -36,13 +36,20 @@ namespace UnityGameTranslator.Core
         internal const int ScanFind = 10;        // the scanner's per-type scene lookup (atomic engine call)
         internal const int UitkCycle = 11;       // UI Toolkit: sweep + document lookup opening a walk cycle
         internal const int UitkSetter = 12;      // the whole TextElement.set_text prefix (route + present)
-        private const int SlotCount = 13;
+
+        // 🔴 The batch phase is measured as a whole and NOTHING inside it is. Measured on a real
+        // game (2026-09-09): 861 ms of batch per 5 s window on average, 3 959 ms at worst, with
+        // single frames at 3.6 s — and no counter able to say whether that is one component or a
+        // thousand. These two answer that first question; without it every explanation is a guess.
+        internal const int ScanProcess = 13;     // one component, all of ProcessComponentForType
+        internal const int ScanText = 14;        // ...of which: reading its text (interop on IL2CPP)
+        private const int SlotCount = 15;
 
         private static readonly string[] Names =
         {
             "UITK.Scan", "UITK.Element", "RTL.Present", "RTL.Reflow", "Font.Scene", "Font.Clones",
             "UITK.Font", "Font.Find", "UITK.Children", "UITK.Image",
-            "Scan.Find", "UITK.Cycle", "UITK.Setter",
+            "Scan.Find", "UITK.Cycle", "UITK.Setter", "Scan.Process", "Scan.Text",
         };
 
         private static readonly long[] _ticks = new long[SlotCount];
@@ -81,6 +88,39 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// The subject of the worst <see cref="ScanProcess"/> call of the window, kept as a
+        /// reference rather than described.
+        ///
+        /// 🔴 **A number alone cannot be acted on.** "max 3597 ms" says one component cost three
+        /// and a half seconds and nothing about WHICH — so the next step is another session and
+        /// another guess. This carries the object itself and describes it once, when the window is
+        /// reported: no string is built on the path that is being measured, and nothing is
+        /// allocated unless a call becomes the worst.
+        ///
+        /// ⚠ Only ever touched inside the report, in a try/catch: a component can be destroyed
+        /// between the call and the report, and reading a destroyed one throws on IL2CPP.
+        /// </summary>
+        private static object _worstProcessed;
+
+        /// <summary>
+        /// Stop the per-component slot, remembering what the worst call was about.
+        ///
+        /// ⚠ Separate from <see cref="Stop"/> rather than an optional argument, so no other slot
+        /// pays for a reference it never reads.
+        /// </summary>
+        internal static void StopProcessed(long start, object subject)
+        {
+            if (start == 0L) return;
+            long spent = Stopwatch.GetTimestamp() - start;
+            _ticks[ScanProcess] += spent;
+            _calls[ScanProcess]++;
+            if (spent <= _max[ScanProcess]) return;
+
+            _max[ScanProcess] = spent;
+            _worstProcessed = subject;
+        }
+
+        /// <summary>
         /// Called from the scanner's tick. Prints the slots that saw work in the window and
         /// clears them — a silent slot is a pass that did not run, which is itself an answer.
         /// </summary>
@@ -114,6 +154,40 @@ namespace UnityGameTranslator.Core
 
             if (sb.Length == 0) { TranslatorCore.LogDebug($"[PASS-PERF] over {window:F1}s | {frames}"); return; }
             TranslatorCore.LogDebug($"[PASS-PERF] over {window:F1}s | {frames} | {sb}");
+
+            SayWhatTheWorstWasAbout();
+        }
+
+        /// <summary>
+        /// Name the component the worst per-component call of the window was spent on.
+        ///
+        /// ⚠ Its own line rather than inside the report: it is only there when there was a worst
+        /// one to name, and a report that grows a field on some windows and not others is harder
+        /// to read across a session than two lines.
+        /// </summary>
+        private static void SayWhatTheWorstWasAbout()
+        {
+            var subject = _worstProcessed;
+            _worstProcessed = null;
+            if (subject == null) return;
+
+            try
+            {
+                var comp = subject as UnityEngine.Component;
+                if (comp == null) return;
+
+                string text = TypeHelper.GetText(subject) ?? "";
+                if (text.Length > 40) text = text.Substring(0, 40) + "…";
+
+                TranslatorCore.LogDebug($"[PASS-PERF] the worst one was '{comp.gameObject.name}' "
+                                        + $"({subject.GetType().Name}) showing '{text}'");
+            }
+            catch (System.Exception e)
+            {
+                // Destroyed between the call and this line, which is ordinary — and saying so is
+                // itself an answer: a component that dies mid-pass is worth knowing about.
+                TranslatorCore.LogDebug($"[PASS-PERF] the worst one could not be named: {e.Message}");
+            }
         }
     }
 }

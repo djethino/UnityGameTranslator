@@ -26,6 +26,70 @@ namespace UnityGameTranslator.Core.Checks
             Emptying(check);
             AnAnswerToAFileThatIsGone(check);
             TheTwoThrottles(check);
+            TheGiveUpList(check);
+        }
+
+        /// <summary>
+        /// Texts the backend has already answered for, unusably, this session.
+        ///
+        /// 🔴 **Without it the mod asks a model that has already failed, on every scan.** An answer
+        /// that invented or dropped placeholders is never stored — storing it would write markup
+        /// into somebody's game — so the text stays untranslated and comes straight back, for as
+        /// long as the game shows it.
+        ///
+        /// 🔴 **And the case that matters is the one that takes a text OFF it.** A person who reads
+        /// what came back and asks for that line again outranks the session's memory: the list
+        /// exists so a line is not hammered, never to refuse somebody who asked once, on purpose.
+        /// Both halves lived as a dictionary in an engine nothing could replay.
+        /// </summary>
+        private static void TheGiveUpList(Action<bool, string, string> check)
+        {
+            var q = new TranslationQueue();
+
+            check(!q.WasRefused("Play"),
+                "nothing is on the give-up list to begin with",
+                "a session starts owing every text an attempt");
+
+            q.NoteRefused("Play");
+            check(q.WasRefused("Play"),
+                "a text the backend could not answer for goes on it",
+                "asking again would repeat a known failure, on every scan, for as long as the game shows the line");
+
+            check(!q.WasRefused("Quit"),
+                "and only that text",
+                "one line's bad answer says nothing about the next one");
+
+            // 🔴 A person asking again.
+            q.ForgetRefused("Play");
+            check(!q.WasRefused("Play"),
+                "🔴 an explicit request takes it back off",
+                "the list is there so a line is not hammered, never to refuse somebody who asked for it once on purpose");
+
+            // ⚠ Emptying the QUEUE must not empty this: replacing what is waiting says nothing
+            // about a model's placeholder mistakes.
+            q.NoteRefused("Play");
+            q.Submit("Quit", null, ownUi: false, out _, out _);
+            q.Clear();
+
+            check(q.WasRefused("Play"),
+                "⚠ dropping what is waiting leaves the list alone",
+                "a reload replaces the translation; it does not make a model able to place a token it could not place a second ago");
+
+            // What does clear it: the model or the language may have changed under us.
+            q.ForgetAllRefused();
+            check(!q.WasRefused("Play"),
+                "and giving every text another chance empties it",
+                "what one model cannot place a token in, the next one may");
+
+            check(!q.WasRefused(null),
+                "nothing was never refused",
+                "the worker asks about whatever it holds; it must not have to test for it first");
+
+            var quiet = new TranslationQueue();
+            quiet.NoteRefused(null);
+            check(!quiet.WasRefused(null),
+                "and refusing nothing records nothing",
+                "an empty entry would match the next null and give up on a text nobody has tried");
         }
 
         private static void OneItemPerTextAndOrigin(Action<bool, string, string> check)

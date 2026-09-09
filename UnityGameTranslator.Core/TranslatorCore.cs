@@ -786,9 +786,6 @@ namespace UnityGameTranslator.Core
         private static HashSet<string> patternMatchFailures = new HashSet<string>();
 
         // Texts whose translation failed placeholder validation after all retries.
-        // In-memory only: never cached to disk, retried on next game launch.
-        // Prevents hammering the backend every scan cycle within the same session.
-        private static ConcurrentDictionary<string, byte> validationFailedTexts = new ConcurrentDictionary<string, byte>();
 
         // Callback for updating components when translation completes
         public static Action<string, string, List<object>> OnTranslationComplete;
@@ -4328,7 +4325,7 @@ namespace UnityGameTranslator.Core
 
             // An explicit request overrides the session's give-up list: that list exists so a line
             // that failed validation is not hammered on every scan, and this is a human asking once.
-            validationFailedTexts.TryRemove(normalizedKey, out _);
+            _queue.ForgetRefused(normalizedKey);
 
             string backend = Config.translation_backend;
             bool deterministicBackend = backend == "google" || backend == "deepl";
@@ -5246,7 +5243,7 @@ namespace UnityGameTranslator.Core
                         }
                         // Text already failed placeholder validation this session:
                         // don't hammer the backend, it will be retried next launch
-                        else if (translation == null && validationFailedTexts.ContainsKey(normalizedOriginal))
+                        else if (translation == null && _queue.WasRefused(normalizedOriginal))
                         {
                             if (Config.debug_ai)
                                 Adapter?.LogInfo($"[Worker] Skipping (failed placeholder validation earlier): {normalizedOriginal.Substring(0, Math.Min(40, normalizedOriginal.Length))}...");
@@ -5630,7 +5627,7 @@ namespace UnityGameTranslator.Core
                 {
                     // Never cache the corruption. In-memory marker only:
                     // left untranslated this session, retried on next launch.
-                    validationFailedTexts.TryAdd(textWithPlaceholders, 0);
+                    _queue.NoteRefused(textWithPlaceholders);
                     Adapter?.LogWarning($"[AI] Placeholder validation failed after {maxAttempts} attempts, left untranslated: {textToTranslate.Substring(0, Math.Min(60, textToTranslate.Length))}...");
                     return null;
                 }
@@ -5948,7 +5945,7 @@ namespace UnityGameTranslator.Core
                     }
                     else
                     {
-                        validationFailedTexts.TryAdd(textWithPlaceholders, 0);
+                        _queue.NoteRefused(textWithPlaceholders);
                         Adapter?.LogWarning($"[API] Invalid placeholders ({string.Join("; ", apiErrors)}), left untranslated: {textToTranslate.Substring(0, Math.Min(60, textToTranslate.Length))}...");
                         return null;
                     }
@@ -6961,7 +6958,7 @@ namespace UnityGameTranslator.Core
             patternMatchFailures.Clear();
 
             // Give validation-failed texts another chance (model/language may have changed)
-            validationFailedTexts.Clear();
+            _queue.ForgetAllRefused();
 
             // Clear user exclusion cache (instance IDs change between scenes)
             ClearUserExclusionCache();

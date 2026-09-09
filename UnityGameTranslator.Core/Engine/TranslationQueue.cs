@@ -271,6 +271,61 @@ namespace UnityGameTranslator.Core
             lock (_lock) { return _tooLong.Add(text); }
         }
 
+        // ── The give-up list ──────────────────────────────────────────────────────
+        //
+        // 🔴 **Texts the backend answered for, unusably, this session.** An answer that invented
+        // or dropped placeholders is never stored — storing it would write markup into somebody's
+        // game — so the text stays untranslated and comes back on the very next scan, and the
+        // next, for as long as the game shows it. Without this list the mod asks a model that has
+        // already failed, over and over, for nothing.
+        //
+        // ⚠ **Here rather than in the engine, and next to NoteTooLong, because it answers the same
+        // question**: should the backend be asked about this text again this session? Both were
+        // memories of that in two different places, and only one of them could be replayed.
+        //
+        // ⚠ Its lifetime is NOT the queue's: Clear() drops what is waiting and leaves this alone,
+        // because replacing the translation does not make a model's placeholder mistakes go away.
+        // What clears it is the caller, when the model or the language may have changed.
+        private readonly HashSet<string> _refused = new HashSet<string>();
+
+        /// <summary>Remember that the backend could not answer usably for this text.</summary>
+        public void NoteRefused(string text)
+        {
+            if (text == null) return;
+            lock (_lock) { _refused.Add(text); }
+        }
+
+        /// <summary>Whether asking about this text again would only repeat a known failure.</summary>
+        public bool WasRefused(string text)
+        {
+            if (text == null) return false;
+            lock (_lock) { return _refused.Contains(text); }
+        }
+
+        /// <summary>
+        /// Take one text off the list.
+        ///
+        /// 🔴 **This is a person asking for that line again**, having read what came back. An
+        /// explicit request outranks the session's give-up list — the list exists so a line is not
+        /// hammered on every scan, never to refuse somebody who asked once, on purpose.
+        /// </summary>
+        public void ForgetRefused(string text)
+        {
+            if (text == null) return;
+            lock (_lock) { _refused.Remove(text); }
+        }
+
+        /// <summary>
+        /// Give every refused text another chance.
+        ///
+        /// ⚠ For when the model or the language may have changed under us: what one model cannot
+        /// place a token in, the next one may.
+        /// </summary>
+        public void ForgetAllRefused()
+        {
+            lock (_lock) { _refused.Clear(); }
+        }
+
         /// <summary>
         /// Whether this interface label is being submitted for the first time this session.
         ///

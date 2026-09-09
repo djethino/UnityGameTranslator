@@ -1697,19 +1697,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             // exactly what it answers. So the sending conditions apply to sending only. A dead
             // lineage no longer needs its own refusal here: the socle has already turned the
             // button into Fork, and the wall above says why.
-            string closed = null;
-            if (TranslatorCore.TranslationCache.Count == 0)
-                closed = "No translations to upload";
-            else if (stillTheCopy)
-                // The fact, then the way out. Naming the author would need a lookup the mod does
-                // not have after a fork — the lineage is gone — and the sentence works without it.
-                closed = "This copy is unchanged. Translate or correct a line to publish it as yours.";
-            else if (act != UploadAct.Fork)
-            {
-                if (!TranslatorCore.Config.online_mode) closed = "Offline mode - upload disabled";
-                else if (!isLoggedIn) closed = "Login required";
-                else if (isInSync) closed = "Up to date — nothing to send";
-            }
+            // ⚠ From the socle, because the corner notification offers Contribute too and the two
+            // must refuse in the same cases — it used to offer it with no account at all, and the
+            // refusal arrived only once the window had been filled in. See Uploads.ClosedReason.
+            string closed = Uploads.ClosedReason(act, TranslatorCore.TranslationCache.Count,
+                                                 stillTheCopy, TranslatorCore.Config.online_mode,
+                                                 isLoggedIn, isInSync);
 
             bool canUpload = closed == null;
             _uploadBtn.Enabled = canUpload;

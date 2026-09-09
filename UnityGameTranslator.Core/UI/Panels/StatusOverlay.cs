@@ -516,8 +516,15 @@ namespace UnityGameTranslator.Core.UI.Panels
                                              policy: TextPolicy.Excluded, align: Placement.MiddleRight);
 
             // After the words, so it sits against the right edge the box is aligned to.
+            //
+            // 🔴 **minWidth is what keeps the words on the right**, and it is not a size choice.
+            // Labels.Create stretches any label aligned right that has no width of its own — one
+            // does the right thing, TWO share the room between them, and "Connected" lands in the
+            // middle of the box. Giving the dot the width of its own glyph leaves the label the
+            // only stretched thing in the row, so the words stay flush against it.
             _connectionDot = Labels.Create(_connectionBox, "ConnectionDot", StatusDot, TextRole.Small,
-                                           policy: TextPolicy.Excluded, align: Placement.MiddleRight);
+                                           policy: TextPolicy.Excluded, align: Placement.MiddleRight,
+                                           minWidth: 12, wrap: false);
 
             _connectionBox.Visible = false;
         }
@@ -734,12 +741,49 @@ namespace UnityGameTranslator.Core.UI.Panels
                     if (canCompare) _syncCompareBtn.Label = $"Compare ({TranslatorCore.LocalChangesCount})";
                 }
 
+                // 🔴 **The refusal is said before the click, not after the form.** This button
+                // opened the upload window whatever the state of the account, so somebody with no
+                // account filled it in and learnt there that they needed one — while the main
+                // panel, three inches away in another screen, greys its own Upload and says why.
+                // One rule for both: Uploads.ClosedReason.
+                string branchClosed = null;
+                string forkClosed = null;
+                if (showBranchFork)
+                {
+                    bool online = TranslatorCore.Config.online_mode;
+                    bool signedIn = !string.IsNullOrEmpty(TranslatorCore.Config.api_token);
+                    int lines = TranslatorCore.TranslationCache.Count;
+                    bool untouchedCopy = serverState == null || !serverState.Exists
+                                         ? TranslatorCore.ForkIsStillTheCopy
+                                         : false;
+
+                    branchClosed = Uploads.ClosedReason(UploadAct.Contribute, lines, untouchedCopy,
+                                                        online, signedIn, inSync: false);
+                    forkClosed = Uploads.ClosedReason(UploadAct.Fork, lines, untouchedCopy,
+                                                      online, signedIn, inSync: false);
+
+                    if (_syncBranchBtn != null) _syncBranchBtn.Enabled = branchClosed == null;
+                    if (_syncForkBtn != null) _syncForkBtn.Enabled = forkClosed == null;
+                }
+
                 if (_syncHintLabel != null)
                 {
-                    _syncHintLabel.Show(showBranchFork
-                        ? Tr("Branch: send them for review to") + $" @{ownerName} • "
-                          + Tr("Fork: start your own independent translation")
-                        : "");
+                    // ⚠ The reason REPLACES the half it is about, and never both: a fork asks for
+                    // neither an account nor the network, so it stays open and stays explained —
+                    // it is the way on precisely when the other half is shut.
+                    string hint = "";
+                    if (showBranchFork)
+                    {
+                        hint = (branchClosed != null
+                                   ? Tr(branchClosed)
+                                   : Tr("Branch: send them for review to") + $" @{ownerName}")
+                               + " • "
+                               + (forkClosed != null
+                                   ? Tr(forkClosed)
+                                   : Tr("Fork: start your own independent translation"));
+                    }
+
+                    _syncHintLabel.Show(hint);
                     _syncHintLabel.Visible = showBranchFork;
                 }
 

@@ -523,8 +523,12 @@ namespace UnityGameTranslator.Core
                 {
                     lines++;
 
-                    var tag = entry.Value?.Tag;
-                    if (tag == "H" || tag == "V" || tag == "S") byHand++;
+                    // 🔴 **The value, not the tag alone.** This listed H, V and S — and so counted
+                    // every CAPTURED line as somebody's work, since a capture is tagged H with
+                    // nothing in it. A game played once in capture-only mode reported a hundred
+                    // and twenty-eight lines "by hand" that nobody had written, on a row whose
+                    // whole purpose is telling one backup from another.
+                    if (Merge.IsByHand(entry.Value?.Tag, entry.Value?.Value)) byHand++;
                 }
             }
             catch

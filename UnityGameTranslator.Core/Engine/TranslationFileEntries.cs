@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using Newtonsoft.Json.Linq;
 using UnityGameTranslator.Common;
 
@@ -125,8 +125,21 @@ namespace UnityGameTranslator.Core
             // Two keys that differed only in their line endings are now one.
             if (Entries.TryGetValue(normalizedKey, out var existing))
             {
-                // Tag priority: H > V > A (Human > Validated > AI)
-                if (Priority(entry.Tag) > Priority(existing.Tag))
+                // 🔴 **The socle's ladder, because this is the socle's question.** A second one
+                // lived here — H > V > anything else — and it disagreed with Merge.PriorityOf on
+                // two tags, in both directions:
+                //
+                //  · a REFUSAL (S) ranked with the machine's work, so a model's output won over a
+                //    line somebody had deliberately marked to be left alone. The socle ranks a
+                //    refusal with a hand translation, because it is the same thing: a person
+                //    deciding about that line;
+                //  · a CAPTURE (H with nothing in it) ranked at the TOP, so an empty entry beat a
+                //    real translation and the translation was lost. The socle ranks that pair
+                //    below everything, which is why it takes the value and not the tag alone.
+                //
+                // ⚠ M never reaches here — an interface line is taken out above, before anything
+                // counts, hashes or merges it.
+                if (Merge.PriorityOf(entry.Tag, entry.Value) > Merge.PriorityOf(existing.Tag, existing.Value))
                 {
                     Entries[normalizedKey] = entry;
                     NeedsRewrite = true;
@@ -230,9 +243,6 @@ namespace UnityGameTranslator.Core
             NeedsRewrite = true;
             return next;
         }
-
-        /// <summary>Human over validated over anything a model produced.</summary>
-        private static int Priority(string tag) => tag == "H" ? 3 : tag == "V" ? 2 : 1;
 
         /// <summary>
         /// A capture-order index, or nothing when the file does not carry a usable one.

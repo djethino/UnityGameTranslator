@@ -108,6 +108,22 @@ namespace UnityGameTranslator.Core.Checks
                       .Entries.Count == 2,
                 "two different keys are two lines",
                 "the collision rule must apply to a collision and to nothing else");
+
+            // 🔴 **The two tags a second ladder used to get backwards** (found auditing for
+            // duplicated rules, 2026-09-09). This file held its own H > V > anything, which
+            // disagreed with the socle's in both directions — and the socle's is the one every
+            // merge, every screen and the website already read.
+            var emptyCapture = Read("{\"Line\\nBreak\":{\"v\":\"Traduit\",\"t\":\"A\"},"
+                                    + "\"Line\\r\\nBreak\":{\"v\":\"\",\"t\":\"H\"}}");
+            check(emptyCapture.Entries["Line\nBreak"].Value == "Traduit",
+                "🔴 a capture with nothing in it does not displace a translation",
+                "H at the top of a ladder that never looked at the value: an empty entry won, and the translation was gone");
+
+            var refusal = Read("{\"Line\\nBreak\":{\"v\":\"Auto\",\"t\":\"A\"},"
+                               + "\"Line\\r\\nBreak\":{\"v\":\"Line\\r\\nBreak\",\"t\":\"S\"}}");
+            check(refusal.Entries["Line\nBreak"].Tag == "S",
+                "🔴 and a model's line does not replace a refusal",
+                "somebody ruled that line must be left alone; ranked with the machine's own work, the machine won");
         }
 
         private static void WhereAnInterfaceLineGoes(Action<bool, string, string> check)

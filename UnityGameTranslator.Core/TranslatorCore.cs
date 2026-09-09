@@ -7177,6 +7177,24 @@ namespace UnityGameTranslator.Core
     {
         /// <summary>True if we've checked with the server (even if translation doesn't exist)</summary>
         public bool Checked { get; set; } = false;
+
+        /// <summary>
+        /// Whether the server was asked AS THIS ACCOUNT — so <see cref="IsOwner"/> and
+        /// <see cref="Role"/> are answers rather than defaults.
+        ///
+        /// 🔴 **"Checked" and "checked as us" are two different facts, and one screen took the
+        /// first for the second.** The public endpoint answers about a translation, never about a
+        /// person: it fills this state with `IsOwner = false, Role = None` because that is all an
+        /// anonymous caller can be told. Read by somebody signed in, before their own check comes
+        /// back, that reads as "this is not yours" — and the notification offered the OWNER of the
+        /// translation the two buttons meant for a stranger, Branch and Fork, for as long as the
+        /// account check took.
+        ///
+        /// ⚠ It cannot be told from the shape: `not owner, role none` is also the honest, final
+        /// answer for somebody using another person's translation. Only who was asked separates
+        /// them, so it is recorded rather than guessed.
+        /// </summary>
+        public bool AskedAsAccount { get; set; } = false;
         /// <summary>True if translation exists on server</summary>
         public bool Exists { get; set; } = false;
         /// <summary>True if current user owns the translation</summary>

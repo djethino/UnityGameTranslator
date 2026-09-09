@@ -74,6 +74,42 @@ namespace UnityGameTranslator.Core.UI
         private static SseClient _syncSseClient;
         public static SseConnectionState SyncConnectionState { get; private set; } = SseConnectionState.Disconnected;
 
+        /// <summary>
+        /// Whether a stream is meant to be up at all.
+        ///
+        /// ⚠ **"Disconnected" answers two different questions**, and only one of them is worth
+        /// showing: a link that dropped is news, never having opened one is not. Most players are
+        /// in the second case — no published line of their own, so nothing to watch — and telling
+        /// them the website is unreachable would be false.
+        /// </summary>
+        public static bool SyncStreamWanted => _syncSseClient != null;
+
+        /// <summary>
+        /// Whether comparing this file with its published version is something that can be done.
+        ///
+        /// 🔴 **One condition, read by both screens that offer it.** The main panel and the sync
+        /// notification are never on screen together — the notification stands down while a panel
+        /// is open — so they are the same control seen in two places, not two doors. What must not
+        /// happen is the two drifting: a button offered in the corner under conditions the panel
+        /// would refuse leads to a page the server will not build.
+        ///
+        /// It takes three things, and each is a different refusal: a published version to compare
+        /// against, that version being OURS (there is nothing to compare with somebody else's — the
+        /// answer there is Branch or Fork), and something of our own that differs from it.
+        /// </summary>
+        public static bool CanCompareWithServer
+        {
+            get
+            {
+                var state = TranslatorCore.ServerState;
+                return state != null
+                       && state.Exists
+                       && state.SiteId.HasValue
+                       && state.IsOwner
+                       && TranslatorCore.LocalChangesCount > 0;
+            }
+        }
+
         // Panels
         public static Panels.WizardPanel WizardPanel { get; private set; }
         public static Panels.MainPanel MainPanel { get; private set; }
@@ -1987,6 +2023,11 @@ namespace UnityGameTranslator.Core.UI
 
                     var state = TranslatorCore.ServerState ?? new ServerTranslationState();
                     state.Checked = true;
+                    // ⚠ Written, not left alone: this reuses whatever state is already there, so
+                    // an account answer that came first would otherwise still be claimed here —
+                    // and the three lines below have just overwritten it with what an anonymous
+                    // caller is told.
+                    state.AskedAsAccount = false;
                     state.Exists = true;
                     state.IsOwner = false;
                     state.Role = LineageRole.None;
@@ -2620,6 +2661,9 @@ namespace UnityGameTranslator.Core.UI
                 var serverState = new ServerTranslationState
                 {
                     Checked = true,
+                    // Both the stream and check-uuid arrive here, and both carry the account's
+                    // Authorization header — so the role below is an answer about US.
+                    AskedAsAccount = true,
                     Exists = exists,
                     IsOwner = role == LineageRole.Main || role == LineageRole.Branch,
                     Role = role,
@@ -3582,6 +3626,40 @@ namespace UnityGameTranslator.Core.UI
             // And the online half, which is bound to a lineage and had no way of hearing about it.
             RewatchIfLineageChanged();
             RebaseEditSession();
+            DropStaleComparison();
+        }
+
+        /// <summary>
+        /// Let go of a comparison that was about the translation just replaced.
+        ///
+        /// 🔴 **A comparison is an answer about two exact files, and one of them is gone.** Three
+        /// things outlive the reload on their own: the merge screen, still showing conflicts worked
+        /// out from the previous file; the stream waiting for the browser to finish that same
+        /// comparison; and the token that reads its result back. Applied afterwards, any of them
+        /// writes the previous translation's lines into the one now loaded.
+        ///
+        /// ⚠ **Closed rather than re-based**, unlike the browser edit session next door, and the
+        /// difference is what each one IS. A session edits *this game's local translation* — still
+        /// true after a restore, so it is handed the new content. A comparison is *this file
+        /// against that one*; replace either side and there is nothing left to re-base, only a
+        /// question that has to be asked again.
+        ///
+        /// ⚠ And it is said, because a screen closing on its own is otherwise indistinguishable
+        /// from the mod losing its place.
+        /// </summary>
+        private static void DropStaleComparison()
+        {
+            bool wasShowing = MergePanel != null && MergePanel.Enabled;
+            bool wasWaiting = _mergeSseClient != null || !string.IsNullOrEmpty(_mergeToken);
+
+            if (!wasShowing && !wasWaiting) return;
+
+            StopMergeCompletionListener();
+            _mergeToken = null;
+            MergePanel?.SetActive(false);
+
+            TranslatorCore.LogInfo("[Merge] The translation was replaced - the comparison no longer describes it");
+            if (wasShowing) ShowHotkeyFeedback("Comparison closed: the translation was replaced");
         }
 
         /// <summary>

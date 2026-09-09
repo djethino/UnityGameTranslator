@@ -50,6 +50,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private ButtonHandle _syncBranchBtn;    // Branch option (contribute, green)
         private ButtonHandle _syncForkBtn;      // Fork option (independent, red)
         private ButtonHandle _syncActionBtn;    // Generic action (Download/Update/Merge)
+        private ButtonHandle _syncCompareBtn;   // Look before pushing (owners with changes)
 
         // UI elements - Website notifications relay
         private Callout _webNotif;
@@ -62,6 +63,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         // UI elements - SSE connection indicator
         private Host _connectionBox;
         private LabelHandle _connectionLabel;
+        private LabelHandle _connectionDot;
 
         // UI elements - Hotkey feedback toast (short-lived visual notification)
         // When the toast is active, the other boxes (mod update, sync, AI queue, connection)
@@ -119,9 +121,26 @@ namespace UnityGameTranslator.Core.UI.Panels
             /// <summary>Main only: branches never reviewed, or changed since.</summary>
             public int BranchesPendingReview;
 
+            /// <summary>
+            /// Signed in, and the server has not yet said what this account is to this lineage.
+            ///
+            /// 🔴 **Every message below is written in the second person, so it cannot be built
+            /// before we know who "you" are.** The public endpoint answers about a translation and
+            /// never about a person: it fills the state with "not the owner", because that is all
+            /// an anonymous caller can be told. Read while the account's own check was still in
+            /// flight, that offered the OWNER of the translation the two buttons meant for a
+            /// stranger — Branch and Fork — for the second or two it took to answer.
+            ///
+            /// ⚠ **Waiting is the whole fix, and it costs nothing.** Nothing here degrades: a
+            /// notification that appears a second later is a notification that is right. Showing
+            /// it early and correcting it is how somebody clicks Fork on their own translation.
+            /// </summary>
+            public bool WaitingForAccount;
+
             /// <summary>Anything at all worth showing.</summary>
-            public bool Any => HasLocalChanges || HasMetadataChanges || HasServerUpdate
-                               || NeedsMerge || HasMainUpdate || BranchesPendingReview > 0;
+            public bool Any => !WaitingForAccount
+                               && (HasLocalChanges || HasMetadataChanges || HasServerUpdate
+                                   || NeedsMerge || HasMainUpdate || BranchesPendingReview > 0);
 
             public static PendingSyncWork Current()
             {
@@ -135,9 +154,15 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // unsent work — silencing those would hide, not calm.
                 bool notifyUpdates = TranslatorCore.Config.sync.notify_updates;
 
+                // ⚠ Not "have we asked" but "have we asked AS US" — the two differ for exactly as
+                // long as this matters. See ServerTranslationState.AskedAsAccount.
+                bool signedIn = TranslatorCore.Config.online_mode
+                                && !string.IsNullOrEmpty(TranslatorCore.Config.api_token);
+
                 return new PendingSyncWork
                 {
                     ServerState = serverState,
+                    WaitingForAccount = signedIn && !(serverState != null && serverState.AskedAsAccount),
                     HasLocalChanges = existsOnServer && TranslatorCore.LocalChangesCount > 0,
                     HasMetadataChanges = existsOnServer && TranslatorCore.MetadataDirty,
                     HasServerUpdate = notifyUpdates && TranslatorUIManager.HasPendingUpdate &&
@@ -366,6 +391,16 @@ namespace UnityGameTranslator.Core.UI.Panels
                                              minWidth: 75, policy: TextPolicy.Excluded);
             _syncActionBtn.Clicked += OnSyncActionClicked;
 
+            // Compare — between the action and Settings, the place it holds on the main panel.
+            //
+            // ⚠ It was on that panel only, so somebody who never opens a panel — which is the
+            // whole point of this corner — could push everything or nothing, and never look first.
+            // Same door, same condition: see TranslatorUIManager.CanCompareWithServer.
+            _syncCompareBtn = Buttons.Compact(syncBtnRow, "SyncCompareBtn", "Compare",
+                                              ButtonTone.Secondary, minWidth: 75,
+                                              policy: TextPolicy.Excluded);
+            _syncCompareBtn.Clicked += OnSyncCompareClicked;
+
             // Settings button
             var syncSettingsBtn = Buttons.Compact(syncBtnRow, "SyncSettingsBtn", "Settings",
                                                   ButtonTone.Secondary, minWidth: 65);
@@ -458,17 +493,43 @@ namespace UnityGameTranslator.Core.UI.Panels
             _aiBox.Visible = false;
         }
 
+        /// <summary>
+        /// Where the link to the website stands: one line, and a dot.
+        ///
+        /// ⚠ **No vertical padding, on purpose.** This is the one box in the stack that says a
+        /// single thing in a single line — the others carry a headline, a hint and buttons — so
+        /// room around it is room that pushes everything else up the screen for nothing. The line
+        /// height is the box height.
+        ///
+        /// ⚠ **The dot is the state; the words are the courtesy.** Colour is read before text, and
+        /// at a glance from across a game it may be all that is read — so the dot carries green,
+        /// amber and red on its own, and would still be understood with the words removed. It is
+        /// the mark <see cref="StatusCard"/> already uses for the same job.
+        /// </summary>
         private void CreateConnectionBox(Host stack)
         {
             _connectionBox = Stacks.Horizontal(stack, "ConnectionBox", spacing: 5,
-                                               pad: new Pad(8, 8, 3, 3), placement: Placement.MiddleRight,
+                                               pad: new Pad(8, 8, 0, 0), placement: Placement.MiddleRight,
                                                minHeight: UIStyles.RowHeightSmall);
 
             _connectionLabel = Labels.Create(_connectionBox, "ConnectionLabel", "", TextRole.Small,
                                              policy: TextPolicy.Excluded, align: Placement.MiddleRight);
 
+            // After the words, so it sits against the right edge the box is aligned to.
+            _connectionDot = Labels.Create(_connectionBox, "ConnectionDot", StatusDot, TextRole.Small,
+                                           policy: TextPolicy.Excluded, align: Placement.MiddleRight);
+
             _connectionBox.Visible = false;
         }
+
+        /// <summary>
+        /// The mark the dot is drawn with — U+25CF, the same one the status card uses.
+        ///
+        /// ⚠ A character rather than an image: it inherits the tone colours the rest of the
+        /// interface is built on, costs no texture, and cannot be lost by an atlas that failed to
+        /// warm on a runtime that strips things.
+        /// </summary>
+        private const string StatusDot = "●";
 
         /// <summary>
         /// Returns true if the overlay has any content to display.
@@ -665,6 +726,14 @@ namespace UnityGameTranslator.Core.UI.Panels
                 if (_syncForkBtn != null) _syncForkBtn.Visible = showBranchFork;
                 if (_syncActionBtn != null) _syncActionBtn.Visible = showAction;
 
+                bool canCompare = TranslatorUIManager.CanCompareWithServer;
+                if (_syncCompareBtn != null)
+                {
+                    _syncCompareBtn.Visible = canCompare;
+                    // The same label as on the main panel: how many lines the comparison is about.
+                    if (canCompare) _syncCompareBtn.Label = $"Compare ({TranslatorCore.LocalChangesCount})";
+                }
+
                 if (_syncHintLabel != null)
                 {
                     _syncHintLabel.Show(showBranchFork
@@ -742,40 +811,36 @@ namespace UnityGameTranslator.Core.UI.Panels
                 if (_aiBox != null) _aiBox.Visible = false;
             }
 
-            // 4. SSE Connection indicator (compact, shown when overlay is visible)
+            // 4. Where the link to the website stands.
+            //
+            // ⚠ **A link that DROPPED is shown too, in red**, where the box used to simply vanish.
+            // Disappearing reads as "there was never anything here", which is the one thing it does
+            // not mean: the mod is signed in, it was listening, and it no longer is. Only somebody
+            // who never had a stream sees nothing — and for them there is genuinely nothing to say.
             bool showConnection = false;
             if (TranslatorCore.Config.online_mode && !string.IsNullOrEmpty(TranslatorCore.Config.api_token))
             {
-                var connState = TranslatorUIManager.SyncConnectionState;
-                switch (connState)
+                string say = null;
+                Tone tone = Tone.Muted;
+
+                switch (TranslatorUIManager.SyncConnectionState)
                 {
                     case SseConnectionState.Connected:
-                        showConnection = true;
-                        if (_connectionLabel != null)
-                        {
-                            _connectionLabel.Say("Connected");
-                            _connectionLabel.Tone = Tone.Success;
-                        }
-                        break;
+                        say = "Connected"; tone = Tone.Success; break;
                     case SseConnectionState.Connecting:
-                        showConnection = true;
-                        if (_connectionLabel != null)
-                        {
-                            _connectionLabel.Say("Connecting...");
-                            _connectionLabel.Tone = Tone.Warning;
-                        }
-                        break;
+                        say = "Connecting..."; tone = Tone.Warning; break;
                     case SseConnectionState.Reconnecting:
-                        showConnection = true;
-                        if (_connectionLabel != null)
-                        {
-                            _connectionLabel.Say("Reconnecting...");
-                            _connectionLabel.Tone = Tone.Warning;
-                        }
-                        break;
+                        say = "Reconnecting..."; tone = Tone.Warning; break;
                     default:
-                        showConnection = false;
+                        if (TranslatorUIManager.SyncStreamWanted) { say = "Disconnected"; tone = Tone.Error; }
                         break;
+                }
+
+                showConnection = say != null;
+                if (showConnection)
+                {
+                    if (_connectionLabel != null) { _connectionLabel.Say(say); _connectionLabel.Tone = tone; }
+                    if (_connectionDot != null) _connectionDot.Tone = tone;
                 }
             }
             if (_connectionBox != null) _connectionBox.Visible = showConnection;
@@ -990,6 +1055,42 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             TranslatorUIManager.NotificationDismissed = true;
             RefreshOverlay();
+        }
+
+        /// <summary>
+        /// Open the comparison page for our own published version.
+        ///
+        /// ⚠ The same call the main panel makes, in the same direction: this is OUR translation, so
+        /// validating there updates the online one. Nothing is decided here — the page is.
+        /// </summary>
+        private async void OnSyncCompareClicked()
+        {
+            var siteId = TranslatorCore.ServerState?.SiteId;
+            if (siteId == null) return;
+
+            _syncCompareBtn?.Busy("Loading...");
+
+            try
+            {
+                await TranslatorUIManager.OpenComparison(siteId.Value, toLocal: false,
+                    onFinished: RestoreCompareButton);
+            }
+            catch (System.Exception e)
+            {
+                var errorMsg = e.Message;
+                TranslatorUIManager.RunOnMainThread(() =>
+                {
+                    TranslatorCore.LogWarning($"[StatusOverlay] Compare error: {errorMsg}");
+                    RestoreCompareButton();
+                });
+            }
+        }
+
+        private void RestoreCompareButton()
+        {
+            if (_syncCompareBtn == null) return;
+            _syncCompareBtn.Enabled = true;
+            _syncCompareBtn.Label = $"Compare ({TranslatorCore.LocalChangesCount})";
         }
 
         private void OnSyncSettingsClicked()

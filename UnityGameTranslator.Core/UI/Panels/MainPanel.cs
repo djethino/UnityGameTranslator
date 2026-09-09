@@ -1751,7 +1751,9 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 // Compare with Server - only for owners (Main or Branch) who have uploaded
                 // Non-owners can't compare because they don't have a server version to compare against
-                bool canCompare = existsOnServer && state.IsOwner && hasLocalChanges;
+                // ⚠ From the manager, because the sync notification offers the same button and
+                // the two must refuse in the same cases. See TranslatorUIManager.CanCompareWithServer.
+                bool canCompare = TranslatorUIManager.CanCompareWithServer;
                 _compareWithServerBtn.Visible = canCompare;
                 if (canCompare)
                 {

@@ -317,6 +317,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                         TranslatorCore.ServerState = new ServerTranslationState
                         {
                             Checked = true,
+                            // We just published as this account, so the role below is ours.
+                            AskedAsAccount = true,
                             Exists = true,
                             IsOwner = true,
                             Role = result.Role,
@@ -407,6 +409,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                         TranslatorCore.ServerState = new ServerTranslationState
                         {
                             Checked = true,
+                            // We just published as this account, so the role below is ours.
+                            AskedAsAccount = true,
                             Exists = true,
                             IsOwner = false,
                             // 🔴 None, not Branch: this account has no row in the lineage yet. One
@@ -822,6 +826,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                     TranslatorCore.ServerState = new ServerTranslationState
                     {
                         Checked = true,
+                        // We just published as this account, so the role below is ours.
+                        AskedAsAccount = true,
                         Exists = true,
                         IsOwner = true,
                         Role = result.Role,

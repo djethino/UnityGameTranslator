@@ -665,7 +665,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             SetActive(false);
             TranslatorUIManager.UploadSetupPanel?.ShowForSetup((game, source, target) =>
             {
-                TranslatorUIManager.UploadPanel?.SetActive(true);
+                TranslatorUIManager.UploadPanel?.OpenForUpload();
             });
         }
 

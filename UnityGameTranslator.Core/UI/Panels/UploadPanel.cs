@@ -246,10 +246,17 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Skip reset if setup was just completed (ContinueAfterSetup sets _setupComplete = true before calling SetActive)
             bool skipReset = active && _setupComplete;
 
+            // ⚠ **An open panel is re-settled when the purpose changes**, and only then. Without
+            // it, Upload pressed while Edit details was open left the details screen up under an
+            // Upload click. `_purposeStated` is what keeps PanelDragger's per-frame SetActive(true)
+            // out of this.
+            bool repurposed = active && !skipReset && _purposeStated
+                              && _openingForDetails != _detailsOnly;
+
             base.SetActive(active);
 
             // Only run on first activation, not repeated SetActive(true) calls
-            if (active && !wasActive && !skipReset)
+            if (active && ((!wasActive && !skipReset) || repurposed))
             {
                 // Reset setup state when opening fresh
                 _setupComplete = false;
@@ -260,6 +267,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // Upload button, a Contribute, a Fork — opens the ordinary screen.
                 _detailsOnly = _openingForDetails;
                 _openingForDetails = false;
+                _purposeStated = false;
 
                 CheckUploadMode();
             }
@@ -275,6 +283,29 @@ namespace UnityGameTranslator.Core.UI.Panels
         public void OpenForDetails()
         {
             _openingForDetails = true;
+            _purposeStated = true;
+            SetActive(true);
+        }
+
+        /// <summary>
+        /// Open this screen to SEND the translation — the ordinary way in, from every button that
+        /// publishes, updates, contributes or forks.
+        ///
+        /// 🔴 **Every way in states its purpose, and that is not tidiness.** This screen serves two
+        /// acts now, and it settles which one it is only on a FRESH activation — a panel already on
+        /// screen keeps what it was. So pressing Upload while Edit details was open left the window
+        /// titled Edit details, marked for the published copy alone, with a Save button that sends
+        /// no translation: the button said one thing and the screen did another.
+        ///
+        /// ⚠ **It cannot be inferred from a bare SetActive(true)**, which is why this exists rather
+        /// than a default: PanelDragger calls SetActive(true) on every frame the pointer spends in
+        /// the drag area, so "no purpose stated" would re-settle the screen as an upload while
+        /// somebody was merely moving it.
+        /// </summary>
+        public void OpenForUpload()
+        {
+            _openingForDetails = false;
+            _purposeStated = true;
             SetActive(true);
         }
 
@@ -283,6 +314,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         // it — and worse, the flag would survive into the NEXT opening, so an ordinary Upload would
         // silently become a details edit.
         private bool _openingForDetails;
+
+        // Whether somebody just said what they are opening this for. Only a stated purpose may
+        // re-settle a panel that is already up — see OpenForUpload.
+        private bool _purposeStated;
 
         public void ContinueAfterSetup(GameInfo game, string sourceLanguage, string targetLanguage)
         {

@@ -760,7 +760,12 @@ namespace UnityGameTranslator.Core.UI.Panels
                 if (_syncForkBtn != null) _syncForkBtn.Visible = showBranchFork;
                 if (_syncActionBtn != null) _syncActionBtn.Visible = showAction;
 
-                bool canCompare = TranslatorUIManager.CanCompareWithServer;
+                // ⚠ **Absent while one is in flight**, where the main panel turns into "Stop
+                // comparison": this row has six controls and no room to explain a second verb, and
+                // offering Compare again would open a SECOND token while abandoning the first. The
+                // way out lives on the screen that has room for it.
+                bool canCompare = TranslatorUIManager.CanCompareWithServer
+                                  && !TranslatorUIManager.IsComparisonOpen;
                 if (_syncCompareBtn != null)
                 {
                     _syncCompareBtn.Visible = canCompare;
@@ -1087,7 +1092,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             switch (direction)
             {
                 case UpdateDirection.Upload:
-                    TranslatorUIManager.UploadPanel?.SetActive(true);
+                    TranslatorUIManager.UploadPanel?.OpenForUpload();
                     break;
 
                 case UpdateDirection.Download:
@@ -1108,7 +1113,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     // button inert for the very case its own notification announces.
                     if (TranslatorCore.LocalChangesCount > 0 || TranslatorCore.MetadataDirty)
                     {
-                        TranslatorUIManager.UploadPanel?.SetActive(true);
+                        TranslatorUIManager.UploadPanel?.OpenForUpload();
                     }
                     break;
             }
@@ -1202,7 +1207,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void OnSyncBranchClicked()
         {
             // Open upload panel - it will detect we're contributing and handle branch creation
-            TranslatorUIManager.UploadPanel?.SetActive(true);
+            TranslatorUIManager.UploadPanel?.OpenForUpload();
         }
 
         /// <summary>

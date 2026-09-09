@@ -71,6 +71,72 @@ namespace UnityGameTranslator.Core.Checks
                     $"and hands it {wall}",
                     "each of these turns a contribution into a fork, and only the server knows it — handed a null, the question is asked and the answer thrown away");
             }
+
+            EveryWayInSaysWhatFor(check);
+        }
+
+        /// <summary>
+        /// Nobody opens the upload screen without saying which act they are opening it for.
+        ///
+        /// 🔴 **It serves two acts and settles which only on a FRESH activation.** A panel already
+        /// on screen keeps what it was — so pressing Upload while Edit details was open left the
+        /// window titled Edit details, marked for the published copy alone, with a button that
+        /// sends no translation. The button said one thing and the screen did another.
+        ///
+        /// ⚠ **The purpose cannot be a default**, which is why a bare SetActive is the thing being
+        /// forbidden rather than fixed: PanelDragger calls SetActive(true) on every frame the
+        /// pointer spends in the drag area, so "no purpose stated" would re-settle the screen as an
+        /// upload while somebody was merely moving the window.
+        ///
+        /// ⚠ Same shape as the AddListener rule in CLAUDE.md: a grep that must come back empty.
+        /// </summary>
+        private static void EveryWayInSaysWhatFor(Action<bool, string, string> check)
+        {
+            var offenders = new List<string>();
+            int ways = 0;
+
+            foreach (var file in Directory.GetFiles(CoreRoot(), "*.cs", SearchOption.AllDirectories))
+            {
+                string text = File.ReadAllText(file);
+                if (text.Contains("UploadPanel?.SetActive(true)", StringComparison.Ordinal)
+                    || text.Contains("UploadPanel.SetActive(true)", StringComparison.Ordinal))
+                {
+                    offenders.Add(Path.GetFileName(file));
+                }
+
+                ways += Occurrences(text, "UploadPanel?.OpenForUpload()")
+                        + Occurrences(text, "UploadPanel.OpenForUpload()")
+                        + Occurrences(text, "UploadPanel?.OpenForDetails()");
+            }
+
+            check(ways >= 6,
+                $"{ways} way(s) into the upload screen say what for",
+                "finding one or none would mean the search missed them, and an empty comparison always passes");
+
+            check(offenders.Count == 0,
+                offenders.Count == 0
+                    ? "and none of them opens it without saying"
+                    : "OPENS THE UPLOAD SCREEN WITHOUT A PURPOSE: " + string.Join(", ", offenders),
+                "an already-open panel keeps the act it was opened for, so a bare SetActive leaves the previous screen under a different button");
+        }
+
+        private static int Occurrences(string text, string needle)
+        {
+            int n = 0, at = 0;
+            while ((at = text.IndexOf(needle, at, StringComparison.Ordinal)) >= 0) { n++; at += needle.Length; }
+            return n;
+        }
+
+        private static string CoreRoot()
+        {
+            var dir = new DirectoryInfo(AppContext.BaseDirectory);
+            while (dir != null)
+            {
+                string candidate = Path.Combine(dir.FullName, "UnityGameTranslator.Core");
+                if (Directory.Exists(candidate)) return candidate;
+                dir = dir.Parent;
+            }
+            return AppContext.BaseDirectory;
         }
 
         /// <summary>What is between the brackets of a call — the arguments, and nothing else.</summary>

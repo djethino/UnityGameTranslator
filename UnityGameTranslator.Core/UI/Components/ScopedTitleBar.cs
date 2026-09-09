@@ -703,6 +703,16 @@ namespace UnityGameTranslator.Core.UI.Components
                 if (i < _scopeMarks.Count && _scopeMarks[i] != null)
                     _scopeMarks[i].color = selected ? UIStyles.MarkLit : UIStyles.TextMuted;
             }
+
+            // 🔴 **The colours are half of it: the LIT cell is the one that keeps its word.**
+            // ApplyScopeTier decides that, and Refresh only reaches it when the WIDTH changed — so
+            // relighting alone left the strip showing the word of the side that was lit at
+            // construction. Both stayed spelled out beside a lit cloud, and the extra width pushed
+            // the title off the left edge it is anchored to, which reads as a centred title.
+            //
+            // ⚠ The tier itself is untouched: the room has not changed, only which of the three
+            // deserves the room.
+            ApplyScopeTier();
         }
 
         /// <summary>What the strip looks like, in one comparable value.</summary>

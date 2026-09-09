@@ -2208,7 +2208,7 @@ namespace UnityGameTranslator.Core.UI
                     afterwards?.Invoke();
 
                     if (!TranslatorCore.ForkIsStillTheCopy)
-                        UploadPanel?.SetActive(true);
+                        UploadPanel?.OpenForUpload();
                 },
                 isDanger: true
             );
@@ -3676,15 +3676,32 @@ namespace UnityGameTranslator.Core.UI
         /// </summary>
         private static void DropStaleComparison()
         {
+            EndComparison("the translation was replaced",
+                          say: "Comparison closed: the translation was replaced");
+        }
+
+        /// <summary>Whether a comparison is in flight — waiting on the browser, or on screen.</summary>
+        public static bool IsComparisonOpen =>
+            _mergeSseClient != null || !string.IsNullOrEmpty(_mergeToken)
+            || (MergePanel != null && MergePanel.Enabled);
+
+        /// <summary>
+        /// Let go of the comparison in flight — the one door, whoever asks.
+        ///
+        /// ⚠ **The site FIRST, because it is what reaches the browser.** Stopping our own listener
+        /// is invisible from the page: it holds a token, not a connection to us. The site ends the
+        /// token and announces it on the stream, which is how the tab finds out — the same path a
+        /// live edit session takes when it is stopped from the game.
+        /// </summary>
+        /// <param name="why">For the log — what ended it.</param>
+        /// <param name="say">Shown in the corner, when the screen it closes was on display.</param>
+        public static void EndComparison(string why, string say = null)
+        {
             bool wasShowing = MergePanel != null && MergePanel.Enabled;
             bool wasWaiting = _mergeSseClient != null || !string.IsNullOrEmpty(_mergeToken);
 
             if (!wasShowing && !wasWaiting) return;
 
-            // ⚠ **The site first, because it is what reaches the browser.** Stopping our own
-            // listener is invisible from the page: it holds a token, not a connection to us. The
-            // site ends the token and announces it on the stream, which is how the tab finds out —
-            // the same path a live edit session takes when it is stopped from the game.
             string ending = _mergeToken;
             if (!string.IsNullOrEmpty(ending)) _ = ApiClient.EndMergePreview(ending);
 
@@ -3692,8 +3709,12 @@ namespace UnityGameTranslator.Core.UI
             _mergeToken = null;
             MergePanel?.SetActive(false);
 
-            TranslatorCore.LogInfo("[Merge] The translation was replaced - the comparison no longer describes it");
-            if (wasShowing) ShowHotkeyFeedback("Comparison closed: the translation was replaced");
+            TranslatorCore.LogInfo($"[Merge] The comparison was let go - {why}");
+
+            if (wasShowing && !string.IsNullOrEmpty(say)) ShowHotkeyFeedback(say);
+
+            MainPanel?.RefreshUI();
+            StatusOverlay?.RefreshOverlay();
         }
 
         /// <summary>
@@ -5898,7 +5919,7 @@ namespace UnityGameTranslator.Core.UI
             else
             {
                 ShowUI = true;
-                UploadPanel.SetActive(true);
+                UploadPanel.OpenForUpload();
                 ShowHotkeyFeedback("Upload: OPEN", true);
             }
         }

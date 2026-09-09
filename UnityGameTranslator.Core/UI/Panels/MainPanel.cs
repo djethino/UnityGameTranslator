@@ -1746,9 +1746,22 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // Non-owners can't compare because they don't have a server version to compare against
                 // ⚠ From the manager, because the sync notification offers the same button and
                 // the two must refuse in the same cases. See TranslatorUIManager.CanCompareWithServer.
+                // 🔴 **One button, two verbs — the shape "Edit in browser" already uses.** A
+                // comparison opened from here lives in a browser tab, and the game had no way to
+                // let go of it: closing the tab leaves the token alive until it expires, and the
+                // mod goes on waiting for a result nobody is going to send. The way out belongs on
+                // the control that opened it, not on a second one.
+                bool comparing = TranslatorUIManager.IsComparisonOpen;
                 bool canCompare = TranslatorUIManager.CanCompareWithServer;
-                _compareWithServerBtn.Visible = canCompare;
-                if (canCompare)
+
+                _compareWithServerBtn.Visible = canCompare || comparing;
+                if (comparing)
+                {
+                    // ⚠ Named, not "Stop": three buttons on this row could be stopped.
+                    _compareWithServerBtn.Enabled = true;
+                    _compareWithServerBtn.Label = "Stop comparison";
+                }
+                else if (canCompare)
                 {
                     _compareWithServerBtn.Enabled = isLoggedIn;
                     // How many lines the comparison is about, on the button that opens it.
@@ -1899,7 +1912,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
             else
             {
-                TranslatorUIManager.UploadPanel?.SetActive(true);
+                TranslatorUIManager.UploadPanel?.OpenForUpload();
             }
         }
 
@@ -2002,7 +2015,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void OnContributeAsBranchClicked()
         {
             // Open upload panel - it will detect that we're contributing to an existing translation
-            TranslatorUIManager.UploadPanel?.SetActive(true);
+            TranslatorUIManager.UploadPanel?.OpenForUpload();
         }
 
         /// <summary>
@@ -2155,6 +2168,14 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private async void OnCompareWithServerClicked()
         {
+            // The button says Stop, so it stops — the same door the reload path uses, which ends
+            // the token on the site so the browser tab is told rather than left hanging.
+            if (TranslatorUIManager.IsComparisonOpen)
+            {
+                TranslatorUIManager.EndComparison("stopped from the game");
+                return;
+            }
+
             // Compare local changes with server version (Main or Branch)
             var serverState = TranslatorCore.ServerState;
             if (serverState?.SiteId == null)

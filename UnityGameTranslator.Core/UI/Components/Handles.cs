@@ -403,6 +403,56 @@ namespace UnityGameTranslator.Core.UI.Components
         }
 
         /// <summary>Recolour for another purpose — a confirm that turns dangerous.</summary>
+        /// <summary>
+        /// Whether what this button opens is on screen right now.
+        ///
+        /// 🔴 **A button that opens a window has to say the window is already there.** Left
+        /// looking exactly as it did before, it invites a second click on something that has
+        /// already happened — and a second click used to do nothing at all, which reads as the
+        /// button being broken.
+        ///
+        /// ⚠ **Lit, not greyed, and that is a decision.** Greying says "not now, later"; here the
+        /// act is available, it has simply already been done — and the way out is the same button.
+        /// Greying it would also strand somebody whose window is behind another one, with nothing
+        /// left to bring it forward. Pressing it again closes: the shape this project already uses
+        /// for `Edit in browser` / `Stop browser session` and for `Compare` / `Stop comparison`.
+        ///
+        /// ⚠ **The look is the active TAB's**, not a new one: same background, same bold. A player
+        /// meets that picture on every tabbed panel in this mod, and it already means "this is the
+        /// one you are on".
+        /// </summary>
+        public bool Showing
+        {
+            set
+            {
+                if (Ref?.Component == null || _showing == value) return;
+                _showing = value;
+
+                if (value)
+                {
+                    if (_resting == null) _resting = Ref.Component.colors;
+
+                    var lit = Ref.Component.colors;
+                    lit.normalColor = UIStyles.TabActiveBackground;
+                    lit.highlightedColor = UIStyles.TabActiveBackground;
+                    lit.pressedColor = UIStyles.TabActiveBackground;
+                    Ref.Component.colors = lit;
+
+                    if (Ref.ButtonText != null) Ref.ButtonText.fontStyle = FontStyle.Bold;
+                }
+                else
+                {
+                    if (_resting.HasValue) Ref.Component.colors = _resting.Value;
+                    if (Ref.ButtonText != null) Ref.ButtonText.fontStyle = FontStyle.Normal;
+                }
+            }
+        }
+
+        // What it looked like before it was lit — read once, so restoring cannot drift from the
+        // tone the button was built with.
+        private UnityEngine.UI.ColorBlock? _resting;
+        private bool _showing;
+
         public ButtonTone Tone
         {
             set { if (Object != null) UIStyles.SetBackground(Object, Tones.ButtonFill(value)); }

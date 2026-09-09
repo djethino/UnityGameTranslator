@@ -77,6 +77,12 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         private bool _detailsOnly;
 
+        /// <summary>Whether this screen is up AND showing the details act rather than the send.</summary>
+        public bool IsShowingDetails => Enabled && _detailsOnly;
+
+        /// <summary>Whether this screen is up AND showing the send rather than the details.</summary>
+        public bool IsShowingUpload => Enabled && !_detailsOnly;
+
         public UploadPanel(UIBase owner) : base(owner)
         {
         }

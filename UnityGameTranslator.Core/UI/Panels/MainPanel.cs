@@ -93,6 +93,9 @@ namespace UnityGameTranslator.Core.UI.Panels
         private LabelHandle _uploadHintLabel;
         private ButtonHandle _reviewOnWebsiteBtn;
         private ButtonHandle _compareWithServerBtn;
+        private ButtonHandle _transParamsBtn;
+        private ButtonHandle _optionsBtn;
+        private ButtonHandle _backupsBtn;
         private ButtonHandle _editDetailsBtn;
         private ButtonHandle _updateFromMainBtn;
         private bool _updateFromMainInFlight;
@@ -233,13 +236,17 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Bottom buttons - in fixed footer (outside scroll). These three concern the whole
             // mod and belong to every tab; a tab's own action has no business here — added as a
             // fourth it pushed Close off the edge of the row.
-            var transParamsBtn = Buttons.Secondary(buttonRow, "TransParamsBtn", "Translation Tools");
-            transParamsBtn.Clicked += () => TranslatorUIManager.TranslationParamsPanel?.SetActive(true);
+            // ⚠ Kept as fields: a button that opens a window has to be told, afterwards, that the
+            // window is there — and that it is gone again. See RefreshOpenerStates.
+            _transParamsBtn = Buttons.Secondary(buttonRow, "TransParamsBtn", "Translation Tools");
+            _transParamsBtn.Clicked += () => Toggle(TranslatorUIManager.TranslationParamsPanel);
+            var transParamsBtn = _transParamsBtn;
             _helpZone?.Describe(transParamsBtn,
                 "Text editors, exclusions, fonts, images and variables");
 
-            var optionsBtn = Buttons.Secondary(buttonRow, "OptionsBtn", "Mod Options");
-            optionsBtn.Clicked += () => TranslatorUIManager.OptionsPanel?.SetActive(true);
+            _optionsBtn = Buttons.Secondary(buttonRow, "OptionsBtn", "Mod Options");
+            _optionsBtn.Clicked += () => Toggle(TranslatorUIManager.OptionsPanel);
+            var optionsBtn = _optionsBtn;
             _helpZone?.Describe(optionsBtn,
                 "General settings: hotkeys, online mode, translation backend");
 
@@ -421,8 +428,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             _backupsLabel = Labels.Create(backupsRow, "BackupsLabel", "", TextRole.Hint,
                                           tone: Tone.Secondary, policy: TextPolicy.Excluded, fill: Fill.Stretch);
 
-            var backupsBtn = Buttons.Secondary(backupsRow, "BackupsBtn", "Backups…");
-            backupsBtn.Clicked += () => TranslatorUIManager.BackupsPanel?.ShowPanel();
+            _backupsBtn = Buttons.Secondary(backupsRow, "BackupsBtn", "Backups…");
+            _backupsBtn.Clicked += () =>
+            {
+                var backups = TranslatorUIManager.BackupsPanel;
+                if (backups == null) return;
+                if (backups.Enabled) backups.SetActive(false); else backups.ShowPanel();
+            };
+            var backupsBtn = _backupsBtn;
             _helpZone?.Describe(backupsBtn,
                 "Your translation as it stood at earlier moments — kept here when something "
                 + "replaces it, and whenever you ask.");
@@ -1827,6 +1840,14 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             bool isLoggedIn = !string.IsNullOrEmpty(TranslatorCore.Config.api_token);
 
+            // ⚠ Only when this button is the one showing the sign-in screen. Signing OUT is not a
+            // window and has nothing to put away.
+            if (!isLoggedIn && TranslatorUIManager.LoginPanel?.Enabled == true)
+            {
+                TranslatorUIManager.LoginPanel.SetActive(false);
+                return;
+            }
+
             if (isLoggedIn)
             {
                 // Show confirmation dialog before logout
@@ -1894,6 +1915,15 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private async void OnUploadClicked()
         {
+            // ⚠ Closes only the SEND. On a window showing the details act, this re-purposes it —
+            // pressing Upload must never read as "close the details I was editing".
+            var openUpload = TranslatorUIManager.UploadPanel;
+            if (_uploadAct != UploadAct.Fork && openUpload != null && openUpload.IsShowingUpload)
+            {
+                openUpload.SetActive(false);
+                return;
+            }
+
             // The button says Fork, so it forks — the same door as the Fork button of the role
             // row and as "Create Independent". Local from end to end: neither the network nor an
             // account is asked for here.
@@ -1935,7 +1965,59 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void OnEditDetailsClicked()
         {
             if (!TranslatorCore.Config.online_mode) return;
-            TranslatorUIManager.UploadPanel?.OpenForDetails();
+
+            // ⚠ Closes only what IT opened. On a window showing the send, this re-purposes it —
+            // pressing "Edit details" must never read as "close the upload I was filling in".
+            var upload = TranslatorUIManager.UploadPanel;
+            if (upload != null && upload.IsShowingDetails) { upload.SetActive(false); return; }
+
+            upload?.OpenForDetails();
+        }
+
+        /// <summary>
+        /// Show a window, or put it away if this button is the one that put it there.
+        ///
+        /// 🔴 **A button that opens a window and then does nothing reads as broken.** Pressing
+        /// "Translation Tools" a second time changed nothing at all — the window was already up,
+        /// possibly behind another one — so the only honest readings were "it is broken" or "I
+        /// missed". The button is lit while its window is up, and it is the way back out.
+        /// </summary>
+        private static void Toggle(TranslatorPanelBase panel)
+        {
+            if (panel == null) return;
+            panel.SetActive(!panel.Enabled);
+        }
+
+        /// <summary>
+        /// Tell every opener whether the thing it opens is on screen.
+        ///
+        /// ⚠ **Reconciled from the state, every frame, rather than flipped on the click.** A window
+        /// closes by its own X, by a hotkey, or because something else closed it — none of which
+        /// passes through the button that opened it. This project has paid for the transition
+        /// approach more than once; see TickNewlyOpenedPanels a few lines from here.
+        ///
+        /// ⚠ Cheap by construction: the setter returns immediately when the value has not changed,
+        /// so this is a handful of bool comparisons per frame and a write only when something moved.
+        /// </summary>
+        public void RefreshOpenerStates()
+        {
+            var upload = TranslatorUIManager.UploadPanel;
+
+            if (_transParamsBtn != null)
+                _transParamsBtn.Showing = TranslatorUIManager.TranslationParamsPanel?.Enabled == true;
+            if (_optionsBtn != null)
+                _optionsBtn.Showing = TranslatorUIManager.OptionsPanel?.Enabled == true;
+            if (_backupsBtn != null)
+                _backupsBtn.Showing = TranslatorUIManager.BackupsPanel?.Enabled == true;
+            if (_loginLogoutBtn != null)
+                _loginLogoutBtn.Showing = TranslatorUIManager.LoginPanel?.Enabled == true;
+            if (_loginCTABtn != null)
+                _loginCTABtn.Showing = TranslatorUIManager.LoginPanel?.Enabled == true;
+
+            // ⚠ The two acts of one window, so each button follows ITS act — never merely "the
+            // window is up", which would light both and say the wrong thing about one of them.
+            if (_uploadBtn != null) _uploadBtn.Showing = upload?.IsShowingUpload == true;
+            if (_editDetailsBtn != null) _editDetailsBtn.Showing = upload?.IsShowingDetails == true;
         }
 
         private void OnReviewOnWebsiteClicked()

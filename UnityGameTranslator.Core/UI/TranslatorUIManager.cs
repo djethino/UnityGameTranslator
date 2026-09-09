@@ -1196,6 +1196,10 @@ namespace UnityGameTranslator.Core.UI
 
                 _panelWasVisible[i] = visible;
             }
+
+            // ⚠ Here rather than in a tick of its own: this asks the same question — which windows
+            // are up — one line after it has been answered for the focus.
+            MainPanel?.RefreshOpenerStates();
         }
 
         private static void TickResponsiveStrips()

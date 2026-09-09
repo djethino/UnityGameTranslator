@@ -1886,7 +1886,22 @@ namespace UnityGameTranslator.Core
 
             if (Config.preload_model && Config.enable_ai && Config.translation_backend == "llm")
             {
-                PreloadModel();
+                // 🔴 **Off this thread, because Initialize runs on the game's.** PreloadModel
+                // blocks on its answer, and loading a model is not quick: measured at 4.1 s on one
+                // machine with a small model and a cold server, and a player with a large one
+                // waits far longer — a freeze at startup that everybody rightly blames on the mod,
+                // because it IS the mod.
+                //
+                // ⚠ Fire and forget is safe HERE and nowhere by default: PreloadModel catches
+                // everything it can throw and logs it, so this task cannot fault and leave an
+                // exception nobody looks at (see SseClient.Connect for the case where it did).
+                _waitingSince = DateTime.UtcNow;
+                _preloading = true;
+                Task.Run(() =>
+                {
+                    try { PreloadModel(); }
+                    finally { _preloading = false; }
+                });
             }
 
             Adapter.LogInfo($"UnityGameTranslator v{PluginInfo.Version} initialized!");
@@ -4691,6 +4706,55 @@ namespace UnityGameTranslator.Core
                 LogDebug($"[TranslatorCore] Cleared {count} items from translation queue");
         }
 
+        // ── Is the model still getting ready? ─────────────────────────────────────
+        //
+        // 🔴 **The first translation of a session can take a minute, and the tenth is instant.**
+        // Reported from a real game with a large model. Two different warm-ups are behind it and
+        // the mod only ever paid for one: loading the WEIGHTS, which the preload covers, and
+        // processing the PROMPT — long, and cached by every local server after the first time —
+        // which a preload saying "Hi" does not cover at all.
+        //
+        // ⚠ **So this waits on the first real TRANSLATION, not on the preload succeeding.** A
+        // preload that answered proves the weights are in memory and says nothing about the wait
+        // the player is about to meet. Watching the wrong one would hide exactly the case this
+        // exists for.
+
+        /// <summary>The startup preload is in flight.</summary>
+        private static volatile bool _preloading;
+
+        /// <summary>A backend call is in flight right now.</summary>
+        private static volatile bool _awaitingBackend;
+
+        /// <summary>A real translation has come back this session — the model is warm from here on.</summary>
+        private static volatile bool _backendHasTranslated;
+
+        /// <summary>When the wait we are describing began, in UTC. Written from the worker thread.</summary>
+        private static DateTime _waitingSince = DateTime.MinValue;
+
+        /// <summary>
+        /// Whether to tell somebody that the model is still getting ready.
+        ///
+        /// ⚠ The rule is <see cref="Engine.ModelWarmup.ShouldSay"/> — pure, and checked there. All
+        /// this does is read the state it needs: which backend, where its server lives, and what
+        /// is in flight.
+        /// </summary>
+        public static bool ModelStillGettingReady
+        {
+            get
+            {
+                if (Config == null) return false;
+
+                // A model somebody runs themselves: an LLM, and a server that is not out on the
+                // internet. Google and DeepL load nothing at all.
+                bool localModel = Config.translation_backend == "llm"
+                                  && Endpoints.Where(Config.ai_url) != Endpoints.Locality.Elsewhere;
+
+                return Engine.ModelWarmup.ShouldSay(localModel, _preloading, _awaitingBackend,
+                                                    _backendHasTranslated,
+                                                    DateTime.UtcNow - _waitingSince);
+            }
+        }
+
         private static void PreloadModel()
         {
             try
@@ -5247,14 +5311,31 @@ namespace UnityGameTranslator.Core
                         {
                             // Dispatch to the appropriate backend
                             string backend = Config.translation_backend;
-                            if (backend == "google" || backend == "deepl")
+
+                            // The wait starts here, so a screen can say the model is still getting
+                            // ready — see ModelStillGettingReady, and why it watches the first
+                            // real translation rather than the preload.
+                            if (!_backendHasTranslated) _waitingSince = DateTime.UtcNow;
+                            _awaitingBackend = true;
+                            try
                             {
-                                translation = TranslateWithAPI(normalizedOriginal, extractedNumbers);
+                                if (backend == "google" || backend == "deepl")
+                                {
+                                    translation = TranslateWithAPI(normalizedOriginal, extractedNumbers);
+                                }
+                                else
+                                {
+                                    // LLM backend (default)
+                                    translation = TranslateWithAI(normalizedOriginal, extractedNumbers, isOwnUI);
+                                }
                             }
-                            else
+                            finally
                             {
-                                // LLM backend (default)
-                                translation = TranslateWithAI(normalizedOriginal, extractedNumbers, isOwnUI);
+                                _awaitingBackend = false;
+                                // An answer proves the model is loaded AND that its prompt has been
+                                // processed once. A refusal proves it just as well; only silence
+                                // does not, which is why this is not set on a null.
+                                if (!string.IsNullOrEmpty(translation)) _backendHasTranslated = true;
                             }
 
                             if (Config.debug_ai)

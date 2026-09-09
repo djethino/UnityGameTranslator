@@ -72,6 +72,12 @@
     -->
     <Compile Include="../../UnityGameTranslator.Core/Engine/TranslationQueue.cs" />
     <!--
+      Whether to say the model is still getting ready. Six facts and a duration in, one answer
+      out — and every one of its cases is a way of saying it when nothing is wrong, or of staying
+      quiet while somebody watches a game that looks broken.
+    -->
+    <Compile Include="../../UnityGameTranslator.Core/Engine/ModelWarmup.cs" />
+    <!--
       The config.json contract and its migrations — a format shared with the Manager, so every key
       is an agreement between two programs. A retired value read as the default takes somebody's
       choice away in silence, which is the only kind of defect this file can have.

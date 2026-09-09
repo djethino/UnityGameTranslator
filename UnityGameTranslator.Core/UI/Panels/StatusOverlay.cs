@@ -853,29 +853,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 _aiBox.Visible = true;
 
-                // 🔴 **Why nothing is happening, said where somebody is already looking.** A local
-                // model that is not in memory yet makes the first translation of a session take up
-                // to a minute, and the tenth take no time at all — so this box sat on
-                // "Translating: Hello" while a player watched, and the mod looked broken or slow
-                // when it was waiting like they were.
-                //
-                // ⚠ It replaces the excerpt rather than joining it: at that moment the question is
-                // not WHICH line is being translated, it is why none of them has come back.
-                //
-                // ⚠ Only for a server somebody runs themselves, only past a second, and only until
-                // the first answer — the conditions live in ModelStillGettingReady, next to what
-                // they are about.
-                if (TranslatorCore.ModelStillGettingReady)
-                {
-                    // ⚠ **It says what is happening and promises nothing.** It read "Only the
-                    // first translation waits for this", which is not true: a server drops a model
-                    // it has not been asked for in a while, and the next line pays the load again.
-                    // A notice that promises something the mod cannot keep is worse than no
-                    // notice — the second time it happens, nobody believes the first line either.
-                    _aiStatusLabel.Say("Loading the model...");
-                    _aiStatusLabel.Visible = true;
-                }
-                else if (isTranslating)
+                if (isTranslating)
                 {
                     // The excerpt is GAME text being translated — data, never sent for translation.
                     // Flattened first: game strings often carry line breaks, and a single one made

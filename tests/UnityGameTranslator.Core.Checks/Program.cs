@@ -110,7 +110,6 @@ namespace UnityGameTranslator.Core.Checks
         {
             Section("The translation queue, across a whole sequence", TranslationQueueChecks.Run);
             Section("A thread the mod starts, on each runtime", WorkerThreadChecks.Run);
-            Section("Saying the model is still getting ready", ModelWarmupChecks.Run);
         }
 
         /// <summary>What a config.json written by an older build still means today.</summary>

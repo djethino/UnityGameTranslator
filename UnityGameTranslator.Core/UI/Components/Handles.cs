@@ -514,6 +514,22 @@ namespace UnityGameTranslator.Core.UI.Components
             add { if (Ref != null) Ref.OnValueChanged += value; }
             remove { if (Ref != null) Ref.OnValueChanged -= value; }
         }
+
+        /// <summary>
+        /// Enter was pressed in this field.
+        ///
+        /// ⚠ **Wire it to the same act as the button beside it, never to a second copy of it.** A
+        /// field with a Save button has one action and two ways to reach it; two implementations
+        /// is how one of them comes to lack the other's conditions.
+        ///
+        /// ⚠ Not "the edit ended": losing focus is not submitting, and a field that saved on focus
+        /// loss would save when somebody clicked Cancel. See UIHelpers.AddSubmitListener.
+        /// </summary>
+        public void Submitted(Action<string> act)
+        {
+            if (Ref?.Component == null || act == null) return;
+            UIHelpers.AddSubmitListener(Ref.Component, act);
+        }
     }
 
     /// <summary>A box that is on or off.</summary>

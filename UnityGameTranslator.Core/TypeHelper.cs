@@ -1351,6 +1351,15 @@ namespace UnityGameTranslator.Core
         private static bool _il2cppHelpersInitialized;
 
         /// <summary>
+        /// Types this runtime cannot reach through Il2CppType, learnt the first time it refuses.
+        ///
+        /// ⚠ A permanent fact, not a transient failure: the proxy for a type is either in the
+        /// game's dumped assemblies or it is not, and nothing that happens while the game runs
+        /// changes that. Asking again costs a reflection call and a warning, every lookup.
+        /// </summary>
+        private static readonly HashSet<Type> _il2cppLookupRefused = new HashSet<Type>();
+
+        /// <summary>
         /// Initialize IL2CPP helper methods. Call from InitializeIL2CPP after methods are found.
         /// </summary>
         public static void SetIL2CPPMethods(MethodInfo il2cppTypeOfMethod, MethodInfo resourcesFindAllMethod,
@@ -1426,7 +1435,8 @@ namespace UnityGameTranslator.Core
             if (type == null) return new UnityEngine.Object[0];
 
             // IL2CPP path: use Il2CppType.Of<T>() pattern
-            if (_il2cppHelpersInitialized && _il2cppTypeOfMethod != null && _il2cppResourcesFindAllMethod != null)
+            if (_il2cppHelpersInitialized && _il2cppTypeOfMethod != null && _il2cppResourcesFindAllMethod != null
+                && !_il2cppLookupRefused.Contains(type))
             {
                 try
                 {
@@ -1452,7 +1462,18 @@ namespace UnityGameTranslator.Core
                 }
                 catch (Exception ex)
                 {
-                    TranslatorCore.LogWarning($"[TypeHelper] IL2CPP FindAllObjectsOfType failed for {type.Name}: {ex.Message}");
+                    // 🔴 **Said once per type, and then never tried again.** Whether this runtime
+                    // can reach a given type through Il2CppType is settled the first time: the
+                    // proxy is either in the game's dumped assemblies or it is not, and nothing
+                    // that happens later changes it. Repeating the attempt cost a reflection call
+                    // and a warning on every lookup — nine identical lines in one short session,
+                    // for a condition that will hold for the life of the process — and a log with
+                    // nine copies of one harmless line is a log where a real warning is missed.
+                    //
+                    // ⚠ Not an error either way: the Mono path below answers for these types, and
+                    // it is what answered before this branch existed.
+                    if (_il2cppLookupRefused.Add(type))
+                        TranslatorCore.LogWarning($"[TypeHelper] This runtime cannot look {type.Name} up through Il2CppType ({ex.Message}) - using the other route from now on");
                 }
             }
 

@@ -231,20 +231,32 @@ namespace UnityGameTranslator.Core.UI.Panels
             // small.** Everything on one line grew wider than the row and pushed against the
             // verbs beside it. Split in two, nothing is cut and the row reads the way every other
             // list in this product reads.
-            var facts = $"{entry.At:dd MMM HH:mm}   {entry.Lines} lines";
+            // 🔴 **A NAME identifies; a date only qualifies.** This panel says so itself, in the
+            // help beside the Rename button: "Ten dated rows are not a choice. A name is what
+            // makes one of them findable." It was written in the smallest role and the dimmest
+            // tone, on the second line, under the date — so the one thing somebody scans the list
+            // for was the hardest thing on the row to read.
+            //
+            // ⚠ The grammar of the row does not change, only what fills each slot: what
+            // identifies on the first line, what qualifies underneath. A backup nobody named
+            // still has the date as its identifier, and keeps it there.
+            string named = !string.IsNullOrEmpty(entry.Label) ? entry.Label : null;
+            string facts = $"{entry.At:dd MMM HH:mm}   {entry.Lines} lines";
 
             var details = new List<string>();
 
-            // The name somebody gave it, or the act that caused it — first, because it is what
-            // the eye looks for. An unnamed saved copy says nothing here: "Saved by you" would be
-            // the heading of the very list it sits in, repeated on every row.
-            if (!string.IsNullOrEmpty(entry.Label)) details.Add("\"" + entry.Label + "\"");
+            // Named, the date joins the qualifiers. Unnamed, the act that caused it takes their
+            // first place — an unnamed saved copy says nothing here, since "Saved by you" is the
+            // heading of the very list it sits in, repeated on every row.
+            if (named != null) details.Add(facts);
             else if (!entry.IsSaved) details.Add(Backups.Describe(entry.Reason, entry.By));
 
             if (entry.ByHand > 0) details.Add($"{entry.ByHand} by hand");
             if (entry.WithAssets) details.Add("with fonts and images");
 
-            Labels.Create(text, "Facts", facts, TextRole.Body, policy: TextPolicy.Excluded,
+            // ⚠ Excluded either way: a date and a count are not ours to rewrite, and a name is
+            // somebody's own words.
+            Labels.Create(text, "Facts", named ?? facts, TextRole.Body, policy: TextPolicy.Excluded,
                           fill: Fill.Stretch, minHeight: UIStyles.RowHeightSmall);
 
             // 🔴 The one restore that cannot be undone with another click, said where the counts
@@ -331,13 +343,22 @@ namespace UnityGameTranslator.Core.UI.Panels
             var field = Fields.Create(row, "Label", "What is this one?", minHeight: UIStyles.RowHeightNormal);
             field.Text = entry.Label ?? "";
 
-            var ok = Buttons.Primary(row, "Ok", "Save");
-            ok.Clicked += () =>
+            // ⚠ ONE act, two ways to reach it — the button and the key run the same lines. Two
+            // copies is how one of them comes to lack the other's conditions.
+            Action save = () =>
             {
                 TranslationBackups.Rename(entry.Id, field.Text);
                 _renaming = null;
                 Refresh();
             };
+
+            // 🔴 Enter validates, as it does in every program. It used to press Cancel: this input
+            // module sends Submit to whatever is SELECTED, and ending the edit moved the selection
+            // onto the button beside the field. See UIHelpers.AddSubmitListener.
+            field.Submitted(_ => save());
+
+            var ok = Buttons.Primary(row, "Ok", "Save");
+            ok.Clicked += () => save();
 
             var cancel = Buttons.Secondary(row, "Cancel", "Cancel");
             cancel.Clicked += () => { _renaming = null; Refresh(); };

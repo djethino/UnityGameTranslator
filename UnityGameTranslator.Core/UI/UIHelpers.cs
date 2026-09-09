@@ -183,6 +183,54 @@ namespace UnityGameTranslator.Core.UI
         }
 
         /// <summary>
+        /// Call back when somebody presses Enter in a field — and only then.
+        ///
+        /// 🔴 **Enter used to do the opposite of what it says.** On this input module Submit is
+        /// sent to whatever is SELECTED, with no raycast (see TranslatorUIManager.DeselectGameObject
+        /// for how that was found). Pressing Enter while typing ends the edit, the selection moves
+        /// on, and Submit lands on a neighbouring button — so renaming a backup and pressing Enter
+        /// pressed Cancel. Every convention in every program says Enter validates.
+        ///
+        /// ⚠ **onEndEdit is not "submitted"**, and using it alone would be worse than the defect:
+        /// it fires on losing focus too, so clicking Cancel would save. The key is read at the
+        /// moment the edit ends, which is the same frame the key went down.
+        ///
+        /// ⚠ Here rather than in a panel because it touches a UnityEvent — see the note at the top
+        /// of this file, and CLAUDE.md on what AddListener does to IL2CPP.
+        /// </summary>
+        public static void AddSubmitListener(InputField field, Action<string> onSubmit)
+        {
+            if (field == null || onSubmit == null) return;
+
+            Action<string> whenEditEnds = text =>
+            {
+                if (!UniverseLib.Input.InputManager.GetKey(KeyCode.Return)
+                    && !UniverseLib.Input.InputManager.GetKey(KeyCode.KeypadEnter))
+                    return;
+
+                onSubmit(text);
+            };
+
+            bool isIL2CPP = TranslatorCore.Adapter?.IsIL2CPP ?? false;
+
+            if (isIL2CPP)
+            {
+                AddListenerViaReflection(field, "onEndEdit", whenEditEnds, "InputField");
+            }
+            else
+            {
+                // Separate method for the same reason as the toggle's: IL2CPP resolves a field
+                // reference when the body is compiled, not when it runs.
+                AddSubmitListenerDirect(field, whenEditEnds);
+            }
+        }
+
+        private static void AddSubmitListenerDirect(InputField field, Action<string> callback)
+        {
+            field.onEndEdit.AddListener((text) => callback(text));
+        }
+
+        /// <summary>
         /// Adds a value change listener to a Slider.
         /// Works on both Mono and IL2CPP by using reflection with delegate conversion.
         /// </summary>

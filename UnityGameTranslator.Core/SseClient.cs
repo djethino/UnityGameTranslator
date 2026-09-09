@@ -116,7 +116,25 @@ namespace UnityGameTranslator.Core
             _finished = false;
             _cts = new CancellationTokenSource();
             var token = _cts.Token;
-            Task.Run(() => ConnectLoop(url, headers, token));
+
+            // 🔴 **The failure is looked at, and this is not defensive.** A Task nobody observes
+            // keeps its exception until the collector notices, and then the runtime raises it as
+            // an unobserved one — which MelonLoader reports as an ERROR, from a thread with no
+            // context, long after the fact. That is what a game showed at shutdown: the socket
+            // torn down mid-read, an abandoned read, and an error line about a transport that had
+            // simply been closed.
+            //
+            // ⚠ A cancelled read is the ordinary way this ends — Disconnect cancels the token —
+            // so it is not worth a word. Anything else is a connection that died on its own, and
+            // that IS worth one: it is the only trace of a stream that stopped answering.
+            Task.Run(() => ConnectLoop(url, headers, token))
+                .ContinueWith(t =>
+                {
+                    if (t.Exception == null) return;
+                    var inner = t.Exception.GetBaseException();
+                    if (inner is OperationCanceledException) return;
+                    TranslatorCore.LogWarning($"[SSE] The connection ended on its own: {inner.Message}");
+                }, TaskContinuationOptions.OnlyOnFaulted);
         }
 
         /// <summary>

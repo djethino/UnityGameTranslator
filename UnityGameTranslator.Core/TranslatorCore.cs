@@ -42,6 +42,28 @@ namespace UnityGameTranslator.Core
         /// Used to determine which UniverseLib variant to use and which scanning method to apply.
         /// </summary>
         bool IsIL2CPP { get; }
+
+        /// <summary>
+        /// A thread the mod started is about to run its own loop. Do whatever this runtime needs
+        /// before it touches anything.
+        ///
+        /// 🔴 **On IL2CPP this is not housekeeping, it is the difference between running and a
+        /// native abort.** The Boehm collector IL2CPP uses knows only the threads the engine made;
+        /// collecting while one of ours holds a reference kills the process with "fatal error in
+        /// GC: Collecting from unknown thread" — no exception to catch, no line in the log, and it
+        /// happens whenever the collector happens to run.
+        ///
+        /// 🔴 **Here rather than in the Core, because only the adapter KNOWS.** The Core is
+        /// compiled once for both runtimes and cannot reference Il2CppInterop at all, so it did
+        /// this by walking every loaded assembly for a type name and reflecting two methods out of
+        /// it — a guess that compiles on a runtime where it means nothing, and fails silently on
+        /// the one where it matters if either name ever moves. Each IL2CPP adapter already
+        /// references that assembly and calls the two functions directly, checked by its compiler.
+        ///
+        /// ⚠ Mono adapters do nothing here, and that is the whole answer for them: .NET threads
+        /// are what their collector already tracks.
+        /// </summary>
+        void OnWorkerThreadStarted();
     }
 
     /// <summary>
@@ -5063,43 +5085,10 @@ namespace UnityGameTranslator.Core
 
         private static void TranslationWorkerLoop()
         {
-            // On IL2CPP, register this thread with the GC to prevent
-            // "fatal error in GC: Collecting from unknown thread" crashes.
-            // The Boehm GC used by IL2CPP doesn't know about .NET threads.
-            if (Adapter?.IsIL2CPP == true)
-            {
-                try
-                {
-                    // Find IL2CPP class (Il2CppInterop.Runtime.IL2CPP)
-                    Type il2cppType = null;
-                    foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-                    {
-                        il2cppType = asm.GetType("Il2CppInterop.Runtime.IL2CPP");
-                        if (il2cppType != null) break;
-                    }
-
-                    if (il2cppType != null)
-                    {
-                        // il2cpp_domain_get() returns the current domain pointer
-                        var domainGet = il2cppType.GetMethod("il2cpp_domain_get",
-                            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
-                        // il2cpp_thread_attach(domain) attaches current thread to GC
-                        var threadAttach = il2cppType.GetMethod("il2cpp_thread_attach",
-                            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
-
-                        if (domainGet != null && threadAttach != null)
-                        {
-                            var domain = domainGet.Invoke(null, null);
-                            threadAttach.Invoke(null, new object[] { domain });
-                            LogDebug("[Worker] Thread attached to IL2CPP GC domain");
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Adapter?.LogWarning($"[Worker] Failed to attach thread to IL2CPP GC: {ex.Message}");
-                }
-            }
+            // Whatever this runtime needs before one of our threads touches anything — on IL2CPP,
+            // being made known to a collector that would otherwise abort the process on sight.
+            // The adapter knows; the Core, compiled once for both runtimes, could only guess.
+            Adapter?.OnWorkerThreadStarted();
 
             LogDebug("[Worker] Thread started, waiting for translations...");
 

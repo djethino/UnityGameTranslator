@@ -33,6 +33,10 @@ namespace UnityGameTranslator.BepInEx6Mono
             public string GetPluginFolder() => pluginPath;
             public string ModLoaderType => "BepInEx6-Mono";
             public bool IsIL2CPP => false;
+
+            /// <inheritdoc />
+            /// <remarks>Nothing to do: Mono's collector already knows every .NET thread.</remarks>
+            public void OnWorkerThreadStarted() { }
         }
 
         void Awake()

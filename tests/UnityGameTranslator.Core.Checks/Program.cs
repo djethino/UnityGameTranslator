@@ -109,6 +109,7 @@ namespace UnityGameTranslator.Core.Checks
         private static void WhatWaitsForABackend()
         {
             Section("The translation queue, across a whole sequence", TranslationQueueChecks.Run);
+            Section("A thread the mod starts, on each runtime", WorkerThreadChecks.Run);
         }
 
         /// <summary>What a config.json written by an older build still means today.</summary>

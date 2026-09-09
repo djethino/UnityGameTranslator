@@ -1,6 +1,7 @@
 using System.IO;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using Il2CppInterop.Runtime;
 using MelonLoader;
 using MelonLoader.Utils;
 using HarmonyLib;
@@ -23,6 +24,23 @@ namespace UnityGameTranslator.MelonLoaderIL2CPP
             public string GetPluginFolder() => Path.Combine(MelonEnvironment.UserDataDirectory, "UnityGameTranslator");
             public string ModLoaderType => "MelonLoader-IL2CPP";
             public bool IsIL2CPP => true;
+
+            /// <inheritdoc />
+            public void OnWorkerThreadStarted()
+            {
+                // ⚠ The catch is a process boundary, not a way of not knowing: a thread that
+                // failed to attach will abort the process natively later, so the one chance
+                // anybody has of learning why is this line.
+                try
+                {
+                    IL2CPP.il2cpp_thread_attach(IL2CPP.il2cpp_domain_get());
+                    MelonLogger.Msg("[Worker] Thread attached to the IL2CPP GC domain");
+                }
+                catch (System.Exception ex)
+                {
+                    MelonLogger.Warning($"[Worker] Could not attach the thread to the IL2CPP GC: {ex.Message}");
+                }
+            }
         }
 
         public override void OnInitializeMelon()

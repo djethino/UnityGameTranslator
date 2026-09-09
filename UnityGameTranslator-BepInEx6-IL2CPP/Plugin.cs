@@ -9,6 +9,7 @@ using HarmonyLib;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityGameTranslator.Core;
+using Il2CppInterop.Runtime;
 using Il2CppInterop.Runtime.Injection;
 
 namespace UnityGameTranslator.BepInEx6IL2CPP
@@ -36,6 +37,23 @@ namespace UnityGameTranslator.BepInEx6IL2CPP
             public string GetPluginFolder() => pluginPath;
             public string ModLoaderType => "BepInEx6-IL2CPP";
             public bool IsIL2CPP => true;
+
+            /// <inheritdoc />
+            public void OnWorkerThreadStarted()
+            {
+                // ⚠ The catch is a process boundary, not a way of not knowing: a thread that
+                // failed to attach will abort the process natively later, so the one chance
+                // anybody has of learning why is this line.
+                try
+                {
+                    IL2CPP.il2cpp_thread_attach(IL2CPP.il2cpp_domain_get());
+                    logger.LogInfo("[Worker] Thread attached to the IL2CPP GC domain");
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning($"[Worker] Could not attach the thread to the IL2CPP GC: {ex.Message}");
+                }
+            }
         }
 
         public override void Load()

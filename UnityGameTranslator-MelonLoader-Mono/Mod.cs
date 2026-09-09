@@ -21,6 +21,10 @@ namespace UnityGameTranslator.MelonLoaderMono
             public string GetPluginFolder() => Path.Combine(MelonEnvironment.UserDataDirectory, "UnityGameTranslator");
             public string ModLoaderType => "MelonLoader-Mono";
             public bool IsIL2CPP => false;
+
+            /// <inheritdoc />
+            /// <remarks>Nothing to do: Mono's collector already knows every .NET thread.</remarks>
+            public void OnWorkerThreadStarted() { }
         }
 
         public override void OnInitializeMelon()

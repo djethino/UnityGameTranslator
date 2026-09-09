@@ -476,13 +476,40 @@ namespace UnityGameTranslator.Core
                 TranslationCache.Count, everPublished));
         }
 
-        /// <inheritdoc cref="LanguageState.SettleTargetOnFirstLine"/>
+        /// <summary>
+        /// The translation has just been given its first line — settle what it IS, and write it
+        /// down.
+        ///
+        /// 🔴 **Two halves, and only the first existed** (found on a real install, 2026-09-09). A
+        /// configuration set to "auto" resolves here, which is
+        /// <see cref="LanguageState.SettleTargetOnFirstLine"/>. But a configuration that already
+        /// NAMES a language has nothing to resolve, so that call returns at once — and nothing else
+        /// ever told the file. <see cref="LanguageState.SettleFromFile"/> is the rule that adopts
+        /// the machine's setting into the file, and it refuses while the file has no line, which is
+        /// exactly what a new translation is when it is created. It was asked once, at load, and
+        /// never again.
+        ///
+        /// **What that produced**: a fresh translation whose configuration said English → French
+        /// carried neither <c>_source_language</c> nor <c>_target_language</c> — for the whole of
+        /// its life, since a file states its languages only if it already states them. It worked on
+        /// the machine that made it, because the configuration answered in its place, and nowhere
+        /// else: restored, downloaded, or opened after the setting moved, it says nothing about
+        /// what it is. That is precisely what the identity work of 2026-09-08 exists to prevent.
+        ///
+        /// ⚠ The order is the fix: resolve first, state second. A configuration on "auto" becomes a
+        /// value in the first call, and the second writes THAT value into the file rather than the
+        /// mode. Both are idempotent, and the second carries its own guard — a lineage already
+        /// published takes its languages from the server, never from this machine.
+        /// </summary>
         private static void SettleTargetLanguageOnFirstLine()
         {
             if (Config == null) return;
 
             ApplyLanguageWriteBack(_languages.SettleTargetOnFirstLine(
                 Config.source_language, Config.target_language, Config.GetTargetLanguage()));
+
+            // The file has a line now, so the rule that was waiting for one applies.
+            SettleLanguagesFromFile();
         }
 
         /// <inheritdoc cref="LanguageState.NoteConflict"/>

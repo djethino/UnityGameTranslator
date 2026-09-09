@@ -27,6 +27,7 @@ namespace UnityGameTranslator.Core.Checks
             WhatTheFileStates(check);
             WhenTheFileAndTheMachineDisagree(check);
             WhenAutoBecomesAValue(check);
+            WhenTheConfigurationAlreadyNamesThem(check);
             WhenTheServerAnswers(check);
             WhenTheyCannotBeReconciled(check);
             WhenTheyAreLocked(check);
@@ -143,6 +144,115 @@ namespace UnityGameTranslator.Core.Checks
             check(!nothing.ConfigChanged,
                 "and 'auto' that resolves to nothing settles nothing",
                 "writing 'auto' into the file would look like a decision while being the absence of one");
+        }
+
+        /// <summary>
+        /// A brand-new translation, on a machine whose configuration already names both languages.
+        ///
+        /// 🔴 **The case nobody covered, and it shipped** (found on a real install, 2026-09-09): a
+        /// fresh file whose configuration said English → French carried neither
+        /// <c>_source_language</c> nor <c>_target_language</c>, for the whole of its life. Each of
+        /// the two rules is right on its own, and between them the file falls through:
+        /// <see cref="LanguageState.SettleTargetOnFirstLine"/> has nothing to resolve when the
+        /// configuration already names a language, and <see cref="LanguageState.SettleFromFile"/>
+        /// refuses while the file has no line — which is what a new translation is.
+        ///
+        /// ⚠ **So the case is the PAIR, in the order the mod calls it**, and neither call proves
+        /// anything alone. That is the whole shape of this file: a right answer at the wrong
+        /// moment, or in this case a right answer nobody asked for a second time.
+        /// </summary>
+        private static void WhenTheConfigurationAlreadyNamesThem(Action<bool, string, string> check)
+        {
+            // ── A new file: no line, nothing stated, never published. ──
+            var fresh = Fresh();
+
+            fresh.SettleTargetOnFirstLine("English", "French", "French");
+            check(fresh.FileTarget == null,
+                "resolving alone states nothing when there was nothing to resolve",
+                "the configuration already named the language, so that rule has no work — this is the half that existed");
+
+            // The line has landed by now, which is what the second rule was waiting for.
+            fresh.SettleFromFile("English", "French", lineCount: 1, everPublished: false);
+
+            check(fresh.FileTarget == "French",
+                "🔴 and asking again once the line has landed states the target",
+                "a file that does not say what language it is works only on the machine that made it: the configuration answers in its place, and nowhere else");
+            check(fresh.FileSource == "English",
+                "and the source with it",
+                "the prompt is built from it; a downloaded copy stating none has the model translating from nothing stated");
+            check(fresh.FileChanged,
+                "and the file is marked to be written",
+                "settled in memory and not on disk is the same as not settled, one launch later");
+
+            // ── The guard that must survive the fix. ──
+            var published = Fresh();
+            published.SettleTargetOnFirstLine("English", "French", "French");
+            published.SettleFromFile("English", "French", lineCount: 1, everPublished: true);
+
+            check(published.FileTarget == null && published.FileSource == null,
+                "⚠ but a published lineage still states nothing from this machine",
+                "the server keeps the languages a translation was published with; guessing first would freeze a wrong answer before the truth arrives");
+
+            // ── And 'auto' still resolves first, so what is written is the value. ──
+            var auto = Fresh();
+            var write = auto.SettleTargetOnFirstLine("English", "auto", "German");
+            auto.SettleFromFile(write.Source, write.Target, lineCount: 1, everPublished: false);
+
+            check(auto.FileTarget == "German",
+                "and 'auto' is written as the value it resolved to, never as the mode",
+                "the two calls compose in that order for exactly this reason");
+
+            // 🔴 And that the mod actually MAKES the pair. Everything above is a rule composing
+            // correctly; none of it says the engine asks twice, and asking once is what shipped.
+            string core = FindCore();
+            check(core != null, "TranslatorCore's source is found",
+                "this case reads it; without it, it proves nothing");
+            if (core == null) return;
+
+            string body = BodyOf(System.IO.File.ReadAllText(core),
+                                 "private static void SettleTargetLanguageOnFirstLine()");
+            check(body != null, "and the first line's handler is still there under its own name",
+                "renamed, the case must say so rather than pass on an empty comparison");
+            if (body == null) return;
+
+            check(body.Contains("SettleTargetOnFirstLine(", StringComparison.Ordinal)
+                  && body.Contains("SettleLanguagesFromFile()", StringComparison.Ordinal),
+                "the first line resolves AND states, in that order",
+                "resolving alone is what left a fresh translation never saying what language it is in");
+        }
+
+        /// <summary>The body of a method, by counting braces from its signature.</summary>
+        private static string BodyOf(string text, string signature)
+        {
+            int start = text.IndexOf(signature, StringComparison.Ordinal);
+            if (start < 0) return null;
+
+            int open = text.IndexOf('{', start + signature.Length);
+            if (open < 0) return null;
+
+            int depth = 0;
+            for (int i = open; i < text.Length; i++)
+            {
+                if (text[i] == '{') depth++;
+                else if (text[i] == '}')
+                {
+                    depth--;
+                    if (depth == 0) return text.Substring(open, i - open + 1);
+                }
+            }
+            return null;
+        }
+
+        private static string FindCore()
+        {
+            var dir = new System.IO.DirectoryInfo(AppContext.BaseDirectory);
+            while (dir != null)
+            {
+                string candidate = System.IO.Path.Combine(dir.FullName, "UnityGameTranslator.Core", "TranslatorCore.cs");
+                if (System.IO.File.Exists(candidate)) return candidate;
+                dir = dir.Parent;
+            }
+            return null;
         }
 
         private static void WhenTheServerAnswers(Action<bool, string, string> check)

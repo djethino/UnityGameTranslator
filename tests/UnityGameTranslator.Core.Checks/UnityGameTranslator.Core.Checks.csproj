@@ -72,14 +72,6 @@
     -->
     <Compile Include="../../UnityGameTranslator.Core/Engine/TranslationQueue.cs" />
     <!--
-      When the scanner searches the scene instead of trusting what it holds. A rule of three
-      booleans and a clock handed in — and the reason it is a file of its own is that the version
-      before it lived inside the scanner, where nothing could ask it anything: an optimisation
-      gated on Graphic.OnEnable that, when that event did not fire, stopped discovery for a whole
-      session with every counter reporting healthy work.
-    -->
-    <Compile Include="../../UnityGameTranslator.Core/Engine/ScanCadence.cs" />
-    <!--
       The config.json contract and its migrations — a format shared with the Manager, so every key
       is an agreement between two programs. A retired value read as the default takes somebody's
       choice away in silence, which is the only kind of defect this file can have.

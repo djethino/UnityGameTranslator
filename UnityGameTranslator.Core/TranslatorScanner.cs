@@ -491,9 +491,6 @@ namespace UnityGameTranslator.Core
         private static bool _cycleLooksUp;
         private static Type _graphicType;
 
-        /// <summary>When a cycle last searched the scene — see <see cref="Engine.ScanCadence"/>.</summary>
-        private static float _lastLookUpAt = float.NegativeInfinity;
-
         /// <summary>
         /// Only a type that DESCENDS from Graphic is announced by Graphic.OnEnable. The generic
         /// frameworks (NGUI's UILabel, SuperTextMesh…) do not, so gating their lookup on that
@@ -541,14 +538,9 @@ namespace UnityGameTranslator.Core
             _refreshTypeIndex = 0;
             _refreshNewTotal = 0;
             _refreshNeedsFilter = new List<RegisteredTextType>();
-            // Whether this cycle searches the scene is Engine.ScanCadence's to say — no Unity, no
-            // clock of its own, so the rule is replayed in the check corpus instead of argued about.
-            // The announcement is an optimisation, never the only way in.
-            float now = Time.realtimeSinceStartup;
-            _cycleLooksUp = Engine.ScanCadence.ShouldLookUp(
-                _appearanceHooked, _componentAppeared, now, _lastLookUpAt);
+            // Without the hook every cycle looks up, as it always did.
+            _cycleLooksUp = !_appearanceHooked || _componentAppeared;
             _componentAppeared = false;
-            if (_cycleLooksUp) _lastLookUpAt = now;
             _lateUpdateCacheDirty = true;
         }
 

@@ -109,7 +109,6 @@ namespace UnityGameTranslator.Core.Checks
         private static void WhatWaitsForABackend()
         {
             Section("The translation queue, across a whole sequence", TranslationQueueChecks.Run);
-            Section("When the scanner searches the scene", ScanCadenceChecks.Run);
         }
 
         /// <summary>What a config.json written by an older build still means today.</summary>

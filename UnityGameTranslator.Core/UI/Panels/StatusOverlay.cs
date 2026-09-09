@@ -867,7 +867,12 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // they are about.
                 if (TranslatorCore.ModelStillGettingReady)
                 {
-                    _aiStatusLabel.Say("Loading the model. Only the first translation waits for this.");
+                    // ⚠ **It says what is happening and promises nothing.** It read "Only the
+                    // first translation waits for this", which is not true: a server drops a model
+                    // it has not been asked for in a while, and the next line pays the load again.
+                    // A notice that promises something the mod cannot keep is worse than no
+                    // notice — the second time it happens, nobody believes the first line either.
+                    _aiStatusLabel.Say("Loading the model...");
                     _aiStatusLabel.Visible = true;
                 }
                 else if (isTranslating)

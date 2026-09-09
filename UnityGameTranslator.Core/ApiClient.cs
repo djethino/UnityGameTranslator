@@ -2360,6 +2360,32 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Let go of a comparison whose subject has changed. Idempotent.
+        ///
+        /// 🔴 **Stopping our own listener tells nobody.** The page opened in the browser has no
+        /// other way to learn that the translation it was comparing is no longer the one this game
+        /// holds — so it sat there live, twenty minutes and several switches later, offering to
+        /// apply a decision to a file nobody has. The site ends the token and says so on the very
+        /// stream this mod was listening to, exactly as it does for a live edit session.
+        /// </summary>
+        public static async Task<bool> EndMergePreview(string token)
+        {
+            if (string.IsNullOrEmpty(token)) return false;
+
+            try
+            {
+                var response = await client.DeleteAsync(
+                    $"{DefaultBaseUrl}/merge-preview/{Uri.EscapeDataString(token)}");
+                return response.IsSuccessStatusCode;
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogWarning($"[ApiClient] Merge preview end error: {e.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
         /// End the edit session server-side (user clicked Stop in the mod,
         /// the browser page was closed past the grace period, or the game is
         /// shutting down). Idempotent.

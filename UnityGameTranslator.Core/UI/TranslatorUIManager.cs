@@ -3089,6 +3089,16 @@ namespace UnityGameTranslator.Core.UI
                     {
                         HandleMergeCompleted(data, translationId);
                     }
+                    // The other direction: somebody closed the comparison from the browser. The
+                    // screen here describes a token that no longer exists, so it goes with it.
+                    else if (eventType == "merge_preview_ended")
+                    {
+                        TranslatorCore.LogInfo("[MergeSSE] The comparison was closed in the browser");
+                        StopMergeCompletionListener();
+                        _mergeToken = null;
+                        MergePanel?.SetActive(false);
+                        StatusOverlay?.RefreshOverlay();
+                    }
                 });
             };
 
@@ -3670,6 +3680,13 @@ namespace UnityGameTranslator.Core.UI
             bool wasWaiting = _mergeSseClient != null || !string.IsNullOrEmpty(_mergeToken);
 
             if (!wasShowing && !wasWaiting) return;
+
+            // ⚠ **The site first, because it is what reaches the browser.** Stopping our own
+            // listener is invisible from the page: it holds a token, not a connection to us. The
+            // site ends the token and announces it on the stream, which is how the tab finds out —
+            // the same path a live edit session takes when it is stopped from the game.
+            string ending = _mergeToken;
+            if (!string.IsNullOrEmpty(ending)) _ = ApiClient.EndMergePreview(ending);
 
             StopMergeCompletionListener();
             _mergeToken = null;

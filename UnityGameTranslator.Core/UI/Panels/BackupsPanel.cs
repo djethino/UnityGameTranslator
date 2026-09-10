@@ -222,8 +222,18 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         private void Row(Host rows, BackupEntry entry)
         {
-            var box = Stacks.Horizontal(rows, "Entry", spacing: 8, pad: new Pad(4, 4, 6, 6),
-                                        surface: Surface.Item);
+            // 🔴 **Being renamed, the row becomes two storeys.** A field has no room on a row that
+            // already carries the facts and two buttons: it came out about 170 px wide, and wider
+            // or narrower depending on how long the name and the date beside it happened to be — so
+            // the one control somebody is typing into was the only thing on the screen whose size
+            // moved. Laid out downwards, the facts keep their line and the field gets one.
+            bool renaming = _renaming == entry.Id;
+
+            var box = renaming
+                ? Stacks.Vertical(rows, "Entry", spacing: 4, pad: new Pad(4, 4, 6, 6),
+                                  surface: Surface.Item)
+                : Stacks.Horizontal(rows, "Entry", spacing: 8, pad: new Pad(4, 4, 6, 6),
+                                    surface: Surface.Item);
 
             var text = Stacks.Vertical(box, "Text", spacing: 1);
 
@@ -277,7 +287,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                               tone: Tone.Secondary, policy: TextPolicy.Excluded, fill: Fill.Stretch);
             }
 
-            if (_renaming == entry.Id)
+            if (renaming)
             {
                 RenameRow(box, entry);
                 return;
@@ -336,11 +346,24 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
         }
 
+        /// <summary>
+        /// The line the name is typed on — its own, under the facts it names.
+        ///
+        /// ⚠ **The grammar is the search row of <see cref="UploadSetupPanel"/>**: the field takes the
+        /// row, its buttons are as tall as it (<see cref="ButtonSize.Field"/>) and short, and there
+        /// is no caption — the row above already says which backup this is, so nothing here repeats
+        /// it. It was built instead with the ordinary 130/110-wide buttons and a 22 px field, where
+        /// every other field in this product is 32.
+        ///
+        /// ⚠ A floor on the width as well: the panel can be dragged down to
+        /// <see cref="MinWidth"/>, and what must not shrink there is the field, not the two verbs.
+        /// </summary>
         private void RenameRow(Host box, BackupEntry entry)
         {
-            var row = Stacks.Row(box, "Rename", spacing: 6, minHeight: UIStyles.RowHeightNormal);
+            var row = Stacks.Row(box, "Rename", spacing: 5, minHeight: UIStyles.RowHeightLarge);
 
-            var field = Fields.Create(row, "Label", "What is this one?", minHeight: UIStyles.RowHeightNormal);
+            var field = Fields.Create(row, "Label", "What is this one?",
+                                      minHeight: UIStyles.InputHeight, minWidth: 160);
             field.Text = entry.Label ?? "";
 
             // ⚠ ONE act, two ways to reach it — the button and the key run the same lines. Two
@@ -357,11 +380,15 @@ namespace UnityGameTranslator.Core.UI.Panels
             // onto the button beside the field. See UIHelpers.AddSubmitListener.
             field.Submitted(_ => save());
 
-            var ok = Buttons.Primary(row, "Ok", "Save");
-            ok.Clicked += () => save();
-
-            var cancel = Buttons.Secondary(row, "Cancel", "Cancel");
+            // ⚠ Cancel, then the verb — the order ConfirmationPanel uses and the order the manager's
+            // own naming dialog uses. This row had them the other way round.
+            var cancel = Buttons.Create(row, "Cancel", "Cancel", ButtonTone.Secondary,
+                                        ButtonSize.Field, minWidth: 70);
             cancel.Clicked += () => { _renaming = null; Refresh(); };
+
+            var ok = Buttons.Create(row, "Ok", "Save", ButtonTone.Primary,
+                                    ButtonSize.Field, minWidth: 70);
+            ok.Clicked += () => save();
         }
 
         // ── Acts that replace or remove ───────────────────────────────────

@@ -799,6 +799,31 @@ namespace UnityGameTranslator.Core
         public static int QueueCount => _queue.Count;
         public static bool IsTranslating => isTranslating;
         public static string CurrentText => currentlyTranslating;
+
+        /// <summary>
+        /// Which attempt this line is on, and out of how many — 0 while it is on its first.
+        ///
+        /// 🔴 **A counter only once there is something to count.** The first try is not a retry, so
+        /// nothing is shown for it; and it is cleared when a line finishes AND when the next one
+        /// starts, so a count left over from the previous text can never be read as this one's.
+        ///
+        /// ⚠ These are the placeholder repairs — the same question asked again because the answer
+        /// came back with the game's slots moved or missing. Not the parameter negotiation beside
+        /// them, which changes the QUESTION rather than repeating it, and not a rate-limit backoff,
+        /// which puts a different line back in the queue.
+        /// </summary>
+        public static int RetryAttempt => _retryAttempt;
+        public static int RetryTotal => _retryTotal;
+
+        private static volatile int _retryAttempt;
+        private static volatile int _retryTotal;
+
+        /// <summary>Say which attempt is running. Attempt 0 is the first try and shows nothing.</summary>
+        private static void NoteAttempt(int attempt, int total)
+        {
+            _retryAttempt = attempt == 0 ? 0 : attempt + 1;
+            _retryTotal = attempt == 0 ? 0 : total;
+        }
         /// <summary>True while the text being translated belongs to the mod's own interface.
         /// The overlay excerpt is meant to show GAME text; showing our own label there reads as
         /// the mod translating itself ("Translating: Translating:").</summary>
@@ -5336,6 +5361,9 @@ namespace UnityGameTranslator.Core
                     // ⚠ The whole text, beside the shortened one: that one is for a screen, this one
                     // answers "is this exact line still owed an answer" and a prefix cannot.
                     _inFlightText = textToTranslate;
+                    // Whatever the line before this one had to be asked twice for is not this
+                    // line's business: the counter starts down for every text.
+                    NoteAttempt(0, 0);
 
                     // 🔴 **Whose text this is was settled when it was queued, and nothing re-decides
                     // it here.** The item's identity IS (text, origin) — the game's "Options" and
@@ -5580,6 +5608,7 @@ namespace UnityGameTranslator.Core
                         isTranslating = false;
                         currentlyTranslating = null;
                         _inFlightText = null;
+                        NoteAttempt(0, 0);
                     }
 
                     // Nothing to clean up: the item left the pending map at dequeue, and it carries
@@ -5723,6 +5752,10 @@ namespace UnityGameTranslator.Core
 
                 for (int attempt = 0; attempt < maxAttempts && !isValid; attempt++)
                 {
+                    // Said before the call, not after it: the wait IS the attempt, and a counter
+                    // that appears once the answer is back has nothing left to explain.
+                    NoteAttempt(attempt, maxAttempts);
+
                     JArray messagesArray;
                     double temperature = baseTemperature;
                     // Attempts past the first are repairs — a job with its own settings, because it

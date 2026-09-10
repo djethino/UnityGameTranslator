@@ -861,9 +861,18 @@ namespace UnityGameTranslator.Core.UI.Panels
                     // jumped on every such text and settled back on the next one.
                     // No excerpt for our own interface: quoting our own labels here reads as the
                     // mod translating itself ("Translating: Translating:").
+                    // 🔴 A counter ONLY while a line is being asked for again. The first try is not
+                    // a retry and shows nothing; the Core lowers the count when a line ends and
+                    // when the next one starts, so what is read here is always about the line named
+                    // beside it — never left over from the one before.
+                    int attempt = TranslatorCore.RetryAttempt;
+                    string again = attempt > 0 ? $" ({attempt}/{TranslatorCore.RetryTotal})" : "";
+
                     if (TranslatorCore.CurrentTextIsOwnUI)
                     {
-                        _aiStatusLabel.Say("Translating the interface...");
+                        _aiStatusLabel.Say(attempt > 0
+                            ? $"Retrying the interface{again}..."
+                            : "Translating the interface...");
                     }
                     else
                     {
@@ -874,7 +883,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                         // of words. Stripping is the socle's, shared with the translation path.
                         string text = Flatten(TextNormalization.StripMarkupTags(TranslatorCore.CurrentText));
                         if (text.Length > 25) text = text.Substring(0, 25) + "…";
-                        _aiStatusLabel.Show(Tr("Translating:") + $" {text}");
+                        _aiStatusLabel.Show(attempt > 0
+                            ? Tr("Retrying") + $"{again}: {text}"
+                            : Tr("Translating:") + $" {text}");
                     }
                     _aiStatusLabel.Visible = true;
                 }

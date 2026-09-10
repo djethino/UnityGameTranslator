@@ -111,6 +111,7 @@ namespace UnityGameTranslator.Core.Checks
         {
             Section("The translation queue, across a whole sequence", TranslationQueueChecks.Run);
             Section("A text asked for and never answered", OwedTextChecks.Run);
+            Section("A retry counter, and when it is not there", RetryCountChecks.Run);
             Section("A thread the mod starts, on each runtime", WorkerThreadChecks.Run);
         }
 

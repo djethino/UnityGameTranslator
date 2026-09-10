@@ -4876,8 +4876,17 @@ namespace UnityGameTranslator.Core
         /// than one and buries everything else. The flag is cleared by an answer rather than by a
         /// delay: what is being reported is a state, not an instant.
         ///
-        /// ⚠ **Nothing is lost.** The line stays as it is, no entry is written, and the scanner
-        /// meets the same untranslated text on its next round.
+        /// 🔴 **And the line IS lost, until the scene changes.** Written first as "the scanner meets
+        /// it again on its next round", which is false and worth stating plainly: the scanner
+        /// records the component as handled the moment the text has been QUEUED — `UpdateSeenText`
+        /// and `processedTextHashes` are set in the branch where nothing was applied — so the next
+        /// round answers SAME-HASH and the component is never looked at again. The item itself was
+        /// taken out of both queue containers by `Take`, and only a rate limit puts one back.
+        ///
+        /// So a silence costs that line for the rest of the scene. What to do about it is a
+        /// decision, not an oversight — see TODO: the queue is not a durable store, the SCREEN is,
+        /// and reconciling from it means not marking a component done until its text was actually
+        /// handled.
         /// </summary>
         private static HttpResponseMessage SendForTranslation(HttpRequestMessage request)
         {

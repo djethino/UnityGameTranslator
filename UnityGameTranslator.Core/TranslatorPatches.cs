@@ -3033,10 +3033,38 @@ namespace UnityGameTranslator.Core
                 //
                 // ⚠ Nothing is lost by waiting: the stabiliser finalises as soon as the text stops
                 // moving, which is what ends every reveal.
+                //
+                // 🔴 **And never one whose own wait had not run out.** Two mechanisms answer "is
+                // this final?" — the stabiliser, which waits, and this branch, which infers it from
+                // a replacement. They contradicted each other: a text replaced while the stabiliser
+                // was still holding it was declared final by this line, although nothing had
+                // decided it was. Same sentence as the rule above, other side: a text that has been
+                // REPLACED before it settled is not final either.
+                //
+                // ⚠ What that cost, measured on a game whose ability text is a template it expands
+                // in place (2026-09-10): the component was set to
+                // `*Overclock* ({0}): Add {1} Strength.` and 317 ms later to the expanded form —
+                // and the TEMPLATE was queued, translated, and stored as
+                // `*Surcadence* ({[!v*0]}): Ajoute {[!v*1]} de Force.` A translated template is not
+                // merely wasted: written back, the game looks for `*Overclock*` and `{0}` to expand
+                // and finds neither.
+                //
+                // ⚠ It uses the stabiliser's own delay and adds no number of its own. What it gives
+                // up is a line the game replaced within half a second of showing it — which nobody
+                // read, and which is not worth a call to a model. A dialogue line replaced after
+                // three seconds settles exactly as before.
+                bool settled = elapsed >= TYPEWRITING_STABILIZE_MS;
                 if (!isGrowing && !state.TypewritingQueued)
                 {
-                    TranslatorCore.LogDebug($"[TW-FINAL] comp={compId} isGrowing={isGrowing} elapsed={elapsed:F0}ms\n  prev({state.TypewritingText.Length}c)='{state.TypewritingText}'\n  new({newText.Length}c)='{newText}'");
-                    ProcessFinalizedText(compId, state.TypewritingText);
+                    if (settled)
+                    {
+                        TranslatorCore.LogDebug($"[TW-FINAL] comp={compId} isGrowing={isGrowing} elapsed={elapsed:F0}ms\n  prev({state.TypewritingText.Length}c)='{state.TypewritingText}'\n  new({newText.Length}c)='{newText}'");
+                        ProcessFinalizedText(compId, state.TypewritingText);
+                    }
+                    else
+                    {
+                        TranslatorCore.LogDebug($"[TW-DROP] comp={compId} replaced after {elapsed:F0}ms, before it had settled — dropped, not sent\n  prev({state.TypewritingText.Length}c)='{state.TypewritingText}'\n  new({newText.Length}c)='{newText}'");
+                    }
                 }
 
                 // Store new text as new start, defer it

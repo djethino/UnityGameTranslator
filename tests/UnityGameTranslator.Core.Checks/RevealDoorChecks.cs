@@ -79,6 +79,42 @@ namespace UnityGameTranslator.Core.Checks
             check(!note.Contains("isSame", StringComparison.Ordinal),
                 "an identical text is not a reason to wait longer",
                 "🔴 restarting the wait on an unchanged text, from a place the sweep reaches several times a second, defers the line for as long as it is on screen — never translated, nothing said");
+
+            NothingIsSentBeforeItSettled(File.ReadAllText(patchFile), check);
+        }
+
+        /// <summary>
+        /// Two mechanisms answer "is this text final?" — the stabiliser, which waits, and the
+        /// replacement branch, which infers it. They must not contradict each other.
+        ///
+        /// 🔴 A game whose ability text is a template expanded in place set a component to
+        /// <c>*Overclock* ({0}): Add {1} Strength.</c> and 317 ms later to the expanded form. The
+        /// template was declared final by the replacement branch while the stabiliser was still
+        /// holding it — queued, translated, and stored as <c>*Surcadence* ({[!v*0]})…</c>. Written
+        /// back, the game looks for <c>*Overclock*</c> and <c>{0}</c> and finds neither.
+        /// </summary>
+        private static void NothingIsSentBeforeItSettled(string patches, Action<bool, string, string> check)
+        {
+            string method = BodyOf(patches, "public static bool IsTypewritingInProgress(long compId, string newText, object component = null)");
+            check(method != null,
+                "the reveal's own decision is still there under its name",
+                "renamed, the check must say so rather than pass on an empty comparison");
+            if (method == null) return;
+
+            check(method.Contains("bool settled = elapsed >= TYPEWRITING_STABILIZE_MS;", StringComparison.Ordinal),
+                "a replacement asks whether the text it replaces had settled",
+                "🔴 without it, a text replaced mid-wait is declared final by a branch while another is still deciding it is not");
+
+            check(method.Contains("if (settled)", StringComparison.Ordinal)
+                  && method.IndexOf("ProcessFinalizedText(compId, state.TypewritingText);", StringComparison.Ordinal)
+                     > method.IndexOf("if (settled)", StringComparison.Ordinal),
+                "and only a settled one is sent",
+                "a text replaced within half a second of appearing was read by nobody, and is a template being expanded as often as not");
+
+            check(method.Contains("TYPEWRITING_STABILIZE_MS", StringComparison.Ordinal)
+                  && !System.Text.RegularExpressions.Regex.IsMatch(method, @"elapsed\s*[<>]=?\s*\d"),
+                "the rule uses the stabiliser's own delay, never a number of its own",
+                "a second constant would be a second answer to one question, and the two would drift");
         }
 
         private static int Occurrences(string text, string needle)

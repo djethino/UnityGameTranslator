@@ -6956,6 +6956,22 @@ namespace UnityGameTranslator.Core
                             int visCompId = TypeHelper.GetInstanceID(visComp);
                             if (TranslatorPatches.IsInTypewritingState(visCompId))
                             {
+                                // 🔴 Tell the reveal what this component now shows before turning
+                                // back, and through the same door as everywhere else.
+                                //
+                                // Returning without a word froze the state on a text the game had
+                                // already replaced, and the stabiliser then finalised THAT one.
+                                // Measured on a game that fills its tooltips while they are still
+                                // hidden and shows them afterwards: the component was set to
+                                // `*Activate* ({0}): Add {1} *Power*.` and, on the very next line
+                                // of the log, to `*Activate* (2): Add 3 *Power*.` — and half a
+                                // second later the mod sent the first of the two to the model.
+                                //
+                                // ⚠ Being out of sight changes what may be QUEUED, never what may
+                                // be KNOWN. The answer is dropped on purpose: this branch has
+                                // already decided to turn back.
+                                if (!skipTypewriting)
+                                    TranslatorPatches.IsTypewritingInProgress(visCompId, text, component);
                                 return text;
                             }
                         }

@@ -136,6 +136,14 @@ namespace UnityGameTranslator.Core.Checks
             check(ask != null && ask.Contains("!TextRelations.HasUnresolvedTokens(text)", StringComparison.Ordinal),
                 "and the finished form is let through",
                 "refusing the whole skeleton would leave the line in the game's own language, which is worse than the defect being fixed");
+
+            // 🔴 Being out of sight changes what may be QUEUED, never what may be KNOWN.
+            int hidden = lookup.IndexOf("!visComp.gameObject.activeInHierarchy", StringComparison.Ordinal);
+            int hiddenEnd = hidden < 0 ? -1 : lookup.IndexOf("catch { }", hidden, StringComparison.Ordinal);
+            string hiddenBranch = hidden >= 0 && hiddenEnd > hidden ? lookup.Substring(hidden, hiddenEnd - hidden) : null;
+            check(hiddenBranch != null && hiddenBranch.Contains("IsTypewritingInProgress(", StringComparison.Ordinal),
+                "a component out of sight still tells the reveal what it shows",
+                "🔴 turning back without a word freezes the state on a text the game has already replaced, and the stabiliser then sends THAT — a game filling its tooltips while hidden had its template sent while the next state sat on the same component");
         }
 
         /// <summary>

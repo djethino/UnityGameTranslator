@@ -3503,6 +3503,23 @@ namespace UnityGameTranslator.Core
                 var comp = __instance as Component;
                 if (comp == null) return;
 
+                // 🔴 **Does the game write its text through here at all?** On one game a reused
+                // tooltip was picked up twice in a whole session while dozens were hovered — and
+                // both setters ARE patched, so either they never fire for it or something below
+                // turns it away. Nothing in the log could tell the two apart, and guessing has
+                // been wrong twice already.
+                //
+                // ⚠ Bounded: this is the hottest path in the mod, called for every text every
+                // game writes. Thirty lines answer the question; the counter costs a compare
+                // afterwards.
+                if (TranslatorCore.DebugMode && _dbgSetterLog < 30)
+                {
+                    _dbgSetterLog++;
+                    long probeId = TypeHelper.GetInstanceID(__instance);
+                    string head = textValue.Length > 40 ? textValue.Substring(0, 40) + "…" : textValue;
+                    TranslatorCore.LogDebug($"[SETTER] {componentType} comp={probeId} '{head}'");
+                }
+
                 if (profiling) t0 = _profSw.ElapsedTicks;
 
                 // Skip if part of our own UI and should not be translated (uses hierarchy check)
@@ -3760,6 +3777,9 @@ namespace UnityGameTranslator.Core
         private static readonly HashSet<int> _inheritedCloneComponents = new HashSet<int>();
         private static int _dbgMissedSetFont = 0;
         private static int _dbgTouchLog = 0;
+
+        /// <summary>How many times the setter probe has spoken this session — see ProcessTextPatchPrefix.</summary>
+        private static int _dbgSetterLog = 0;
         public static bool BypassFontSizePrefix { get => _bypassFontSizePrefix; set => _bypassFontSizePrefix = value; }
 
         /// <summary>

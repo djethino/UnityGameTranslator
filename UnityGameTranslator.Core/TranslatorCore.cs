@@ -4691,6 +4691,32 @@ namespace UnityGameTranslator.Core
         /// four, and the survivor was the set of "these texts are the mod's interface". A GAME text
         /// queued afterwards that happened to equal one of our labels was then filed as interface.
         /// </summary>
+        /// <summary>
+        /// This text turned out to be a template the game expands in place, not a line anybody
+        /// reads. Take it back out of the queue if it is still waiting, and never ask for it again
+        /// this session.
+        ///
+        /// 🔴 **Nothing is deleted.** A translation already in the file belongs to whoever built
+        /// that file, and a local observation on one component cannot decide what to remove from a
+        /// list keyed by text alone. This only stops a NEW one being made — which is why a file
+        /// polluted before the rule existed keeps its lines until its owner cleans them out.
+        ///
+        /// ⚠ The refusal is in memory only, like every other refusal here: next launch asks again,
+        /// and if the game still expands the text in place it will be refused again in the same
+        /// second.
+        /// </summary>
+        public static void ForgetTemplateText(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return;
+
+            string key = NormalizeForCacheLookup(text);
+            bool withdrawn = _queue.Withdraw(text) || _queue.Withdraw(key);
+            _queue.NoteRefused(key);
+
+            if (DebugMode)
+                LogDebug($"[TW-TEMPLATE] the game expanded this in place — {(withdrawn ? "taken out of the queue" : "not queued")} and not asked again: '{(text.Length > 60 ? text.Substring(0, 60) : text)}'");
+        }
+
         public static void ClearQueue()
         {
             int count = _queue.Clear();

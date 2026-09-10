@@ -2994,6 +2994,23 @@ namespace UnityGameTranslator.Core
                     return true;
                 }
 
+                // 🔴 **The line that just arrived is the previous one EXPANDED**: the game wrote its
+                // own template on the component (`*Overclock* ({0}): Add {1} Strength.`) and has now
+                // resolved its tokens into markup and values. The template was never a line anybody
+                // reads — and its translation, written back, stops the game finding `*Overclock*`
+                // and `{0}` to expand at all.
+                //
+                // ⚠ Taken back rather than merely not sent: the template is stable long enough to
+                // be queued (501 ms, measured), so by the time the expansion proves what it was, it
+                // is already waiting. See TranslatorCore.ForgetTemplateText for what that does and,
+                // as importantly, what it refuses to do.
+                if (TextRelations.SameAfterExpansion(state.TypewritingText, newText))
+                {
+                    TranslatorCore.ForgetTemplateText(state.TypewritingText);
+                    HoldTypewriting(state, compId, newText, now);
+                    return true;
+                }
+
                 float elapsed = (now - state.TypewritingSince) * 1000f;
                 bool isGrowing = TextRelations.Grows(state.TypewritingText, newText);
 

@@ -227,6 +227,41 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Take a text back out while it is still waiting, and say whether it was there.
+        ///
+        /// 🔴 For the one thing that is only knowable AFTER a text has been queued: a game that
+        /// writes its ability text as a template and expands it in place. The template is stable
+        /// long enough to be sent, and only the expansion arriving a moment later proves it was
+        /// never a line anybody reads. Nothing about it is worth a call to a model, and its
+        /// translation, written back, stops the game expanding its own text.
+        ///
+        /// ⚠ Only what is still WAITING. An item already taken is in flight with its targets in
+        /// somebody's hand, and reaching into that is how the four containers of this class's own
+        /// history lost track of each other.
+        /// </summary>
+        public bool Withdraw(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return false;
+
+            lock (_lock)
+            {
+                var key = new QueueKey(text, false);
+                if (!_waiting.TryGetValue(key, out var item)) return false;
+                _waiting.Remove(key);
+
+                // The queue is a Queue<T>: rebuilt without this one rather than searched, which is
+                // what keeps the order everything else depends on.
+                int remaining = _order.Count;
+                for (int i = 0; i < remaining; i++)
+                {
+                    var next = _order.Dequeue();
+                    if (!ReferenceEquals(next, item)) _order.Enqueue(next);
+                }
+                return true;
+            }
+        }
+
+        /// <summary>
         /// Empty it, and say how many were dropped.
         ///
         /// ⚠ Both containers, together, and that is the point: this used to empty three of four,

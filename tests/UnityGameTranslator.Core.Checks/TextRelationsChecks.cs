@@ -58,6 +58,61 @@ namespace UnityGameTranslator.Core.Checks
 
             Same(check, null, "Hello", false, "nothing said is not the same as something said");
             Same(check, "Hello", null, false, "and the other way round");
+
+            ATemplateAndItsExpansion(check);
+        }
+
+        /// <summary>
+        /// A template the game expands in place, and the line it expands into.
+        ///
+        /// 🔴 The two pairs below are verbatim from a game's log (2026-09-10). The template was
+        /// translated and cached; written back, the game could no longer find `*Overclock*` and
+        /// `{0}` to expand, and the player read the asterisks.
+        /// </summary>
+        private static void ATemplateAndItsExpansion(Action<bool, string, string> check)
+        {
+            Expanded(check,
+                "*Tripower*: Gain *Double Strength*.",
+                "<color=#73E5AC>Tripower</color><sprite=\"buff\" name=triangle>: Gain <color=#E77531>Double Strength</color><sprite=\"buff\" name=power_rate>.",
+                true, "the keyword became a colour and an icon — same words, and the icons leave no word behind");
+
+            Expanded(check,
+                "*Overclock* ({0}): Add {1} Strength.",
+                "<color=#FF78C1>Overclock</color><sprite=\"buff\" name=overclock> (<color=#F4FF58>9</color>): Add <color=#F4FF58>10</color> Strength.",
+                true, "and the value slots became values — the slot and its value are one thing seen twice");
+
+            // 🔴 What must NOT match, in the order the mistakes would be made.
+            Expanded(check, "Add 5 HP", "Add <color=#F4FF58>7</color> HP",
+                     false, "a value simply being updated is not an expansion: nothing in the previous text was a token");
+
+            Expanded(check, "*sigh* I suppose we should go.", "*sigh* I suppose we should go, then.",
+                     false, "prose using asterisks stays prose: no markup arrived, so nothing was expanded");
+
+            Expanded(check, "*sigh*", "<i>*sigh*</i>",
+                     false, "🔴 the asterisks SURVIVED: prose was italicised, no token was resolved — found by this very case");
+
+            Expanded(check, "*Ready* in {0} turns", "<color=#FF0000>Ready</color> in {0} turns",
+                     false, "half-expanded is not expanded: a slot the game still has to fill must not be sent either");
+
+            Expanded(check, "<b>*Ready*</b>", "<color=#FF0000>Ready</color>",
+                     false, "a previous text that already carried markup is a redecoration, never an expansion");
+
+            Expanded(check, "*Overclock* ({0}): Add {1} Strength.",
+                     "<color=#FF78C1>Overheat</color><sprite=\"buff\" name=overclock> (<color=#F4FF58>9</color>): Add <color=#F4FF58>10</color> Strength.",
+                     false, "one word apart is a different line, however alike the shape");
+
+            Expanded(check, "Add Strength.", "<color=#F4FF58>Add Strength.</color>",
+                     false, "identical words, but the previous text held no token: this is SameContent, and it must not be answered here");
+
+            Expanded(check, null, "<b>x</b>", false, "nothing expands into something");
+            Expanded(check, "*x*", null, false, "and the other way round");
+        }
+
+        private static void Expanded(Action<bool, string, string> check, string previous, string current,
+                                     bool expected, string why)
+        {
+            bool actual = TextRelations.SameAfterExpansion(previous, current);
+            check(actual == expected, $"SameAfterExpansion({Show(previous)}, …) -> {actual}", why);
         }
 
         private static void Same(Action<bool, string, string> check, string previous, string current,

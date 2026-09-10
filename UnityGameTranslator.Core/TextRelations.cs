@@ -131,6 +131,102 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Whether <paramref name="current"/> is <paramref name="previous"/> with the GAME's own
+        /// decoration tokens resolved — a template and the line it was expanded into.
+        ///
+        /// 🔴 **Some games write their ability text as a template with their own token syntax**,
+        /// assign it to the visible component, and expand it in place a moment later:
+        ///
+        /// <code>
+        /// *Overclock* ({0}): Add {1} Strength.
+        /// &lt;color=#FF78C1&gt;Overclock&lt;/color&gt;&lt;sprite="buff" name=overclock&gt; (&lt;color=#F4FF58&gt;9&lt;/color&gt;): Add &lt;color=#F4FF58&gt;10&lt;/color&gt; Strength.
+        /// </code>
+        ///
+        /// `*word*` is a keyword to style and follow with an icon; `{N}` is a value slot. Every card
+        /// game writes descriptions this way, and there is nothing to blame: the only unusual part
+        /// is assigning the un-expanded template to the component instead of to a local string.
+        ///
+        /// 🔴 **Why this cannot be answered by TIME.** Measured on a real game: the template sat
+        /// unchanged on screen for 501 ms, so the stabiliser declared it final — correctly, by its
+        /// own rule. It was then translated into `*Surcadence* ({[!v*0]})…` and cached. Written back
+        /// on the next hover, the game looks for `*Overclock*` and `{0}` to expand and finds
+        /// neither, so the player reads the asterisks.
+        ///
+        /// 🔴 **And why this is NOT a rule about asterisks.** Nothing here judges one text. It
+        /// compares TWO texts seen one after the other on the SAME component, exactly as
+        /// <see cref="SameContent"/> does for markup — and a false match would mean the second text
+        /// IS the first one dressed, which is the case being caught. Real prose (`*sigh*`,
+        /// `*whispers*`) is never followed, on its own component, by a version of itself in which
+        /// the asterisks have become tags.
+        ///
+        /// 🔴 **The whole rule in one sentence: the tokens were THERE and are GONE.** The previous
+        /// text carried the game's own delimiters, the new one carries none, and markup arrived in
+        /// their place. All three, or it is not an expansion:
+        ///
+        /// <code>
+        /// *sigh*  →  &lt;i&gt;*sigh*&lt;/i&gt;      the asterisks survived: prose was italicised, nothing resolved
+        /// Add 5 HP → Add &lt;color&gt;7&lt;/color&gt; HP   no token in the first: a value was updated
+        /// &lt;b&gt;*Ready*&lt;/b&gt; → &lt;color&gt;Ready&lt;/color&gt;  the first was already dressed: a redecoration
+        /// </code>
+        ///
+        /// ⚠ The first of those was found by its own check case, not by reasoning: without the
+        /// "and gone" half, italicising `*sigh*` read as an expansion of it.
+        ///
+        /// ⚠ Digits are flattened on both sides because `{0}` becomes `9` — the slot and its value
+        /// are the same thing seen twice. That is also why the two forms share one cache key.
+        /// </summary>
+        public static bool SameAfterExpansion(string previous, string current)
+        {
+            if (string.IsNullOrEmpty(previous) || string.IsNullOrEmpty(current)) return false;
+
+            // The expansion is what PUTS the markup there. A previous text that already carried
+            // tags is SameContent's business, and a current one that carries none was not expanded.
+            if (current.IndexOf('<') < 0 || previous.IndexOf('<') >= 0) return false;
+
+            // The tokens were there…
+            if (previous.IndexOf('*') < 0 && previous.IndexOf('{') < 0) return false;
+
+            // …and they are gone. Asked of the text with its markup removed, so a delimiter living
+            // inside a tag's own attributes is not mistaken for one the game left standing.
+            string bare = TextNormalization.StripMarkupTags(current);
+            if (bare.IndexOf('*') >= 0 || bare.IndexOf('{') >= 0) return false;
+
+            return string.Equals(Flatten(previous), Flatten(current), StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// A text with everything the expansion changes taken out: markup, the game's own token
+        /// delimiters, and digits. What is left is the words, which the expansion never touches.
+        /// </summary>
+        private static string Flatten(string text)
+        {
+            string stripped = TextNormalization.StripMarkupTags(text);
+
+            var sb = new System.Text.StringBuilder(stripped.Length);
+            bool lastWasSpace = false;
+            for (int i = 0; i < stripped.Length; i++)
+            {
+                char c = stripped[i];
+                if (c == '*' || c == '{' || c == '}') continue;
+                if (c >= '0' && c <= '9') continue;
+
+                // Layout differs on the two sides — a sprite tag leaves none of the space its glyph
+                // occupied — so runs of blank become one, and the ends are trimmed below.
+                if (c == ' ' || c == '\t' || c == '\n' || c == '\r')
+                {
+                    if (lastWasSpace) continue;
+                    lastWasSpace = true;
+                    sb.Append(' ');
+                    continue;
+                }
+                lastWasSpace = false;
+                sb.Append(c);
+            }
+
+            return sb.ToString().Trim();
+        }
+
+        /// <summary>
         /// True when <paramref name="text"/> holds anything but line breaks, spaces and tabs from
         /// <paramref name="startIndex"/> onwards.
         ///

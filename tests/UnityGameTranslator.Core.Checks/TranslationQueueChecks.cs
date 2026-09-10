@@ -297,6 +297,53 @@ namespace UnityGameTranslator.Core.Checks
             check(!queue.NoteOwnUiSubmitted("Play") && !queue.NoteTooLong("a credits roll"),
                 "and clearing the queue forgets neither",
                 "they answer 'have we already asked', which is still true of work that was thrown away");
+
+            TakingOneBackOut(check);
+        }
+
+        /// <summary>
+        /// Taking a text back out while it still waits.
+        ///
+        /// 🔴 For the one thing only knowable after queueing: a game that writes its ability text as
+        /// a template and expands it in place. The template is stable long enough to be sent, and
+        /// only the expansion arriving proves it was never a line anybody reads.
+        /// </summary>
+        private static void TakingOneBackOut(Action<bool, string, string> check)
+        {
+            var queue = new TranslationQueue();
+            queue.Submit("first", null, false, out _, out _);
+            queue.Submit("*Overclock* ({0})", null, false, out _, out _);
+            queue.Submit("last", null, false, out _, out _);
+
+            check(queue.Withdraw("*Overclock* ({0})"),
+                "a waiting text can be taken back out",
+                "the expansion proves the template was never a line, and it is still waiting when that proof arrives");
+
+            check(queue.Count == 2,
+                "and the queue is one shorter",
+                "removing it from the map alone left it in the order, so it would still have been sent");
+
+            var first = queue.Take();
+            var last = queue.Take();
+            check(first != null && first.Text == "first" && last != null && last.Text == "last",
+                "the ones around it keep their order",
+                "the queue is rebuilt without that one, and everything downstream depends on first-in-first-out");
+
+            check(queue.Take() == null,
+                "and nothing else is left",
+                "a copy surviving in either container is the defect this class was rewritten to remove");
+
+            check(!queue.Withdraw("never queued") && !queue.Withdraw(null),
+                "taking back what was never there changes nothing",
+                "the caller acts on a component's behaviour, not on knowledge of the queue — it must be able to ask blind");
+
+            // ⚠ A text in flight is NOT withdrawn: its targets are in somebody's hand.
+            var busy = new TranslationQueue();
+            busy.Submit("in flight", null, false, out _, out _);
+            var taken = busy.Take();
+            check(!busy.Withdraw("in flight") && taken != null,
+                "one already taken is left alone",
+                "reaching into work in flight is how the four containers of this class's history lost track of each other");
         }
     }
 }

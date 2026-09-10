@@ -4870,14 +4870,18 @@ namespace UnityGameTranslator.Core
         /// Whether the mod still intends to do something about this text — so whoever displays it
         /// must not be written off as handled.
         ///
-        /// 🔴 **The queue is not a durable store; the SCREEN is.** A text that was queued and never
-        /// answered used to be lost for the rest of the scene: the scanner recorded the component as
-        /// handled the moment the text had been QUEUED, so the next round answered SAME-HASH, while
-        /// the item itself had left both queue containers at dequeue and only a rate limit ever put
-        /// one back. Reconciling from what is on screen removes the need for any retry list: a
-        /// component whose text is still owed an answer is simply not marked, so it comes back on
-        /// its own — and it survives a cache reload, a scene pass and a panel change, which no list
-        /// of ours would.
+        /// 🔴 **The queue is the store, and it outlives a scene.** It is emptied only by a cache
+        /// reload and by switching translation off — never by a scene change — so a text asked for
+        /// in one scene goes on being translated in the next and its answer lands in the cache,
+        /// ready for the moment that scene comes back.
+        ///
+        /// 🔴 **This is the recovery for the one case where a text leaves the queue WITHOUT an
+        /// answer**: a request that ran out of time. The item was taken out of both containers at
+        /// dequeue and only a rate limit ever put one back, while the scanner had already recorded
+        /// the component as handled — the moment the text was QUEUED, not answered — so the next
+        /// round returned SAME-HASH and that line stayed in the game's own language for the rest of
+        /// the scene. Leaving the component unmarked is what brings it back, and it needs no retry
+        /// list of ours: what is on screen and still untranslated is asked for again by itself.
         ///
         /// ⚠ **A refusal is not a debt.** Too long, numeric, our own interface, a language conflict:
         /// nothing more will be done about those, so they ARE marked and stop costing anything. Only

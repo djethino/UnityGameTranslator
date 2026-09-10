@@ -14,9 +14,14 @@ namespace UnityGameTranslator.Core.Checks
     /// stayed in the game's own language for the rest of the scene. The item itself had left both
     /// queue containers at dequeue, and only a rate limit ever put one back.
     ///
-    /// 🔴 **And the answer is not a retry list.** Reconciling from what is on screen needs no
-    /// container of ours, and it survives a cache reload, a scene pass and a panel change, which no
-    /// list would. It is the same lesson as the sweep: state, not transitions.
+    /// ⚠ **The queue itself is untouched, and it outlives a scene** — emptied only by a cache
+    /// reload and by switching translation off, never by a scene change, so a text asked for in one
+    /// scene goes on being translated in the next. What follows is the recovery for the one case
+    /// where a text leaves the queue WITHOUT an answer, and nothing else.
+    ///
+    /// 🔴 **And that recovery is not a retry list.** A component still showing an untranslated text
+    /// asks for it again by itself, which needs no container of ours. Same lesson as the sweep:
+    /// state, not transitions.
     ///
     /// ⚠ Half pure, half lexical, and the split is the honest one: what the queue knows can be
     /// replayed here, while "who asks it, and before what" needs a game — so it is read.

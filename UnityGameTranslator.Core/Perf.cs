@@ -43,13 +43,22 @@ namespace UnityGameTranslator.Core
         // thousand. These two answer that first question; without it every explanation is a guess.
         internal const int ScanProcess = 13;     // one component, all of ProcessComponentForType
         internal const int ScanText = 14;        // ...of which: reading its text (interop on IL2CPP)
-        private const int SlotCount = 15;
+
+        // 🔴 ...and of which WHAT. Measured on a real game: one call at 473 ms out of 690 ms spent
+        // across 109 126 calls — one component is seventy per cent of the whole phase, on texts as
+        // plain as "+999" and "Clear Selection". So it is neither the text nor its reading; these
+        // three cut the rest of the call in the three things it actually does.
+        internal const int ScanGate = 15;        // ...of which: the questions asked before translating
+        internal const int ScanTranslate = 16;   // ...of which: looking the text up and queueing it
+        internal const int ScanApply = 17;       // ...of which: writing the answer onto the component
+        private const int SlotCount = 18;
 
         private static readonly string[] Names =
         {
             "UITK.Scan", "UITK.Element", "RTL.Present", "RTL.Reflow", "Font.Scene", "Font.Clones",
             "UITK.Font", "Font.Find", "UITK.Children", "UITK.Image",
             "Scan.Find", "UITK.Cycle", "UITK.Setter", "Scan.Process", "Scan.Text",
+            "Scan.Gate", "Scan.Translate", "Scan.Apply",
         };
 
         private static readonly long[] _ticks = new long[SlotCount];

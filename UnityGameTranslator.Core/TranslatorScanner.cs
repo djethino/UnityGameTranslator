@@ -1426,14 +1426,22 @@ namespace UnityGameTranslator.Core
                 if (!_processedThisCycle.Add(instanceId))
                     return;
 
-                // Skip if own UI and should not be translated
-                if (TranslatorCore.ShouldSkipTranslation(comp))
-                    return;
+                // ...of which: everything asked BEFORE the text is even read — is this ours, does
+                // its font take translation, is it somebody's typing. Each walks a hierarchy or a
+                // map, and each runs on every component of every pass.
+                long tGate = Perf.Start();
+                try
+                {
+                    // Skip if own UI and should not be translated
+                    if (TranslatorCore.ShouldSkipTranslation(comp))
+                        return;
 
-                // Skip if translation disabled for this font
-                string fontName = GetFontNameForType(component, type);
-                if (!string.IsNullOrEmpty(fontName) && !FontManager.IsTranslationEnabled(fontName))
-                    return;
+                    // Skip if translation disabled for this font
+                    string fontName = GetFontNameForType(component, type);
+                    if (!string.IsNullOrEmpty(fontName) && !FontManager.IsTranslationEnabled(fontName))
+                        return;
+                }
+                finally { Perf.Stop(Perf.ScanGate, tGate); }
 
                 // Skip if already identified as InputField user text
                 if (inputFieldTextIds.Contains(instanceId))
@@ -1480,37 +1488,51 @@ namespace UnityGameTranslator.Core
 
                 // Check if own UI (use UI-specific prompt)
                 bool isOwnUI = TranslatorCore.IsOwnUITranslatable(comp);
-                string translated = TranslatorCore.TranslateTextWithTracking(currentText, comp, isOwnUI);
-                if (translated != currentText)
-                {
-                    SetTextForType(component, type, translated);
 
-                    // Force refresh based on type flags
-                    if (type.NeedsForceMeshUpdate)
-                        TypeHelper.ForceMeshUpdate(component);
-                    else if (type.NeedsSetAllDirty)
-                        TypeHelper.SetAllDirty(component);
+                // ...of which: looking this text up and, when it is not known, putting it in the
+                // queue. It normalises, hashes, consults the caches and the patterns.
+                long tTranslate = Perf.Start();
+                string translated;
+                try { translated = TranslatorCore.TranslateTextWithTracking(currentText, comp, isOwnUI); }
+                finally { Perf.Stop(Perf.ScanTranslate, tTranslate); }
 
-                    TranslatorCore.UpdateSeenText(instanceId, translated);
-                    processedTextHashes[instanceId] = translated.GetHashCode();
-                }
-                else
+                // ...and of which: writing onto the component and making the engine redraw it.
+                // A mesh rebuild is the one thing here that can cost a whole frame on its own.
+                long tApply = Perf.Start();
+                try
                 {
-                    // Text unchanged (key==value) but the component might still need
-                    // font replacement. Trigger SetText to fire the Harmony prefix
-                    // which handles font clone/fallback application.
-                    if (TranslatorCore.HasCachedTranslation(currentText))
+                    if (translated != currentText)
                     {
-                        SetTextForType(component, type, currentText);
+                        SetTextForType(component, type, translated);
+
+                        // Force refresh based on type flags
                         if (type.NeedsForceMeshUpdate)
                             TypeHelper.ForceMeshUpdate(component);
                         else if (type.NeedsSetAllDirty)
                             TypeHelper.SetAllDirty(component);
-                    }
 
-                    TranslatorCore.UpdateSeenText(instanceId, currentText);
-                    processedTextHashes[instanceId] = textHash;
+                        TranslatorCore.UpdateSeenText(instanceId, translated);
+                        processedTextHashes[instanceId] = translated.GetHashCode();
+                    }
+                    else
+                    {
+                        // Text unchanged (key==value) but the component might still need
+                        // font replacement. Trigger SetText to fire the Harmony prefix
+                        // which handles font clone/fallback application.
+                        if (TranslatorCore.HasCachedTranslation(currentText))
+                        {
+                            SetTextForType(component, type, currentText);
+                            if (type.NeedsForceMeshUpdate)
+                                TypeHelper.ForceMeshUpdate(component);
+                            else if (type.NeedsSetAllDirty)
+                                TypeHelper.SetAllDirty(component);
+                        }
+
+                        TranslatorCore.UpdateSeenText(instanceId, currentText);
+                        processedTextHashes[instanceId] = textHash;
+                    }
                 }
+                finally { Perf.Stop(Perf.ScanApply, tApply); }
             }
             catch { }
         }

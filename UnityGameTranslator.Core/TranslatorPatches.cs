@@ -169,6 +169,33 @@ namespace UnityGameTranslator.Core
                             patchCount++;
                         }
                     }
+                    // 🔴 **The other ways TMP takes a text — a PROBE, not a translation.**
+                    //
+                    // Measured on a real game: a tooltip's description component was seen by the
+                    // mod exactly once in a session, and its setter probe counted ZERO writes —
+                    // its quota was never even touched. The item NAMES on the same screen went
+                    // through SetText(string) normally. So the description arrives by one of the
+                    // overloads below, and the mod only ever learns about it when the scanner's
+                    // sweep happens to walk past while the tooltip is up.
+                    //
+                    // ⚠ **A postfix that only looks.** Translating here would mean rewriting the
+                    // caller's own StringBuilder or char[], which a game is free to pool and reuse
+                    // — that is a decision to take with evidence, not on the way past. This says
+                    // whether the door exists before anybody opens it.
+                    foreach (var method in setTextMethods)
+                    {
+                        bool otherText = (method.Name == "SetText" || method.Name == "SetCharArray")
+                                         && method.GetParameters().Length > 0
+                                         && method.GetParameters()[0].ParameterType != typeof(string);
+                        if (!otherText) continue;
+
+                        var probe = typeof(TranslatorPatches).GetMethod(nameof(TMPText_OtherWrite_Probe),
+                            BindingFlags.Static | BindingFlags.Public);
+                        patcher(method, null, probe);
+                        patchCount++;
+                        TranslatorCore.LogDebug($"[Patches] Watching TMP_Text.{method.Name}({method.GetParameters()[0].ParameterType.Name})");
+                    }
+
                     // TMP_Text.fontSize setter — intercept to apply font scale
                     var fontSizeProp = TypeHelper.TMP_TextType.GetProperty("fontSize", BindingFlags.Public | BindingFlags.Instance);
                     if (fontSizeProp?.SetMethod != null)
@@ -3786,6 +3813,29 @@ namespace UnityGameTranslator.Core
         public static void TMPText_SetTextMethod_Prefix(object __instance, ref string __0)
         {
             ProcessTextPatchPrefix(__instance, ref __0, "TMP");
+        }
+
+        /// <summary>
+        /// A game wrote a text through one of TMP's other doors — a StringBuilder, a char array.
+        ///
+        /// 🔴 **It only looks.** Whether the mod should translate here is a separate decision with
+        /// a real cost: the argument belongs to the game, which is free to pool and reuse it, so
+        /// rewriting it is not the same act as rewriting a string it handed us by value.
+        ///
+        /// ⚠ A postfix taking nothing but the instance, deliberately: it can be attached to any
+        /// overload whatever its parameters, where a prefix naming them could not.
+        /// </summary>
+        public static void TMPText_OtherWrite_Probe(object __instance)
+        {
+            if (!TranslatorCore.DebugMode) return;
+
+            try
+            {
+                string written = TypeHelper.GetText(__instance);
+                if (string.IsNullOrEmpty(written)) return;
+                NoteSetterFired(__instance, written, "TMP-other");
+            }
+            catch { }
         }
 
         /// <summary>

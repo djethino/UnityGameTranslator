@@ -227,6 +227,22 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Whether this text is still waiting, whichever side asked for it.
+        ///
+        /// ⚠ Says nothing about one already TAKEN: that item is in the worker's hand and the queue
+        /// no longer knows it. Whoever needs both asks both — see TranslatorCore.StillOwed.
+        /// </summary>
+        public bool Holds(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return false;
+            lock (_lock)
+            {
+                return _waiting.ContainsKey(new QueueKey(text, false))
+                    || _waiting.ContainsKey(new QueueKey(text, true));
+            }
+        }
+
+        /// <summary>
         /// Take a text back out while it is still waiting, and say whether it was there.
         ///
         /// 🔴 For the one thing that is only knowable AFTER a text has been queued: a game that

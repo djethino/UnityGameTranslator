@@ -4863,6 +4863,37 @@ namespace UnityGameTranslator.Core
         /// <summary>Said once, and again only after an answer has come back.</summary>
         private static volatile bool _backendSilent;
 
+        /// <summary>The whole text of the item in the worker's hand, or null.</summary>
+        private static volatile string _inFlightText;
+
+        /// <summary>
+        /// Whether the mod still intends to do something about this text — so whoever displays it
+        /// must not be written off as handled.
+        ///
+        /// 🔴 **The queue is not a durable store; the SCREEN is.** A text that was queued and never
+        /// answered used to be lost for the rest of the scene: the scanner recorded the component as
+        /// handled the moment the text had been QUEUED, so the next round answered SAME-HASH, while
+        /// the item itself had left both queue containers at dequeue and only a rate limit ever put
+        /// one back. Reconciling from what is on screen removes the need for any retry list: a
+        /// component whose text is still owed an answer is simply not marked, so it comes back on
+        /// its own — and it survives a cache reload, a scene pass and a panel change, which no list
+        /// of ours would.
+        ///
+        /// ⚠ **A refusal is not a debt.** Too long, numeric, our own interface, a language conflict:
+        /// nothing more will be done about those, so they ARE marked and stop costing anything. Only
+        /// what is waiting, in flight, or held back by a silent server counts.
+        /// </summary>
+        internal static bool StillOwed(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return false;
+
+            // Nothing is being asked while the server is silent, and everything on screen is owed
+            // the moment it answers again.
+            if (_backendSilent) return true;
+
+            return string.Equals(_inFlightText, text, StringComparison.Ordinal) || _queue.Holds(text);
+        }
+
         /// <summary>
         /// Send one translation request, and say plainly when no answer came.
         ///
@@ -5298,6 +5329,9 @@ namespace UnityGameTranslator.Core
                     }
                     isTranslating = true;
                     currentlyTranslating = textToTranslate.Length > 50 ? textToTranslate.Substring(0, 50) + "..." : textToTranslate;
+                    // ⚠ The whole text, beside the shortened one: that one is for a screen, this one
+                    // answers "is this exact line still owed an answer" and a prefix cannot.
+                    _inFlightText = textToTranslate;
 
                     // 🔴 **Whose text this is was settled when it was queued, and nothing re-decides
                     // it here.** The item's identity IS (text, origin) — the game's "Options" and
@@ -5541,6 +5575,7 @@ namespace UnityGameTranslator.Core
                     {
                         isTranslating = false;
                         currentlyTranslating = null;
+                        _inFlightText = null;
                     }
 
                     // Nothing to clean up: the item left the pending map at dequeue, and it carries
@@ -6457,6 +6492,17 @@ namespace UnityGameTranslator.Core
             // so nothing is queued at all: no line in the notice that says a translation is running,
             // and no call. See IsExpandedInPlace.
             if (IsExpandedInPlace(text)) return false;
+
+            // 🔴 The server has stopped answering. Nothing new goes in — a queue filling behind a
+            // dead server is work nobody will get, and every entry would carry its own notice — but
+            // ONE at a time is let through, and that one IS the probe: it succeeds and everything
+            // resumes, or it runs out of time and we are no worse off.
+            //
+            // ⚠ No timer anywhere. The cadence of the retry is the ceiling itself, and what lifts
+            // the state is an ANSWER. Refusing everything instead would be a deadlock: nothing
+            // would ever ask again, so nothing would ever answer.
+            if (_backendSilent && (_queue.Count > 0 || isTranslating))
+                return false;
 
             // Longer than any backend will accept. Refused HERE, at the single door, rather than
             // deeper down where the refusal used to be recorded as a cache entry tagged "S".

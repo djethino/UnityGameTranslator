@@ -1568,8 +1568,18 @@ namespace UnityGameTranslator.Core
                                 TypeHelper.SetAllDirty(component);
                         }
 
-                        TranslatorCore.UpdateSeenText(instanceId, currentText);
-                        processedTextHashes[instanceId] = textHash;
+                        // 🔴 Written off as handled only when nothing more is coming. This branch is
+                        // reached for two opposite reasons — the text needed nothing (its own
+                        // translation, a capture, a refusal), and the text was just QUEUED and has
+                        // no answer yet — and marking both cost the second one for the rest of the
+                        // scene: the next round answers SAME-HASH and this component is never looked
+                        // at again. See TranslatorCore.StillOwed: the queue is not a durable store,
+                        // this is.
+                        if (!TranslatorCore.StillOwed(currentText))
+                        {
+                            TranslatorCore.UpdateSeenText(instanceId, currentText);
+                            processedTextHashes[instanceId] = textHash;
+                        }
                     }
                 }
                 finally { Perf.Stop(Perf.ScanApply, tApply); }

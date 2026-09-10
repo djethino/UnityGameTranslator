@@ -110,6 +110,7 @@ namespace UnityGameTranslator.Core.Checks
         private static void WhatWaitsForABackend()
         {
             Section("The translation queue, across a whole sequence", TranslationQueueChecks.Run);
+            Section("A text asked for and never answered", OwedTextChecks.Run);
             Section("A thread the mod starts, on each runtime", WorkerThreadChecks.Run);
         }
 

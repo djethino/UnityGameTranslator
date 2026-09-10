@@ -124,12 +124,20 @@ namespace UnityGameTranslator.Core.UI.Panels
                   height: 150);
         }
 
+        /// <summary>
+        /// What the translation holds right now — asked in one place.
+        ///
+        /// ⚠ The header states it, the Backup button is allowed or refused on it, and the restore
+        /// question weighs the backup against it. Three readings of one figure: written three times,
+        /// the day one of them changes source the screen contradicts itself.
+        /// </summary>
+        private static int NowLines() => TranslatorCore.TranslationCache?.Count ?? 0;
+
         private void RefreshHeader(int savedCount)
         {
             if (_nowLabel == null) return;
 
-            var lines = TranslatorCore.TranslationCache?.Count ?? 0;
-            _nowLabel.Show($"Now: {lines} lines");
+            _nowLabel.Show(Backups.NowLine(NowLines()));
         }
 
         /// <summary>Whether another backup may be taken, and why not when it may not.</summary>
@@ -137,7 +145,11 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (_saveBtn == null) return;
 
-            var why = Backups.WhyCannotSave(TranslationBackups.List());
+            // 🔴 **Including "there are no lines yet".** The ceiling was the only refusal asked
+            // about, so a game whose translation has not started offered Backup — and taking one
+            // produced a row that looks like every other and restores to nothing. The socle decides
+            // both, so this panel and the manager's window refuse the same thing in the same words.
+            var why = Backups.WhyCannotSave(TranslationBackups.List(), NowLines());
             var can = why == null;
 
             _saveBtn.Enabled = can;
@@ -332,8 +344,10 @@ namespace UnityGameTranslator.Core.UI.Panels
                 {
                     if (!TranslationBackups.Keep(entry.Id))
                     {
+                        // ⚠ The slot ceiling alone: this duplicates a backup that already holds
+                        // lines, so how many the game holds today has no say in it.
                         TranslatorUIManager.StatusOverlay?.ShowToast(
-                            Backups.WhyCannotSave(TranslationBackups.List())
+                            Backups.WhyNoRoom(TranslationBackups.List())
                             ?? "This one could not be kept.", StatusOverlay.ToastTone.Off);
                     }
 
@@ -398,8 +412,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (TranslationBackups.SaveCopy() == null)
             {
                 TranslatorUIManager.StatusOverlay?.ShowToast(
-                    Backups.WhyCannotSave(TranslationBackups.List()) ?? "It could not be kept.",
-                    StatusOverlay.ToastTone.Off);
+                    Backups.WhyCannotSave(TranslationBackups.List(), NowLines())
+                    ?? "It could not be kept.", StatusOverlay.ToastTone.Off);
             }
 
             Refresh();
@@ -416,10 +430,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         private void ConfirmRestore(BackupEntry entry)
         {
-            var now = TranslatorCore.TranslationCache?.Count ?? 0;
-
             var body = Backups.ConfirmRestoreBody(
-                entry.Lines, now, entry.At.ToString("dd MMM HH:mm"),
+                entry.Lines, NowLines(), entry.At.ToString("dd MMM HH:mm"),
                 Backups.IsAnotherLineage(entry.Uuid, TranslatorCore.FileUuid));
 
             TranslatorUIManager.ConfirmationPanel?.Show(

@@ -116,6 +116,16 @@ namespace UnityGameTranslator.Core.UI.Panels
         private ButtonHandle _loginCTABtn;
         private Host _statusSection;
 
+        /// <summary>
+        /// The way into this translation's history.
+        ///
+        /// 🔴 **Held because it outlives the card above it.** It sits in the status section, which
+        /// used to be hidden whole when there is no translation — so the backups taken by whatever
+        /// removed that translation became unreachable from the game, and the only way back was a
+        /// file manager. It now decides its own fate: see <see cref="RefreshBackupsLine"/>.
+        /// </summary>
+        private Host _backupsRow;
+
         // UI references - the three choices when holding another lineage (GAP 8)
         private Host _lineageChoiceSection;
         /// <summary>
@@ -424,6 +434,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // arbitrating, forking. What you keep on your own machine is a different subject.
             var backupsRow = Stacks.Row(_statusSection, "BackupsRow", spacing: 8,
                                         minHeight: UIStyles.RowHeightNormal);
+            _backupsRow = backupsRow;
 
             _backupsLabel = Labels.Create(backupsRow, "BackupsLabel", "", TextRole.Hint,
                                           tone: Tone.Secondary, policy: TextPolicy.Excluded, fill: Fill.Stretch);
@@ -1032,14 +1043,32 @@ namespace UnityGameTranslator.Core.UI.Panels
             // without a name attached to it.
             bool showStatusCard = _currentLayoutState != LayoutState.NoLocal;
 
-            // Status section with StatusCard - show when logged in and has local content
-            if (_statusSection != null)
+            // 🔴 **The card goes, the section stays.** Hiding the whole section took the way into
+            // Backups with it — and "there is no translation" is exactly the state in which somebody
+            // needs it, since removing one is what took the last backup. So the card hides itself,
+            // the external-resources block follows it (it describes that same translation), and the
+            // backups line decides on its own in RefreshBackupsLine.
+            //
+            // ⚠ The manager already did this and said why — see its TranslationWorkbench: "the way
+            // back survives having nothing to work on". The mod was the one product left without it.
+            if (_statusCard != null)
             {
-                _statusSection.Visible = showStatusCard;
-                if (showStatusCard)
-                {
-                    RefreshStatusCard();
-                }
+                _statusCard.SetVisible(showStatusCard);
+            }
+
+            if (!showStatusCard && _resourcesLinkSection != null)
+            {
+                _resourcesLinkSection.Visible = false;
+            }
+
+            if (showStatusCard)
+            {
+                RefreshStatusCard();
+            }
+            else
+            {
+                // RefreshStatusCard would have done it; with no card there is nobody else to ask.
+                RefreshBackupsLine();
             }
 
             // Legacy TranslationInfo section - hide when StatusCard is shown
@@ -1273,6 +1302,16 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 if (entry.IsSaved) saved++;
                 else automatic++;
+            }
+
+            // 🔴 **Shown whenever there is a translation OR a backup of one.** Those are the two
+            // reasons to come here — keeping a copy before a risky move, and walking back out of one
+            // — and the second survives the translation being gone. With neither, the game has no
+            // history and nothing to make one from, so the row says nothing at all.
+            if (_backupsRow != null)
+            {
+                _backupsRow.Visible = _currentLayoutState != LayoutState.NoLocal
+                                      || saved + automatic > 0;
             }
 
             _backupsLabel.Show(saved == 0 && automatic == 0

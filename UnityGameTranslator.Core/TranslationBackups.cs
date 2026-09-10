@@ -304,9 +304,14 @@ namespace UnityGameTranslator.Core
         /// <returns>The new copy's id, or null when it could not be taken.</returns>
         public static string SaveCopy()
         {
-            if (!Backups.CanSaveAnother(List()))
+            // ⚠ Both refusals, from the socle, on the figure the panel shows — so the button's
+            // greyed state, the words in its tooltip and what happens when it is pressed anyway
+            // can never disagree. The slot ceiling was checked here and the empty translation
+            // nowhere, so a game with no lines took a backup that restores to nothing.
+            var why = Backups.WhyCannotSave(List(), TranslatorCore.TranslationCache?.Count ?? 0);
+            if (why != null)
             {
-                TranslatorCore.LogWarning("[Backups] Refused: no free slot");
+                TranslatorCore.LogWarning($"[Backups] Refused: {why}");
                 return null;
             }
 
@@ -325,6 +330,16 @@ namespace UnityGameTranslator.Core
                 {
                     // Nothing to copy is not a failure: a game whose translation has never been
                     // written has no history to keep.
+                    return null;
+                }
+
+                // 🔴 **An empty one is not a failure either, and it is worse than nothing.** Here
+                // rather than in SaveCopy alone, because the automatic family is where it does the
+                // damage: five empty backups rotate the real ones out, and the act that caused each
+                // of them was the act somebody wanted protecting. The figure is the cache, which is
+                // what SaveCache is about to write into the file this copies.
+                if (!Backups.HasAnythingToBackUp(TranslatorCore.TranslationCache?.Count ?? 0))
+                {
                     return null;
                 }
 

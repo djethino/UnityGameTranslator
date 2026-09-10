@@ -176,6 +176,7 @@ namespace UnityGameTranslator.Core.Checks
         private static void WhenTheSweepHasBeenRound()
         {
             Section("One round of the sweep", ScanRoundChecks.Run);
+            Section("What a reveal in flight is told", RevealDoorChecks.Run);
         }
 
         /// <summary>How one step of a hierarchy path is named when the thing has no name.</summary>

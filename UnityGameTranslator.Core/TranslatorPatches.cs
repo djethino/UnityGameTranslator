@@ -2886,46 +2886,52 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Touch the typewriting timestamp for a component. Called on cache hits
-        /// to prevent the stabilizer from thinking the typewriting stopped.
-        /// Also updates the stored text if it grew (StartsWith).
+        /// This component's text has just been looked at. If a reveal is in flight and the text
+        /// has grown past what is being held, hold the longer one and start the wait again.
+        ///
+        /// 🔴 **The one door, and it used to be one of eleven** (2026-09-10). A reveal is only
+        /// followed through <see cref="IsTypewritingInProgress"/>, which a text already known never
+        /// reaches: the lookup answers and returns. Eleven exits in that lookup say "this text is
+        /// known" — the exact key, the normalised key, the trimmed key, a number pattern, a concat
+        /// result — and exactly ONE of them told the reveal what it had seen. So the moment a
+        /// growing sentence became recognisable (the numbers in it are lifted into placeholders, so
+        /// recognition arrives BEFORE the last character), the reveal went blind: it kept holding
+        /// the last unrecognised fragment, waited out its five hundred milliseconds on a text the
+        /// game had already finished, and sent that fragment to the model.
+        ///
+        /// Measured on one dialogue of one game, visited three times:
+        /// <code>
+        /// 15:16:52  finalised 37 characters → model call → fragment cached → Apply SKIP
+        /// 15:23:37  finalised 36 characters → model call → fragment cached → Apply SKIP
+        /// 15:23:47  finalised 35 characters → model call → fragment cached → Apply SKIP
+        /// </code>
+        /// Three keys for one sentence, each a truncation of the next, each paid for, each landing
+        /// after the screen already showed the translation. And a "translating" notice every time,
+        /// on a line the player could see was already translated.
+        ///
+        /// ⚠ **An identical text is NOT a reason to wait longer.** It used to restart the wait, and
+        /// that only stayed harmless because the caller was rare: called from the top of the lookup,
+        /// where the sweep re-reads the same unchanged text several times a second, it would defer
+        /// the line for as long as it stayed on screen — never translated, and nothing said.
         /// </summary>
-        public static void TouchTypewritingTimestamp(long compId, string currentText)
+        public static void NoteTextSeen(long compId, string currentText)
         {
             if (compId == -1 || string.IsNullOrEmpty(currentText)) return;
             var state = PeekState(compId);
             if (state == null || state.Mode != TextMode.Typewriter) return;
 
-            bool isGrowing = TextRelations.Grows(state.TypewritingText, currentText);
-            bool isSame = currentText == state.TypewritingText;
+            // Already handed over: IsTypewritingInProgress owns what happens next, and re-holding
+            // here would cancel a finalisation that has already been decided.
+            if (state.TypewritingQueued) return;
 
-            if (state.TypewritingQueued)
-            {
-                if (_dbgTouchLog < 10 && (isGrowing || isSame))
-                {
-                    _dbgTouchLog++;
-                    TranslatorCore.LogInfo($"[TW-TOUCH] comp={compId} BLOCKED by Queued=true, isGrowing={isGrowing} isSame={isSame} stateText='{Head(state.TypewritingText)}' curText='{Head(currentText)}'");
-                }
-                return;
-            }
+            if (!TextRelations.Grows(state.TypewritingText, currentText)) return;
 
-            if (!isGrowing && !isSame)
-            {
-                if (_dbgTouchLog < 10)
-                {
-                    _dbgTouchLog++;
-                    TranslatorCore.LogInfo($"[TW-TOUCH] comp={compId} SKIP unrelated stateText='{Head(state.TypewritingText)}' curText='{Head(currentText)}'");
-                }
-                return;
-            }
+            // The per-character trace of a reveal, which used to come from [TW-CHECK]: a text that
+            // grows is now held here, so IsTypewritingInProgress sees it unchanged and says nothing.
+            if (TranslatorCore.DebugMode)
+                TranslatorCore.LogDebug($"[TW-GROW] comp={compId} {state.TypewritingText.Length}c → {currentText.Length}c '{Head(currentText)}'");
 
-            if (_dbgTouchLog < 10)
-            {
-                _dbgTouchLog++;
-                TranslatorCore.LogInfo($"[TW-TOUCH] comp={compId} OK isGrowing={isGrowing} text='{Head(currentText)}'");
-            }
-
-            HoldTypewriting(state, compId, isGrowing ? currentText : state.TypewritingText, Time.realtimeSinceStartup);
+            HoldTypewriting(state, compId, currentText, Time.realtimeSinceStartup);
         }
 
         /// <summary>First 30 characters of a text, for a log line.</summary>
@@ -3860,7 +3866,6 @@ namespace UnityGameTranslator.Core
         // Components that inherited a clone font from template — skip ApplyFontScale (already scaled)
         private static readonly HashSet<int> _inheritedCloneComponents = new HashSet<int>();
         private static int _dbgMissedSetFont = 0;
-        private static int _dbgTouchLog = 0;
 
         /// <summary>
         /// How many times each component has been seen writing text — the setter probe's quota.

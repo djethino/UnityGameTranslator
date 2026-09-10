@@ -6603,6 +6603,13 @@ namespace UnityGameTranslator.Core
                     text = reconstructed;
             }
 
+            // 🔴 Tell a reveal in flight what this component now shows, BEFORE any lookup can
+            // answer and return. Every exit below means "this text is known", and each one that
+            // forgot to say so left the reveal holding a fragment it then sent to the model — see
+            // TranslatorPatches.NoteTextSeen for what that cost, measured.
+            if (component is Component seenComp)
+                TranslatorPatches.NoteTextSeen(TypeHelper.GetInstanceID(seenComp), text);
+
             // Fast path: check concat assembled cache (runtime only, not JSON)
             // Catches full tooltip texts that were assembled from translated deltas.
             string concatResult = TranslatorPatches.GetConcatCacheResult(text);
@@ -6626,14 +6633,8 @@ namespace UnityGameTranslator.Core
             // Fast path: try exact text lookup BEFORE any normalization (avoids allocations for cache hits)
             if (store.TryGetValue(text, out var exactEntry))
             {
-                // If this component is in typewriting state, touch the timestamp
-                // so the stabilizer doesn't think the typewriting stopped.
-                // Cache hits bypass IsTypewritingInProgress, leaving the timestamp stale.
-                if (component is Component twComp2)
-                {
-                    int twId2 = TypeHelper.GetInstanceID(twComp2);
-                    TranslatorPatches.TouchTypewritingTimestamp(twId2, text);
-                }
+                // ⚠ The reveal was told at the top of this method, for every exit at once — this
+                // used to be said HERE, on the exact-key hit alone, which is the defect.
 
                 // An entry with nothing in it is a line waiting for a translation, whatever tag it
                 // wears: the game's captures say so with H, and a hand-written interface file can
@@ -6647,14 +6648,17 @@ namespace UnityGameTranslator.Core
                 {
                     cacheHitCount++;
                     translatedCount++;
-                    // TEMP LOG: detect if typewriting text gets a cache hit before typewriting check
+                    // The canary for the defect NoteTextSeen was written for: a text recognised on
+                    // a component whose reveal is still in flight. It is normal — recognition
+                    // arrives before the last character, since the numbers are lifted out — and it
+                    // is only harmless because the reveal was told at the top of this method.
                     if (_dbgTwCacheHit < 20 && component is Component twComp)
                     {
                         int twId = TypeHelper.GetInstanceID(twComp);
                         if (TranslatorPatches.IsInTypewritingState(twId))
                         {
                             _dbgTwCacheHit++;
-                            LogDebug($"[TW-CACHEHIT] comp={twId} text='{(text.Length > 40 ? text.Substring(0,40) : text)}' → cache hit BYPASSES typewriting check");
+                            LogDebug($"[TW-CACHEHIT] comp={twId} text='{(text.Length > 40 ? text.Substring(0,40) : text)}' → known while a reveal is in flight");
                         }
                     }
                     if (DebugMode && text.Length > 100)

@@ -18,6 +18,53 @@ namespace UnityGameTranslator.Core.Checks
             Growth(check);
             TypewriterSteps(check);
             ConcatDeltas(check);
+            SameSentenceDressedDifferently(check);
+        }
+
+        /// <summary>
+        /// A reveal that walks a tag along a finished line, rather than building the string.
+        ///
+        /// 🔴 **Measured, not imagined**: one sentence revealed this way cost 93 requests to the
+        /// model and 91 cache entries, and a quarter of that game's translation file — 258 lines
+        /// of 1050 — was five sentences written out fifty-two times each. Every frame changed the
+        /// raw text and <see cref="TextRelations.Grows"/> was false, because the tag MOVED rather
+        /// than grew, so every frame read as a brand new line.
+        /// </summary>
+        private static void SameSentenceDressedDifferently(Action<bool, string, string> check)
+        {
+            // The two frames that cost 93 calls, verbatim from the game's log.
+            Same(check,
+                 "<color=#8f8f8f><i>T</i></color><color=#00000000>he bastards are all in on it together!</color>",
+                 "<color=#8f8f8f><i>Th</i></color><color=#00000000>e bastards are all in on it together!</color>",
+                 true, "🔴 the tag moved one character along a sentence that never changed");
+
+            Same(check,
+                 "<color=#8f8f8f><i>The bastards are all in on it together!</i></color>",
+                 "<color=#8f8f8f><i>T</i></color><color=#00000000>he bastards are all in on it together!</color>",
+                 true, "the reveal starting, from the line already fully written");
+
+            Same(check, "Hello", "Hello", true, "identical is trivially the same sentence");
+            Same(check, "<b>Hello</b>", "<i>Hello</i>", true,
+                 "a game repainting a label says the same thing; the tags come back from the cache key, not from here");
+
+            // ── What it must NOT swallow ──
+            Same(check, "Hello", "Goodbye", false, "two sentences are two sentences");
+            Same(check, "Hel", "Hello", false,
+                 "🔴 real growth is NOT the same content — it is the case the growth rule exists for, and swallowing it would stop every typewriter being detected at all");
+            Same(check, "<b>Hel</b>", "<b>Hello</b>", false,
+                 "markup around a text that genuinely grew changes nothing: the content grew");
+            Same(check, "You have 3 apples", "You have 5 apples",
+                 false, "a number is CONTENT, not decoration — this only ever undresses markup");
+
+            Same(check, null, "Hello", false, "nothing said is not the same as something said");
+            Same(check, "Hello", null, false, "and the other way round");
+        }
+
+        private static void Same(Action<bool, string, string> check, string previous, string current,
+                                 bool expected, string why)
+        {
+            bool actual = TextRelations.SameContent(previous, current);
+            check(actual == expected, $"SameContent({Show(previous)}, {Show(current)}) -> {actual}", why);
         }
 
         /// <summary>The shared brick: same text, plus something at the end.</summary>

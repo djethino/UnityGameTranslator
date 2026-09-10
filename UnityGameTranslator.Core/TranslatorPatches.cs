@@ -2945,6 +2945,22 @@ namespace UnityGameTranslator.Core
                     return true;
                 }
 
+                // 🔴 **The same sentence, dressed differently, is the same sentence.** A game that
+                // reveals by walking a colour tag along a finished line changes its raw text every
+                // frame while saying exactly the same thing — and every frame was read as a new
+                // line. One sentence cost 93 requests to the model and 91 cache entries, and a
+                // quarter of that game's file was five sentences written out fifty-two times.
+                //
+                // ⚠ Held, not finalised: the reveal IS in progress, and the translation must not
+                // reach the screen until it ends — the tag's position is the animation's own
+                // state. The newest raw form is kept so that what is eventually finalised is the
+                // line as the game leaves it.
+                if (TextRelations.SameContent(state.TypewritingText, newText))
+                {
+                    HoldTypewriting(state, compId, newText, now);
+                    return true;
+                }
+
                 float elapsed = (now - state.TypewritingSince) * 1000f;
                 bool isGrowing = TextRelations.Grows(state.TypewritingText, newText);
 
@@ -2973,7 +2989,18 @@ namespace UnityGameTranslator.Core
                 }
 
                 // Text changed completely (not StartsWith) or grew after long pause.
-                if (!state.TypewritingQueued)
+                //
+                // 🔴 **Never the shorter one while it is still GROWING.** If Grows is true, a
+                // longer version of this very text is in hand at this instant — so the one being
+                // finalised is provably not final. A game that pauses mid-sentence (a comma, a
+                // breath) waited past the stabiliser and had its half-written line finalised,
+                // translated and cached: the fragment entered the file, the complete sentence
+                // never did, and the line stayed in the game's own language. Observed with a
+                // 620 ms pause on a reveal running at 40 ms a character.
+                //
+                // ⚠ Nothing is lost by waiting: the stabiliser finalises as soon as the text stops
+                // moving, which is what ends every reveal.
+                if (!isGrowing && !state.TypewritingQueued)
                 {
                     TranslatorCore.LogDebug($"[TW-FINAL] comp={compId} isGrowing={isGrowing} elapsed={elapsed:F0}ms\n  prev({state.TypewritingText.Length}c)='{state.TypewritingText}'\n  new({newText.Length}c)='{newText}'");
                     ProcessFinalizedText(compId, state.TypewritingText);
@@ -3512,13 +3539,7 @@ namespace UnityGameTranslator.Core
                 // ⚠ Bounded: this is the hottest path in the mod, called for every text every
                 // game writes. Thirty lines answer the question; the counter costs a compare
                 // afterwards.
-                if (TranslatorCore.DebugMode && _dbgSetterLog < 30)
-                {
-                    _dbgSetterLog++;
-                    long probeId = TypeHelper.GetInstanceID(__instance);
-                    string head = textValue.Length > 40 ? textValue.Substring(0, 40) + "…" : textValue;
-                    TranslatorCore.LogDebug($"[SETTER] {componentType} comp={probeId} '{head}'");
-                }
+                if (TranslatorCore.DebugMode) NoteSetterFired(__instance, textValue, componentType);
 
                 if (profiling) t0 = _profSw.ElapsedTicks;
 
@@ -3778,8 +3799,46 @@ namespace UnityGameTranslator.Core
         private static int _dbgMissedSetFont = 0;
         private static int _dbgTouchLog = 0;
 
-        /// <summary>How many times the setter probe has spoken this session — see ProcessTextPatchPrefix.</summary>
-        private static int _dbgSetterLog = 0;
+        /// <summary>
+        /// How many times each component has been seen writing text — the setter probe's quota.
+        ///
+        /// 🔴 **Per component, and that is the whole point.** A single session-wide budget is
+        /// unusable for the question it answers: a game writes hundreds of texts on the way to
+        /// wherever the thing being investigated lives, so the quota is gone before anybody gets
+        /// there — "you cannot teleport into the game at the spot you want to test".
+        ///
+        /// ⚠ Capped in size as well as per entry: a game that creates text components without end
+        /// must not turn a diagnostic into a leak.
+        /// </summary>
+        private static readonly Dictionary<long, int> _dbgSetterSeen = new Dictionary<long, int>();
+
+        private const int SetterProbePerComponent = 2;
+        private const int SetterProbeComponents = 2000;
+
+        /// <summary>
+        /// Say that this component wrote text — the first couple of times it does, whenever that is.
+        ///
+        /// ⚠ Two lines are enough for what is asked: does the game write through here AT ALL for
+        /// this component. A third would only repeat the answer.
+        /// </summary>
+        private static void NoteSetterFired(object instance, string textValue, string componentType)
+        {
+            long probeId = TypeHelper.GetInstanceID(instance);
+            if (probeId == -1) return;
+
+            int seen;
+            if (!_dbgSetterSeen.TryGetValue(probeId, out seen))
+            {
+                if (_dbgSetterSeen.Count >= SetterProbeComponents) return;
+                seen = 0;
+            }
+
+            if (seen >= SetterProbePerComponent) return;
+            _dbgSetterSeen[probeId] = seen + 1;
+
+            string head = textValue.Length > 40 ? textValue.Substring(0, 40) + "…" : textValue;
+            TranslatorCore.LogDebug($"[SETTER] {componentType} comp={probeId} '{head}'");
+        }
         public static bool BypassFontSizePrefix { get => _bypassFontSizePrefix; set => _bypassFontSizePrefix = value; }
 
         /// <summary>

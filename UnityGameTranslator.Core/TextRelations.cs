@@ -85,6 +85,52 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Whether two texts say the same thing, and differ only in how they are dressed.
+        ///
+        /// 🔴 **Some games reveal a line by MARKUP rather than by building the string.** The whole
+        /// sentence is there from the first frame; a tag walks along it, showing what is behind it
+        /// and hiding the rest:
+        ///
+        /// <code>
+        /// &lt;i&gt;T&lt;/i&gt;&lt;color=#00000000&gt;he bastards are all in on it together!&lt;/color&gt;
+        /// &lt;i&gt;Th&lt;/i&gt;&lt;color=#00000000&gt;e bastards are all in on it together!&lt;/color&gt;
+        /// </code>
+        ///
+        /// The raw text changes every frame and <see cref="Grows"/> is false — the tag MOVED, it
+        /// did not grow — so every frame read as a brand new line. Measured on a real game: one
+        /// sentence produced **93 requests to the model and 91 cache entries**, and a quarter of
+        /// that game's translation file (258 lines of 1050) was five sentences written out
+        /// fifty-two times each.
+        ///
+        /// 🔴 **The markup is REMOVED here, never replaced by a token**, and the difference is the
+        /// whole rule: a token moves WITH its tag, so the two frames above stay different and
+        /// nothing is gained. Verified by putting the token version in and watching both cases go
+        /// red.
+        ///
+        /// ⚠ **This asks about CONTENT, and nothing else may be asked of it.** Whether a reveal is
+        /// finished — whether a translation may be written to the screen — is a question about the
+        /// RAW text, because the tag's position is the reveal's own state. Answering that one here
+        /// would paint a whole line at once and destroy the animation the game was written to play.
+        ///
+        /// ⚠ And it must never reach the cache key, which keeps its tokens: stripped, we would know
+        /// a line had markup but no longer WHERE to put it back in a translation whose words are in
+        /// another order.
+        /// </summary>
+        public static bool SameContent(string previous, string current)
+        {
+            if (previous == null || current == null) return false;
+            if (previous == current) return true;
+
+            // Nothing to undress: a cheap way out of the common case, since most texts carry no
+            // markup at all and this is asked on the hottest path in the mod.
+            if (previous.IndexOf('<') < 0 && current.IndexOf('<') < 0) return false;
+
+            return string.Equals(TextNormalization.StripMarkupTags(previous),
+                                 TextNormalization.StripMarkupTags(current),
+                                 StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// True when <paramref name="text"/> holds anything but line breaks, spaces and tabs from
         /// <paramref name="startIndex"/> onwards.
         ///

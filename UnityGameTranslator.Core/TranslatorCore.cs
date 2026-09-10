@@ -4709,11 +4709,20 @@ namespace UnityGameTranslator.Core
         {
             if (string.IsNullOrEmpty(text)) return;
 
-            string key = NormalizeForCacheLookup(text);
+            // 🔴 The SKELETON, not the text. The game resolves its tokens a few at a time, and each
+            // state is its own string — so a refusal recorded on one of them says nothing about the
+            // next, nor about the same template appearing on another component in another half-
+            // resolved form. Measured: the fully-tokenised state was refused while
+            // `…[*White*] Energy, add 2 Strength.` went to the model on the component beside it and
+            // came back with the keyword translated, which is exactly what the game cannot expand.
+            string skeleton = TextRelations.ExpansionSkeleton(text);
+            if (skeleton.Length == 0) return;
+
             bool known;
-            lock (lockObj) { known = !_expandedInPlace.Add(key); }
+            lock (lockObj) { known = !_expandedInPlace.Add(skeleton); }
             if (known) return;
 
+            string key = NormalizeForCacheLookup(text);
             bool withdrawn = _queue.Withdraw(text) || _queue.Withdraw(key);
             _queue.NoteRefused(key);
 
@@ -4739,10 +4748,16 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static readonly HashSet<string> _expandedInPlace = new HashSet<string>();
 
-        internal static bool IsExpandedInPlace(string key)
+        internal static bool IsExpandedInPlace(string text)
         {
-            if (_expandedInPlace.Count == 0 || string.IsNullOrEmpty(key)) return false;
-            lock (lockObj) { return _expandedInPlace.Contains(key); }
+            if (_expandedInPlace.Count == 0 || string.IsNullOrEmpty(text)) return false;
+
+            // 🔴 The FINISHED form of the same template goes through, and it must: it is the line
+            // the player reads and the one worth translating. Only the states that still carry
+            // something for the game to resolve are refused.
+            if (!TextRelations.HasUnresolvedTokens(text)) return false;
+
+            lock (lockObj) { return _expandedInPlace.Contains(TextRelations.ExpansionSkeleton(text)); }
         }
 
         public static void ClearQueue()
@@ -6122,7 +6137,7 @@ namespace UnityGameTranslator.Core
                 // hundred milliseconds after the text was queued — which is usually before the
                 // model answers, but nothing guarantees it, so the answer is refused HERE as well.
                 // That is what makes it deterministic rather than a race the worker usually loses.
-                if (!toModUi && IsExpandedInPlace(NormalizeForCacheLookup(normalizedKey)))
+                if (!toModUi && IsExpandedInPlace(normalizedKey))
                 {
                     LogInfo($"[TW-TEMPLATE] answer discarded, the game expands this in place: '{(normalizedKey.Length > 60 ? normalizedKey.Substring(0, 60) : normalizedKey)}'");
                     return;
@@ -6355,7 +6370,7 @@ namespace UnityGameTranslator.Core
             // A template the game expands in place. Refused at this door rather than in the worker,
             // so nothing is queued at all: no line in the notice that says a translation is running,
             // and no call. See IsExpandedInPlace.
-            if (IsExpandedInPlace(NormalizeForCacheLookup(text))) return false;
+            if (IsExpandedInPlace(text)) return false;
 
             // Longer than any backend will accept. Refused HERE, at the single door, rather than
             // deeper down where the refusal used to be recorded as a cache entry tagged "S".
@@ -6686,7 +6701,7 @@ namespace UnityGameTranslator.Core
             //
             // ⚠ Before every lookup, since it is a lookup ANSWERING that does the damage. The
             // Count == 0 test inside costs nothing on the games that never do this.
-            if (IsExpandedInPlace(NormalizeForCacheLookup(text)))
+            if (IsExpandedInPlace(text))
                 return text;
 
             // Fast path: check concat assembled cache (runtime only, not JSON)

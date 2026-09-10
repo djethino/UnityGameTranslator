@@ -126,6 +126,57 @@ namespace UnityGameTranslator.Core.Checks
 
             Expanded(check, null, "<b>x</b>", false, "nothing expands into something");
             Expanded(check, "*x*", null, false, "and the other way round");
+
+            OneSkeletonForTheWholeChain(check);
+        }
+
+        /// <summary>
+        /// Every state of one expansion yields the same skeleton — and only the finished one is
+        /// allowed through.
+        ///
+        /// 🔴 **Why a skeleton and not the text**: the refusal was recorded on the fully-tokenised
+        /// state, and the game showed a half-resolved one on the component beside it. Different
+        /// string, so nothing matched: it went to the model and came back with the keyword
+        /// translated, which is precisely what the game can no longer expand. Reported from a game
+        /// as "it translates twice — once properly and once with the asterisks".
+        /// </summary>
+        private static void OneSkeletonForTheWholeChain(Action<bool, string, string> check)
+        {
+            string tokenised = "When loaded with [*White*] Energy, add {0} Strength.";
+            string halfDone = "When loaded with [*White*] Energy, add 2 Strength.";
+            string finished = "When loaded with [<color=#FFFFFF>White</color><sprite name=w>] Energy, add <color=#F4FF58>2</color> Strength.";
+            // What the worker stores under, once numbers and tags are lifted into our placeholders.
+            string asStored = "When loaded with [*White*] Energy, add [!v*0] Strength.";
+            string finishedAsStored = "When loaded with [[!t*0]White[!t*1][!t*2]] Energy, add [!t*3][!v*0][!t*4] Strength.";
+
+            string skeleton = TextRelations.ExpansionSkeleton(tokenised);
+            check(skeleton.Length > 0, "a skeleton is something", "an empty one would match every text there is");
+
+            check(TextRelations.ExpansionSkeleton(halfDone) == skeleton
+                  && TextRelations.ExpansionSkeleton(finished) == skeleton,
+                "every state of one expansion yields the same skeleton",
+                "🔴 recorded on one state, a refusal says nothing about the next — which is how the half-resolved one reached the model");
+
+            check(TextRelations.ExpansionSkeleton(asStored) == skeleton
+                  && TextRelations.ExpansionSkeleton(finishedAsStored) == skeleton,
+                "and a cache key yields it too, placeholders and all",
+                "the worker stores under the key while the screen showed the raw text: two skeletons would hold the refusal at one moment out of three");
+
+            check(TextRelations.HasUnresolvedTokens(tokenised)
+                  && TextRelations.HasUnresolvedTokens(halfDone)
+                  && TextRelations.HasUnresolvedTokens(asStored),
+                "every state on the way says it still has tokens to resolve",
+                "one of them answering no is one line of the game's own template translated and cached");
+
+            check(!TextRelations.HasUnresolvedTokens(finished)
+                  && !TextRelations.HasUnresolvedTokens(finishedAsStored),
+                "🔴 and the finished form says no — it is the line to translate",
+                "refusing it too would leave the tooltip in the game's own language, which is worse than the defect being fixed");
+
+            check(!TextRelations.HasUnresolvedTokens("Just a plain sentence.")
+                  && !TextRelations.HasUnresolvedTokens("Add [!v*0] Max HP."),
+                "an ordinary line has none either, placeholders included",
+                "our own [!v*N] carries an asterisk: counted, every normalised key in the game would look unresolved");
         }
 
         private static void Expanded(Action<bool, string, string> check, string previous, string current,

@@ -128,9 +128,14 @@ namespace UnityGameTranslator.Core.Checks
                 "it is a lookup ANSWERING that does the damage, so asking afterwards is asking too late");
 
             string forget = BodyOf(core, "public static void ForgetTemplateText(string text)");
-            check(forget != null && forget.Contains("_expandedInPlace.Add(key)", StringComparison.Ordinal),
-                "and one door records it",
-                "recorded by each caller instead, the one that forgets leaves the text queued for ever");
+            check(forget != null && forget.Contains("_expandedInPlace.Add(skeleton)", StringComparison.Ordinal),
+                "and one door records it, as a skeleton",
+                "🔴 recorded as the text, a refusal covers one state of the expansion and none of the others — which is how the half-resolved form reached the model on the component beside it");
+
+            string ask = BodyOf(core, "internal static bool IsExpandedInPlace(string text)");
+            check(ask != null && ask.Contains("!TextRelations.HasUnresolvedTokens(text)", StringComparison.Ordinal),
+                "and the finished form is let through",
+                "refusing the whole skeleton would leave the line in the game's own language, which is worse than the defect being fixed");
         }
 
         /// <summary>

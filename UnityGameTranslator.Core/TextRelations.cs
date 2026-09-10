@@ -204,17 +204,64 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
+        /// Whether the game still has tokens of its own to resolve in this text — so it is a state
+        /// on the way to a line, not the line.
+        ///
+        /// ⚠ The finished form answers false, and that is the whole point: it is the one to
+        /// translate. Everything before it in the chain answers true.
+        /// </summary>
+        public static bool HasUnresolvedTokens(string text) => TokensLeft(text) > 0;
+
+        /// <summary>
+        /// What is left of a text once everything the expansion changes is set aside: markup, the
+        /// game's own delimiters, the digits that fill its slots, and our own placeholders. Every
+        /// state of one expansion yields the same skeleton — which is what lets a template be
+        /// recognised again on ANOTHER component, in another of its half-resolved forms.
+        ///
+        /// 🔴 **Our placeholders are dropped so a raw text and a cache key agree.** The worker
+        /// stores under `…add [!v*0] Strength.` while the screen showed `…add 2 Strength.`; without
+        /// this, the same state would produce two different skeletons and the refusal would hold at
+        /// one of the three moments and not the others.
+        /// </summary>
+        public static string ExpansionSkeleton(string text) => string.IsNullOrEmpty(text) ? "" : Flatten(text);
+
+        /// <summary>
         /// How many of the game's own delimiters are still standing. Asked of the text with its
         /// markup removed, so a delimiter living inside a tag's attributes — which the game put
         /// there and will not touch again — is not counted as one it has yet to resolve.
+        ///
+        /// ⚠ And with OUR placeholders dropped first: `[!v*0]` carries an asterisk of ours, and
+        /// counting it would make every normalised key look unresolved — including the finished
+        /// form, the one that must go through.
         /// </summary>
         private static int TokensLeft(string text)
         {
-            string bare = TextNormalization.StripMarkupTags(text);
+            string bare = DropOwnPlaceholders(TextNormalization.StripMarkupTags(text));
             int n = 0;
             for (int i = 0; i < bare.Length; i++)
                 if (bare[i] == '*' || bare[i] == '{') n++;
             return n;
+        }
+
+        /// <summary>Remove `[!v*N]` and `[!t*N]` — ours, standing exactly where a number or a tag was.</summary>
+        private static string DropOwnPlaceholders(string text)
+        {
+            if (text.IndexOf("[!", StringComparison.Ordinal) < 0) return text;
+
+            var sb = new System.Text.StringBuilder(text.Length);
+            int i = 0;
+            while (i < text.Length)
+            {
+                if (i + 4 < text.Length && text[i] == '[' && text[i + 1] == '!'
+                    && (text[i + 2] == 'v' || text[i + 2] == 't') && text[i + 3] == '*')
+                {
+                    int close = text.IndexOf(']', i + 4);
+                    if (close > 0) { i = close + 1; continue; }
+                }
+                sb.Append(text[i]);
+                i++;
+            }
+            return sb.ToString();
         }
 
         /// <summary>
@@ -223,7 +270,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static string Flatten(string text)
         {
-            string stripped = TextNormalization.StripMarkupTags(text);
+            string stripped = DropOwnPlaceholders(TextNormalization.StripMarkupTags(text));
 
             var sb = new System.Text.StringBuilder(stripped.Length);
             bool lastWasSpace = false;

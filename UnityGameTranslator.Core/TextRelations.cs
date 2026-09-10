@@ -159,39 +159,62 @@ namespace UnityGameTranslator.Core
         /// `*whispers*`) is never followed, on its own component, by a version of itself in which
         /// the asterisks have become tags.
         ///
-        /// 🔴 **The whole rule in one sentence: the tokens were THERE and are GONE.** The previous
-        /// text carried the game's own delimiters, the new one carries none, and markup arrived in
-        /// their place. All three, or it is not an expansion:
+        /// 🔴 **The whole rule in one sentence: the same words, with FEWER of the game's own tokens
+        /// left.** An expansion resolves tokens; it never adds any, and it never changes a word.
         ///
         /// <code>
-        /// *sigh*  →  &lt;i&gt;*sigh*&lt;/i&gt;      the asterisks survived: prose was italicised, nothing resolved
-        /// Add 5 HP → Add &lt;color&gt;7&lt;/color&gt; HP   no token in the first: a value was updated
-        /// &lt;b&gt;*Ready*&lt;/b&gt; → &lt;color&gt;Ready&lt;/color&gt;  the first was already dressed: a redecoration
+        /// *Overclock* ({0}): Add {1} Strength.        4 tokens
+        /// *Overclock* (9): Add 10 Strength.           2   ← the slots were filled, the keyword not yet
+        /// &lt;color&gt;Overclock&lt;/color&gt;&lt;sprite&gt; (9)…      0   ← and then the keyword
         /// </code>
         ///
-        /// ⚠ The first of those was found by its own check case, not by reasoning: without the
-        /// "and gone" half, italicising `*sigh*` read as an expansion of it.
+        /// ⚠ **It resolves them a FEW AT A TIME, and that is why counting is the rule.** Written
+        /// first as "the tokens were there and are gone", it caught only the two ends of that chain
+        /// and let every state in between through: the file still gained
+        /// `*Overclock* ([!v*0]): Add [!v*1] Strength…`, `When loaded with [*White*] Energy, add
+        /// [!v*0] Strength.` and `…they have &lt;color&gt;Double Strength&lt;/color&gt;` — half-resolved
+        /// states, each translated as its own line. Found by reading the file the rule had just
+        /// been shipped for, not by reasoning.
+        ///
+        /// What it still refuses, and these are the ones that matter:
+        ///
+        /// <code>
+        /// *sigh*  →  &lt;i&gt;*sigh*&lt;/i&gt;               2 → 2: prose italicised, nothing resolved
+        /// Add 5 HP → Add &lt;color&gt;7&lt;/color&gt; HP     0 → 0: a value was updated, there was no token
+        /// *Overclock* … → *Overheat* …           one word apart is another line, whatever the shape
+        /// </code>
         ///
         /// ⚠ Digits are flattened on both sides because `{0}` becomes `9` — the slot and its value
         /// are the same thing seen twice. That is also why the two forms share one cache key.
+        ///
+        /// ⚠ **What this gives up**: prose that loses an emphasis without changing a word — `He said
+        /// *nothing*.` then `He said nothing.` — reads as a resolution, and the first form is left
+        /// untranslated. The second is translated normally, and the refusal is said out loud, so it
+        /// is visible rather than silent.
         /// </summary>
         public static bool SameAfterExpansion(string previous, string current)
         {
             if (string.IsNullOrEmpty(previous) || string.IsNullOrEmpty(current)) return false;
 
-            // The expansion is what PUTS the markup there. A previous text that already carried
-            // tags is SameContent's business, and a current one that carries none was not expanded.
-            if (current.IndexOf('<') < 0 || previous.IndexOf('<') >= 0) return false;
-
-            // The tokens were there…
-            if (previous.IndexOf('*') < 0 && previous.IndexOf('{') < 0) return false;
-
-            // …and they are gone. Asked of the text with its markup removed, so a delimiter living
-            // inside a tag's own attributes is not mistaken for one the game left standing.
-            string bare = TextNormalization.StripMarkupTags(current);
-            if (bare.IndexOf('*') >= 0 || bare.IndexOf('{') >= 0) return false;
+            // Strictly fewer tokens left to resolve. Equal is not enough: that is a redecoration
+            // (SameContent's business) or prose that happens to use the same characters.
+            if (TokensLeft(current) >= TokensLeft(previous)) return false;
 
             return string.Equals(Flatten(previous), Flatten(current), StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// How many of the game's own delimiters are still standing. Asked of the text with its
+        /// markup removed, so a delimiter living inside a tag's attributes — which the game put
+        /// there and will not touch again — is not counted as one it has yet to resolve.
+        /// </summary>
+        private static int TokensLeft(string text)
+        {
+            string bare = TextNormalization.StripMarkupTags(text);
+            int n = 0;
+            for (int i = 0; i < bare.Length; i++)
+                if (bare[i] == '*' || bare[i] == '{') n++;
+            return n;
         }
 
         /// <summary>

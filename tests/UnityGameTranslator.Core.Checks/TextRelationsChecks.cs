@@ -81,6 +81,23 @@ namespace UnityGameTranslator.Core.Checks
                 "<color=#FF78C1>Overclock</color><sprite=\"buff\" name=overclock> (<color=#F4FF58>9</color>): Add <color=#F4FF58>10</color> Strength.",
                 true, "and the value slots became values — the slot and its value are one thing seen twice");
 
+            // 🔴 The states IN BETWEEN, which the first version of this rule let through — and which
+            // the game's own file then showed, half-resolved, one line each.
+            Expanded(check,
+                "*Overclock* ({0}): Add {1} Strength.",
+                "*Overclock* (9): Add 10 Strength.",
+                true, "🔴 the slots were filled and the keyword was not: a half-resolved state is still not a line anybody reads");
+
+            Expanded(check,
+                "When loading {0} Energy of the same point, add {1} Strength.",
+                "When loading 2 Energy of the same point, add {1} Strength.",
+                true, "and it resolves them one at a time, so one slot down is already a supersession");
+
+            Expanded(check,
+                "While Single Stars are the only loaded *Attack Units*, they have *Double Strength*.",
+                "While Single Stars are the only loaded *Attack Units*, they have <color=#E77531>Double Strength</color><sprite=\"buff\" name=power_rate>.",
+                true, "one keyword expanded and the other not — verbatim from the file, where it became its own line");
+
             // 🔴 What must NOT match, in the order the mistakes would be made.
             Expanded(check, "Add 5 HP", "Add <color=#F4FF58>7</color> HP",
                      false, "a value simply being updated is not an expansion: nothing in the previous text was a token");
@@ -92,10 +109,13 @@ namespace UnityGameTranslator.Core.Checks
                      false, "🔴 the asterisks SURVIVED: prose was italicised, no token was resolved — found by this very case");
 
             Expanded(check, "*Ready* in {0} turns", "<color=#FF0000>Ready</color> in {0} turns",
-                     false, "half-expanded is not expanded: a slot the game still has to fill must not be sent either");
+                     true, "the keyword resolved and a slot is still open: superseded all the same, and the next state supersedes this one");
 
             Expanded(check, "<b>*Ready*</b>", "<color=#FF0000>Ready</color>",
-                     false, "a previous text that already carried markup is a redecoration, never an expansion");
+                     true, "markup on the previous text does not make it final — the keyword inside it had still to be resolved");
+
+            Expanded(check, "He said *nothing*.", "He said nothing.",
+                     true, "⚠ what the rule gives up: prose losing an emphasis reads as a resolution, and is left untranslated in that form. Said out loud, never silently");
 
             Expanded(check, "*Overclock* ({0}): Add {1} Strength.",
                      "<color=#FF78C1>Overheat</color><sprite=\"buff\" name=overclock> (<color=#F4FF58>9</color>): Add <color=#F4FF58>10</color> Strength.",

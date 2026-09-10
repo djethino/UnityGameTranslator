@@ -244,6 +244,7 @@ namespace UnityGameTranslator.Core
             ResetPhase2State();
             processedTextHashes.Clear();
             inputFieldTextIds.Clear();
+            ScanProbe.Forget();
             componentOriginals.Clear();
             _renderWatch.Clear();
 
@@ -1475,16 +1476,32 @@ namespace UnityGameTranslator.Core
 
                 int textHash = currentText.GetHashCode();
 
+                // 🔴 **Where a text is lost between being SEEN and being SENT.** On one game the
+                // mod replaces a tooltip's text without trouble when it already knows it, and a
+                // new one is almost never queued — so the component IS reached, and the loss is
+                // one of the four decisions below. Nothing said which.
+                //
+                // ⚠ Bounded per component like the setter probe, and for the same reason: a
+                // session-wide budget is spent long before anybody reaches the thing being looked
+                // at.
+                bool watching = TranslatorCore.DebugMode && ScanProbe.Wants(instanceId);
+
                 // Quick skip: already processed with same text
                 if (processedTextHashes.TryGetValue(instanceId, out int lastHash) && lastHash == textHash)
+                {
+                    if (watching) ScanProbe.Say(instanceId, "SAME-HASH", currentText);
                     return;
+                }
 
                 // Check if text changed since last seen
                 if (TranslatorCore.HasSeenText(instanceId, currentText, out _))
                 {
+                    if (watching) ScanProbe.Say(instanceId, "ALREADY-SEEN", currentText);
                     processedTextHashes[instanceId] = textHash;
                     return;
                 }
+
+                if (watching) ScanProbe.Say(instanceId, "REACHES-TRANSLATE", currentText);
 
                 // Check if own UI (use UI-specific prompt)
                 bool isOwnUI = TranslatorCore.IsOwnUITranslatable(comp);

@@ -3041,7 +3041,20 @@ namespace UnityGameTranslator.Core
             // First time — defer for stabilization
             if (TranslatorCore.DebugMode)
             {
-                TranslatorCore.LogDebug($"[TW-NEW] comp={compId} FIRST text({newText.Length}c)='{newText}'");
+                // ⚠ The TYPE and the object's name, because on one game this is the only trace a
+                // tooltip leaves: its text never comes through a patched setter, so nothing else
+                // says what kind of component the mod is actually looking at.
+                string what = "?";
+                try
+                {
+                    var probeComp = state.Target as Component;
+                    what = probeComp != null
+                        ? $"{probeComp.GetType().Name} '{probeComp.gameObject.name}'"
+                        : (state.Target != null ? state.Target.GetType().Name : "no target");
+                }
+                catch { }
+
+                TranslatorCore.LogDebug($"[TW-NEW] comp={compId} {what} FIRST text({newText.Length}c)='{newText}'");
             }
             HoldTypewriting(state, compId, newText, now);
             return true;

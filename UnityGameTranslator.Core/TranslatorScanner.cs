@@ -92,6 +92,11 @@ namespace UnityGameTranslator.Core
         private const int BATCH_SIZE = 200; // Process 200 components per scan cycle
         private static bool scanCycleComplete = true;
 
+        // 🔴 Which kinds have been walked end to end since the round began. Read ScanRound: the
+        // question used to be "did they all finish in this very call", which two lists longer than
+        // a batch can never answer yes to, and a scene therefore got exactly one pass in its life.
+        private static readonly Engine.ScanRound _round = new Engine.ScanRound();
+
         #endregion
 
         #region Component Cache
@@ -407,30 +412,41 @@ namespace UnityGameTranslator.Core
             {
                 // Clear per-cycle dedup only when starting a fresh cycle (so dedup spans
                 // the whole cycle even if it gets split across frames by the budget).
-                if (scanCycleComplete) _processedThisCycle.Clear();
+                if (scanCycleComplete) { _processedThisCycle.Clear(); _round.Restart(); }
 
-                bool allDone = true;
+                int typeCount = _registeredTypes.Count;
+                _round.Track(typeCount);
                 // ⚠ Rotating start: with a small budget the first type ate every frame and the
                 // last ones never advanced (their BatchIndex stayed put for the whole session).
-                int typeCount = _registeredTypes.Count;
                 if (_batchTypeStart >= typeCount) _batchTypeStart = 0;
                 for (int step = 0; step < typeCount; step++)
                 {
-                    var type = _registeredTypes[(_batchTypeStart + step) % typeCount];
-                    if (type.CachedComponents == null || type.CachedComponents.Length == 0) continue;
-                    if (_scanFrameSw.Elapsed.TotalMilliseconds > budgetMs)
+                    int index = (_batchTypeStart + step) % typeCount;
+                    var type = _registeredTypes[index];
+                    if (type.CachedComponents == null || type.CachedComponents.Length == 0)
+                    {
+                        // Nothing to walk is walked: a game with no UI.Text at all must not hold
+                        // the round open for ever on its behalf.
+                        _round.NothingToSweep(index);
+                        continue;
+                    }
+                    // 🔴 The frame's first eligible kind always gets a turn, whatever the passes
+                    // above already spent. ProcessBatch guarantees sixteen components once it is
+                    // entered; without this, a frame whose budget was gone before the sweep started
+                    // advanced nothing at all — and a round that can stall is the very defect this
+                    // was rewritten to remove.
+                    if (step > 0 && _scanFrameSw.Elapsed.TotalMilliseconds > budgetMs)
                     {
                         // Budget exhausted — resume next frame from where we are
                         // (each type's BatchIndex remembers its progress).
-                        allDone = false;
-                        _batchTypeStart = (_batchTypeStart + step) % typeCount;
+                        _batchTypeStart = index;
                         break;
                     }
-                    bool typeDone = ProcessBatch(type, budgetMs);
-                    if (!typeDone) { allDone = false; _batchTypeStart = (_batchTypeStart + step) % typeCount; break; }
+                    if (ProcessBatch(type, budgetMs)) _round.WentRound(index);
+                    else { _batchTypeStart = index; break; }
                 }
-                if (allDone) _batchTypeStart = 0;
-                scanCycleComplete = allDone;
+                scanCycleComplete = _round.Complete;
+                if (scanCycleComplete) _batchTypeStart = 0;
             }
             catch { }
 
@@ -511,7 +527,14 @@ namespace UnityGameTranslator.Core
                 Type graphic = null;
                 for (var t = TypeHelper.UI_TextType ?? TypeHelper.TMP_TextType; t != null && graphic == null; t = t.BaseType)
                     if (t.Name == "Graphic") graphic = t;
-                var onEnable = graphic?.GetMethod("OnEnable", BindingFlags.NonPublic | BindingFlags.Instance);
+                // ⚠ Public too, and it is not defensive: OnEnable is protected in Unity's own
+                // source, but an IL2CPP interop proxy re-declares it PUBLIC. Asking for NonPublic
+                // alone found nothing on every IL2CPP game, so the arrival hook silently fell back
+                // to looking the whole scene up on every detection cycle — the one thing it exists
+                // to avoid. Same flags as the font hook on the same method (PatchGraphicOnEnable),
+                // which is why that one worked and this one did not.
+                var onEnable = graphic?.GetMethod("OnEnable",
+                    BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance);
                 if (onEnable == null)
                 {
                     TranslatorCore.LogInfo("[Scanner] Graphic.OnEnable not found — component lookups stay per cycle");

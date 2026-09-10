@@ -42,6 +42,14 @@
     -->
     <Compile Include="../../UnityGameTranslator.Core/Engine/TextNormalization.cs" />
     <!--
+      🔴 When the sweep has been all the way round every kind of text component. A counting rule,
+      and it was unreachable: it asked whether they all finished inside the SAME call, which two
+      lists longer than a batch can never do. A scene therefore got one pass in its life, and every
+      component was refused after it — measured, on a game, as 90 000 visits per five seconds all
+      returning at the first line. Nothing about that needs Unity, which is why it belongs here.
+    -->
+    <Compile Include="../../UnityGameTranslator.Core/Engine/ScanRound.cs" />
+    <!--
       The path matcher both exclusions and font rules read, cut out the same day. What a pattern
       means is a promise to whoever wrote it: an exclusion that quietly stops matching is text
       going to a model that somebody asked to be left alone.

@@ -57,6 +57,7 @@ namespace UnityGameTranslator.Core.Checks
             HowContentIsFingerprinted();
             HowTextChanges();
             WhenTextMayBeTyping();
+            WhenTheSweepHasBeenRound();
             HowATargetIsNamed();
             WhereTheModsInterfaceGoes();
             WhatSitsBesideTheTranslation();
@@ -169,6 +170,12 @@ namespace UnityGameTranslator.Core.Checks
         private static void WhenTextMayBeTyping()
         {
             Section("Input echo", InputEchoChecks.Run);
+        }
+
+        /// <summary>When the sweep has been all the way round every kind of text component.</summary>
+        private static void WhenTheSweepHasBeenRound()
+        {
+            Section("One round of the sweep", ScanRoundChecks.Run);
         }
 
         /// <summary>How one step of a hierarchy path is named when the thing has no name.</summary>

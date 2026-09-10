@@ -4826,7 +4826,7 @@ namespace UnityGameTranslator.Core
             {
                 var handler = BuildProxyHandler(config);
                 var client = handler != null ? new HttpClient(handler) : new HttpClient();
-                client.Timeout = TimeSpan.FromMinutes(5);
+                client.Timeout = CeilingFor(config);
                 LogProxyMode(config);
                 return client;
             }
@@ -4834,8 +4834,80 @@ namespace UnityGameTranslator.Core
             {
                 Adapter?.LogError($"[HttpClient] Failed to create configured HttpClient, falling back to default: {e.GetType().Name}: {e.Message}");
                 var fallback = new HttpClient();
-                fallback.Timeout = TimeSpan.FromMinutes(5);
+                fallback.Timeout = CeilingFor(config);
                 return fallback;
+            }
+        }
+
+        /// <summary>
+        /// How long one request may take before we accept that no answer is coming.
+        ///
+        /// 🔴 **It is a deadlock escape, not a patience limit**, and that is why it is wide. See
+        /// ModConfig.timeout_ms: a slow local model answers in minutes and its answer is wanted;
+        /// what this exists for is a request that has been swallowed and will never return.
+        ///
+        /// ⚠ A second is the floor, and it is not a policy: HttpClient refuses zero or negative,
+        /// and a typo in a hand-edited file must not stop the mod from starting.
+        /// </summary>
+        private static TimeSpan CeilingFor(ModConfig config)
+        {
+            int ms = config?.timeout_ms ?? ModConfig.DefaultTimeoutMs;
+            if (ms < 1000)
+            {
+                Adapter?.LogWarning($"[HttpClient] timeout_ms={ms} is below the one-second floor; using {ModConfig.DefaultTimeoutMs} ms");
+                ms = ModConfig.DefaultTimeoutMs;
+            }
+            return TimeSpan.FromMilliseconds(ms);
+        }
+
+        /// <summary>Said once, and again only after an answer has come back.</summary>
+        private static volatile bool _backendSilent;
+
+        /// <summary>
+        /// Send one translation request, and say plainly when no answer came.
+        ///
+        /// 🔴 **The one door for the three backends**, because a silence is the same event whoever
+        /// was asked. Before this, a request that ran out of time surfaced as
+        /// `[AI] Worker error: One or more errors occurred.` — the wrapper's own words, naming
+        /// neither the cause nor the wait — and the player saw a queue that had simply stopped.
+        ///
+        /// ⚠ Said ONCE, and again only after something answers. A dead server with fifteen texts
+        /// waiting would otherwise put fifteen notices on screen, one per text, which says no more
+        /// than one and buries everything else. The flag is cleared by an answer rather than by a
+        /// delay: what is being reported is a state, not an instant.
+        ///
+        /// ⚠ **Nothing is lost.** The line stays as it is, no entry is written, and the scanner
+        /// meets the same untranslated text on its next round.
+        /// </summary>
+        private static HttpResponseMessage SendForTranslation(HttpRequestMessage request)
+        {
+            try
+            {
+                var response = httpClient.SendAsync(request).Result;
+                _backendSilent = false;
+                return response;
+            }
+            catch (AggregateException agg) when (agg.GetBaseException() is TaskCanceledException)
+            {
+                if (_backendSilent) return null;
+                _backendSilent = true;
+
+                TimeSpan waited = httpClient.Timeout;
+                string howLong = waited.TotalMinutes >= 1
+                    ? $"{waited.TotalMinutes:0.#} min"
+                    : $"{waited.TotalSeconds:0.#} s";
+                string message = $"No answer from the translation server after {howLong}.";
+
+                Adapter?.LogWarning($"[AI] {message} The line is left as it is and will be asked for again. "
+                                    + "If the model is simply slow, raise timeout_ms in config.json.");
+                try
+                {
+                    UI.TranslatorUIManager.RunOnMainThread(() =>
+                        UI.TranslatorUIManager.StatusOverlay?.ShowToast(message,
+                            UI.Panels.StatusOverlay.ToastTone.Off));
+                }
+                catch { }
+                return null;
             }
         }
 
@@ -5771,7 +5843,10 @@ namespace UnityGameTranslator.Core
                 };
                 AddAIAuthHeader(request);
 
-                var response = httpClient.SendAsync(request).Result;
+                var response = SendForTranslation(request);
+                // Nothing came back in time. Said already, and there is nothing to negotiate about:
+                // the ladder below reasons on what a server ANSWERED.
+                if (response == null) return null;
 
                 if (response.IsSuccessStatusCode)
                 {
@@ -5855,7 +5930,8 @@ namespace UnityGameTranslator.Core
                 request.Content = httpContent;
                 request.Headers.Add("X-Goog-Api-Key", Config.google_api_key);
 
-                var response = httpClient.SendAsync(request).Result;
+                var response = SendForTranslation(request);
+                if (response == null) return null;
 
                 if (!response.IsSuccessStatusCode)
                 {
@@ -5933,7 +6009,8 @@ namespace UnityGameTranslator.Core
                 request.Content = httpContent;
                 request.Headers.Add("Authorization", $"DeepL-Auth-Key {Config.deepl_api_key}");
 
-                var response = httpClient.SendAsync(request).Result;
+                var response = SendForTranslation(request);
+                if (response == null) return null;
 
                 if (!response.IsSuccessStatusCode)
                 {

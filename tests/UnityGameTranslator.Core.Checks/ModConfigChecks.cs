@@ -122,7 +122,29 @@ namespace UnityGameTranslator.Core.Checks
                 "and one written since is honoured",
                 "the version guard is what makes the migration run once instead of overriding a decision for ever");
 
-            check(Read(@"{""config_version"":0}").config_version == 2,
+            // 🔴 v3. timeout_ms became effective. Same shape as v1: declared, serialised into every
+            // file, documented on the site — and read by nothing, the real ceiling being five
+            // minutes compiled in.
+            var deadTimeout = Read(@"{""timeout_ms"":30000,""config_version"":2}");
+            check(deadTimeout.timeout_ms == 300000,
+                "the 30 s every old file carries is read as the default nobody chose",
+                "🔴 honouring it cuts every request at thirty seconds — losing translations on exactly the slow local models the option was advertised to help; measured, one took 197 s and came back");
+
+            var chosenTimeout = Read(@"{""timeout_ms"":120000,""config_version"":2}");
+            check(chosenTimeout.timeout_ms == 120000,
+                "and a number somebody typed is kept",
+                "the documentation told people to raise it: whoever did made a real choice about what they believed was a real setting");
+
+            var afterV3 = Read(@"{""timeout_ms"":30000,""config_version"":3}");
+            check(afterV3.timeout_ms == 30000,
+                "30 s set from here on is honoured too",
+                "the version guard is what separates a default nobody picked from a decision, and it must run once");
+
+            check(Read(@"{}").timeout_ms == 300000,
+                "a file that never mentioned it gets the wide ceiling",
+                "it is a deadlock escape for a request that will never be answered, not a limit on how patient to be with a model");
+
+            check(Read(@"{""config_version"":0}").config_version == 3,
                 "a migrated file records that it was migrated",
                 "without it every one of these runs again at the next launch, over values somebody has since set");
 
@@ -132,7 +154,7 @@ namespace UnityGameTranslator.Core.Checks
             // in between. Measured rather than assumed: this case first asserted the opposite.
             var blank = Read("{}");
             check(blank.translation_backend == "none" && blank.translate_mod_ui == null
-                  && !blank.enable_ai && blank.config_version == 2,
+                  && !blank.enable_ai && blank.config_version == 3,
                 "an empty file is defaults, stamped with the current version",
                 "the migrations find nothing to repair; what the stamp buys is that they never run again over what is set afterwards");
         }

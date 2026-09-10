@@ -40,7 +40,32 @@ namespace UnityGameTranslator.Core
         public string source_language { get; set; } = "auto";
         public bool strict_source_language { get; set; } = false;
         public string game_context { get; set; } = "";
-        public int timeout_ms { get; set; } = 30000;
+        /// <summary>
+        /// How long the mod waits for a translation backend before giving up on ONE request.
+        ///
+        /// 🔴 **Deliberately very wide.** A local model on a machine whose GPU is busy answers in
+        /// minutes, not seconds — measured on a 27B model that had spilled into system RAM: 40 s,
+        /// then 130 s, then 197 s for one-line texts, and every one of them came back. Cutting
+        /// those off loses translations somebody was waiting for, which is the one thing this must
+        /// never do. What the ceiling exists for is the opposite case: a game that hooks the
+        /// network stack and installs a proxy which SWALLOWS the request, where no answer will ever
+        /// come and without a ceiling the worker waits for the rest of the session in silence.
+        ///
+        /// ⚠ **Not in the settings window, on purpose**: nobody should have to think about this.
+        /// It is here for whoever runs something slow enough to need it.
+        ///
+        /// ⚠ Was 30000 and was read by NOTHING — declared, written into every config.json, and
+        /// documented on the site as "milliseconds before a translation request is given up on".
+        /// See the v3 migration: a file carrying that exact value is carrying a default nobody
+        /// could have chosen for an effect that did not exist.
+        /// </summary>
+        public int timeout_ms { get; set; } = DefaultTimeoutMs;
+
+        /// <summary>Five minutes. Named so the migration and the reader agree on one value.</summary>
+        internal const int DefaultTimeoutMs = 300000;
+
+        /// <summary>The value every config written before the option did anything carries.</summary>
+        internal const int DeadTimeoutMs = 30000;
 
         /// <summary>
         /// Whether live translation runs at all, whichever backend is selected.
@@ -275,13 +300,27 @@ namespace UnityGameTranslator.Core
                     enable_ai = true;
                 }
 
+                // v3 — timeout_ms became effective. Exactly the same shape as v1: the key was
+                // declared, serialised into every config.json and documented on the site, and read
+                // by NOTHING; the real ceiling was five minutes, compiled in. So the 30000 that
+                // every existing file carries is a default nobody could have chosen, for an effect
+                // that did not exist — and honouring it now would cut every request at thirty
+                // seconds, losing translations on precisely the slow local models the option was
+                // advertised to help.
+                //
+                // ⚠ Only that exact value. Anyone who followed the documentation and typed a
+                // different number made a real choice, about a real setting as far as they knew,
+                // and it is kept.
+                if (config_version < 3 && timeout_ms == DeadTimeoutMs)
+                    timeout_ms = DefaultTimeoutMs;
+
                 config_version = CurrentConfigVersion;
                 _configMigrated = true;
             }
         }
 
         /// <summary>Config schema version, bumped when a one-shot migration is added above.</summary>
-        private const int CurrentConfigVersion = 2;
+        private const int CurrentConfigVersion = 3;
 
         // 0 = written before migrations were versioned. Persisted so each migration runs once.
         public int config_version { get; set; } = 0;

@@ -81,6 +81,56 @@ namespace UnityGameTranslator.Core.Checks
                 "🔴 restarting the wait on an unchanged text, from a place the sweep reaches several times a second, defers the line for as long as it is on screen — never translated, nothing said");
 
             NothingIsSentBeforeItSettled(File.ReadAllText(patchFile), check);
+            ATemplateIsRefusedAtThreeMoments(File.ReadAllText(coreFile), check);
+        }
+
+        /// <summary>
+        /// A template the game expands in place is one FACT, asked at the three moments it matters.
+        ///
+        /// 🔴 **Taking it out of the queue is not enough.** The proof arrives with the expansion, a
+        /// few hundred milliseconds after the text was queued, and the worker may have taken it in
+        /// between — no reasoning about how long a model takes can rule that out, and a text can be
+        /// hundredth in the queue or first. So the withdrawal is the best case; what makes the rule
+        /// deterministic is that once the pair has been seen, the text can never be queued, never be
+        /// stored, and above all never be written back.
+        ///
+        /// ⚠ The last one is also what protects a file polluted before the rule existed: the line
+        /// stays in it — deleting somebody's translation on a local observation is refused here —
+        /// but it stops reaching the screen, so the game can expand its own text again.
+        /// </summary>
+        private static void ATemplateIsRefusedAtThreeMoments(string core, Action<bool, string, string> check)
+        {
+            string queueing = BodyOf(core, "public static bool QueueForTranslation(string text, object component = null, bool isOwnUI = false)");
+            string storing = BodyOf(core, "public static void AddToCache(string original, string translated, string tag = \"A\")");
+            string lookup = BodyOf(core, "private static string TranslateSingleTextWithTracking(string text, object component");
+
+            check(queueing != null && storing != null && lookup != null,
+                "the three moments are found",
+                "this check reads them; without them, it proves nothing");
+            if (queueing == null || storing == null || lookup == null) return;
+
+            check(queueing.Contains("IsExpandedInPlace(", StringComparison.Ordinal),
+                "a template is never queued",
+                "queued, it costs a call and shows a notice saying a translation is running on a line the player can see is done");
+
+            check(storing.Contains("IsExpandedInPlace(", StringComparison.Ordinal),
+                "and its answer is never stored, if one was already in flight",
+                "🔴 this is what makes the rule deterministic instead of a race the worker usually loses");
+
+            check(lookup.Contains("IsExpandedInPlace(", StringComparison.Ordinal),
+                "and it is never written back, whatever the cache holds",
+                "🔴 the only one that protects a file polluted before the rule: written back, the game cannot expand its own text");
+
+            int told = lookup.IndexOf("IsExpandedInPlace(", StringComparison.Ordinal);
+            int firstLookup = FirstIndexOf(lookup, "GetConcatCacheResult(", "store.TryGetValue(", "TryPatternMatch(");
+            check(told >= 0 && firstLookup >= 0 && told < firstLookup,
+                "asked before any lookup can answer",
+                "it is a lookup ANSWERING that does the damage, so asking afterwards is asking too late");
+
+            string forget = BodyOf(core, "public static void ForgetTemplateText(string text)");
+            check(forget != null && forget.Contains("_expandedInPlace.Add(key)", StringComparison.Ordinal),
+                "and one door records it",
+                "recorded by each caller instead, the one that forgets leaves the text queued for ever");
         }
 
         /// <summary>

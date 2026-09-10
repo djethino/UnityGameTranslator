@@ -4710,11 +4710,39 @@ namespace UnityGameTranslator.Core
             if (string.IsNullOrEmpty(text)) return;
 
             string key = NormalizeForCacheLookup(text);
+            bool known;
+            lock (lockObj) { known = !_expandedInPlace.Add(key); }
+            if (known) return;
+
             bool withdrawn = _queue.Withdraw(text) || _queue.Withdraw(key);
             _queue.NoteRefused(key);
 
-            if (DebugMode)
-                LogDebug($"[TW-TEMPLATE] the game expanded this in place — {(withdrawn ? "taken out of the queue" : "not queued")} and not asked again: '{(text.Length > 60 ? text.Substring(0, 60) : text)}'");
+            LogInfo($"[TW-TEMPLATE] the game expands this in place — {(withdrawn ? "taken out of the queue" : "it was not waiting")}, not asked again, and never written back: '{(text.Length > 60 ? text.Substring(0, 60) : text)}'");
+        }
+
+        /// <summary>
+        /// Whether this text is one the game expands in place — a template, not a line anybody
+        /// reads. Asked at the three moments it matters, because it is one FACT rather than one act.
+        ///
+        /// 🔴 **Taking it out of the queue is not enough, and saying otherwise was wrong.** The
+        /// proof arrives with the expansion, a few hundred milliseconds after the template was
+        /// queued, and the worker may have taken it in between — which no amount of reasoning about
+        /// how long a model takes can rule out. So the withdrawal is the best case, not the rule:
+        /// what makes this deterministic is that once the pair has been seen, the text can never be
+        /// queued, never be stored, and above all **never be written back**.
+        ///
+        /// ⚠ That last one is what protects a file polluted before this rule existed. The line stays
+        /// in it — deleting somebody's translation on a local observation is the thing this project
+        /// refuses — but it stops reaching the screen, so the game can expand its own text again.
+        ///
+        /// ⚠ In memory, per session, like every other refusal here.
+        /// </summary>
+        private static readonly HashSet<string> _expandedInPlace = new HashSet<string>();
+
+        internal static bool IsExpandedInPlace(string key)
+        {
+            if (_expandedInPlace.Count == 0 || string.IsNullOrEmpty(key)) return false;
+            lock (lockObj) { return _expandedInPlace.Contains(key); }
         }
 
         public static void ClearQueue()
@@ -6090,6 +6118,16 @@ namespace UnityGameTranslator.Core
                 if (store.ContainsKey(normalizedKey))
                     return;
 
+                // A template the game expands in place. The proof arrives with the expansion, a few
+                // hundred milliseconds after the text was queued — which is usually before the
+                // model answers, but nothing guarantees it, so the answer is refused HERE as well.
+                // That is what makes it deterministic rather than a race the worker usually loses.
+                if (!toModUi && IsExpandedInPlace(NormalizeForCacheLookup(normalizedKey)))
+                {
+                    LogInfo($"[TW-TEMPLATE] answer discarded, the game expands this in place: '{(normalizedKey.Length > 60 ? normalizedKey.Substring(0, 60) : normalizedKey)}'");
+                    return;
+                }
+
                 // Last stop before an entry exists: every route that creates one passes here, so this
                 // is where the read-back guard finally belongs. Guarding the queue, then the
                 // synchronous translate path, each time left another route open — the same
@@ -6313,6 +6351,11 @@ namespace UnityGameTranslator.Core
             NotePrivateUseShare(text);
 
             if (IsNumericOrSymbol(text)) return false;
+
+            // A template the game expands in place. Refused at this door rather than in the worker,
+            // so nothing is queued at all: no line in the notice that says a translation is running,
+            // and no call. See IsExpandedInPlace.
+            if (IsExpandedInPlace(NormalizeForCacheLookup(text))) return false;
 
             // Longer than any backend will accept. Refused HERE, at the single door, rather than
             // deeper down where the refusal used to be recorded as a cache entry tagged "S".
@@ -6635,6 +6678,16 @@ namespace UnityGameTranslator.Core
             // TranslatorPatches.NoteTextSeen for what that cost, measured.
             if (component is Component seenComp)
                 TranslatorPatches.NoteTextSeen(TypeHelper.GetInstanceID(seenComp), text);
+
+            // 🔴 A template the game expands in place is never written back, whatever the cache
+            // holds. This is what makes the rule deterministic — the withdrawal from the queue is
+            // only the best case — and what keeps a file polluted before the rule from breaking the
+            // game's own expansion. Nothing is deleted; the line simply stops reaching the screen.
+            //
+            // ⚠ Before every lookup, since it is a lookup ANSWERING that does the damage. The
+            // Count == 0 test inside costs nothing on the games that never do this.
+            if (IsExpandedInPlace(NormalizeForCacheLookup(text)))
+                return text;
 
             // Fast path: check concat assembled cache (runtime only, not JSON)
             // Catches full tooltip texts that were assembled from translated deltas.

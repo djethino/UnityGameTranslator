@@ -551,6 +551,9 @@ namespace UnityGameTranslator.Core
                    remoteUuid == FileUuid;
         }
 
+        /// <summary>How many times the cache-hit normalisation dump has been written this session.</summary>
+        private static int _dbgCacheHitNormLog = 0;
+
         private static float lastSaveTime = 0f;
         private static int translatedCount = 0;
         private static int aiTranslationCount = 0;
@@ -6715,8 +6718,18 @@ namespace UnityGameTranslator.Core
                 {
                     cacheHitCount++;
                     translatedCount++;
-                    if (DebugMode && text.Length > 100)
+                    // 🔴 **Said a few times, then not again.** This dumps the whole text TWICE —
+                    // original and normalised, newlines and markup included — on every cache hit
+                    // over a hundred characters. On a game whose long tooltips are on screen
+                    // continuously that is 780 dumps in one session: a log nobody can read, in
+                    // which a real warning is invisible, written by the thing being diagnosed.
+                    //
+                    // ⚠ Bounded like [TW-TOUCH] beside it rather than removed: what it shows —
+                    // which text produced which key — is exactly what a normalisation defect looks
+                    // like, and it is worth seeing once.
+                    if (DebugMode && text.Length > 100 && _dbgCacheHitNormLog < 10)
                     {
+                        _dbgCacheHitNormLog++;
                         int cId = (component is Component dc3) ? TypeHelper.GetInstanceID(dc3) : -1;
                         LogDebug($"[CACHE-HIT-NORM] comp={cId} orig({text.Length}c) norm→key({normalizedText.Length}c)\n  orig='{text}'\n  norm='{normalizedText}'");
                     }

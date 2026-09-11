@@ -319,6 +319,50 @@ namespace UnityGameTranslator.Core
             }
         }
 
+        /// <summary>
+        /// The two migrations of the <c>sync</c> block that need the RAW json beside the parsed
+        /// object, run once the object exists. True when something moved and the file is worth
+        /// writing back.
+        ///
+        /// 🔴 Lived in LoadConfig until 2026-09-11 — the one part of this contract nothing could
+        /// hold to a case, since LoadConfig reads a disk and logs through the loader. Verbatim
+        /// from there; spec/config's cases now hold it.
+        ///
+        /// · <c>check_update_on_start</c> became a frequency: false meant "never look", true meant
+        ///   "look on every connection" — which is what the permanent stream did. Existing users
+        ///   land on the new default rather than keeping a stream open for the whole session.
+        /// · One setting became two (2026-08-20): the frequency decided BOTH the rhythm and whether
+        ///   to keep a stream open. Read from the value AS STORED, before Normalize() folds "auto"
+        ///   and "realtime" into a rhythm — those two are precisely the ones that asked for a
+        ///   connection, and once folded there is no way left to tell they did. The RAW json
+        ///   decides, not the property: it defaults to true for a new install, so the property
+        ///   alone cannot tell an absent field from a deliberate yes.
+        /// </summary>
+        public bool CompleteSyncFromRaw(JObject raw)
+        {
+            if (sync == null) return false;
+            bool moved = false;
+
+            if (sync.check_update_on_start.HasValue)
+            {
+                sync.update_check_frequency = sync.check_update_on_start.Value
+                    ? UpdateCheckFrequency.Hourly
+                    : UpdateCheckFrequency.Never;
+                sync.check_update_on_start = null;
+                moved = true;
+            }
+
+            if ((raw?["sync"] as JObject)?["realtime_own_translation"] == null)
+            {
+                string stored = sync.update_check_frequency;
+                sync.realtime_own_translation = UpdateCheckFrequency.AskedForRealtime(stored);
+                sync.update_check_frequency = UpdateCheckFrequency.Normalize(stored);
+                moved = true;
+            }
+
+            return moved;
+        }
+
         /// <summary>Config schema version, bumped when a one-shot migration is added above.</summary>
         private const int CurrentConfigVersion = 3;
 

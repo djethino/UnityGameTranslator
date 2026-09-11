@@ -2211,46 +2211,14 @@ namespace UnityGameTranslator.Core
                     Adapter.LogWarning($"[Security] ai_url points to a remote server over plain http ({Sanitize.Url(Config.ai_url)}) - your AI API key is sent unencrypted. Use https for remote AI servers.");
                 }
 
-                // The "check on start" switch became a frequency. false meant "never
-                // look", true meant "look on every connection" — which is what the
-                // permanent stream did. Existing users land on the new default rather
-                // than keeping a stream open for the whole session; the choice is
-                // theirs to change, and the reason is in the option's help text.
-                if (Config.sync != null && Config.sync.check_update_on_start.HasValue)
+                // The two migrations of the sync block that need the raw json — the "check on
+                // start" switch that became a frequency, and the frequency that became a rhythm
+                // plus a stream switch. The rule is ModConfig.CompleteSyncFromRaw's, held by
+                // spec/config's cases; here it only decides whether the file is written back.
+                if (Config.CompleteSyncFromRaw(rawJson))
                 {
-                    Config.sync.update_check_frequency = Config.sync.check_update_on_start.Value
-                        ? UpdateCheckFrequency.Hourly
-                        : UpdateCheckFrequency.Never;
-                    Config.sync.check_update_on_start = null;
-                    LogDebug($"[Config] Migrated check_update_on_start -> update_check_frequency={Config.sync.update_check_frequency}");
-                    needsResave = true;
-                }
-
-                // 🔴 **One setting became two** (2026-08-20). The frequency decided BOTH the rhythm
-                // and whether to keep a stream open, so the contributions a Main receives arrived
-                // in real time — waking the game to recount its branches every time anybody sent
-                // one. The stream is now its own switch, about one's OWN line only.
-                //
-                // ⚠ Read from the value as stored, before Normalize() folds "auto" and "realtime"
-                // into a rhythm: those two are precisely the ones that asked for a connection, and
-                // once folded there is no way left to tell they did. Every other value never
-                // opened one, so it answers no — handing somebody a permanent connection they had
-                // declined is the one outcome this migration must not produce.
-                //
-                // ⚠ The RAW json decides, not the property: it defaults to true for a new install
-                // (which never reaches this code — LoadConfig returns after writing the file), so
-                // the property alone cannot tell an absent field from a deliberate yes.
-                if (Config.sync != null && rawJson["sync"]?["realtime_own_translation"] == null)
-                {
-                    string stored = Config.sync.update_check_frequency;
-
-                    Config.sync.realtime_own_translation =
-                        UpdateCheckFrequency.AskedForRealtime(stored);
-                    Config.sync.update_check_frequency = UpdateCheckFrequency.Normalize(stored);
-
-                    LogDebug($"[Config] Split update_check_frequency={stored} -> "
-                             + $"{Config.sync.update_check_frequency} + realtime_own_translation="
-                             + $"{Config.sync.realtime_own_translation}");
+                    LogDebug($"[Config] Sync settings migrated -> update_check_frequency={Config.sync.update_check_frequency}, "
+                             + $"realtime_own_translation={Config.sync.realtime_own_translation}");
                     needsResave = true;
                 }
 

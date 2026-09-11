@@ -120,6 +120,7 @@ namespace UnityGameTranslator.Core.Checks
         private static void WhatAConfigFileStillMeans()
         {
             Section("The config.json contract and its migrations", ModConfigChecks.Run);
+            Section("config.json against the spec's cases", ConfigSpecChecks.Run);
         }
 
         /// <summary>Reading one server-sent event stream: the grammar, and the loop pulling the lines.</summary>

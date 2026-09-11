@@ -129,6 +129,13 @@
     -->
     <Compile Include="../../UnityGameTranslator.Core/Engine/TextGate.cs" />
     <!--
+      "Is this text one of OUR translations coming back?" — the anti-loop device every gate asks
+      first. Too wide, it refuses genuine source text and the game stays untranslated in silence;
+      too narrow, our own output is queued as a new source and published under a target-language
+      key. Both only show in a sequence: index, ask, re-decorate, clear, ask again.
+    -->
+    <Compile Include="../../UnityGameTranslator.Core/Engine/ReadbackIndex.cs" />
+    <!--
       What a downloaded translation may ask of the disk and of the main thread. Both are pure by
       construction — a string in, an answer out — and both exist as files of their own so that the
       refusals AND the acceptances can be proved here rather than in a game.

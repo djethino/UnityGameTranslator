@@ -577,172 +577,28 @@ namespace UnityGameTranslator.Core
         private static int skippedAlreadyTranslated = 0;
         private static bool _enableTranslationsLogOnce = true; // Log once when translations disabled
 
-        // Reverse cache: all translated values (to detect already-translated text)
-        private static ConcurrentDictionary<string, byte> translatedTexts = new ConcurrentDictionary<string, byte>();
-
-        // Decoration-insensitive form of the same translated values. The exact reverse cache above
-        // misses a whole family: games that build text from templates re-format their slots when they
-        // read a component back — {0} becomes 3, or <color=#F4FF58>3</color>. What comes back is OUR
-        // translation wearing a decoration we never produced, so it looks like new source text and
-        // gets re-translated, drifting on each round trip and polluting the cache with target-language
-        // keys. Comparing on a decoration-insensitive form recognises it, synchronously, with no delay.
-        // See analyse/readback-substitution-fr-keys-analysis.md.
-        private static ConcurrentDictionary<string, byte> readbackTranslations = new ConcurrentDictionary<string, byte>();
-
         /// <summary>
-        /// The same two indexes, for the mod's own interface — and SEPARATE, which took an argument
-        /// to get right.
-        ///
-        /// 🔴 **One shared index let the two files decide for each other.** These answer "is this
-        /// text already one of our translations", and sharing them meant a mod-interface translation
-        /// could mark a GAME text as already translated: the line was then never queued, never
-        /// captured, and simply absent from the file that gets published — with nothing to say why,
-        /// since the interface file does not travel with the translation and nobody looking at the
-        /// game's would ever see the cause.
-        ///
-        /// ⚠ It is not a coincidence worth tolerating either way round: a game's register is not
-        /// this tool's, and a menu label is not dialogue. They must not answer for one another.
-        ///
-        /// ⚠ Splitting them is safe because the read-back it guards against is confined to its own
-        /// side: a game reads back what a GAME component displays, and our labels are written by our
-        /// own code into our own components. Neither can hand the other its output.
+        /// "Is this text one of OUR translations coming back?" — four indexes (exact and
+        /// decoration-insensitive, one pair per side) plus the presented strings, in
+        /// Engine/ReadbackIndex.cs, where the sequences are replayed. The statics below are its
+        /// façade: same names, same signatures as before the cut, so no caller moved.
         /// </summary>
-        private static ConcurrentDictionary<string, byte> modUiTranslatedTexts = new ConcurrentDictionary<string, byte>();
-
-        /// <inheritdoc cref="modUiTranslatedTexts"/>
-        private static ConcurrentDictionary<string, byte> modUiReadbackTranslations = new ConcurrentDictionary<string, byte>();
-
-        private static ConcurrentDictionary<string, byte> TargetIndex(bool ownUi) =>
-            ownUi ? modUiTranslatedTexts : translatedTexts;
-
-        private static ConcurrentDictionary<string, byte> ReadbackIndex(bool ownUi) =>
-            ownUi ? modUiReadbackTranslations : readbackTranslations;
-        private const int ReadbackSkipLogBudget = 10;
-        private static int _readbackSkipLogCount;
+        private static readonly ReadbackIndex _readback = new ReadbackIndex { Debug = m => LogDebug(m) };
         private static int _shapedQueueRefusals;
         private static int _readbackStoreLogged;
 
-
-        // Presented strings that carry private-use codepoints (glyphs named by our font assets),
-        // kept whole: a typewriter frame or a concat step of one comes back as a FRAGMENT of the
-        // presented string, which no normalized whole-string index can recognise — and a fragment
-        // holding one of our private codepoints can be nothing but ours.
-        private static readonly List<string> presentedWithPrivate = new List<string>();
-        private const int PresentedWithPrivateMax = 4096;
-
-        private static bool HasPrivateGlyphCodepoint(string text)
-        {
-            foreach (char c in text)
-                if (c >= Rasterizer.TtfFontPipeline.PrivateGlyphBase && c <= Rasterizer.TtfFontPipeline.PrivateGlyphLast) return true;
-            return false;
-        }
-
-        /// <summary>A text holding one of our private glyph codepoints, found inside a string we presented.</summary>
-        private static bool IsFragmentOfPresentedText(string text)
-        {
-            if (!HasPrivateGlyphCodepoint(text)) return false;
-            string probe = text.Trim();
-            if (probe.Length == 0) return false;
-            lock (presentedWithPrivate)
-            {
-                foreach (string presented in presentedWithPrivate)
-                    if (presented.IndexOf(probe, StringComparison.Ordinal) >= 0) return true;
-            }
-            return false;
-        }
-
-        /// <summary>
-        /// Index a produced translation for decoration-insensitive recognition.
-        /// Only entries whose value is a REAL translation are indexed: when the normalized value
-        /// equals the normalized key, the "translation" is the source text itself (unchanged output,
-        /// or a typewriter frame whose only difference is a tag). Indexing those would let the gate
-        /// refuse genuine source text — measured on the bench, that single guard took one game from
-        /// 42 wrong matches down to zero.
-        /// </summary>
-        // Presented (shaped) form → the LOGICAL string it was composed from. The refuse-to-learn
-        // set says "this is ours"; only this map can say "and HERE is its truth" — without it the
-        // in-game editor resolved a shaped display back to a shaped KEY and offered to save it
-        // (found by the user: an Arabic key in the text editor).
-        private static readonly ConcurrentDictionary<string, string> presentedToLogical =
-            new ConcurrentDictionary<string, string>();
-
-        /// <summary>
-        /// Register a PRESENTED string — one the RTL pipeline composed for display — as our own
-        /// output, together with the logical string it came from. Every gate
-        /// (<see cref="IsAlreadyTargetText"/>: the scanner, the getters, the setter prefixes)
-        /// then refuses to learn from it, and everything that resolves a DISPLAYED text back to
-        /// the cache (<see cref="ResolveDisplayedText"/>) recovers the logical truth first —
-        /// a shaped form must never be queued to the AI, cached as a source text, or written to
-        /// translations.json (decision D8).
-        /// </summary>
+        /// <inheritdoc cref="ReadbackIndex.RegisterPresented"/>
         internal static void RegisterPresentedText(string presented, string logical)
-        {
-            if (string.IsNullOrEmpty(presented)) return;
-            if (HasPrivateGlyphCodepoint(presented))
-            {
-                lock (presentedWithPrivate)
-                {
-                    if (presentedWithPrivate.Count >= PresentedWithPrivateMax) presentedWithPrivate.RemoveAt(0);
-                    presentedWithPrivate.Add(presented);
-                }
-            }
-            string n = NormalizeForReadbackMatch(presented);
-            if (n == null) return;
-            // The GAME's index: the RTL presentation pass runs on the game's components and skips
-            // ours outright (RtlPresenter checks IsOwnUI), so nothing shaped here
-            // ever belongs to the interface.
-            readbackTranslations.TryAdd(n, 0);
-            if (!string.IsNullOrEmpty(logical) && !string.Equals(presented, logical, StringComparison.Ordinal))
-                presentedToLogical[n] = logical;
-        }
+            => _readback.RegisterPresented(presented, logical);
 
-        /// <summary>The logical string behind a presented one, or null when the text is not ours.</summary>
+        /// <inheritdoc cref="ReadbackIndex.PresentedLogical"/>
         internal static string TryGetPresentedLogical(string displayed)
-        {
-            if (string.IsNullOrEmpty(displayed) || presentedToLogical.IsEmpty) return null;
-            string n = NormalizeForReadbackMatch(displayed);
-            if (n == null) return null;
-            return presentedToLogical.TryGetValue(n, out var logical) ? logical : null;
-        }
+            => _readback.PresentedLogical(displayed);
 
-        private static void IndexReadbackTranslation(string key, string value, bool ownUi)
-        {
-            if (string.IsNullOrEmpty(key) || string.IsNullOrEmpty(value)) return;
-            string nv = NormalizeForReadbackMatch(value);
-            if (nv == null) return;
-            string nk = NormalizeForReadbackMatch(key);
-            if (nk != null && string.Equals(nk, nv, StringComparison.Ordinal)) return;
-            ReadbackIndex(ownUi).TryAdd(nv, 0);
-        }
-
-        /// <summary>
-        /// Record one translated value in its own side's reverse indexes, so the text can be
-        /// recognised as OUR output if it comes back — exactly, or wearing a decoration.
-        ///
-        /// 🔴 **Its own side.** This is not storage, it is the anti-loop device that stops a string
-        /// on screen from being learnt as a new source — and it must not reach across: a mod
-        /// interface translation marking a GAME text as "already translated" removes that line from
-        /// the file that gets published, and the interface file does not travel with it, so nothing
-        /// downstream could ever show the cause. See <see cref="modUiTranslatedTexts"/>.
-        /// </summary>
+        /// <inheritdoc cref="ReadbackIndex.Index"/>
         private static void IndexTranslatedValue(string key, string value, bool ownUi)
-        {
-            if (string.IsNullOrEmpty(value) || key == value) return;
+            => _readback.Index(key, value, ownUi, Config != null && Config.normalize_numbers);
 
-            string normalized = NormalizeLineEndings(value);
-            if (Config != null && Config.normalize_numbers)
-                normalized = ExtractNumbersToPlaceholders(normalized, out _);
-
-            TargetIndex(ownUi).TryAdd(normalized.TrimEnd(), 0);
-            IndexReadbackTranslation(key, value, ownUi);
-        }
-
-        /// <summary>
-        /// True when the text is one of our own translations handed back by the game with a different
-        /// decoration. Callers must treat it exactly like an exact reverse-cache hit: leave the text
-        /// alone. Nothing on screen changes — the game's own rendering is kept as the developer built
-        /// it; we simply refuse to learn from it.
-        /// </summary>
         /// <summary>
         /// "This text is ALREADY in the target language — do not translate it." The single question
         /// every gate must ask, and the single place that answers it: the exact reverse cache, then
@@ -758,32 +614,19 @@ namespace UnityGameTranslator.Core
         /// <param name="ownUi">
         /// Which side is asking. 🔴 **The two never answer for each other**: a mod-interface
         /// translation that marked a GAME text as already translated would take that line out of
-        /// what gets published, invisibly — see <see cref="modUiTranslatedTexts"/>. Defaults to the
+        /// what gets published, invisibly — see <see cref="ReadbackIndex"/>. Defaults to the
         /// game, which is what every gate on a game component wants.
         /// </param>
         public static bool IsAlreadyTargetText(string text, string normalizedTrimmed = null, bool ownUi = false)
         {
             if (string.IsNullOrEmpty(text)) return false;
             string probe = normalizedTrimmed ?? NormalizeForCacheLookup(text).TrimEnd();
-            if (TargetIndex(ownUi).ContainsKey(probe)) return true;
-            return IsReadbackOfOwnTranslation(text, ownUi);
+            return _readback.IsAlreadyTarget(text, probe, ownUi);
         }
 
-        /// <inheritdoc cref="IsAlreadyTargetText"/>
+        /// <inheritdoc cref="ReadbackIndex.IsReadback"/>
         public static bool IsReadbackOfOwnTranslation(string text, bool ownUi = false)
-        {
-            var index = ReadbackIndex(ownUi);
-            if (index.Count == 0) return IsFragmentOfPresentedText(text);
-            string n = NormalizeForReadbackMatch(text);
-            if (n == null || !index.ContainsKey(n)) return IsFragmentOfPresentedText(text);
-
-            if (_readbackSkipLogCount < ReadbackSkipLogBudget)
-            {
-                _readbackSkipLogCount++;
-                LogDebug($"[Readback] Not queued, this is our own translation re-decorated by the game: '{(text.Length > 60 ? text.Substring(0, 60) + "..." : text)}'");
-            }
-            return true;
-        }
+            => _readback.IsReadback(text, ownUi);
 
         // Pattern match failure cache (texts that don't match any pattern)
         private static HashSet<string> patternMatchFailures = new HashSet<string>();
@@ -2888,10 +2731,7 @@ namespace UnityGameTranslator.Core
                 // Build reverse cache: all translated values (NORMALIZED for comparison)
                 // Values must be normalized the same way as incoming text in TranslateTextWithTracking
                 // ALSO trim trailing whitespace/newlines because TMP often strips them when displaying
-                translatedTexts.Clear();
-                readbackTranslations.Clear();
-                presentedToLogical.Clear();
-                _readbackSkipLogCount = 0;
+                _readback.ClearGame();
                 foreach (var kv in TranslationCache)
                     IndexTranslatedValue(kv.Key, kv.Value.Value, ownUi: false);
                 // The interface's, into ITS OWN index — never the game's. LoadModUiCache fills it
@@ -2941,7 +2781,7 @@ namespace UnityGameTranslator.Core
                 // the two would otherwise lose them for good.
                 SaveModUiCacheIfDirty();
 
-                Adapter.LogInfo($"Loaded {TranslationCache.Count} cached translations, {translatedTexts.Count} reverse entries, {readbackTranslations.Count} decoration-insensitive, UUID: {FileUuid}");
+                Adapter.LogInfo($"Loaded {TranslationCache.Count} cached translations, {_readback.TargetCount(false)} reverse entries, {_readback.ReadbackCount(false)} decoration-insensitive, UUID: {FileUuid}");
             }
             catch (Exception e)
             {
@@ -2951,10 +2791,7 @@ namespace UnityGameTranslator.Core
                 // ⚠ The reverse indexes with it. They are built from the cache in the success path
                 // and answer "have we already written this line"; kept beside an EMPTY cache they
                 // go on answering about a file that could not be read.
-                translatedTexts.Clear();
-                readbackTranslations.Clear();
-                presentedToLogical.Clear();
-                _readbackSkipLogCount = 0;
+                _readback.ClearGame();
 
                 // Fresh cache: allow own-UI labels that failed once to be submitted again.
                 _queue.ForgetOwnUiSubmitted();
@@ -3085,8 +2922,7 @@ namespace UnityGameTranslator.Core
 
             // Rebuilt from what was just read, exactly as LoadCache does for the game's: a language
             // set aside leaves its translations in here otherwise, answering about a file they left.
-            modUiTranslatedTexts.Clear();
-            modUiReadbackTranslations.Clear();
+            _readback.ClearOwnUi();
             _queue.ForgetOwnUiSubmitted();
 
             // Its translated forms go into the INTERFACE's reverse index — its own, never the
@@ -4661,7 +4497,7 @@ namespace UnityGameTranslator.Core
             // keeps the caller from tracking it as a new translation).
             // ⚠ The GAME's index: the stale snapshot is taken from the game's cache before a
             // reload, and own-UI text returns before ever reaching this function.
-            translatedTexts.TryAdd(trimmedNormalized, 0);
+            _readback.MarkTarget(trimmedNormalized, ownUi: false);
             LogDebug($"[StaleRefresh] Entry gone from new cache, keeping displayed text for key: {key.Substring(0, Math.Min(40, key.Length))}");
             return text;
         }
@@ -6430,7 +6266,7 @@ namespace UnityGameTranslator.Core
             // Text is already a known translation (reverse cache) — the component
             // already shows translated text and should have the clone font.
             string trimmed = normalized.TrimEnd();
-            if (TargetIndex(ownUI).ContainsKey(trimmed))
+            if (_readback.IsTarget(trimmed, ownUI))
                 return true;
 
             return false;
@@ -6779,7 +6615,7 @@ namespace UnityGameTranslator.Core
                 translatedCount++;
                 FontManager.EnsureCharsInCloneAtlas(result, component);
 
-                // Into the index of the side this text came from — see modUiTranslatedTexts.
+                // Into the index of the side this text came from — see ReadbackIndex.
                 // Index straight away: the read-back happens within the same session, often within
                 // the same frame, so waiting for the next cache load would miss the whole point.
                 IndexTranslatedValue(text, result, isOwnUI);

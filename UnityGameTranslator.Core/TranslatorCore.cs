@@ -4360,19 +4360,12 @@ namespace UnityGameTranslator.Core
 
         #region Stale Translation Snapshot (post-reload safety net)
 
-        private class StalePatternEntry
-        {
-            public Regex Regex;                  // matches the OLD translated form with concrete numbers
-            public List<int> PlaceholderIndices; // capture group i+1 -> placeholder index
-            public string Key;
-        }
-
-        // Snapshot of the cache being replaced by ReloadCache. Texts still displayed
-        // with an old translation (components RestoreAllOriginals could not reach)
-        // are recognized through it and refreshed from the new cache instead of
-        // being queued for AI translation.
-        private static Dictionary<string, string> _staleValueToKey;
-        private static List<StalePatternEntry> _stalePatterns;
+        /// <summary>
+        /// The post-reload safety net — Engine/StaleSnapshot.cs, where a reload can be replayed
+        /// without a game. What stays here is the copy of the live cache (the worker may be
+        /// writing it) and the host effects a verdict calls for.
+        /// </summary>
+        private static readonly StaleSnapshot _stale = new StaleSnapshot { Debug = m => LogDebug(m) };
 
         /// <summary>
         /// Snapshot the current cache values before a reload replaces them.
@@ -4380,9 +4373,6 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static void BuildStaleTranslationSnapshot()
         {
-            var valueToKey = new Dictionary<string, string>();
-            var stalePatterns = new List<StalePatternEntry>();
-
             // Snapshot first: the AI worker can mutate TranslationCache during
             // this iteration (same reason BuildPatternEntries snapshots)
             KeyValuePair<string, TranslationEntry>[] cacheSnapshot;
@@ -4392,40 +4382,7 @@ namespace UnityGameTranslator.Core
             }
             catch { return; }
 
-            foreach (var kv in cacheSnapshot)
-            {
-                string value = kv.Value?.Value;
-                if (string.IsNullOrEmpty(value) || kv.Key == value) continue;
-
-                string normalizedValue = NormalizeLineEndings(value);
-                if (Config.normalize_numbers)
-                    normalizedValue = ExtractNumbersToPlaceholders(normalizedValue, out _);
-                normalizedValue = normalizedValue.TrimEnd();
-                if (!valueToKey.ContainsKey(normalizedValue))
-                    valueToKey[normalizedValue] = kv.Key;
-
-                // Values whose placeholders were reordered by the translation can't be
-                // matched by the normalized-value lookup — keep a regex for them
-                if (value.Contains(PlaceholderPrefix))
-                {
-                    var regex = NumberPatterns.BuildPatternRegex(value, out var indices);
-                    if (regex == null) continue;
-                    bool inAppearanceOrder = true;
-                    for (int i = 0; i < indices.Count; i++)
-                        if (indices[i] != i) { inAppearanceOrder = false; break; }
-                    if (!inAppearanceOrder)
-                        stalePatterns.Add(new StalePatternEntry
-                        {
-                            Regex = regex,
-                            PlaceholderIndices = indices,
-                            Key = kv.Key
-                        });
-                }
-            }
-
-            _staleValueToKey = valueToKey;
-            _stalePatterns = stalePatterns;
-            LogDebug($"[StaleSnapshot] {valueToKey.Count} values, {stalePatterns.Count} reordered patterns");
+            _stale.Take(cacheSnapshot, Config.normalize_numbers);
         }
 
         /// <summary>
@@ -4436,70 +4393,27 @@ namespace UnityGameTranslator.Core
         /// </summary>
         private static string TryResolveStaleTranslation(string text, string trimmedNormalized, object component)
         {
-            var valueToKey = _staleValueToKey;
-            if (valueToKey == null) return null;
-
-            string key = null;
-            Dictionary<int, string> capturedNumbers = null;
-
-            if (valueToKey.TryGetValue(trimmedNormalized, out key))
+            var verdict = _stale.Resolve(text, trimmedNormalized, TranslationCache, Config.normalize_numbers);
+            switch (verdict.Kind)
             {
-                // Normalized-value match: placeholders are in appearance order,
-                // so live numbers map to placeholder indices by position
-                if (Config.normalize_numbers)
-                {
-                    ExtractNumbersToPlaceholders(NormalizeLineEndings(text), out var numbers);
-                    if (numbers != null && numbers.Count > 0)
+                case StaleKind.Refreshed:
+                    if (component != null)
                     {
-                        capturedNumbers = new Dictionary<int, string>();
-                        for (int i = 0; i < numbers.Count; i++)
-                            capturedNumbers[i] = numbers[i];
+                        TranslatorScanner.StoreOriginalText(component, verdict.OriginalText);
+                        TranslatorPatches.TrackTranslation(TypeHelper.GetInstanceID(component), verdict.OriginalText, verdict.NewText);
                     }
-                }
-            }
-            else
-            {
-                var stalePatterns = _stalePatterns;
-                if (stalePatterns == null || stalePatterns.Count == 0) return null;
+                    translatedCount++;
+                    return verdict.NewText;
 
-                string lineNormalized = NormalizeLineEndings(text).TrimEnd();
-                foreach (var sp in stalePatterns)
-                {
-                    var m = sp.Regex.Match(lineNormalized);
-                    if (!m.Success) continue;
-                    key = sp.Key;
-                    capturedNumbers = new Dictionary<int, string>();
-                    for (int g = 0; g < sp.PlaceholderIndices.Count; g++)
-                        capturedNumbers[sp.PlaceholderIndices[g]] = m.Groups[g + 1].Value;
-                    break;
-                }
-                if (key == null) return null;
-            }
+                case StaleKind.Gone:
+                    // ⚠ The GAME's index: the stale snapshot is taken from the game's cache before a
+                    // reload, and own-UI text returns before ever reaching this function.
+                    _readback.MarkTarget(trimmedNormalized, ownUi: false);
+                    return text;
 
-            // The displayed text is a stale translation of `key`
-            if (TranslationCache.TryGetValue(key, out var entry) && !string.IsNullOrEmpty(entry.Value)
-                && entry.Value != key && !entry.IsHumanEmpty && entry.Tag != "S")
-            {
-                string newText = RestoreNumbersFromPlaceholders(entry.Value, capturedNumbers);
-                if (component != null)
-                {
-                    string originalText = RestoreNumbersFromPlaceholders(key, capturedNumbers);
-                    TranslatorScanner.StoreOriginalText(component, originalText);
-                    TranslatorPatches.TrackTranslation(TypeHelper.GetInstanceID(component), originalText, newText);
-                }
-                translatedCount++;
-                LogDebug($"[StaleRefresh] Refreshed stale translation for key: {key.Substring(0, Math.Min(40, key.Length))}");
-                return newText;
+                default:
+                    return null;
             }
-
-            // Entry removed from the new cache: keep the displayed text and mark it
-            // as translated so it is never queued (returning the input unchanged also
-            // keeps the caller from tracking it as a new translation).
-            // ⚠ The GAME's index: the stale snapshot is taken from the game's cache before a
-            // reload, and own-UI text returns before ever reaching this function.
-            _readback.MarkTarget(trimmedNormalized, ownUi: false);
-            LogDebug($"[StaleRefresh] Entry gone from new cache, keeping displayed text for key: {key.Substring(0, Math.Min(40, key.Length))}");
-            return text;
         }
 
         #endregion

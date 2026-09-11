@@ -162,6 +162,7 @@ namespace UnityGameTranslator.Core.Checks
             Section("Number patterns", NumberPatternChecks.Run);
             Section("The text gate: exact, normalized, trimmed, pattern", TextGateChecks.Run);
             Section("Our own translations coming back, across a sequence", ReadbackIndexChecks.Run);
+            Section("An old translation still on screen after a reload", StaleSnapshotChecks.Run);
         }
 
         /// <summary>What a component's new text is, relative to the one it held a moment ago.</summary>

@@ -136,6 +136,13 @@
     -->
     <Compile Include="../../UnityGameTranslator.Core/Engine/ReadbackIndex.cs" />
     <!--
+      The post-reload safety net: a text still on screen with the OLD translation is recognised,
+      refreshed from the new cache or kept — never queued as a new source line, which is how an
+      old translation becomes a KEY in the file. A right answer here is right only after the
+      snapshot was taken and against the cache that stands now.
+    -->
+    <Compile Include="../../UnityGameTranslator.Core/Engine/StaleSnapshot.cs" />
+    <!--
       What a downloaded translation may ask of the disk and of the main thread. Both are pure by
       construction — a string in, an answer out — and both exist as files of their own so that the
       refusals AND the acceptances can be proved here rather than in a game.

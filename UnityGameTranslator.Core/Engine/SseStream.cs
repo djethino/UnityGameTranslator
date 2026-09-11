@@ -131,8 +131,22 @@ namespace UnityGameTranslator.Core
             // the stream", the connection dies, and every reconnection meets the same wall.
             Task<string> readTask = null;
 
-            while (!ct.IsCancellationRequested)
+            // 🔴 **A read left in flight is OBSERVED on the way out, whichever way out.** Every
+            // early return below — cancelled, heartbeat, delivered — can leave ReadLineAsync
+            // pending; the caller then disposes the stream under it, and the read faults with
+            // "the I/O operation has been aborted", which is only the socket being closed. Nobody
+            // awaits that task, so the runtime raised it as an UNOBSERVED exception when the
+            // collector got to it: an [ERROR] line in the game's log at every change of
+            // translation, about a connection that had been closed on purpose, and in which a
+            // real unobserved failure would drown. The ordinary end of a stream is not an error.
+            //
+            // ⚠ Observing is not swallowing: a connection that dies on its own still comes back
+            // through the awaited read below (IOException → Closed → "Connection lost, will
+            // retry"). This only concerns a read abandoned by THIS method's own exit.
+            try
             {
+                while (!ct.IsCancellationRequested)
+                {
                 if ((Now() - lastData).TotalMilliseconds > HeartbeatTimeoutMs)
                 {
                     Warning?.Invoke("[SSE] Heartbeat timeout, reconnecting...");
@@ -243,9 +257,25 @@ namespace UnityGameTranslator.Core
                         if (int.TryParse(value, out int retryMs) && retryMs >= 0) RetryDelayMs = retryMs;
                         break;
                 }
-            }
+                }
 
-            return SseStopReason.Cancelled;
+                return SseStopReason.Cancelled;
+            }
+            finally
+            {
+                if (readTask != null) ObserveAbandoned(readTask);
+            }
+        }
+
+        /// <summary>
+        /// Mark a read this method walked away from as looked at, so its fault — the socket
+        /// closed under it — is never raised as unobserved. Reading <c>Exception</c> is what
+        /// marks it; nothing is logged, because the exit that abandoned it already said why.
+        /// </summary>
+        private static void ObserveAbandoned(Task read)
+        {
+            read.ContinueWith(t => { var _ = t.Exception; },
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously);
         }
     }
 }

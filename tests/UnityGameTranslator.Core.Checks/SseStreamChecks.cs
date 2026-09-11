@@ -253,6 +253,64 @@ namespace UnityGameTranslator.Core.Checks
             check(survived.Count == 1 && complaints.Count == 1,
                 "a handler that throws is said out loud and the stream reads on",
                 "one bad event handler must not take down a connection the rest of the mod is waiting on");
+
+            // 🔴 A read left in flight by a deliberate stop, then failed by the socket closing
+            // under it, must not come back as an UNOBSERVED exception — that was an [ERROR] line
+            // in the game's log at every change of translation, about nothing.
+            int unobserved = 0;
+            EventHandler<UnobservedTaskExceptionEventArgs> count = (s, e) => { unobserved++; e.SetObserved(); };
+            TaskScheduler.UnobservedTaskException += count;
+            try
+            {
+                AbandonAReadThenFailIt();
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                GC.Collect();
+            }
+            finally
+            {
+                TaskScheduler.UnobservedTaskException -= count;
+            }
+            check(unobserved == 0,
+                "a read abandoned by a stop, then failed by the closing socket, is not raised as unobserved",
+                "the socket being closed is the ordinary end of a stream, not an error; a real unobserved failure would drown among these");
+        }
+
+        /// <summary>
+        /// Start a stream, cancel it while its first read is pending, then fail that read the way
+        /// a disposed stream does — and drop every reference, so the collector can finalise it.
+        /// </summary>
+        private static void AbandonAReadThenFailIt()
+        {
+            var cts = new CancellationTokenSource();
+            var reader = new HangingReader(onRead: () => cts.Cancel());
+            var stream = new SseStream(reader) { TickMs = 5 };
+            var stopped = stream.Run(cts.Token).GetAwaiter().GetResult();
+            if (stopped != SseStopReason.Cancelled) throw new InvalidOperationException("the stream did not stop on the cancel");
+            reader.FailPendingRead(new IOException("Unable to read data from the transport connection: the I/O operation has been aborted"));
+        }
+
+        /// <summary>A reader whose read never completes on its own: the check decides when, and how.</summary>
+        private sealed class HangingReader : TextReader
+        {
+            private readonly Action _onRead;
+            private TaskCompletionSource<string> _pending;
+
+            public HangingReader(Action onRead) { _onRead = onRead; }
+
+            public override Task<string> ReadLineAsync()
+            {
+                _pending = new TaskCompletionSource<string>();
+                _onRead?.Invoke();
+                return _pending.Task;
+            }
+
+            public void FailPendingRead(Exception e)
+            {
+                var pending = _pending;
+                _pending = null;
+                pending?.SetException(e);
+            }
         }
     }
 }

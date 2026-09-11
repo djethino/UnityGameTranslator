@@ -157,6 +157,15 @@
     -->
     <Compile Include="../../UnityGameTranslator.Core/Engine/TranslationWorker.cs" />
     <!--
+      What the site's answers MEAN on this side: one reader per route, a JSON object in and a
+      record out. They sat inline in ApiClient between an HttpClient call and a log line; here
+      common/spec/api-v1/cases.json — the file the site replays with PHPUnit — is fed to each
+      reader and what it derives is compared to what the case says. The records come with them,
+      and carry no clock of their own (the two view helpers take one).
+    -->
+    <Compile Include="../../UnityGameTranslator.Core/Engine/ApiResults.cs" />
+    <Compile Include="../../UnityGameTranslator.Core/Engine/ApiReaders.cs" />
+    <!--
       What a downloaded translation may ask of the disk and of the main thread. Both are pure by
       construction — a string in, an answer out — and both exist as files of their own so that the
       refusals AND the acceptances can be proved here rather than in a game.

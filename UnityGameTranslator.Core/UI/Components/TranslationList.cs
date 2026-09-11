@@ -474,7 +474,7 @@ namespace UnityGameTranslator.Core.UI.Components
             // The two things about a translation that catch the eye and are written nowhere else
             // on its row. Deliberately only two: a badge works by being rare, and the line count,
             // the review stage and the download count are already there in plain words.
-            if (translation.IsNew) by += "  ·  " + TranslatorCore.TranslateOwnUIDynamic("new");
+            if (translation.IsNewAt(DateTime.UtcNow)) by += "  ·  " + TranslatorCore.TranslateOwnUIDynamic("new");
             if (IsFurthest(translation)) by += "  ·  " + TranslatorCore.TranslateOwnUIDynamic("goes furthest");
             // Says in words what the stripe says in colour — a mark nobody can name is a mark
             // nobody can act on.
@@ -583,7 +583,7 @@ namespace UnityGameTranslator.Core.UI.Components
         {
             var facts = new List<string>();
 
-            string dateLabel = translation.ContentDateLabel;
+            string dateLabel = translation.ContentDateLabel(TimeZoneInfo.Local);
             if (!string.IsNullOrEmpty(dateLabel)) facts.Add(dateLabel);
             // 🔴 **"finished", never "complete".** The server's own value is the string `complete`,
             // and printing it put a fourth word on screen for a fact the strip already calls

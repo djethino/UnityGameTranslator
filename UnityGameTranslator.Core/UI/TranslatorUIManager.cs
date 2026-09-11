@@ -2747,10 +2747,10 @@ namespace UnityGameTranslator.Core.UI
                         ? linesWaiting["review"]?.ToObject<int?>()
                         : previous?.LinesToReview,
                     LinesNew = linesWaiting != null
-                        ? ApiClient.TallyOf(linesWaiting, "new")
+                        ? ApiReaders.TallyOf(linesWaiting, "new")
                         : (previous?.LinesNew ?? default(TagTally)),
                     LinesDiffering = linesWaiting != null
-                        ? ApiClient.TallyOf(linesWaiting, "differing")
+                        ? ApiReaders.TallyOf(linesWaiting, "differing")
                         : (previous?.LinesDiffering ?? default(TagTally)),
 
                     LinesOffered = data["lines_offered"] != null

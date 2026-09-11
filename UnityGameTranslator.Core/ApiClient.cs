@@ -335,36 +335,28 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static string DescribeHttpError(HttpResponseMessage response, string body)
         {
-            if ((int)response.StatusCode == 429)
+            return ApiReaders.DescribeError((int)response.StatusCode, ParseJsonOrNull(body), RetryAfterSeconds(response));
+        }
+
+        /// <summary>The body as JSON, or null when it is not — a proxy error page, an empty answer.</summary>
+        private static JObject ParseJsonOrNull(string body)
+        {
+            if (string.IsNullOrWhiteSpace(body)) return null;
+            try { return ParseJsonSafe(body); }
+            catch { return null; }
+        }
+
+        /// <summary>The seconds a 429 asks us to wait, or 0 when it did not say.</summary>
+        private static int RetryAfterSeconds(HttpResponseMessage response)
+        {
+            if (response.Headers.TryGetValues("Retry-After", out var values))
             {
-                int seconds = 60;
-                if (response.Headers.TryGetValues("Retry-After", out var values))
+                foreach (var value in values)
                 {
-                    foreach (var value in values)
-                    {
-                        if (int.TryParse(value, out int parsed) && parsed > 0)
-                        {
-                            seconds = parsed;
-                            break;
-                        }
-                    }
+                    if (int.TryParse(value, out int parsed) && parsed > 0) return parsed;
                 }
-                return $"too many attempts in a row, wait {seconds}s and try again";
             }
-
-            try
-            {
-                var parsed = ParseJsonSafe(body);
-                string message = parsed["error"]?.Value<string>()
-                    ?? parsed["message"]?.Value<string>();
-                if (!string.IsNullOrEmpty(message)) return message;
-            }
-            catch
-            {
-                // Not JSON (proxy error page): the status code is all we can say
-            }
-
-            return $"HTTP {(int)response.StatusCode} {response.StatusCode}";
+            return 0;
         }
 
         /// <summary>
@@ -500,25 +492,7 @@ namespace UnityGameTranslator.Core
                     return new TranslationCheckResult { Success = false, Error = DescribeHttpError(response, json) };
                 }
 
-                var data = ParseJsonSafe(json);
-                string serverHash = data["file_hash"]?.Value<string>();
-
-                return new TranslationCheckResult
-                {
-                    Success = true,
-                    FileHash = serverHash,
-                    LineCount = data["line_count"]?.Value<int>() ?? 0,
-                    VoteCount = data["vote_count"]?.Value<int>() ?? 0,
-                    // Absent on an older server: left null, which the caller reads as "unknown"
-                    // and never as "published by nobody"
-                    Uploader = data["uploader"]?.Value<string>(),
-                    ETag = response.Headers.ETag?.ToString(),
-                    // Trust our own comparison rather than the optional flag:
-                    // the caller always knows the hash it is holding
-                    HasUpdate = !string.IsNullOrEmpty(serverHash)
-                                && !string.IsNullOrEmpty(localHash)
-                                && serverHash != localHash,
-                };
+                return ApiReaders.ReadCheck(ParseJsonSafe(json), localHash, response.Headers.ETag?.ToString());
             }
             catch (Exception e)
             {
@@ -610,8 +584,7 @@ namespace UnityGameTranslator.Core
 
                 if (!response.IsSuccessStatusCode) return;
 
-                var body = ParseJsonSafe(await response.Content.ReadAsStringAsync());
-                AccessCode = body?["access_code"]?.Value<string>();
+                AccessCode = ApiReaders.ReadAccessCode(ParseJsonSafe(await response.Content.ReadAsStringAsync()));
             }
             catch (Exception e)
             {
@@ -726,31 +699,7 @@ namespace UnityGameTranslator.Core
                     return new ModNotificationsResult { Success = false, Error = $"HTTP {response.StatusCode}" };
                 }
 
-                string json = await response.Content.ReadAsStringAsync();
-                var data = ParseJsonSafe(json);
-
-                var result = new ModNotificationsResult
-                {
-                    Success = true,
-                    Unread = data["unread"]?.Value<int>() ?? 0,
-                    Items = new List<ModNotificationItem>(),
-                };
-
-                if (data["items"] is JArray items)
-                {
-                    foreach (var item in items)
-                    {
-                        result.Items.Add(new ModNotificationItem
-                        {
-                            Id = item["id"]?.ToString(),
-                            Type = item["type"]?.ToString(),
-                            Text = item["text"]?.ToString(),
-                            Url = item["url"]?.ToString(),
-                        });
-                    }
-                }
-
-                return result;
+                return ApiReaders.ReadNotifications(ParseJsonSafe(await response.Content.ReadAsStringAsync()));
             }
             catch (Exception e)
             {
@@ -802,23 +751,7 @@ namespace UnityGameTranslator.Core
                     return new TranslationSearchResult { Success = false, Error = $"HTTP {response.StatusCode}" };
                 }
 
-                string json = await response.Content.ReadAsStringAsync();
-                var data = ParseJsonSafe(json);
-
-                var result = new TranslationSearchResult { Success = true };
-                result.Count = data["count"]?.Value<int>() ?? 0;
-                result.Translations = new List<TranslationInfo>();
-
-                var translations = data["translations"] as JArray;
-                if (translations != null)
-                {
-                    foreach (var t in translations)
-                    {
-                        result.Translations.Add(ParseTranslationInfo(t));
-                    }
-                }
-
-                return result;
+                return ApiReaders.ReadSearch(ParseJsonSafe(await response.Content.ReadAsStringAsync()));
             }
             catch (Exception e)
             {
@@ -828,21 +761,8 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Search for translations by game name.
-        ///
-        /// 🔴 **The answer can describe SEVERAL games, and this used to take all of it.** A game
-        /// with no Steam id is looked up by name, and the site matches loosely on purpose — a game
-        /// folder is not always named as the site names it ("Foo" against "Foo: Deluxe Edition").
-        /// So `q=Cat` also answers for Cattails and Cat Quest II, and every one of those
-        /// translations was listed here as this game's, ready to be downloaded into it.
-        ///
-        /// The site now groups its answer by game. Which of those groups was asked about is
-        /// <see cref="GameNames"/>' decision — the socle's, because the Manager asks the same
-        /// question about fifty games and the two must not answer it differently.
-        ///
-        /// ⚠ The flat list is still read when `games` is absent: a self-hosted site older than this
-        /// mod answers exactly as before, and losing its results would be a worse fault than the
-        /// one being fixed.
+        /// Search for translations by game name. The answer can describe SEVERAL games, on
+        /// purpose; which group was asked about is decided in <see cref="ApiReaders.ReadSearchByName"/>.
         /// </summary>
         public static async Task<TranslationSearchResult> SearchByGameName(string gameName, string targetLang)
         {
@@ -856,153 +776,13 @@ namespace UnityGameTranslator.Core
                     return new TranslationSearchResult { Success = false, Error = $"HTTP {response.StatusCode}" };
                 }
 
-                string json = await response.Content.ReadAsStringAsync();
-                var data = ParseJsonSafe(json);
-
-                var result = new TranslationSearchResult { Success = true };
-                result.Translations = new List<TranslationInfo>();
-
-                var grouped = data["games"] as JArray;
-
-                if (grouped != null)
-                {
-                    var names = new List<string>();
-                    foreach (var group in grouped)
-                    {
-                        names.Add(group["game"]?["name"]?.Value<string>() ?? "");
-                    }
-
-                    var which = GameNames.Which(names, gameName);
-
-                    // ⚠ Counted from what was KEPT, never from the server's total: the total
-                    // answers about every game the name touched, and printing it beside a filtered
-                    // list is the same lie in a smaller place.
-                    result.Count = 0;
-
-                    foreach (var index in which.Chosen)
-                    {
-                        var group = grouped[index];
-                        result.Count += group["total"]?.Value<int>() ?? 0;
-
-                        var rows = group["translations"] as JArray;
-                        if (rows == null) continue;
-
-                        foreach (var t in rows)
-                        {
-                            result.Translations.Add(ParseTranslationInfo(t));
-                        }
-                    }
-
-                    return result;
-                }
-
-                result.Count = data["count"]?.Value<int>() ?? 0;
-
-                var translations = data["translations"] as JArray;
-                if (translations != null)
-                {
-                    foreach (var t in translations)
-                    {
-                        result.Translations.Add(ParseTranslationInfo(t));
-                    }
-                }
-
-                return result;
+                return ApiReaders.ReadSearchByName(ParseJsonSafe(await response.Content.ReadAsStringAsync()), gameName);
             }
             catch (Exception e)
             {
                 TranslatorCore.LogWarning($"[ApiClient] Search error: {e.Message}");
                 return new TranslationSearchResult { Success = false, Error = Connectivity.Describe(e) };
             }
-        }
-
-        /// <summary>
-        /// One side of a review — "new" or "differing" — read into the socle's own shape.
-        ///
-        /// ⚠ A missing letter is zero, unlike a missing figure elsewhere: the server sends only the
-        /// tags it counted, so an absent "S" means no refusals rather than an unknown number. What
-        /// stands for "we do not know" is the whole `lines_waiting` block being absent, which an
-        /// older server does not send at all.
-        /// </summary>
-        internal static TagTally TallyOf(JToken waiting, string side)
-        {
-            // ⚠ `as JObject`, like every other reader here: `lines_waiting` comes back as JSON
-            // null on a lineage with nothing waiting, and `?.` lets a JValue through to an indexer
-            // that throws. The cast turns "not an object" into a C# null.
-            var tags = (waiting as JObject)?[side];
-            if (tags == null || tags.Type != JTokenType.Object) return default(TagTally);
-
-            return new TagTally
-            {
-                Human = tags["H"]?.Value<int>() ?? 0,
-                Validated = tags["V"]?.Value<int>() ?? 0,
-                Machine = tags["A"]?.Value<int>() ?? 0,
-                Skipped = tags["S"]?.Value<int>() ?? 0,
-            };
-        }
-
-        /// <summary>
-        /// Where a fork came from, or null when it came from nowhere.
-        ///
-        /// ⚠ An author of null inside a present block is NOT the same as an absent block: the
-        /// first is a fork whose source account has gone, which is still a credit worth showing;
-        /// the second is a translation somebody started themselves.
-        /// </summary>
-        private static Origin? ParseOrigin(JToken origin)
-        {
-            if (origin == null || origin.Type != JTokenType.Object) return null;
-
-            return new Origin(origin["author"]?.Value<string>(),
-                              origin["lines"]?.Value<int?>());
-        }
-
-        private static TranslationInfo ParseTranslationInfo(JToken t)
-        {
-            // ⚠ `as JObject`, like every other reader here: a key the server sends as null comes
-            // back as a JValue, which `?.` lets through to an indexer that throws. The cast turns
-            // "not an object" into a C# null, which is what the null-conditional below expects.
-            var game = t["game"] as JObject;
-            return new TranslationInfo
-            {
-                Id = t["id"]?.Value<int>() ?? 0,
-                GameName = game?["name"]?.Value<string>(),
-                GameSlug = game?["slug"]?.Value<string>(),
-                GameSteamId = game?["steam_id"]?.Value<string>(),
-                GameImageUrl = game?["image_url"]?.Value<string>(),
-                Uploader = t["uploader"]?.Value<string>(),
-                SourceLanguage = t["source_language"]?.Value<string>(),
-                TargetLanguage = t["target_language"]?.Value<string>(),
-                LineCount = t["line_count"]?.Value<int>() ?? 0,
-                Status = t["status"]?.Value<string>(),
-                Type = t["type"]?.Value<string>(),
-                Notes = t["notes"]?.Value<string>(),
-                ResourcesUrl = t["resources_url"]?.Value<string>(),
-                // Whether its Main takes contributions. Null on a server that predates the
-                // field, and null shows nothing — silence is not "solo work".
-                AcceptsBranches = t["accepts_branches"]?.ToObject<bool?>(),
-                // Where a fork came from. Absent on a server that predates the field and on
-                // anything nobody forked — both read as "started from nothing", which is what the
-                // row then says by saying nothing.
-                Origin = ParseOrigin(t["origin"]),
-                VoteCount = t["vote_count"]?.Value<int>() ?? 0,
-                // Null for anonymous callers and for servers older than this field.
-                UserVote = t["user_vote"]?.Value<int?>(),
-                DownloadCount = t["download_count"]?.Value<int>() ?? 0,
-                HumanCount = t["human_count"]?.Value<int>() ?? 0,
-                ValidatedCount = t["validated_count"]?.Value<int>() ?? 0,
-                AiCount = t["ai_count"]?.Value<int>() ?? 0,
-                CaptureCount = t["capture_count"]?.Value<int>() ?? 0,
-                SkippedCount = t["skipped_count"]?.Value<int>() ?? 0,
-                FileHash = t["file_hash"]?.Value<string>(),
-                FileUuid = t["file_uuid"]?.Value<string>(),
-                UpdatedAt = t["updated_at"]?.Value<string>(),
-                // Null on servers older than this field: the list then shows no
-                // date rather than one that a vote could have moved
-                ContentUpdatedAt = t["content_updated_at"]?.Value<string>(),
-                // Same rule: absent means unknown, and the list says nothing rather than 0 %
-                GameCoverage = t["game_coverage"]?.Value<float?>(),
-                CreatedAt = t["created_at"]?.Value<string>()
-            };
         }
 
         #endregion
@@ -1128,116 +908,9 @@ namespace UnityGameTranslator.Core
 
                 string json = await response.Content.ReadAsStringAsync();
                 TranslatorCore.LogDebug($"[ApiClient] CheckUuid response: {json}");
-                var data = ParseJsonSafe(json);
 
-                // Parse role first to derive IsOwner
-                string roleStr = data["role"]?.Value<string>();
-                LineageRole role;
-                switch (roleStr)
-                {
-                    case "main":
-                        role = LineageRole.Main;
-                        break;
-                    case "branch":
-                        role = LineageRole.Branch;
-                        break;
-                    default:
-                        role = LineageRole.None;
-                        break;
-                }
-
-                var result = new UuidCheckResult
-                {
-                    Success = true,
-                    Exists = data["exists"]?.Value<bool>() ?? false,
-                    // IsOwner = user has a translation (role is main or branch)
-                    IsOwner = role == LineageRole.Main || role == LineageRole.Branch,
-                    Role = role,
-                    // MainUsername is in main.uploader when role is none and main exists
-                    MainUsername = data["main"]?["uploader"]?.Value<string>(),
-                    // Null on older servers: "unknown", never "the Main is fine"
-                    MainMissing = data["main_missing"]?.ToObject<bool?>(),
-                    MainAbandoned = data["main_abandoned"]?.ToObject<bool?>(),
-                    // Use ToObject<int?>() to handle explicit JSON null values
-                    BranchesCount = data["branches_count"]?.ToObject<int?>() ?? 0,
-
-                    // ⚠ ToObject<bool?> rather than Value<bool>: a missing field must stay null
-                    // and not become false. See the properties.
-                    AcceptsBranches = data["accepts_branches"]?.ToObject<bool?>(),
-                    BranchFrozen = data["branch_frozen"]?.ToObject<bool?>(),
-
-                    // ⚠ Null on an older site, and null is "unknown" — never "nothing is waiting".
-                    BranchesWithWork = data["branches_with_work"]?.ToObject<int?>(),
-                    LinesAvailable = data["lines_available"]?.ToObject<int?>(),
-
-                    // The other axis: how many rows need a decision, and what they are made of.
-                    // Absent on a server that predates it, and the card then shows the total
-                    // alone, as before.
-                    LinesToReview = data["lines_waiting"]?["review"]?.ToObject<int?>(),
-                    LinesNew = TallyOf(data["lines_waiting"], "new"),
-                    LinesDiffering = TallyOf(data["lines_waiting"], "differing"),
-                    LinesOffered = data["lines_offered"]?.ToObject<int?>()
-                };
-
-                // Votes on the published translation of this lineage. Absent on older servers,
-                // and null when nothing of this lineage is published — both mean "no vote to
-                // show here", never "zero votes".
-                var voteToken = data["vote"];
-                if (voteToken != null && voteToken.Type == JTokenType.Object)
-                {
-                    result.Vote = new VoteState
-                    {
-                        TargetId = voteToken["target_id"]?.Value<int>() ?? 0,
-                        Count = voteToken["count"]?.Value<int>() ?? 0,
-                        UserVote = voteToken["user_vote"]?.Value<int?>(),
-                        CanVote = voteToken["can_vote"]?.Value<bool>() ?? false,
-                    };
-                }
-
+                var result = ApiReaders.ReadUuidCheck(ParseJsonSafe(json));
                 TranslatorCore.LogInfo($"[ApiClient] Parsed: exists={result.Exists}, isOwner={result.IsOwner}, role={result.Role}");
-
-                // Parse translation info if UPDATE
-                if (result.Exists && result.IsOwner && data["translation"] != null)
-                {
-                    var t = data["translation"];
-                    result.ExistingTranslation = new UuidCheckTranslationInfo
-                    {
-                        Id = t["id"]?.Value<int>() ?? 0,
-                        SourceLanguage = t["source_language"]?.Value<string>(),
-                        TargetLanguage = t["target_language"]?.Value<string>(),
-                        Type = t["type"]?.Value<string>(),
-                        // Null on a server that predates this field — the caller then leaves the
-                        // status alone rather than guessing at one.
-                        Status = t["status"]?.Value<string>(),
-                        Notes = t["notes"]?.Value<string>(),
-                        ResourcesUrl = t["resources_url"]?.Value<string>(),
-                        // The row's own link, which is not the same question as the one above.
-                        // Null on a server that predates the field — the edit field then falls
-                        // back to the effective value, exactly as it behaved before.
-                        OwnResourcesUrl = t["resources_url_own"]?.Value<string>(),
-                        LineCount = t["line_count"]?.Value<int>() ?? 0,
-                        FileHash = t["file_hash"]?.Value<string>(),
-                        UpdatedAt = t["updated_at"]?.Value<string>()
-                    };
-                }
-
-                // Parse main info if FORK (user doesn't own but main exists)
-                // API returns "main" object, not "original"
-                if (result.Exists && !result.IsOwner && data["main"] != null)
-                {
-                    var m = data["main"];
-                    result.OriginalTranslation = new UuidCheckTranslationInfo
-                    {
-                        Id = m["id"]?.Value<int>() ?? 0,
-                        Uploader = m["uploader"]?.Value<string>(),
-                        SourceLanguage = m["source_language"]?.Value<string>(),
-                        TargetLanguage = m["target_language"]?.Value<string>(),
-                        Type = m["type"]?.Value<string>(),
-                        LineCount = m["line_count"]?.Value<int>() ?? 0,
-                        UpdatedAt = m["updated_at"]?.Value<string>()
-                    };
-                }
-
                 return result;
             }
             catch (HttpRequestException httpEx)
@@ -1290,35 +963,7 @@ namespace UnityGameTranslator.Core
                     return new BranchListResult { Success = false, Error = $"HTTP {response.StatusCode}" };
                 }
 
-                string json = await response.Content.ReadAsStringAsync();
-                var data = ParseJsonSafe(json);
-
-                var result = new BranchListResult
-                {
-                    Success = true,
-                    Branches = new List<BranchInfo>()
-                };
-
-                var branches = data["branches"] as JArray;
-                if (branches != null)
-                {
-                    foreach (var b in branches)
-                    {
-                        result.Branches.Add(new BranchInfo
-                        {
-                            Id = b["id"]?.Value<int>() ?? 0,
-                            // API returns user.name (nested object)
-                            Username = b["user"]?["name"]?.Value<string>(),
-                            LineCount = b["line_count"]?.Value<int>() ?? 0,
-                            HumanCount = b["human_count"]?.Value<int>() ?? 0,
-                            AiCount = b["ai_count"]?.Value<int>() ?? 0,
-                            ValidatedCount = b["validated_count"]?.Value<int>() ?? 0,
-                            UpdatedAt = b["updated_at"]?.Value<string>()
-                        });
-                    }
-                }
-
-                return result;
+                return ApiReaders.ReadBranches(ParseJsonSafe(await response.Content.ReadAsStringAsync()));
             }
             catch (Exception e)
             {
@@ -1463,31 +1108,7 @@ namespace UnityGameTranslator.Core
                     return new GameSearchResult { Success = false, Error = $"HTTP {response.StatusCode}" };
                 }
 
-                string json = await response.Content.ReadAsStringAsync();
-                var data = ParseJsonSafe(json);
-
-                var result = new GameSearchResult { Success = true };
-                result.Count = data["count"]?.Value<int>() ?? 0;
-                result.Games = new List<GameApiInfo>();
-
-                var games = data["games"] as JArray;
-                if (games != null)
-                {
-                    foreach (var g in games)
-                    {
-                        result.Games.Add(new GameApiInfo
-                        {
-                            Id = g["id"]?.Value<int>() ?? 0,
-                            Name = g["name"]?.Value<string>(),
-                            Slug = g["slug"]?.Value<string>(),
-                            SteamId = g["steam_id"]?.Value<string>(),
-                            ImageUrl = g["image_url"]?.Value<string>(),
-                            TranslationsCount = g["translations_count"]?.Value<int>() ?? 0
-                        });
-                    }
-                }
-
-                return result;
+                return ApiReaders.ReadGames(ParseJsonSafe(await response.Content.ReadAsStringAsync()));
             }
             catch (Exception e)
             {
@@ -1524,30 +1145,7 @@ namespace UnityGameTranslator.Core
                     return new GameSearchResult { Success = false, Error = $"HTTP {response.StatusCode}" };
                 }
 
-                string json = await response.Content.ReadAsStringAsync();
-                var data = ParseJsonSafe(json);
-
-                var result = new GameSearchResult { Success = true };
-                result.Count = data["count"]?.Value<int>() ?? 0;
-                result.Games = new List<GameApiInfo>();
-
-                var games = data["games"] as JArray;
-                if (games != null)
-                {
-                    foreach (var g in games)
-                    {
-                        result.Games.Add(new GameApiInfo
-                        {
-                            Id = g["id"]?.Value<int>() ?? 0,
-                            Name = g["name"]?.Value<string>(),
-                            SteamId = g["steam_id"]?.Value<string>(),
-                            ImageUrl = g["image_url"]?.Value<string>(),
-                            Source = g["source"]?.Value<string>()
-                        });
-                    }
-                }
-
-                return result;
+                return ApiReaders.ReadExternalGames(ParseJsonSafe(await response.Content.ReadAsStringAsync()));
             }
             catch (Exception e)
             {
@@ -1718,18 +1316,7 @@ namespace UnityGameTranslator.Core
                         return new DeviceFlowInitResult { Success = false, Error = $"HTTP {response.StatusCode}" };
                     }
 
-                    string json = await response.Content.ReadAsStringAsync();
-                    var data = ParseJsonSafe(json);
-
-                    return new DeviceFlowInitResult
-                    {
-                        Success = true,
-                        DeviceCode = data["device_code"]?.Value<string>(),
-                        UserCode = data["user_code"]?.Value<string>(),
-                        VerificationUri = data["verification_uri"]?.Value<string>(),
-                        ExpiresIn = data["expires_in"]?.Value<int>() ?? 900,
-                        Interval = data["interval"]?.Value<int>() ?? 5
-                    };
+                    return ApiReaders.ReadDeviceFlow(ParseJsonSafe(await response.Content.ReadAsStringAsync()));
                 }
             }
             catch (Exception e)
@@ -1816,72 +1403,12 @@ namespace UnityGameTranslator.Core
                 TranslatorCore.LogInfo($"[ApiClient] Response: {(int)response.StatusCode} {response.StatusCode}");
 
                 string json = await response.Content.ReadAsStringAsync();
-                var data = ParseJsonSafe(json);
-
-                if (!response.IsSuccessStatusCode)
+                var result = ApiReaders.ReadUploadAnswer((int)response.StatusCode, ParseJsonOrNull(json));
+                if (!result.Success)
                 {
-                    // Handle different error formats (Laravel validation vs custom)
-                    string errorMsg = data["error"]?.Value<string>()
-                        ?? data["message"]?.Value<string>()
-                        ?? $"HTTP {response.StatusCode}";
-
-                    // Include validation errors if present
-                    var errors = data["errors"];
-                    if (errors != null)
-                    {
-                        var errorList = new List<string>();
-                        foreach (var prop in errors.Children<JProperty>())
-                        {
-                            foreach (var e in prop.Value)
-                            {
-                                errorList.Add(e.Value<string>());
-                            }
-                        }
-                        if (errorList.Count > 0)
-                        {
-                            errorMsg = string.Join(", ", errorList);
-                        }
-                    }
-
-                    TranslatorCore.LogWarning($"[ApiClient] Upload failed: {errorMsg}");
-                    return new UploadResult
-                    {
-                        Success = false,
-                        Error = errorMsg
-                    };
+                    TranslatorCore.LogWarning($"[ApiClient] Upload failed: {result.Error}");
                 }
-
-                // 🔴 **Null here is the ORDINARY case, not an edge one**: this is check-uuid, and
-                // a lineage this account holds no row in answers `"translation": null`. Read
-                // without the cast, `translation?["role"]` reached an indexer on a JValue and threw
-                // — on precisely the translations that belong to somebody else.
-                var translation = data["translation"] as JObject;
-
-                // Parse role from API response
-                string roleStr = translation?["role"]?.Value<string>();
-                LineageRole role;
-                switch (roleStr)
-                {
-                    case "main":
-                        role = LineageRole.Main;
-                        break;
-                    case "branch":
-                        role = LineageRole.Branch;
-                        break;
-                    default:
-                        role = LineageRole.None;
-                        break;
-                }
-
-                return new UploadResult
-                {
-                    Success = true,
-                    TranslationId = translation?["id"]?.Value<int>() ?? 0,
-                    FileHash = translation?["file_hash"]?.Value<string>(),
-                    LineCount = translation?["line_count"]?.Value<int>() ?? 0,
-                    Role = role,
-                    WebUrl = translation?["web_url"]?.Value<string>()
-                };
+                return result;
             }
             catch (Exception e)
             {
@@ -1952,15 +1479,7 @@ namespace UnityGameTranslator.Core
                     return new MergePreviewInitResult { Success = false, Error = errorMsg };
                 }
 
-                var data = ParseJsonSafe(json);
-
-                return new MergePreviewInitResult
-                {
-                    Success = true,
-                    Token = data["token"]?.Value<string>(),
-                    Url = data["url"]?.Value<string>(),
-                    ExpiresAt = data["expires_at"]?.Value<string>()
-                };
+                return ApiReaders.ReadMergePreviewInit(ParseJsonSafe(json));
             }
             catch (Exception e)
             {
@@ -1983,23 +1502,7 @@ namespace UnityGameTranslator.Core
                 var response = await client.GetAsync($"{DefaultBaseUrl}/merge-preview/{Uri.EscapeDataString(token)}/result");
                 string json = await response.Content.ReadAsStringAsync();
 
-                if (!response.IsSuccessStatusCode)
-                {
-                    return new TranslationDownloadResult { Success = false, Error = DescribeHttpError(response, json) };
-                }
-
-                var data = ParseJsonSafe(json);
-                var content = data["content"];
-                if (content == null || content.Type == Newtonsoft.Json.Linq.JTokenType.Null)
-                {
-                    return new TranslationDownloadResult { Success = false, Error = "Merge result was empty" };
-                }
-
-                return new TranslationDownloadResult
-                {
-                    Success = true,
-                    Content = content.ToString(Newtonsoft.Json.Formatting.None)
-                };
+                return ApiReaders.ReadMergePreviewResult((int)response.StatusCode, ParseJsonOrNull(json), RetryAfterSeconds(response));
             }
             catch (Exception e)
             {
@@ -2148,15 +1651,7 @@ namespace UnityGameTranslator.Core
                     return new EditSessionInitResult { Success = false, Error = errorMsg };
                 }
 
-                var data = ParseJsonSafe(json);
-
-                return new EditSessionInitResult
-                {
-                    Success = true,
-                    ModKey = data["mod_key"]?.Value<string>(),
-                    Url = data["url"]?.Value<string>(),
-                    ExpiresAt = data["expires_at"]?.Value<string>()
-                };
+                return ApiReaders.ReadEditSessionInit(ParseJsonSafe(json));
             }
             catch (Exception e)
             {
@@ -2200,25 +1695,7 @@ namespace UnityGameTranslator.Core
                 var response = await client.PostAsync($"{DefaultBaseUrl}/edit-session/{Uri.EscapeDataString(modKey)}/update", content);
                 string json = await response.Content.ReadAsStringAsync();
 
-                if (!response.IsSuccessStatusCode)
-                {
-                    var errorData = ParseJsonSafe(json);
-                    return new EditSessionUpdateResult
-                    {
-                        Success = false,
-                        SessionGone = response.StatusCode == System.Net.HttpStatusCode.NotFound,
-                        Error = errorData["error"]?.Value<string>() ?? $"HTTP {response.StatusCode}"
-                    };
-                }
-
-                var data = ParseJsonSafe(json);
-                return new EditSessionUpdateResult
-                {
-                    Success = true,
-                    ContentHash = data["content_hash"]?.Value<string>(),
-                    BrowserSeenSecondsAgo = data["browser_seen_seconds_ago"]?.Value<int?>(),
-                    BrowserLeft = data["browser_left"]?.Value<bool>() ?? false
-                };
+                return ApiReaders.ReadEditSessionUpdate((int)response.StatusCode, ParseJsonOrNull(json));
             }
             catch (Exception e)
             {
@@ -2267,44 +1744,14 @@ namespace UnityGameTranslator.Core
                 var response = await client.GetAsync(
                     $"{DefaultBaseUrl}/edit-session/{Uri.EscapeDataString(modKey)}/state");
 
-                if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
-                    return new EditSessionProbe { Exists = false };
-
-                if (!response.IsSuccessStatusCode)
-                    return new EditSessionProbe { Exists = null };
-
-                var data = ParseJsonSafe(await response.Content.ReadAsStringAsync());
-                return new EditSessionProbe
-                {
-                    Exists = true,
-                    PendingChanges = data["pending_changes"]?.Value<int>() ?? 0
-                };
+                return ApiReaders.ReadEditSessionState((int)response.StatusCode,
+                    ParseJsonOrNull(await response.Content.ReadAsStringAsync()));
             }
             catch (Exception e)
             {
                 TranslatorCore.LogWarning($"[ApiClient] Edit session state error: {e.Message}");
                 return new EditSessionProbe { Exists = null };
             }
-        }
-
-        /// <summary>What the site says about a session we are asking about, not living in.</summary>
-        public class EditSessionProbe
-        {
-            /// <summary>True alive, false gone, null could not ask.</summary>
-            public bool? Exists { get; set; }
-
-            /// <summary>
-            /// Saves the browser made that nobody has fetched. ⚠ Until somebody does, the session
-            /// is the only place that work exists.
-            /// </summary>
-            public int PendingChanges { get; set; }
-        }
-
-        /// <summary>What came of asking the site to change what a translation says about itself.</summary>
-        public class DetailsResult
-        {
-            public bool Success;
-            public string Error;
         }
 
         /// <summary>
@@ -2339,18 +1786,7 @@ namespace UnityGameTranslator.Core
                 var response = await client.SendAsync(request);
                 string answer = await response.Content.ReadAsStringAsync();
 
-                if (response.IsSuccessStatusCode) return new DetailsResult { Success = true };
-
-                // The site says why in words meant to be shown; falling back to the status code is
-                // better than "something went wrong" and worse than what it wrote.
-                var parsed = ParseJsonSafe(answer);
-                return new DetailsResult
-                {
-                    Success = false,
-                    Error = parsed?["message"]?.Value<string>()
-                            ?? parsed?["error"]?.Value<string>()
-                            ?? $"HTTP {(int)response.StatusCode}",
-                };
+                return ApiReaders.ReadDetails((int)response.StatusCode, ParseJsonOrNull(answer));
             }
             catch (Exception e)
             {
@@ -2475,20 +1911,8 @@ namespace UnityGameTranslator.Core
 
                 var response = await client.SendAsync(request);
                 string json = await response.Content.ReadAsStringAsync();
-                var data = ParseJsonSafe(json);
 
-                if (!response.IsSuccessStatusCode)
-                {
-                    var error = data["error"]?.Value<string>() ?? data["message"]?.Value<string>() ?? $"HTTP {response.StatusCode}";
-                    return new VoteResult { Success = false, Error = error };
-                }
-
-                return new VoteResult
-                {
-                    Success = true,
-                    VoteCount = data["vote_count"]?.Value<int>() ?? 0,
-                    UserVote = data["user_vote"]?.Value<int?>()
-                };
+                return ApiReaders.ReadVote((int)response.StatusCode, ParseJsonOrNull(json));
             }
             catch (Exception e)
             {
@@ -2499,472 +1923,4 @@ namespace UnityGameTranslator.Core
 
         #endregion
     }
-
-    #region Result Classes
-
-    public class ModNotificationsResult
-    {
-        public bool Success { get; set; }
-        public string Error { get; set; }
-        public int Unread { get; set; }
-        public List<ModNotificationItem> Items { get; set; } = new List<ModNotificationItem>();
-    }
-
-    public class ModNotificationItem
-    {
-        public string Id { get; set; }
-        public string Type { get; set; }
-        public string Text { get; set; }
-        public string Url { get; set; }
-    }
-
-    public class TranslationSearchResult
-    {
-        public bool Success { get; set; }
-        public string Error { get; set; }
-        public int Count { get; set; }
-        public List<TranslationInfo> Translations { get; set; }
-    }
-
-    public class TranslationInfo
-    {
-        public int Id { get; set; }
-        public string GameName { get; set; }
-        public string GameSlug { get; set; }
-        public string GameSteamId { get; set; }
-        public string GameImageUrl { get; set; }
-        public string Uploader { get; set; }
-        public string SourceLanguage { get; set; }
-        public string TargetLanguage { get; set; }
-        public int LineCount { get; set; }
-        public string Status { get; set; }
-        public string Type { get; set; }
-        public string Notes { get; set; }
-        public string ResourcesUrl { get; set; }
-        /// <summary>Whether this lineage takes contributions. Null on an older server, and null
-        /// is not "no" — nothing is said rather than inventing somebody's decision.</summary>
-        public bool? AcceptsBranches { get; set; }
-
-        /// <summary>
-        /// Which translation this one was forked from. Null when it was forked from none — and on
-        /// a server that predates the field, where nothing is said rather than a claim made.
-        ///
-        /// ⚠ Not derivable from anything else here: a fork leads its own lineage and looks exactly
-        /// like a translation somebody wrote from scratch. See <see cref="Origins"/>.
-        /// </summary>
-        public Origin? Origin { get; set; }
-
-        public int VoteCount { get; set; }
-        /// <summary>This user's own vote (+1 / -1), null when they haven't voted, aren't
-        /// signed in, or the server predates the field.</summary>
-        public int? UserVote { get; set; }
-        public int DownloadCount { get; set; }
-        public int HumanCount { get; set; }
-        public int ValidatedCount { get; set; }
-        public int AiCount { get; set; }
-        public int CaptureCount { get; set; }
-        /// <summary>
-        /// Lines the author marked as not to translate (tag S). Outside the composition bar and
-        /// the score; shown on its own. Zero on servers that predate the field.
-        /// </summary>
-        public int SkippedCount { get; set; }
-        public string FileHash { get; set; }
-        public string FileUuid { get; set; }
-        public string UpdatedAt { get; set; }
-
-        /// <summary>
-        /// When the translation itself last changed. Distinct from UpdatedAt,
-        /// which a vote or a download also moves. Null on older servers.
-        /// </summary>
-        public string ContentUpdatedAt { get; set; }
-
-        /// <summary>
-        /// How much of the game this translation reaches, 0 to 1, measured against the furthest
-        /// translation of the same game whatever its language.
-        ///
-        /// Comes from the server because it cannot be computed here: it needs every other
-        /// translation of the game. Null on servers that do not report it — and null must read
-        /// as "unknown", never as "covers nothing".
-        /// </summary>
-        public float? GameCoverage { get; set; }
-
-        /// <summary>
-        /// When it was published. Null on servers that do not report it — and absence must read
-        /// as "unknown", never as "old".
-        /// </summary>
-        public string CreatedAt { get; set; }
-
-        /// <summary>Published within the last week, by the same reckoning as the website.</summary>
-        public bool IsNew
-        {
-            get
-            {
-                if (string.IsNullOrEmpty(CreatedAt)) return false;
-                DateTime published;
-                if (!DateTime.TryParse(CreatedAt, System.Globalization.CultureInfo.InvariantCulture,
-                        System.Globalization.DateTimeStyles.RoundtripKind, out published))
-                    return false;
-                return (DateTime.UtcNow - published.ToUniversalTime()).TotalDays <= 7;
-            }
-        }
-
-        /// <summary>
-        /// The content date as a short local string, or null when the server
-        /// did not send one. Never falls back to UpdatedAt: showing a date that
-        /// a vote moved would be worse than showing none.
-        /// </summary>
-        public string ContentDateLabel
-        {
-            get
-            {
-                if (string.IsNullOrEmpty(ContentUpdatedAt)) return null;
-                DateTime parsed;
-                if (!DateTime.TryParse(ContentUpdatedAt, System.Globalization.CultureInfo.InvariantCulture,
-                        System.Globalization.DateTimeStyles.AdjustToUniversal, out parsed))
-                {
-                    return null;
-                }
-
-                return parsed.ToLocalTime().ToString("d MMM yyyy");
-            }
-        }
-
-        /// <summary>
-        /// Quality score (0-3 scale): H=3pts, V=2pts, A=1pt. Shared formula — see
-        /// <see cref="TranslationQuality"/>.
-        /// </summary>
-
-        /// <summary>
-        /// Get website URL for this translation
-        /// </summary>
-        public string GetWebUrl()
-        {
-            return $"{ApiClient.WebsiteBaseUrl}/games/{GameSlug}";
-        }
-    }
-
-    public class TranslationCheckResult
-    {
-        public bool Success { get; set; }
-        public string Error { get; set; }
-        public bool HasUpdate { get; set; }
-        public string FileHash { get; set; }
-        public int LineCount { get; set; }
-        public int VoteCount { get; set; }
-        public string UpdatedAt { get; set; }
-
-        /// <summary>
-        /// Who published it. The only way someone with no account can learn whose work they
-        /// installed — every other source of that name is behind authentication.
-        /// Null on a server too old to send it, which reads as "unknown", never as "nobody".
-        /// </summary>
-        public string Uploader { get; set; }
-
-        /// <summary>
-        /// The server answered "nothing changed". ⚠ Every other field is then EMPTY, not zero:
-        /// a caller that writes them anyway blanks the very values it was trying to spare.
-        /// </summary>
-        public bool NotModified { get; set; }
-
-        /// <summary>
-        /// The validator to hand back on the next call. Opaque on purpose — it stopped being
-        /// the file hash the day the answer started carrying the vote count and the uploader.
-        /// </summary>
-        public string ETag { get; set; }
-    }
-
-    public class TranslationDownloadResult
-    {
-        public bool Success { get; set; }
-        public string Error { get; set; }
-        public bool NotModified { get; set; }
-        public string Content { get; set; }
-        public string FileHash { get; set; }
-    }
-
-    public class GameSearchResult
-    {
-        public bool Success { get; set; }
-        public string Error { get; set; }
-        public int Count { get; set; }
-        public List<GameApiInfo> Games { get; set; }
-    }
-
-    public class GameApiInfo
-    {
-        public int Id { get; set; }
-        public string Name { get; set; }
-        public string Slug { get; set; }
-        public string SteamId { get; set; }
-        public string ImageUrl { get; set; }
-        public int TranslationsCount { get; set; }
-        public string Source { get; set; } // "local", "steam", "igdb", "rawg"
-    }
-
-    public class DeviceFlowInitResult
-    {
-        public bool Success { get; set; }
-        public string Error { get; set; }
-        public string DeviceCode { get; set; }
-        public string UserCode { get; set; }
-        public string VerificationUri { get; set; }
-        public int ExpiresIn { get; set; }
-        public int Interval { get; set; }
-    }
-
-    public class VoteResult
-    {
-        public bool Success { get; set; }
-        public string Error { get; set; }
-        public int VoteCount { get; set; }
-        /// <summary>User's current vote: 1 (upvote), -1 (downvote), or null (no vote)</summary>
-        public int? UserVote { get; set; }
-    }
-
-    public class UploadRequest
-    {
-        public string SteamId { get; set; }
-        public string GameName { get; set; }
-
-        /// <summary>
-        /// The studio Unity records beside the product name, when the game states one.
-        ///
-        /// 🔴 **What it buys.** The site keeps the pair as `unity_name`/`unity_company` and
-        /// resolves lookups with it, so a translation published from here stays findable from
-        /// another install whatever its folder is called. A product name alone is often too weak
-        /// to identify a game — "Game", "Prototype" — and the studio settles it.
-        /// </summary>
-        public string GameCompany { get; set; }
-        public string SourceLanguage { get; set; }
-        public string TargetLanguage { get; set; }
-        // Note: Type is now auto-calculated by server from HVASM tags
-        public string Status { get; set; }
-        public string Content { get; set; }
-        public string Notes { get; set; }
-        public string ResourcesUrl { get; set; }
-
-        /// <summary>
-        /// Whether this lineage takes contributions. Null on a branch — the decision belongs to
-        /// the Main, and a contributor sending it would answer for somebody else's translation.
-        /// </summary>
-        public bool? AcceptsBranches { get; set; }
-    }
-
-    public class UploadResult
-    {
-        public bool Success { get; set; }
-        public string Error { get; set; }
-        public int TranslationId { get; set; }
-        public string FileHash { get; set; }
-        public int LineCount { get; set; }
-        /// <summary>Role assigned by the server (Main for public, Branch for contributor)</summary>
-        public LineageRole Role { get; set; } = LineageRole.None;
-        public string WebUrl { get; set; }
-    }
-
-    public class UuidCheckResult
-    {
-        public bool Success { get; set; }
-        public string Error { get; set; }
-        public bool Exists { get; set; }
-        public bool IsOwner { get; set; }
-        /// <summary>Detected role: Main (owner), Branch (contributor), or None (new)</summary>
-        public LineageRole Role { get; set; } = LineageRole.None;
-        /// <summary>Username of the Main translation owner (if this is a Branch)</summary>
-        public string MainUsername { get; set; }
-
-        /// <summary>Branch whose Main is gone. Null on servers that do not report it.</summary>
-        public bool? MainMissing { get; set; }
-
-        /// <summary>
-        /// The Main is still there and the account behind it is not.
-        ///
-        /// Same consequence as MainMissing — nobody will ever merge this — reached another way, and
-        /// the difference matters to whoever reads it: the translation is still published and still
-        /// safe to keep using. Null on servers that do not report it.
-        /// </summary>
-        public bool? MainAbandoned { get; set; }
-        /// <summary>Number of branches contributing to this UUID (if this is Main)</summary>
-        public int BranchesCount { get; set; }
-
-        /// <summary>
-        /// Whether this lineage takes contributions at all — the Main's own decision.
-        ///
-        /// Null on a server that predates the field. Null is NOT "no": announcing that somebody
-        /// works alone because a server said nothing would put words in their mouth, so an unknown
-        /// answer behaves exactly as before and the refusal, if any, arrives from the upload.
-        /// </summary>
-        public bool? AcceptsBranches { get; set; }
-
-        /// <summary>
-        /// A branch whose Main has since closed: nothing can be done with it as a branch any more.
-        /// The way on is to publish it as a translation of its own.
-        /// </summary>
-        public bool? BranchFrozen { get; set; }
-
-        /// <summary>
-        /// Of the branches above, how many are actually waiting: not been through in their current
-        /// state, AND holding something. Null on a server too old to say — which is "unknown",
-        /// never "none". See <see cref="ServerTranslationState.BranchesWithWork"/>.
-        /// </summary>
-        public int? BranchesWithWork { get; set; }
-
-        /// <summary>How many lines those hold, counted once each. Null if unknown.</summary>
-        public int? LinesAvailable { get; set; }
-
-        /// <summary>
-        /// How many rows need a decision — see <see cref="ServerTranslationState.LinesToReview"/>.
-        /// Null on a server that predates it, which is "unknown", never zero.
-        /// </summary>
-        public int? LinesToReview { get; set; }
-
-        /// <summary>Of those, the ones the Main does not hold, by the contribution's tag.</summary>
-        public TagTally LinesNew { get; set; }
-
-        /// <summary>Of those, the ones both sides hold differently, by the contribution's tag.</summary>
-        public TagTally LinesDiffering { get; set; }
-
-        /// <summary>On a branch: what this contribution still holds for its Main. Null if unknown.</summary>
-        public int? LinesOffered { get; set; }
-
-        public UuidCheckTranslationInfo ExistingTranslation { get; set; } // For UPDATE
-        public UuidCheckTranslationInfo OriginalTranslation { get; set; } // For FORK
-
-        /// <summary>
-        /// Votes on the PUBLISHED translation of this lineage — the one being played, and the
-        /// one the ranking ranks. Null when nothing of it is published, and on any server too
-        /// old to report it: absence must read as "unknown", never as "no votes".
-        /// </summary>
-        public VoteState Vote { get; set; }
-    }
-
-    /// <summary>
-    /// What the mod needs to show a vote without deciding anything itself. Whether the player
-    /// MAY vote is a server rule (one owner, one translation, no self-votes) and stays there:
-    /// the mod asks, it does not re-implement.
-    /// </summary>
-    public class VoteState
-    {
-        /// <summary>The translation a vote from here would land on.</summary>
-        public int TargetId { get; set; }
-        public int Count { get; set; }
-        /// <summary>This player's own vote (+1 / -1), null when they have not voted.</summary>
-        public int? UserVote { get; set; }
-        public bool CanVote { get; set; }
-    }
-
-    public class UuidCheckTranslationInfo
-    {
-        public int Id { get; set; }
-        public string Uploader { get; set; }
-        public string SourceLanguage { get; set; }
-        public string TargetLanguage { get; set; }
-        public string Type { get; set; }
-
-        /// <summary>
-        /// "in_progress" or "complete" — the author's own declaration.
-        ///
-        /// ⚠ Read so it can be SHOWN and sent back unchanged. Without it the upload posted
-        /// "in_progress" every time, quietly undoing a translation its author had marked complete
-        /// on the website.
-        /// </summary>
-        public string Status { get; set; }
-        public string Notes { get; set; }
-
-        /// <summary>
-        /// The link to show: this translation's own, or the Main's when a branch has none.
-        /// </summary>
-        public string ResourcesUrl { get; set; }
-
-        /// <summary>
-        /// The link to EDIT: this row's own, never an inherited one.
-        ///
-        /// 🔴 Prefilling the edit field from <see cref="ResourcesUrl"/> and posting it back makes
-        /// a branch adopt a copy of its Main's link and stop following it, over an edit its author
-        /// never made. Null on servers older than the field, where the caller falls back.
-        /// </summary>
-        public string OwnResourcesUrl { get; set; }
-
-        public int LineCount { get; set; }
-        public string FileHash { get; set; }
-        public string UpdatedAt { get; set; }
-    }
-
-    public class BranchListResult
-    {
-        public bool Success { get; set; }
-        public string Error { get; set; }
-        public List<BranchInfo> Branches { get; set; }
-    }
-
-    /// <summary>
-    /// Information about a branch (contributor) to a translation
-    /// </summary>
-    public class BranchInfo
-    {
-        public int Id { get; set; }
-        public string Username { get; set; }
-        public int LineCount { get; set; }
-        /// <summary>Number of human-translated entries (tag H)</summary>
-        public int HumanCount { get; set; }
-        /// <summary>Number of AI-translated entries (tag A)</summary>
-        public int AiCount { get; set; }
-        /// <summary>Number of validated entries (tag V)</summary>
-        public int ValidatedCount { get; set; }
-        public string UpdatedAt { get; set; }
-    }
-
-    public class MergePreviewInitResult
-    {
-        public bool Success { get; set; }
-        public string Error { get; set; }
-        /// <summary>Token for the merge preview session</summary>
-        public string Token { get; set; }
-        /// <summary>URL to open in browser (may be relative)</summary>
-        public string Url { get; set; }
-        /// <summary>ISO8601 expiration timestamp</summary>
-        public string ExpiresAt { get; set; }
-    }
-
-    public class EditSessionInitResult
-    {
-        public bool Success { get; set; }
-        public string Error { get; set; }
-        /// <summary>Mod-side key for content download and SSE stream (never shown to a browser)</summary>
-        public string ModKey { get; set; }
-        /// <summary>URL to open in browser (may be relative, contains the one-time browser token)</summary>
-        public string Url { get; set; }
-        /// <summary>ISO8601 expiration timestamp</summary>
-        public string ExpiresAt { get; set; }
-    }
-
-    public class EditSessionContentResult
-    {
-        public bool Success { get; set; }
-        public string Error { get; set; }
-        /// <summary>Raw JSON of the session translations file</summary>
-        public string Content { get; set; }
-        /// <summary>
-        /// True when the server no longer knows the session (404). Distinguishes
-        /// "the session is over" — forget it — from a transient network failure,
-        /// which must keep a resumable session on disk.
-        /// </summary>
-        public bool SessionGone { get; set; }
-    }
-
-    public class EditSessionUpdateResult
-    {
-        public bool Success { get; set; }
-        public string Error { get; set; }
-        /// <summary>True when the server no longer knows the session (404)</summary>
-        public bool SessionGone { get; set; }
-        /// <summary>sha256 of the session file after this push</summary>
-        public string ContentHash { get; set; }
-        /// <summary>Seconds since the browser last signaled presence (null: never opened)</summary>
-        public int? BrowserSeenSecondsAgo { get; set; }
-        /// <summary>True when the pagehide beacon fired without a rejoin since</summary>
-        public bool BrowserLeft { get; set; }
-    }
-
-    #endregion
 }

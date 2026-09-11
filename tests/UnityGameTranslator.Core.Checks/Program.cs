@@ -150,6 +150,7 @@ namespace UnityGameTranslator.Core.Checks
         private static void WhatALoadedFileSaysAboutItself()
         {
             Section("What a translation file states about itself", LoadedFileChecks.Run);
+            Section("The translation file against the spec's cases", TranslationFileSpecChecks.Run);
             Section("A translation's own identity, on loading", LoadedIdentityChecks.Run);
             Section("Everything a reload has to re-run", ReloadChainChecks.Run);
             Section("Who the server was asked as", AccountVerdictChecks.Run);

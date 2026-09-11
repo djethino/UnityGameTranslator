@@ -160,6 +160,7 @@ namespace UnityGameTranslator.Core.Checks
         private static void HowANumberedSentenceIsRecognised()
         {
             Section("Number patterns", NumberPatternChecks.Run);
+            Section("The text gate: exact, normalized, trimmed, pattern", TextGateChecks.Run);
         }
 
         /// <summary>What a component's new text is, relative to the one it held a moment ago.</summary>

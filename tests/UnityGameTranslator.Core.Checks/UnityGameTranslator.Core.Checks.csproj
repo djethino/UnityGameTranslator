@@ -122,6 +122,13 @@
     -->
     <Compile Include="../../UnityGameTranslator.Core/Engine/NumberPatterns.cs" />
     <!--
+      The lookup ladder every displayed text climbs — exact, normalized, trimmed, pattern — and
+      the three answers it can get. The ORDER is the semantic: a rung answering out of turn shows
+      a translation of another line, or queues one the file already holds. A second Core has to
+      climb it in this order, and these cases are what holds it to that.
+    -->
+    <Compile Include="../../UnityGameTranslator.Core/Engine/TextGate.cs" />
+    <!--
       What a downloaded translation may ask of the disk and of the main thread. Both are pure by
       construction — a string in, an answer out — and both exist as files of their own so that the
       refusals AND the acceptances can be proved here rather than in a game.

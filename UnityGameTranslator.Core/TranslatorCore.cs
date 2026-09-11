@@ -6621,6 +6621,18 @@ namespace UnityGameTranslator.Core
             return result;
         }
 
+        /// <summary>
+        /// The game's variables as <see cref="TextGate"/> asks for them. A thin face over the static
+        /// <see cref="VariableManager"/>: no resolution here, only the two string transformations.
+        /// </summary>
+        private sealed class GameVariables : IVariableSubstitution
+        {
+            public static readonly GameVariables Instance = new GameVariables();
+            public bool HasVariables => VariableManager.HasVariables;
+            public string Extract(string text, out List<KeyValuePair<int, string>> extracted) => VariableManager.ExtractVariables(text, out extracted);
+            public string Restore(string text, List<KeyValuePair<int, string>> extracted) => VariableManager.RestoreVariables(text, extracted);
+        }
+
         public static string TranslateSingleText(string text)
         {
             if (string.IsNullOrEmpty(text))
@@ -6629,90 +6641,27 @@ namespace UnityGameTranslator.Core
             if (IsNumericOrSymbol(text))
                 return text;
 
-            // Normalize line endings FIRST (for cross-platform consistency)
-            // Cache keys are stored with normalized line endings (\n only)
-            string lineNormalized = NormalizeLineEndings(text);
-
-            // Extract string variables BEFORE numbers (variables may contain digits)
-            string afterVars = lineNormalized;
-            List<KeyValuePair<int, string>> extractedVars = null;
-            if (VariableManager.HasVariables)
+            // 🔴 The same ladder as the tracking path — exact, normalized, trimmed, pattern — in
+            // Engine/TextGate.cs, where its order is held by cases. This door has no component and
+            // no own-UI notion: it serves the localization fallback, which only ever sees the game.
+            // (Until 2026-09-11 it carried its own copy, which had drifted; see the gate's remarks.)
+            var look = TextGate.Lookup(text, isOwnUI: false, TranslationCache, Config.normalize_numbers, GameVariables.Instance, TryPatternMatch);
+            switch (look.Outcome)
             {
-                afterVars = VariableManager.ExtractVariables(lineNormalized, out extractedVars);
-            }
-
-            // Then extract numbers to placeholders (if enabled)
-            string normalizedText = afterVars;
-            List<string> extractedNumbers = null;
-            if (Config.normalize_numbers)
-            {
-                normalizedText = ExtractNumbersToPlaceholders(afterVars, out extractedNumbers);
-            }
-
-            // Check cache with NORMALIZED key
-            bool foundInCache = false;
-            if (TranslationCache.TryGetValue(normalizedText, out var cachedEntry))
-            {
-                foundInCache = true;
-                // H+empty (capture-only) or S (skipped): return original text
-                if (cachedEntry.IsHumanEmpty || cachedEntry.Tag == "S")
-                {
-                    cacheHitCount++;
-                    return text;
-                }
-                if (cachedEntry.Value != normalizedText)
-                {
-                    cacheHitCount++;
+                case GateOutcome.Hit:
+                    if (look.Stage != GateStage.Pattern) cacheHitCount++;
                     translatedCount++;
-                    // Restore numbers first, then variables
-                    string result = (extractedNumbers != null && extractedNumbers.Count > 0)
-                        ? RestoreNumbersFromPlaceholders(cachedEntry.Value, extractedNumbers)
-                        : cachedEntry.Value;
-                    return VariableManager.RestoreVariables(result, extractedVars);
-                }
-                // If cached == normalizedText, it means "no translation needed", still a cache hit
-            }
-
-            // Try trimmed normalized
-            string trimmed = normalizedText.Trim();
-            if (trimmed != normalizedText && TranslationCache.TryGetValue(trimmed, out var cachedTrimmedEntry))
-            {
-                foundInCache = true;
-                // H+empty (capture-only) or S (skipped): return original text
-                if (cachedTrimmedEntry.IsHumanEmpty || cachedTrimmedEntry.Tag == "S")
-                {
+                    return look.Value;
+                case GateOutcome.Known:
                     cacheHitCount++;
                     return text;
-                }
-                if (cachedTrimmedEntry.Value != trimmed)
-                {
-                    cacheHitCount++;
-                    string trimResult = (extractedNumbers != null && extractedNumbers.Count > 0)
-                        ? RestoreNumbersFromPlaceholders(cachedTrimmedEntry.Value, extractedNumbers)
-                        : cachedTrimmedEntry.Value;
-                    return VariableManager.RestoreVariables(trimResult, extractedVars);
-                }
-            }
-
-            // If found in cache with key == value, no translation needed, don't queue
-            if (foundInCache)
-            {
-                return text;
-            }
-
-            // Pattern matching (keep for non-number patterns)
-            string patternResult = TryPatternMatch(text);
-            if (patternResult != null)
-            {
-                translatedCount++;
-                return patternResult;
             }
 
             if ((Config.IsTranslationEnabled || Config.capture_keys_only) && !string.IsNullOrEmpty(text))
             {
                 // Check reverse cache with NORMALIZED text (translations are stored normalized + trimmed)
                 // TrimEnd because TMP often strips trailing whitespace/newlines when displaying
-                string trimmedNormalized = normalizedText.TrimEnd();
+                string trimmedNormalized = look.NormalizedText.TrimEnd();
                 if (IsAlreadyTargetText(text, trimmedNormalized))
                 {
                     skippedAlreadyTranslated++;
@@ -6893,24 +6842,21 @@ namespace UnityGameTranslator.Core
             // branch ends up asking a fourth way.
             var store = isOwnUI ? ModUiCache : TranslationCache;
 
-            // Fast path: try exact text lookup BEFORE any normalization (avoids allocations for cache hits)
-            if (store.TryGetValue(text, out var exactEntry))
-            {
-                // ⚠ The reveal was told at the top of this method, for every exit at once — this
-                // used to be said HERE, on the exact-key hit alone, which is the defect.
+            // 🔴 The ladder — exact, normalized, trimmed, pattern — lives in Engine/TextGate.cs,
+            // where its order is held by cases. What follows is what a verdict DOES on this host:
+            // the counters, the bounded debug lines, and the tracking a hit needs.
+            var look = TextGate.Lookup(text, isOwnUI, store, Config.normalize_numbers, GameVariables.Instance, TryPatternMatch);
 
-                // An entry with nothing in it is a line waiting for a translation, whatever tag it
-                // wears: the game's captures say so with H, and a hand-written interface file can
-                // hold a key somebody has not filled in yet. Both show the source text.
-                if (exactEntry.IsEmpty || exactEntry.Tag == "S")
+            if (look.Outcome == GateOutcome.Hit)
+            {
+                if (look.Stage != GateStage.Pattern) cacheHitCount++;
+                translatedCount++;
+
+                if (look.Stage == GateStage.Exact)
                 {
-                    cacheHitCount++;
-                    return text;
-                }
-                if (exactEntry.Value != text)
-                {
-                    cacheHitCount++;
-                    translatedCount++;
+                    // ⚠ The reveal was told at the top of this method, for every exit at once — this
+                    // used to be said HERE, on the exact-key hit alone, which is the defect.
+
                     // The canary for the defect NoteTextSeen was written for: a text recognised on
                     // a component whose reveal is still in flight. It is normal — recognition
                     // arrives before the last character, since the numbers are lifted out — and it
@@ -6927,64 +6873,11 @@ namespace UnityGameTranslator.Core
                     if (DebugMode && text.Length > 100)
                     {
                         int cId = (component is Component dc) ? TypeHelper.GetInstanceID(dc) : -1;
-                        LogDebug($"[CACHE-HIT-LONG] comp={cId}\n  key({text.Length}c)='{text}'\n  val({exactEntry.Value.Length}c)='{exactEntry.Value}'");
+                        LogDebug($"[CACHE-HIT-LONG] comp={cId}\n  key({text.Length}c)='{text}'\n  val({look.Value.Length}c)='{look.Value}'");
                     }
-                    if (component != null)
-                    {
-                        TranslatorScanner.StoreOriginalText(component, text);
-                        int trackId = TypeHelper.GetInstanceID(component);
-                        TranslatorPatches.TrackTranslation(trackId, text, exactEntry.Value);
-                    }
-                    return exactEntry.Value;
                 }
-                // key == value: no translation needed, return as-is
-                cacheHitCount++;
-                if (DebugMode && text.Length > 100)
+                else if (look.Stage == GateStage.Normalized)
                 {
-                    int cId = (component is Component dc2) ? TypeHelper.GetInstanceID(dc2) : -1;
-                    LogDebug($"[CACHE-HIT-SAME] comp={cId} key==val({text.Length}c)='{text}'");
-                }
-                return text;
-            }
-
-            // Normalize line endings (for cross-platform consistency)
-            // Cache keys are stored with normalized line endings (\n only)
-            string lineNormalized = NormalizeLineEndings(text);
-
-            // Extract string variables BEFORE numbers — never on our own GUI (game variables
-            // have no meaning there, and a colliding value would eat the label; see the worker).
-            string afterVars = lineNormalized;
-            List<KeyValuePair<int, string>> extractedVars = null;
-            if (VariableManager.HasVariables && !isOwnUI)
-            {
-                afterVars = VariableManager.ExtractVariables(lineNormalized, out extractedVars);
-            }
-
-            // Then extract numbers to placeholders (if enabled)
-            string normalizedText = afterVars;
-            List<string> extractedNumbers = null;
-            if (Config.normalize_numbers)
-            {
-                normalizedText = ExtractNumbersToPlaceholders(afterVars, out extractedNumbers);
-            }
-
-            string translation = null;
-
-            // Check cache with NORMALIZED key
-            bool foundInCache = false;
-            if (store.TryGetValue(normalizedText, out var cachedEntry))
-            {
-                foundInCache = true;
-                // Nothing in it (a capture, or a key nobody filled in) or S: return original text
-                if (cachedEntry.IsEmpty || cachedEntry.Tag == "S")
-                {
-                    cacheHitCount++;
-                    return text;
-                }
-                if (cachedEntry.Value != normalizedText)
-                {
-                    cacheHitCount++;
-                    translatedCount++;
                     // 🔴 **Said a few times, then not again.** This dumps the whole text TWICE —
                     // original and normalised, newlines and markup included — on every cache hit
                     // over a hundred characters. On a game whose long tooltips are on screen
@@ -6998,74 +6891,31 @@ namespace UnityGameTranslator.Core
                     {
                         _dbgCacheHitNormLog++;
                         int cId = (component is Component dc3) ? TypeHelper.GetInstanceID(dc3) : -1;
-                        LogDebug($"[CACHE-HIT-NORM] comp={cId} orig({text.Length}c) norm→key({normalizedText.Length}c)\n  orig='{text}'\n  norm='{normalizedText}'");
-                    }
-                    // Restore numbers then variables in the translation
-                    string rawTranslation = (extractedNumbers != null && extractedNumbers.Count > 0)
-                        ? RestoreNumbersFromPlaceholders(cachedEntry.Value, extractedNumbers)
-                        : cachedEntry.Value;
-                    translation = VariableManager.RestoreVariables(rawTranslation, extractedVars);
-                }
-                // If cached == normalizedText, it means "no translation needed", still a cache hit
-            }
-
-            // Try trimmed normalized
-            if (translation == null && !foundInCache)
-            {
-                string trimmed = normalizedText.Trim();
-                if (trimmed != normalizedText && store.TryGetValue(trimmed, out var cachedTrimmedEntry))
-                {
-                    foundInCache = true;
-                    // Nothing in it (a capture, or a key nobody filled in) or S: return original
-                    if (cachedTrimmedEntry.IsEmpty || cachedTrimmedEntry.Tag == "S")
-                    {
-                        cacheHitCount++;
-                        return text;
-                    }
-                    if (cachedTrimmedEntry.Value != trimmed)
-                    {
-                        cacheHitCount++;
-                        string rawTrimTranslation = (extractedNumbers != null && extractedNumbers.Count > 0)
-                            ? RestoreNumbersFromPlaceholders(cachedTrimmedEntry.Value, extractedNumbers)
-                            : cachedTrimmedEntry.Value;
-                        translation = VariableManager.RestoreVariables(rawTrimTranslation, extractedVars);
+                        LogDebug($"[CACHE-HIT-NORM] comp={cId} orig({text.Length}c) norm→key({look.NormalizedText.Length}c)\n  orig='{text}'\n  norm='{look.NormalizedText}'");
                     }
                 }
-            }
 
-            // Pattern matching no longer needed for numbers (normalized lookup handles it)
-            // But keep for other patterns that might exist.
-            //
-            // ⚠ The GAME's patterns only. They are built from the game's lines, and letting one
-            // rewrite a label of ours is the mixing this split removes — our own placeholders
-            // ("Apply ([!v*0])") already resolve through the normalized lookup above.
-            if (translation == null && !isOwnUI)
-            {
-                string patternResult = TryPatternMatch(text);
-                if (patternResult != null)
-                {
-                    translatedCount++;
-                    translation = patternResult;
-                }
-            }
-
-            // If we found a translation in cache, return it synchronously
-            // This prevents the game from reading back translated text and appending to it
-            if (translation != null)
-            {
-                // Store original text for this component (enables runtime toggle restoration)
+                // Return it synchronously — this prevents the game from reading back translated
+                // text and appending to it. Store the original for this component (enables the
+                // runtime toggle restoration) and track the pair.
                 if (component != null)
                 {
                     TranslatorScanner.StoreOriginalText(component, text);
-                    int trackId = (component is Component tc) ? TypeHelper.GetInstanceID(tc) : -1;
-                    TranslatorPatches.TrackTranslation(trackId, text, translation);
+                    TranslatorPatches.TrackTranslation(TypeHelper.GetInstanceID(component), text, look.Value);
                 }
-                return translation;
+                return look.Value;
             }
 
-            // If found in cache with key == value, no translation needed, don't queue
-            if (foundInCache)
+            if (look.Outcome == GateOutcome.Known)
             {
+                // Nothing in it (a capture, or a key nobody filled in), S, or key == value:
+                // the source is what to show, and nothing is queued.
+                cacheHitCount++;
+                if (look.Stage == GateStage.Exact && DebugMode && text.Length > 100)
+                {
+                    int cId = (component is Component dc2) ? TypeHelper.GetInstanceID(dc2) : -1;
+                    LogDebug($"[CACHE-HIT-SAME] comp={cId} known as shown ({text.Length}c)='{text}'");
+                }
                 return text;
             }
 
@@ -7076,7 +6926,7 @@ namespace UnityGameTranslator.Core
                 // TrimEnd because TMP often strips trailing whitespace/newlines when displaying.
                 // ⚠ Its OWN side's index: a mod-interface translation answering here about a game
                 // text would take that line out of the file that gets published, invisibly.
-                string trimmedNormalized = normalizedText.TrimEnd();
+                string trimmedNormalized = look.NormalizedText.TrimEnd();
                 if (IsAlreadyTargetText(text, trimmedNormalized, isOwnUI))
                 {
                     skippedAlreadyTranslated++;

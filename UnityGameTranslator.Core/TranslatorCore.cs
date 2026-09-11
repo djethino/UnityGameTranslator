@@ -4385,37 +4385,6 @@ namespace UnityGameTranslator.Core
             _stale.Take(cacheSnapshot, Config.normalize_numbers);
         }
 
-        /// <summary>
-        /// Recognize a displayed text that is a translation from the pre-reload cache.
-        /// Returns the refreshed translation from the new cache, the input text itself
-        /// when the entry no longer exists (marked as translated so it is never queued),
-        /// or null when the text is not a stale translation.
-        /// </summary>
-        private static string TryResolveStaleTranslation(string text, string trimmedNormalized, object component)
-        {
-            var verdict = _stale.Resolve(text, trimmedNormalized, TranslationCache, Config.normalize_numbers);
-            switch (verdict.Kind)
-            {
-                case StaleKind.Refreshed:
-                    if (component != null)
-                    {
-                        TranslatorScanner.StoreOriginalText(component, verdict.OriginalText);
-                        TranslatorPatches.TrackTranslation(TypeHelper.GetInstanceID(component), verdict.OriginalText, verdict.NewText);
-                    }
-                    translatedCount++;
-                    return verdict.NewText;
-
-                case StaleKind.Gone:
-                    // ⚠ The GAME's index: the stale snapshot is taken from the game's cache before a
-                    // reload, and own-UI text returns before ever reaching this function.
-                    _readback.MarkTarget(trimmedNormalized, ownUi: false);
-                    return text;
-
-                default:
-                    return null;
-            }
-        }
-
         #endregion
 
         private static bool workerRunning = false;
@@ -6407,34 +6376,33 @@ namespace UnityGameTranslator.Core
                     return text;
             }
 
-            if ((Config.IsTranslationEnabled || Config.capture_keys_only) && !string.IsNullOrEmpty(text))
+            // The same miss path as the tracking door, with no component: nothing to hide,
+            // nothing to reveal — see TextGate.ResolveMiss for the order.
+            var miss = TextGate.ResolveMiss(text, isOwnUI: false, normalizedText: look.NormalizedText,
+                gateOpen: Config.IsTranslationEnabled || Config.capture_keys_only,
+                skipTypewriting: false, skipQueueing: false,
+                readback: _readback, stale: _stale, current: TranslationCache, normalizeNumbers: Config.normalize_numbers,
+                host: GateHost.Instance, component: null);
+            switch (miss.Kind)
             {
-                // Check reverse cache with NORMALIZED text (translations are stored normalized + trimmed)
-                // TrimEnd because TMP often strips trailing whitespace/newlines when displaying
-                string trimmedNormalized = look.NormalizedText.TrimEnd();
-                if (IsAlreadyTargetText(text, trimmedNormalized))
-                {
+                case MissKind.AlreadyTarget:
                     skippedAlreadyTranslated++;
                     return text;
-                }
-
-                // Text may be a translation from the pre-reload cache still displayed
-                // (component missed by RestoreAllOriginals) — refresh it, never queue it
-                string staleRefreshed = TryResolveStaleTranslation(text, trimmedNormalized, null);
-                if (staleRefreshed != null)
-                    return staleRefreshed;
-
-                // A never-seen text may miss only because variable values went
-                // stale (game assigned a new seed/name this frame). Refresh and
-                // retry the whole lookup once — RefreshOnMiss is throttled to
-                // once per frame, so the recursion cannot loop.
-                if (VariableManager.RefreshOnMiss())
+                case MissKind.Refreshed:
+                    translatedCount++;
+                    return miss.NewText;
+                case MissKind.Gone:
+                    _readback.MarkTarget(miss.TrimmedNormalized, ownUi: false);
+                    return text;
+                case MissKind.Retry:
+                    // RefreshOnMiss is throttled to once per frame, so the recursion cannot loop.
                     return TranslateSingleText(text);
-
-                QueueForTranslation(text);
+                case MissKind.Queue:
+                    QueueForTranslation(text);
+                    return text;
+                default:
+                    return text;
             }
-
-            return text;
         }
 
         /// <summary>
@@ -6669,16 +6637,17 @@ namespace UnityGameTranslator.Core
                 return text;
             }
 
-            // No cache hit - queue for AI if enabled (or for capture-only mode)
-            if ((Config.IsTranslationEnabled || Config.capture_keys_only) && !string.IsNullOrEmpty(text))
+            // 🔴 The miss path — reverse index, own UI, stale snapshot, visibility, reveal, concat,
+            // variables, queue — is TextGate.ResolveMiss, where its order is held by cases. What
+            // follows is what each verdict DOES on this host.
+            var miss = TextGate.ResolveMiss(text, isOwnUI, look.NormalizedText,
+                gateOpen: Config.IsTranslationEnabled || Config.capture_keys_only,
+                skipTypewriting: skipTypewriting, skipQueueing: skipQueueing,
+                readback: _readback, stale: _stale, current: TranslationCache, normalizeNumbers: Config.normalize_numbers,
+                host: GateHost.Instance, component: component);
+            switch (miss.Kind)
             {
-                // Check reverse cache with NORMALIZED text (translations are stored normalized + trimmed)
-                // TrimEnd because TMP often strips trailing whitespace/newlines when displaying.
-                // ⚠ Its OWN side's index: a mod-interface translation answering here about a game
-                // text would take that line out of the file that gets published, invisibly.
-                string trimmedNormalized = look.NormalizedText.TrimEnd();
-                if (IsAlreadyTargetText(text, trimmedNormalized, isOwnUI))
-                {
+                case MissKind.AlreadyTarget:
                     skippedAlreadyTranslated++;
                     // This component displays an ALREADY-translated string (e.g. a title's shadow/
                     // duplicate layer copied from the main layer) and so never had its source stored —
@@ -6693,102 +6662,87 @@ namespace UnityGameTranslator.Core
                             TranslatorScanner.StoreOriginalText(component, src);
                     }
                     return text;
-                }
 
-                // Own UI text that's already translated (displayed result) — don't re-queue.
-                // The mod UI shows translated text; re-queueing it creates an infinite loop.
-                //
-                // ⚠ Before the stale-translation check below, which reasons about the GAME's cache
-                // as it stood before a reload: nothing of ours is in that snapshot, so asking it
-                // about one of our labels can only ever answer wrongly.
-                if (isOwnUI)
-                {
+                case MissKind.Refreshed:
+                    if (component != null)
+                    {
+                        TranslatorScanner.StoreOriginalText(component, miss.OriginalText);
+                        TranslatorPatches.TrackTranslation(TypeHelper.GetInstanceID(component), miss.OriginalText, miss.NewText);
+                    }
+                    translatedCount++;
+                    return miss.NewText;
+
+                case MissKind.Gone:
+                    // ⚠ The GAME's index: the stale snapshot is taken from the game's cache before a
+                    // reload, and own-UI text returns before ever reaching this point.
+                    _readback.MarkTarget(miss.TrimmedNormalized, ownUi: false);
                     return text;
-                }
 
-                // Text may be a translation from the pre-reload cache still displayed
-                // (component missed by RestoreAllOriginals) — refresh it, never queue it
-                string staleRefreshed = TryResolveStaleTranslation(text, trimmedNormalized, component);
-                if (staleRefreshed != null)
-                    return staleRefreshed;
+                case MissKind.Retry:
+                    NoteReverseMiss(text, miss.TrimmedNormalized);
+                    return TranslateSingleTextWithTracking(text, component, isOwnUI, skipTypewriting, skipQueueing);
 
-                // Skip invisible components ONLY if they're also in typewriting state
-                // (likely an accumulator: hidden component with growing text).
-                // Inactive components with STABLE text (tab panels, menus) are allowed
-                // through so they get translated before the user opens them.
-                if (component is Component visComp)
-                {
-                    try
-                    {
-                        if (visComp.gameObject != null && !visComp.gameObject.activeInHierarchy)
-                        {
-                            int visCompId = TypeHelper.GetInstanceID(visComp);
-                            if (TranslatorPatches.IsInTypewritingState(visCompId))
-                            {
-                                // 🔴 Tell the reveal what this component now shows before turning
-                                // back, and through the same door as everywhere else.
-                                //
-                                // Returning without a word froze the state on a text the game had
-                                // already replaced, and the stabiliser then finalised THAT one.
-                                // Measured on a game that fills its tooltips while they are still
-                                // hidden and shows them afterwards: the component was set to
-                                // `*Activate* ({0}): Add {1} *Power*.` and, on the very next line
-                                // of the log, to `*Activate* (2): Add 3 *Power*.` — and half a
-                                // second later the mod sent the first of the two to the model.
-                                //
-                                // ⚠ Being out of sight changes what may be QUEUED, never what may
-                                // be KNOWN. The answer is dropped on purpose: this branch has
-                                // already decided to turn back.
-                                if (!skipTypewriting)
-                                    TranslatorPatches.IsTypewritingInProgress(visCompId, text, component);
-                                return text;
-                            }
-                        }
-                    }
-                    catch { }
-                }
-
-                // Typewriting detection: skip queuing if text is growing char by char
-                // on the same component. Only for cache MISSES — cache hits are returned above.
-                // This prevents partial typewriting text from being sent to AI.
-                // Skip for concat deltas (they should be queued immediately, not deferred).
-                int compId = (component is Component comp2) ? TypeHelper.GetInstanceID(comp2) : -1;
-                if (!skipTypewriting && TranslatorPatches.IsTypewritingInProgress(compId, text, component))
-                {
-                    return text;
-                }
-
-                // DEBUG LOG: if text contains Latin chars and wasn't caught by reverse cache
-                // Log AFTER all skip checks so we only see texts actually queued
-                if (_dbgReverseMiss < 20 && text.Length > 5)
-                {
-                    bool hasLatin = false;
-                    foreach (char c in text)
-                    {
-                        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'))
-                        { hasLatin = true; break; }
-                    }
-                    if (hasLatin)
-                    {
-                        _dbgReverseMiss++;
-                        LogDebug($"[REVERSE-MISS] orig({text.Length}c)='{text}'\n  norm({trimmedNormalized.Length}c)='{trimmedNormalized}'");
-                    }
-                }
-
-                if (!skipQueueing)
-                {
-                    // Same stale-variables guard as TranslateSingleText: refresh
-                    // and retry once before minting a new queue entry (throttled
-                    // once per frame — the recursion cannot loop)
-                    if (VariableManager.RefreshOnMiss())
-                        return TranslateSingleTextWithTracking(text, component, isOwnUI, skipTypewriting, skipQueueing);
-
+                case MissKind.Queue:
+                    NoteReverseMiss(text, miss.TrimmedNormalized);
                     QueueForTranslation(text, component, isOwnUI);
+                    return text;
+
+                default:
+                    // Closed, OwnUiUnknown, HeldHidden, HeldRevealing, NotQueued: the text as shown.
+                    return text;
+            }
+        }
+
+        /// <summary>
+        /// DEBUG LOG: a text with Latin letters that reached the queue without the reverse index
+        /// recognising it — after every skip check, so only texts actually queued are named.
+        /// </summary>
+        private static void NoteReverseMiss(string text, string trimmedNormalized)
+        {
+            if (_dbgReverseMiss < 20 && text.Length > 5)
+            {
+                bool hasLatin = false;
+                foreach (char c in text)
+                {
+                    if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'))
+                    { hasLatin = true; break; }
                 }
-                // else: concat component — deltas are queued individually, skip full text queue
+                if (hasLatin)
+                {
+                    _dbgReverseMiss++;
+                    LogDebug($"[REVERSE-MISS] orig({text.Length}c)='{text}'\n  norm({trimmedNormalized.Length}c)='{trimmedNormalized}'");
+                }
+            }
+        }
+
+        /// <summary>
+        /// The three questions of the miss path only this host can answer — see
+        /// <see cref="ITextGateHost"/>. One instance for every call: the component travels as the
+        /// opaque object every caller already holds, so a miss allocates nothing here.
+        /// </summary>
+        private sealed class GateHost : ITextGateHost
+        {
+            public static readonly GateHost Instance = new GateHost();
+
+            public bool IsHiddenWhileRevealing(object component)
+            {
+                if (!(component is Component visComp)) return false;
+                try
+                {
+                    if (visComp.gameObject != null && !visComp.gameObject.activeInHierarchy)
+                        return TranslatorPatches.IsInTypewritingState(TypeHelper.GetInstanceID(visComp));
+                }
+                catch { }
+                return false;
             }
 
-            return text;
+            public bool IsRevealInProgress(object component, string text)
+            {
+                int compId = (component is Component comp) ? TypeHelper.GetInstanceID(comp) : -1;
+                return TranslatorPatches.IsTypewritingInProgress(compId, text, component);
+            }
+
+            public bool RefreshVariables() => VariableManager.RefreshOnMiss();
         }
 
         public static string TryPatternMatch(string text)

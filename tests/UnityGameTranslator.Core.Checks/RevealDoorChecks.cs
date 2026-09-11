@@ -56,7 +56,7 @@ namespace UnityGameTranslator.Core.Checks
 
             // Ahead of every exit that can answer. The first `return` of the method body that
             // follows a cache question is what must never come first.
-            int firstLookup = FirstIndexOf(lookup, "GetConcatCacheResult(", "store.TryGetValue(", "TryPatternMatch(");
+            int firstLookup = FirstIndexOf(lookup, "GetConcatCacheResult(", "TextGate.Lookup(", "store.TryGetValue(", "TryPatternMatch(");
             check(firstLookup >= 0 && told < firstLookup,
                 "before the first question that can answer and return",
                 "told after a lookup, every text that lookup recognises still leaves the reveal holding what it had");
@@ -122,7 +122,7 @@ namespace UnityGameTranslator.Core.Checks
                 "🔴 the only one that protects a file polluted before the rule: written back, the game cannot expand its own text");
 
             int told = lookup.IndexOf("IsExpandedInPlace(", StringComparison.Ordinal);
-            int firstLookup = FirstIndexOf(lookup, "GetConcatCacheResult(", "store.TryGetValue(", "TryPatternMatch(");
+            int firstLookup = FirstIndexOf(lookup, "GetConcatCacheResult(", "TextGate.Lookup(", "store.TryGetValue(", "TryPatternMatch(");
             check(told >= 0 && firstLookup >= 0 && told < firstLookup,
                 "asked before any lookup can answer",
                 "it is a lookup ANSWERING that does the damage, so asking afterwards is asking too late");
@@ -138,12 +138,23 @@ namespace UnityGameTranslator.Core.Checks
                 "refusing the whole skeleton would leave the line in the game's own language, which is worse than the defect being fixed");
 
             // 🔴 Being out of sight changes what may be QUEUED, never what may be KNOWN.
-            int hidden = lookup.IndexOf("!visComp.gameObject.activeInHierarchy", StringComparison.Ordinal);
-            int hiddenEnd = hidden < 0 ? -1 : lookup.IndexOf("catch { }", hidden, StringComparison.Ordinal);
-            string hiddenBranch = hidden >= 0 && hiddenEnd > hidden ? lookup.Substring(hidden, hiddenEnd - hidden) : null;
-            check(hiddenBranch != null && hiddenBranch.Contains("IsTypewritingInProgress(", StringComparison.Ordinal),
+            //
+            // Since 2026-09-11 the branch lives in the pure miss path (Engine/TextGate.cs), which
+            // asks the host, and the host's answer is the same door as everywhere else. Two halves,
+            // two files — and TextGateChecks proves the branch behaviourally as well.
+            string gateFile = Find("UnityGameTranslator.Core", "Engine", "TextGate.cs");
+            string missPath = gateFile == null ? null : BodyOf(File.ReadAllText(gateFile), "public static MissVerdict ResolveMiss(");
+            int hidden = missPath == null ? -1 : missPath.IndexOf("IsHiddenWhileRevealing(", StringComparison.Ordinal);
+            int hiddenEnd = hidden < 0 ? -1 : missPath.IndexOf("return ", hidden, StringComparison.Ordinal);
+            string hiddenBranch = hidden >= 0 && hiddenEnd > hidden ? missPath.Substring(hidden, hiddenEnd - hidden) : null;
+            check(hiddenBranch != null && hiddenBranch.Contains("IsRevealInProgress(", StringComparison.Ordinal),
                 "a component out of sight still tells the reveal what it shows",
                 "🔴 turning back without a word freezes the state on a text the game has already replaced, and the stabiliser then sends THAT — a game filling its tooltips while hidden had its template sent while the next state sat on the same component");
+
+            string door = BodyOf(core, "public bool IsRevealInProgress(object component, string text)");
+            check(door != null && door.Contains("TranslatorPatches.IsTypewritingInProgress(", StringComparison.Ordinal),
+                "and through the same door as everywhere else",
+                "the host's answer IS the reveal's one door; a second way of telling it would be a second state to keep in step");
         }
 
         /// <summary>

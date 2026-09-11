@@ -64,6 +64,69 @@ namespace UnityGameTranslator.Core
     }
 
     /// <summary>
+    /// What the miss path asks of the host, in the order it asks. Each question is about the
+    /// component the text was set on, handed through as the opaque object every caller already
+    /// holds — so one static host serves every call and a miss allocates nothing here.
+    ///
+    /// 🔴 **Asked DURING the descent, never collected before it.** <see cref="IsRevealInProgress"/>
+    /// has effects — it is the one door through which a reveal is followed, and it records the
+    /// text it is shown — and it must be asked only once the rungs above have said "not known".
+    /// Asking it earlier, to hand the answer in as a fact, would change the moment a reveal
+    /// learns what its component shows. That is why this is an interface and not a struct of facts.
+    /// </summary>
+    public interface ITextGateHost
+    {
+        /// <summary>The component is out of sight AND a reveal is in flight on it — an accumulator filling a hidden tooltip. False for anything that is not a component.</summary>
+        bool IsHiddenWhileRevealing(object component);
+
+        /// <summary>Typewriting detection: the text is growing char by char on this component. Has effects (the reveal is told). False for anything that is not a component.</summary>
+        bool IsRevealInProgress(object component, string text);
+
+        /// <summary>Re-resolve the game's variables right before a never-seen text is queued; true when a refresh actually ran, so the whole lookup is retried once (the host throttles, so the retry cannot loop).</summary>
+        bool RefreshVariables();
+    }
+
+    /// <summary>What becomes of a text the ladder did not find.</summary>
+    public enum MissKind
+    {
+        /// <summary>The gate is shut (translation off and not capturing) or the text is empty: nothing happens.</summary>
+        Closed,
+        /// <summary>One of our own translations coming back: left alone, never learnt.</summary>
+        AlreadyTarget,
+        /// <summary>A label of the mod's own interface the file does not hold: shown as is, never queued from here (the anti-loop guard; a code-owned label submits itself).</summary>
+        OwnUiUnknown,
+        /// <summary>An old translation still on screen after a reload, whose line still exists: show <see cref="MissVerdict.NewText"/>.</summary>
+        Refreshed,
+        /// <summary>An old translation still on screen after a reload, whose line is gone: keep it, and mark it ours.</summary>
+        Gone,
+        /// <summary>Out of sight while a reveal is in flight: held back, the reveal told.</summary>
+        HeldHidden,
+        /// <summary>A reveal in progress: held back until the text settles.</summary>
+        HeldRevealing,
+        /// <summary>A concat delta: deltas are queued individually, the whole text is not.</summary>
+        NotQueued,
+        /// <summary>The variables were refreshed: climb the whole ladder again, once.</summary>
+        Retry,
+        /// <summary>A line nobody has: queue it.</summary>
+        Queue,
+    }
+
+    /// <summary>The miss path's answer.</summary>
+    public struct MissVerdict
+    {
+        public MissKind Kind;
+        /// <summary>The refreshed translation to show (<see cref="MissKind.Refreshed"/> only).</summary>
+        public string NewText;
+        /// <summary>The source of that translation, live numbers put back — the component's original (<see cref="MissKind.Refreshed"/> only).</summary>
+        public string OriginalText;
+        /// <summary>The key shape the indexes were asked with, trailing whitespace trimmed — what <see cref="MissKind.Gone"/> marks as ours.</summary>
+        public string TrimmedNormalized;
+
+        internal static MissVerdict Of(MissKind kind, string trimmedNormalized)
+            => new MissVerdict { Kind = kind, TrimmedNormalized = trimmedNormalized };
+    }
+
+    /// <summary>
     /// The lookup ladder every displayed text climbs before anything else happens to it: is this
     /// line already in the file, and in which shape?
     ///
@@ -106,10 +169,20 @@ namespace UnityGameTranslator.Core
     /// out. No Unity, no clock, no state of its own — the store, the variables and the patterns
     /// are the caller's, handed in. Linked by tests/UnityGameTranslator.Core.Checks.
     ///
-    /// ⚠ What happens AFTER a miss — the reverse index, the stale snapshot, visibility, a reveal
-    /// in flight, the queue — is not here yet: it reads state that still lives in TranslatorCore
-    /// (step 6t of analyse/plan-prealables-couches.md). The order of those rungs is written where
-    /// they run.
+    /// ⚠ What happens AFTER a miss is the second half, <see cref="ResolveMiss"/>, and its order is
+    /// held by cases just the same:
+    ///
+    /// | rung | question | answer |
+    /// |---|---|---|
+    /// | gate | is translation on, or capture? | <see cref="MissKind.Closed"/> otherwise — nothing below is asked |
+    /// | reverse index | is this one of OUR translations coming back? | <see cref="MissKind.AlreadyTarget"/> |
+    /// | own UI | is it a label of ours the file does not hold? | <see cref="MissKind.OwnUiUnknown"/> — the stale snapshot is the GAME's, and must not be asked about our labels |
+    /// | stale snapshot | is it an old translation still on screen? | <see cref="MissKind.Refreshed"/> / <see cref="MissKind.Gone"/> |
+    /// | visibility | hidden while a reveal is in flight? | <see cref="MissKind.HeldHidden"/> — the reveal is told first |
+    /// | reveal | growing char by char? | <see cref="MissKind.HeldRevealing"/> |
+    /// | concat | a delta queued on its own? | <see cref="MissKind.NotQueued"/> |
+    /// | variables | did a refresh just run? | <see cref="MissKind.Retry"/> — the whole ladder again, once |
+    /// | queue | | <see cref="MissKind.Queue"/> |
     /// </summary>
     public static class TextGate
     {
@@ -204,6 +277,108 @@ namespace UnityGameTranslator.Core
                 return GateLookup.KnownAt(knownAt, normalizedText);
 
             return GateLookup.Missed(normalizedText);
+        }
+
+        /// <summary>
+        /// What becomes of a text the ladder did not find. See the class remarks for the rungs and
+        /// their order; what each verdict DOES (counters, tracking, the queue itself) is the caller's.
+        /// </summary>
+        /// <param name="text">The text as shown.</param>
+        /// <param name="isOwnUI">True for the mod's own labels.</param>
+        /// <param name="normalizedText">The key shape <see cref="Lookup"/> reported; the indexes are asked with it, trailing whitespace trimmed.</param>
+        /// <param name="gateOpen">Translation on, or capture-only on — the two reasons a miss is worth anything.</param>
+        /// <param name="skipTypewriting">Do not ask the reveal (a concat delta: immediate by design).</param>
+        /// <param name="skipQueueing">Do not queue (a concat component: its deltas are queued one by one).</param>
+        /// <param name="readback">Our own translations coming back.</param>
+        /// <param name="stale">The post-reload safety net.</param>
+        /// <param name="current">The GAME's cache as it stands, for the stale snapshot to refresh from.</param>
+        /// <param name="normalizeNumbers">Whether numbers are lifted into slots.</param>
+        /// <param name="host">The three questions only the host can answer; may be null when there is no component and no variables (a check, or a text with no home).</param>
+        /// <param name="component">The component the text was set on, opaque, handed to the host's questions.</param>
+        public static MissVerdict ResolveMiss(
+            string text,
+            bool isOwnUI,
+            string normalizedText,
+            bool gateOpen,
+            bool skipTypewriting,
+            bool skipQueueing,
+            ReadbackIndex readback,
+            StaleSnapshot stale,
+            IDictionary<string, TranslationEntry> current,
+            bool normalizeNumbers,
+            ITextGateHost host,
+            object component)
+        {
+            if (readback == null) throw new ArgumentNullException(nameof(readback));
+            if (stale == null) throw new ArgumentNullException(nameof(stale));
+
+            string trimmedNormalized = (normalizedText ?? text ?? "").TrimEnd();
+
+            if (!gateOpen || string.IsNullOrEmpty(text))
+                return MissVerdict.Of(MissKind.Closed, trimmedNormalized);
+
+            // Check reverse cache with NORMALIZED text (translations are stored normalized + trimmed)
+            // TrimEnd because TMP often strips trailing whitespace/newlines when displaying.
+            // ⚠ Its OWN side's index: a mod-interface translation answering here about a game
+            // text would take that line out of the file that gets published, invisibly.
+            if (readback.IsAlreadyTarget(text, trimmedNormalized, isOwnUI))
+                return MissVerdict.Of(MissKind.AlreadyTarget, trimmedNormalized);
+
+            // Own UI text that's already translated (displayed result) — don't re-queue.
+            // The mod UI shows translated text; re-queueing it creates an infinite loop.
+            //
+            // ⚠ Before the stale-translation check below, which reasons about the GAME's cache
+            // as it stood before a reload: nothing of ours is in that snapshot, so asking it
+            // about one of our labels can only ever answer wrongly.
+            if (isOwnUI)
+                return MissVerdict.Of(MissKind.OwnUiUnknown, trimmedNormalized);
+
+            // Text may be a translation from the pre-reload cache still displayed
+            // (component missed by RestoreAllOriginals) — refresh it, never queue it
+            var old = stale.Resolve(text, trimmedNormalized, current, normalizeNumbers);
+            if (old.Kind == StaleKind.Refreshed)
+                return new MissVerdict { Kind = MissKind.Refreshed, NewText = old.NewText, OriginalText = old.OriginalText, TrimmedNormalized = trimmedNormalized };
+            if (old.Kind == StaleKind.Gone)
+                return MissVerdict.Of(MissKind.Gone, trimmedNormalized);
+
+            if (host != null)
+            {
+                // Skip invisible components ONLY if they're also in typewriting state
+                // (likely an accumulator: hidden component with growing text).
+                // Inactive components with STABLE text (tab panels, menus) are allowed
+                // through so they get translated before the user opens them.
+                if (host.IsHiddenWhileRevealing(component))
+                {
+                    // 🔴 Tell the reveal what this component now shows before turning back, and
+                    // through the same door as everywhere else. Returning without a word froze the
+                    // state on a text the game had already replaced, and the stabiliser then
+                    // finalised THAT one. ⚠ Being out of sight changes what may be QUEUED, never
+                    // what may be KNOWN. The answer is dropped on purpose: this branch has already
+                    // decided to turn back.
+                    if (!skipTypewriting)
+                        host.IsRevealInProgress(component, text);
+                    return MissVerdict.Of(MissKind.HeldHidden, trimmedNormalized);
+                }
+
+                // Typewriting detection: skip queuing if text is growing char by char
+                // on the same component. Only for cache MISSES — cache hits are returned above.
+                // This prevents partial typewriting text from being sent to AI.
+                // Skip for concat deltas (they should be queued immediately, not deferred).
+                if (!skipTypewriting && host.IsRevealInProgress(component, text))
+                    return MissVerdict.Of(MissKind.HeldRevealing, trimmedNormalized);
+            }
+
+            // concat component — deltas are queued individually, skip full text queue
+            if (skipQueueing)
+                return MissVerdict.Of(MissKind.NotQueued, trimmedNormalized);
+
+            // A never-seen text may miss only because variable values went stale (game
+            // assigned a new seed/name this frame). Refresh and retry the whole lookup once —
+            // the host throttles the refresh to once per frame, so the retry cannot loop.
+            if (host != null && host.RefreshVariables())
+                return MissVerdict.Of(MissKind.Retry, trimmedNormalized);
+
+            return MissVerdict.Of(MissKind.Queue, trimmedNormalized);
         }
 
         /// <summary>Numbers back first, then variables — the reverse of the extraction.</summary>

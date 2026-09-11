@@ -28,6 +28,127 @@ namespace UnityGameTranslator.Core.Checks
             OwnUi(check);
             Variables(check);
             Misses(check);
+            AfterAMiss(check);
+        }
+
+        /// <summary>The host's three answers, and the order in which they were asked.</summary>
+        private sealed class FakeHost : ITextGateHost
+        {
+            public bool Hidden, Revealing;
+            public int RefreshesLeft;
+            public readonly List<string> Asked = new List<string>();
+            public object LastComponent;
+
+            public bool IsHiddenWhileRevealing(object component) { Asked.Add("hidden"); LastComponent = component; return Hidden; }
+            public bool IsRevealInProgress(object component, string text) { Asked.Add("reveal"); LastComponent = component; return Revealing; }
+            public bool RefreshVariables() { Asked.Add("refresh"); if (RefreshesLeft <= 0) return false; RefreshesLeft--; return true; }
+        }
+
+        private static MissVerdict Miss(string text, ReadbackIndex readback = null, StaleSnapshot stale = null, FakeHost host = null,
+            bool ownUi = false, bool gateOpen = true, bool skipTypewriting = false, bool skipQueueing = false,
+            Dictionary<string, TranslationEntry> current = null, string normalized = null, object component = null)
+            => TextGate.ResolveMiss(text, ownUi, normalized ?? text, gateOpen, skipTypewriting, skipQueueing,
+                readback ?? new ReadbackIndex(), stale ?? new StaleSnapshot(), current ?? Store(), true, host, component);
+
+        private static void AfterAMiss(Action<bool, string, string> check)
+        {
+            // The gate
+            var ours = new ReadbackIndex();
+            ours.Index("Play", "Jouer", ownUi: false, normalizeNumbers: true);
+            var shut = new FakeHost { Hidden = true };
+            var closed = Miss("Jouer", readback: ours, host: shut, gateOpen: false);
+            check(closed.Kind == MissKind.Closed && shut.Asked.Count == 0,
+                "with the gate shut, nothing is asked of anybody",
+                "translation off and no capture: a miss means nothing, and no reveal is told anything");
+
+            check(Miss("", host: shut).Kind == MissKind.Closed && Miss(null, host: shut).Kind == MissKind.Closed && shut.Asked.Count == 0,
+                "nor for an empty text",
+                "there is nothing to queue and nothing to hold");
+
+            // The reverse index, first
+            var hidden = new FakeHost { Hidden = true };
+            var back = Miss("Jouer", readback: ours, host: hidden);
+            check(back.Kind == MissKind.AlreadyTarget && hidden.Asked.Count == 0 && back.TrimmedNormalized == "Jouer",
+                "our own translation coming back is recognised before anything else",
+                "learning it as a source is the loop everything here exists to break; no reveal, no queue");
+
+            var decorated = Miss("<b>Jouer</b>", readback: ours, host: hidden, normalized: "<b>Jouer</b>");
+            check(decorated.Kind == MissKind.AlreadyTarget,
+                "re-decorated or not",
+                "the decoration-insensitive half answers here too");
+
+            // Own UI, before the stale snapshot
+            var stale = new StaleSnapshot();
+            stale.Take(Store(("Play", "Jouer", "A")), normalizeNumbers: true);
+            var uiHost = new FakeHost { Hidden = true };
+            var ui = Miss("Jouer", stale: stale, host: uiHost, ownUi: true);
+            check(ui.Kind == MissKind.OwnUiUnknown && uiHost.Asked.Count == 0,
+                "a label of ours the file does not hold is shown as is, and nobody else is asked",
+                "the stale snapshot is the GAME's: asked about one of our labels it can only answer wrongly — and a reveal is never followed on our own components");
+
+            // The stale snapshot
+            var current = Store(("Play", "Jouer !", "H"));
+            var refreshHost = new FakeHost { Hidden = true };
+            var refreshed = Miss("Jouer", stale: stale, host: refreshHost, current: current);
+            check(refreshed.Kind == MissKind.Refreshed && refreshed.NewText == "Jouer !" && refreshed.OriginalText == "Play" && refreshHost.Asked.Count == 0,
+                "an old translation still on screen is refreshed, and the host is not asked",
+                "a stale text is never a reveal and never a queue entry; it is the previous file's output");
+
+            var goneHost = new FakeHost { Hidden = true };
+            var gone = Miss("Jouer", stale: stale, host: goneHost, current: Store());
+            check(gone.Kind == MissKind.Gone && gone.TrimmedNormalized == "Jouer" && goneHost.Asked.Count == 0,
+                "one whose line is gone is kept, and marked ours with the key shape",
+                "the caller marks the trimmed key in the reverse index so it is never queued again");
+
+            // Visibility, then the reveal
+            var hiddenHost = new FakeHost { Hidden = true, Revealing = false };
+            var held = Miss("New line", host: hiddenHost, component: "comp");
+            check(held.Kind == MissKind.HeldHidden && string.Join(",", hiddenHost.Asked) == "hidden,reveal" && hiddenHost.LastComponent == (object)"comp",
+                "hidden while a reveal is in flight: held, and the reveal told first",
+                "returning without a word froze the state on a text the game had already replaced, and the stabiliser finalised that one");
+
+            var hiddenSkip = new FakeHost { Hidden = true };
+            check(Miss("New line", host: hiddenSkip, skipTypewriting: true).Kind == MissKind.HeldHidden && string.Join(",", hiddenSkip.Asked) == "hidden",
+                "a concat delta hidden in flight is held without telling the reveal",
+                "deltas are immediate by design; the reveal is not theirs to follow");
+
+            var revealing = new FakeHost { Revealing = true, RefreshesLeft = 5 };
+            check(Miss("New li", host: revealing).Kind == MissKind.HeldRevealing && string.Join(",", revealing.Asked) == "hidden,reveal",
+                "a text growing char by char is held, and the variables are not refreshed",
+                "a half-written line must never reach the queue; refreshing for it would be work for nothing");
+
+            var revealSkipped = new FakeHost { Revealing = true };
+            check(Miss("New li", host: revealSkipped, skipTypewriting: true).Kind == MissKind.Queue && string.Join(",", revealSkipped.Asked) == "hidden,refresh",
+                "a concat delta is never asked about a reveal",
+                "it is queued at once, whatever the component's reveal is doing");
+
+            // Concat, then the variables, then the queue
+            var concat = new FakeHost { RefreshesLeft = 5 };
+            check(Miss("Whole text", host: concat, skipQueueing: true).Kind == MissKind.NotQueued && string.Join(",", concat.Asked) == "hidden,reveal",
+                "a concat component's whole text is not queued, and no refresh is spent on it",
+                "its deltas were queued one by one; the assembled text is not a line anybody has");
+
+            var refreshing = new FakeHost { RefreshesLeft = 1 };
+            var first = Miss("Hello Bob", host: refreshing);
+            var second = Miss("Hello Bob", host: refreshing);
+            check(first.Kind == MissKind.Retry && second.Kind == MissKind.Queue,
+                "a refresh of the variables asks for one more climb, then the text is queued",
+                "the game may have assigned a name this frame; the host throttles the refresh, so the retry cannot loop");
+
+            var plain = new FakeHost();
+            check(Miss("Never seen", host: plain).Kind == MissKind.Queue && string.Join(",", plain.Asked) == "hidden,reveal,refresh",
+                "a line nobody has is queued, after the three questions in this order",
+                "visibility before the reveal, the reveal before the variables: each one can end the descent");
+
+            check(Miss("Never seen", host: null).Kind == MissKind.Queue,
+                "with no host at all, a miss is a queue",
+                "the localization fallback has no component: nothing to hide, nothing to reveal");
+
+            bool threw = false;
+            try { TextGate.ResolveMiss("x", false, "x", true, false, false, null, new StaleSnapshot(), Store(), true, null, null); } catch (ArgumentNullException) { threw = true; }
+            check(threw,
+                "a missing reverse index is refused",
+                "without it every one of our translations coming back would be queued as a new source");
         }
 
         private static Dictionary<string, TranslationEntry> Store(params (string key, string value, string tag)[] lines)

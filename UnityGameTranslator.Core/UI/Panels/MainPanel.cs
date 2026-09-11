@@ -2434,53 +2434,17 @@ namespace UnityGameTranslator.Core.UI.Panels
             SearchCommunityAsync(game.steam_id, game.name, targetLang);
         }
 
-        private async void OnDownloadCommunityClicked()
+        private void OnDownloadCommunityClicked()
         {
             if (!TranslatorCore.Config.online_mode) return;
 
             var selectedTranslation = _translationList?.SelectedTranslation;
             if (selectedTranslation == null) return;
 
-            int localChanges = TranslatorCore.LocalChangesCount;
-            int localCount = TranslatorCore.TranslationCache.Count;
-
-            // GAP 10: Check if downloading a different lineage (different UUID)
-            bool isDifferentLineage = !string.IsNullOrEmpty(TranslatorCore.FileUuid) &&
-                                      !string.IsNullOrEmpty(selectedTranslation.FileUuid) &&
-                                      selectedTranslation.FileUuid != TranslatorCore.FileUuid;
-
-            if (isDifferentLineage && localCount > 0)
-            {
-                // WARNING: Different lineage - this is a major change
-                Intents.Confirm(
-                    "Switch to Different Translation?",
-                    $"This translation is not related to yours — it is a separate translation, not an update.\n\n" +
-                    $"Your current translation ({localCount} entries) will be replaced with the translation from "
-                    + $"{People.MentionOf(selectedTranslation.Uploader, TranslatorCore.Config.api_user)}.\n\n" +
-                    "You will lose your current translation and its history.\n\n" +
-                    "This cannot be undone.",
-                    "Switch Translation",
-                    async () => await PerformDownload(selectedTranslation),
-                    isDanger: true
-                );
-            }
-            else if (localChanges > 0)
-            {
-                // WARNING: Local changes will be lost
-                Intents.Confirm(
-                    "Replace Local Translation?",
-                    $"You have {localChanges} local change(s) that will be replaced.\n\nDownload "
-                    + $"'{selectedTranslation.TargetLanguage}' by "
-                    + $"{People.MentionOf(selectedTranslation.Uploader, TranslatorCore.Config.api_user)}?",
-                    "Replace",
-                    async () => await PerformDownload(selectedTranslation),
-                    isDanger: true
-                );
-            }
-            else
-            {
-                await PerformDownload(selectedTranslation);
-            }
+            // The one door for taking a translation over the local file, shared with the wizard:
+            // it asks what must be asked (another lineage, unpublished changes) and hands over.
+            TranslatorUIManager.OfferDownload(selectedTranslation,
+                () => _ = PerformDownload(selectedTranslation));
         }
 
         private async System.Threading.Tasks.Task PerformDownload(TranslationInfo translation)

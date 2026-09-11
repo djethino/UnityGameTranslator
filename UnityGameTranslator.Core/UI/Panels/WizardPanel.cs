@@ -104,10 +104,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private LabelHandle _downloadStatusLabel;
         private LabelHandle _comparisonLabel;
         private ButtonHandle _downloadBtn;
-        private ButtonHandle _uploadBtn;
-        private ButtonHandle _mergeBtn;
         private Host _actionButtonsRow;
-        private LabelHandle _actionButtonsHint;
         private Host _onlineChoiceBox;
         private Host _offlineChoiceBox;
         private Components.HelpZone _helpZone;
@@ -446,7 +443,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             _downloadStatusLabel = Labels.Create(card, "DownloadStatus", "", TextRole.Small, centred: true,
                                                  policy: TextPolicy.Excluded, minHeight: UIStyles.RowHeightSmall);
 
-            // Action buttons row (Download / Upload / Merge)
+            // The one act of this step: take a community translation. ⚠ Download only, decided
+            // 2026-09-11: this screen used to offer Upload and Merge too, on line counts and the
+            // uploader's name alone — no role, no hash, no lineage — where the Main's status card
+            // decides from the server state. Somebody who passes without downloading is offered
+            // the sync from that card and the corner overlay, which know who they are.
             _actionButtonsRow = Stacks.Row(card, "ActionBtnsRow", minHeight: UIStyles.RowHeightLarge,
                                            placement: Placement.MiddleCenter);
 
@@ -454,20 +455,6 @@ namespace UnityGameTranslator.Core.UI.Panels
             _downloadBtn.Clicked += OnDownloadClicked;
             _helpZone?.Describe(_downloadBtn,
                 "Get the selected community translation and use it in your game");
-
-            _uploadBtn = Buttons.Compact(_actionButtonsRow, "UploadBtn", "Upload", ButtonTone.Success, minWidth: 100);
-            _uploadBtn.Clicked += OnUploadClicked;
-            _helpZone?.Describe(_uploadBtn,
-                "Share your local translation on the website");
-
-            _mergeBtn = Buttons.Compact(_actionButtonsRow, "MergeBtn", "Merge", ButtonTone.Warning, minWidth: 100);
-            _mergeBtn.Clicked += OnMergeClicked;
-            _helpZone?.Describe(_mergeBtn,
-                "Combine the community translation with your local texts (nothing is lost)");
-
-            _actionButtonsHint = Labels.Create(card, "ActionBtnsHint",
-                "Merge combines the community translation with the texts you already have locally", TextRole.Hint);
-            _actionButtonsHint.Visible = false;
 
             _actionButtonsRow.Visible = false;
 
@@ -547,174 +534,58 @@ namespace UnityGameTranslator.Core.UI.Panels
         }
 
         /// <summary>
-        /// Updates action buttons based on local/remote comparison.
-        /// Shows Download, Upload, or Merge depending on the situation.
+        /// The comparison line and the Download button, from what is selected and what is local.
+        ///
+        /// ⚠ Download is the only act here (2026-09-11). Which of upload, merge or update applies
+        /// to a local file is a question of role, hash and lineage; this screen knows none of
+        /// them and used to answer it on line counts. The Main's status card and the corner
+        /// overlay answer it from the server state once the game runs.
         /// </summary>
         private void UpdateActionButtons()
         {
             var selected = _translationList?.SelectedTranslation;
             int localCount = TranslatorCore.TranslationCache.Count;
-            bool isLoggedIn = !string.IsNullOrEmpty(TranslatorCore.Config.api_token);
-            string currentUser = TranslatorCore.Config.api_user;
 
-            // Default: hide all
             _downloadBtn.Visible = false;
-            _uploadBtn.Visible = false;
-            _mergeBtn.Visible = false;
             _comparisonLabel.Show("");
             _actionButtonsRow.Visible = false;
-            _actionButtonsHint.Visible = false;
 
-            if (selected == null && localCount == 0)
+            if (selected == null)
             {
-                // No local, no remote selected
-                _comparisonLabel.Say("No translation found for your language");
-                _comparisonLabel.Tone = Tone.Muted;
-                return;
-            }
-
-            _actionButtonsRow.Visible = true;
-
-            // Is the selected translation published under this account — the socle's one test.
-            // (The old inline version called .Equals on an Uploader that can be null.)
-            bool isOwnRemote = isLoggedIn && People.IsYou(selected?.Uploader, currentUser);
-
-            int remoteCount = selected?.LineCount ?? 0;
-
-            if (selected == null && localCount > 0)
-            {
-                // Local only, no remote
-                if (isLoggedIn)
+                if (localCount == 0)
                 {
-                    _comparisonLabel.Say($"You have {localCount} local translations (not uploaded yet)");
-                    _comparisonLabel.Tone = Tone.Success;
-                    _uploadBtn.Visible = true;
+                    _comparisonLabel.Say("No translation found for your language");
+                    _comparisonLabel.Tone = Tone.Muted;
                 }
                 else
                 {
-                    // Not logged in - hide button row entirely, only show message
-                    _actionButtonsRow.Visible = false;
-                    _comparisonLabel.Say($"You have {localCount} local translations. Login to upload!");
-                    _comparisonLabel.Tone = Tone.Secondary;
+                    _comparisonLabel.Say($"You have {localCount} local translations");
+                    _comparisonLabel.Tone = Tone.Success;
                 }
                 return;
             }
 
-            if (localCount == 0 && selected != null)
+            int remoteCount = selected.LineCount;
+            if (localCount == 0)
             {
-                // Remote only, no local
                 _comparisonLabel.Show(Tr($"On the server: {remoteCount} lines by") + $" @{selected.Uploader}");
-                _comparisonLabel.Tone = Tone.Plain;
-                _downloadBtn.Visible = true;
-                return;
-            }
-
-            // Both local and remote exist - compare
-            int diff = localCount - remoteCount;
-            string diffText = diff > 0 ? $"+{diff}" : diff.ToString();
-
-            if (isOwnRemote)
-            {
-                // Same owner - sync scenario
-                _comparisonLabel.Show($"Local: {localCount} | Server (yours): {remoteCount} ({diffText})");
-
-                if (localCount > remoteCount)
-                {
-                    // Local is more complete - suggest upload
-                    _comparisonLabel.Tone = Tone.Success;
-                    _uploadBtn.Visible = true;
-                    _downloadBtn.Visible = true;
-                    _mergeBtn.Visible = true;
-                }
-                else if (localCount < remoteCount)
-                {
-                    // Remote is more complete - suggest download
-                    _comparisonLabel.Tone = Tone.Warning;
-                    _downloadBtn.Visible = true;
-                    _mergeBtn.Visible = true;
-                }
-                else
-                {
-                    // Same count - might still have differences
-                    _comparisonLabel.Tone = Tone.Plain;
-                    _downloadBtn.Visible = true;
-                    _uploadBtn.Visible = true;
-                    _mergeBtn.Visible = true;
-                }
             }
             else
             {
-                // Different owner - download or merge
-                _comparisonLabel.Show($"Local: {localCount} | Server (@{selected.Uploader}): {remoteCount}");
-                _comparisonLabel.Tone = Tone.Plain;
-
-                _downloadBtn.Visible = true;
-                if (localCount > 0)
-                {
-                    _mergeBtn.Visible = true;
-                }
+                bool isOwnRemote = !string.IsNullOrEmpty(TranslatorCore.Config.api_token)
+                                   && People.IsYou(selected.Uploader, TranslatorCore.Config.api_user);
+                _comparisonLabel.Show(isOwnRemote
+                    ? $"Local: {localCount} | Server (yours): {remoteCount}"
+                    : $"Local: {localCount} | Server (@{selected.Uploader}): {remoteCount}");
             }
-
-            // Explain Merge whenever the button is offered
-            _actionButtonsHint.Visible = _mergeBtn.Visible;
-        }
-
-        private void OnUploadClicked()
-        {
-            // Open upload panel
-            SetActive(false);
-            Intents.SetUpUpload((game, source, target) => Intents.OpenUpload());
-        }
-
-        private async void OnMergeClicked()
-        {
-            try
-            {
-                var selected = _translationList?.SelectedTranslation;
-                if (selected == null) return;
-
-                _downloadStatusLabel.Say("Downloading for merge...");
-                _downloadStatusLabel.Tone = Tone.Warning;
-                SetButtonsInteractable(false);
-
-                await TranslatorUIManager.DownloadAndMerge(selected, (success, message) =>
-                {
-                    if (success)
-                    {
-                        _downloadStatusLabel.Show(message);
-                        _downloadStatusLabel.Tone = Tone.Success;
-                        // Auto-advance to complete after successful merge
-                        TranslatorUIManager.RunDelayed(1.5f, () => ShowStep(WizardStep.Complete));
-                    }
-                    else
-                    {
-                        _downloadStatusLabel.Show(message);
-                        _downloadStatusLabel.Tone = Tone.Error;
-                        SetButtonsInteractable(true);
-                    }
-                });
-
-                // After await, we may be on a background thread (IL2CPP issue)
-                // If MergePanel opened (conflicts), close wizard
-                TranslatorUIManager.RunOnMainThread(() =>
-                {
-                    if (Intents.IsOpen(ScreenId.Merge))
-                    {
-                        SetActive(false);
-                    }
-                });
-            }
-            catch (Exception _e)
-            {
-                TranslatorCore.LogError($"[OnMergeClicked] {_e.GetType().Name}: {_e.Message}\n{_e.StackTrace}");
-            }
+            _comparisonLabel.Tone = Tone.Plain;
+            _actionButtonsRow.Visible = true;
+            _downloadBtn.Visible = true;
         }
 
         private void SetButtonsInteractable(bool interactable)
         {
             _downloadBtn.Enabled = interactable;
-            _uploadBtn.Enabled = interactable;
-            _mergeBtn.Enabled = interactable;
         }
 
         public void UpdateAccountStatus()
@@ -748,13 +619,20 @@ namespace UnityGameTranslator.Core.UI.Panels
             Intents.OpenLogin();
         }
 
-        private async void OnDownloadClicked()
+        private void OnDownloadClicked()
+        {
+            var selected = _translationList?.SelectedTranslation;
+            if (selected == null || _isDownloading) return;
+
+            // The same door as the Main's Download: it asks what must be asked before a local
+            // file is replaced (another lineage, unpublished changes), then hands over.
+            TranslatorUIManager.OfferDownload(selected, () => PerformDownload(selected));
+        }
+
+        private async void PerformDownload(TranslationInfo selected)
         {
             try
             {
-                var selected = _translationList?.SelectedTranslation;
-                if (selected == null || _isDownloading) return;
-
                 _isDownloading = true;
                 _downloadStatusLabel.Say("Downloading...");
                 _downloadStatusLabel.Tone = Tone.Warning;
@@ -779,7 +657,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
             catch (Exception _e)
             {
-                TranslatorCore.LogError($"[OnDownloadClicked] {_e.GetType().Name}: {_e.Message}\n{_e.StackTrace}");
+                TranslatorCore.LogError($"[Wizard.PerformDownload] {_e.GetType().Name}: {_e.Message}\n{_e.StackTrace}");
                 _isDownloading = false;
                 SetButtonsInteractable(true);
             }
@@ -1282,6 +1160,17 @@ namespace UnityGameTranslator.Core.UI.Panels
             // re-write on its own would otherwise stay untranslated until it next changes.
             TranslatorCore.ClearProcessingCaches();
             TranslatorScanner.ForceRefreshAllText(reapplyAllScales: true);
+
+            // Same for the pictures (seen 2026-09-11 on a wizard re-run over a translation that
+            // carries images): the sprite patch answered "no replacement" to everything set while
+            // the latch was shut, and a sprite already on screen is never set again. This is the
+            // pass a scene change runs (ImageReplacer.OnSceneChange) and the Images switch runs —
+            // the files from disk, then the targeted apply. Fonts need nothing here: the
+            // re-submitted text goes back through the font replacement, and the scene pass
+            // (FontManager.ApplyUnityClonesToScene) runs on the scanner's tick; UI Toolkit
+            // pictures are asked on every walk.
+            ImageReplacer.LoadAllReplacements();
+            ImageReplacer.ApplyToScene();
 
             // What the startup would have done had the setup already been complete. The wizard is
             // the trigger, not a timer: the answers exist now, so the work happens now.

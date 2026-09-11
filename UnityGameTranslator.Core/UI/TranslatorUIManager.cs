@@ -5011,6 +5011,56 @@ namespace UnityGameTranslator.Core.UI
         }
 
         /// <summary>
+        /// The one door for taking a community translation over the local file: it asks what must
+        /// be asked, then hands over to the caller's own download. Two questions, in this order —
+        /// another lineage (a separate translation, not an update: the file and its history go),
+        /// then unpublished local changes (they go) — and none when there is nothing to lose.
+        ///
+        /// ⚠ One door, two screens (the Main's community list and the wizard's), since 2026-09-11:
+        /// the wizard used to download without asking, and the Main asked with these two dialogs
+        /// written inline. A user act has one entry point, and that point carries its conditions.
+        /// </summary>
+        public static void OfferDownload(TranslationInfo translation, Action proceed)
+        {
+            if (translation == null || proceed == null) return;
+
+            int localChanges = TranslatorCore.LocalChangesCount;
+            int localCount = TranslatorCore.TranslationCache.Count;
+            string uploader = People.MentionOf(translation.Uploader, TranslatorCore.Config.api_user);
+
+            bool isDifferentLineage = !string.IsNullOrEmpty(TranslatorCore.FileUuid)
+                                      && !string.IsNullOrEmpty(translation.FileUuid)
+                                      && translation.FileUuid != TranslatorCore.FileUuid;
+
+            if (isDifferentLineage && localCount > 0)
+            {
+                ConfirmationPanel?.Show(
+                    "Switch to Different Translation?",
+                    "This translation is not related to yours — it is a separate translation, not an update.\n\n"
+                    + $"Your current translation ({localCount} entries) will be replaced with the translation from {uploader}.\n\n"
+                    + "You will lose your current translation and its history.\n\n"
+                    + "This cannot be undone.",
+                    "Switch Translation",
+                    proceed,
+                    isDanger: true);
+            }
+            else if (localChanges > 0)
+            {
+                ConfirmationPanel?.Show(
+                    "Replace Local Translation?",
+                    $"You have {localChanges} local change(s) that will be replaced.\n\n"
+                    + $"Download '{translation.TargetLanguage}' by {uploader}?",
+                    "Replace",
+                    proceed,
+                    isDanger: true);
+            }
+            else
+            {
+                proceed();
+            }
+        }
+
+        /// <summary>
         /// Download and apply a translation from a TranslationInfo (selected from list).
         /// Used by Wizard and MainPanel community translations.
         /// </summary>

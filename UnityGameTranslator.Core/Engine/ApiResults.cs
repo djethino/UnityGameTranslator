@@ -483,4 +483,258 @@ namespace UnityGameTranslator.Core
         public bool Success;
         public string Error;
     }
+
+    // ── What the relay's streams carry (spec/sse-events) ──────────────────────────────────
+
+    /// <summary>The device-flow stream's one event: the access, delivered once.</summary>
+    public class DeviceAuthorizedEvent
+    {
+        public string AccessToken { get; set; }
+        public int? UserId { get; set; }
+        public string UserName { get; set; }
+    }
+
+    /// <summary>
+    /// A stream's `error` event, before or during. <see cref="Revoked"/> is the one a client reads
+    /// as "sign out": the relay names it (<c>code: revoked</c>); every other error is a stream
+    /// that ended, and the connection loop decides what that means.
+    /// </summary>
+    public class StreamErrorEvent
+    {
+        public string Error { get; set; }
+        public string Code { get; set; }
+        public bool Revoked => Code == "revoked";
+    }
+
+    /// <summary>The sync stream's `translation_updated`: the caller's own row moved.</summary>
+    public class TranslationUpdatedEvent
+    {
+        public string FileHash { get; set; }
+        public int LineCount { get; set; }
+        public int VoteCount { get; set; }
+    }
+
+    /// <summary>
+    /// The merge-preview stream's `merge_completed`. <see cref="ToLocal"/> says the arbitrated
+    /// file is collected from the token (nothing was published), otherwise it IS the published
+    /// translation and is read back through the ordinary download.
+    /// </summary>
+    public class MergeCompletedEvent
+    {
+        public int? TranslationId { get; set; }
+        public string FileHash { get; set; }
+        public int LineCount { get; set; }
+        public bool ToLocal { get; set; }
+    }
+
+    /// <summary>The edit-session stream's `edit_saved`: the browser saved, fetch the file.</summary>
+    public class EditSavedEvent
+    {
+        public string ContentHash { get; set; }
+        public int LineCount { get; set; }
+        public string SavedAt { get; set; }
+    }
+
+    /// <summary>The edit-session stream's `edit_retranslate`: the page asks for one line again.</summary>
+    public class EditRetranslateEvent
+    {
+        public string Key { get; set; }
+        public string RequestId { get; set; }
+    }
+
+    /// <summary>
+    /// Server state for current translation (from check-uuid, not persisted to disk)
+    /// </summary>
+    public class ServerTranslationState
+    {
+        /// <summary>True if we've checked with the server (even if translation doesn't exist)</summary>
+        public bool Checked { get; set; } = false;
+
+        /// <summary>
+        /// Whether the server was asked AS THIS ACCOUNT — so <see cref="IsOwner"/> and
+        /// <see cref="Role"/> are answers rather than defaults.
+        ///
+        /// 🔴 **"Checked" and "checked as us" are two different facts, and one screen took the
+        /// first for the second.** The public endpoint answers about a translation, never about a
+        /// person: it fills this state with `IsOwner = false, Role = None` because that is all an
+        /// anonymous caller can be told. Read by somebody signed in, before their own check comes
+        /// back, that reads as "this is not yours" — and the notification offered the OWNER of the
+        /// translation the two buttons meant for a stranger, Branch and Fork, for as long as the
+        /// account check took.
+        ///
+        /// ⚠ It cannot be told from the shape: `not owner, role none` is also the honest, final
+        /// answer for somebody using another person's translation. Only who was asked separates
+        /// them, so it is recorded rather than guessed.
+        /// </summary>
+        public bool AskedAsAccount { get; set; } = false;
+        /// <summary>True if translation exists on server</summary>
+        public bool Exists { get; set; } = false;
+        /// <summary>True if current user owns the translation</summary>
+        public bool IsOwner { get; set; } = false;
+        /// <summary>Translation ID on server</summary>
+        public int? SiteId { get; set; }
+        /// <summary>Username of uploader</summary>
+        public string Uploader { get; set; }
+        /// <summary>File hash on server</summary>
+        public string Hash { get; set; }
+        /// <summary>Translation type (ai, human, etc.)</summary>
+        public string Type { get; set; }
+        /// <summary>Translation notes</summary>
+        public string Notes { get; set; }
+        /// <summary>URL to external resources (fonts, images)</summary>
+        public string ResourcesUrl { get; set; }
+
+        /// <summary>
+        /// "in_progress" or "complete", as published. Null when unknown — an older server, or a
+        /// lineage we do not own — and a caller must then leave it alone rather than pick one.
+        /// </summary>
+        public string Status { get; set; }
+
+        /// <summary>
+        /// Whether this lineage takes contributions — the Main's own decision.
+        ///
+        /// Null when unknown: an older server, or a lineage nobody has asked about yet. Unknown
+        /// is NOT "solo work", and every reader must leave it alone rather than pick one.
+        /// </summary>
+        public bool? AcceptsBranches { get; set; }
+
+        /// <summary>
+        /// This branch's Main has closed to contributions since: it can no longer be sent, nor
+        /// have its details changed.
+        ///
+        /// 🔴 Nothing inside the game changes when it happens — the file opens, translates and
+        /// saves exactly as before — so unless a screen says it, the discovery happens at the
+        /// moment of publishing, after the work. Null is unknown, never "all is well".
+        /// </summary>
+        public bool? BranchFrozen { get; set; }
+
+        /// <summary>
+        /// THIS ACCOUNT's role in the lineage — the row published under its name.
+        ///
+        /// 🔴 <see cref="LineageRole.None"/> unless <see cref="IsOwner"/>, always. The mod's own
+        /// enum used to carry two meanings: the server's "branch" (this account's row is a
+        /// contribution) and, from one writer, "holding somebody else's lineage without having
+        /// published" — which its own comment said was NOT a branch. Five screens read the role
+        /// without IsOwner and confused the two; one becomes a Branch by uploading, and only then.
+        /// Since 2026-09-07 the role is the socle's <see cref="LineageRole"/>, and every writer
+        /// leaves it None for somebody who has no row.
+        /// </summary>
+        public LineageRole Role { get; set; } = LineageRole.None;
+
+        /// <summary>If Branch, the username of the Main owner</summary>
+        public string MainUsername { get; set; }
+
+        /// <summary>
+        /// Branch whose Main no longer exists — deleted, or its account closed.
+        ///
+        /// Nobody can ever merge this work: a branch needs a head to be merged into. The way
+        /// forward is to publish it as a translation of its own, which the Fork action does.
+        /// Null on servers too old to report it, and that absence must read as "unknown" rather
+        /// than "the Main is fine".
+        /// </summary>
+        public bool? MainMissing { get; set; }
+
+        /// <summary>
+        /// The Main is still published and the account that owned it has been erased.
+        ///
+        /// Ends the same way as MainMissing — a branch needs somebody to be merged by, and there is
+        /// nobody — but it is the harder of the two to notice: the Main is still listed, still
+        /// downloadable, and still says it accepts contributions. Nothing ever fails; the work
+        /// simply waits for a reader who does not exist.
+        ///
+        /// ⚠ Kept apart from MainMissing rather than folded into it, because what somebody has to
+        /// understand is not the same: here the translation is still there and still safe to use.
+        /// Null on servers too old to report it.
+        /// </summary>
+        public bool? MainAbandoned { get; set; }
+
+        /// <summary>
+        /// The Main was told about this branch, has edited their own file since, and has taken
+        /// nothing in. Not the same as silence — that is dormancy — and said once only.
+        /// Null on servers too old to report it.
+        /// </summary>
+        public bool? MainIgnoring { get; set; }
+
+        /// <summary>Lines of this branch the Main has taken in, added up over every merge.</summary>
+        public int MergedLinesTotal { get; set; }
+
+        /// <summary>If Main, the number of branches</summary>
+        public int BranchesCount { get; set; }
+
+        /// <summary>
+        /// Of those branches, how many are actually waiting on their Main: not been through in
+        /// their current state, AND holding something a merge would offer.
+        ///
+        /// 🔴 **This is what a screen shows, not <see cref="BranchesCount"/>.** That one answers
+        /// "how many people contribute" — true, and not the question somebody asks when deciding
+        /// whether to open the merge screen. Counting a contributor who took the file months ago
+        /// and never came back sends their Main to review emptiness.
+        ///
+        /// ⚠ Null on a server too old to say. Unknown is not zero: a screen falls back to the raw
+        /// count rather than announcing that nothing is waiting.
+        /// </summary>
+        public int? BranchesWithWork { get; set; }
+
+        /// <summary>How many lines those contributions hold, counted once each. Null if unknown.</summary>
+        public int? LinesAvailable { get; set; }
+
+        /// <summary>
+        /// How many rows need a DECISION — lines the Main does not hold, plus lines both sides hold
+        /// differently, the ones it will keep its own on included.
+        ///
+        /// 🔴 **Not <see cref="LinesAvailable"/>, and neither follows from the other.** That one is
+        /// what would be taken; this is what has to be looked at. Measured on a real lineage: 56 and
+        /// 38, the 18 in between being two machine translations that differ. One answers "how long
+        /// will this take", the other "is there anything here for me".
+        ///
+        /// ⚠ Null on a server too old to say. Unknown is not zero.
+        /// </summary>
+        public int? LinesToReview { get; set; }
+
+        /// <summary>
+        /// Of those rows, the ones the Main does not hold at all, by the contribution's tag —
+        /// because 21 new lines written by hand is not the proposition 21 machine lines are.
+        /// </summary>
+        public TagTally LinesNew { get; set; }
+
+        /// <summary>Of those rows, the ones both sides hold differently, by the contribution's tag.</summary>
+        public TagTally LinesDiffering { get; set; }
+
+        /// <summary>
+        /// On a branch: how many lines THIS contribution is still holding for its Main — what was
+        /// sent and not taken in. Its author's own business, and nobody else's.
+        /// </summary>
+        public int? LinesOffered { get; set; }
+
+        /// <summary>
+        /// Votes on the PUBLISHED translation of this lineage — count, this player's own vote,
+        /// and whether they may vote at all. The server decides that last one: no self-votes,
+        /// public only. Null when nothing is published, and on any server too old to report it —
+        /// absence reads as "unknown", never as "no votes".
+        /// </summary>
+        public VoteState Vote { get; set; }
+
+        /// <summary>
+        /// If Main, how many branches have never been reviewed or changed since.
+        /// The plain count above cannot answer that: it does not move when a
+        /// contributor pushes more work to a branch already counted.
+        /// </summary>
+        public int BranchesPendingReview { get; set; }
+
+        /// <summary>
+        /// If Branch, the Main this translation derives from — id and hash, so the
+        /// mod can tell that upstream moved without downloading anything.
+        /// Null for a Main, for a detached fork, and for any server that does not
+        /// report it yet (older site: absence must read as "unknown", not "gone").
+        /// </summary>
+        public int? MainSiteId { get; set; }
+        public string MainHash { get; set; }
+        public int MainLineCount { get; set; }
+
+        /// <summary>Source language of the translation (original game language)</summary>
+        public string SourceLanguage { get; set; }
+
+        /// <summary>Target language of the translation (translated to)</summary>
+        public string TargetLanguage { get; set; }
+    }
 }

@@ -689,5 +689,235 @@ namespace UnityGameTranslator.Core
                 PendingChanges = data["pending_changes"]?.Value<int>() ?? 0
             };
         }
+
+        // ── The relay's streams (spec/sse-events) ───────────────────────────────────────────
+
+        /// <summary>The device-flow stream's `authorized` payload.</summary>
+        public static DeviceAuthorizedEvent ReadDeviceAuthorized(JObject data)
+        {
+            var user = data["user"] as JObject;
+            return new DeviceAuthorizedEvent
+            {
+                AccessToken = data["access_token"]?.Value<string>(),
+                UserId = user?["id"]?.Value<int?>(),
+                UserName = user?["name"]?.Value<string>(),
+            };
+        }
+
+        /// <summary>A stream's `error` payload: the sentence, and the code when the relay named one.</summary>
+        public static StreamErrorEvent ReadStreamError(JObject data)
+        {
+            return new StreamErrorEvent
+            {
+                Error = data?["error"]?.Value<string>(),
+                Code = data?["code"]?.Value<string>(),
+            };
+        }
+
+        /// <summary>The sync stream's `translation_updated` payload.</summary>
+        public static TranslationUpdatedEvent ReadTranslationUpdated(JObject data)
+        {
+            return new TranslationUpdatedEvent
+            {
+                FileHash = data["file_hash"]?.Value<string>(),
+                LineCount = data["line_count"]?.Value<int>() ?? 0,
+                VoteCount = data["vote_count"]?.Value<int>() ?? 0,
+            };
+        }
+
+        /// <summary>The merge-preview stream's `merge_completed` payload.</summary>
+        public static MergeCompletedEvent ReadMergeCompleted(JObject data)
+        {
+            return new MergeCompletedEvent
+            {
+                TranslationId = data["translation_id"]?.Value<int?>(),
+                FileHash = data["file_hash"]?.Value<string>(),
+                LineCount = data["line_count"]?.Value<int>() ?? 0,
+                ToLocal = data["destination"]?.Value<string>() == "local",
+            };
+        }
+
+        /// <summary>The edit-session stream's `edit_saved` payload.</summary>
+        public static EditSavedEvent ReadEditSaved(JObject data)
+        {
+            return new EditSavedEvent
+            {
+                ContentHash = data["content_hash"]?.Value<string>(),
+                LineCount = data["line_count"]?.Value<int>() ?? 0,
+                SavedAt = data["saved_at"]?.Value<string>(),
+            };
+        }
+
+        /// <summary>The edit-session stream's `edit_retranslate` payload.</summary>
+        public static EditRetranslateEvent ReadEditRetranslate(JObject data)
+        {
+            return new EditRetranslateEvent
+            {
+                Key = data["key"]?.Value<string>(),
+                RequestId = data["id"]?.Value<string>(),
+            };
+        }
+
+        /// <summary>
+        /// The sync stream's `state` payload — the same body as <c>GET /sync/state</c> — read into
+        /// what the screens hold about the lineage.
+        ///
+        /// 🔴 **A partial answer must not erase what a full one established.** The payload is
+        /// rebuilt from scratch on every event, which was safe while every caller asked for
+        /// everything. Since the stream asks for one's own line alone (<c>lineage=0</c>), the
+        /// lineage half arrives ABSENT — and absent read as zero wiped the contribution count, the
+        /// overlay's notice, and the Main a branch derives from, one second after the startup call
+        /// had filled them in correctly. So each lineage field is taken from THIS payload only when
+        /// the payload carries it, and kept from <paramref name="previous"/> otherwise: absent means
+        /// unknown, never none. That rule is a SEQUENCE, which is why it is held by cases here.
+        ///
+        /// ⚠ Both the stream and check-uuid arrive here, and both carry the account's token — so
+        /// the role is an answer about US (<c>AskedAsAccount</c>), and one's own row is credited
+        /// to <paramref name="accountName"/>.
+        /// </summary>
+        public static ServerTranslationState ReadSyncState(JObject data, ServerTranslationState previous, string accountName)
+        {
+            bool exists = data["exists"]?.Value<bool>() ?? false;
+            LineageRole role = RoleOf(data["role"]?.Value<string>() ?? "none");
+
+            int branchesCount = data["branches_count"] != null
+                ? data["branches_count"].Value<int>()
+                : (previous?.BranchesCount ?? 0);
+
+            var translation = data["translation"];
+            var main = data["main"];
+
+            // ⚠ `as JObject` once, read three times below: `lines_waiting` comes back as JSON
+            // null on a lineage with nothing waiting, and `?.` lets a JValue through to an
+            // indexer that throws. Third time this trap has been paid for.
+            var linesWaiting = data["lines_waiting"] as JObject;
+
+            var serverState = new ServerTranslationState
+            {
+                Checked = true,
+                AskedAsAccount = true,
+                Exists = exists,
+                IsOwner = role == LineageRole.Main || role == LineageRole.Branch,
+                Role = role,
+                BranchesCount = branchesCount,
+                // Absent from an older site: stays null, which reads as "unknown" and never as
+                // "the Main is fine". And kept from the previous state when this payload leaves
+                // them out — they describe what became of the MAIN, so they belong to the lineage
+                // and a stream does not carry them.
+                MainMissing = data["main_missing"] != null
+                    ? data["main_missing"].ToObject<bool?>()
+                    : previous?.MainMissing,
+                MainAbandoned = data["main_abandoned"] != null
+                    ? data["main_abandoned"].ToObject<bool?>()
+                    : previous?.MainAbandoned,
+                MainIgnoring = data["main_ignoring"] != null
+                    ? data["main_ignoring"].ToObject<bool?>()
+                    : previous?.MainIgnoring,
+
+                // Read at the TOP level, because it is a fact about the lineage — told to the
+                // player running somebody else's translation too, who is precisely the person
+                // deciding whether to send their corrections back.
+                AcceptsBranches = data["accepts_branches"]?.ToObject<bool?>(),
+
+                MergedLinesTotal = data["merged_lines_total"] != null
+                    ? (data["merged_lines_total"].ToObject<int?>() ?? 0)
+                    : (previous?.MergedLinesTotal ?? 0),
+
+                // Null on an older site, and null means unknown — a zero would claim that
+                // nothing is waiting. Kept from the previous state when this payload does not
+                // carry them: a stream leaves them out by design.
+                BranchesWithWork = data["branches_with_work"] != null
+                    ? data["branches_with_work"].ToObject<int?>()
+                    : previous?.BranchesWithWork,
+                LinesAvailable = data["lines_available"] != null
+                    ? data["lines_available"].ToObject<int?>()
+                    : previous?.LinesAvailable,
+                LinesToReview = linesWaiting != null
+                    ? linesWaiting["review"]?.ToObject<int?>()
+                    : previous?.LinesToReview,
+                LinesNew = linesWaiting != null
+                    ? TallyOf(linesWaiting, "new")
+                    : (previous?.LinesNew ?? default(TagTally)),
+                LinesDiffering = linesWaiting != null
+                    ? TallyOf(linesWaiting, "differing")
+                    : (previous?.LinesDiffering ?? default(TagTally)),
+                LinesOffered = data["lines_offered"] != null
+                    ? data["lines_offered"].ToObject<int?>()
+                    : previous?.LinesOffered,
+            };
+
+            if (translation != null && translation.Type != JTokenType.Null)
+            {
+                serverState.SiteId = translation["id"]?.Value<int>();
+                serverState.Uploader = accountName;
+                serverState.Hash = translation["file_hash"]?.Value<string>();
+                serverState.Type = translation["type"]?.Value<string>();
+                // Read HERE as well as in the upload panel: this is the path the main screen
+                // takes at startup, and a card that only learned the status once somebody opened
+                // the upload screen would show nothing on the screen that matters.
+                serverState.Status = translation["status"]?.Value<string>();
+                serverState.Notes = translation["notes"]?.Value<string>();
+                serverState.ResourcesUrl = translation["resources_url"]?.Value<string>();
+                // The languages this lineage was published with — the payload has carried them
+                // all along, and only an upload made from THIS machine used to write them back.
+                serverState.SourceLanguage = translation["source_language"]?.Value<string>();
+                serverState.TargetLanguage = translation["target_language"]?.Value<string>();
+
+                // Only when the row carries it: the lineage answer is already in from the top
+                // level above, and an absent key here must not wipe it.
+                if (translation["accepts_branches"] != null)
+                    serverState.AcceptsBranches = translation["accepts_branches"].ToObject<bool?>();
+
+                serverState.BranchFrozen = translation["branch_frozen"]?.ToObject<bool?>();
+
+                // A branch also hears about the Main it derives from — and keeps it when this
+                // payload does not carry it, or "Update from Main" and the owner's name would go
+                // off the screen a second after the startup call had put them there.
+                if (role == LineageRole.Branch)
+                {
+                    if (main != null && main.Type != JTokenType.Null)
+                    {
+                        serverState.MainSiteId = main["id"]?.Value<int>();
+                        serverState.MainHash = main["file_hash"]?.Value<string>();
+                        serverState.MainLineCount = main["line_count"]?.Value<int>() ?? 0;
+                        serverState.MainUsername = main["uploader"]?.Value<string>();
+                    }
+                    else if (previous != null)
+                    {
+                        serverState.MainSiteId = previous.MainSiteId;
+                        serverState.MainHash = previous.MainHash;
+                        serverState.MainLineCount = previous.MainLineCount;
+                        serverState.MainUsername = previous.MainUsername;
+                    }
+                }
+
+                serverState.BranchesPendingReview = data["branches_pending_review"] != null
+                    ? data["branches_pending_review"].Value<int>()
+                    : (previous?.BranchesPendingReview ?? 0);
+            }
+            else if (main != null && main.Type != JTokenType.Null)
+            {
+                serverState.SiteId = main["id"]?.Value<int>();
+                serverState.Uploader = main["uploader"]?.Value<string>();
+                serverState.MainUsername = main["uploader"]?.Value<string>();
+                serverState.Hash = main["file_hash"]?.Value<string>();
+                serverState.ResourcesUrl = main["resources_url"]?.Value<string>();
+
+                // Holding somebody's lineage without having published into it is a first-class
+                // case, and the Main IS this row: without MainSiteId, MergeFromMain refused and
+                // the only way to take in what the Main added was the download that REPLACES.
+                serverState.MainSiteId = serverState.SiteId;
+                serverState.MainHash = serverState.Hash;
+                serverState.MainLineCount = main["line_count"]?.Value<int>() ?? 0;
+                serverState.SourceLanguage = main["source_language"]?.Value<string>();
+                serverState.TargetLanguage = main["target_language"]?.Value<string>();
+            }
+
+            // Votes on the published translation of this lineage. Left null on a server that
+            // does not report it: the card then shows no vote at all, rather than "0".
+            serverState.Vote = ReadVoteState(data["vote"]);
+
+            return serverState;
+        }
     }
 }

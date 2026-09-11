@@ -30,6 +30,10 @@ namespace UnityGameTranslator.Core.Checks
             {
                 ("the sync watch", Find("UnityGameTranslator.Core", "UI", "TranslatorUIManager.cs")),
                 ("the upload screen", Find("UnityGameTranslator.Core", "UI", "Panels", "UploadPanel.cs")),
+                // The stream's `state` reader moved out of the sync watch on 2026-09-11
+                // (ApiReaders.ReadSyncState, held by spec/sse-events); it builds the state the
+                // watch used to build inline, so it answers to the same rule.
+                ("the readers", Find("UnityGameTranslator.Core", "Engine", "ApiReaders.cs")),
             };
 
             foreach (var file in files)

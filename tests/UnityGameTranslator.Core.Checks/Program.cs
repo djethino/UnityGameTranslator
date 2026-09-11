@@ -152,6 +152,7 @@ namespace UnityGameTranslator.Core.Checks
             Section("What a translation file states about itself", LoadedFileChecks.Run);
             Section("The translation file against the spec's cases", TranslationFileSpecChecks.Run);
             Section("The site's answers against the API contract's cases", ApiContractChecks.Run);
+            Section("The relay's streams against the spec's cases", SseEventsChecks.Run);
             Section("A translation's own identity, on loading", LoadedIdentityChecks.Run);
             Section("Everything a reload has to re-run", ReloadChainChecks.Run);
             Section("Who the server was asked as", AccountVerdictChecks.Run);

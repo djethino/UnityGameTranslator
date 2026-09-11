@@ -236,9 +236,9 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             try
             {
-                var data = ApiClient.ParseJsonSafe(jsonData);
-                string token = data["access_token"]?.Value<string>();
-                string userName = data["user"]?["name"]?.Value<string>();
+                var authorized = ApiReaders.ReadDeviceAuthorized(ApiClient.ParseJsonSafe(jsonData));
+                string token = authorized.AccessToken;
+                string userName = authorized.UserName;
 
                 _sseClient?.Disconnect();
                 _sseClient = null;
@@ -287,8 +287,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             try
             {
-                var data = ApiClient.ParseJsonSafe(jsonData);
-                string error = data["error"]?.Value<string>() ?? "Unknown error";
+                string error = ApiReaders.ReadStreamError(ApiClient.ParseJsonSafe(jsonData)).Error ?? "Unknown error";
                 _status.Show(error, Tone.Error);
             }
             catch

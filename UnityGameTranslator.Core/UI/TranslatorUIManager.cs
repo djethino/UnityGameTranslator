@@ -2569,7 +2569,7 @@ namespace UnityGameTranslator.Core.UI
                         // (`code: revoked`), and this hands it to the SAME path an HTTP 401 takes:
                         // sign out locally, say so, refresh. One place decides what a refusal does.
                         case "error":
-                            if (data != null && data.Contains("\"revoked\""))
+                            if (ApiReaders.ReadStreamError(ParseOrNull(data)).Revoked)
                             {
                                 HandleAuthenticationRejected(
                                     "this access was revoked from your account.");
@@ -2648,222 +2648,15 @@ namespace UnityGameTranslator.Core.UI
             {
                 var data = ApiClient.ParseJsonSafe(jsonData);
 
-                bool exists = data["exists"]?.Value<bool>() ?? false;
-                string roleStr = data["role"]?.Value<string>() ?? "none";
-
-                // 🔴 **A partial answer must not erase what a full one established.**
-                //
-                // This payload is rebuilt from scratch on every event, which was safe while every
-                // caller asked for everything. Since the stream asks for one's own line alone
-                // (lineage=0), the lineage half arrives ABSENT — and absent read as zero wiped the
-                // contribution count, the overlay's notice, and the Main a branch derives from,
-                // one second after the startup call had filled them in correctly.
-                //
-                // ⚠ So each lineage field is taken from THIS payload only when the payload carries
-                // it, and kept otherwise. Same rule as everywhere else in this file: absent means
-                // unknown, never none.
-                var previous = TranslatorCore.ServerState;
-
-                int branchesCount = data["branches_count"] != null
-                    ? data["branches_count"].Value<int>()
-                    : (previous?.BranchesCount ?? 0);
-
-                LineageRole role;
-                switch (roleStr)
-                {
-                    case "main": role = LineageRole.Main; break;
-                    case "branch": role = LineageRole.Branch; break;
-                    default: role = LineageRole.None; break;
-                }
-
+                // 🔴 **A partial answer must not erase what a full one established** — the rule is
+                // ApiReaders.ReadSyncState's, held by spec/sse-events' cases: each lineage field is
+                // taken from THIS payload only when it carries it, and kept otherwise.
+                var serverState = ApiReaders.ReadSyncState(data, TranslatorCore.ServerState,
+                    TranslatorCore.Config.api_user);
+                bool exists = serverState.Exists;
+                LineageRole role = serverState.Role;
                 var translation = data["translation"];
                 var main = data["main"];
-
-                // ⚠ `as JObject` once, read three times below — see the note there.
-                var linesWaiting = data["lines_waiting"] as JObject;
-
-                // Build ServerState (replaces FetchServerState logic)
-                var serverState = new ServerTranslationState
-                {
-                    Checked = true,
-                    // Both the stream and check-uuid arrive here, and both carry the account's
-                    // Authorization header — so the role below is an answer about US.
-                    AskedAsAccount = true,
-                    Exists = exists,
-                    IsOwner = role == LineageRole.Main || role == LineageRole.Branch,
-                    Role = role,
-                    BranchesCount = branchesCount,
-                    // Absent from an older site: stays null, which reads as "unknown" and never
-                    // as "the Main is fine".
-                    //
-                    // ⚠ And kept from the previous state when this payload leaves them out — they
-                    // describe what became of the MAIN, so they belong to the lineage and a stream
-                    // does not carry them. Dropping them would take the red notice off the card a
-                    // second after it appeared, on the one screen that says the road is closed.
-                    MainMissing = data["main_missing"] != null
-                        ? data["main_missing"].ToObject<bool?>()
-                        : previous?.MainMissing,
-                    MainAbandoned = data["main_abandoned"] != null
-                        ? data["main_abandoned"].ToObject<bool?>()
-                        : previous?.MainAbandoned,
-                    MainIgnoring = data["main_ignoring"] != null
-                        ? data["main_ignoring"].ToObject<bool?>()
-                        : previous?.MainIgnoring,
-
-                    // 🔴 Read at the TOP level, because it is a fact about the lineage. Taken from
-                    // the caller's own row alone, it reached only somebody who had published into
-                    // it — never the player running somebody else's translation, who is precisely
-                    // the person deciding whether to send their corrections back.
-                    AcceptsBranches = data["accepts_branches"]?.ToObject<bool?>(),
-
-                    // The contributor's apport over time — a lineage fact, kept when left out.
-                    MergedLinesTotal = data["merged_lines_total"] != null
-                        ? (data["merged_lines_total"].ToObject<int?>() ?? 0)
-                        : (previous?.MergedLinesTotal ?? 0),
-
-                    // ⚠ **Null on an older site, and null means unknown.** A zero here would say
-                    // "nothing is waiting", which is a claim; not knowing is not the same answer,
-                    // and the screens show the raw branch count in that case rather than inventing
-                    // a reassuring one.
-                    //
-                    // ⚠ And kept from the previous state when THIS payload does not carry them —
-                    // see the note above: a stream leaves them out by design.
-                    BranchesWithWork = data["branches_with_work"] != null
-                        ? data["branches_with_work"].ToObject<int?>()
-                        : previous?.BranchesWithWork,
-                    LinesAvailable = data["lines_available"] != null
-                        ? data["lines_available"].ToObject<int?>()
-                        : previous?.LinesAvailable,
-
-                    // The other axis, carried the same way as the total above and kept from the
-                    // previous state for the same reason: a stream leaves it out by design.
-                    //
-                    // 🔴 **Read through `linesWaiting`, and that is not a tidy-up.** `!= null` was
-                    // true for a key the server sends as JSON null — a JValue is not a C# null —
-                    // so the indexer on the next line threw "Cannot access child value on JValue"
-                    // and took the whole handler with it, on every state event, for a lineage with
-                    // nothing waiting. Third time this trap has been paid for in this file.
-                    LinesToReview = linesWaiting != null
-                        ? linesWaiting["review"]?.ToObject<int?>()
-                        : previous?.LinesToReview,
-                    LinesNew = linesWaiting != null
-                        ? ApiReaders.TallyOf(linesWaiting, "new")
-                        : (previous?.LinesNew ?? default(TagTally)),
-                    LinesDiffering = linesWaiting != null
-                        ? ApiReaders.TallyOf(linesWaiting, "differing")
-                        : (previous?.LinesDiffering ?? default(TagTally)),
-
-                    LinesOffered = data["lines_offered"] != null
-                        ? data["lines_offered"].ToObject<int?>()
-                        : previous?.LinesOffered,
-                };
-
-                if (translation != null && translation.Type != JTokenType.Null)
-                {
-                    serverState.SiteId = translation["id"]?.Value<int>();
-                    serverState.Uploader = TranslatorCore.Config.api_user;
-                    serverState.Hash = translation["file_hash"]?.Value<string>();
-                    serverState.Type = translation["type"]?.Value<string>();
-
-                    // ⚠ Read HERE as well as in the upload panel: this is the path the main screen
-                    // takes at startup, and a card that only learned the status once somebody
-                    // opened the upload screen would show nothing on the screen that matters.
-                    serverState.Status = translation["status"]?.Value<string>();
-
-                    serverState.Notes = translation["notes"]?.Value<string>();
-                    serverState.ResourcesUrl = translation["resources_url"]?.Value<string>();
-
-                    // 🔴 **The languages this lineage was published with, and they were never read
-                    // here.** The payload has carried them all along; only an upload made from THIS
-                    // machine wrote them back into the configuration. So every translation somebody
-                    // downloaded kept a source of "auto" — and "auto" means the mod asks the model
-                    // to translate without saying from what, and leaves strict_source_language
-                    // nothing to enforce. See TranslatorCore.AlignLanguagesFromServer.
-                    serverState.SourceLanguage = translation["source_language"]?.Value<string>();
-                    serverState.TargetLanguage = translation["target_language"]?.Value<string>();
-
-                    // Same reason as the status right above: this is the path the main screen
-                    // takes at startup, and learning it only when somebody opens the upload panel
-                    // would be learning it at the one moment it is too late to be useful.
-                    // ⚠ Only when the row carries it: the lineage answer is already in from the
-                    // top level above, and an absent key here must not wipe it.
-                    if (translation["accepts_branches"] != null)
-                        serverState.AcceptsBranches = translation["accepts_branches"].ToObject<bool?>();
-
-                    serverState.BranchFrozen = translation["branch_frozen"]?.ToObject<bool?>();
-
-                    // A branch now also hears about the Main it derives from. Absent
-                    // from an older site: stays null, which reads as "unknown" and
-                    // never as "the Main is gone".
-                    //
-                    // ⚠ **Kept when this payload does not carry it.** The Main belongs to the
-                    // lineage, so a stream leaves it out — and dropping it here would take
-                    // "Update from Main" and the owner's name off the screen a second after the
-                    // startup call had put them there.
-                    if (role == LineageRole.Branch)
-                    {
-                        if (main != null && main.Type != JTokenType.Null)
-                        {
-                            serverState.MainSiteId = main["id"]?.Value<int>();
-                            serverState.MainHash = main["file_hash"]?.Value<string>();
-                            serverState.MainLineCount = main["line_count"]?.Value<int>() ?? 0;
-                            serverState.MainUsername = main["uploader"]?.Value<string>();
-                        }
-                        else if (previous != null)
-                        {
-                            serverState.MainSiteId = previous.MainSiteId;
-                            serverState.MainHash = previous.MainHash;
-                            serverState.MainLineCount = previous.MainLineCount;
-                            serverState.MainUsername = previous.MainUsername;
-                        }
-                    }
-
-                    serverState.BranchesPendingReview = data["branches_pending_review"] != null
-                        ? data["branches_pending_review"].Value<int>()
-                        : (previous?.BranchesPendingReview ?? 0);
-                }
-                else if (main != null && main.Type != JTokenType.Null)
-                {
-                    serverState.SiteId = main["id"]?.Value<int>();
-                    serverState.Uploader = main["uploader"]?.Value<string>();
-                    serverState.MainUsername = main["uploader"]?.Value<string>();
-                    serverState.Hash = main["file_hash"]?.Value<string>();
-                    serverState.ResourcesUrl = main["resources_url"]?.Value<string>();
-
-                    // 🔴 **Holding somebody's lineage without having published into it is a
-                    // first-class case, and the Main IS this row.** These three were filled for a
-                    // Branch alone, so that person had no MainSiteId — and MergeFromMain refuses
-                    // without one. Their only way to take in what the Main added was Download
-                    // Latest, which REPLACES: the mod knew the safe path and offered the
-                    // destructive one. CLAUDE.md says they must have both.
-                    //
-                    // ⚠ Nothing new crosses the wire: the block is already in this payload and its
-                    // id is already read into SiteId above. The gate was ours, and what it shut was
-                    // a local act — see analyse/merge-from-main-without-branch.md.
-                    serverState.MainSiteId = serverState.SiteId;
-                    serverState.MainHash = serverState.Hash;
-                    serverState.MainLineCount = main["line_count"]?.Value<int>() ?? 0;
-
-                    // Same reason as on one's own row above — and this is the case that matters
-                    // most, because it is the person running a translation they downloaded, whose
-                    // source has been "auto" ever since.
-                    serverState.SourceLanguage = main["source_language"]?.Value<string>();
-                    serverState.TargetLanguage = main["target_language"]?.Value<string>();
-                }
-
-                // Votes on the published translation of this lineage. Left null on a server that
-                // does not report it: the card then shows no vote at all, rather than "0".
-                var voteToken = data["vote"];
-                if (voteToken != null && voteToken.Type == JTokenType.Object)
-                {
-                    serverState.Vote = new VoteState
-                    {
-                        TargetId = voteToken["target_id"]?.Value<int>() ?? 0,
-                        Count = voteToken["count"]?.Value<int>() ?? 0,
-                        UserVote = voteToken["user_vote"]?.Value<int?>(),
-                        CanVote = voteToken["can_vote"]?.Value<bool>() ?? false,
-                    };
-                }
 
                 TranslatorCore.ServerState = serverState;
 
@@ -2948,6 +2741,14 @@ namespace UnityGameTranslator.Core.UI
             return token[name];
         }
 
+        /// <summary>An event's data as JSON, or null when it is not — a reader takes null as "nothing said".</summary>
+        private static JObject ParseOrNull(string jsonData)
+        {
+            if (string.IsNullOrWhiteSpace(jsonData)) return null;
+            try { return ApiClient.ParseJsonSafe(jsonData); }
+            catch { return null; }
+        }
+
         /// <summary>
         /// Handle the SSE 'translation_updated' event — real-time notification when
         /// the server translation is modified (upload from another device, merge, etc.).
@@ -2956,11 +2757,10 @@ namespace UnityGameTranslator.Core.UI
         {
             try
             {
-                var data = ApiClient.ParseJsonSafe(jsonData);
-
-                string serverHash = data["file_hash"]?.Value<string>();
-                int lineCount = data["line_count"]?.Value<int>() ?? 0;
-                int voteCount = data["vote_count"]?.Value<int>() ?? 0;
+                var updated = ApiReaders.ReadTranslationUpdated(ApiClient.ParseJsonSafe(jsonData));
+                string serverHash = updated.FileHash;
+                int lineCount = updated.LineCount;
+                int voteCount = updated.VoteCount;
 
                 // Update server state hash
                 var serverState = TranslatorCore.ServerState;
@@ -3280,10 +3080,10 @@ namespace UnityGameTranslator.Core.UI
         {
             try
             {
-                var data = ApiClient.ParseJsonSafe(jsonData);
-                string fileHash = data["file_hash"]?.Value<string>();
-                int lineCount = data["line_count"]?.Value<int>() ?? 0;
-                bool toLocal = data["destination"]?.Value<string>() == "local";
+                var completed = ApiReaders.ReadMergeCompleted(ApiClient.ParseJsonSafe(jsonData));
+                string fileHash = completed.FileHash;
+                int lineCount = completed.LineCount;
+                bool toLocal = completed.ToLocal;
 
                 TranslatorCore.LogInfo($"[MergeSSE] Merge completed! destination={(toLocal ? "local" : "server")}, lines={lineCount}");
 
@@ -4636,11 +4436,11 @@ namespace UnityGameTranslator.Core.UI
         {
             try
             {
-                var data = ApiClient.ParseJsonSafe(jsonData);
-                string key = data["key"]?.Value<string>();
+                var asked = ApiReaders.ReadEditRetranslate(ApiClient.ParseJsonSafe(jsonData));
+                string key = asked.Key;
                 if (string.IsNullOrEmpty(key)) return;
 
-                string requestId = data["id"]?.Value<string>();
+                string requestId = asked.RequestId;
                 if (!string.IsNullOrEmpty(requestId))
                 {
                     if (_seenRetranslateIds.Contains(requestId))
@@ -4696,9 +4496,9 @@ namespace UnityGameTranslator.Core.UI
         {
             try
             {
-                var data = ApiClient.ParseJsonSafe(jsonData);
-                string contentHash = data["content_hash"]?.Value<string>();
-                int lineCount = data["line_count"]?.Value<int>() ?? 0;
+                var saved = ApiReaders.ReadEditSaved(ApiClient.ParseJsonSafe(jsonData));
+                string contentHash = saved.ContentHash;
+                int lineCount = saved.LineCount;
 
                 // Reconnections replay the latest save — skip if already applied.
                 // Dedup on the applied-save hash (never clobbered by our pushes), so a

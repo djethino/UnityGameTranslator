@@ -256,9 +256,8 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 _status.Show(Tr("Logged in as") + $" {userName}!", Tone.Success);
 
-                // Refresh panels that show login status
-                TranslatorUIManager.WizardPanel?.UpdateAccountStatus();
-                TranslatorUIManager.MainPanel?.RefreshUI();
+                // Every screen that shows who is signed in re-reads it
+                Intents.AccountChanged();
 
                 // Start watching for updates now that we're authenticated
                 TranslatorUIManager.StartSyncWatch();

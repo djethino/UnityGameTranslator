@@ -4601,7 +4601,7 @@ namespace UnityGameTranslator.Core
                 {
                     UI.TranslatorUIManager.RunOnMainThread(() =>
                         UI.TranslatorUIManager.StatusOverlay?.ShowToast(message,
-                            UI.Panels.StatusOverlay.ToastTone.Off));
+                            UI.ToastTone.Off));
                 }
                 catch { }
                 return null;

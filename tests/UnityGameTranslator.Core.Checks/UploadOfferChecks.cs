@@ -98,15 +98,21 @@ namespace UnityGameTranslator.Core.Checks
             foreach (var file in Directory.GetFiles(CoreRoot(), "*.cs", SearchOption.AllDirectories))
             {
                 string text = File.ReadAllText(file);
+                // The bare roads: the panel's own SetActive, and the router's generic Show or
+                // Toggle on the upload screen (Intents has no Open(ScreenId) for this reason).
                 if (text.Contains("UploadPanel?.SetActive(true)", StringComparison.Ordinal)
-                    || text.Contains("UploadPanel.SetActive(true)", StringComparison.Ordinal))
+                    || text.Contains("UploadPanel.SetActive(true)", StringComparison.Ordinal)
+                    || text.Contains("Show(ScreenId.Upload)", StringComparison.Ordinal)
+                    || text.Contains("Toggle(ScreenId.Upload)", StringComparison.Ordinal))
                 {
                     offenders.Add(Path.GetFileName(file));
                 }
 
                 ways += Occurrences(text, "UploadPanel?.OpenForUpload()")
                         + Occurrences(text, "UploadPanel.OpenForUpload()")
-                        + Occurrences(text, "UploadPanel?.OpenForDetails()");
+                        + Occurrences(text, "UploadPanel?.OpenForDetails()")
+                        + Occurrences(text, "Intents.OpenUpload()")
+                        + Occurrences(text, "Intents.OpenDetails()");
             }
 
             check(ways >= 6,

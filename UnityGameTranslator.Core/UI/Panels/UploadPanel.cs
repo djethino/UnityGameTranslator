@@ -237,7 +237,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             SetActive(false);
 
             // Reopen setup panel - it will pre-populate with detected game
-            TranslatorUIManager.UploadSetupPanel.ShowForSetup((game, srcLang, tgtLang) =>
+            Intents.SetUpUpload((game, srcLang, tgtLang) =>
             {
                 ContinueAfterSetup(game, srcLang, tgtLang);
             });
@@ -636,7 +636,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                             _isChecking = false;
                             SetActive(false);
 
-                            TranslatorUIManager.UploadSetupPanel.ShowForSetup((game, srcLang, tgtLang) =>
+                            Intents.SetUpUpload((game, srcLang, tgtLang) =>
                             {
                                 ContinueAfterSetup(game, srcLang, tgtLang);
                             });
@@ -785,7 +785,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 + "Published as it is, anyone downloading it gets the original text back.\n\n"
                 + "Publish anyway?");
 
-            if (TranslatorUIManager.ConfirmationPanel == null)
+            if (!Intents.CanConfirm())
             {
                 // No dialog available: publishing is the author's own request, and swallowing it
                 // silently would be worse than asking nothing.
@@ -793,7 +793,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 return;
             }
 
-            TranslatorUIManager.ConfirmationPanel.Show(
+            Intents.Confirm(
                 TranslatorCore.TranslateOwnUIDynamic("Nothing translated yet"),
                 message,
                 TranslatorCore.TranslateOwnUIDynamic("Publish"),
@@ -1011,7 +1011,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                         _isUploading = false;
                         _uploadBtn.Enabled = true;
                         SetActive(false);
-                        TranslatorUIManager.MainPanel?.RefreshUI();
+                        Intents.StateChanged();
                     });
                     return; // Skip finally block UI updates (already done above)
                 }
@@ -1080,7 +1080,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 // The settings that travel with a translation are unchanged by this, so nothing
                 // local is dirty — but the screens read the notes from the server state.
-                TranslatorUIManager.MainPanel?.RefreshUI();
+                Intents.StateChanged();
             });
         }
 

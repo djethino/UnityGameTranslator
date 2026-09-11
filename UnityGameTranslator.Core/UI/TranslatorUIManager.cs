@@ -52,7 +52,6 @@ namespace UnityGameTranslator.Core.UI
 
         // Callback for when initialization completes (used by TranslatorPatches to retry failed font replacements)
         public static event Action OnInitialized;
-        private static bool _showUI;
         private static bool _lastPanelVisibleState; // Track panel state for EventSystem and cursor management
 
         // True while the mod's interface owns the game's input. Follows the panels, but lags them
@@ -137,30 +136,17 @@ namespace UnityGameTranslator.Core.UI
         public static Panels.TranslationParametersPanel TranslationParamsPanel { get; private set; }
 
         /// <summary>
+        /// Which screen is up and the rules of their sequence (Engine/Screens.cs). Every panel is
+        /// registered here under its ScreenId; a panel that wants another screen emits an intent
+        /// (UI/Intents.cs), never names the panel. Null until CreatePanels has run.
+        /// </summary>
+        public static ScreenRouter Screens { get; private set; }
+
+        /// <summary>
         /// List of all interactive panels (excludes StatusOverlay which is a notification overlay).
         /// Used for centralized panel state management.
         /// </summary>
         private static readonly List<Panels.TranslatorPanelBase> _interactivePanels = new List<Panels.TranslatorPanelBase>();
-
-        /// <summary>
-        /// Gets all registered interactive panels.
-        /// </summary>
-        public static IReadOnlyList<Panels.TranslatorPanelBase> InteractivePanels => _interactivePanels;
-
-        /// <summary>
-        /// Whether any main panel is visible (not including status overlay).
-        /// Note: UiBase remains enabled for hotkey detection and status overlay.
-        /// </summary>
-        public static bool ShowUI
-        {
-            get => _showUI;
-            set
-            {
-                _showUI = value;
-                // Don't disable UiBase - keep it enabled for hotkey detection and status overlay
-                // Individual panels control their own visibility
-            }
-        }
 
         /// <summary>
         /// Execute an action on the main Unity thread.
@@ -1311,6 +1297,23 @@ namespace UnityGameTranslator.Core.UI
             _interactivePanels.Add(InspectorPanel);
             _interactivePanels.Add(TranslationParamsPanel);
 
+            // The router knows each panel as a screen and nothing more; the sequence rules
+            // (the wizard in place of the Main, the Main behind the inspector) live there.
+            Screens = new ScreenRouter();
+            Screens.Register(ScreenId.Wizard, WizardPanel);
+            Screens.Register(ScreenId.Main, MainPanel);
+            Screens.Register(ScreenId.Options, OptionsPanel);
+            Screens.Register(ScreenId.Login, LoginPanel);
+            Screens.Register(ScreenId.Upload, UploadPanel);
+            Screens.Register(ScreenId.UploadSetup, UploadSetupPanel);
+            Screens.Register(ScreenId.Merge, MergePanel);
+            Screens.Register(ScreenId.Language, LanguagePanel);
+            Screens.Register(ScreenId.Backups, BackupsPanel);
+            Screens.Register(ScreenId.Confirmation, ConfirmationPanel);
+            Screens.Register(ScreenId.SettingsChoice, SettingsChoicePanel);
+            Screens.Register(ScreenId.Inspector, InspectorPanel);
+            Screens.Register(ScreenId.TranslationParameters, TranslationParamsPanel);
+
             // Hide all panels initially (using centralized list + StatusOverlay)
             CloseAllPanels();
             StatusOverlay.SetActive(false);
@@ -1349,7 +1352,7 @@ namespace UnityGameTranslator.Core.UI
                         "mod interface kept in English (get the translation's resources to install it)");
                     StatusOverlay?.ShowToast(
                         $"Missing font '{requestedFont}' — interface kept in English. Install the translation's resources.",
-                        Panels.StatusOverlay.ToastTone.Off);
+                        ToastTone.Off);
                 }
             }
             else
@@ -2264,7 +2267,7 @@ namespace UnityGameTranslator.Core.UI
                 {
                     TranslatorCore.LogWarning($"[MainMerge] Could not download the Main: {error}");
                     StatusOverlay?.ShowToast($"Could not fetch the Main: {error}",
-                        Panels.StatusOverlay.ToastTone.Off);
+                        ToastTone.Off);
                     return;
                 }
 
@@ -2301,7 +2304,7 @@ namespace UnityGameTranslator.Core.UI
                     $"(upstream ancestor: {upstreamAncestor.Count} entries)");
 
                 // Shown whatever the conflict count: the summary IS the decision point
-                MergePanel?.SetActive(true);
+                Screens.Show(ScreenId.Merge);
                 MergePanel?.SetMergeDataWithTags(mergeResult, mainContent, fileHash ?? expectedHash);
                 MergePanel?.SetUpstreamMerge(mainContent, fileHash ?? expectedHash);
                 // The Main's baseline is its own (.mainancestor), never this
@@ -2910,7 +2913,7 @@ namespace UnityGameTranslator.Core.UI
                         TranslatorCore.LogInfo("[MergeSSE] The comparison was closed in the browser");
                         StopMergeCompletionListener();
                         _mergeToken = null;
-                        MergePanel?.SetActive(false);
+                        Screens.Hide(ScreenId.Merge);
                         StatusOverlay?.RefreshOverlay();
                     }
                 });
@@ -2949,7 +2952,7 @@ namespace UnityGameTranslator.Core.UI
                 string message = string.IsNullOrEmpty(reason)
                     ? "Signed out: the server refused this account's token."
                     : "Signed out: " + reason;
-                StatusOverlay?.ShowToast(message, Panels.StatusOverlay.ToastTone.Off);
+                StatusOverlay?.ShowToast(message, ToastTone.Off);
 
                 MainPanel?.RefreshUI();
                 StatusOverlay?.RefreshOverlay();
@@ -3015,7 +3018,7 @@ namespace UnityGameTranslator.Core.UI
                 {
                     TranslatorCore.LogWarning($"[Compare] Could not open the comparison: {error}");
                     StatusOverlay?.ShowToast("Could not open the comparison page",
-                        Panels.StatusOverlay.ToastTone.Off);
+                        ToastTone.Off);
                 }
 
                 // Both screens, both outcomes — the same pair EndComparison uses. On success they
@@ -3055,14 +3058,14 @@ namespace UnityGameTranslator.Core.UI
                 if (!success || string.IsNullOrEmpty(content))
                 {
                     TranslatorCore.LogWarning($"[MergeSSE] Could not collect the comparison result: {error}");
-                    StatusOverlay?.ShowToast("Could not retrieve the comparison result", Panels.StatusOverlay.ToastTone.Off);
+                    StatusOverlay?.ShowToast("Could not retrieve the comparison result", ToastTone.Off);
                     MainPanel?.RefreshUI();
                     return;
                 }
 
                 if (!ApplyDownloadedTranslationFile(content))
                 {
-                    StatusOverlay?.ShowToast("The comparison result could not be applied", Panels.StatusOverlay.ToastTone.Off);
+                    StatusOverlay?.ShowToast("The comparison result could not be applied", ToastTone.Off);
                     return;
                 }
 
@@ -3071,7 +3074,7 @@ namespace UnityGameTranslator.Core.UI
                 // step with it would hide the update the player still has to send.
                 TranslatorCore.ClearProcessingCaches();
                 TranslatorCore.LogInfo("[MergeSSE] Comparison result applied locally (nothing published)");
-                StatusOverlay?.ShowToast("Comparison applied to your translation", Panels.StatusOverlay.ToastTone.On);
+                StatusOverlay?.ShowToast("Comparison applied to your translation", ToastTone.On);
                 MainPanel?.RefreshUI();
             });
         }
@@ -3249,8 +3252,6 @@ namespace UnityGameTranslator.Core.UI
             TranslatorCore.LogInfo($"[Settings] Asking about {arbitrated.Count} section(s): "
                 + string.Join(", ", arbitratedNames.ToArray()));
 
-            // A dialog nobody can see is the same as no dialog at all
-            ShowUI = true;
             // "Compare" opens the browser side-by-side view — settings included since it can now
             // show them one by one. Offered only when we know WHICH online translation to compare
             // against; without that there is nowhere to go, and a button that leads nowhere is
@@ -3531,7 +3532,7 @@ namespace UnityGameTranslator.Core.UI
 
             StopMergeCompletionListener();
             _mergeToken = null;
-            MergePanel?.SetActive(false);
+            Screens.Hide(ScreenId.Merge);
 
             TranslatorCore.LogInfo($"[Merge] The comparison was let go - {why}");
 
@@ -4190,9 +4191,6 @@ namespace UnityGameTranslator.Core.UI
 
                 if (ConfirmationPanel == null) return;
 
-                // The mod's UI is hidden at startup: a dialog nobody can see is
-                // the same as no dialog at all
-                ShowUI = true;
                 ConfirmationPanel.Show(
                     "Live edit session",
                     "A browser edit session was still open when this game last closed.\n\n"
@@ -4240,7 +4238,7 @@ namespace UnityGameTranslator.Core.UI
                     // Network trouble, not a dead session: keep the file so the
                     // next launch can offer it again rather than stranding the browser
                     TranslatorCore.LogWarning($"[EditSSE] Could not resume the session: {error}");
-                    StatusOverlay?.ShowToast("Could not resume the edit session", Panels.StatusOverlay.ToastTone.Off);
+                    StatusOverlay?.ShowToast("Could not resume the edit session", ToastTone.Off);
                     return;
                 }
 
@@ -4255,7 +4253,7 @@ namespace UnityGameTranslator.Core.UI
                 TranslatorCore.LogInfo("[EditSSE] Edit session resumed after game restart");
                 TranslationParamsPanel?.OnEditSessionResumed();
                 MainPanel?.RefreshUI();
-                StatusOverlay?.ShowToast("Live edit session resumed", Panels.StatusOverlay.ToastTone.On);
+                StatusOverlay?.ShowToast("Live edit session resumed", ToastTone.On);
             });
         }
 
@@ -4842,7 +4840,7 @@ namespace UnityGameTranslator.Core.UI
                         {
                             // Real conflicts - show merge panel for user to resolve
                             // SetActive first to ensure UI is constructed before setting data
-                            MergePanel?.SetActive(true);
+                            Screens.Show(ScreenId.Merge);
                             MergePanel?.SetMergeDataWithTags(mergeResult, remoteTranslations, fileHash);
                             MergePanel?.SetSettingsContext(
                                 TranslationSettings.FromCurrentState(),
@@ -5219,7 +5217,7 @@ namespace UnityGameTranslator.Core.UI
                         {
                             // Show merge panel for user to resolve conflicts
                             // SetActive first to ensure UI is constructed before setting data
-                            MergePanel?.SetActive(true);
+                            Screens.Show(ScreenId.Merge);
                             MergePanel?.SetMergeDataWithTags(mergeResult, remoteTranslations, fileHash);
                             MergePanel?.SetSettingsContext(
                                 TranslationSettings.FromCurrentState(),
@@ -5273,11 +5271,7 @@ namespace UnityGameTranslator.Core.UI
         /// </summary>
         public static void ShowWizard()
         {
-            if (WizardPanel == null || MainPanel == null) return;
-
-            ShowUI = true;
-            WizardPanel.SetActive(true);
-            MainPanel.SetActive(false);
+            Screens?.ShowWizard();
         }
 
         /// <summary>
@@ -5285,11 +5279,8 @@ namespace UnityGameTranslator.Core.UI
         /// </summary>
         public static void ShowMain()
         {
-            if (WizardPanel == null || MainPanel == null) return;
-
-            ShowUI = true;
-            WizardPanel.SetActive(false);
-            MainPanel.SetActive(true);
+            if (Screens == null) return;
+            Screens.ShowMain();
             BootstrapInterfaceFontOnce();
         }
 
@@ -5311,18 +5302,12 @@ namespace UnityGameTranslator.Core.UI
         /// </summary>
         public static void ToggleMain()
         {
-            if (MainPanel == null) return;
+            if (Screens == null) return;
 
-            if (MainPanel.Enabled)
-            {
-                MainPanel.SetActive(false);
-                if (!AnyPanelVisible())
-                    ShowUI = false;
-            }
+            if (Screens.IsVisible(ScreenId.Main))
+                Screens.Hide(ScreenId.Main);
             else
-            {
                 ShowMain();
-            }
         }
 
         /// <summary>
@@ -5333,9 +5318,8 @@ namespace UnityGameTranslator.Core.UI
         public static void OpenInspectorPanel(Panels.InspectorMode mode = Panels.InspectorMode.Exclusion)
         {
             if (InspectorPanel == null) return;
-            ShowUI = true;
             InspectorPanel.SetMode(mode);
-            InspectorPanel.SetActive(true);
+            Screens.Show(ScreenId.Inspector);
         }
 
         /// <summary>
@@ -5345,57 +5329,18 @@ namespace UnityGameTranslator.Core.UI
         {
             CloseAllPanels();
             StatusOverlay?.SetActive(false);
-            ShowUI = false;
         }
 
         /// <summary>
-        /// Hide all main panels but allow status overlay to remain.
-        /// Alias for CloseAllPanels() for backward compatibility.
-        /// </summary>
-        public static void HideMainPanels()
-        {
-            CloseAllPanels();
-        }
-
-        /// <summary>
-        /// Check if any interactive panel is currently visible.
-        /// Uses the centralized panel list.
-        /// </summary>
-        private static bool AnyPanelVisible()
-        {
-            for (int i = 0; i < _interactivePanels.Count; i++)
-            {
-                if (_interactivePanels[i].Enabled)
-                    return true;
-            }
-            return false;
-        }
-
-        /// <summary>
-        /// Close all interactive panels.
-        /// Uses the centralized panel list.
+        /// Close all interactive panels (the overlay stays).
         /// </summary>
         public static void CloseAllPanels()
         {
-            for (int i = 0; i < _interactivePanels.Count; i++)
-            {
-                _interactivePanels[i].SetActive(false);
-            }
+            Screens?.CloseAll();
         }
 
-        /// <summary>
-        /// Get all currently visible panels.
-        /// </summary>
-        public static List<Panels.TranslatorPanelBase> GetVisiblePanels()
-        {
-            var visible = new List<Panels.TranslatorPanelBase>();
-            for (int i = 0; i < _interactivePanels.Count; i++)
-            {
-                if (_interactivePanels[i].Enabled)
-                    visible.Add(_interactivePanels[i]);
-            }
-            return visible;
-        }
+        /// <summary>Is any screen up (the overlay is not one).</summary>
+        private static bool AnyPanelVisible() => Screens != null && Screens.AnyVisible;
 
         private static float _overlayRefreshTimer = 0f;
         private const float OVERLAY_REFRESH_INTERVAL = 0.5f; // Refresh every 0.5 seconds
@@ -5715,16 +5660,15 @@ namespace UnityGameTranslator.Core.UI
         /// </summary>
         private static void OpenInspectorHotkey()
         {
-            if (InspectorPanel == null) return;
-            if (InspectorPanel.Enabled)
+            if (Screens == null) return;
+            if (Screens.IsVisible(ScreenId.Inspector))
             {
-                InspectorPanel.SetActive(false);
+                Screens.Hide(ScreenId.Inspector);
                 ShowHotkeyFeedback("Inspector: CLOSED", false);
             }
             else
             {
-                ShowUI = true;
-                InspectorPanel.SetActive(true);
+                Screens.Show(ScreenId.Inspector);
                 ShowHotkeyFeedback("Inspector: OPEN", true);
             }
         }
@@ -5735,14 +5679,13 @@ namespace UnityGameTranslator.Core.UI
         private static void OpenUploadHotkey()
         {
             if (UploadPanel == null) return;
-            if (UploadPanel.Enabled)
+            if (Screens.IsVisible(ScreenId.Upload))
             {
-                UploadPanel.SetActive(false);
+                Screens.Hide(ScreenId.Upload);
                 ShowHotkeyFeedback("Upload: CLOSED", false);
             }
             else
             {
-                ShowUI = true;
                 UploadPanel.OpenForUpload();
                 ShowHotkeyFeedback("Upload: OPEN", true);
             }
@@ -5754,10 +5697,10 @@ namespace UnityGameTranslator.Core.UI
         /// </summary>
         private static void OpenExclusionModeHotkey()
         {
-            if (InspectorPanel == null) return;
-            if (InspectorPanel.Enabled)
+            if (Screens == null) return;
+            if (Screens.IsVisible(ScreenId.Inspector))
             {
-                InspectorPanel.SetActive(false);
+                Screens.Hide(ScreenId.Inspector);
                 ShowHotkeyFeedback("Exclusion mode: CLOSED", false);
             }
             else
@@ -5772,10 +5715,10 @@ namespace UnityGameTranslator.Core.UI
         /// </summary>
         private static void OpenTextEditorHotkey()
         {
-            if (InspectorPanel == null) return;
-            if (InspectorPanel.Enabled)
+            if (Screens == null) return;
+            if (Screens.IsVisible(ScreenId.Inspector))
             {
-                InspectorPanel.SetActive(false);
+                Screens.Hide(ScreenId.Inspector);
                 ShowHotkeyFeedback("Text editor: CLOSED", false);
             }
             else
@@ -5804,9 +5747,9 @@ namespace UnityGameTranslator.Core.UI
             TranslatorCore.LogInfo($"[Hotkey] {message}");
             if (StatusOverlay == null) return;
 
-            var tone = Panels.StatusOverlay.ToastTone.Info;
+            var tone = ToastTone.Info;
             if (enabled.HasValue)
-                tone = enabled.Value ? Panels.StatusOverlay.ToastTone.On : Panels.StatusOverlay.ToastTone.Off;
+                tone = enabled.Value ? ToastTone.On : ToastTone.Off;
 
             StatusOverlay.ShowToast(message, tone);
         }

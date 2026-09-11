@@ -249,13 +249,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             // ⚠ Kept as fields: a button that opens a window has to be told, afterwards, that the
             // window is there — and that it is gone again. See RefreshOpenerStates.
             _transParamsBtn = Buttons.Secondary(buttonRow, "TransParamsBtn", "Translation Tools");
-            _transParamsBtn.Clicked += () => Toggle(TranslatorUIManager.TranslationParamsPanel);
+            _transParamsBtn.Clicked += () => Intents.Toggle(ScreenId.TranslationParameters);
             var transParamsBtn = _transParamsBtn;
             _helpZone?.Describe(transParamsBtn,
                 "Text editors, exclusions, fonts, images and variables");
 
             _optionsBtn = Buttons.Secondary(buttonRow, "OptionsBtn", "Mod Options");
-            _optionsBtn.Clicked += () => Toggle(TranslatorUIManager.OptionsPanel);
+            _optionsBtn.Clicked += () => Intents.Toggle(ScreenId.Options);
             var optionsBtn = _optionsBtn;
             _helpZone?.Describe(optionsBtn,
                 "General settings: hotkeys, online mode, translation backend");
@@ -399,7 +399,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             _loginCTABtn = Buttons.Primary(ctaBtnRow, "CTALoginBtn", "Create Account / Login", 200);
             _loginCTABtn.Tone = ButtonTone.Success;
-            _loginCTABtn.Clicked += () => TranslatorUIManager.LoginPanel?.SetActive(true);
+            _loginCTABtn.Clicked += () => Intents.OpenLogin();
             _helpZone?.Describe(_loginCTABtn,
                 "An account is only needed to SHARE translations. Downloading and playing work without one.");
         }
@@ -442,9 +442,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             _backupsBtn = Buttons.Secondary(backupsRow, "BackupsBtn", "Backups…");
             _backupsBtn.Clicked += () =>
             {
-                var backups = TranslatorUIManager.BackupsPanel;
-                if (backups == null) return;
-                if (backups.Enabled) backups.SetActive(false); else backups.ShowPanel();
+                if (Intents.IsOpen(ScreenId.Backups)) Intents.Close(ScreenId.Backups);
+                else Intents.OpenBackups();
             };
             var backupsBtn = _backupsBtn;
             _helpZone?.Describe(backupsBtn,
@@ -1897,16 +1896,16 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // ⚠ Only when this button is the one showing the sign-in screen. Signing OUT is not a
             // window and has nothing to put away.
-            if (!isLoggedIn && TranslatorUIManager.LoginPanel?.Enabled == true)
+            if (!isLoggedIn && Intents.IsOpen(ScreenId.Login))
             {
-                TranslatorUIManager.LoginPanel.SetActive(false);
+                Intents.Close(ScreenId.Login);
                 return;
             }
 
             if (isLoggedIn)
             {
                 // Show confirmation dialog before logout
-                TranslatorUIManager.ConfirmationPanel?.Show(
+                Intents.Confirm(
                     "Logout",
                     "Are you sure you want to disconnect?\nYou'll need to re-authenticate to sync translations.",
                     "Logout",
@@ -1922,14 +1921,13 @@ namespace UnityGameTranslator.Core.UI.Panels
                             // Said, not swallowed. The access is still live on the account and the
                             // only way to cut it now is from the site.
                             TranslatorUIManager.RunOnMainThread(() =>
-                                TranslatorUIManager.StatusOverlay?.ShowToast(
+                                Intents.Toast(
                                     "Signed out here, but the site could not be reached. Cut this access from Linked devices on your account.",
-                                    Panels.StatusOverlay.ToastTone.Off));
+                                    ToastTone.Off));
                         });
 
-                        // Refresh all UI components
-                        RefreshUI();
-                        TranslatorUIManager.StatusOverlay?.RefreshOverlay();
+                        // Every screen that shows who is signed in re-reads it
+                        Intents.AccountChanged();
                         TranslatorUIManager.NotificationDismissed = false; // Reset dismissals
                     },
                     isDanger: true
@@ -1938,7 +1936,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             else
             {
                 // Show login panel
-                TranslatorUIManager.LoginPanel?.SetActive(true);
+                Intents.OpenLogin();
             }
         }
 
@@ -1972,10 +1970,9 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             // ⚠ Closes only the SEND. On a window showing the details act, this re-purposes it —
             // pressing Upload must never read as "close the details I was editing".
-            var openUpload = TranslatorUIManager.UploadPanel;
-            if (_uploadAct != UploadAct.Fork && openUpload != null && openUpload.IsShowingUpload)
+            if (_uploadAct != UploadAct.Fork && Intents.IsShowingUpload())
             {
-                openUpload.SetActive(false);
+                Intents.Close(ScreenId.Upload);
                 return;
             }
 
@@ -1997,7 +1994,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
             else
             {
-                TranslatorUIManager.UploadPanel?.OpenForUpload();
+                Intents.OpenUpload();
             }
         }
 
@@ -2023,10 +2020,9 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // ⚠ Closes only what IT opened. On a window showing the send, this re-purposes it —
             // pressing "Edit details" must never read as "close the upload I was filling in".
-            var upload = TranslatorUIManager.UploadPanel;
-            if (upload != null && upload.IsShowingDetails) { upload.SetActive(false); return; }
+            if (Intents.IsShowingDetails()) { Intents.Close(ScreenId.Upload); return; }
 
-            upload?.OpenForDetails();
+            Intents.OpenDetails();
         }
 
         /// <summary>
@@ -2037,12 +2033,6 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// possibly behind another one — so the only honest readings were "it is broken" or "I
         /// missed". The button is lit while its window is up, and it is the way back out.
         /// </summary>
-        private static void Toggle(TranslatorPanelBase panel)
-        {
-            if (panel == null) return;
-            panel.SetActive(!panel.Enabled);
-        }
-
         /// <summary>
         /// Tell every opener whether the thing it opens is on screen.
         ///
@@ -2056,23 +2046,21 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         public void RefreshOpenerStates()
         {
-            var upload = TranslatorUIManager.UploadPanel;
-
             if (_transParamsBtn != null)
-                _transParamsBtn.Showing = TranslatorUIManager.TranslationParamsPanel?.Enabled == true;
+                _transParamsBtn.Showing = Intents.IsOpen(ScreenId.TranslationParameters);
             if (_optionsBtn != null)
-                _optionsBtn.Showing = TranslatorUIManager.OptionsPanel?.Enabled == true;
+                _optionsBtn.Showing = Intents.IsOpen(ScreenId.Options);
             if (_backupsBtn != null)
-                _backupsBtn.Showing = TranslatorUIManager.BackupsPanel?.Enabled == true;
+                _backupsBtn.Showing = Intents.IsOpen(ScreenId.Backups);
             if (_loginLogoutBtn != null)
-                _loginLogoutBtn.Showing = TranslatorUIManager.LoginPanel?.Enabled == true;
+                _loginLogoutBtn.Showing = Intents.IsOpen(ScreenId.Login);
             if (_loginCTABtn != null)
-                _loginCTABtn.Showing = TranslatorUIManager.LoginPanel?.Enabled == true;
+                _loginCTABtn.Showing = Intents.IsOpen(ScreenId.Login);
 
             // ⚠ The two acts of one window, so each button follows ITS act — never merely "the
             // window is up", which would light both and say the wrong thing about one of them.
-            if (_uploadBtn != null) _uploadBtn.Showing = upload?.IsShowingUpload == true;
-            if (_editDetailsBtn != null) _editDetailsBtn.Showing = upload?.IsShowingDetails == true;
+            if (_uploadBtn != null) _uploadBtn.Showing = Intents.IsShowingUpload();
+            if (_editDetailsBtn != null) _editDetailsBtn.Showing = Intents.IsShowingDetails();
 
             // ⚠ The comparison lives in a BROWSER, so nothing in this window is told when it opens,
             // ends, or is closed from the page. Asked here for the same reason as the rest.
@@ -2156,7 +2144,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void OnContributeAsBranchClicked()
         {
             // Open upload panel - it will detect that we're contributing to an existing translation
-            TranslatorUIManager.UploadPanel?.OpenForUpload();
+            Intents.OpenUpload();
         }
 
         /// <summary>
@@ -2177,7 +2165,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // GAP 10: Warning for replacing local changes
             if (localChanges > 0)
             {
-                TranslatorUIManager.ConfirmationPanel?.Show(
+                Intents.Confirm(
                     "Take the Main's version?",
                     $"This will replace your {localChanges} local change(s) with the latest version from "
                     + $"{People.MentionOf(serverState.Uploader, TranslatorCore.Config.api_user)}.\n\n" +
@@ -2464,7 +2452,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (isDifferentLineage && localCount > 0)
             {
                 // WARNING: Different lineage - this is a major change
-                TranslatorUIManager.ConfirmationPanel?.Show(
+                Intents.Confirm(
                     "Switch to Different Translation?",
                     $"This translation is not related to yours — it is a separate translation, not an update.\n\n" +
                     $"Your current translation ({localCount} entries) will be replaced with the translation from "
@@ -2479,7 +2467,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             else if (localChanges > 0)
             {
                 // WARNING: Local changes will be lost
-                TranslatorUIManager.ConfirmationPanel?.Show(
+                Intents.Confirm(
                     "Replace Local Translation?",
                     $"You have {localChanges} local change(s) that will be replaced.\n\nDownload "
                     + $"'{selectedTranslation.TargetLanguage}' by "

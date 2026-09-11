@@ -265,7 +265,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void OnStartTextEditorClicked()
         {
             SetActive(false);
-            TranslatorUIManager.OpenInspectorPanel(InspectorMode.TextEdit);
+            Intents.OpenInspector(InspectorMode.TextEdit);
         }
 
         private void OnBrowserEditorClicked()
@@ -338,7 +338,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     return;
                 }
 
-                if (TranslatorUIManager.ConfirmationPanel == null)
+                if (!Intents.CanConfirm())
                 {
                     // No way to ask is not a licence to decide: the safe answer is to do nothing
                     // and say why, rather than erase a session somebody may be typing in.
@@ -347,7 +347,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     return;
                 }
 
-                TranslatorUIManager.ConfirmationPanel.Show(
+                Intents.Confirm(
                     "Already being edited",
                     blocking.Question,
                     blocking.ModKey != null ? "End it and open mine" : "Open mine anyway",
@@ -578,14 +578,14 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             // Close panel and open inspector panel (exclusion mode)
             SetActive(false);
-            TranslatorUIManager.OpenInspectorPanel();
+            Intents.OpenInspector();
         }
 
         private void OnStartImageInspectorClicked()
         {
             // Close panel and open inspector panel (image replacement mode)
             SetActive(false);
-            TranslatorUIManager.OpenInspectorPanel(InspectorMode.BitmapReplace);
+            Intents.OpenInspector(InspectorMode.BitmapReplace);
         }
 
         private void OnAddManualPatternClicked()
@@ -1019,7 +1019,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void OnStartFontOverrideInspector()
         {
             SetActive(false);
-            TranslatorUIManager.OpenInspectorPanel(InspectorMode.FontOverride);
+            Intents.OpenInspector(InspectorMode.FontOverride);
         }
 
         /// <summary>

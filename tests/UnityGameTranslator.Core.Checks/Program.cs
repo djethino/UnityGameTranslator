@@ -227,6 +227,7 @@ namespace UnityGameTranslator.Core.Checks
         private static void WhereThePanelsStop()
         {
             Section("UI frontier (panels hold handles only)", UiBoundaryChecks.Run);
+            Section("Screen router (which screen is up after which act)", ScreenRouterChecks.Run);
         }
 
         /// <summary>Which strings trigger the presentation pass, and what shaping makes of them.</summary>

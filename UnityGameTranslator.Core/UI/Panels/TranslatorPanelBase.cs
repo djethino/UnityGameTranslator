@@ -15,8 +15,21 @@ namespace UnityGameTranslator.Core.UI.Panels
     /// Provides consistent sizing and centering behavior similar to the old IMGUI windows.
     /// Uses UIStyles for centralized theming.
     /// </summary>
-    public abstract partial class TranslatorPanelBase : PanelBase
+    public abstract partial class TranslatorPanelBase : PanelBase, IScreen
     {
+        // ── The screen the router sees ──────────────────────────────────────────
+        // Registered under a Screen by the manager; the router never holds the panel itself.
+        bool IScreen.Visible => Enabled;
+        void IScreen.Show() => SetActive(true);
+        void IScreen.Hide() => SetActive(false);
+
+        /// <summary>
+        /// Raised when Enabled ACTUALLY changed, whichever road did it. A close asked for from
+        /// inside a click is deferred a frame by PanelBase and comes back through SetActive, so
+        /// it is reported then, not when asked — the router's rules run on what is on screen.
+        /// </summary>
+        public event Action<IScreen, bool> VisibilityChanged;
+
         /// <summary>
         /// The scrollable body with its fixed footer — the skeleton every ordinary panel is built
         /// on: content scrolls if needed while the buttons stay at the bottom. Handed to the panel
@@ -403,6 +416,8 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         public override void SetActive(bool active)
         {
+            bool wasEnabled = Enabled;
+
             // Handle backdrop
             if (UseBackdrop)
             {
@@ -432,6 +447,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // happened while the panel was hidden
                 EnsureValidPosition();
             }
+
+            if (Enabled != wasEnabled)
+                VisibilityChanged?.Invoke(this, Enabled);
         }
 
         /// <summary>

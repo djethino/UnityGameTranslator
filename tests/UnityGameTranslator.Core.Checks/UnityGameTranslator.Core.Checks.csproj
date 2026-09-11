@@ -189,6 +189,8 @@
       files gone or names out — replayed here on a real folder.
     -->
     <Compile Include="../../UnityGameTranslator.Core/CompanionFiles.cs" />
+    <!-- The screens' sequence rules: which window is up after which act. No Unity: a view is an IScreen. -->
+    <Compile Include="../../UnityGameTranslator.Core/Engine/Screens.cs" />
     <!--
       The socle, as an assembly rather than as files. It has no Unity reference of any kind — the
       mod, the manager and this project all read the same build — so the reasoning above does not

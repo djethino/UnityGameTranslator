@@ -346,9 +346,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                     {
                         // ⚠ The slot ceiling alone: this duplicates a backup that already holds
                         // lines, so how many the game holds today has no say in it.
-                        TranslatorUIManager.StatusOverlay?.ShowToast(
+                        Intents.Toast(
                             Backups.WhyNoRoom(TranslationBackups.List())
-                            ?? "This one could not be kept.", StatusOverlay.ToastTone.Off);
+                            ?? "This one could not be kept.", ToastTone.Off);
                     }
 
                     Refresh();
@@ -411,9 +411,9 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (TranslationBackups.SaveCopy() == null)
             {
-                TranslatorUIManager.StatusOverlay?.ShowToast(
+                Intents.Toast(
                     Backups.WhyCannotSave(TranslationBackups.List(), NowLines())
-                    ?? "It could not be kept.", StatusOverlay.ToastTone.Off);
+                    ?? "It could not be kept.", ToastTone.Off);
             }
 
             Refresh();
@@ -434,13 +434,12 @@ namespace UnityGameTranslator.Core.UI.Panels
                 entry.Lines, NowLines(), entry.At.ToString("dd MMM HH:mm"),
                 Backups.IsAnotherLineage(entry.Uuid, TranslatorCore.FileUuid));
 
-            TranslatorUIManager.ConfirmationPanel?.Show(
+            Intents.Confirm(
                 Backups.ConfirmRestoreTitle, body, Backups.ConfirmRestoreVerb,
                 () =>
                 {
                     if (!TranslationBackups.Restore(entry.Id))
-                        TranslatorUIManager.StatusOverlay?.ShowToast("It could not be put back.",
-                                                                      StatusOverlay.ToastTone.Off);
+                        Intents.Toast("It could not be put back.", ToastTone.Off);
 
                     Refresh();
                 });
@@ -452,7 +451,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 ? $"from {entry.At:dd MMM HH:mm}"
                 : $"\"{entry.Label}\"";
 
-            TranslatorUIManager.ConfirmationPanel?.Show(
+            Intents.Confirm(
                 Backups.ConfirmDeleteTitle,
                 Backups.ConfirmDeleteBody(what, entry.Lines),
                 Backups.ConfirmDeleteVerb,

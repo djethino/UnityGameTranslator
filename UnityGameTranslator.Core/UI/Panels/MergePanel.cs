@@ -57,8 +57,16 @@ namespace UnityGameTranslator.Core.UI.Panels
         // True while the review page round trip is in flight (see OpenReviewPage)
         private bool _reviewInFlight;
 
+        /// <summary>
+        /// This panel, for its own button callbacks: a lambda that captures `this` is the IL2CPP
+        /// trap (a delegate over an Il2Cpp object), so the callbacks reach the panel through a
+        /// static instead. There is one merge panel per process.
+        /// </summary>
+        private static MergePanel _self;
+
         public MergePanel(UIBase owner) : base(owner)
         {
+            _self = this;
         }
 
         /// <summary>
@@ -150,21 +158,21 @@ namespace UnityGameTranslator.Core.UI.Panels
                 scope: EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: false));
             // ⚠ Writes this machine's translation and publishes nothing — the whole merge panel
             // settles a local file. Marked so the three buttons of this row say the same thing.
-            _applyBtn.Clicked += () => TranslatorUIManager.MergePanel?.ApplyMerge();
+            _applyBtn.Clicked += () => _self?.ApplyMerge();
             SetApplyButtonEnabled(false);
             _helpZone?.Describe(_applyBtn,
                 "Save the merged result: non-conflicting changes from both sides plus your choices above");
 
             // Bottom buttons - in fixed footer (outside scroll)
             var cancelBtn = Buttons.Secondary(buttonRow, "CancelBtn", "Cancel");
-            cancelBtn.Clicked += () => TranslatorUIManager.MergePanel?.CancelMerge();
+            cancelBtn.Clicked += () => _self?.CancelMerge();
             _helpZone?.Describe(cancelBtn, "Close without changing anything — you can merge later");
 
             // ⚠ Overwrites the local file with the online one. The most destructive act on this
             // row, and it was the one saying nothing about where it lands.
             var replaceBtn = Buttons.Create(buttonRow, "ReplaceBtn", "Replace with Server", ButtonTone.Danger,
                 minWidth: 130, scope: EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: false));
-            replaceBtn.Clicked += () => TranslatorUIManager.MergePanel?.ReplaceWithRemote();
+            replaceBtn.Clicked += () => _self?.ReplaceWithRemote();
             _helpZone?.Describe(replaceBtn, "Throw away ALL your local changes and take the website's version as-is");
 
             // Review on Website in the footer (secondary action)
@@ -172,7 +180,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // and never comes back here on its own.
             _reviewBtn = Buttons.Create(buttonRow, "ReviewBtn", "Review on Website", ButtonTone.Link,
                 minWidth: 115, scope: EditScope.SideAfter(onThisMachine: false, yourPublishedCopy: true));
-            _reviewBtn.Clicked += () => TranslatorUIManager.MergePanel?.OpenReviewPage();
+            _reviewBtn.Clicked += () => _self?.OpenReviewPage();
             _helpZone?.Describe(_reviewBtn,
                 "Open this merge in your browser: bigger screen, search, and line-by-line tools");
         }
@@ -190,7 +198,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             _bulkChoice = Choices.Create(_bulkChoiceHost, "BulkChoice",
                 new[] { "Keep My Changes", "Take Server" }, initial: -1, spacing: 10, onChosen: index =>
                 {
-                    var self = TranslatorUIManager.MergePanel;
+                    var self = _self;
                     if (self == null) return;
                     if (index == 0) self.UseAllLocal();
                     else self.UseAllRemote();
@@ -298,7 +306,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             Choices.Create(choiceRow, "Choice", new[] { "Use Local", "Use Server" },
                 initial: isLocal ? 0 : 1, spacing: 10, minWidth: 100, onChosen: index =>
                 {
-                    var self = TranslatorUIManager.MergePanel;
+                    var self = _self;
                     if (self == null) return;
                     self._resolutions[capturedKey] = index == 0 ? ConflictResolution.KeepLocal : ConflictResolution.TakeRemote;
                     self.OnUserMadeChoice();
@@ -524,7 +532,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 ? $"This will discard {localChanges} local change(s) and replace with the server version.\n\nThis action cannot be undone."
                 : "This will replace your local translations with the server version.\n\nThis action cannot be undone.";
 
-            TranslatorUIManager.ConfirmationPanel?.Show(
+            Intents.Confirm(
                 "Replace with Remote",
                 message,
                 "Replace",
@@ -628,9 +636,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                         TranslatorCore.LogWarning($"[MergePanel] Failed to init merge preview: {error}");
                         // Without this the failure is silent: no tab opens and the
                         // player has no way to know whether it is still loading
-                        TranslatorUIManager.StatusOverlay?.ShowToast(
+                        Intents.Toast(
                             $"Could not open the review page: {error}",
-                            Panels.StatusOverlay.ToastTone.Off);
+                            ToastTone.Off);
                     }
 
                     SetReviewBusy(false);
@@ -642,9 +650,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TranslatorCore.LogError($"[MergePanel] Open review page failed: {errorMsg}");
                 TranslatorUIManager.RunOnMainThread(() =>
                 {
-                    TranslatorUIManager.StatusOverlay?.ShowToast(
+                    Intents.Toast(
                         $"Could not open the review page: {errorMsg}",
-                        Panels.StatusOverlay.ToastTone.Off);
+                        ToastTone.Off);
                     SetReviewBusy(false);
                 });
             }

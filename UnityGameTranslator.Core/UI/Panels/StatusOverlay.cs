@@ -247,7 +247,6 @@ namespace UnityGameTranslator.Core.UI.Panels
             _toast = Toasts.Create(stack, "ToastBox");
         }
 
-        public enum ToastTone { Info, On, Off }
 
         /// <summary>
         /// Shows a short-lived toast message (used for hotkey feedback).
@@ -1098,7 +1097,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             switch (direction)
             {
                 case UpdateDirection.Upload:
-                    TranslatorUIManager.UploadPanel?.OpenForUpload();
+                    Intents.OpenUpload();
                     break;
 
                 case UpdateDirection.Download:
@@ -1119,7 +1118,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     // button inert for the very case its own notification announces.
                     if (TranslatorCore.LocalChangesCount > 0 || TranslatorCore.MetadataDirty)
                     {
-                        TranslatorUIManager.UploadPanel?.OpenForUpload();
+                        Intents.OpenUpload();
                     }
                     break;
             }
@@ -1131,7 +1130,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (serverState?.SiteId == null)
             {
                 TranslatorCore.LogError("[StatusOverlay] No server translation to download");
-                TranslatorUIManager.ShowMain();
+                Intents.ShowMain();
                 return;
             }
 
@@ -1234,7 +1233,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private void OnSyncSettingsClicked()
         {
-            TranslatorUIManager.ShowMain();
+            Intents.ShowMain();
         }
 
         /// <summary>
@@ -1244,7 +1243,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void OnSyncBranchClicked()
         {
             // Open upload panel - it will detect we're contributing and handle branch creation
-            TranslatorUIManager.UploadPanel?.OpenForUpload();
+            Intents.OpenUpload();
         }
 
         /// <summary>

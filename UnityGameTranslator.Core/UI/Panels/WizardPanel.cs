@@ -663,10 +663,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             // Open upload panel
             SetActive(false);
-            TranslatorUIManager.UploadSetupPanel?.ShowForSetup((game, source, target) =>
-            {
-                TranslatorUIManager.UploadPanel?.OpenForUpload();
-            });
+            Intents.SetUpUpload((game, source, target) => Intents.OpenUpload());
         }
 
         private async void OnMergeClicked()
@@ -701,7 +698,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // If MergePanel opened (conflicts), close wizard
                 TranslatorUIManager.RunOnMainThread(() =>
                 {
-                    if (TranslatorUIManager.MergePanel != null && TranslatorUIManager.MergePanel.Enabled)
+                    if (Intents.IsOpen(ScreenId.Merge))
                     {
                         SetActive(false);
                     }
@@ -748,7 +745,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Sync wizard state to Config so LoginPanel sees correct online_mode
             TranslatorCore.Config.online_mode = _onlineMode;
 
-            TranslatorUIManager.LoginPanel?.SetActive(true);
+            Intents.OpenLogin();
         }
 
         private async void OnDownloadClicked()
@@ -1291,7 +1288,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             TranslatorUIManager.TriggerStartupTasks();
 
             SetActive(false);
-            TranslatorUIManager.ShowMain();
+            Intents.ShowMain();
         }
 
         protected override void OnClosePanelClicked()

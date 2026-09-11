@@ -1906,7 +1906,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                         _checkModUpdatesStatusLabel.Show(Tr("Update available:") + $" v{latestVersion}");
                         _checkModUpdatesStatusLabel.Tone = Tone.Success;
 
-                        TranslatorUIManager.MainPanel?.RefreshUI();
+                        Intents.StateChanged();
                     }
                     else if (success)
                     {
@@ -2162,7 +2162,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TranslatorCore.Config.sync.notification_position = PositionDisplayToConfig(_notificationPositionDropdown.SelectedValue);
 
                 // Apply notification position change immediately
-                TranslatorUIManager.StatusOverlay?.ApplyPositionFromConfig();
+                Intents.OverlayPositionChanged();
 
                 // Advanced settings (per-game, stored in translations.json, requires restart)
                 bool eventSystemChanged = TranslatorCore.DisableEventSystemOverride != _disableEventSystemOverrideToggle.IsOn;
@@ -2292,10 +2292,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 // Always refresh UI after online mode change (or any settings change)
                 if (nowOnline != wasOnline)
-                {
-                    TranslatorUIManager.MainPanel?.RefreshUI();
-                    TranslatorUIManager.StatusOverlay?.RefreshOverlay();
-                }
+                    Intents.SettingsChanged();
 
                 // Update snapshots after apply (no pending changes now)
                 _initialSnapshot = ConfigSnapshot.FromConfig();

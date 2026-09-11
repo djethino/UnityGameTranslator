@@ -138,7 +138,6 @@ namespace UnityGameTranslator.Core.UI.Panels
         private string _lastSelectedPath = "";
         private string _lastSelectedName = "";
         private object _lastSelectedSpriteObj = null;
-        private bool _mainPanelWasOpen = false;
 
         public InspectorPanel(UIBase owner) : base(owner)
         {
@@ -344,24 +343,13 @@ namespace UnityGameTranslator.Core.UI.Panels
                     ClearHover();
                     _statusLabel.Show("");
                     UpdateUIForMode();
-
-                    // Hide MainPanel during inspection to clear the view
-                    var mainPanel = TranslatorUIManager.MainPanel;
-                    _mainPanelWasOpen = mainPanel != null && mainPanel.Enabled;
-                    if (_mainPanelWasOpen)
-                        mainPanel.SetActive(false);
+                    // The Main is hidden while inspecting and put back after — the ScreenRouter's
+                    // rule, run on this panel's VisibilityChanged, so a hotkey close counts too.
                 }
             }
             else
             {
                 _picker.Stop();
-
-                // Restore MainPanel if it was open before inspection
-                if (_mainPanelWasOpen)
-                {
-                    TranslatorUIManager.MainPanel?.SetActive(true);
-                }
-                _mainPanelWasOpen = false;
             }
         }
 
@@ -423,10 +411,10 @@ namespace UnityGameTranslator.Core.UI.Panels
                 int lastSlash = overridePath.LastIndexOf('/');
                 if (lastSlash > 0)
                     overridePath = overridePath.Substring(0, lastSlash) + "/**";
-                // Close inspector FIRST (restores MainPanel if it was open)
+                // Close inspector FIRST (the router puts the Main back if it was open)
                 SetActive(false);
-                // THEN open TranslationParamsPanel (SetAsLastSibling puts it on top)
-                TranslatorUIManager.TranslationParamsPanel?.AddFontOverrideFromInspector("path:" + overridePath);
+                // THEN open the parameters window (SetAsLastSibling puts it on top)
+                Intents.AddFontOverride("path:" + overridePath);
                 return;
             }
             else if (_currentMode == InspectorMode.BitmapReplace)
@@ -1050,15 +1038,12 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             SetActive(false);
 
-            // Return to the appropriate TranslationParametersPanel tab
-            if (_currentMode == InspectorMode.BitmapReplace)
-                TranslatorUIManager.TranslationParamsPanel?.OpenOnBitmapReplaceTab();
-            else if (_currentMode == InspectorMode.FontOverride)
-                TranslatorUIManager.TranslationParamsPanel?.OpenOnFontOverridesTab();
-            else if (_currentMode == InspectorMode.TextEdit)
-                TranslatorUIManager.TranslationParamsPanel?.OpenOnToolsTab();
-            else
-                TranslatorUIManager.TranslationParamsPanel?.OpenOnExclusionsTab();
+            // Back to the parameters window, on the tab this mode came from
+            Intents.OpenTranslationParameters(
+                _currentMode == InspectorMode.BitmapReplace ? ParametersTab.Images
+                : _currentMode == InspectorMode.FontOverride ? ParametersTab.FontOverrides
+                : _currentMode == InspectorMode.TextEdit ? ParametersTab.Tools
+                : ParametersTab.Exclusions);
         }
     }
 }

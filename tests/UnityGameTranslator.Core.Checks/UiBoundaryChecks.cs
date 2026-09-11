@@ -68,6 +68,19 @@ namespace UnityGameTranslator.Core.Checks
             (new Regex(@"\bSetDynamicText\b|\bRegisterUIText\b|\bRegisterExcluded\b"), "a raw Text write or registration (a label's policy does that)"),
         };
 
+        /// <summary>
+        /// Rule 3 — what a panel may not name of the OTHER panels. Navigation is an intent
+        /// (UI/Intents.cs) resolved by the ScreenRouter; a panel that reaches another panel through
+        /// the manager's statics is a screen that can never be described in data. The manager and
+        /// Intents.cs are the two files allowed to name a panel, and neither is under this rule.
+        /// </summary>
+        private static readonly (Regex pattern, string what)[] PanelCoupling =
+        {
+            (new Regex(@"\bTranslatorUIManager\.(?:\w+Panel|StatusOverlay|Screens|ShowWizard|ShowMain|ToggleMain|OpenInspectorPanel|HideAll|CloseAllPanels)\b"),
+                "another screen reached through the manager (an intent does that)"),
+            (new Regex(@"\b(?:Panels\.)?StatusOverlay\."), "the overlay's type (a toast is an intent, its tone is UI.ToastTone)"),
+        };
+
         private const string EngineTypes =
             @"(GameObject|Text|ButtonRef|InputFieldRef|Toggle|Slider|Image|RectTransform|Color\??|TextAnchor|FontStyle|Vector[234])";
 
@@ -138,6 +151,32 @@ namespace UnityGameTranslator.Core.Checks
                     $"{name} lets no engine type through its public surface",
                     leak.Success ? "leaks: " + leak.Value.Trim() : "what a panel receives is a handle");
             }
+
+            // ── Rule 3: no panel names another ────────────────────────────────
+            foreach (var folder in new[] { panels, components })
+            foreach (var file in Directory.GetFiles(folder, "*.cs"))
+            {
+                string name = Path.GetFileName(file);
+                string source = StripComments(File.ReadAllText(file));
+                var found = new List<string>();
+                foreach (var (pattern, what) in PanelCoupling)
+                {
+                    // The overlay may name its own type; nobody else may.
+                    if (name == "StatusOverlay.cs" && ReferenceEquals(pattern, PanelCoupling[1].pattern)) continue;
+                    if (pattern.IsMatch(source)) found.Add(what);
+                }
+                check(found.Count == 0,
+                    $"{name} names no other screen",
+                    found.Count == 0 ? "it emits intents; the router resolves them" : "found: " + string.Join(", ", found));
+            }
+
+            check(File.Exists(Path.Combine(ui, "Intents.cs")),
+                "UI/Intents.cs exists", "the one file that resolves an intent to a panel");
+            check(PanelCoupling[0].pattern.IsMatch("TranslatorUIManager.UploadPanel?.OpenForUpload();")
+                  && PanelCoupling[0].pattern.IsMatch("TranslatorUIManager.ShowMain();")
+                  && !PanelCoupling[0].pattern.IsMatch("TranslatorUIManager.RunOnMainThread(() => x);"),
+                "rule 3 tells a screen from the manager's other services",
+                "RunOnMainThread, TriggerStartupTasks and the like stay callable from a panel");
 
             // ── The alarm test: the rule must be able to fire ─────────────────
             check(PanelForbidden[2].pattern.IsMatch("var x = UIFactory.CreateLabel(a, b, c);"),

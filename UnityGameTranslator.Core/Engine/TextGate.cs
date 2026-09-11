@@ -221,20 +221,8 @@ namespace UnityGameTranslator.Core
                 return GateLookup.KnownAt(GateStage.Exact, text);
             }
 
-            // Line endings first: keys are stored with \n only.
-            string lineNormalized = NormalizeLineEndings(text);
-
-            // Variables BEFORE numbers — never on our own GUI.
-            string afterVars = lineNormalized;
-            List<KeyValuePair<int, string>> extractedVars = null;
-            if (!isOwnUI && variables != null && variables.HasVariables)
-                afterVars = variables.Extract(lineNormalized, out extractedVars);
-
-            // Then numbers into slots, when the setting says so.
-            string normalizedText = afterVars;
-            List<string> extractedNumbers = null;
-            if (normalizeNumbers)
-                normalizedText = ExtractNumbersToPlaceholders(afterVars, out extractedNumbers);
+            string normalizedText = KeyShape(text, isOwnUI, variables, normalizeNumbers,
+                out List<KeyValuePair<int, string>> extractedVars, out List<string> extractedNumbers);
 
             // A rung that found the line equal to its own key: known, but the pattern rung below
             // is still tried before saying so (see the class remarks: the shape the tracking path had).
@@ -381,7 +369,40 @@ namespace UnityGameTranslator.Core
             return MissVerdict.Of(MissKind.Queue, trimmedNormalized);
         }
 
+        /// <summary>
+        /// The shape a key is stored in: line endings normalised, then the game's variables lifted
+        /// out (never on our own GUI), then the numbers into slots when the setting says so.
+        ///
+        /// 🔴 **One implementation.** The gate, the worker and the reverse-index probe each wrote
+        /// this out until 2026-09-11; three copies of an order are three places for it to drift.
+        /// </summary>
+        public static string KeyShape(string text, bool isOwnUI, IVariableSubstitution variables, bool normalizeNumbers,
+            out List<KeyValuePair<int, string>> extractedVars, out List<string> extractedNumbers)
+        {
+            extractedVars = null;
+            extractedNumbers = null;
+            if (string.IsNullOrEmpty(text)) return text;
+
+            // Line endings first: keys are stored with \n only.
+            string lineNormalized = NormalizeLineEndings(text);
+
+            // Variables BEFORE numbers — never on our own GUI.
+            string afterVars = lineNormalized;
+            if (!isOwnUI && variables != null && variables.HasVariables)
+                afterVars = variables.Extract(lineNormalized, out extractedVars);
+
+            // Then numbers into slots, when the setting says so.
+            string normalizedText = afterVars;
+            if (normalizeNumbers)
+                normalizedText = ExtractNumbersToPlaceholders(afterVars, out extractedNumbers);
+
+            return normalizedText;
+        }
+
         /// <summary>Numbers back first, then variables — the reverse of the extraction.</summary>
+        public static string RestoreSlots(string value, List<string> numbers, List<KeyValuePair<int, string>> vars, IVariableSubstitution variables)
+            => Restore(value, numbers, vars, variables);
+
         private static string Restore(string value, List<string> numbers, List<KeyValuePair<int, string>> vars, IVariableSubstitution variables)
         {
             string result = (numbers != null && numbers.Count > 0)

@@ -150,6 +150,13 @@
     -->
     <Compile Include="../../UnityGameTranslator.Core/Engine/LoadedFile.cs" />
     <!--
+      What the worker does with one item between the dequeue and the verdict — cache, capture,
+      refusal, the backend, a rate limit, an invented token, a stale answer, the filing, the
+      notification. The ORDER is what a second Core must reproduce, and several defects paid for
+      were defects of order; the host is a recorder here, so the sequence can be read back.
+    -->
+    <Compile Include="../../UnityGameTranslator.Core/Engine/TranslationWorker.cs" />
+    <!--
       What a downloaded translation may ask of the disk and of the main thread. Both are pure by
       construction — a string in, an answer out — and both exist as files of their own so that the
       refusals AND the acceptances can be proved here rather than in a game.

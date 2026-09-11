@@ -5046,207 +5046,46 @@ namespace UnityGameTranslator.Core
                         if (Config.debug_ai)
                             Adapter?.LogInfo($"[Worker] Calling AI...{(isOwnUI ? " (UI prompt)" : "")}");
 
-                        // Extract variables then numbers BEFORE sending to AI.
-                        // Never on our own GUI: variables hold GAME state (player name, seed…) and
-                        // substitution is a plain Replace of their current value. A value that happens
-                        // to equal one of our labels would swallow it whole ("Current Translation" →
-                        // "[!STR*0]") and poison that cache entry for good.
-                        string normalizedOriginal = textToTranslate;
-                        List<KeyValuePair<int, string>> workerExtractedVars = null;
-                        if (VariableManager.HasVariables && !isOwnUI)
-                        {
-                            normalizedOriginal = VariableManager.ExtractVariables(normalizedOriginal, out workerExtractedVars);
-                        }
-                        List<string> extractedNumbers = null;
-                        if (Config.normalize_numbers)
-                        {
-                            normalizedOriginal = ExtractNumbersToPlaceholders(normalizedOriginal, out extractedNumbers);
-                        }
-
                         // A human asked for this line again, having read the answer we already had.
-                        // Everything below that shortcuts to a stored or previously refused answer
-                        // must be skipped for it — those are exactly the answers being rejected.
+                        // Everything that shortcuts to a stored or previously refused answer must be
+                        // skipped for it — those are exactly the answers being rejected. So it has
+                        // its own loop, with a previous value to put back if it cannot get one.
                         retranslate = TakeRetranslateRequest(textToTranslate);
-
-                        // Check cache first (another request might have already translated this)
-                        string translation = null;
-                        if (retranslate == null && TranslationCache.TryGetValue(normalizedOriginal, out var cachedEntry))
-                        {
-                            if (cachedEntry.Value != normalizedOriginal && !cachedEntry.IsHumanEmpty && cachedEntry.Tag != "S")
-                            {
-                                translation = cachedEntry.Value;
-                                if (Config.debug_ai)
-                                    Adapter?.LogInfo($"[Worker] Cache hit for normalized text, skipping AI");
-
-                                // Notify components even for cache hits — the text was re-queued
-                                // with different components that didn't get the first Apply.
-                                string cachedTranslation = (extractedNumbers != null && extractedNumbers.Count > 0)
-                                    ? RestoreNumbersFromPlaceholders(translation, extractedNumbers)
-                                    : translation;
-                                cachedTranslation = VariableManager.RestoreVariables(cachedTranslation, workerExtractedVars);
-                                OnTranslationComplete?.Invoke(originalText, cachedTranslation, componentsToUpdate);
-                            }
-                        }
-
-                        // Retranslation: its own loop, because it needs a DIFFERENT answer and has
-                        // a previous value to put back if it cannot get one.
                         if (retranslate != null)
                         {
+                            string normalizedOriginal = TextGate.KeyShape(textToTranslate, isOwnUI, GameVariables.Instance,
+                                Config.normalize_numbers, out var workerExtractedVars, out var extractedNumbers);
                             RunRetranslation(retranslate, normalizedOriginal, extractedNumbers,
                                 workerExtractedVars, originalText, componentsToUpdate);
                         }
-                        // Capture keys only mode: store H+empty without calling AI.
-                        //
-                        // 🔴 **The mod's own interface is not captured**, and this branch ignoring
-                        // that is what filed our menu labels in the GAME's file as empty human
-                        // captures. Capturing collects the game's strings for somebody to
-                        // translate later — on the site, or in the browser editor. Our interface
-                        // goes to neither, no backend is called in this mode, so an entry for it
-                        // would have no editor, no destination and nothing to become.
-                        else if (Config.capture_keys_only)
+                        else
                         {
-                            // The socle decides, here as below: Answers.Capture is the same rule a
-                            // Core in another language has to reach, and it is checked there.
-                            var filed = Answers.Capture(isOwnUI);
-                            if (filed == Filing.Nothing)
+                            // 🔴 Everything else that happens to one item — cache, capture, refusal,
+                            // the backend, a rate limit, an invented token, a stale answer, the
+                            // filing, the notification — is TranslationWorker.Process, where the
+                            // ORDER is held by cases. What follows is what a verdict does here.
+                            var outcome = TranslationWorker.Process(queued, WorkerContextNow(), WorkerHost.Instance);
+                            switch (outcome)
                             {
-                                if (Config.debug_ai)
-                                    Adapter?.LogInfo("[Worker] Interface label not captured: capture mode collects the game's text.");
-                            }
-                            else
-                            {
-                                AddToCache(normalizedOriginal, "", Answers.TagOf(filed));
-                                if (Config.debug_ai)
-                                    Adapter?.LogInfo($"[Worker] Captured key (no translation): {normalizedOriginal.Substring(0, Math.Min(30, normalizedOriginal.Length))}...");
-                            }
-                        }
-                        // Text already failed placeholder validation this session:
-                        // don't hammer the backend, it will be retried next launch
-                        else if (translation == null && _queue.WasRefused(normalizedOriginal))
-                        {
-                            if (Config.debug_ai)
-                                Adapter?.LogInfo($"[Worker] Skipping (failed placeholder validation earlier): {normalizedOriginal.Substring(0, Math.Min(40, normalizedOriginal.Length))}...");
-                        }
-                        // Only call translation backend if not in cache
-                        else if (translation == null)
-                        {
-                            // Dispatch to the appropriate backend
-                            string backend = Config.translation_backend;
-                            if (backend == "google" || backend == "deepl")
-                            {
-                                translation = TranslateWithAPI(normalizedOriginal, extractedNumbers);
-                            }
-                            else
-                            {
-                                // LLM backend (default)
-                                translation = TranslateWithAI(normalizedOriginal, extractedNumbers, isOwnUI);
-                            }
-
-                            if (Config.debug_ai)
-                                Adapter?.LogInfo($"[Worker] {backend} returned: {(translation == null ? "(null)" : translation.Substring(0, Math.Min(40, translation.Length)))}");
-
-                            // Handle rate limit: re-queue the text and backoff.
-                            //
-                            // ⚠ The SAME item goes back, not its text. Re-queuing a bare string
-                            // left the second attempt with neither the components to update nor
-                            // the origin — so a mod-interface label came back from the retry as a
-                            // GAME line, written into the game's file under a game tag.
-                            if (translation == null && _apiRateLimited)
-                            {
-                                _apiRateLimited = false;
-                                _queue.PutBack(queued);
-                                float delaySec = Math.Max(0.1f, Config.rate_limit_retry_delay);
-                                Adapter?.LogWarning($"[Worker] Rate limited — re-queued, backing off {delaySec:F1}s ({_queue.Count} pending)");
-                                // Backoff: wait before retrying (in small increments to respond to shutdown)
-                                int delayMs = (int)(delaySec * 1000);
-                                for (int i = 0; i < delayMs && !ShuttingDown; i += 100)
-                                    Thread.Sleep(Math.Min(100, delayMs - i));
-                            }
-
-                            // Discard an answer that invented placeholders: treated as no answer at
-                            // all, so nothing is cached and nothing reaches the screen.
-                            if (!string.IsNullOrEmpty(translation))
-                            {
-                                var inventedTokens = Placeholders.Invented(normalizedOriginal, translation);
-                                if (inventedTokens.Count > 0)
-                                {
-                                    string badPreview = normalizedOriginal.Length > 40
-                                        ? normalizedOriginal.Substring(0, 40) + "..."
-                                        : normalizedOriginal;
-                                    Adapter?.LogWarning($"[Worker] Discarded answer inventing {string.Join(", ", inventedTokens)} (absent from source): '{badPreview}'");
-                                    translation = null;
-                                }
-                            }
-
-                            // 🔴 **An answer asked for a translation that has since been replaced
-                            // is not an answer.** ReloadCache empties the queue, which settles
-                            // everything still waiting — but this item left before that and comes
-                            // back seconds later. Written, it adds to the restored file a line it
-                            // never had, in the language of the one before it, marks the file
-                            // changed, and paints it onto components whose own text was just put
-                            // back. Dropped the same way as an answer inventing a token above.
-                            if (!string.IsNullOrEmpty(translation) && !_queue.IsCurrent(queued))
-                            {
-                                Adapter?.LogInfo("[Worker] Dropped an answer asked before the translation was replaced");
-                                translation = null;
-                            }
-
-                            if (!string.IsNullOrEmpty(translation))
-                            {
-                                // Check if AI returned the skip marker (text not in expected source language)
-                                // Note: Google/DeepL don't return skip markers, so this only applies to LLM
-                                // ⚠ Read ONCE: the kind decides what is filed just below, and the
-                                // same answer read twice is one call away from being read two ways.
-                                AnswerKind answerKind = Answers.Read(translation);
-                                bool isSkipped = answerKind == AnswerKind.Skip;
-
-                                // 🔴 **Where a line comes from outranks what happened to it, and the
-                                // socle is what says so.** The rule lived here as three conditions
-                                // and four spelled-out letters; it is Answers.Store now, where a
-                                // Core in another language reads the same one and where every case
-                                // — including the two this cost — can be replayed.
-                                var filed = Answers.Store(isOwnUI, answerKind);
-                                if (filed == Filing.Nothing)
-                                {
-                                    if (Config.debug_ai)
-                                        Adapter?.LogInfo("[Worker] The model declined an interface label; left in English, nothing stored.");
-                                }
-                                else
-                                {
-                                    AddToCache(normalizedOriginal,
-                                        Answers.StoresTheSource(filed) ? normalizedOriginal : translation,
-                                        Answers.TagOf(filed));
-                                }
-
-                                if (!isSkipped && translation != normalizedOriginal)
-                                {
+                                case WorkerOutcome.Translated:
                                     aiTranslationCount++;
-
-                                    // For updating components, restore actual numbers then variables
-                                    string translationWithNumbers = translation;
-                                    if (extractedNumbers != null)
-                                    {
-                                        translationWithNumbers = RestoreNumbersFromPlaceholders(translation, extractedNumbers);
-                                    }
-                                    translationWithNumbers = VariableManager.RestoreVariables(translationWithNumbers, workerExtractedVars);
-
-                                    // Notify mod loader to update components
-                                    OnTranslationComplete?.Invoke(originalText, translationWithNumbers, componentsToUpdate);
-
                                     // Request visual refresh so static text picks up the new translation
                                     PendingVisualRefresh = true;
-
                                     if (DebugMode || Config.debug_ai)
                                     {
                                         string preview = originalText.Length > 30 ? originalText.Substring(0, 30) + "..." : originalText;
                                         Adapter?.LogInfo($"[AI] {preview}");
                                     }
-                                }
-                                else if (isSkipped && Config.debug_ai)
-                                {
-                                    string preview = originalText.Length > 30 ? originalText.Substring(0, 30) + "..." : originalText;
-                                    Adapter?.LogInfo($"[AI] Skipped (not in source language): {preview}");
-                                }
+                                    break;
+
+                                case WorkerOutcome.Skipped:
+                                case WorkerOutcome.Declined:
+                                    if (Config.debug_ai)
+                                    {
+                                        string preview = originalText.Length > 30 ? originalText.Substring(0, 30) + "..." : originalText;
+                                        Adapter?.LogInfo($"[AI] Skipped (not in source language): {preview}");
+                                    }
+                                    break;
                             }
                         }
                     }
@@ -6121,14 +5960,9 @@ namespace UnityGameTranslator.Core
 
         public static string NormalizeForCacheLookup(string text)
         {
-            if (string.IsNullOrEmpty(text)) return text;
-            string normalized = NormalizeLineEndings(text);
-            // Variables BEFORE numbers (variables may contain digits)
-            if (VariableManager.HasVariables)
-                normalized = VariableManager.ExtractVariables(normalized, out _);
-            if (Config.normalize_numbers)
-                normalized = ExtractNumbersToPlaceholders(normalized, out _);
-            return normalized;
+            // The key shape — one implementation, in TextGate. ⚠ isOwnUI is false here on purpose:
+            // this probe has always lifted the variables out whichever side asked.
+            return TextGate.KeyShape(text, isOwnUI: false, GameVariables.Instance, Config.normalize_numbers, out _, out _);
         }
 
         /// <summary>
@@ -6291,6 +6125,57 @@ namespace UnityGameTranslator.Core
             public bool HasVariables => VariableManager.HasVariables;
             public string Extract(string text, out List<KeyValuePair<int, string>> extracted) => VariableManager.ExtractVariables(text, out extracted);
             public string Restore(string text, List<KeyValuePair<int, string>> extracted) => VariableManager.RestoreVariables(text, extracted);
+        }
+
+        /// <summary>What the worker needs to know about this moment, read once per item.</summary>
+        private static WorkerContext WorkerContextNow() => new WorkerContext
+        {
+            CaptureOnly = Config.capture_keys_only,
+            NormalizeNumbers = Config.normalize_numbers,
+            Debug = Config.debug_ai,
+            Backend = Config.translation_backend,
+            RateLimitRetryDelay = Config.rate_limit_retry_delay,
+            Variables = GameVariables.Instance,
+            Cache = TranslationCache,
+            Queue = _queue,
+        };
+
+        /// <summary>
+        /// The worker's host on this runtime — see <see cref="IWorkerHost"/>. The backend is chosen
+        /// here, the rate-limit flag the backends raise is read and reset here, and every effect a
+        /// verdict calls for lands here.
+        /// </summary>
+        private sealed class WorkerHost : IWorkerHost
+        {
+            public static readonly WorkerHost Instance = new WorkerHost();
+
+            public string Translate(string normalized, List<string> numbers, bool ownUi, out bool rateLimited)
+            {
+                string backend = Config.translation_backend;
+                string answer = (backend == "google" || backend == "deepl")
+                    ? TranslateWithAPI(normalized, numbers)
+                    : TranslateWithAI(normalized, numbers, ownUi);   // LLM backend (default)
+                rateLimited = answer == null && _apiRateLimited;
+                if (rateLimited) _apiRateLimited = false;
+                return answer;
+            }
+
+            public void Store(string key, string value, string tag) => AddToCache(key, value, tag);
+
+            public void Notify(string original, string shown, List<object> targets)
+                => OnTranslationComplete?.Invoke(original, shown, targets);
+
+            public void Backoff(float seconds)
+            {
+                // In small increments to respond to shutdown
+                int delayMs = (int)(seconds * 1000);
+                for (int i = 0; i < delayMs && !ShuttingDown; i += 100)
+                    Thread.Sleep(Math.Min(100, delayMs - i));
+            }
+
+            public void Debug(string line) => Adapter?.LogInfo(line);
+            public void Info(string line) => Adapter?.LogInfo(line);
+            public void Warn(string line) => Adapter?.LogWarning(line);
         }
 
         public static string TranslateSingleText(string text)

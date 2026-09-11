@@ -148,6 +148,7 @@ namespace UnityGameTranslator.Core.Checks
         /// <summary>What a file says about ITSELF is re-derived from it, never inherited.</summary>
         private static void WhatALoadedFileSaysAboutItself()
         {
+            Section("What a translation file states about itself", LoadedFileChecks.Run);
             Section("A translation's own identity, on loading", LoadedIdentityChecks.Run);
             Section("Everything a reload has to re-run", ReloadChainChecks.Run);
             Section("Who the server was asked as", AccountVerdictChecks.Run);

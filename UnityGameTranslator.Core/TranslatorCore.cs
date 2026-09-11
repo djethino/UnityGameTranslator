@@ -2492,118 +2492,59 @@ namespace UnityGameTranslator.Core
                 // Fresh cache: allow own-UI labels that failed once to be submitted again.
                 _queue.ForgetOwnUiSubmitted();
 
-                // Track saved _game.steam_id to compare with current detection
-                string savedSteamId = null;
-                int engineVersion = 0;
-                var entriesRead = new TranslationFileEntries();
-                string strandedUiFont = null;
+                // 🔴 **The whole file, read into a record with a value for every field** —
+                // Engine/LoadedFile.cs, where each key's reading is held by cases. Then every
+                // field assigned from it, unconditionally: a file that says nothing says "none",
+                // and "the previous one survives" is no longer expressible. The reset above still
+                // stands for the two paths that never get here: no file, and a file that could
+                // not be read.
+                var file = LoadedFile.Read(parsed);
 
-                // Extract metadata and translations
-                foreach (var prop in parsed.Properties())
+                int engineVersion = file.EngineVersion;
+                FileUuid = file.Uuid;
+                // Kept only when the file says something: a file written with "auto" in it — an
+                // older mod, or a hand edit — states nothing, and reading it as an answer would
+                // let a mode outrank the server. LanguageState judges the value; absent is absent.
+                if (file.SourceLanguage != null) _languages.StateSource(file.SourceLanguage);
+                if (file.TargetLanguage != null) _languages.StateTarget(file.TargetLanguage);
+                LocalChangesCount = file.LocalChanges;
+                MetadataDirty = file.MetadataDirty;
+                LastSyncedHash = file.LastSyncedHash;
+                LastMergedMainHash = file.LastMergedMainHash;
+                SourceSiteId = file.SourceSiteId;
+                ForkedFromSiteId = file.ForkedFromSiteId;
+                ForkedFromHash = file.ForkedFromHash;
+                ForkedFromResolvedLines = file.ForkedFromResolvedLines;
+                ForkedFromContentHash = file.ForkedFromContentHash;
+                string savedSteamId = file.SavedSteamId;
+
+                // ui_font described the MOD's interface from inside the GAME's file. Read once,
+                // carried to the interface file by the migration below, never written back here.
+                string strandedUiFont = file.StrandedUiFont;
+                if (!string.IsNullOrEmpty(strandedUiFont)) cacheModified = true;
+
+                // Every section the file carries, through the one door that also emptied them
+                // above — the fonts' exception (inventory kept or not) is a named decision there.
+                foreach (var section in file.Sections)
                 {
-                    if (prop.Name == "_engine_version")
-                    {
-                        engineVersion = prop.Value.Value<int>();
-                    }
-                    else if (prop.Name == "_uuid")
-                    {
-                        FileUuid = prop.Value.ToString();
-                    }
-                    else if (prop.Name == "_source_language")
-                    {
-                        // Kept only when it says something: a file written with "auto" in it —
-                        // an older mod, or a hand edit — states nothing, and reading it as an
-                        // answer would let a mode outrank the server.
-                        string stated = prop.Value.ToString();
-                        _languages.StateSource(stated);
-                    }
-                    else if (prop.Name == "_target_language")
-                    {
-                        string stated = prop.Value.ToString();
-                        _languages.StateTarget(stated);
-                    }
-                    else if (prop.Name == "_local_changes")
-                    {
-                        LocalChangesCount = prop.Value.Value<int>();
-                    }
-                    else if (prop.Name == "_metadata_dirty")
-                    {
-                        MetadataDirty = prop.Value.Value<bool>();
-                    }
-                    else if (prop.Name == "_source" && prop.Value.Type == JTokenType.Object)
-                    {
-                        // Load source info for sync detection
-                        var source = prop.Value as JObject;
-                        LastSyncedHash = source?["hash"]?.Value<string>();
-                        LastMergedMainHash = source?["main_hash"]?.Value<string>();
-                        SourceSiteId = source?["site_id"]?.Value<int?>();
-                    }
-                    else if (prop.Name == "_forked_from" && prop.Value.Type == JTokenType.Object)
-                    {
-                        var origin = prop.Value as JObject;
-                        ForkedFromSiteId = origin?["site_id"]?.Value<int?>();
-                        ForkedFromHash = origin?["hash"]?.Value<string>();
-                        ForkedFromResolvedLines = origin?["resolved_lines"]?.Value<int?>();
-                        // ⚠ Absent from a file forked before this key existed. Left null, which
-                        // reads as "we cannot tell" — see ForkIsStillTheCopy.
-                        ForkedFromContentHash = origin?["content_hash"]?.Value<string>();
-                    }
-                    else if (prop.Name == "_game" && prop.Value.Type == JTokenType.Object)
-                    {
-                        // Load saved steam_id for comparison with current detection
-                        var game = prop.Value as JObject;
-                        savedSteamId = game?["steam_id"]?.Value<string>();
-                    }
-                    // 🔴 **One branch for the six settings sections, and the socle says which they
-                    // are.** They were six branches naming six keys — the same list SaveCache
-                    // walks from SettingsSections.All, written out a second time where nothing
-                    // compared the two. A section added to the table was written by every product
-                    // and read back by nobody.
-                    //
-                    // ⚠ No type guard, and it changes nothing: three of the six had one and three
-                    // did not, while the download path (ApplySettingsSection) has none at all.
-                    // Every parser is `as JObject` / `as JArray` and yields nothing on anything
-                    // else, so a malformed section leaves that section empty — exactly what
-                    // skipping the branch did, now that emptying happens before the loop.
-                    else if (SettingsSections.SectionOf(prop.Name) != null)
-                    {
-                        string section = SettingsSections.SectionOf(prop.Name);
+                    ApplySectionAtLoad(section.Key, section.Value);
 
-                        // ⚠ Lifted out BEFORE the section is applied, and it is not part of it:
-                        // ui_font described the MOD's interface from inside the GAME's file. Read
-                        // once, carried to the interface file by the migration below, never
-                        // written back here.
-                        if (section == SettingsSections.GameSettings)
-                        {
-                            strandedUiFont = (prop.Value as JObject)?["ui_font"]?.Value<string>();
-                            if (!string.IsNullOrEmpty(strandedUiFont)) cacheModified = true;
-                        }
-
-                        ApplySectionAtLoad(section, prop.Value);
-
-                        // What the section HOLDS once read, not what the file offered: an entry
-                        // the owner refused (a rule with no pattern, an image with no sprite) is
-                        // the kind of thing worth seeing in a log from a game we do not have.
-                        if (DebugMode)
-                        {
-                            var held = BuildSettingsSection(section);
-                            var heldArray = held as JArray;
-                            var heldObject = held as JObject;
-                            int kept = heldArray != null ? heldArray.Count
-                                     : heldObject != null ? heldObject.Count
-                                     : 0;
-                            LogDebug($"[LoadCache] {SettingsSections.Name(section)}: {kept} kept");
-                        }
-                    }
-                    else if (!prop.Name.StartsWith("_"))
+                    // What the section HOLDS once read, not what the file offered: an entry
+                    // the owner refused (a rule with no pattern, an image with no sprite) is
+                    // the kind of thing worth seeing in a log from a game we do not have.
+                    if (DebugMode)
                     {
-                        // Which line wins a collision, which one has no business in this file, and
-                        // whether reading changed what the file should hold — see
-                        // Engine/TranslationFileEntries, where it can be replayed without a game.
-                        entriesRead.Read(prop.Name, prop.Value);
+                        var held = BuildSettingsSection(section.Key);
+                        var heldArray = held as JArray;
+                        var heldObject = held as JObject;
+                        int kept = heldArray != null ? heldArray.Count
+                                 : heldObject != null ? heldObject.Count
+                                 : 0;
+                        LogDebug($"[LoadCache] {SettingsSections.Name(section.Key)}: {kept} kept");
                     }
                 }
 
+                var entriesRead = file.Entries;
                 TranslationCache = entriesRead.Entries;
                 // Interface lines found where they no longer belong — see the migration below.
                 Dictionary<string, TranslationEntry> strandedModUi = entriesRead.StrandedModUi;

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Reflection;
 using System.Text.RegularExpressions;
 using UnityGameTranslator.Common;
 
@@ -11,28 +12,29 @@ namespace UnityGameTranslator.Core.Checks
     /// file — never inherited from the one loaded before it.
     ///
     /// 🔴 **Four defects of one family, and the fourth was found on a real install.** Each metadata
-    /// block in the file is written only when it has something to say, so a file that says nothing
-    /// leaves the previous file's answer standing: the branch that reads it simply never runs. It
-    /// has cost, in order — the game settings (typewriting and concat stayed off from one
-    /// translation to the next), then `_local_changes` and `_metadata_dirty` (the mod claimed local
-    /// changes right after downloading the server's own copy), then the lineage identity itself.
+    /// block in the file was read by a branch that only ran when its key was present, so a file
+    /// that said nothing left the previous file's answer standing. It has cost, in order — the
+    /// game settings (typewriting and concat stayed off from one translation to the next), then
+    /// `_local_changes` and `_metadata_dirty` (the mod claimed local changes right after
+    /// downloading the server's own copy), then the lineage identity itself.
     ///
     /// 🔴 **What the last one did**, observed on 2026-09-08: a published English→French translation,
     /// then a never-published English→Thai backup restored over it in the same session. The Thai
     /// file came out carrying `_source: { hash: 57881c8a…, site_id: 12 }` — the French
-    /// translation's row and content hash — written into its own file. From then on Thai content
-    /// was compared against a French translation's server hash, so the sync verdict disagreed
-    /// permanently and nothing could settle it.
+    /// translation's row and content hash — written into its own file.
     ///
-    /// ⚠ **This is a LEXICAL check, and it is deliberate.** LoadCache reads a real file, logs
-    /// through the mod loader and talks to Unity, so it cannot be replayed here — but the invariant
-    /// is a property of the source: every field the reading assigns must also be cleared before the
-    /// reading starts. That is checkable without running anything, and it fires on the one thing
-    /// that brings the family back — somebody adding a `_new_key` branch and not the reset.
+    /// ✅ **Since 2026-09-11 the file is read into a RECORD** (<see cref="LoadedFile"/>) with a
+    /// value for every field, and LoadCache assigns every field from it. "The previous value
+    /// survives" is no longer expressible in the reading. What can still go wrong is around it,
+    /// and that is what is checked here, lexically on purpose (LoadCache reads a real file, logs
+    /// through the mod loader and talks to Unity, so it cannot be replayed):
     ///
-    /// ⚠ Until <see cref="TranslationFileEntries"/> grows into a record of the whole file, where
-    /// "the previous value survives" stops being expressible, this is what stands in its place.
-    /// See analyse/plan-prealables-couches.md, 6r.
+    /// | what | why it can still bite |
+    /// |---|---|
+    /// | every field the applying assigns is cleared before the file is read | the two paths that never reach the record — no file, a file that could not be read — rely on the reset |
+    /// | every field the record carries is applied | a field added to the record and not to LoadCache is read and thrown away |
+    /// | every `_key` SaveCache writes is read by the record | a key written from memory and never read is the family coming back one level up |
+    /// | the sections are walked from the socle's table on both sides, no key spelled out | a seventh section written by every product and read by nobody |
     /// </summary>
     internal static class LoadedIdentityChecks
     {
@@ -40,61 +42,63 @@ namespace UnityGameTranslator.Core.Checks
         /// A field of the mod's own, assigned: `SomeName = …` at the start of its line.
         ///
         /// ⚠ **Anchored to the line start on purpose.** Matching anywhere read three assignments
-        /// out of one interpolated log line — `$"… TW={TypewritingDetection}, Concat={…}"` — and
-        /// failed the check on prose. It also would have read a commented-out assignment as a real
-        /// one. Every assignment in the two regions below begins its line; nothing inside a string
-        /// or after `//` does.
+        /// out of one interpolated log line and failed the check on prose; it also would have read
+        /// a commented-out assignment as a real one. Every assignment in the regions below begins
+        /// its line; nothing inside a string or after `//` does.
         /// </summary>
         private static readonly Regex Assignment =
             new Regex(@"^[ \t]*(?<name>[A-Z][A-Za-z0-9]*)[ \t]*=[ \t]*(?!=)",
                       RegexOptions.Compiled | RegexOptions.Multiline);
 
+        /// <summary>A metadata key written as a literal: `"_something"`.</summary>
+        private static readonly Regex MetadataKey = new Regex("\"(_[a-z_]+)\"", RegexOptions.Compiled);
+
         public static void Run(Action<bool, string, string> check)
         {
-            string source = FindCore();
-            check(source != null, "TranslatorCore's source is found",
-                "this check reads it; without it, it proves nothing");
-            if (source == null) return;
+            string source = FindCore("TranslatorCore.cs");
+            string recordSource = FindCore("Engine", "LoadedFile.cs");
+            check(source != null && recordSource != null, "TranslatorCore's and LoadedFile's sources are found",
+                "this check reads them; without them, it proves nothing");
+            if (source == null || recordSource == null) return;
 
             string text = File.ReadAllText(source);
+            string record = File.ReadAllText(recordSource);
 
             int loadCache = text.IndexOf("private static void LoadCache()", StringComparison.Ordinal);
-            int reading = text.IndexOf("foreach (var prop in parsed.Properties())", StringComparison.Ordinal);
-            int entries = text.IndexOf("else if (!prop.Name.StartsWith(\"_\"))", StringComparison.Ordinal);
-
+            int reading = text.IndexOf("var file = LoadedFile.Read(parsed);", StringComparison.Ordinal);
+            int entries = text.IndexOf("TranslationCache = entriesRead.Entries;", StringComparison.Ordinal);
             check(loadCache >= 0 && reading > loadCache && entries > reading,
-                "and its three landmarks are where they are expected",
+                "and the three landmarks of LoadCache are where they are expected",
                 "the check is anchored on them; moved or renamed, it must say so rather than pass quietly");
             if (loadCache < 0 || reading <= loadCache || entries <= reading) return;
 
-            // From the start of LoadCache to the loop: where a field is cleared.
+            // From the start of LoadCache to the record: where a field is cleared.
             string clearedRegion = text.Substring(loadCache, reading - loadCache);
-            // From the loop to the entry branch: where the metadata is read.
-            string readRegion = text.Substring(reading, entries - reading);
+            // From the record to the lines: where the record is applied.
+            string appliedRegion = text.Substring(reading, entries - reading);
 
             var cleared = new HashSet<string>(StringComparer.Ordinal);
             foreach (Match m in Assignment.Matches(clearedRegion)) cleared.Add(m.Groups["name"].Value);
 
-            var assignedByReading = new List<string>();
-            foreach (Match m in Assignment.Matches(readRegion))
+            var assignedByApplying = new List<string>();
+            foreach (Match m in Assignment.Matches(appliedRegion))
             {
                 string name = m.Groups["name"].Value;
-                if (!assignedByReading.Contains(name)) assignedByReading.Add(name);
+                if (!assignedByApplying.Contains(name)) assignedByApplying.Add(name);
             }
 
-            check(assignedByReading.Count > 0,
-                $"the reading assigns {assignedByReading.Count} field(s) of its own",
+            check(assignedByApplying.Count > 0,
+                $"applying the record assigns {assignedByApplying.Count} field(s) of the mod's own",
                 "finding none would mean the regions were mis-cut, and an empty comparison always passes");
 
             var unguarded = new List<string>();
-            foreach (string name in assignedByReading)
+            foreach (string name in assignedByApplying)
                 if (!cleared.Contains(name)) unguarded.Add(name);
-
             check(unguarded.Count == 0,
                 unguarded.Count == 0
                     ? "and every one of them is cleared before the file is read"
-                    : "READ FROM THE FILE, SURVIVES THE PREVIOUS ONE: " + string.Join(", ", unguarded),
-                "a block absent from the file leaves the previous translation's answer standing — that is how a never-published file came to carry another one's server row");
+                    : "ASSIGNED FROM THE FILE, NOT CLEARED FIRST: " + string.Join(", ", unguarded),
+                "the reset is what the no-file and the failed-read paths rely on; a field missing from it keeps the previous translation's answer on those two paths");
 
             // The four that were paid for, named so that dropping one is not a silent edit.
             foreach (string field in new[] { "FileUuid", "LastSyncedHash", "SourceSiteId", "ForkedFromSiteId" })
@@ -104,33 +108,59 @@ namespace UnityGameTranslator.Core.Checks
                     "each of these was, or would have been, one file's identity written into another's");
             }
 
+            // 🔴 Every field the record carries is applied. A field read into the record and never
+            // taken out of it is the family one level up: read, and thrown away.
+            var unapplied = new List<string>();
+            foreach (FieldInfo field in typeof(LoadedFile).GetFields(BindingFlags.Public | BindingFlags.Instance))
+                if (!appliedRegion.Contains("file." + field.Name, StringComparison.Ordinal)) unapplied.Add(field.Name);
+            check(unapplied.Count == 0,
+                unapplied.Count == 0
+                    ? $"every one of the record's {typeof(LoadedFile).GetFields(BindingFlags.Public | BindingFlags.Instance).Length} fields is applied"
+                    : "READ INTO THE RECORD, NEVER APPLIED: " + string.Join(", ", unapplied),
+                "a value the file states and the mod does not take is a value the next save writes from memory");
+
+            // 🔴 Every key SaveCache writes is read by the record — the strong one. It is how the
+            // family comes back: a block written from memory that nothing reads from the file.
+            string saving = BodyOf(text, "public static void SaveCache()");
+            check(saving != null, "SaveCache is found", "without it the round trip cannot be checked");
+            if (saving != null)
+            {
+                var written = new List<string>();
+                foreach (Match m in MetadataKey.Matches(saving))
+                    if (!written.Contains(m.Groups[1].Value)) written.Add(m.Groups[1].Value);
+                var unread = new List<string>();
+                foreach (string key in written)
+                    if (!record.Contains("\"" + key + "\"", StringComparison.Ordinal)) unread.Add(key);
+                check(written.Count > 0 && unread.Count == 0,
+                    unread.Count == 0
+                        ? $"every one of the {written.Count} metadata keys SaveCache writes is read back by the record"
+                        : "WRITTEN BY SAVECACHE, READ BY NOBODY: " + string.Join(", ", unread),
+                    "a key written and never read is one file's answer carried into the next, with nothing on disk to say so");
+            }
+
             // 🔴 A SECTION is not read by assigning a field — it is handed to whoever owns it. So
-            // the rule above could not see five of them, and they carried the same defect: a
-            // Chinese→English translation came back wearing a Chinese→French one's replacement
-            // image, its exclusions and its variables, none of which its own backup held.
+            // the rules above cannot see them, and they carried the same defect: a Chinese→English
+            // translation came back wearing a Chinese→French one's replacement image, its
+            // exclusions and its variables, none of which its own backup held.
             //
             // 🔴 **This used to name the six emptying calls one by one, which made it blind to a
-            // SEVENTH section** — its own weakness, and the reason the reading is now driven by the
-            // socle's table instead (2026-09-09). Both halves walk that table, so these cases walk
-            // it too: a section added to SettingsSections is covered the day it is named, in the
-            // one place where every product already learns about it.
+            // SEVENTH section.** Both halves walk the socle's table, so these cases walk it too: a
+            // section added to SettingsSections is covered the day it is named.
             check(clearedRegion.Contains("foreach (string section in SettingsSections.All)", StringComparison.Ordinal),
                 "every section the socle names is emptied before the file is read",
                 "a section a file does not carry means this translation has none, never keep the last one's — and the next save writes it into the file that never had it");
-
             check(clearedRegion.Contains("ApplySectionAtLoad(section, null)", StringComparison.Ordinal),
                 "and emptied through the same door that fills it",
                 "two doors is how emptying and reading came to disagree about what a section even is");
-
-            check(readRegion.Contains("SettingsSections.SectionOf(prop.Name)", StringComparison.Ordinal),
-                "and the file's keys are named back by that same table",
+            check(record.Contains("SettingsSections.SectionOf(prop.Name)", StringComparison.Ordinal),
+                "and the file's keys are named back by that same table, in the record",
                 "matching them by hand is a second copy of the list, which nothing compares to the first");
-
-            check(readRegion.Contains("ApplySectionAtLoad(section, prop.Value)", StringComparison.Ordinal),
-                "and applied through it",
+            check(appliedRegion.Contains("foreach (var section in file.Sections)", StringComparison.Ordinal)
+                  && appliedRegion.Contains("ApplySectionAtLoad(section.Key, section.Value)", StringComparison.Ordinal),
+                "and every section the record carries is applied through it",
                 "the door is what makes the fonts' exception a named decision rather than two places that happen to differ");
 
-            // 🔴 The strong one: no section key spelled out anywhere in either region. It catches a
+            // 🔴 The strong one: no section key spelled out anywhere, on either side. It catches a
             // hand-written branch coming back, and it covers a seventh section without being told.
             var spelledOut = new List<string>();
             foreach (string section in SettingsSections.All)
@@ -138,23 +168,44 @@ namespace UnityGameTranslator.Core.Checks
                 string key = SettingsSections.JsonKey(section);
                 if (key == null) continue;
                 if (clearedRegion.Contains("\"" + key + "\"", StringComparison.Ordinal)
-                    || readRegion.Contains("\"" + key + "\"", StringComparison.Ordinal))
+                    || appliedRegion.Contains("\"" + key + "\"", StringComparison.Ordinal)
+                    || record.Contains("\"" + key + "\"", StringComparison.Ordinal))
                     spelledOut.Add(key);
             }
-
             check(spelledOut.Count == 0,
                 spelledOut.Count == 0
-                    ? $"and none of the {SettingsSections.All.Length} keys is written out here"
+                    ? $"and none of the {SettingsSections.All.Length} keys is written out on either side"
                     : "SPELLED OUT INSTEAD OF ASKED: " + string.Join(", ", spelledOut),
                 "a key written here is a branch the socle's table does not know about, so adding a section leaves it unread");
         }
 
-        private static string FindCore()
+        private static string BodyOf(string text, string signature)
+        {
+            int start = text.IndexOf(signature, StringComparison.Ordinal);
+            if (start < 0) return null;
+            int open = text.IndexOf('{', start + signature.Length);
+            if (open < 0) return null;
+            int depth = 0;
+            for (int i = open; i < text.Length; i++)
+            {
+                if (text[i] == '{') depth++;
+                else if (text[i] == '}')
+                {
+                    depth--;
+                    if (depth == 0) return text.Substring(open, i - open + 1);
+                }
+            }
+            return null;
+        }
+
+        private static string FindCore(params string[] parts)
         {
             var dir = new DirectoryInfo(AppContext.BaseDirectory);
             while (dir != null)
             {
-                string candidate = Path.Combine(dir.FullName, "UnityGameTranslator.Core", "TranslatorCore.cs");
+                var segments = new List<string> { dir.FullName, "UnityGameTranslator.Core" };
+                segments.AddRange(parts);
+                string candidate = Path.Combine(segments.ToArray());
                 if (File.Exists(candidate)) return candidate;
                 dir = dir.Parent;
             }

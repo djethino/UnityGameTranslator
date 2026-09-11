@@ -143,6 +143,13 @@
     -->
     <Compile Include="../../UnityGameTranslator.Core/Engine/StaleSnapshot.cs" />
     <!--
+      What a translation file states about itself, read into a record with a value for every
+      field. The shape that ends the family of "the previous file's answer survives": a key the
+      record does not read is a key the next save writes from memory — somebody else's, if
+      another file was loaded before.
+    -->
+    <Compile Include="../../UnityGameTranslator.Core/Engine/LoadedFile.cs" />
+    <!--
       What a downloaded translation may ask of the disk and of the main thread. Both are pure by
       construction — a string in, an answer out — and both exist as files of their own so that the
       refusals AND the acceptances can be proved here rather than in a game.

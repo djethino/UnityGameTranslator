@@ -344,7 +344,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                     _statusLabel.Show("");
                     UpdateUIForMode();
                     // The Main is hidden while inspecting and put back after — the ScreenRouter's
-                    // rule, run on this panel's VisibilityChanged, so a hotkey close counts too.
+                    // rule, run on this panel's VisibilityChanged (reported on the request, before
+                    // UniverseLib's deferred close), so a hotkey close counts too and the Main is
+                    // back BEFORE OnStopClicked reopens Translation Tools on top of it.
                 }
             }
             else

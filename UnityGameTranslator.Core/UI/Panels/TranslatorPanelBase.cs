@@ -18,16 +18,23 @@ namespace UnityGameTranslator.Core.UI.Panels
     public abstract partial class TranslatorPanelBase : PanelBase, IScreen
     {
         // ── The screen the router sees ──────────────────────────────────────────
-        // Registered under a Screen by the manager; the router never holds the panel itself.
-        bool IScreen.Visible => Enabled;
+        // Registered under a ScreenId by the manager; the router never holds the panel itself.
+        bool IScreen.Visible => _reportedVisible;
         void IScreen.Show() => SetActive(true);
         void IScreen.Hide() => SetActive(false);
 
         /// <summary>
-        /// Raised when Enabled ACTUALLY changed, whichever road did it. A close asked for from
-        /// inside a click is deferred a frame by PanelBase and comes back through SetActive, so
-        /// it is reported then, not when asked — the router's rules run on what is on screen.
+        /// What this panel has told the router, which is the state AS ASKED, not as drawn. A close
+        /// asked for from inside a click is deferred a frame by PanelBase (so the click finishes on
+        /// a button that still exists); the router hears it at once, as the panel's own SetActive
+        /// override used to act on it — so what the router puts back (the Main behind the
+        /// inspector) is on screen BEFORE whatever the closing act opens next comes on top of it.
+        /// Reported once per change: the drag handle calls SetActive(true) every frame.
+        /// A panel is born active (PanelBase), and CreatePanels hides them all.
         /// </summary>
+        private bool _reportedVisible = true;
+
+        /// <summary>Raised when the state as asked changed, whichever road asked — see _reportedVisible.</summary>
         public event Action<IScreen, bool> VisibilityChanged;
 
         /// <summary>
@@ -416,8 +423,6 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         public override void SetActive(bool active)
         {
-            bool wasEnabled = Enabled;
-
             // Handle backdrop
             if (UseBackdrop)
             {
@@ -448,8 +453,11 @@ namespace UnityGameTranslator.Core.UI.Panels
                 EnsureValidPosition();
             }
 
-            if (Enabled != wasEnabled)
-                VisibilityChanged?.Invoke(this, Enabled);
+            if (_reportedVisible != active)
+            {
+                _reportedVisible = active;
+                VisibilityChanged?.Invoke(this, active);
+            }
         }
 
         /// <summary>

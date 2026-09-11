@@ -28,8 +28,10 @@ namespace UnityGameTranslator.Core
 
     /// <summary>
     /// What the router asks of a screen's view, and the one thing the view owes back: to say
-    /// when its visibility ACTUALLY changed, whichever road closed it — a close button, a hotkey,
-    /// a close deferred by a frame so the click that asked for it can finish.
+    /// when its visibility changed, whichever road did it — a close button, a hotkey, the
+    /// router itself. Reported AS ASKED, at once: a view that draws the change a frame later
+    /// (UniverseLib defers a close asked from inside a click) still reports on the request, so
+    /// what the router puts back in answer is on screen before the next act comes on top.
     /// </summary>
     public interface IScreen
     {
@@ -151,7 +153,10 @@ namespace UnityGameTranslator.Core
             if (!_ids.TryGetValue(view, out var screen)) return;
 
             // The rule that lived in InspectorPanel.SetActive until 2026-09-11, verbatim: judged on
-            // the ACTUAL transition, so a hotkey, the Stop button and a deferred close all count.
+            // the view's report, so the Stop button, a hotkey and the router's own Hide all count.
+            // ⚠ On the REPORT, which comes with the request: the Main is put back before the
+            // closing act opens the next screen (Stop reopens Translation Tools), so that screen
+            // lands on top of it — put back is not brought forward.
             if (screen == ScreenId.Inspector)
             {
                 if (visible)

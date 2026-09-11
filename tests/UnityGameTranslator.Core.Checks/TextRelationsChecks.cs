@@ -196,6 +196,18 @@ namespace UnityGameTranslator.Core.Checks
         /// <summary>The shared brick: same text, plus something at the end.</summary>
         private static void Growth(Action<bool, string, string> check)
         {
+            // ── The head of a longer known line ───────────────────────────────
+            var known = new[] { "ECD Workforce Training Series\nTape [!v*0]: Basics\n\nThe low ground is your friend. [Click]", "Play", null };
+            Head(check, "ECD Workforce Training Series\nTape [!v*0]: Basics\n\nThe low", known, true,
+                "a reveal resumed part-way and stood still: not a line of its own (Forsaken's tape, 2026-09-12)");
+            Head(check, "ECD Workforce Training Series\nTape [!v*0]: Basics\n\nThe low ground is your friend. [Click]", known, false,
+                "the whole line is not its own head: that is a cache hit, answered before this is asked");
+            Head(check, "Play", known, false, "equal is not longer");
+            Head(check, "Pla", known, true, "asked only of a reveal that stabilised, never of a button — a rule for the typewriter, not for menus");
+            Head(check, "ECD workforce", known, false, "ordinal: a case that differs is another text");
+            Head(check, "", known, false, "nothing is the head of nothing");
+            Head(check, "x", null, false, "no lines, no head");
+
             Grows(check, "Hel", "Hello", true, "the previous text with more after it");
             Grows(check, "", "H", true, "growing from nothing still grows");
             Grows(check, "Hello", "Hello", false, "identical is not growing");
@@ -270,6 +282,13 @@ namespace UnityGameTranslator.Core.Checks
         {
             bool actual = TextRelations.LooksLikeTypewriterGrowth(previous, current);
             check(actual == expected, $"Typewriter({Show(previous)}, {Show(current)}) -> {actual}", why);
+        }
+
+        private static void Head(Action<bool, string, string> check, string text, string[] lines,
+                                 bool expected, string why)
+        {
+            bool actual = TextRelations.IsHeadOfALongerLine(text, lines);
+            check(actual == expected, $"Head({Show(text.Length > 24 ? text.Substring(0, 24) + "…" : text)}) -> {actual}", why);
         }
 
         private static void Concat(Action<bool, string, string> check, string previous, string current,

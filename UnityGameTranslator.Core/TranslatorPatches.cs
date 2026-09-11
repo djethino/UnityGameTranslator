@@ -3128,10 +3128,15 @@ namespace UnityGameTranslator.Core
             // Same question as every other gate, same answer: inCache already covered the key, so
             // what remains is "is this text itself target language?".
             bool alreadyTranslated = !inCache && TranslatorCore.IsAlreadyTargetText(text);
+            // The head of a line the file already holds: a reveal resumed part-way, stood still,
+            // and is not a line of its own (TextRelations.IsHeadOfALongerLine). Held, not sent:
+            // the reveal goes on from here, and the line it belongs to answers when it arrives.
+            bool headOfKnown = !inCache && !alreadyTranslated
+                               && TextRelations.IsHeadOfALongerLine(normalizedText, TranslatorCore.TranslationCache.Keys);
 
             if (TranslatorCore.DebugMode)
             {
-                TranslatorCore.LogDebug($"[TW-FINALIZE] comp={compId} inCache={inCache} alreadyTranslated={alreadyTranslated} text({text.Length}c)='{text}'");
+                TranslatorCore.LogDebug($"[TW-FINALIZE] comp={compId} inCache={inCache} alreadyTranslated={alreadyTranslated} headOfKnown={headOfKnown} text({text.Length}c)='{text}'");
             }
 
             if (inCache)
@@ -3144,6 +3149,10 @@ namespace UnityGameTranslator.Core
                 // Text is already in target language (reverse cache hit) — skip
                 if (TranslatorCore.DebugMode)
                     TranslatorCore.LogDebug($"[TW-FINALIZE] SKIP already translated: '{(text.Length > 40 ? text.Substring(0,40) : text)}'");
+            }
+            else if (headOfKnown)
+            {
+                TranslatorCore.LogInfo($"[TW-PARTIAL] comp={compId} the head of a longer known line — held, not sent: '{(text.Length > 40 ? text.Substring(0, 40) : text)}'");
             }
             else
             {

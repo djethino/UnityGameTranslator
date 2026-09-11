@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace UnityGameTranslator.Core
 {
@@ -50,6 +51,34 @@ namespace UnityGameTranslator.Core
         {
             return current.Length > previous.Length
                    && current.StartsWith(previous, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Is this text the HEAD of a longer line among <paramref name="lines"/> — the same
+        /// characters, and more after them.
+        ///
+        /// 🔴 A reveal that stabilises on the head of a line the file already holds is not a line
+        /// of its own. Seen 2026-09-12: a tape recording resumed where the player had stopped it,
+        /// so the component was set to the first 191 characters at once, stood still for the
+        /// stabilising delay, and was finalised — sent to the model, cached as a line, translated
+        /// as a fragment. Deleting the fragment in the editor changed nothing: the next resume
+        /// made it again. Held instead, the screen shows the source until the reveal reaches the
+        /// line it is the head of, exactly as during any other reveal.
+        ///
+        /// ⚠ Ordinal, like <see cref="Grows"/>, and for the same reasons. Asked of the NORMALISED
+        /// text against the cache's keys, which are normalised the same way — the numbers are
+        /// lifted out on both sides, so "Tape 12" and "Tape [!v*0]" are one head. An equal line is
+        /// not a head: that is a cache hit, answered before this is asked.
+        /// </summary>
+        public static bool IsHeadOfALongerLine(string text, IEnumerable<string> lines)
+        {
+            if (string.IsNullOrEmpty(text) || lines == null) return false;
+            foreach (var line in lines)
+            {
+                if (line != null && line.Length > text.Length && line.StartsWith(text, StringComparison.Ordinal))
+                    return true;
+            }
+            return false;
         }
 
         /// <summary>Most characters a single typewriter step is assumed to reveal.</summary>

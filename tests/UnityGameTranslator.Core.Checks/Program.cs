@@ -221,6 +221,7 @@ namespace UnityGameTranslator.Core.Checks
         private static void WhatSitsBesideTheTranslation()
         {
             Section("Companion files (ancestors, images)", CompanionFilesChecks.Run);
+            Section("Translation store (the moments of the file)", TranslationStoreChecks.Run);
         }
 
         /// <summary>The frontier: a panel names nothing of the engine, a component lets no engine type through.</summary>

@@ -189,6 +189,8 @@
       files gone or names out — replayed here on a real folder.
     -->
     <Compile Include="../../UnityGameTranslator.Core/CompanionFiles.cs" />
+    <!-- The file's own facts and the moments they move at: download, upload, merge, fork, write, load. -->
+    <Compile Include="../../UnityGameTranslator.Core/Engine/TranslationStore.cs" />
     <!-- The screens' sequence rules: which window is up after which act. No Unity: a view is an IScreen. -->
     <Compile Include="../../UnityGameTranslator.Core/Engine/Screens.cs" />
     <!--

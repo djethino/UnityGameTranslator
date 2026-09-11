@@ -98,7 +98,7 @@ namespace UnityGameTranslator.Core
         public static string ConfigPath { get; private set; }
         public static string ModFolder { get; private set; }
         public static bool DebugMode { get; private set; } = false;
-        public static string FileUuid { get; private set; }
+        public static string FileUuid { get => Store.Uuid; private set => Store.Uuid = value; }
 
         /// <summary>
         /// Per-font settings for translation and fallback.
@@ -121,7 +121,7 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static ForkContext PendingFork { get; set; }
 
-        public static int LocalChangesCount { get; private set; } = 0;
+        public static int LocalChangesCount => Store.LocalChanges;
 
         /// <summary>
         /// Translated lines this session has actually put on screen.
@@ -160,7 +160,7 @@ namespace UnityGameTranslator.Core
         /// Included in sync direction calculation so metadata changes trigger an upload prompt.
         /// </summary>
         public static bool MetadataDirty { get; private set; } = false;
-        public static Dictionary<string, TranslationEntry> AncestorCache { get; private set; } = new Dictionary<string, TranslationEntry>();
+        public static Dictionary<string, TranslationEntry> AncestorCache => Store.Ancestor;
 
         /// <summary>
         /// The SETTINGS as they stood at the last sync, or null when unknown
@@ -173,12 +173,39 @@ namespace UnityGameTranslator.Core
         /// </summary>
         public static TranslationSettings AncestorSettings { get; private set; }
 
+        private static TranslationStore _store;
+
+        /// <summary>
+        /// The file's own facts — identity, sync stamps, ancestors — and the moments they move at
+        /// (Engine/TranslationStore.cs, held by TranslationStoreChecks on real files). One per
+        /// translation path, made fresh at every load so nothing of the previous file survives.
+        /// The statics around it are its façade: same names, same callers.
+        /// </summary>
+        public static TranslationStore Store => _store ?? (_store = new TranslationStore(CachePath, LogDebug));
+
+        /// <summary>The settings a stored sections object describes, or null when it describes none (no baseline).</summary>
+        private static TranslationSettings SettingsFromSections(JObject sections)
+        {
+            if (sections == null) return null;
+            var settings = TranslationSettings.FromFile(sections);
+            return settings.HasAny() ? settings : null;
+        }
+
+        /// <summary>The sections a TranslationSettings writes, as the store stores them; null stays null (unknown).</summary>
+        private static JObject SectionsOf(TranslationSettings settings)
+        {
+            if (settings == null) return null;
+            var sections = new JObject();
+            settings.WriteInto(sections);
+            return sections;
+        }
+
         /// <summary>
         /// Hash of the translation at last sync (download or upload).
         /// Used to detect if server has changed since our last sync.
         /// Stored in translations.json as _source.hash
         /// </summary>
-        public static string LastSyncedHash { get; set; } = null;
+        public static string LastSyncedHash { get => Store.SourceHash; set => Store.SourceHash = value; }
 
         /// <summary>
         /// Hash of the MAIN as it stood the last time this branch merged from it.
@@ -190,7 +217,7 @@ namespace UnityGameTranslator.Core
         /// the site, this one tracks the upstream it derives from. Never mix them —
         /// see analyse/main-to-branch-sync.md §2.
         /// </summary>
-        public static string LastMergedMainHash { get; set; } = null;
+        public static string LastMergedMainHash { get => Store.MainHash; set => Store.MainHash = value; }
 
         /// <summary>
         /// Site id of the translation this file came from, kept in
@@ -205,7 +232,7 @@ namespace UnityGameTranslator.Core
         /// Public identifier of a public translation: nothing to protect here,
         /// and the endpoint already refuses branches to anyone but their Main.
         /// </summary>
-        public static int? SourceSiteId { get; set; } = null;
+        public static int? SourceSiteId { get => Store.SiteId; set => Store.SiteId = value; }
 
         /// <summary>
         /// Where this file came from when it was forked, and how much of it was already written
@@ -221,9 +248,9 @@ namespace UnityGameTranslator.Core
         /// The line count is measured here rather than asked of the server later: the original
         /// keeps growing, so the question only has an answer at the instant of the fork.
         /// </summary>
-        public static int? ForkedFromSiteId { get; set; } = null;
-        public static string ForkedFromHash { get; set; } = null;
-        public static int? ForkedFromResolvedLines { get; set; } = null;
+        public static int? ForkedFromSiteId => Store.ForkedFromSiteId;
+        public static string ForkedFromHash => Store.ForkedFromHash;
+        public static int? ForkedFromResolvedLines => Store.ForkedFromResolvedLines;
 
         /// <summary>
         /// The forked file as it stood at the fork — lines, tags and the settings that travel
@@ -237,7 +264,7 @@ namespace UnityGameTranslator.Core
         /// ⚠ So the fingerprint deliberately hashes the lines with the uuid held CONSTANT. It is
         /// not a file_hash and must never be sent as one: it answers one question, here.
         /// </summary>
-        public static string ForkedFromContentHash { get; set; } = null;
+        public static string ForkedFromContentHash => Store.ForkedFromContentHash;
 
         /// <summary>
         /// A fork that is still, line for line, the copy it was made from.
@@ -2396,7 +2423,9 @@ namespace UnityGameTranslator.Core
             // neither key — the mod still claimed unsynced settings and local changes, with no way
             // for the user to clear it.
             MetadataDirty = false;
-            LocalChangesCount = 0;
+            // A fresh store: identity, stamps, ancestor — every field at its "absent" value, so
+            // nothing of the previous file can survive into this one (the block below says why).
+            _store = new TranslationStore(CachePath, LogDebug);
 
             // 🔴 **Who this translation IS, and what it has to do with the server — re-derived from
             // the file, never inherited from the one loaded before it.**
@@ -2424,15 +2453,9 @@ namespace UnityGameTranslator.Core
             // The fourth defect of this family (game settings, then _local_changes and
             // _metadata_dirty, then these). See analyse/plan-prealables-couches.md 6r: the shape
             // that ends the family is a record with a value for every field, where "the previous
-            // one survives" stops being expressible.
-            FileUuid = null;
-            LastSyncedHash = null;
-            LastMergedMainHash = null;
-            SourceSiteId = null;
-            ForkedFromSiteId = null;
-            ForkedFromHash = null;
-            ForkedFromResolvedLines = null;
-            ForkedFromContentHash = null;
+            // one survives" stops being expressible — which is what the fresh TranslationStore
+            // above now is: FileUuid, LastSyncedHash, LastMergedMainHash, SourceSiteId and the
+            // four ForkedFrom* read through it and start null.
 
             if (!File.Exists(CachePath))
             {
@@ -2469,21 +2492,14 @@ namespace UnityGameTranslator.Core
                 var file = LoadedFile.Read(parsed);
 
                 int engineVersion = file.EngineVersion;
-                FileUuid = file.Uuid;
+                // Identity and stamps, every field, as the file states them.
+                Store.TakeIdentity(file);
                 // Kept only when the file says something: a file written with "auto" in it — an
                 // older mod, or a hand edit — states nothing, and reading it as an answer would
                 // let a mode outrank the server. LanguageState judges the value; absent is absent.
                 if (file.SourceLanguage != null) _languages.StateSource(file.SourceLanguage);
                 if (file.TargetLanguage != null) _languages.StateTarget(file.TargetLanguage);
-                LocalChangesCount = file.LocalChanges;
                 MetadataDirty = file.MetadataDirty;
-                LastSyncedHash = file.LastSyncedHash;
-                LastMergedMainHash = file.LastMergedMainHash;
-                SourceSiteId = file.SourceSiteId;
-                ForkedFromSiteId = file.ForkedFromSiteId;
-                ForkedFromHash = file.ForkedFromHash;
-                ForkedFromResolvedLines = file.ForkedFromResolvedLines;
-                ForkedFromContentHash = file.ForkedFromContentHash;
                 string savedSteamId = file.SavedSteamId;
 
                 // ui_font described the MOD's interface from inside the GAME's file. Read once,
@@ -2714,61 +2730,14 @@ namespace UnityGameTranslator.Core
 
         private static void LoadAncestorCache()
         {
-            string ancestorPath = TranslationFiles.AncestorOf(CachePath);
-            if (!File.Exists(ancestorPath))
-            {
-                AncestorCache = new Dictionary<string, TranslationEntry>();
-                AncestorSettings = null;
-                return;
-            }
-
             try
             {
-                string ancestorJson = File.ReadAllText(ancestorPath);
-                // Normalize line endings (consistency with main cache)
-                ancestorJson = ancestorJson.Replace("\r\n", "\n");
-                var ancestorParsed = JObject.Parse(ancestorJson);
-                AncestorCache = new Dictionary<string, TranslationEntry>();
-                // An ancestor written before settings travelled with it carries
-                // none: that is "unknown", not "empty", so it stays null
-                var ancestorSettings = TranslationSettings.FromFile(ancestorParsed);
-                AncestorSettings = ancestorSettings.HasAny() ? ancestorSettings : null;
-
-                foreach (var prop in ancestorParsed.Properties())
-                {
-                    if (!prop.Name.StartsWith("_"))
-                    {
-                        // Normalize key line endings for cross-platform consistency
-                        string normalizedKey = NormalizeLineEndings(prop.Name);
-
-                        if (prop.Value.Type == JTokenType.Object)
-                        {
-                            // New format
-                            var obj = prop.Value as JObject;
-                            AncestorCache[normalizedKey] = new TranslationEntry
-                            {
-                                Value = NormalizeLineEndings(obj?["v"]?.ToString() ?? ""),
-                                Tag = obj?["t"]?.ToString() ?? "A"
-                            };
-                        }
-                        else if (prop.Value.Type == JTokenType.String)
-                        {
-                            // Legacy format
-                            AncestorCache[normalizedKey] = new TranslationEntry
-                            {
-                                Value = NormalizeLineEndings(prop.Value.ToString()),
-                                Tag = "A"
-                            };
-                        }
-                    }
-                }
-
-                Adapter.LogInfo($"Loaded {AncestorCache.Count} ancestor entries for merge support");
+                Store.LoadAncestor();
+                AncestorSettings = SettingsFromSections(Store.AncestorSettings);
             }
             catch (Exception ae)
             {
                 Adapter.LogWarning($"Failed to load ancestor cache: {ae.Message}");
-                AncestorCache = new Dictionary<string, TranslationEntry>();
                 AncestorSettings = null;
             }
         }
@@ -3026,48 +2995,14 @@ namespace UnityGameTranslator.Core
 
         private static string MainAncestorPath => TranslationFiles.MainAncestorOf(CachePath);
 
-        /// <summary>
-        /// The Main's content at the last merge from it, or an EMPTY dictionary
-        /// when unknown. Empty is the safe answer, not a degraded one: with no
-        /// ancestor entries the merger can never conclude to a deletion, so the
-        /// merge becomes purely additive.
-        /// </summary>
+        /// <summary>The Main as last merged from (TranslationStore.ReadMainAncestor); empty when there is none, or none readable.</summary>
         public static Dictionary<string, TranslationEntry> LoadMainAncestor()
         {
-            var result = new Dictionary<string, TranslationEntry>();
-
             try
             {
-                if (!File.Exists(MainAncestorPath)) return result;
-
-                string json = File.ReadAllText(MainAncestorPath).Replace("\r\n", "\n");
-                var parsed = JObject.Parse(json);
-
-                foreach (var prop in parsed.Properties())
-                {
-                    if (prop.Name.StartsWith("_")) continue;
-
-                    string key = NormalizeLineEndings(prop.Name);
-                    if (prop.Value.Type == JTokenType.Object)
-                    {
-                        var obj = prop.Value as JObject;
-                        result[key] = new TranslationEntry
-                        {
-                            Value = NormalizeLineEndings(obj?["v"]?.ToString() ?? ""),
-                            Tag = obj?["t"]?.ToString() ?? "A"
-                        };
-                    }
-                    else if (prop.Value.Type == JTokenType.String)
-                    {
-                        result[key] = new TranslationEntry
-                        {
-                            Value = NormalizeLineEndings(prop.Value.ToString()),
-                            Tag = "A"
-                        };
-                    }
-                }
-
+                var result = Store.ReadMainAncestor();
                 LogDebug($"Loaded {result.Count} upstream ancestor entries");
+                return result;
             }
             catch (Exception e)
             {
@@ -3075,8 +3010,6 @@ namespace UnityGameTranslator.Core
                 Adapter.LogWarning($"Failed to load upstream ancestor ({e.Message}) - merging additively");
                 return new Dictionary<string, TranslationEntry>();
             }
-
-            return result;
         }
 
         /// <summary>
@@ -3119,19 +3052,14 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// The Main's SETTINGS at the last merge from it, or null when unknown.
-        /// Same rule as AncestorSettings: null means "no common baseline", which
-        /// makes the mod ask rather than decide.
+        /// The Main's settings as last merged from. Same rule as AncestorSettings: null means "no
+        /// common baseline", which makes the next sync ask rather than guess.
         /// </summary>
         public static TranslationSettings LoadMainAncestorSettings()
         {
             try
             {
-                if (!File.Exists(MainAncestorPath)) return null;
-
-                string json = File.ReadAllText(MainAncestorPath).Replace("\r\n", "\n");
-                var settings = TranslationSettings.FromFile(JObject.Parse(json));
-                return settings.HasAny() ? settings : null;
+                return SettingsFromSections(Store.ReadMainAncestorSettings());
             }
             catch (Exception e)
             {
@@ -3142,34 +3070,15 @@ namespace UnityGameTranslator.Core
 
         /// <summary>
         /// Remember the Main exactly as it was merged, so the NEXT merge can tell
-        /// what upstream changed instead of asking about everything again.
+        /// what upstream changed instead of asking about everything again. The moment is the
+        /// store's (TranslationStore.NoteMainMerged); this only logs what it could not write.
         /// </summary>
         public static void SaveMainAncestor(Dictionary<string, TranslationEntry> mainContent, string mainHash,
             TranslationSettings mainSettings = null)
         {
             try
             {
-                var output = new JObject();
-                foreach (var kvp in mainContent)
-                {
-                    if (kvp.Key.StartsWith("_")) continue;
-                    output[kvp.Key] = new JObject
-                    {
-                        ["v"] = kvp.Value.Value,
-                        ["t"] = kvp.Value.Tag ?? "A"
-                    };
-                }
-
-                // Only record what we saw of the Main's settings (see
-                // SaveAncestorFromRemote): an invented baseline is worse than none
-                if (mainSettings != null)
-                {
-                    mainSettings.WriteInto(output);
-                }
-
-                File.WriteAllText(MainAncestorPath, output.ToString(Formatting.Indented));
-                LastMergedMainHash = mainHash;
-                LogDebug($"Saved upstream ancestor with {output.Count} entries");
+                Store.NoteMainMerged(mainContent, mainHash, SectionsOf(mainSettings));
             }
             catch (Exception e)
             {
@@ -3178,47 +3087,17 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Save the current cache as ancestor (for 3-way merge)
-        /// Call this after downloading from website before any local changes
+        /// After a download or an upload: the cache IS what the server holds, so it becomes the
+        /// ancestor and nothing is left to publish (TranslationStore.NoteSynced). Callers set
+        /// LastSyncedHash and SourceSiteId first, then this, then SaveCache — the ancestor moves
+        /// before the file is written, because the count in the file is measured against it.
         /// </summary>
         public static void SaveAncestorCache()
         {
             try
             {
-                string ancestorPath = TranslationFiles.AncestorOf(CachePath);
-                var output = new JObject();
-
-                foreach (var kvp in TranslationCache)
-                {
-                    output[kvp.Key] = new JObject
-                    {
-                        ["v"] = kvp.Value.Value,
-                        ["t"] = kvp.Value.Tag ?? "A"
-                    };
-                }
-
-                // Settings travel with the ancestor too: without them there is no
-                // way to tell "the other side changed this" from "I changed this",
-                // and every difference would have to be asked about
                 AncestorSettings = TranslationSettings.FromCurrentState();
-                AncestorSettings.WriteInto(output);
-
-                string json = output.ToString(Formatting.Indented);
-                File.WriteAllText(ancestorPath, json);
-
-                // Copy to AncestorCache
-                AncestorCache = new Dictionary<string, TranslationEntry>();
-                foreach (var kvp in TranslationCache)
-                {
-                    AncestorCache[kvp.Key] = new TranslationEntry
-                    {
-                        Value = kvp.Value.Value,
-                        Tag = kvp.Value.Tag
-                    };
-                }
-
-                LocalChangesCount = 0;
-                LogDebug($"Saved ancestor cache with {AncestorCache.Count} entries");
+                Store.NoteSynced(null, null, TranslationCache, SectionsOf(AncestorSettings));
             }
             catch (Exception e)
             {
@@ -3227,96 +3106,18 @@ namespace UnityGameTranslator.Core
         }
 
         /// <summary>
-        /// Save remote translations as ancestor (for use after merge).
-        /// This sets the ancestor to the server version, so LocalChangesCount reflects local additions.
-        /// </summary>
-        /// <param name="remoteTranslations">Remote translations (legacy string format, will be converted to entries with AI tag)</param>
-        public static void SaveAncestorFromRemote(Dictionary<string, string> remoteTranslations)
-        {
-            try
-            {
-                string ancestorPath = TranslationFiles.AncestorOf(CachePath);
-                var output = new JObject();
-
-                foreach (var kvp in remoteTranslations)
-                {
-                    if (kvp.Key.StartsWith("_")) continue;
-                    output[kvp.Key] = new JObject
-                    {
-                        ["v"] = kvp.Value,
-                        ["t"] = "A"  // Default to AI for legacy format
-                    };
-                }
-
-                string json = output.ToString(Formatting.Indented);
-                File.WriteAllText(ancestorPath, json);
-
-                // Convert to AncestorCache
-                AncestorCache = new Dictionary<string, TranslationEntry>();
-                foreach (var kvp in remoteTranslations)
-                {
-                    if (kvp.Key.StartsWith("_")) continue;
-                    AncestorCache[kvp.Key] = new TranslationEntry
-                    {
-                        Value = kvp.Value,
-                        Tag = "A"
-                    };
-                }
-
-                LogDebug($"Saved ancestor from remote with {AncestorCache.Count} entries");
-            }
-            catch (Exception e)
-            {
-                Adapter.LogWarning($"Failed to save ancestor from remote: {e.Message}");
-            }
-        }
-
-        /// <summary>
-        /// Save remote translations as ancestor (new format with tags).
+        /// After a merge: the PUBLISHED lines become the ancestor, never the merged ones, and the
+        /// count becomes what the cache has that the published version does not
+        /// (TranslationStore.NoteMerged). The published settings go with it only when actually
+        /// seen: an invented baseline is worse than none.
         /// </summary>
         public static void SaveAncestorFromRemote(Dictionary<string, TranslationEntry> remoteTranslations,
             TranslationSettings remoteSettings = null)
         {
             try
             {
-                string ancestorPath = TranslationFiles.AncestorOf(CachePath);
-                var output = new JObject();
-
-                foreach (var kvp in remoteTranslations)
-                {
-                    if (kvp.Key.StartsWith("_")) continue;
-                    output[kvp.Key] = new JObject
-                    {
-                        ["v"] = kvp.Value.Value,
-                        ["t"] = kvp.Value.Tag ?? "A"
-                    };
-                }
-
-                // Only record settings we actually saw. Guessing them (say, from
-                // our own state) would claim a common baseline that never
-                // existed, and the next comparison would trust it.
                 AncestorSettings = remoteSettings;
-                if (remoteSettings != null)
-                {
-                    remoteSettings.WriteInto(output);
-                }
-
-                string json = output.ToString(Formatting.Indented);
-                File.WriteAllText(ancestorPath, json);
-
-                // Copy to AncestorCache
-                AncestorCache = new Dictionary<string, TranslationEntry>();
-                foreach (var kvp in remoteTranslations)
-                {
-                    if (kvp.Key.StartsWith("_")) continue;
-                    AncestorCache[kvp.Key] = new TranslationEntry
-                    {
-                        Value = kvp.Value.Value,
-                        Tag = kvp.Value.Tag
-                    };
-                }
-
-                LogDebug($"Saved ancestor from remote with {AncestorCache.Count} entries");
+                Store.NoteMerged(null, remoteTranslations, SectionsOf(remoteSettings), TranslationCache);
             }
             catch (Exception e)
             {
@@ -3324,10 +3125,6 @@ namespace UnityGameTranslator.Core
             }
         }
 
-        /// <summary>
-        /// Recalculate LocalChangesCount based on actual differences between TranslationCache and AncestorCache.
-        /// Call this after loading caches or after a merge.
-        /// </summary>
         /// <summary>
         /// Migrate old placeholder format [vN] to new format [!v*N] in all cache entries.
         /// Returns the number of entries migrated.
@@ -3365,51 +3162,10 @@ namespace UnityGameTranslator.Core
             return toMigrate.Count;
         }
 
+        /// <summary>Counted against the ancestor, never trusted — TranslationStore.Recount.</summary>
         public static void RecalculateLocalChanges()
         {
-            if (AncestorCache.Count == 0)
-            {
-                // No ancestor = all entries are local changes
-                LocalChangesCount = TranslationCache.Count;
-                return;
-            }
-
-            int changes = 0;
-            foreach (var kvp in TranslationCache)
-            {
-                // Skip metadata keys
-                if (kvp.Key.StartsWith("_")) continue;
-
-                // New key or different value/tag = local change
-                if (!AncestorCache.TryGetValue(kvp.Key, out var ancestorEntry) ||
-                    ancestorEntry.Value != kvp.Value.Value ||
-                    ancestorEntry.Tag != kvp.Value.Tag)
-                {
-                    changes++;
-                }
-            }
-
-            // Entries the ancestor had and we no longer do. Walking only the local cache made
-            // deletions invisible: the count stayed at zero, so "in sync" was judged true while the
-            // file no longer matched the server. The mod then read the divergence as a SERVER update
-            // and offered to download — which would have silently restored what the user deleted.
-            int removed = 0;
-            foreach (var kvp in AncestorCache)
-            {
-                if (kvp.Key.StartsWith("_")) continue;
-                // 🔴 An interface line the server's copy holds and this file no longer does is
-                // NOT a change somebody made. Those lines were published by a version that kept
-                // the mod's interface inside the game's translation; taking them out is this
-                // version doing what it must, not work waiting to be shared. Counting them showed
-                // "unpublished changes" on a file nobody had touched — and to somebody holding
-                // another person's Main, a count they could never clear.
-                if (!Common.Merge.IsGameLine(kvp.Value?.Tag)) continue;
-                if (!TranslationCache.ContainsKey(kvp.Key)) removed++;
-            }
-            changes += removed;
-
-            LocalChangesCount = changes;
-            LogDebug($"[LocalChanges] Recalculated: {changes} local changes ({removed} deleted)");
+            Store.Recount(TranslationCache);
         }
 
         /// <summary>
@@ -5810,21 +5566,8 @@ namespace UnityGameTranslator.Core
                     cacheModified = true;
                     if (firstGameLine) SettleTargetLanguageOnFirstLine();
 
-                    // Track local changes (if different from ancestor or new)
-                    if (AncestorCache.Count > 0)
-                    {
-                        if (!AncestorCache.TryGetValue(normalizedKey, out var ancestorEntry) ||
-                            ancestorEntry.Value != entry.Value ||
-                            ancestorEntry.Tag != entry.Tag)
-                        {
-                            LocalChangesCount++;
-                        }
-                    }
-                    else
-                    {
-                        // No ancestor = all translations are local
-                        LocalChangesCount++;
-                    }
+                    // The running figure the screens show between two writes; the file recounts.
+                    Store.NoteLocalEdit(normalizedKey, entry);
                 }
 
                 // Into the reverse index of the side this entry belongs to, never the other's.
@@ -6683,56 +6426,9 @@ namespace UnityGameTranslator.Core
                         };
                     }
 
-                    // Save _source with hash for multi-device sync detection, plus the
-                    // Main's hash at the last merge from it (branches only)
-                    if (!string.IsNullOrEmpty(LastSyncedHash)
-                        || !string.IsNullOrEmpty(LastMergedMainHash)
-                        || SourceSiteId.HasValue)
-                    {
-                        var source = new JObject();
-                        if (!string.IsNullOrEmpty(LastSyncedHash))
-                        {
-                            source["hash"] = LastSyncedHash;
-                        }
-                        if (!string.IsNullOrEmpty(LastMergedMainHash))
-                        {
-                            source["main_hash"] = LastMergedMainHash;
-                        }
-                        if (SourceSiteId.HasValue)
-                        {
-                            source["site_id"] = SourceSiteId.Value;
-                        }
-                        output["_source"] = source;
-                    }
-
-                    // Provenance of a fork. Separate from _source, which an older version reads
-                    // and rewrites: this block is unknown to it, so it would be dropped on its
-                    // next save — a loss of credit, never a breakage. It stays out of the content
-                    // hash (which covers translations plus _uuid), so it can never make two
-                    // installs disagree about whether they hold the same file.
-                    if (ForkedFromSiteId.HasValue)
-                    {
-                        var origin = new JObject();
-                        origin["site_id"] = ForkedFromSiteId.Value;
-                        if (!string.IsNullOrEmpty(ForkedFromHash))
-                        {
-                            origin["hash"] = ForkedFromHash;
-                        }
-                        if (ForkedFromResolvedLines.HasValue)
-                        {
-                            origin["resolved_lines"] = ForkedFromResolvedLines.Value;
-                        }
-                        if (!string.IsNullOrEmpty(ForkedFromContentHash))
-                        {
-                            origin["content_hash"] = ForkedFromContentHash;
-                        }
-                        output["_forked_from"] = origin;
-                    }
-
-                    if (LocalChangesCount > 0)
-                    {
-                        output["_local_changes"] = LocalChangesCount;
-                    }
+                    // _source (hash, main_hash, site_id), _forked_from, _local_changes — the stamps
+                    // as the store holds them, recounted just above.
+                    Store.WriteStampsInto(output);
 
                     if (MetadataDirty)
                     {
@@ -6796,34 +6492,28 @@ namespace UnityGameTranslator.Core
 
             LogDebug($"[Fork] Context saved: {PendingFork.SourceLanguage} -> {PendingFork.TargetLanguage}, game={PendingFork.Game?.name}");
 
-            // Written down BEFORE the reset below wipes the sync state. Detaching the sync is
-            // required; erasing where the work came from was a side effect of doing both with the
-            // same variables. The count is what we actually received — measured now, because the
-            // original goes on growing and the question has no answer afterwards.
-            ForkedFromSiteId = SourceSiteId;
-            ForkedFromHash = LastSyncedHash;
-            ForkedFromResolvedLines = CountResolvedEntries();
-            // ⚠ Taken BEFORE the new uuid is generated is not why it works — the fingerprint
-            // ignores the uuid, which is the whole point. It is taken here because this is the last
-            // instant the cache holds exactly what was copied.
-            ForkedFromContentHash = ComputeContentFingerprint();
-
-            // Generate new UUID for the fork
-            FileUuid = Guid.NewGuid().ToString();
+            // The moment is the store's (TranslationStore.Fork): where the work came from is
+            // written down before the reset wipes the sync state; the count is what was actually
+            // received, measured now because the original goes on growing; then a new uuid, no
+            // server, no Main, every line local, and both ancestor files deleted. The fingerprint
+            // ignores the uuid, which is the whole point — it is taken here because this is the
+            // last instant the cache holds exactly what was copied.
+            try
+            {
+                int dropped = Store.Fork(Guid.NewGuid().ToString(), CountResolvedEntries(),
+                                         ComputeContentFingerprint(), TranslationCache.Count);
+                LogDebug($"[Fork] Dropped {dropped} ancestor file(s)");
+            }
+            catch (Exception e)
+            {
+                // A file that would not go stays to be reloaded at the next launch — said loudly,
+                // because that is exactly the state the fork exists to prevent.
+                Adapter?.LogWarning($"Failed to drop the ancestors after forking: {e.Message}");
+            }
+            AncestorSettings = null;
 
             // Reset server state - we're starting fresh
             ServerState = new ServerTranslationState();
-
-            // Reset sync tracking - local changes will be counted from this point
-            LastSyncedHash = null;
-            // A fork is detached: it has no upstream Main any more, so the memory of
-            // one would make the mod offer to merge from a lineage it just left
-            LastMergedMainHash = null;
-            SourceSiteId = null;
-            LocalChangesCount = TranslationCache.Count; // All entries are now "local changes"
-
-            // Clear ancestor cache - no longer relevant for the new lineage
-            ClearAncestorCache();
 
             // Save with new UUID
             SaveCache();
@@ -6848,36 +6538,6 @@ namespace UnityGameTranslator.Core
             return resolved;
         }
 
-        /// <summary>
-        /// Drops both baselines a fork inherits from the lineage it leaves: its own last-synced
-        /// ancestor and, if it was a branch, the Main it last merged from. A fork is a Main in its
-        /// own right; what serves a branch only, it no longer needs (decided 2026-09-07).
-        ///
-        /// 🔴 The memory is cleared WHETHER OR NOT a file existed. This used to sit inside the
-        /// `File.Exists` test — and the path it tested was misspelt (`translations.ancestor.json`
-        /// for a file every reader names `translations.json.ancestor`), so nothing was ever deleted
-        /// and the clear never ran: every fork went on counting its lines against a stranger's
-        /// ancestor until its first upload rewrote it. The name lives in
-        /// <see cref="TranslationFiles"/> now, the deletion in <see cref="CompanionFiles"/>, where
-        /// Core.Checks replays it on real files.
-        /// </summary>
-        private static void ClearAncestorCache()
-        {
-            AncestorCache = new Dictionary<string, TranslationEntry>();
-            AncestorSettings = null;
-
-            try
-            {
-                int dropped = CompanionFiles.DeleteAncestors(CachePath);
-                LogDebug($"[Fork] Dropped {dropped} ancestor file(s)");
-            }
-            catch (Exception e)
-            {
-                // A file that would not go stays to be reloaded at the next launch — said loudly,
-                // because that is exactly the state this method exists to prevent.
-                Adapter?.LogWarning($"Failed to drop the ancestors after forking: {e.Message}");
-            }
-        }
     }
 
     /// <summary>

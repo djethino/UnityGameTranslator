@@ -80,6 +80,33 @@ namespace UnityGameTranslator.Core.Checks
             var cleared = new HashSet<string>(StringComparer.Ordinal);
             foreach (Match m in Assignment.Matches(clearedRegion)) cleared.Add(m.Groups["name"].Value);
 
+            // Since 2026-09-12 the identity and the stamps live in TranslationStore, and LoadCache
+            // clears them all at once by making the store afresh; the statics below are façades
+            // over it. A fresh store IS the clear, for exactly these names.
+            string[] storeOwned =
+            {
+                // the façades in TranslatorCore
+                "FileUuid", "LastSyncedHash", "LastMergedMainHash", "SourceSiteId", "LocalChangesCount",
+                "ForkedFromSiteId", "ForkedFromHash", "ForkedFromResolvedLines", "ForkedFromContentHash",
+                // and the store's own fields, which TakeIdentity assigns
+                "Uuid", "SourceHash", "MainHash", "SiteId", "LocalChanges",
+            };
+            if (clearedRegion.Contains("_store = new TranslationStore(", StringComparison.Ordinal))
+                foreach (string name in storeOwned) cleared.Add(name);
+
+            // And the record is applied to the store by TakeIdentity, field by field: that method
+            // is part of the applied region for the "every field is taken" rule below.
+            string storeSource = FindCore("Engine", "TranslationStore.cs");
+            check(storeSource != null && appliedRegion.Contains("Store.TakeIdentity(file)", StringComparison.Ordinal),
+                "the record is handed to the store", "TranslationStore.TakeIdentity is where the file's identity lands");
+            if (storeSource != null)
+            {
+                string store = File.ReadAllText(storeSource);
+                int take = store.IndexOf("public void TakeIdentity(LoadedFile file)", StringComparison.Ordinal);
+                int takeEnd = take >= 0 ? store.IndexOf("        }", take, StringComparison.Ordinal) : -1;
+                if (take >= 0 && takeEnd > take) appliedRegion += store.Substring(take, takeEnd - take);
+            }
+
             var assignedByApplying = new List<string>();
             foreach (Match m in Assignment.Matches(appliedRegion))
             {

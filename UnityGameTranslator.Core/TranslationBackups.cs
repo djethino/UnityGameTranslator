@@ -200,6 +200,42 @@ namespace UnityGameTranslator.Core
             }
         }
 
+        /// <summary>
+        /// Reads what a copy translates out of the copy itself, and writes it into its description
+        /// so nobody has to look again.
+        ///
+        /// ⚠ Silent on failure, on purpose: this fills in a decoration. A copy whose file cannot be
+        /// read is still restorable, and that is what the row is for — the same reasoning as the
+        /// unreadable description above. What it must NOT do is come back next time, which is why
+        /// the mark is written even when nothing was found.
+        /// </summary>
+        private static void LearnLanguages(string directory, string aboutPath, JObject about,
+                                           BackupEntry entry)
+        {
+            try
+            {
+                var file = Path.Combine(directory, TranslationFile);
+                if (File.Exists(file))
+                {
+                    var saved = JObject.Parse(File.ReadAllText(file));
+                    entry.SourceLanguage = saved["_source_language"]?.Value<string>();
+                    entry.TargetLanguage = saved["_target_language"]?.Value<string>();
+                }
+
+                entry.LanguagesKnown = true;
+
+                about["languages"] = true;
+                about["source_language"] = entry.SourceLanguage;
+                about["target_language"] = entry.TargetLanguage;
+
+                File.WriteAllText(aboutPath, about.ToString(Newtonsoft.Json.Formatting.Indented));
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogWarning($"[Backups] Could not read the languages of a copy: {e.Message}");
+            }
+        }
+
         private static BackupEntry ReadAbout(string directory, string id, bool saved)
         {
             var entry = new BackupEntry
@@ -248,6 +284,21 @@ namespace UnityGameTranslator.Core
                 entry.ByHand = json["by_hand"]?.Value<int>() ?? 0;
                 entry.Uuid = json["uuid"]?.Value<string>();
                 entry.WithAssets = json["assets"]?.Value<bool>() ?? saved;
+
+                entry.LanguagesKnown = json["languages"]?.Value<bool>() ?? false;
+                entry.SourceLanguage = json["source_language"]?.Value<string>();
+                entry.TargetLanguage = json["target_language"]?.Value<string>();
+
+                // 🔴 **Asked once, of a copy taken before descriptions carried this.** The languages
+                // are in the saved translation, not in the note beside it, so every older backup has
+                // them on disk and not here. Reading them on every draw would be a file opened per
+                // row; leaving them blank for ever would have the screen say two different things
+                // about two identical copies.
+                //
+                // ⚠ The answer is written back whatever it is — see the note on LanguagesKnown. A
+                // translation that names no language is a valid answer, and must not send us back
+                // to the file on the next draw.
+                if (!entry.LanguagesKnown) LearnLanguages(directory, about, json, entry);
             }
             catch (Exception e)
             {
@@ -516,6 +567,15 @@ namespace UnityGameTranslator.Core
                 if (!string.IsNullOrEmpty(by)) about["by"] = by;
                 if (!string.IsNullOrEmpty(label)) about["label"] = label;
                 if (!string.IsNullOrEmpty(TranslatorCore.FileUuid)) about["uuid"] = TranslatorCore.FileUuid;
+
+                // 🔴 Written from here on, so the question stops being asked. What a copy translates
+                // lives in the saved file; the description is what a list of copies is drawn from,
+                // and opening every file to draw a row is an access per row for a decoration.
+                // ⚠ `languages` marks them as LOOKED FOR, which is not the same as found: a
+                // translation that names no language must not be reopened on every draw for ever.
+                about["languages"] = true;
+                about["source_language"] = TranslatorCore.Config.source_language;
+                about["target_language"] = TranslatorCore.Config.target_language;
 
                 File.WriteAllText(Path.Combine(directory, Backups.AboutFileName),
                                   about.ToString(Newtonsoft.Json.Formatting.Indented));

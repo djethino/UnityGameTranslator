@@ -281,6 +281,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             Labels.Create(text, "Facts", named ?? facts, TextRole.Body, policy: TextPolicy.Excluded,
                           fill: Fill.Stretch, minHeight: UIStyles.RowHeightSmall);
 
+            ShowLanguages(text, entry);
+
             // 🔴 The one restore that cannot be undone with another click, said where the counts
             // are and not in small print underneath.
             if (Backups.IsAnotherLineage(entry.Uuid, TranslatorCore.FileUuid))
@@ -372,6 +374,41 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// ⚠ A floor on the width as well: the panel can be dragged down to
         /// <see cref="MinWidth"/>, and what must not shrink there is the field, not the two verbs.
         /// </summary>
+        /// <summary>
+        /// What this copy translates, in two flags.
+        ///
+        /// 🔴 **Two flags and an arrow, never the names.** A row already carries a date, a count of
+        /// lines, sometimes a name somebody wrote and a reason — adding "English → French" in words
+        /// makes a list of ten copies a wall of text, and the question being asked here is only
+        /// "which one of mine is this". A flag answers it at a glance and takes no width.
+        ///
+        /// ⚠ A source that was never settled — "auto", or nothing — gets the arrow with nothing
+        /// before it, because that IS the fact: the copy was taken before anybody said what it
+        /// translates from. Writing "Auto" there would dress an absence up as an answer.
+        ///
+        /// ⚠ Nothing at all when neither is known: an older copy whose file did not say is a row
+        /// with one line less, not a row with two empty boxes.
+        /// </summary>
+        private static void ShowLanguages(Host text, BackupEntry entry)
+        {
+            bool source = Backups.IsSettledLanguage(entry.SourceLanguage);
+            bool target = Backups.IsSettledLanguage(entry.TargetLanguage);
+
+            if (!source && !target) return;
+
+            var row = Stacks.Row(text, "Languages", spacing: 4,
+                                 minHeight: UIStyles.RowHeightSmall);
+
+            if (source) LanguageMark.Create(row, "From", entry.SourceLanguage);
+
+            // ⚠ Excluded from the mod's own translation pass: an arrow is a sign, not a word, and
+            // there is nothing to translate in it.
+            Labels.Create(row, "To", "→", TextRole.Caption, tone: Tone.Secondary,
+                          policy: TextPolicy.Excluded);
+
+            if (target) LanguageMark.Create(row, "Into", entry.TargetLanguage);
+        }
+
         private void RenameRow(Host box, BackupEntry entry)
         {
             var row = Stacks.Row(box, "Rename", spacing: 5, minHeight: UIStyles.RowHeightLarge);

@@ -6,6 +6,7 @@ using UniverseLib;
 using UniverseLib.UI;
 using UniverseLib.UI.Models;
 using UniverseLib.UI.Widgets;
+using UnityGameTranslator.Common;
 
 namespace UnityGameTranslator.Core.UI.Components
 {
@@ -18,7 +19,21 @@ namespace UnityGameTranslator.Core.UI.Components
         // Configuration
         private readonly string _name;
         private readonly int _popupHeight;
-        private readonly bool _showSearch;
+
+        /// <summary>
+        /// Whether this list carries a search field — MEASURED when it opens, never declared.
+        ///
+        /// 🔴 **It used to be an argument at every call site, and that is how the same question got
+        /// twenty answers.** A list of four backends was given one here and not there; the Manager
+        /// gave one to everything. A search field over a list that fits is furniture: it costs a
+        /// line of screen, a focus stop and a decision, to filter something already entirely
+        /// visible. It earns its place exactly when the list is taller than its room, which is a
+        /// thing this can look at rather than a judgement somebody has to remember to make.
+        ///
+        /// ⚠ The rule lives in the socle (<see cref="DropdownFit"/>) because the Manager asks it of
+        /// the same lists. Only the numbers are ours: the row height and the popup's own height.
+        /// </summary>
+        private bool _showSearch;
 
         // State
         private string[] _options;
@@ -108,14 +123,12 @@ namespace UnityGameTranslator.Core.UI.Components
         /// <param name="options">Array of options to choose from</param>
         /// <param name="initialValue">Initially selected value (null for first option or empty)</param>
         /// <param name="popupHeight">Height of the popup list</param>
-        /// <param name="showSearch">Whether to show the search input</param>
-        public SearchableDropdown(string name, string[] options, string initialValue = null, int popupHeight = 200, bool showSearch = true)
+        public SearchableDropdown(string name, string[] options, string initialValue = null, int popupHeight = 200)
         {
             _name = name;
             _options = options ?? new string[0];
             _selectedValue = initialValue ?? (_options.Length > 0 ? _options[0] : "");
             _popupHeight = popupHeight;
-            _showSearch = showSearch;
         }
 
         /// <summary>Build the dropdown in a host, and get it back as one — to describe or place it.</summary>
@@ -291,6 +304,15 @@ namespace UnityGameTranslator.Core.UI.Components
             }
             BuildCategories();
             bool showCategories = _categories.Count > 1;
+
+            // 🔴 Decided here, on what the list actually holds, rather than passed in by whoever
+            // built the screen — see the note on _showSearch. `Overflows` rather than `NeedsSearch`
+            // because the popup's height is settled below by our own geometry: it opens downwards
+            // from the button and nothing flips it, so the socle is asked the question it can
+            // answer and not the one it cannot.
+            _showSearch = DropdownFit.Overflows(_options.Length, ITEM_HEIGHT + ITEM_SPACING,
+                                                _popupHeight);
+
             float popupHeight = _popupHeight + (_showSearch ? 35 : 10)
                 + (showCategories ? CHIP_HEIGHT + 4f : 0f);
 

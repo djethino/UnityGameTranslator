@@ -344,8 +344,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _languages[i + 1] = langs[i];
             }
 
-            _sourceLanguageDropdown = new SearchableDropdown("SourceLang", _sourceLanguages, "auto (Detect)", popupHeight: 250, showSearch: true);
-            _targetLanguageDropdown = new SearchableDropdown("TargetLang", _languages, "auto (System)", popupHeight: 250, showSearch: true);
+            _sourceLanguageDropdown = new SearchableDropdown("SourceLang", _sourceLanguages, "auto (Detect)", popupHeight: 250);
+            _targetLanguageDropdown = new SearchableDropdown("TargetLang", _languages, "auto (System)", popupHeight: 250);
 
             // The flag beside each name, the same one the status card and the selector draw.
             // ⚠ The "auto …" rows stand for no language and get none — LanguageMark returns
@@ -460,7 +460,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (!Array.Exists(interfaceFontOptions, o => o == initialInterfaceFont))
                 initialInterfaceFont = "(None)";
             _interfaceFontDropdown = new SearchableDropdown("InterfaceFont", interfaceFontOptions,
-                initialInterfaceFont, popupHeight: 250, showSearch: true);
+                initialInterfaceFont, popupHeight: 250);
             _interfaceFontDropdown.CategoryProvider = FontManager.GetFontOrigin;
             var interfaceFontHost = _interfaceFontDropdown.CreateUI(_interfaceFontRow,
                 (_) => { if (!_isLoadingSettings) UpdateApplyButtonText(); }, width: 260);
@@ -484,8 +484,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 "NotifPosition",
                 new[] { "Top-Right", "Top-Left", "Bottom-Right", "Bottom-Left" },
                 "Top-Right",
-                popupHeight: 150,
-                showSearch: false
+                popupHeight: 150
             );
             var posDropdownHost = _notificationPositionDropdown.CreateUI(posRow, (_) => { UpdateApplyButtonText(); }, width: 140,
                                                                         minHeight: UIStyles.InputHeight);
@@ -887,7 +886,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             Labels.Create(typeRow, "TypeLabel", "Type:", TextRole.Info, minWidth: 40);
 
             _backendTypeDropdown = new SearchableDropdown(
-                "BackendTypeDropdown", BackendTypeOptions, UIStyles.BackendTypeLLM, popupHeight: 100, showSearch: false);
+                "BackendTypeDropdown", BackendTypeOptions, UIStyles.BackendTypeLLM, popupHeight: 100);
             var typeHost = _backendTypeDropdown.CreateUI(typeRow, OnBackendTypeChanged, width: 160,
                                                          minHeight: UIStyles.InputHeight);
             _helpZone?.Describe(typeHost,
@@ -938,7 +937,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             var modelRow = Stacks.Row(_llmSection, "ModelRow", spacing: 5, minHeight: UIStyles.InputHeight);
             Labels.Create(modelRow, "ModelLabel", "Model:", TextRole.Info, minWidth: 50);
 
-            _modelDropdown = new SearchableDropdown("ModelDropdown", new string[0], null, 200, false);
+            _modelDropdown = new SearchableDropdown("ModelDropdown", new string[0], null, 200);
             var modelHost = _modelDropdown.CreateUI(modelRow, (val) => { }, width: 200, stretch: true);
             _helpZone?.Describe(modelHost, "Which AI model handles the translations. Use Refresh to load the list from your server.");
 
@@ -978,7 +977,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             Labels.Create(providerRow, "ProviderLabel", "Provider:", TextRole.Info, minWidth: 55);
 
             _providerDropdown = new SearchableDropdown(
-                "ProviderDropdown", ProviderOptions, "Google Translate", popupHeight: 100, showSearch: false);
+                "ProviderDropdown", ProviderOptions, "Google Translate", popupHeight: 100);
             var providerHost = _providerDropdown.CreateUI(providerRow, OnProviderChanged, width: 160,
                                                           minHeight: UIStyles.InputHeight);
             _helpZone?.Describe(providerHost, "Choose the translation service: Google Translate or DeepL. Each needs its own API key.");
@@ -1180,8 +1179,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 "CheckFrequency",
                 UpdateFrequencyDisplayOptions,
                 FrequencyConfigToDisplay(UpdateCheckFrequency.Hourly),
-                popupHeight: 150,
-                showSearch: false
+                popupHeight: 150
             );
             var freqHost = _checkFrequencyDropdown.CreateUI(freqRow, (_) => { UpdateApplyButtonText(); }, width: 200,
                                                             minHeight: UIStyles.InputHeight);
@@ -1264,7 +1262,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             Labels.Create(proxyModeRow, "ProxyModeLabel", "Mode:", TextRole.Info, minWidth: 80);
 
             _proxyModeDropdown = new SearchableDropdown(
-                "ProxyModeDropdown", ProxyModeDisplayOptions, ProxyModeDisplayOptions[0], popupHeight: 150, showSearch: false);
+                "ProxyModeDropdown", ProxyModeDisplayOptions, ProxyModeDisplayOptions[0], popupHeight: 150);
             var proxyModeHost = _proxyModeDropdown.CreateUI(proxyModeRow, OnProxyModeChanged, width: 200, stretch: true);
             _helpZone?.Describe(proxyModeHost, "How the mod connects to the internet. Keep Default unless the game blocks the mod's network calls.");
 

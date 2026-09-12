@@ -178,7 +178,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             Labels.Create(card, "CameraLabel", "Target", TextRole.SectionTitle);
 
             _cameraDropdown = new Components.SearchableDropdown("CameraTarget",
-                new[] { "UI Only" }, "UI Only", popupHeight: 150, showSearch: false);
+                new[] { "UI Only" }, "UI Only", popupHeight: 150);
             var cameraHost = _cameraDropdown.CreateUI(card, OnCameraSelected, PanelWidth - 80, stretch: true);
             _helpZone?.Describe(cameraHost,
                 "'UI Only' picks on-screen interface text. Choose a camera to pick objects in the game world instead.");

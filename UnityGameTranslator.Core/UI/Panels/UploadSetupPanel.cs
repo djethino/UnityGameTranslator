@@ -167,8 +167,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Initialize components (must be here, not in constructor - base calls ConstructUI first)
             var languages = LanguageHelper.GetLanguageNames();
             // No default for source - must be explicitly selected (required field)
-            _sourceDropdown = new SearchableDropdown("Source", languages, "", popupHeight: 250, showSearch: true);
-            _targetDropdown = new SearchableDropdown("Target", languages, "", popupHeight: 250, showSearch: true);
+            _sourceDropdown = new SearchableDropdown("Source", languages, "", popupHeight: 250);
+            _targetDropdown = new SearchableDropdown("Target", languages, "", popupHeight: 250);
 
             Layout(out var scrollContent, out var buttonRow, PanelWidth - 40);
 

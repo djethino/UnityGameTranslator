@@ -47,8 +47,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             // Initialize components (must be here, not in constructor - base calls ConstructUI first)
             var languages = LanguageHelper.GetLanguageNames();
-            _sourceDropdown = new SearchableDropdown("Source", languages, "English", popupHeight: 250, showSearch: true);
-            _targetDropdown = new SearchableDropdown("Target", languages, "", popupHeight: 250, showSearch: true);
+            _sourceDropdown = new SearchableDropdown("Source", languages, "English", popupHeight: 250);
+            _targetDropdown = new SearchableDropdown("Target", languages, "", popupHeight: 250);
 
             // The flag beside each name, as OptionsPanel already does for its own two.
             //

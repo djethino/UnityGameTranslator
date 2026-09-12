@@ -361,8 +361,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 "TargetLang",
                 LanguageHelper.GetLanguageNames(),
                 _targetLanguage,
-                popupHeight: 250,
-                showSearch: true
+                popupHeight: 250
             );
             var targetLangHost = _targetLanguageDropdown.CreateUI(langSection, (lang) => _targetLanguage = lang, width: 200);
             _helpZone?.Describe(targetLangHost,
@@ -700,7 +699,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             string[] typeOptions = { UIStyles.BackendTypeLLM, UIStyles.BackendTypeApi };
             bool isTransApi = _translationBackend == "google" || _translationBackend == "deepl";
             _wizardBackendTypeDropdown = new SearchableDropdown("WizardType", typeOptions,
-                isTransApi ? UIStyles.BackendTypeApi : UIStyles.BackendTypeLLM, 100, false);
+                isTransApi ? UIStyles.BackendTypeApi : UIStyles.BackendTypeLLM, 100);
             var typeHost = _wizardBackendTypeDropdown.CreateUI(typeSection, OnWizardTypeChanged, stretch: true);
             _helpZone?.Describe(typeHost,
                 "Choose the translation backend: a local or cloud AI model, or a translation API such as Google or DeepL.");
@@ -746,7 +745,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             var modelRow = Stacks.Row(modelSection, "ModelRow", spacing: 5, minHeight: UIStyles.RowHeightLarge);
             string[] initialModels = !string.IsNullOrEmpty(_aiModel) ? new[] { _aiModel } : new string[0];
-            _modelDropdown = new SearchableDropdown("ModelDropdown", initialModels, _aiModel, 200, false);
+            _modelDropdown = new SearchableDropdown("ModelDropdown", initialModels, _aiModel, 200);
             var modelHost = _modelDropdown.CreateUI(modelRow, (val) => _aiModel = val, stretch: true);
             _helpZone?.Describe(modelHost,
                 "AI model used for translation. Use Refresh to load the models available on the server.");
@@ -776,7 +775,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             string[] providerOptions = { "Google Translate", "DeepL" };
             string currentProvider = _translationBackend == "deepl" ? "DeepL" : "Google Translate";
-            _wizardProviderDropdown = new SearchableDropdown("WizardProvider", providerOptions, currentProvider, 100, false);
+            _wizardProviderDropdown = new SearchableDropdown("WizardProvider", providerOptions, currentProvider, 100);
             var providerHost = _wizardProviderDropdown.CreateUI(providerSection, OnWizardProviderChanged, stretch: true);
             _helpZone?.Describe(providerHost,
                 "Translation API provider to use, Google Translate or DeepL. Each needs its own API key below.");

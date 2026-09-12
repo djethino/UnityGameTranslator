@@ -851,7 +851,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             _pendingAtlasSize = curBudget;
             _fontAtlasSizeDropdown = new SearchableDropdown("FontSharpness", sharpOptions.ToArray(),
-                sharpInitial, popupHeight: 150, showSearch: false);
+                sharpInitial, popupHeight: 150);
             var sharpHost = _fontAtlasSizeDropdown.CreateUI(sharpRow, (val) =>
             {
                 // Pending only — applied (and fonts rebuilt) on Apply, like every other setting.
@@ -1259,7 +1259,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                                   : string.Equals(rule.rtl_alignment, "keep", StringComparison.OrdinalIgnoreCase) ? "Keep game's"
                                   : "Inherit from font";
                 var rtlDropdown = new SearchableDropdown($"OverrideRtl_{index}",
-                    new[] { "Inherit from font", "Mirror", "Keep game's" }, initialRtl, showSearch: false);
+                    new[] { "Inherit from font", "Mirror", "Keep game's" }, initialRtl);
                 var rtlHost = rtlDropdown.CreateUI(rtlRow, (selected) =>
                 {
                     if (capturedIndex >= _pendingFontOverrides.Count) return;
@@ -1561,8 +1561,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                     $"Fallback_{capturedFontName}",
                     options.ToArray(),
                     initialValue,
-                    popupHeight: 250,
-                    showSearch: true
+                    popupHeight: 250
                 );
                 dropdown.CategoryProvider = FontManager.GetFontOrigin;
 

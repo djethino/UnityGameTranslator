@@ -139,11 +139,16 @@ namespace UnityGameTranslator.Core.UI.Components
         /// more). Added 2026-09-08; <c>fillHeight</c> from <see cref="Create"/> is left as it was,
         /// so the list still grows to fill whatever this leaves free.
         /// </summary>
-        public void SetHeight(int height)
+        /// <param name="fill">
+        /// Whether it still takes whatever room is left over. **False for a list that shares its
+        /// surface**: the height it was just given IS its share, and a flexible share on top would
+        /// take back the room that was worked out for its neighbour.
+        /// </param>
+        public void SetHeight(int height, bool fill = true)
         {
             if (_scroll == null) return;
             UIFactory.SetLayoutElement(_scroll, minHeight: height, preferredHeight: height,
-                                       flexibleHeight: 9999, flexibleWidth: 9999);
+                                       flexibleHeight: fill ? 9999 : 0, flexibleWidth: 9999);
         }
 
         public bool Visible

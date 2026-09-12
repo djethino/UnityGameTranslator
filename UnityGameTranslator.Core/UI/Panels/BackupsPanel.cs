@@ -75,6 +75,24 @@ namespace UnityGameTranslator.Core.UI.Panels
         private static readonly int SaveVerb = 4 + UIStyles.RowHeightNormal;
 
         /// <summary>
+        /// What a block with no rows comes to: its heading and a sentence of two lines. Declared,
+        /// because an empty block is not in the division — it is a sentence, not a scroll area — and
+        /// its height still has to come off the room the others share.
+        /// </summary>
+        private static readonly int EmptyBlock = BlockChrome + 34;
+
+        /// <summary>
+        /// What the body carries besides the blocks themselves: the card's padding, the spacer
+        /// between the two blocks and the gaps around it, and a few pixels of margin.
+        ///
+        /// ⚠ **Rounded UP on purpose.** Overstating it leaves a few pixels of empty card under the
+        /// lists; understating it makes them ask for more than the body has, and the panel grows a
+        /// scrollbar of its own around the two the lists already have. The two mistakes do not cost
+        /// the same, so the safe side is chosen deliberately.
+        /// </summary>
+        private static readonly int AroundTheBlocks = 2 * UIStyles.CardPadding + 12 + 2 * 6 + 8;
+
+        /// <summary>
         /// What the panel carries besides its two blocks: the fixed header (title, privacy note,
         /// state), the spacer between the blocks, the help zone and the footer, and the window's own
         /// title bar and margins.
@@ -103,6 +121,26 @@ namespace UnityGameTranslator.Core.UI.Panels
         // ⚠ Nothing is lost: the list that overflows carries a flexible height, so the layout gives
         // it the new room on its own. Only the moment a list stops needing to scroll would be
         // worth recomputing, and it is not worth rebuilding a live window for.
+
+        /// <summary>
+        /// One list, what it asks for, and what its block carries around it — kept because the
+        /// height is not settled when the list is built: it is settled once the body has a measured
+        /// height, and again every time that height changes.
+        /// </summary>
+        private struct Slice
+        {
+            public ScrollList List;
+            public ListRoom Room;
+            public int Chrome;
+        }
+
+        private readonly List<Slice> _slices = new List<Slice>();
+
+        /// <summary>What the blocks with no rows take off the room the others divide.</summary>
+        private int _sentences;
+
+        /// <summary>Whether the lists have been given their height since the last redraw.</summary>
+        private bool _shared;
 
         private Host _listHost;
         private LabelHandle _nowLabel;
@@ -204,41 +242,71 @@ namespace UnityGameTranslator.Core.UI.Panels
             // from a guess, inside a layout system that knows the real sizes and re-runs on every
             // resize.
             //
-            // So each list states three facts about ITSELF — the socle works them out
-            // (<see cref="ListRooms"/>), because the Manager's window asks them of the same two
-            // lists over the same folder — and the layout does the arbitration:
+            // 🔴 **Each list states what it holds and what it can be squeezed to, and NOTHING here
+            // settles a height** — see <see cref="ListRooms"/>, where the rule lives because the
+            // Manager's window asks it of the same two lists over the same folder.
             //
-            //   minHeight       — never squeezed below this (two rows and their padding)
-            //   preferredHeight — its whole content: what it asks for, and never more, so a list
-            //                     that fits stops at its last row instead of drawing a gap
-            //   flexibleHeight  — zero: spare room is not a list's to take
-            //
-            // Both lists say it the same way, because neither is more important than the other.
-            // When there is room for both, both are whole. When there is not, the layout shrinks
-            // them towards their minimums in proportion to what they asked for — the row counts
-            // again. When there is more than enough, what is left falls to the spacer below.
-            //
-            // ⚠ Unless one of them is EMPTY, and then the other has nobody to share with: it takes
-            // the surface. An empty list is a sentence and a verb, not a scroll area, so leaving
-            // room beside it reserves room for rows that do not exist.
-            var alone = (saved.Count > 0) ^ (automatic.Count > 0);
+            // ⚠ But the arbitration cannot be left to this engine, and that is the one thing that
+            // differs between the two products. uGUI has a minimum, a preferred and a flexible
+            // height and **no maximum**: a flexible child grows without bound, and a preferred
+            // height large enough to hold the whole content makes the PANEL's scroll area grow to
+            // the sum of them — a third scrollbar, around the screen, on top of the two the lists
+            // already carry. Reported exactly like that. So the lists ask for their floor and take
+            // no flexible share, and the heights are worked out in BodySized from a body height
+            // that has been MEASURED. Avalonia is told the same three facts and arbitrates alone.
+            _slices.Clear();
+            _sentences = 0;
+            _shared = false;
 
             Group(Backups.SavedHeading, $"{saved.Count} of {Backups.SavedKept}", saved,
                   "No backups yet. Take one before you try something, and you can walk back out "
                   + "of whatever you try.",
-                  saved: true, alone: alone);
+                  saved: true);
 
             Stacks.Spacer(_listHost, 12);
 
             Group(Backups.AutomaticHeading, Backups.AutomaticNote, automatic,
-                  "Nothing yet. One is taken whenever something replaces your translation.",
-                  alone: alone);
+                  "Nothing yet. One is taken whenever something replaces your translation.");
 
-            // ⚠ Where the spare room goes when both lists already show everything. Without
-            // somewhere to put it the layout hands it back to them, and a list given room it has
-            // nothing to fill draws a gap under its last row. Not when one list is alone: it has
-            // already taken it.
-            if (!alone) Stacks.Vertical(_listHost, "Rest", fillHeight: true);
+            // ⚠ Straight away when the body already has a height — a redraw after a backup or a
+            // restore is not a first show, and waiting for a resize would leave both lists at two
+            // rows in a window that has room for ten.
+            BodySized();
+        }
+
+        /// <summary>
+        /// The body has a measured height: divide it between the lists.
+        ///
+        /// 🔴 **The room is measured, never guessed.** That distinction is the whole difference
+        /// between this and the arithmetic it replaced: the old one took an ESTIMATE of the
+        /// available room at draw time and settled the heights once, so a stretched window left a
+        /// gap under one list while the other was still scrolling. This is asked again every time
+        /// the body's height changes, with the height the layout actually gave it.
+        /// </summary>
+        protected override void BodySized()
+        {
+            if (_slices.Count == 0) return;
+
+            var body = BodyHeight;
+            if (body <= 1) return;
+
+            var rooms = new List<ListRoom>();
+            for (var i = 0; i < _slices.Count; i++) rooms.Add(_slices[i].Room);
+
+            var heights = ListRooms.Share(rooms, body - AroundTheBlocks - _sentences);
+
+            for (var i = 0; i < _slices.Count; i++)
+                _slices[i].List.SetHeight((int)Math.Max(0, heights[i] - _slices[i].Chrome), fill: false);
+
+            // 🔴 **Here, and only the first time after a redraw.** A list is put back at its first
+            // row when it is rebuilt, but the height it was rebuilt at is not the one it ends up
+            // with — and a scroll area whose viewport changes size settles wherever its offset
+            // happens to land, which is how both lists opened part-way down. On a RESIZE it must
+            // not happen: somebody who was reading row twelve is still reading row twelve.
+            if (_shared) return;
+
+            _shared = true;
+            for (var i = 0; i < _slices.Count; i++) _slices[i].List.ToTop();
         }
 
         /// <summary>
@@ -284,23 +352,16 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// every other section of this product wears. Hand-rolling a bold label made it the same
         /// weight as the rows beneath it, which is how a heading stops reading as one.
         /// </summary>
-        /// <param name="alone">
-        /// Whether this block is the only one with rows. Then it takes the surface: there is nobody
-        /// to leave the spare room to, and a panel enlarged to show more that then draws small does
-        /// nothing.
-        /// </param>
         private void Group(string heading, string note, List<BackupEntry> entries, string empty,
-                           bool saved = false, bool alone = false)
+                           bool saved = false)
         {
             // Left 6, right 8, top 8, bottom 8 — the padding as it was, named.
-            // ⚠ The block grows exactly when its list does, and never otherwise: a pinned parent
-            // pins a flexible child, and a flexible parent hands spare room to a list that has
-            // nothing to put there. Both were learnt the hard way, one after the other.
-            var wholeSurface = alone && entries.Count > 0;
-
+            // ⚠ Pinned, and its list is given a settled height: a flexible block hands spare room to
+            // a list that has nothing to put there, and a flexible list in a pinned block is pinned
+            // anyway. Both were learnt the hard way, one after the other.
             var block = Stacks.Vertical(_listHost, "Group", spacing: 4, pad: new Pad(6, 8, 8, 8),
                                         surface: Surface.Elevated,
-                                        fillHeight: wholeSurface);
+                                        fillHeight: false);
 
             var titleRow = Stacks.Row(block, "Heading", spacing: 8, minHeight: UIStyles.SectionTitleHeight);
 
@@ -311,6 +372,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             Labels.Create(titleRow, "Note", note, TextRole.Caption, policy: TextPolicy.Excluded,
                           align: Placement.MiddleRight, fill: Fill.Stretch);
 
+            var chrome = BlockChrome + (saved ? SaveVerb : 0);
+
             if (entries.Count == 0)
             {
                 Labels.Create(block, "Empty", empty, TextRole.Caption, fill: Fill.Stretch);
@@ -319,6 +382,10 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // copy there, and hiding it until a copy exists would hide it from everybody who
                 // has never made one.
                 AddSaveButton(block, saved);
+
+                // ⚠ It is not in the division — a sentence is not a scroll area — but its height
+                // still comes off the room the others share.
+                _sentences += EmptyBlock + (saved ? SaveVerb : 0);
                 return;
             }
 
@@ -326,24 +393,23 @@ namespace UnityGameTranslator.Core.UI.Panels
             // below the fold, and somebody scrolling to reach it loses the first — which is the
             // state the whole screen exists to compare against.
             //
-            // Three facts about itself, and no arbitration — see the note in Refresh:
-            //   preferred = its whole content, so it stops at its last row rather than drawing a gap
-            //   min       = two rows and their padding, so it is never squeezed to a heading alone
-            //   flexible  = none, so spare room falls below both lists instead of into one of them
-            //               — except when this list is the only one with rows, and then it is the
-            //               surface and the spare room is its own
-            var room = ListRooms.For(entries.Count, RowSpace, ListPad);
+            // ⚠ It opens at its FLOOR and takes no flexible share, so the sum of what this body
+            // asks for stays under the body itself and the panel never grows a scrollbar of its
+            // own. The real height is posed in BodySized, from the measured room.
+            var room = ListRooms.For(entries.Count, RowSpace, ListPad + chrome);
+            var floor = (int)room.Least - chrome;
 
             var list = ScrollList.Create(block, "Rows",
-                                         minHeight: (int)room.Least, preferredHeight: (int)room.Whole,
-                                         fillHeight: wholeSurface, spacing: 4);
+                                         minHeight: floor, preferredHeight: floor,
+                                         fillHeight: false, spacing: 4);
+
+            _slices.Add(new Slice { List = list, Room = room, Chrome = chrome });
 
             foreach (var entry in entries) Row(list.Rows, entry);
 
-            // ⚠ A freshly built scroll area does not start at its first row on its own — it starts
-            // wherever its content happens to sit under its anchors. Both lists opened part-way
-            // down, showing the middle of something nobody had scrolled.
-            list.ToTop();
+            // ⚠ Put back at its first row in BodySized, not here: the height it is built at is not
+            // the one it ends up with, and a scroll area whose viewport changes size settles
+            // wherever its offset happens to land.
 
             AddSaveButton(block, saved);
         }

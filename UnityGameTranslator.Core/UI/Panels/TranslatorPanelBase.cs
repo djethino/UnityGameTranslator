@@ -511,7 +511,48 @@ namespace UnityGameTranslator.Core.UI.Panels
             _initialSizingComplete = true;
 
             UpdateDraggerCache();
+
+            // ⚠ After the size has been applied, never before: a panel asked how tall its body is
+            // while the layout is still catching up gets the height it had a moment ago.
+            yield return null;
+            BodySized();
         }
+
+        /// <summary>
+        /// How tall the scrolling body is right now, in pixels — zero until the layout has run.
+        ///
+        /// 🔴 **The room, measured, and the only honest source for it.** A screen that has to divide
+        /// its height between several lists cannot ask the engine to do it — uGUI has a minimum, a
+        /// preferred and a flexible height and NO maximum, so a flexible child grows without bound
+        /// and a preferred height holding the whole content makes this very scroll area grow to the
+        /// sum of them: a scrollbar around the screen, on top of the one inside each list. It was
+        /// reported exactly like that, twice. So such a screen works the heights out — from this,
+        /// which is a measurement, never from a guess at what the room probably is.
+        /// </summary>
+        protected float BodyHeight
+        {
+            get
+            {
+                if (ContentRoot == null) return 0f;
+
+                var scroll = ContentRoot.transform.Find("PanelScroll");
+                var rect = scroll != null ? scroll.GetComponent<ScrollRect>() : null;
+                var viewport = rect != null ? rect.viewport : null;
+
+                return viewport != null ? viewport.rect.height : 0f;
+            }
+        }
+
+        /// <summary>
+        /// The panel's body has a height that can be measured, and it may have changed: first
+        /// layout, and the end of every resize.
+        ///
+        /// ⚠ **The END of a resize, not during one.** Rebuilding a screen while the handle is held
+        /// tears down the scroll areas UniverseLib's auto-hiding scrollbar holds on to — the bar
+        /// vanished and left its lane painted black. What is posed here must be a size, never a
+        /// rebuild.
+        /// </summary>
+        protected virtual void BodySized() { }
 
         #region Dynamic Sizing
 
@@ -682,6 +723,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             // Invalidate content measurement cache since size changed
             _contentMeasured = false;
+
+            // ⚠ Before the early returns below: a screen that divides its height between lists has
+            // to hear about a programmatic resize too — that is how it is sized on the way in.
+            BodySized();
 
             // Kept as a backstop although the tick already does this every frame: a panel that is
             // not registered as interactive is never ticked, and one float comparison is a cheaper

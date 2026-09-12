@@ -435,10 +435,9 @@ namespace UnityGameTranslator.Core.UI.Components
             _scrollRect = scrollObj.GetComponent<ScrollRect>();
             if (_scrollRect != null)
             {
-                // ⚠ Movement type is NOT set here any more: the give at the end of a scroll is a
-                // property of scrolling in this mod, applied by ConfigureScrollViewNoScrollbar
-                // above — see UIStyles.GiveScrollAnEdge. Setting Clamped here put this one list
-                // back to stopping dead, which is the very question the give answers.
+                // ⚠ How the ends behave is set by ConfigureScrollViewNoScrollbar above, for every
+                // scrolling area at once — see UIStyles.GiveScrollAnEdge, which also records why
+                // Elastic is refused here.
                 _scrollRect.scrollSensitivity = 20f;
                 _scrollRect.inertia = false;
             }

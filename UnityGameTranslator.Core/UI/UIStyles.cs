@@ -694,39 +694,35 @@ namespace UnityGameTranslator.Core.UI
         }
 
         /// <summary>
-        /// The give at the end of a scroll: push past the last line and the content leans, then
-        /// settles back. Applied here because every scrolling area in this mod is built through
-        /// this one call — the panels, the translation list, the lists and the dropdowns.
+        /// How a scrolling area behaves at its ends. Set here because every one in this mod is
+        /// built through this one call — the panels, the translation list, the lists and the
+        /// dropdowns.
         ///
-        /// It answers a question a scrollbar answers badly and a long list asks constantly — *is
-        /// there more below, or is that everything?* A view that stops dead is indistinguishable
-        /// from one that has frozen, and people scroll again to find out.
+        /// 🔴 **Clamped, and `Elastic` must NOT be put back.** It was, on 2026-09-12, to give the
+        /// mod the same give at the end of a scroll the site and the Manager have. It was wrong
+        /// within the hour, on a real game: holding the wheel down opened a gap of a whole screen,
+        /// and the view then fought its way back in jumps.
         ///
-        /// 🔴 **Unity's own elastic movement, NOT the shared EdgeGive, and that is a decision with
-        /// a reason.** The socle's model is what the site and the Manager run, and matching it here
-        /// would mean writing the pixels ourselves — but the content's position belongs to the
-        /// ScrollRect, which rewrites it every frame, so displacing it needs either a component
-        /// injected into the runtime or an extra transform between viewport and content. This
-        /// assembly is built ONCE for Mono and IL2CPP and therefore cannot inject a MonoBehaviour —
-        /// the reason ButtonStates is a ticked registry rather than a component, and the failure
-        /// mode this project pays for most often. So the engine's own spring is used, tuned to sit
-        /// near ours rather than to be it.
+        /// ⚠ **The reason is in Unity, and it is worth knowing before reaching for Elastic again.**
+        /// The resistance that makes an elastic edge feel like an edge — `RubberDelta` — is applied
+        /// only while DRAGGING. `OnScroll`, which is the wheel, writes the position with no bound at
+        /// all: every notch adds its full distance past the end, unopposed, and notches accumulate.
+        /// The spring then pulls while the wheel is still pushing, which is the ping-pong this
+        /// project spent a day removing from the other two products.
         ///
-        /// ⚠ **What this costs, stated rather than hidden**: the return is Unity's, not the damped
-        /// run-out the other two products got on 2026-09-12. Closing that gap means giving the
-        /// content a transform of its own to lean, and that is a change to how every panel is
-        /// built — worth doing, not worth smuggling in here.
+        /// ⚠ **So the mod has no give at the end, for now, and that is the honest state.** Doing it
+        /// properly means displacing the content ourselves — and the content's position belongs to
+        /// the ScrollRect, which rewrites it. That needs either a component injected into the
+        /// runtime (impossible: this assembly is built ONCE for Mono and IL2CPP — see ButtonStates)
+        /// or a transform of its own between viewport and content, which changes how every panel is
+        /// built. A chantier, not a line.
         /// </summary>
         public static void GiveScrollAnEdge(GameObject scrollObj)
         {
             var scroll = scrollObj != null ? scrollObj.GetComponent<ScrollRect>() : null;
             if (scroll == null) return;
 
-            scroll.movementType = ScrollRect.MovementType.Elastic;
-
-            // ⚠ Unity's elasticity is a time constant in seconds, not a stiffness: smaller is
-            // firmer. This sits close to the half second the other products settle in.
-            scroll.elasticity = 0.12f;
+            scroll.movementType = ScrollRect.MovementType.Clamped;
         }
 
         /// <summary>

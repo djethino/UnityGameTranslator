@@ -31,6 +31,18 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         protected override int MinPanelHeight => 340;
 
+        /// <summary>
+        /// 🔴 **Declared, or the panel cannot be made taller than its own content.** MaxHeight is
+        /// the measured content height for a panel that does not say this — which is right for a
+        /// form, and wrong for a screen made of two lists: the height is exactly what somebody
+        /// wants to give them. Reported as "redimensionnable oui, mais fixe en hauteur max".
+        ///
+        /// ⚠ It is the second half of the same fix. Freeing the lists to grow did nothing on its
+        /// own, because the panel would not go past the size its content asked for — and its
+        /// content, being two scroll areas, never asks for more.
+        /// </summary>
+        protected override bool HasFlexibleContent => true;
+
         private Host _listHost;
         private LabelHandle _nowLabel;
         private ButtonHandle _saveBtn;

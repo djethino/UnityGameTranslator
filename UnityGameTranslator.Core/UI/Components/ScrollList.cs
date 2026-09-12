@@ -127,7 +127,23 @@ namespace UnityGameTranslator.Core.UI.Components
             var rect = _scroll != null ? _scroll.GetComponent<ScrollRect>() : null;
             if (rect == null) yield break;
 
+            // ⚠ Rebuilt first, and both halves of it: the position is worked out from the content's
+            // size against the viewport's, and a list whose height was posed this frame has neither
+            // until the layout has been asked for them. Without this the value is written against
+            // sizes that no longer hold and the list settles wherever its offset lands.
+            if (rect.content != null) LayoutRebuilder.ForceRebuildLayoutImmediate(rect.content);
+            LayoutRebuilder.ForceRebuildLayoutImmediate(_scroll.GetComponent<RectTransform>());
+
             rect.verticalNormalizedPosition = 1f;
+
+            // 🔴 **And again on the next frame.** uGUI settles a ScrollRect during its own late
+            // pass, after this coroutine has run: the position written here is correct and is then
+            // recomputed from the sizes it had before the rebuild. One more frame is what the
+            // difference between "put back at the top" and "put back at the top, then dropped"
+            // comes down to — reported three times as "tout apparaît scrollé en bas".
+            yield return null;
+
+            if (rect != null) rect.verticalNormalizedPosition = 1f;
         }
 
         /// <summary>The empty sentence, to reword it.</summary>

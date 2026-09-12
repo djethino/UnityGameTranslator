@@ -511,11 +511,6 @@ namespace UnityGameTranslator.Core.UI.Panels
             _initialSizingComplete = true;
 
             UpdateDraggerCache();
-
-            // ⚠ After the size has been applied, never before: a panel asked how tall its body is
-            // while the layout is still catching up gets the height it had a moment ago.
-            yield return null;
-            BodySized();
         }
 
         /// <summary>
@@ -544,13 +539,74 @@ namespace UnityGameTranslator.Core.UI.Panels
         }
 
         /// <summary>
-        /// The panel's body has a height that can be measured, and it may have changed: first
-        /// layout, and the end of every resize.
+        /// What the body's content comes to on its own, in pixels — what it would need if nothing
+        /// scrolled.
         ///
-        /// ⚠ **The END of a resize, not during one.** Rebuilding a screen while the handle is held
-        /// tears down the scroll areas UniverseLib's auto-hiding scrollbar holds on to — the bar
-        /// vanished and left its lane painted black. What is posed here must be a size, never a
-        /// rebuild.
+        /// ⚠ **The fill is neutralised for the length of the measurement.** A flexible panel carries
+        /// a FillViewportHeight that writes the CURRENT viewport height into the content's preferred
+        /// height every frame, so measuring with it live answers max(viewport, children): it can
+        /// never come back smaller than the body, and therefore can never say how much room is going
+        /// spare — which is the one thing it is asked. <c>MeasureContentHeight</c> neutralises it for
+        /// the same reason, and had to learn it the same way.
+        /// </summary>
+        protected float BodyContentHeight
+        {
+            get
+            {
+                if (ContentRoot == null) return 0f;
+
+                var fitter = ContentRoot.GetComponentInChildren<ContentSizeFitter>();
+                if (fitter == null) return 0f;
+
+                var rect = fitter.gameObject.GetComponent<RectTransform>();
+                if (rect == null) return 0f;
+
+                var element = fitter.gameObject.GetComponent<LayoutElement>();
+                float saved = element != null ? element.preferredHeight : -1f;
+                if (element != null) element.preferredHeight = -1f;
+
+                try
+                {
+                    LayoutRebuilder.ForceRebuildLayoutImmediate(rect);
+                    return LayoutUtility.GetPreferredHeight(rect);
+                }
+                finally
+                {
+                    if (element != null) element.preferredHeight = saved;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Follows the body's height, frame by frame, and tells the panel when it moves.
+        ///
+        /// ⚠ **Every frame, and the economy is the early return**, exactly as
+        /// <see cref="RefreshScopeStrip"/> does one line away in the same tick: a height that has
+        /// not moved costs a read and a compare. Gating this on "only while resizing" was tried for
+        /// the strips and removed — a panel's size changes in ways no flag is raised for, and a
+        /// screen that stops following at moments nobody can predict is worse than a comparison.
+        ///
+        /// 🔴 It was first wired to the END of a resize only, and that showed: the lists stopped
+        /// following the handle, so stretching the window did nothing until it was let go.
+        /// </summary>
+        public void FollowBodyHeight()
+        {
+            var height = BodyHeight;
+            if (height <= 1f || Math.Abs(height - _lastBodyHeight) < 0.5f) return;
+
+            _lastBodyHeight = height;
+            BodySized();
+        }
+
+        private float _lastBodyHeight;
+
+        /// <summary>
+        /// The panel's body has a height that can be measured, and it has changed.
+        ///
+        /// ⚠ **What is posed here is a SIZE, never a rebuild.** Rebuilding a screen while the handle
+        /// is held tears down the scroll areas UniverseLib's auto-hiding scrollbar holds on to — the
+        /// bar vanished and left its lane painted black. Posing a layout height destroys nothing, so
+        /// it can run on every frame of a drag.
         /// </summary>
         protected virtual void BodySized() { }
 
@@ -723,10 +779,6 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             // Invalidate content measurement cache since size changed
             _contentMeasured = false;
-
-            // ⚠ Before the early returns below: a screen that divides its height between lists has
-            // to hear about a programmatic resize too — that is how it is sized on the way in.
-            BodySized();
 
             // Kept as a backstop although the tick already does this every frame: a panel that is
             // not registered as interactive is never ticked, and one float comparison is a cheaper

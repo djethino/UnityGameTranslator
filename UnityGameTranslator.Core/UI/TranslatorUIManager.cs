@@ -1206,6 +1206,11 @@ namespace UnityGameTranslator.Core.UI
                 if (panel == null || !panel.Enabled) continue;
 
                 panel.RefreshScopeStrip();
+
+                // ⚠ The same bargain one line down: a screen that divides its height between
+                // several lists has to be told when that height moves, and the alternative — only
+                // at the end of a resize — stopped the lists following the handle at all.
+                panel.FollowBodyHeight();
             }
         }
 

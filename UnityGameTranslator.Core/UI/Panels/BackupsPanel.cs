@@ -68,29 +68,16 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// <summary>
         /// What a block adds around its list: its own padding, its heading, and the spacing between
         /// the two. Read straight off what <see cref="Group"/> builds, three screens below.
+        ///
+        /// ⚠ **Used for <see cref="Smallest"/> and nothing else.** How the room is actually divided
+        /// does not read these — it measures (see <see cref="BodySized"/>). A bound may be declared
+        /// because being a few pixels out only makes the smallest window a few pixels off; a layout
+        /// may not, because being a few pixels out there is a gap or a third scrollbar.
         /// </summary>
         private static readonly int BlockChrome = 16 + UIStyles.SectionTitleHeight + 4;
 
         /// <summary>And the verb under the list of saved copies, which only that block carries.</summary>
         private static readonly int SaveVerb = 4 + UIStyles.RowHeightNormal;
-
-        /// <summary>
-        /// What a block with no rows comes to: its heading and a sentence of two lines. Declared,
-        /// because an empty block is not in the division — it is a sentence, not a scroll area — and
-        /// its height still has to come off the room the others share.
-        /// </summary>
-        private static readonly int EmptyBlock = BlockChrome + 34;
-
-        /// <summary>
-        /// What the body carries besides the blocks themselves: the card's padding, the spacer
-        /// between the two blocks and the gaps around it, and a few pixels of margin.
-        ///
-        /// ⚠ **Rounded UP on purpose.** Overstating it leaves a few pixels of empty card under the
-        /// lists; understating it makes them ask for more than the body has, and the panel grows a
-        /// scrollbar of its own around the two the lists already have. The two mistakes do not cost
-        /// the same, so the safe side is chosen deliberately.
-        /// </summary>
-        private static readonly int AroundTheBlocks = 2 * UIStyles.CardPadding + 12 + 2 * 6 + 8;
 
         /// <summary>
         /// What the panel carries besides its two blocks: the fixed header (title, privacy note,
@@ -127,17 +114,16 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// height is not settled when the list is built: it is settled once the body has a measured
         /// height, and again every time that height changes.
         /// </summary>
-        private struct Slice
+        private sealed class Slice
         {
             public ScrollList List;
             public ListRoom Room;
-            public int Chrome;
+
+            /// <summary>What it was last given — what the measured chrome is worked out against.</summary>
+            public int Given;
         }
 
         private readonly List<Slice> _slices = new List<Slice>();
-
-        /// <summary>What the blocks with no rows take off the room the others divide.</summary>
-        private int _sentences;
 
         /// <summary>Whether the lists have been given their height since the last redraw.</summary>
         private bool _shared;
@@ -255,7 +241,6 @@ namespace UnityGameTranslator.Core.UI.Panels
             // no flexible share, and the heights are worked out in BodySized from a body height
             // that has been MEASURED. Avalonia is told the same three facts and arbitrates alone.
             _slices.Clear();
-            _sentences = 0;
             _shared = false;
 
             Group(Backups.SavedHeading, $"{saved.Count} of {Backups.SavedKept}", saved,
@@ -290,13 +275,28 @@ namespace UnityGameTranslator.Core.UI.Panels
             var body = BodyHeight;
             if (body <= 1) return;
 
+            // 🔴 **The chrome is MEASURED, and nothing about it is written down here.** Everything
+            // the body carries that is not a list — two headings, the verb under one of them, the
+            // padding of the card, the gap between the blocks, a whole block reduced to a sentence
+            // when its list is empty — is the difference between what the content asks for and what
+            // the lists were last given. Declaring those figures instead is what left a band of
+            // empty card under the lists when it overshot, and a scrollbar around the whole screen
+            // when it fell short.
+            double given = 0;
+            for (var i = 0; i < _slices.Count; i++) given += _slices[i].Given;
+
+            var chrome = BodyContentHeight - given;
+
             var rooms = new List<ListRoom>();
             for (var i = 0; i < _slices.Count; i++) rooms.Add(_slices[i].Room);
 
-            var heights = ListRooms.Share(rooms, body - AroundTheBlocks - _sentences);
+            var heights = ListRooms.Share(rooms, body - chrome);
 
             for (var i = 0; i < _slices.Count; i++)
-                _slices[i].List.SetHeight((int)Math.Max(0, heights[i] - _slices[i].Chrome), fill: false);
+            {
+                _slices[i].Given = (int)Math.Max(0, heights[i]);
+                _slices[i].List.SetHeight(_slices[i].Given, fill: false);
+            }
 
             // 🔴 **Here, and only the first time after a redraw.** A list is put back at its first
             // row when it is rebuilt, but the height it was rebuilt at is not the one it ends up
@@ -372,8 +372,6 @@ namespace UnityGameTranslator.Core.UI.Panels
             Labels.Create(titleRow, "Note", note, TextRole.Caption, policy: TextPolicy.Excluded,
                           align: Placement.MiddleRight, fill: Fill.Stretch);
 
-            var chrome = BlockChrome + (saved ? SaveVerb : 0);
-
             if (entries.Count == 0)
             {
                 Labels.Create(block, "Empty", empty, TextRole.Caption, fill: Fill.Stretch);
@@ -383,9 +381,10 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // has never made one.
                 AddSaveButton(block, saved);
 
-                // ⚠ It is not in the division — a sentence is not a scroll area — but its height
-                // still comes off the room the others share.
-                _sentences += EmptyBlock + (saved ? SaveVerb : 0);
+                // ⚠ Nothing is recorded for it. A block with no rows is a sentence, not a scroll
+                // area: it takes its own height, and BodySized counts it as chrome without being
+                // told — it is part of what the content asks for and not part of what the lists
+                // were given.
                 return;
             }
 
@@ -396,14 +395,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             // ⚠ It opens at its FLOOR and takes no flexible share, so the sum of what this body
             // asks for stays under the body itself and the panel never grows a scrollbar of its
             // own. The real height is posed in BodySized, from the measured room.
-            var room = ListRooms.For(entries.Count, RowSpace, ListPad + chrome);
-            var floor = (int)room.Least - chrome;
+            var room = ListRooms.For(entries.Count, RowSpace, ListPad);
+            var floor = (int)room.Least;
 
             var list = ScrollList.Create(block, "Rows",
                                          minHeight: floor, preferredHeight: floor,
                                          fillHeight: false, spacing: 4);
 
-            _slices.Add(new Slice { List = list, Room = room, Chrome = chrome });
+            _slices.Add(new Slice { List = list, Room = room, Given = floor });
 
             foreach (var entry in entries) Row(list.Rows, entry);
 

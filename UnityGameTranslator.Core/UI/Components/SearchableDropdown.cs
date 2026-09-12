@@ -131,6 +131,41 @@ namespace UnityGameTranslator.Core.UI.Components
             _popupHeight = popupHeight;
         }
 
+        /// <summary>
+        /// A dropdown whose rows are languages — the same control, with the flags already on.
+        ///
+        /// 🔴 **Because remembering to set MarkProvider is something a screen forgets, and did.**
+        /// Five of the six language lists in this mod had no flags: only the options screen set the
+        /// provider, so the wizard, the upload setup and the language panel showed bare names for
+        /// the same languages the same program drew flags for three panels away. Nothing was broken
+        /// and nothing said anything.
+        ///
+        /// ⚠ Same reasoning as ModSettingControls.LanguagePicker in the Manager: a list of
+        /// languages is a KIND of list, so it is built by something that knows that, rather than by
+        /// a caller who has to remember two lines.
+        /// </summary>
+        public static SearchableDropdown ForLanguages(string name, string[] languages,
+                                                      string initialValue = null,
+                                                      int popupHeight = 250)
+        {
+            var box = new SearchableDropdown(name, languages, initialValue, popupHeight);
+            box.MarkProvider = LanguageOfRow;
+            return box;
+        }
+
+        /// <summary>
+        /// The language a row stands for, or null when the row is not one.
+        ///
+        /// The rows are language NAMES, which is what the whole ecosystem keys on — so the row is
+        /// its own answer. The exceptions are the "auto …" entries, which name a behaviour rather
+        /// than a language; they are handed over unchanged and the mark comes back empty.
+        /// </summary>
+        private static string LanguageOfRow(string row)
+        {
+            if (string.IsNullOrEmpty(row)) return null;
+            return row.StartsWith("auto", StringComparison.OrdinalIgnoreCase) ? null : row;
+        }
+
         /// <summary>Build the dropdown in a host, and get it back as one — to describe or place it.</summary>
         /// <param name="stretch">
         /// Fill the row's width and raise the height to an ordinary field's, for a dropdown
@@ -400,7 +435,10 @@ namespace UnityGameTranslator.Core.UI.Components
             _scrollRect = scrollObj.GetComponent<ScrollRect>();
             if (_scrollRect != null)
             {
-                _scrollRect.movementType = ScrollRect.MovementType.Clamped;
+                // ⚠ Movement type is NOT set here any more: the give at the end of a scroll is a
+                // property of scrolling in this mod, applied by ConfigureScrollViewNoScrollbar
+                // above — see UIStyles.GiveScrollAnEdge. Setting Clamped here put this one list
+                // back to stopping dead, which is the very question the give answers.
                 _scrollRect.scrollSensitivity = 20f;
                 _scrollRect.inertia = false;
             }

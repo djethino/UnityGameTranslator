@@ -10,7 +10,11 @@ namespace UnityGameTranslator.Core.UI.Panels
     /// <summary>
     /// Upload setup panel for NEW translations.
     /// Handles game selection/search and language selection before upload.
-    /// Uses reusable LanguageSelector components.
+    ///
+    /// ⚠ Its language lists are SearchableDropdown.ForLanguages, like every other language list in
+    /// the mod. It used to say "LanguageSelector", a component this panel stopped using and which
+    /// nothing constructed any more — it was removed on 2026-09-12 along with the two UIStyles
+    /// factories that served only it.
     /// </summary>
     public class UploadSetupPanel : TranslatorPanelBase
     {
@@ -167,8 +171,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Initialize components (must be here, not in constructor - base calls ConstructUI first)
             var languages = LanguageHelper.GetLanguageNames();
             // No default for source - must be explicitly selected (required field)
-            _sourceDropdown = new SearchableDropdown("Source", languages, "", popupHeight: 250);
-            _targetDropdown = new SearchableDropdown("Target", languages, "", popupHeight: 250);
+            _sourceDropdown = SearchableDropdown.ForLanguages("Source", languages, "");
+            _targetDropdown = SearchableDropdown.ForLanguages("Target", languages, "");
 
             Layout(out var scrollContent, out var buttonRow, PanelWidth - 40);
 

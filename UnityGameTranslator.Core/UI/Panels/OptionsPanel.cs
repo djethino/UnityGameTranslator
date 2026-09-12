@@ -344,14 +344,9 @@ namespace UnityGameTranslator.Core.UI.Panels
                 _languages[i + 1] = langs[i];
             }
 
-            _sourceLanguageDropdown = new SearchableDropdown("SourceLang", _sourceLanguages, "auto (Detect)", popupHeight: 250);
-            _targetLanguageDropdown = new SearchableDropdown("TargetLang", _languages, "auto (System)", popupHeight: 250);
+            _sourceLanguageDropdown = SearchableDropdown.ForLanguages("SourceLang", _sourceLanguages, "auto (Detect)");
+            _targetLanguageDropdown = SearchableDropdown.ForLanguages("TargetLang", _languages, "auto (System)");
 
-            // The flag beside each name, the same one the status card and the selector draw.
-            // ⚠ The "auto …" rows stand for no language and get none — LanguageMark returns
-            // nothing for a name the catalogue does not know, so they simply stay plain text.
-            _sourceLanguageDropdown.MarkProvider = LanguageOfRow;
-            _targetLanguageDropdown.MarkProvider = LanguageOfRow;
             _hotkeyCapture = new HotkeyCapture("F10");
             _hotkeyToggleTranslations = new HotkeyCapture("");
             _hotkeyToggleAI = new HotkeyCapture("");
@@ -2501,19 +2496,6 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Translated at set-time (cache-aware, placeholder-aware) so this code-managed button
             // shows the right state in the current language without racing the async pipeline.
             _applyBtn.Label = changes > 0 ? $"Apply ({changes})" : "Close";
-        }
-
-        /// <summary>
-        /// The language a dropdown row stands for, or null when the row is not one.
-        ///
-        /// The rows are language NAMES, which is what the whole ecosystem keys on — so the row is
-        /// its own answer. The exceptions are the "auto …" entries, which name a behaviour rather
-        /// than a language; they are handed over unchanged and the mark comes back empty.
-        /// </summary>
-        private static string LanguageOfRow(string row)
-        {
-            if (string.IsNullOrEmpty(row)) return null;
-            return row.StartsWith("auto", System.StringComparison.OrdinalIgnoreCase) ? null : row;
         }
 
     }

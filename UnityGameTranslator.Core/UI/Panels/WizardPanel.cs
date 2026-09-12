@@ -357,11 +357,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             Labels.Create(langSection, "LangLabel", "Translate games to:", TextRole.Small, tone: Tone.Secondary,
                           minHeight: UIStyles.RowHeightSmall);
 
-            _targetLanguageDropdown = new SearchableDropdown(
+            _targetLanguageDropdown = SearchableDropdown.ForLanguages(
                 "TargetLang",
                 LanguageHelper.GetLanguageNames(),
-                _targetLanguage,
-                popupHeight: 250
+                _targetLanguage
             );
             var targetLangHost = _targetLanguageDropdown.CreateUI(langSection, (lang) => _targetLanguage = lang, width: 200);
             _helpZone?.Describe(targetLangHost,

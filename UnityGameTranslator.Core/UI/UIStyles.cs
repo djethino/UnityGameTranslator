@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
@@ -689,6 +689,44 @@ namespace UnityGameTranslator.Core.UI
 
             // Override UniverseLib's gray viewport background with our navy color
             ApplyViewportBackground(scrollObj);
+
+            GiveScrollAnEdge(scrollObj);
+        }
+
+        /// <summary>
+        /// The give at the end of a scroll: push past the last line and the content leans, then
+        /// settles back. Applied here because every scrolling area in this mod is built through
+        /// this one call — the panels, the translation list, the lists and the dropdowns.
+        ///
+        /// It answers a question a scrollbar answers badly and a long list asks constantly — *is
+        /// there more below, or is that everything?* A view that stops dead is indistinguishable
+        /// from one that has frozen, and people scroll again to find out.
+        ///
+        /// 🔴 **Unity's own elastic movement, NOT the shared EdgeGive, and that is a decision with
+        /// a reason.** The socle's model is what the site and the Manager run, and matching it here
+        /// would mean writing the pixels ourselves — but the content's position belongs to the
+        /// ScrollRect, which rewrites it every frame, so displacing it needs either a component
+        /// injected into the runtime or an extra transform between viewport and content. This
+        /// assembly is built ONCE for Mono and IL2CPP and therefore cannot inject a MonoBehaviour —
+        /// the reason ButtonStates is a ticked registry rather than a component, and the failure
+        /// mode this project pays for most often. So the engine's own spring is used, tuned to sit
+        /// near ours rather than to be it.
+        ///
+        /// ⚠ **What this costs, stated rather than hidden**: the return is Unity's, not the damped
+        /// run-out the other two products got on 2026-09-12. Closing that gap means giving the
+        /// content a transform of its own to lean, and that is a change to how every panel is
+        /// built — worth doing, not worth smuggling in here.
+        /// </summary>
+        public static void GiveScrollAnEdge(GameObject scrollObj)
+        {
+            var scroll = scrollObj != null ? scrollObj.GetComponent<ScrollRect>() : null;
+            if (scroll == null) return;
+
+            scroll.movementType = ScrollRect.MovementType.Elastic;
+
+            // ⚠ Unity's elasticity is a time constant in seconds, not a stiffness: smaller is
+            // firmer. This sits close to the half second the other products settle in.
+            scroll.elasticity = 0.12f;
         }
 
         /// <summary>
@@ -1237,126 +1275,6 @@ namespace UnityGameTranslator.Core.UI
             }
 
             return item;
-        }
-
-        /// <summary>
-        /// Creates an inline language selector with search and scrollable list.
-        /// </summary>
-        /// <param name="parent">Parent container</param>
-        /// <param name="name">Base name for UI elements</param>
-        /// <param name="languages">Array of language names</param>
-        /// <param name="listHeight">Height of the scrollable list</param>
-        /// <returns>Tuple with (container, searchInput, listContent, selectedLabel)</returns>
-        public static (GameObject container, InputFieldRef searchInput, GameObject listContent, Text selectedLabel, GameObject selectedMark)
-            CreateLanguageSelector(GameObject parent, string name, int listHeight = 120)
-        {
-            var container = UIFactory.CreateVerticalGroup(parent, name + "Container", false, false, true, true, SmallSpacing);
-            UIFactory.SetLayoutElement(container, flexibleWidth: 9999);
-
-            // Selected language display
-            var selectedRow = UIFactory.CreateHorizontalGroup(container, name + "SelectedRow", false, false, true, true, SmallSpacing);
-            UIFactory.SetLayoutElement(selectedRow, minHeight: RowHeightMedium);
-
-            var selectedLabelPrefix = UIFactory.CreateLabel(selectedRow, name + "Prefix", "Selected: ", TextAnchor.MiddleLeft);
-            selectedLabelPrefix.color = TextSecondary;
-            selectedLabelPrefix.fontSize = FontSizeSmall;
-            UIFactory.SetLayoutElement(selectedLabelPrefix.gameObject, minWidth: 60);
-
-            // Holds the flag of whatever is selected. Rebuilt by LanguageSelector when the choice
-            // changes — a mark left over from the previous one would name a language nobody picked.
-            var selectedMark = UIFactory.CreateUIObject(name + "SelectedMark", selectedRow);
-            UIFactory.SetLayoutGroup<HorizontalLayoutGroup>(selectedMark, false, false, true, true,
-                                                            4, 0, 0, 0, 0, TextAnchor.MiddleLeft);
-            UIFactory.SetLayoutElement(selectedMark, minHeight: RowHeightSmall,
-                                       flexibleWidth: 0, flexibleHeight: 0);
-
-            var selectedLabel = UIFactory.CreateLabel(selectedRow, name + "Selected", "", TextAnchor.MiddleLeft);
-            selectedLabel.color = TextAccent;
-            selectedLabel.fontStyle = FontStyle.Bold;
-            selectedLabel.fontSize = FontSizeNormal;
-            UIFactory.SetLayoutElement(selectedLabel.gameObject, flexibleWidth: 9999);
-
-            // Search input
-            var searchInput = CreateStyledInputField(container, name + "Search", "Search languages...", RowHeightLarge);
-
-            // Scrollable list
-            var scrollObj = UIFactory.CreateScrollView(container, name + "Scroll", out var listContent, out _);
-            UIFactory.SetLayoutElement(scrollObj, minHeight: listHeight, flexibleWidth: 9999);
-            UIFactory.SetLayoutGroup<VerticalLayoutGroup>(listContent, false, false, true, true, 2, 5, 5, 5, 5);
-            // ⚠ The seventh trough, missed when the other six were fixed because it is built
-            // in here rather than at a call site: InputBackground is the same value as
-            // ItemBackground, so every row was the colour of the list it sits in.
-            SetBackground(scrollObj, TroughBackground);
-            ConfigureScrollViewNoScrollbar(scrollObj);
-
-            return (container, searchInput, listContent, selectedLabel, selectedMark);
-        }
-
-        /// <summary>
-        /// Populates a language list with clickable items.
-        /// Call this to refresh the list when search changes or selection changes.
-        /// </summary>
-        /// <param name="listContent">The list content from CreateLanguageSelector</param>
-        /// <param name="languages">All available languages</param>
-        /// <param name="searchFilter">Current search text (empty = show all)</param>
-        /// <param name="selectedLanguage">Currently selected language</param>
-        /// <param name="onSelect">Callback when a language is clicked</param>
-        public static void PopulateLanguageList(
-            GameObject listContent,
-            string[] languages,
-            string searchFilter,
-            string selectedLanguage,
-            System.Action<string> onSelect)
-        {
-            if (listContent == null) return;
-
-            // Clear existing items (iterate backwards for safe destruction)
-            for (int i = listContent.transform.childCount - 1; i >= 0; i--)
-            {
-                UnityEngine.Object.Destroy(listContent.transform.GetChild(i).gameObject);
-            }
-
-            string filter = searchFilter?.ToLower() ?? "";
-
-            foreach (var lang in languages)
-            {
-                if (!string.IsNullOrEmpty(filter) && !lang.ToLower().Contains(filter))
-                    continue;
-
-                bool isSelected = lang == selectedLanguage;
-                var item = CreateListItem(listContent, $"Lang_{lang}", RowHeightMedium, isSelected);
-
-                // Flag then name, in one control. ⚠ The row is a horizontal group already, so the
-                // mark drops in where the label used to be; the socle suppresses the tag chip
-                // because the name is right there, which is what it exists to replace.
-                var mark = Components.LanguageMark.Create(
-                    item, "Mark", lang, withName: true,
-                    nameColour: isSelected ? TextPrimary : TextSecondary);
-
-                if (mark != null)
-                {
-                    UIFactory.SetLayoutElement(mark, flexibleWidth: 9999);
-                }
-                else
-                {
-                    // A language the catalogue does not mark still has to be pickable.
-                    var label = UIFactory.CreateLabel(item, "Label", lang, TextAnchor.MiddleLeft);
-                    label.color = isSelected ? TextPrimary : TextSecondary;
-                    label.fontSize = FontSizeNormal;
-                    UIFactory.SetLayoutElement(label.gameObject, flexibleWidth: 9999);
-                }
-
-                // Make clickable (use helper for IL2CPP compatibility)
-                var btn = item.AddComponent<Button>();
-                var langCapture = lang; // Capture for closure
-                UIHelpers.AddButtonListener(btn, () => onSelect?.Invoke(langCapture));
-
-                // Add hover effect (works on both Mono and IL2CPP via UniverseLib)
-                if (!isSelected)
-                {
-                    AddHoverEffect(item, ItemBackground, ItemBackgroundHover);
-                }
-            }
         }
 
         /// <summary>

@@ -697,6 +697,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             // can move the title bar above the screen — clamp it back
             EnsureValidPosition();
 
+            // ⚠ And a panel whose content is divided by height has to divide it again: the room
+            // its lists share is exactly what just changed. Panels that do not override this pay
+            // nothing for it.
+            OnWindowResized();
+
             // Don't save during initial construction - only after user interaction
             if (!_initialSizingComplete) return;
 

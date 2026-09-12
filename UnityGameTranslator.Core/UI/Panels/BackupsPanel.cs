@@ -53,6 +53,14 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         private const int RowSpace = 56;
 
+        /// <summary>
+        /// Divides the room again when the window is resized by hand.
+        ///
+        /// ⚠ The whole point of making this panel taller is to see more rows, and how many rows
+        /// each list shows is settled when it is drawn — so being made taller has to redraw it.
+        /// </summary>
+        protected override void OnWindowResized() => Refresh();
+
         private Host _listHost;
         private LabelHandle _nowLabel;
         private ButtonHandle _saveBtn;
@@ -157,7 +165,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (saved.Count > 0) wants.Add(RowSpace * saved.Count + 8);
             if (automatic.Count > 0) wants.Add(RowSpace * automatic.Count + 8);
 
-            var shares = ListShares.Split(wants, RoomForLists());
+            var shares = ListShares.Split(wants, RoomForLists(), RowSpace);
             var next = 0;
 
             Group(Backups.SavedHeading, $"{saved.Count} of {Backups.SavedKept}", saved,
@@ -188,8 +196,20 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         private float RoomForLists()
         {
+            // 🔴 **Never zero, and this is what keeps the ASCENSEUR on the lists.** Refresh runs
+            // while the panel is being built, before any layout, so the laid-out height is not
+            // known yet — and answering "not measured" makes ListShares give each list its whole
+            // content. Two lists asking for everything they hold overflow the panel, the panel's
+            // own scroll area takes over, and the Close button goes under the fold. That is the
+            // shape this screen was built to avoid: each list scrolls, the screen never does.
+            //
+            // ⚠ So the declared height stands in until there is a real one. It is the size the
+            // panel opens at, so it is the right guess, and the moment the window is laid out or
+            // resized the next Refresh reads the true figure.
             var height = WindowHeight();
-            return height > 0 ? Math.Max(0f, height - 300f) : 0f;
+            if (height <= 0) height = PanelHeight;
+
+            return Math.Max(RowSpace * 2, height - 300f);
         }
 
         /// <summary>

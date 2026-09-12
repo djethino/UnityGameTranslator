@@ -75,15 +75,6 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         protected virtual float ContentHeightFloor => _tallestTabContentHeight;
 
-        /// <summary>
-        /// The window was resized by hand. Nothing by default.
-        ///
-        /// ⚠ For a panel that divides its height between several lists: how much room there is to
-        /// divide is precisely what changed, and a panel that does not ask again keeps the split it
-        /// worked out when it opened. Panels with one flexible area need nothing here — the layout
-        /// grows them on its own.
-        /// </summary>
-        protected virtual void OnWindowResized() { }
 
         /// <summary>
         /// THE RULE FOR EVERY SCROLLING LIST IN A PANEL, written here because getting it wrong

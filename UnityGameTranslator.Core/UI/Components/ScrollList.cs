@@ -90,6 +90,26 @@ namespace UnityGameTranslator.Core.UI.Components
         public void Filled()
         {
             if (_empty != null) _empty.Visible = false;
+            ToTop();
+        }
+
+        /// <summary>
+        /// Puts the list back at its first row.
+        ///
+        /// 🔴 **A rebuilt list is not the same list, and a ScrollRect does not know that.** It keeps
+        /// the offset it had, so a panel redrawn — after a backup, a restore, a resize — opened
+        /// already scrolled down, showing the middle of a list nobody had scrolled. Reported as
+        /// "les 2 listes scrollées vers le bas".
+        ///
+        /// ⚠ Vertical only, and set rather than animated: this is not a movement somebody should
+        /// see. What they should see is the top of the list they just asked for.
+        /// </summary>
+        public void ToTop()
+        {
+            var rect = _scroll != null ? _scroll.GetComponent<ScrollRect>() : null;
+            if (rect == null) return;
+
+            rect.verticalNormalizedPosition = 1f;
         }
 
         /// <summary>The empty sentence, to reword it.</summary>

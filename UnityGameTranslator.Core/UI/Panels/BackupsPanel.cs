@@ -53,13 +53,15 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         private const int RowSpace = 56;
 
-        /// <summary>
-        /// Divides the room again when the window is resized by hand.
-        ///
-        /// ⚠ The whole point of making this panel taller is to see more rows, and how many rows
-        /// each list shows is settled when it is drawn — so being made taller has to redraw it.
-        /// </summary>
-        protected override void OnWindowResized() => Refresh();
+        // 🔴 **No redraw on resize, and that was mine to learn twice.** Rebuilding both lists while
+        // the window is being dragged tears down the scroll areas UniverseLib's auto-hiding
+        // scrollbar is holding on to: the bar vanished and left its lane painted black. The
+        // Manager had the same idea and it was worse there — rewriting the grid's rows from a
+        // layout event is a loop, and it took the window off the screen.
+        //
+        // ⚠ Nothing is lost: the list that overflows carries a flexible height, so the layout gives
+        // it the new room on its own. Only the moment a list stops needing to scroll would be
+        // worth recomputing, and it is not worth rebuilding a live window for.
 
         private Host _listHost;
         private LabelHandle _nowLabel;
@@ -165,7 +167,10 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (saved.Count > 0) wants.Add(RowSpace * saved.Count + 8);
             if (automatic.Count > 0) wants.Add(RowSpace * automatic.Count + 8);
 
-            var shares = ListShares.Split(wants, RoomForLists(), RowSpace);
+            // ⚠ The floor is in the same units as what a list asks for — rows plus the padding
+            // around them — so a squeezed group still shows two entries under its heading.
+            var floor = RowSpace * 2 + 8;
+            var shares = ListShares.Split(wants, RoomForLists(), floor);
             var next = 0;
 
             Group(Backups.SavedHeading, $"{saved.Count} of {Backups.SavedKept}", saved,
@@ -314,6 +319,11 @@ namespace UnityGameTranslator.Core.UI.Panels
                                          fillHeight: weight > 0, spacing: 4, share: weight);
 
             foreach (var entry in entries) Row(list.Rows, entry);
+
+            // ⚠ A freshly built scroll area does not start at its first row on its own — it starts
+            // wherever its content happens to sit under its anchors. Both lists opened part-way
+            // down, showing the middle of something nobody had scrolled.
+            list.ToTop();
 
             AddSaveButton(block, saved);
         }

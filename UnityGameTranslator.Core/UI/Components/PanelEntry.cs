@@ -52,7 +52,12 @@ namespace UnityGameTranslator.Core.UI.Components
         /// on every frame it is held, so playing this on every call would keep a panel permanently
         /// at 96% while it is being moved — see the note on _reportedVisible in TranslatorPanelBase.
         /// </summary>
-        public static void Play(GameObject panel)
+        /// <remarks>
+        /// ⚠ `internal`, like every engine-typed member the legacy components keep for each other
+        /// and for the base: what crosses the frontier in public is a handle, never a GameObject.
+        /// `UiBoundaryChecks` rule 2 enforces it, and caught this the first time it was written.
+        /// </remarks>
+        internal static void Play(GameObject panel)
         {
             if (panel == null) return;
 

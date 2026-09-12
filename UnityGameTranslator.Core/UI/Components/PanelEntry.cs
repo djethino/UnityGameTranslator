@@ -32,7 +32,29 @@ namespace UnityGameTranslator.Core.UI.Components
     public static class PanelEntry
     {
         /// <summary>How long the movement lasts, in seconds. Short enough to be felt, not watched.</summary>
-        private const float Span = 0.14f;
+        private const float Span = 0.16f;
+
+        /// <summary>
+        /// How long the panel is held out of sight before it grows, in seconds.
+        ///
+        /// 🔴 **This is the fix for the shudder at opening, and it is not a delay for taste.** A
+        /// panel cannot be measured while it is hidden — it has no size — so the sizing pass runs
+        /// with the window ALREADY ON SCREEN: two frames, a forced layout rebuild, then the real
+        /// size and the position clamp. Everything in that sequence is correct and every step of it
+        /// is visible, which is exactly what "a little glitch, a sort of tremble at opening" is. It
+        /// became noticeable with the router, which hides and shows panels on every navigation
+        /// rather than leaving them up.
+        ///
+        /// ⚠ **Held at scale zero rather than made inactive.** The layout ignores scale, so the
+        /// panel is measured and re-clamped normally while nobody can see it — deactivating it
+        /// would stop the very pass we are waiting for. And scale is the one transform nothing else
+        /// writes: the CanvasGroup belongs to the focus pass, which dims the windows that are not
+        /// in front.
+        ///
+        /// ⚠ Four frames at 60Hz. Long enough to cover the sizing pass, short enough that opening
+        /// still feels immediate — the movement that follows is what the eye reads as the opening.
+        /// </summary>
+        private const float Settling = 0.066f;
 
         /// <summary>
         /// How small it starts. Just under one: the panel settles into place rather than zooming.
@@ -40,7 +62,7 @@ namespace UnityGameTranslator.Core.UI.Components
         /// ⚠ A larger number reads as a flourish, and these windows carry settings and warnings,
         /// not celebrations.
         /// </summary>
-        private const float FromScale = 0.96f;
+        private const float FromScale = 0.93f;
 
         private static readonly List<Transform> _playing = new List<Transform>();
         private static readonly List<float> _startedAt = new List<float>();
@@ -75,12 +97,21 @@ namespace UnityGameTranslator.Core.UI.Components
                 _startedAt.Add(Clock.Now);
             }
 
-            transform.localScale = Vector3.one * FromScale;
+            // Out of sight while it sizes itself — see Settling. Nothing is watching yet, so
+            // nothing has to be smooth about this.
+            transform.localScale = Vector3.zero;
         }
 
         /// <summary>
         /// Advances every movement in flight. Called from the UI update loop, beside the toast's own
         /// tick, so one clock drives everything that moves in this interface.
+        ///
+        /// 🔴 **This became load-bearing the day the panel was held out of sight to settle.** A
+        /// panel starts at scale zero and it is THIS that brings it back: stop calling it and a
+        /// window opens invisible, with nothing in the log and nothing to see. Two things make that
+        /// safe, and both must stay true — the loop this sits in runs whenever any UI is showing,
+        /// which a panel becoming visible guarantees; and Clock.Now is realtimeSinceStartup, so a
+        /// paused game or a zero timescale does not freeze the count.
         /// </summary>
         public static void Tick()
         {
@@ -97,7 +128,16 @@ namespace UnityGameTranslator.Core.UI.Components
                     continue;
                 }
 
-                var t = Mathf.Clamp01((Clock.Now - _startedAt[i]) / Span);
+                var since = Clock.Now - _startedAt[i];
+
+                // Still sizing itself. Kept out of sight rather than shown mid-rearrangement.
+                if (since < Settling)
+                {
+                    transform.localScale = Vector3.zero;
+                    continue;
+                }
+
+                var t = Mathf.Clamp01((since - Settling) / Span);
 
                 // Eased out, so it decelerates into place instead of arriving at a stop.
                 var eased = 1f - (1f - t) * (1f - t) * (1f - t);

@@ -1,0 +1,144 @@
+using System;
+using System.Collections.Generic;
+using UnityGameTranslator.Core.UI.Components;
+
+namespace UnityGameTranslator.Core.UI
+{
+    /// <summary>
+    /// A screen once built: its pieces by name, and the slots the code writes.
+    /// </summary>
+    internal sealed class BuiltScreen
+    {
+        private readonly ScreenDocument _doc;
+        private readonly Dictionary<string, LabelHandle> _labels = new Dictionary<string, LabelHandle>(StringComparer.Ordinal);
+        private readonly Dictionary<string, ButtonHandle> _buttons = new Dictionary<string, ButtonHandle>(StringComparer.Ordinal);
+        private readonly Dictionary<string, Host> _hosts = new Dictionary<string, Host>(StringComparer.Ordinal);
+
+        internal BuiltScreen(ScreenDocument doc) { _doc = doc; }
+
+        internal void Add(string name, LabelHandle label) => _labels[name] = label;
+        internal void Add(string name, ButtonHandle button) => _buttons[name] = button;
+        internal void Add(string name, Host host) => _hosts[name] = host;
+
+        public LabelHandle Label(string name) => _labels.TryGetValue(name, out var l) ? l : throw new ScreenDocumentException($"{_doc.Name}: no label named '{name}'");
+        public ButtonHandle Button(string name) => _buttons.TryGetValue(name, out var b) ? b : throw new ScreenDocumentException($"{_doc.Name}: no button named '{name}'");
+        public Host Host(string name) => _hosts.TryGetValue(name, out var h) ? h : throw new ScreenDocumentException($"{_doc.Name}: no host named '{name}'");
+
+        /// <summary>
+        /// Write a slot. The document names it and says which piece holds it; the code says what
+        /// goes there, in the interface's language — translated at this moment, as any Dynamic text.
+        /// </summary>
+        public void Say(string bind, string text)
+        {
+            if (!_doc.Binds.TryGetValue(bind, out var node))
+                throw new ScreenDocumentException($"{_doc.Name}: no slot named '{bind}'");
+            if (node.Kind == "button") Button(node.Name).Label = text;
+            else Label(node.Name).Say(text);
+        }
+    }
+
+    /// <summary>
+    /// The interpreter for this engine: reads a ScreenDocument and builds it with the vocabulary
+    /// (UI/Components), piece by piece, name by name. A Core on another engine has its own.
+    ///
+    /// ⚠ One switch, closed on ScreenDocument.Kinds: a kind the document may carry and this does
+    /// not draw is refused here, loudly, rather than drawn as nothing.
+    /// </summary>
+    internal static class ScreenBuilder
+    {
+        /// <param name="actOf">The handler for each act the document asks for; asked once per button, at build time, so an act nobody handles fails the build and not the click.</param>
+        public static BuiltScreen Build(ScreenDocument doc, Host body, Host footer, Func<string, Action> actOf)
+        {
+            if (doc == null) throw new ArgumentNullException(nameof(doc));
+            if (actOf == null) throw new ArgumentNullException(nameof(actOf));
+
+            var built = new BuiltScreen(doc);
+            foreach (var node in doc.Body) Place(doc, node, body, built, actOf);
+            foreach (var node in doc.Footer) Place(doc, node, footer, built, actOf);
+            return built;
+        }
+
+        private static void Place(ScreenDocument doc, ScreenNode node, Host parent, BuiltScreen built, Func<string, Action> actOf)
+        {
+            switch (node.Kind)
+            {
+                case "card":
+                {
+                    var host = Stacks.Card(parent, node.Name, node.Int("width") ?? doc.CardWidth);
+                    built.Add(node.Name, host);
+                    foreach (var child in node.Children) Place(doc, child, host, built, actOf);
+                    break;
+                }
+                case "stack":
+                {
+                    var host = Stacks.Vertical(parent, node.Name, node.Int("spacing") ?? 0);
+                    built.Add(node.Name, host);
+                    foreach (var child in node.Children) Place(doc, child, host, built, actOf);
+                    break;
+                }
+                case "row":
+                {
+                    var host = Stacks.Row(parent, node.Name, node.Int("spacing") ?? 10);
+                    built.Add(node.Name, host);
+                    foreach (var child in node.Children) Place(doc, child, host, built, actOf);
+                    break;
+                }
+                case "spacer":
+                    built.Add(node.Name, Stacks.Spacer(parent, node.Int("height") ?? 0, node.Name));
+                    break;
+                case "label":
+                {
+                    // A bound text is written at show time, so it is Dynamic whatever the document
+                    // says: translated at the moment it is written, never registered as static UI text.
+                    var policy = node.Bind != null ? TextPolicy.Dynamic : Enum(node.Word("policy"), TextPolicy.UiText);
+                    var label = Labels.Create(parent, node.Name, node.Text ?? "",
+                                              Enum(node.Word("role"), TextRole.Body),
+                                              tone: node.Word("tone") != null ? Enum(node.Word("tone"), Tone.Plain) : (Tone?)null,
+                                              centred: node.Flag("centred"),
+                                              policy: policy,
+                                              minHeight: MinHeight(node));
+                    built.Add(node.Name, label);
+                    break;
+                }
+                case "button":
+                {
+                    var policy = node.Bind != null ? TextPolicy.Dynamic : Enum(node.Word("policy"), TextPolicy.UiText);
+                    var size = node.Word("size") == "Compact" ? ButtonSize.Compact : ButtonSize.Normal;
+                    var button = Buttons.Create(parent, node.Name, node.Text ?? "",
+                                                Enum(node.Word("tone"), ButtonTone.Secondary), size,
+                                                minWidth: node.Int("minWidth"), policy: policy);
+                    var handler = actOf(node.Act)
+                                  ?? throw new ScreenDocumentException($"{doc.Name}: the act '{node.Act}' has no handler");
+                    button.Clicked += handler;
+                    built.Add(node.Name, button);
+                    break;
+                }
+                default:
+                    throw new ScreenDocumentException($"{doc.Name}: this engine's builder does not draw '{node.Kind}'");
+            }
+        }
+
+        private static int? MinHeight(ScreenNode node)
+        {
+            if (node.Int("minHeight") is int pixels) return pixels;
+            switch (node.Word("minHeight"))
+            {
+                case null: return null;
+                case "RowHeightSmall": return UIStyles.RowHeightSmall;
+                case "RowHeightNormal": return UIStyles.RowHeightNormal;
+                case "RowHeightLarge": return UIStyles.RowHeightLarge;
+                case "InputHeight": return UIStyles.InputHeight;
+                case "MultiLineSmall": return UIStyles.MultiLineSmall;
+                default: throw new ScreenDocumentException($"'{node.Name}': '{node.Word("minHeight")}' is not a height the theme names");
+            }
+        }
+
+        private static T Enum<T>(string word, T fallback) where T : struct
+        {
+            if (word == null) return fallback;
+            return System.Enum.TryParse(word, out T value)
+                ? value
+                : throw new ScreenDocumentException($"'{word}' is not a {typeof(T).Name}");
+        }
+    }
+}

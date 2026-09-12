@@ -7,25 +7,27 @@ namespace UnityGameTranslator.Core.UI.Panels
     /// <summary>
     /// Reusable confirmation dialog for destructive actions.
     ///
-    /// ⚠ The first panel written entirely against the vocabulary (2026-09-07): it holds labels and
-    /// buttons, and knows nothing about what draws them. What it looks like is decided by the roles
-    /// it names — a Title, a Description, a Primary that turns Danger.
+    /// 🔴 **The first screen described in data** (2026-09-12): its shape is
+    /// <c>common/spec/screens/confirm.json</c>, embedded in the assembly and built by
+    /// <see cref="ScreenBuilder"/>. What is left here is what a document cannot say — three slots
+    /// written at show time, two acts, and one decision: the verb's tone. A Core on another engine
+    /// draws the same file with its own builder and keeps exactly this much code.
     /// </summary>
     public class ConfirmationPanel : TranslatorPanelBase
     {
-        public override string Name => "Confirm";
-        public override int MinWidth => 400;
-        public override int MinHeight => 150;
-        public override int PanelWidth => 400;
-        public override int PanelHeight => 200;
+        private static readonly ScreenDocument Doc = ScreenDocument.FromEmbedded("confirm");
 
-        protected override int MinPanelHeight => 150;
-        protected override bool PersistWindowPreferences => false;
+        public override string Name => Doc.Name;
+        public override int MinWidth => Doc.MinWidth;
+        public override int MinHeight => Doc.MinHeight;
+        public override int PanelWidth => Doc.Width;
+        public override int PanelHeight => Doc.Height;
 
-        private LabelHandle _title;
-        private LabelHandle _message;
-        private ButtonHandle _confirm;
-        private ButtonHandle _cancel;
+        protected override int MinPanelHeight => Doc.MinHeight;
+        protected override bool PersistWindowPreferences => Doc.Persist;
+        protected override bool UseBackdrop => Doc.Backdrop;
+
+        private BuiltScreen _screen;
         private Action _onConfirm;
         private Action _onCancel;
 
@@ -50,36 +52,32 @@ namespace UnityGameTranslator.Core.UI.Panels
             Action onCancel = null,
             bool isDanger = true)
         {
-            _title.Say(title);
-            _message.Say(message);
-            _confirm.Label = confirmText;
+            _screen.Say("title", title);
+            _screen.Say("message", message);
+            _screen.Say("verb", confirmText);
             _onConfirm = onConfirm;
             _onCancel = onCancel;
 
-            _confirm.Tone = isDanger ? ButtonTone.Danger : ButtonTone.Primary;
+            // The one decision of this screen: a destructive verb reads as danger.
+            _screen.Button("ConfirmBtn").Tone = isDanger ? ButtonTone.Danger : ButtonTone.Primary;
 
             SetActive(true);
         }
 
         protected override void ConstructPanelContent()
         {
-            Layout(out var body, out var footer, PanelWidth - 40);
+            Layout(out var body, out var footer, Doc.CardWidth);
+            _screen = ScreenBuilder.Build(Doc, body, footer, ActOf);
+        }
 
-            var card = Stacks.Card(body, "ConfirmCard", 360);
-
-            // Written by Show, so Dynamic: translated at the moment they are written.
-            _title = Labels.Create(card, "Title", "Confirm", TextRole.Title, policy: TextPolicy.Dynamic);
-
-            Stacks.Spacer(card, 10);
-
-            _message = Labels.Create(card, "Message", "", TextRole.Description,
-                                     policy: TextPolicy.Dynamic, minHeight: UIStyles.MultiLineSmall);
-
-            _cancel = Buttons.Secondary(footer, "CancelBtn", "Cancel");
-            _cancel.Clicked += OnCancelClicked;
-
-            _confirm = Buttons.Primary(footer, "ConfirmBtn", "Confirm", policy: TextPolicy.Dynamic);
-            _confirm.Clicked += OnConfirmClicked;
+        private Action ActOf(string act)
+        {
+            switch (act)
+            {
+                case "confirm": return OnConfirmClicked;
+                case "cancel": return OnCancelClicked;
+                default: return null;
+            }
         }
 
         private void OnConfirmClicked()

@@ -32,6 +32,10 @@
          (Directory.Build.props): what ships is a single merged DLL, and an assembly absent
          from that list is missing at runtime with nothing at build time saying so. -->
     <ProjectReference Include="..\common\src\UnityGameTranslator.Common\UnityGameTranslator.Common.csproj" />
+    <!-- The screens described in data (common/spec/screens), shipped inside the one DLL the mod is:
+         ScreenDocument.FromEmbedded("confirm") reads screens/confirm.json from here. -->
+    <EmbeddedResource Include="..\common\spec\screens\*.json" Exclude="..\common\spec\screens\schema.json"
+                      LogicalName="screens/%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>

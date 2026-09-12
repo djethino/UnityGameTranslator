@@ -171,8 +171,11 @@ namespace UnityGameTranslator.Core.UI.Panels
                            int height, bool saved = false)
         {
             // Left 6, right 8, top 8, bottom 8 — the padding as it was, named.
+            // ⚠ The block grows too, or the list inside it has nothing to grow into: a flexible
+            // child of a pinned parent is still pinned.
             var block = Stacks.Vertical(_listHost, "Group", spacing: 4, pad: new Pad(6, 8, 8, 8),
-                                        surface: Surface.Elevated);
+                                        surface: Surface.Elevated,
+                                        fillHeight: entries.Count > 0);
 
             var titleRow = Stacks.Row(block, "Heading", spacing: 8, minHeight: UIStyles.SectionTitleHeight);
 
@@ -197,8 +200,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             // 🔴 Its own scroll area, capped. Ten rows in the outer scroll would push the second
             // heading below the fold, and somebody scrolling to reach it loses the first — which
             // is the state the whole screen exists to compare against.
+            // 🔴 **It grows with the window, and the two lists split the room by what they hold.**
+            // It used to be pinned (`fillHeight: false`) to a figure written here, so enlarging the
+            // panel enlarged the empty space around the lists and nothing else — reported as "it
+            // looks like I am not allowed to make the backups panel bigger". And the share is the
+            // ROW COUNT, so a list of one no longer takes as much room as a list of ten beside it.
             var list = ScrollList.Create(block, "Rows", minHeight: Math.Min(height, entries.Count * 40 + 8),
-                                         preferredHeight: height, fillHeight: false, spacing: 4);
+                                         preferredHeight: height, spacing: 4, share: entries.Count);
 
             foreach (var entry in entries) Row(list.Rows, entry);
 

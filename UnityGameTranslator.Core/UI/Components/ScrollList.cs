@@ -26,15 +26,27 @@ namespace UnityGameTranslator.Core.UI.Components
 
         /// <param name="minHeight">The least room it takes.</param>
         /// <param name="fillHeight">Grow with the panel — the list is what should grow when the window does.</param>
+        /// <param name="share">
+        /// How much of the spare room this list takes when it shares a panel with others.
+        ///
+        /// 🔴 **Two lists that grow equally are two lists that ignore what is in them.** Unity
+        /// divides the leftover height between flexible children in proportion to this number, and
+        /// every list asking for the same 9999 gets the same half — so a list of one row was given
+        /// as much room as a list of ten beside it, with the first mostly empty and the second
+        /// scrolling. Passing the NUMBER OF ROWS makes the split say what the lists hold.
+        ///
+        /// ⚠ Null keeps the old behaviour — take what there is — which is right for a list that is
+        /// alone in its panel and has nobody to share with.
+        /// </param>
         /// <param name="emptyText">Shown alone while the list holds no row; null for no such sentence.</param>
         /// <param name="padding">Room between the trough's edge and its rows, on all four sides.</param>
         public static ScrollList Create(Host parent, string name, int minHeight, int? preferredHeight = null,
                                         bool fillHeight = true, string emptyText = null, int spacing = 5,
-                                        int padding = 5)
+                                        int padding = 5, int? share = null)
         {
             var scroll = UIFactory.CreateScrollView(parent.Object, name, out GameObject rows, out _);
             UIFactory.SetLayoutElement(scroll, minHeight: minHeight, preferredHeight: preferredHeight ?? minHeight,
-                                       flexibleHeight: fillHeight ? 9999 : 0, flexibleWidth: 9999);
+                                       flexibleHeight: fillHeight ? (share ?? 9999) : 0, flexibleWidth: 9999);
             UIFactory.SetLayoutGroup<VerticalLayoutGroup>(rows, false, false, true, true, spacing,
                                                           padding, padding, padding, padding);
 

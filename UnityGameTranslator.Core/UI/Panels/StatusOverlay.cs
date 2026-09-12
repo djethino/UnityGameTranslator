@@ -322,12 +322,13 @@ namespace UnityGameTranslator.Core.UI.Panels
         public void TickToast()
         {
             if (_toast == null || !_toast.Visible) return;
-            if (Clock.Now >= _toastHideTime)
-            {
-                _toast.Visible = false;
-                // Trigger a refresh so the normal boxes come back immediately.
-                RefreshOverlay();
-            }
+
+            // ⚠ Asked to leave, then seen out. The box stays visible while it fades, so the refresh
+            // that brings the other boxes back waits for it to be actually gone — bringing them
+            // back over a fading toast would be two things on screen saying different states.
+            if (Clock.Now >= _toastHideTime) _toast.BeginHide();
+
+            if (!_toast.Tick()) RefreshOverlay();
         }
 
         private void CreateModUpdateBox(Host stack)

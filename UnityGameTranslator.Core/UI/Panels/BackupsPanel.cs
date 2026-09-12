@@ -88,9 +88,20 @@ namespace UnityGameTranslator.Core.UI.Panels
             _nowLabel.Bold = true;
 
             // The rows themselves are the only thing that scrolls, in the panel's own scroll area.
-            var card = Stacks.Card(body, "BackupsCard", PanelWidth - 40);
+            // 🔴 **stretchVertically, like every other panel's card.** Without it the card has no
+            // flexible height at all, and the panel's scroll area centres what it holds — so the
+            // two lists sat frozen in the middle of a window somebody had just enlarged, with the
+            // new space going to the margins. Reported as "cet écran ne suit pas du tout la
+            // philosophie des autres panels", which is exactly what it was: Inspector, Main, Merge
+            // and Options all pass this, and this one did not.
+            //
+            // ⚠ It is the third and last link. Freeing the lists did nothing while their block was
+            // pinned; freeing the block did nothing while the card was; and none of it mattered
+            // while MaxHeight capped the panel at its content. A chain of four, and three of them
+            // silently undo the fourth.
+            var card = Stacks.Card(body, "BackupsCard", PanelWidth - 40, stretchVertically: true);
 
-            _listHost = Stacks.Vertical(card, "List", spacing: 6);
+            _listHost = Stacks.Vertical(card, "List", spacing: 6, fillHeight: true);
 
             var closeBtn = Buttons.Secondary(footer, "CloseBtn", "Close");
             closeBtn.Clicked += () => SetActive(false);

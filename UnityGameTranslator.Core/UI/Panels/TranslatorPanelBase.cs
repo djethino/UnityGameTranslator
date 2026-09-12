@@ -371,6 +371,22 @@ namespace UnityGameTranslator.Core.UI.Panels
         }
 
         /// <summary>
+        /// The window's height as laid out, or zero before any layout has run.
+        ///
+        /// ⚠ Zero rather than the declared height, and that is the useful answer: a panel asking
+        /// how much room it has before it has any should be told it does not know, not handed a
+        /// figure that will be wrong. What reads this (ListShares) treats zero as "not measured"
+        /// and falls back to giving each list its own content.
+        ///
+        /// ⚠ Here rather than in a panel because Rect is an engine type: a panel holds handles and
+        /// numbers, never a RectTransform — see UiBoundaryChecks rule 1.
+        /// </summary>
+        protected float WindowHeight()
+        {
+            return Rect != null && Rect.rect.height > 1f ? Rect.rect.height : 0f;
+        }
+
+        /// <summary>
         /// Override ConstructUI to use construction mode.
         /// This ensures all text created during panel construction is skipped from translation,
         /// preventing race conditions where texts are queued before we can register them.

@@ -43,6 +43,16 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         protected override bool HasFlexibleContent => true;
 
+        /// <summary>
+        /// What one row comes to, heading and qualifiers included.
+        ///
+        /// ⚠ An estimate, and it only ever decides how much a list ASKS for — the scroll area is
+        /// what handles being wrong. Too small and a full list scrolls slightly sooner than it
+        /// needs to; too large and it asks for room it gives back. Both are recoverable, which is
+        /// why this is a number here rather than a measuring pass.
+        /// </summary>
+        private const int RowSpace = 56;
+
         private Host _listHost;
         private LabelHandle _nowLabel;
         private ButtonHandle _saveBtn;
@@ -135,16 +145,51 @@ namespace UnityGameTranslator.Core.UI.Panels
             // screen was one undifferentiated list. Each group now owns a titled block with its
             // own scroll area, so its heading is always above its own rows and never above
             // somebody else's.
+            // 🔴 **How much room each list asks for is decided together, before either is built.**
+            // The rule is in the socle — see ListShares — because the Manager's window asks it of
+            // the same two lists. A list alone fills the panel; two that both fit stop at their
+            // last row; two that do not share what is there, the one that nearly fitted served
+            // first.
+            //
+            // ⚠ Only the lists that HAVE rows are counted. An empty group is a sentence, not a
+            // scroll area, and holding room for it is holding room for nothing.
+            var wants = new List<double>();
+            if (saved.Count > 0) wants.Add(RowSpace * saved.Count + 8);
+            if (automatic.Count > 0) wants.Add(RowSpace * automatic.Count + 8);
+
+            var shares = ListShares.Split(wants, RoomForLists());
+            var next = 0;
+
             Group(Backups.SavedHeading, $"{saved.Count} of {Backups.SavedKept}", saved,
                   "No backups yet. Take one before you try something, and you can walk back out "
                   + "of whatever you try.",
-                  height: 190, saved: true);
+                  share: saved.Count > 0 ? shares[next++] : default, saved: true);
 
             Stacks.Spacer(_listHost, 12);
 
             Group(Backups.AutomaticHeading, Backups.AutomaticNote, automatic,
                   "Nothing yet. One is taken whenever something replaces your translation.",
-                  height: 150);
+                  share: automatic.Count > 0 ? shares[next] : default);
+
+            // 🔴 **Where the spare room goes when both lists already show everything.** Without
+            // somewhere to put it, the layout hands it back to the lists, and a list given room it
+            // has nothing to fill draws a gap under its last row. Here it falls below them both,
+            // which is what an enlarged window with little in it should look like.
+            Stacks.Vertical(_listHost, "Rest", fillHeight: true);
+        }
+
+        /// <summary>
+        /// Roughly how much height the two lists have between them.
+        ///
+        /// ⚠ An estimate, and a safe one to get wrong: handing ListShares a zero means "not
+        /// measured", and it answers with each list asking for its own content — which is exactly
+        /// what should happen before the panel has a size. The chrome is the fixed header, the two
+        /// group headings, the Backup button and the footer.
+        /// </summary>
+        private float RoomForLists()
+        {
+            var height = WindowHeight();
+            return height > 0 ? Math.Max(0f, height - 300f) : 0f;
         }
 
         /// <summary>
@@ -191,14 +236,16 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// weight as the rows beneath it, which is how a heading stops reading as one.
         /// </summary>
         private void Group(string heading, string note, List<BackupEntry> entries, string empty,
-                           int height, bool saved = false)
+                           ListShare share, bool saved = false)
         {
             // Left 6, right 8, top 8, bottom 8 — the padding as it was, named.
             // ⚠ The block grows too, or the list inside it has nothing to grow into: a flexible
             // child of a pinned parent is still pinned.
+            // ⚠ The block grows only when its list does: a pinned parent pins a flexible child, and
+            // a flexible parent hands spare room to a list that has nothing to put there.
             var block = Stacks.Vertical(_listHost, "Group", spacing: 4, pad: new Pad(6, 8, 8, 8),
                                         surface: Surface.Elevated,
-                                        fillHeight: entries.Count > 0);
+                                        fillHeight: share.Weight > 0);
 
             var titleRow = Stacks.Row(block, "Heading", spacing: 8, minHeight: UIStyles.SectionTitleHeight);
 
@@ -223,13 +270,28 @@ namespace UnityGameTranslator.Core.UI.Panels
             // 🔴 Its own scroll area, capped. Ten rows in the outer scroll would push the second
             // heading below the fold, and somebody scrolling to reach it loses the first — which
             // is the state the whole screen exists to compare against.
-            // 🔴 **It grows with the window, and the two lists split the room by what they hold.**
-            // It used to be pinned (`fillHeight: false`) to a figure written here, so enlarging the
-            // panel enlarged the empty space around the lists and nothing else — reported as "it
-            // looks like I am not allowed to make the backups panel bigger". And the share is the
-            // ROW COUNT, so a list of one no longer takes as much room as a list of ten beside it.
-            var list = ScrollList.Create(block, "Rows", minHeight: Math.Min(height, entries.Count * 40 + 8),
-                                         preferredHeight: height, spacing: 4, share: entries.Count);
+            // 🔴 **It asks for exactly what it holds, and for no more.** Sharing the spare room in
+            // proportion to the row counts was still wrong: a list of three got three elevenths of
+            // a tall window, showed its three rows and then a gap, while the list of eight beside
+            // it was still scrolling. Reported as "la liste au dessus grandit en montrant du vide
+            // plutôt que de se bloquer quand elle a affiché tout son contenu".
+            //
+            // A preferred height equal to the whole content, and NO flexible height, is what says
+            // that: Unity hands out the preferred sizes first, so a list that fits stops at its
+            // content, and what is left over goes to the spacer below the groups rather than into
+            // a list that has nothing more to show. When the window is too small for both, the
+            // layout trims them in proportion to what they asked for — which is the row counts
+            // again, so the longer list keeps the larger share.
+            // ⚠ Both numbers come from the shared rule: what it asks for, and whether it takes any
+            // of what is left. A weight of zero is a list that already shows everything — and
+            // handing it spare room is the gap under the last row this whole passage is about.
+            var asked = (int)Math.Round(share.Preferred);
+            var weight = (int)Math.Round(share.Weight);
+
+            var list = ScrollList.Create(block, "Rows",
+                                         minHeight: Math.Min(asked, RowSpace * 2),
+                                         preferredHeight: asked,
+                                         fillHeight: weight > 0, spacing: 4, share: weight);
 
             foreach (var entry in entries) Row(list.Rows, entry);
 

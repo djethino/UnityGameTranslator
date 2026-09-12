@@ -140,11 +140,36 @@ namespace UnityGameTranslator.Core.UI.Components
         /// <summary>What draws it. For the components, never for a panel.</summary>
         internal abstract GameObject Object { get; }
 
-        /// <summary>Shown or hidden. Hidden takes no room.</summary>
+        /// <summary>
+        /// Shown or hidden. Hidden takes no room.
+        ///
+        /// 🔴 **Appearing is a movement, and this is the one place that sees every one of them.**
+        /// Every piece of the vocabulary is shown through this setter, so a block arriving grows
+        /// into place from here — the boxes of the overlay, the cards, the rows, and anything
+        /// written afterwards. Reported as "everything is too raw": a program whose blocks blink in
+        /// reads as unfinished however good each screen is. The alternative was a call at each of
+        /// the hundreds of sites that show something, which is a rule forgotten the day after it is
+        /// written.
+        ///
+        /// ⚠ Only on a REAL change. Refreshing a screen sets Visible on things already visible, and
+        /// replaying the movement then would make a panel shimmer every time anything in it moved.
+        ///
+        /// ⚠ Hiding is immediate and stays so: hidden takes no room, so fading a block out would
+        /// mean holding a gap open for something already gone. An arrival nobody notices costs a
+        /// reading; a departure nobody watches costs nothing.
+        /// </summary>
         public bool Visible
         {
             get => Object != null && Object.activeSelf;
-            set { if (Object != null) Object.SetActive(value); }
+            set
+            {
+                if (Object == null) return;
+
+                bool was = Object.activeSelf;
+                Object.SetActive(value);
+
+                if (value && !was) Appearances.Block(Object);
+            }
         }
 
         /// <summary>Its name in the hierarchy — the name it was created with.</summary>

@@ -5419,7 +5419,7 @@ namespace UnityGameTranslator.Core.UI
 
             // ⚠ Before the overlay, and not inside it: UpdateStatusOverlay returns early when there
             // is no overlay, and a panel opening must move whether or not notifications exist.
-            Components.PanelEntry.Tick();
+            Components.Appearances.Tick();
 
             // Manage status overlay visibility
             UpdateStatusOverlay();

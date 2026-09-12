@@ -4,14 +4,26 @@ using UnityEngine;
 namespace UnityGameTranslator.Core.UI.Components
 {
     /// <summary>
-    /// The small movement a panel makes as it opens.
+    /// The small movement anything makes as it appears — a whole panel, or one box inside one.
     ///
-    /// 🔴 **Because appearing and being there look the same.** A window that is simply switched on
-    /// between two frames gives the eye nothing to follow: it was not there, now it is, and whether
-    /// it is the one just asked for or one that was already open is a question the reader has to
+    /// 🔴 **Because appearing and being there look the same.** Something simply switched on between
+    /// two frames gives the eye nothing to follow: it was not there, now it is, and whether it is
+    /// what was just asked for or something that was already up is a question the reader has to
     /// answer by reading. A short growth into place answers it before any word is read — the same
     /// job the give at the end of a scroll does for "that was the end", and the toast for "this is
     /// new".
+    ///
+    /// 🔴 **Two profiles, one mechanism, and every appearance in this mod goes through it.** A
+    /// panel is a window opening; a box is a line of an answer arriving. They want the same gesture
+    /// at different sizes, not two gestures — so the difference is two numbers, and the movement,
+    /// the clock and the registry are shared. Reported as "everything is too raw": a program where
+    /// blocks blink in reads as unfinished however good each screen is.
+    ///
+    /// ⚠ **Where a block appearance is triggered from is the one place that can see them all**:
+    /// `Handle.Visible`, which every piece of the vocabulary sets. One line there covers the boxes
+    /// of the overlay, the cards, the rows, and anything written afterwards — the alternative was a
+    /// call at each of the hundreds of sites that show something, which is a rule that gets
+    /// forgotten the day after it is written.
     ///
     /// 🔴 **SCALE only, and the alpha is deliberately left alone.** The panel's CanvasGroup already
     /// belongs to something else: TranslatorUIManager writes it every time focus changes, to dim
@@ -29,10 +41,19 @@ namespace UnityGameTranslator.Core.UI.Components
     /// after it has been closed would make "is it open?" answerable two ways. A departure nobody
     /// watches costs nothing; an arrival nobody notices costs a reading.
     /// </summary>
-    public static class PanelEntry
+    public static class Appearances
     {
-        /// <summary>How long the movement lasts, in seconds. Short enough to be felt, not watched.</summary>
-        private const float Span = 0.16f;
+        /// <summary>How long a panel's movement lasts. Short enough to be felt, not watched.</summary>
+        private const float PanelSpan = 0.16f;
+
+        /// <summary>
+        /// And a box's, which is shorter.
+        ///
+        /// ⚠ A block is small and there may be several at once — a refreshed overlay shows three.
+        /// The same duration as a window would read as the screen labouring; briefer reads as the
+        /// content settling.
+        /// </summary>
+        private const float BlockSpan = 0.11f;
 
         /// <summary>
         /// How long the panel is held out of sight before it grows, in seconds.
@@ -57,49 +78,71 @@ namespace UnityGameTranslator.Core.UI.Components
         private const float Settling = 0.066f;
 
         /// <summary>
-        /// How small it starts. Just under one: the panel settles into place rather than zooming.
+        /// How small a panel starts. Just under one: it settles into place rather than zooming.
         ///
         /// ⚠ A larger number reads as a flourish, and these windows carry settings and warnings,
         /// not celebrations.
         /// </summary>
-        private const float FromScale = 0.93f;
+        private const float PanelFrom = 0.93f;
+
+        /// <summary>
+        /// And a box, which starts closer to its size.
+        ///
+        /// ⚠ Deliberately slight. A block sits INSIDE something already on screen, so a movement
+        /// big enough to notice on its own would read as the panel around it jumping.
+        /// </summary>
+        private const float BlockFrom = 0.97f;
 
         private static readonly List<Transform> _playing = new List<Transform>();
         private static readonly List<float> _startedAt = new List<float>();
+        private static readonly List<bool> _isPanel = new List<bool>();
 
         /// <summary>
-        /// Starts the movement on a panel that has just become visible.
+        /// Starts a panel opening: held out of sight while it sizes itself, then grown in.
         ///
         /// ⚠ Called only on a real change from hidden to shown. The drag handle calls SetActive(true)
         /// on every frame it is held, so playing this on every call would keep a panel permanently
-        /// at 96% while it is being moved — see the note on _reportedVisible in TranslatorPanelBase.
+        /// under size while it is being moved — see the note on _reportedVisible in
+        /// TranslatorPanelBase.
         /// </summary>
         /// <remarks>
         /// ⚠ `internal`, like every engine-typed member the legacy components keep for each other
         /// and for the base: what crosses the frontier in public is a handle, never a GameObject.
         /// `UiBoundaryChecks` rule 2 enforces it, and caught this the first time it was written.
         /// </remarks>
-        internal static void Play(GameObject panel)
-        {
-            if (panel == null) return;
+        internal static void Panel(GameObject panel) => Start(panel, true);
 
-            var transform = panel.transform;
+        /// <summary>
+        /// Starts a box arriving inside something already on screen.
+        ///
+        /// ⚠ No settling wait: a block is laid out by its parent, which is already measured. The
+        /// wait exists for a window that has to find its own size first.
+        /// </summary>
+        internal static void Block(GameObject box) => Start(box, false);
+
+        private static void Start(GameObject target, bool panel)
+        {
+            if (target == null) return;
+
+            var transform = target.transform;
             if (transform == null) return;
 
             var known = _playing.IndexOf(transform);
             if (known >= 0)
             {
                 _startedAt[known] = Clock.Now;
+                _isPanel[known] = panel;
             }
             else
             {
                 _playing.Add(transform);
                 _startedAt.Add(Clock.Now);
+                _isPanel.Add(panel);
             }
 
-            // Out of sight while it sizes itself — see Settling. Nothing is watching yet, so
-            // nothing has to be smooth about this.
-            transform.localScale = Vector3.zero;
+            // A panel goes out of sight while it sizes itself — see Settling. A block starts at its
+            // own beginning, since there is nothing to wait for.
+            transform.localScale = panel ? Vector3.zero : Vector3.one * BlockFrom;
         }
 
         /// <summary>
@@ -123,34 +166,43 @@ namespace UnityGameTranslator.Core.UI.Components
                 // means this has to be asked rather than assumed.
                 if (transform == null)
                 {
-                    _playing.RemoveAt(i);
-                    _startedAt.RemoveAt(i);
+                    Forget(i);
                     continue;
                 }
 
+                bool panel = _isPanel[i];
                 var since = Clock.Now - _startedAt[i];
+                var wait = panel ? Settling : 0f;
 
-                // Still sizing itself. Kept out of sight rather than shown mid-rearrangement.
-                if (since < Settling)
+                // A panel is still sizing itself: kept out of sight rather than shown
+                // mid-rearrangement.
+                if (since < wait)
                 {
                     transform.localScale = Vector3.zero;
                     continue;
                 }
 
-                var t = Mathf.Clamp01((since - Settling) / Span);
+                var t = Mathf.Clamp01((since - wait) / (panel ? PanelSpan : BlockSpan));
 
                 // Eased out, so it decelerates into place instead of arriving at a stop.
                 var eased = 1f - (1f - t) * (1f - t) * (1f - t);
-                transform.localScale = Vector3.one * Mathf.Lerp(FromScale, 1f, eased);
+                var from = panel ? PanelFrom : BlockFrom;
+                transform.localScale = Vector3.one * Mathf.Lerp(from, 1f, eased);
 
                 if (t < 1f) continue;
 
-                // ⚠ Put back to exactly one rather than near it: a panel left at 0.999 is a whole
+                // ⚠ Put back to exactly one rather than near it: anything left at 0.999 is a whole
                 // subtree re-rasterised for ever at a size nothing asked for.
                 transform.localScale = Vector3.one;
-                _playing.RemoveAt(i);
-                _startedAt.RemoveAt(i);
+                Forget(i);
             }
+        }
+
+        private static void Forget(int i)
+        {
+            _playing.RemoveAt(i);
+            _startedAt.RemoveAt(i);
+            _isPanel.RemoveAt(i);
         }
     }
 }

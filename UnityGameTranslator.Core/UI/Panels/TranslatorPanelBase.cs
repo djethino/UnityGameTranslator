@@ -460,7 +460,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // ⚠ Here and nowhere else: this is the one place that knows a panel really changed
                 // state. SetActive(true) arrives on every frame the drag handle is held, and
                 // playing the movement on each would hold the panel at 96% for the whole drag.
-                if (active) Components.PanelEntry.Play(UIRoot);
+                if (active) Components.Appearances.Panel(UIRoot);
 
                 VisibilityChanged?.Invoke(this, active);
             }

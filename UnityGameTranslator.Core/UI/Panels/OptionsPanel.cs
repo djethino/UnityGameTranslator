@@ -40,6 +40,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         private LabelHandle _lockedHeader;
         private LabelHandle _lockedSourceLangValue;
         private LabelHandle _lockedTargetLangValue;
+        private Host _lockedSourceMark;
+        private Host _lockedTargetMark;
 
         // Interface section
         private LabelHandle _resetWindowsStatusLabel;
@@ -534,14 +536,22 @@ namespace UnityGameTranslator.Core.UI.Panels
             _lockedHeader = Labels.Create(_languagesLockedSection, "LockedHeader", "", TextRole.Small,
                                           tone: Tone.Warning, policy: TextPolicy.Dynamic);
 
+            // ⚠ The flag goes here too. These two rows say exactly what the pickers above them say,
+            // for a file whose languages are settled — and a language drawn with its flag in one
+            // place and as bare text three lines below reads as two different things. Held in a
+            // container of their own because the value changes and the mark is rebuilt with it.
             var sourceRow = Stacks.Row(_languagesLockedSection, "SourceRow", spacing: 5, minHeight: UIStyles.RowHeightNormal);
             Labels.Create(sourceRow, "SourceLabel", "Source:", TextRole.Info, minWidth: 60);
+
+            _lockedSourceMark = Stacks.Row(sourceRow, "SourceMark", spacing: 0);
 
             _lockedSourceLangValue = Labels.Create(sourceRow, "SourceValue", "-", TextRole.Body,
                                                    policy: TextPolicy.Dynamic, fill: Fill.Stretch);
 
             var targetRow = Stacks.Row(_languagesLockedSection, "TargetRow", spacing: 5, minHeight: UIStyles.RowHeightNormal);
             Labels.Create(targetRow, "TargetLabel", "Target:", TextRole.Info, minWidth: 60);
+
+            _lockedTargetMark = Stacks.Row(targetRow, "TargetMark", spacing: 0);
 
             _lockedTargetLangValue = Labels.Create(targetRow, "TargetValue", "-", TextRole.Body,
                                                    policy: TextPolicy.Dynamic, fill: Fill.Stretch);
@@ -1608,15 +1618,36 @@ namespace UnityGameTranslator.Core.UI.Panels
                     string sourceLang = TranslatorCore.Config.source_language;
                     string targetLang = TranslatorCore.Config.target_language;
 
-                    _lockedSourceLangValue.Show(string.IsNullOrEmpty(sourceLang) || sourceLang == "auto"
-                        ? "Auto (Detect)"
-                        : sourceLang);
+                    bool sourceIsAuto = string.IsNullOrEmpty(sourceLang) || sourceLang == "auto";
+                    bool targetIsAuto = string.IsNullOrEmpty(targetLang) || targetLang == "auto";
 
-                    _lockedTargetLangValue.Show(string.IsNullOrEmpty(targetLang) || targetLang == "auto"
-                        ? "Auto (System)"
-                        : targetLang);
+                    _lockedSourceLangValue.Show(sourceIsAuto ? "Auto (Detect)" : sourceLang);
+                    _lockedTargetLangValue.Show(targetIsAuto ? "Auto (System)" : targetLang);
+
+                    // ⚠ Rebuilt rather than tinted: a mark is a flag image, and the flag is not the
+                    // same one. An "auto" row stands for no language yet and gets none — which is
+                    // what LanguageMark answers on a name the catalogue does not know.
+                    ShowMark(_lockedSourceMark, sourceIsAuto ? null : sourceLang);
+                    ShowMark(_lockedTargetMark, targetIsAuto ? null : targetLang);
                 }
             }
+        }
+
+        /// <summary>
+        /// Puts the flag for <paramref name="languageName"/> in its holder, or empties it.
+        ///
+        /// ⚠ Through LanguageMark, like every other flag in this mod: one drawing of a language,
+        /// wherever it appears. A name the catalogue does not know — and "auto", which names a
+        /// behaviour rather than a language — leaves the holder empty rather than guessing.
+        /// </summary>
+        private static void ShowMark(Host holder, string languageName)
+        {
+            if (holder == null) return;
+
+            holder.Clear();
+            if (string.IsNullOrEmpty(languageName)) return;
+
+            LanguageMark.Create(holder, "Mark", languageName);
         }
 
         private void OnOnlineModeChanged(bool enabled)

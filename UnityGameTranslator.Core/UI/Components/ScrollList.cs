@@ -24,29 +24,30 @@ namespace UnityGameTranslator.Core.UI.Components
             _empty = empty;
         }
 
-        /// <param name="minHeight">The least room it takes.</param>
-        /// <param name="fillHeight">Grow with the panel — the list is what should grow when the window does.</param>
-        /// <param name="share">
-        /// How much of the spare room this list takes when it shares a panel with others.
+        /// <param name="minHeight">The least room it takes — its floor, never squeezed below it.</param>
+        /// <param name="preferredHeight">
+        /// What it asks for: everything it holds, and never more.
         ///
-        /// 🔴 **Two lists that grow equally are two lists that ignore what is in them.** Unity
-        /// divides the leftover height between flexible children in proportion to this number, and
-        /// every list asking for the same 9999 gets the same half — so a list of one row was given
-        /// as much room as a list of ten beside it, with the first mostly empty and the second
-        /// scrolling. Passing the NUMBER OF ROWS makes the split say what the lists hold.
-        ///
-        /// ⚠ Null keeps the old behaviour — take what there is — which is right for a list that is
-        /// alone in its panel and has nobody to share with.
+        /// 🔴 **A ceiling, not a wish.** A list handed room it has nothing to fill draws a gap under
+        /// its last row, which is what "elle grandit en montrant du vide plutôt que de se bloquer"
+        /// was. Defaults to the minimum, which is right for a list whose content is not known in
+        /// rows.
+        /// </param>
+        /// <param name="fillHeight">
+        /// Take the spare room as well. **False whenever this list shares a surface**: Unity divides
+        /// the leftover height between flexible children, and two lists both asking for it get half
+        /// each whatever they hold — which is how a list of three rows took as much room as the list
+        /// of ten beside it. Spare room belongs to a spacer, not to a list.
         /// </param>
         /// <param name="emptyText">Shown alone while the list holds no row; null for no such sentence.</param>
         /// <param name="padding">Room between the trough's edge and its rows, on all four sides.</param>
         public static ScrollList Create(Host parent, string name, int minHeight, int? preferredHeight = null,
                                         bool fillHeight = true, string emptyText = null, int spacing = 5,
-                                        int padding = 5, int? share = null)
+                                        int padding = 5)
         {
             var scroll = UIFactory.CreateScrollView(parent.Object, name, out GameObject rows, out _);
             UIFactory.SetLayoutElement(scroll, minHeight: minHeight, preferredHeight: preferredHeight ?? minHeight,
-                                       flexibleHeight: fillHeight ? (share ?? 9999) : 0, flexibleWidth: 9999);
+                                       flexibleHeight: fillHeight ? 9999 : 0, flexibleWidth: 9999);
             UIFactory.SetLayoutGroup<VerticalLayoutGroup>(rows, false, false, true, true, spacing,
                                                           padding, padding, padding, padding);
 
@@ -106,8 +107,25 @@ namespace UnityGameTranslator.Core.UI.Components
         /// </summary>
         public void ToTop()
         {
+            if (_scroll == null) return;
+
+            UniverseLib.RuntimeHelper.StartCoroutine(TopOnceLaidOut());
+        }
+
+        /// <summary>
+        /// 🔴 **One frame later, or it does nothing at all.** A ScrollRect works its position out
+        /// from the size of its content against the size of its viewport, and a list that has just
+        /// been filled has neither until the layout has run: the value is written, then recomputed
+        /// from what the scroller believes it holds — nothing — and the list stays exactly where it
+        /// was. Written straight after the rows were added, this call had no effect for as long as
+        /// it existed, and both lists went on opening part-way down.
+        /// </summary>
+        private System.Collections.IEnumerator TopOnceLaidOut()
+        {
+            yield return null;
+
             var rect = _scroll != null ? _scroll.GetComponent<ScrollRect>() : null;
-            if (rect == null) return;
+            if (rect == null) yield break;
 
             rect.verticalNormalizedPosition = 1f;
         }

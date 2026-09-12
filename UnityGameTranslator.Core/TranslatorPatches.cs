@@ -4218,7 +4218,7 @@ namespace UnityGameTranslator.Core
             if (_initCallbackRegistered) return;
             _initCallbackRegistered = true;
 
-            UI.TranslatorUIManager.OnInitialized += OnUIInitialized;
+            TranslatorCore.HostReady += OnUIInitialized;
             TranslatorCore.LogDebug("[AlternateTMP] Registered init callback for pending font replacements");
         }
 
@@ -4248,7 +4248,7 @@ namespace UnityGameTranslator.Core
 
             // Use RunDelayed to wait a few frames for Unity to stabilize
             // This is critical: applying font immediately after init often fails
-            UI.TranslatorUIManager.RunDelayed(0.1f, () => ProcessPendingFontReplacements(toProcess));
+            TranslatorCore.Host?.RunLater(0.1f, () => ProcessPendingFontReplacements(toProcess));
         }
 
         /// <summary>
@@ -4748,7 +4748,7 @@ namespace UnityGameTranslator.Core
                         // If UI not ready yet, queue for later processing
                         // DON'T apply font here - it will be reset by the game before we can replay
                         // We queue the component and will apply font + translation together after init
-                        if (needsFontReplacement && !UI.TranslatorUIManager.IsInitialized)
+                        if (needsFontReplacement && !TranslatorCore.HostIsReady)
                         {
                             RegisterInitCallback();
                             if (!_pendingFontReplacements.ContainsKey(instanceId))

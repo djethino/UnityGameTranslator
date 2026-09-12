@@ -193,6 +193,8 @@
     <Compile Include="../../UnityGameTranslator.Core/Engine/TranslationStore.cs" />
     <!-- The screens' sequence rules: which window is up after which act. No Unity: a view is an IScreen. -->
     <Compile Include="../../UnityGameTranslator.Core/Engine/Screens.cs" />
+    <!-- What the engine asks of its host. No Unity: the day it needs one, this stops compiling. -->
+    <Compile Include="../../UnityGameTranslator.Core/Engine/EngineHost.cs" />
     <!--
       The socle, as an assembly rather than as files. It has no Unity reference of any kind — the
       mod, the manager and this project all read the same build — so the reasoning above does not

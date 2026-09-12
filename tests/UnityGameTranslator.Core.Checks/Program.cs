@@ -229,6 +229,7 @@ namespace UnityGameTranslator.Core.Checks
         {
             Section("UI frontier (panels hold handles only)", UiBoundaryChecks.Run);
             Section("Screen router (which screen is up after which act)", ScreenRouterChecks.Run);
+            Section("Engine frontier (the engine names nothing of the interface)", EngineFrontierChecks.Run);
         }
 
         /// <summary>Which strings trigger the presentation pass, and what shaping makes of them.</summary>

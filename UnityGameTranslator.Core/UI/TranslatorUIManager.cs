@@ -50,8 +50,6 @@ namespace UnityGameTranslator.Core.UI
         private static bool _initialized;
         public static bool IsInitialized => _initialized;
 
-        // Callback for when initialization completes (used by TranslatorPatches to retry failed font replacements)
-        public static event Action OnInitialized;
         private static bool _lastPanelVisibleState; // Track panel state for EventSystem and cursor management
 
         // True while the mod's interface owns the game's input. Follows the panels, but lags them
@@ -275,6 +273,10 @@ namespace UnityGameTranslator.Core.UI
             if (_initialized)
                 return;
 
+            // The engine's host, from here on: every fact the engine states lands on this class
+            // through EngineHostAdapter, never by name.
+            TranslatorCore.AttachHost(new EngineHostAdapter());
+
             TranslatorCore.LogInfo("[UIManager] Initializing UniverseLib...");
 
             ApiClient.OnAuthenticationRejected += HandleAuthenticationRejected;
@@ -409,8 +411,8 @@ namespace UnityGameTranslator.Core.UI
 
             _initialized = true;
 
-            // Notify listeners (e.g., TranslatorPatches to retry failed font replacements)
-            try { OnInitialized?.Invoke(); } catch { }
+            // The engine's listeners (the patches replay the font replacements they held back).
+            TranslatorCore.NotifyHostReady();
 
             // Initialize UI state based on config
             InitializeUIState();

@@ -12,7 +12,6 @@ using System.Threading.Tasks;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
-using UnityGameTranslator.Core.UI;
 using UnityGameTranslator.Common;
 // The pure text rules moved to Engine/TextNormalization.cs on 2026-09-08 — placeholders,
 // markup, line endings, and the two questions about letters. Imported unqualified so the
@@ -74,6 +73,33 @@ namespace UnityGameTranslator.Core
         public static TranslatorCore Instance { get; private set; }
         public static IModLoaderAdapter Adapter { get; private set; }
         public static volatile bool ShuttingDown;
+
+        /// <summary>
+        /// Whoever hosts the engine on this machine — the interface, attached at its start, or
+        /// nothing at all (the engine translates a game with no window). Every reach from the
+        /// engine to a screen goes through it, as <c>Host?.</c> (Engine/EngineHost.cs).
+        /// </summary>
+        public static IEngineHost Host { get; private set; }
+
+        /// <summary>
+        /// The host is ready to be drawn on. Held HERE, not on the host: the patches can fire on
+        /// the first scene before any host exists, and must still be able to wait for one.
+        /// </summary>
+        public static event Action HostReady;
+
+        public static bool HostIsReady => Host != null && Host.IsReady;
+
+        public static void AttachHost(IEngineHost host)
+        {
+            Host = host ?? throw new ArgumentNullException(nameof(host));
+        }
+
+        /// <summary>Said by the host once it is built. Raised at most once per attachment.</summary>
+        public static void NotifyHostReady()
+        {
+            if (Host == null) throw new InvalidOperationException("No host is attached.");
+            try { HostReady?.Invoke(); } catch (Exception e) { Adapter?.LogError($"[Host] A ready handler threw: {e.GetType().Name}: {e.Message}"); }
+        }
         public static ModConfig Config { get; private set; } = new ModConfig();
         public static Dictionary<string, TranslationEntry> TranslationCache { get; private set; } = new Dictionary<string, TranslationEntry>();
 
@@ -1857,14 +1883,10 @@ namespace UnityGameTranslator.Core
             // A game left frozen would be unplayable, and nothing else would put it right.
             try { GamePause.Release(); } catch { }
 
-            // Stop SSE streams (background tasks with HTTP connections)
-            try { TranslatorUIManager.StopSyncWatch(); } catch { }
-            try { TranslatorUIManager.StopMergeCompletionListener(); } catch { }
-
-            // Closing the game is one of the two legitimate session-end
-            // events — clean up the live edit session server-side (bounded
-            // wait; must run BEFORE httpClient disposal below)
-            try { TranslatorUIManager.EndEditSessionOnShutdown(); } catch { }
+            // The host stops its streams and ends the live edit session server-side (bounded
+            // wait) — closing the game is one of the two legitimate session-end events, and it
+            // must run BEFORE httpClient disposal below.
+            try { Host?.ShuttingDown(); } catch { }
 
             // Stop the LateUpdate coroutine
             try { TranslatorScanner.StopLateUpdateRunner(); } catch { }
@@ -2924,7 +2946,7 @@ namespace UnityGameTranslator.Core
             // What is on screen still describes the file that was there a moment ago. Said HERE
             // and not by the callers: it was one of five, and the four that forgot included
             // putting a backup back.
-            UI.TranslatorUIManager.NotifyTranslationReloaded();
+            Host?.TranslationReloaded();
         }
 
         /// <summary>
@@ -4353,13 +4375,7 @@ namespace UnityGameTranslator.Core
 
                 Adapter?.LogWarning($"[AI] {message} The line is left as it is and will be asked for again. "
                                     + "If the model is simply slow, raise timeout_ms in config.json.");
-                try
-                {
-                    UI.TranslatorUIManager.RunOnMainThread(() =>
-                        UI.TranslatorUIManager.StatusOverlay?.ShowToast(message,
-                            UI.ToastTone.Off));
-                }
-                catch { }
+                try { Host?.Warn(message); } catch { }
                 return null;
             }
         }
@@ -6464,9 +6480,9 @@ namespace UnityGameTranslator.Core
                 }
             }
 
-            // Live edit session: push the change to the browser editor
-            // (debounced + hash-checked by the UI manager, no-op otherwise)
-            UI.TranslatorUIManager.NotifyLocalFileChanged();
+            // Live edit session: the host pushes the change to the browser editor
+            // (debounced + hash-checked there, no-op otherwise)
+            Host?.LocalFileChanged();
         }
 
         /// <summary>

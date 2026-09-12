@@ -65,8 +65,8 @@ namespace UnityGameTranslator.Core.Checks
                 ("ReapplyFontSettings(",
                  "changing a font is a transition off the old one — applying the new map alone leaves the components wearing what the previous translation asked for"),
 
-                ("UI.TranslatorUIManager.NotifyTranslationReloaded()",
-                 "said here rather than by the callers: it was one of five, and the four that forgot included putting a backup back"),
+                ("Host?.TranslationReloaded()",
+                 "said here rather than by the callers: it was one of five, and the four that forgot included putting a backup back — to the host, never to a manager by name"),
             };
 
             foreach (var link in chain)

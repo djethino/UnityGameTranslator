@@ -30,7 +30,9 @@ namespace UnityGameTranslator.Core.UI.Components
     /// the windows that are not in front. Two things animating one property is the defect that had
     /// the Manager's tabs stop bouncing the same day this was written — there, Motion's transition
     /// and the scroll edge were both writing RenderTransform. Scale is touched by nothing: not by
-    /// the layout, not by the dragger, not by the focus pass.
+    /// the layout, not by the dragger, not by the focus pass. When a panel has to be out of sight
+    /// while it sizes itself, this says so (<see cref="HeldOutOfSight"/>) and the focus pass writes
+    /// the zero — one writer, one fact.
     ///
     /// ⚠ **A registry ticked once a frame, not a MonoBehaviour** — the shape ButtonStates explains
     /// at length: this assembly is built ONCE for Mono and IL2CPP, so a type injected into the
@@ -66,11 +68,21 @@ namespace UnityGameTranslator.Core.UI.Components
         /// became noticeable with the router, which hides and shows panels on every navigation
         /// rather than leaving them up.
         ///
-        /// ⚠ **Held at scale zero rather than made inactive.** The layout ignores scale, so the
-        /// panel is measured and re-clamped normally while nobody can see it — deactivating it
-        /// would stop the very pass we are waiting for. And scale is the one transform nothing else
-        /// writes: the CanvasGroup belongs to the focus pass, which dims the windows that are not
-        /// in front.
+        /// ⚠ **Held out of sight rather than made inactive.** The layout runs on a hidden window,
+        /// so the panel is measured and re-clamped normally while nobody can see it — deactivating
+        /// it would stop the very pass we are waiting for.
+        ///
+        /// 🔴 **Out of sight means alpha zero, NEVER scale zero** (2026-09-15). It was held at scale
+        /// zero, on the reasoning that the layout ignores scale. The layout does; a ScrollRect does
+        /// not: it works its content's bounds out through the viewport's world-to-local matrix,
+        /// which is singular at scale zero, and every scroll area of the window then pushed its
+        /// content by thousands of pixels a frame until the clamp caught it at the far edge. That
+        /// is what "les listes s'ouvrent scrollées en bas" was — on the one screen whose lists are
+        /// built and sized during these very frames — and three fixes aimed at the lists could not
+        /// touch it. The alpha belongs to the focus pass (TranslatorUIManager dims the windows not
+        /// in front), so this does not write it: it answers <see cref="HeldOutOfSight"/>, and the
+        /// focus pass — the one writer — writes zero while that holds. The scale sits at
+        /// <see cref="PanelFrom"/> meanwhile, where the movement will start from.
         ///
         /// ⚠ Four frames at 60Hz. Long enough to cover the sizing pass, short enough that opening
         /// still feels immediate — the movement that follows is what the eye reads as the opening.
@@ -140,9 +152,24 @@ namespace UnityGameTranslator.Core.UI.Components
                 _isPanel.Add(panel);
             }
 
-            // A panel goes out of sight while it sizes itself — see Settling. A block starts at its
-            // own beginning, since there is nothing to wait for.
-            transform.localScale = panel ? Vector3.zero : Vector3.one * BlockFrom;
+            // Both start where their movement will start from. A panel is out of sight meanwhile —
+            // through the focus pass, see Settling — a block has nothing to wait for.
+            transform.localScale = Vector3.one * (panel ? PanelFrom : BlockFrom);
+        }
+
+        /// <summary>
+        /// Whether this panel is still sizing itself and must not be seen yet — the fact the focus
+        /// pass turns into an alpha of zero. See <see cref="Settling"/> for why it is asked rather
+        /// than done here.
+        /// </summary>
+        internal static bool HeldOutOfSight(GameObject panel)
+        {
+            if (panel == null) return false;
+
+            var known = _playing.IndexOf(panel.transform);
+            if (known < 0 || !_isPanel[known]) return false;
+
+            return Clock.Now - _startedAt[known] < Settling;
         }
 
         /// <summary>
@@ -150,11 +177,12 @@ namespace UnityGameTranslator.Core.UI.Components
         /// tick, so one clock drives everything that moves in this interface.
         ///
         /// 🔴 **This became load-bearing the day the panel was held out of sight to settle.** A
-        /// panel starts at scale zero and it is THIS that brings it back: stop calling it and a
-        /// window opens invisible, with nothing in the log and nothing to see. Two things make that
-        /// safe, and both must stay true — the loop this sits in runs whenever any UI is showing,
-        /// which a panel becoming visible guarantees; and Clock.Now is realtimeSinceStartup, so a
-        /// paused game or a zero timescale does not freeze the count.
+        /// panel starts under size and it is THIS that brings it to one — and the focus pass keeps
+        /// it at alpha zero for as long as <see cref="HeldOutOfSight"/> says so, which is a count on
+        /// the same clock. Two things make that safe, and both must stay true — the loop this sits
+        /// in runs whenever any UI is showing, which a panel becoming visible guarantees; and
+        /// Clock.Now is realtimeSinceStartup, so a paused game or a zero timescale does not freeze
+        /// the count.
         /// </summary>
         public static void Tick()
         {
@@ -174,11 +202,11 @@ namespace UnityGameTranslator.Core.UI.Components
                 var since = Clock.Now - _startedAt[i];
                 var wait = panel ? Settling : 0f;
 
-                // A panel is still sizing itself: kept out of sight rather than shown
-                // mid-rearrangement.
+                // A panel is still sizing itself: kept out of sight by the focus pass rather than
+                // shown mid-rearrangement, and held where its movement will start from.
                 if (since < wait)
                 {
-                    transform.localScale = Vector3.zero;
+                    transform.localScale = Vector3.one * PanelFrom;
                     continue;
                 }
 

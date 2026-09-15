@@ -456,6 +456,10 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             base.SetActive(active);
 
+            // ⚠ A body cannot be measured while hidden, and a redraw may have happened meanwhile:
+            // forgetting the last size makes the tick ask BodySized again on the first shown frame.
+            if (active) _lastBodySize = Vector2.zero;
+
             // Dynamic sizing on FIRST SHOW - this is when Unity's layout is actually calculated
             if (active && _needsFirstShowSizing && UseDynamicSizing)
             {

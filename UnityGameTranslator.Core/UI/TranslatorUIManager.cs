@@ -771,7 +771,13 @@ namespace UnityGameTranslator.Core.UI
                 if (panel == null || !panel.Enabled) continue;
 
                 bool hasFocus = ReferenceEquals(panel, _focusedPanel);
-                SetPanelOpacity(panel, hasFocus ? focused : unfocused);
+
+                // A window still sizing itself is not shown mid-rearrangement: out of sight until
+                // its appearance says it may be seen. Written here because this is the one writer
+                // of a panel's alpha — see Appearances.Settling for what holding it at scale zero
+                // instead did to every scroll area of the window.
+                float alpha = Components.Appearances.HeldOutOfSight(panel.UIRoot) ? 0f : (hasFocus ? focused : unfocused);
+                SetPanelOpacity(panel, alpha);
                 SetTitleBarFocused(panel, hasFocus);
             }
         }

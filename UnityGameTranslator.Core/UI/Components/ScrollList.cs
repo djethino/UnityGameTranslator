@@ -102,13 +102,19 @@ namespace UnityGameTranslator.Core.UI.Components
         /// already scrolled down, showing the middle of a list nobody had scrolled. Reported as
         /// "les 2 listes scrollées vers le bas".
         ///
-        /// 🔴 **Written as an OFFSET, not as a normalised position** (2026-09-15). The content of a
+        /// ⚠ **Written as an OFFSET, not as a normalised position** (2026-09-15). The content of a
         /// scroll view is pinned to the top of its viewport (pivot and anchors at the top, see
         /// UIFactory.CreateScrollView), so an offset of zero IS the first row — whatever the content
         /// and the viewport measure, now or once the layout has run. A normalised position is
-        /// worked out from those two sizes, and written before they were current it landed
-        /// somewhere else: that is what three attempts with coroutines and forced rebuilds were
-        /// chasing, and it is why the lists went on opening part-way down.
+        /// worked out from those two sizes, so it needs the layout to have run first; an offset
+        /// needs nothing.
+        ///
+        /// 🔴 **And this was never where "opens scrolled down" came from.** Three fixes were aimed
+        /// here — a coroutine, forced rebuilds, then this offset — and each left the lists at the
+        /// bottom, because what moved them ran AFTER any of these: the window was held at scale
+        /// zero while it sized itself, and a ScrollRect works its bounds out through a matrix
+        /// that is singular at scale zero. See Appearances.Settling, where the fix is, and
+        /// `analyse/pieges-projet.md` for the method lesson — a probe found it in ten minutes.
         ///
         /// ⚠ Vertical only, and set rather than animated: this is not a movement somebody should
         /// see. What they should see is the top of the list they just asked for.
@@ -165,6 +171,7 @@ namespace UnityGameTranslator.Core.UI.Components
                 return rect != null ? rect.content : null;
             }
         }
+
 
         /// <summary>The empty sentence, to reword it.</summary>
         public LabelHandle EmptyText => _empty;

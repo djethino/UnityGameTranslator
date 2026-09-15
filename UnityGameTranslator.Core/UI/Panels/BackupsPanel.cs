@@ -269,6 +269,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             if (_screen == null) return;
 
+            // ⚠ Nothing can be measured on a hidden hierarchy: the layout does not run there, and
+            // every row answers zero. A redraw while hidden waits for the show, which asks again.
+            if (UIRoot == null || !UIRoot.activeInHierarchy) return;
+
             var body = BodyHeight;
             if (body <= 1f) return;
 

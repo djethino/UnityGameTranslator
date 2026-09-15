@@ -17,24 +17,26 @@ namespace UnityGameTranslator.Core.UI.Panels
     /// no dialog at all, and the rare one is a short list.
     ///
     /// The panel decides nothing: it collects ticks and hands them back.
+    ///
+    /// ⚠ Described in data since 2026-09-15 (<c>common/spec/screens/settings-choice.json</c>):
+    /// the frame is the document's; the rows are built here at show time, one per section, because
+    /// their number and their words come from the two files being compared.
     /// </summary>
     public class SettingsChoicePanel : TranslatorPanelBase
     {
-        public override string Name => "Settings";
-        public override int MinWidth => 480;
-        public override int MinHeight => 220;
-        public override int PanelWidth => 560;
-        public override int PanelHeight => 420;
+        private static readonly ScreenDocument Doc = ScreenDocument.FromEmbedded("settings-choice");
 
-        protected override int MinPanelHeight => 220;
-        protected override bool PersistWindowPreferences => false;
+        public override string Name => Doc.Name;
+        public override int MinWidth => Doc.MinWidth;
+        public override int MinHeight => Doc.MinHeight;
+        public override int PanelWidth => Doc.Width;
+        public override int PanelHeight => Doc.Height;
 
-        private LabelHandle _introLabel;
-        private LabelHandle _backupLabel;
-        private Host _sectionsHost;
-        private ButtonHandle _applyBtn;
-        private ButtonHandle _compareBtn;
-        private ButtonHandle _cancelBtn;
+        protected override int MinPanelHeight => Doc.MinHeight;
+        protected override bool PersistWindowPreferences => Doc.Persist;
+        protected override bool UseBackdrop => Doc.Backdrop;
+
+        private BuiltScreen _screen;
 
         // Section name -> its toggle. Ticked means "replace mine with theirs".
         private readonly Dictionary<string, ToggleHandle> _toggles = new Dictionary<string, ToggleHandle>();
@@ -75,7 +77,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // sides had changed, which is right for a conflict but wrong for a download the
             // player asked for (where any difference is submitted) and wrong again when they
             // deliberately come to take the online settings back.
-            _introLabel.Say(
+            _screen.Say("intro",
                 $"These settings differ between your version and {sourceLabel}.\n"
                 + $"Tick what you want to replace with the settings from {sourceLabel}. "
                 + "Anything left unticked keeps your own setting.");
@@ -83,65 +85,40 @@ namespace UnityGameTranslator.Core.UI.Panels
             BuildSectionRows(decisions);
 
             // The button is only honest when there is somewhere to go
-            _compareBtn.Visible = onCompare != null;
-            _backupLabel.Visible = fileWasBackedUp;
+            _screen.Button("CompareBtn").Visible = onCompare != null;
+            _screen.Label("BackupNote").Visible = fileWasBackedUp;
 
             SetActive(true);
         }
 
         protected override void ConstructPanelContent()
         {
-            Layout(out var body, out var footer, PanelWidth - 40);
+            Layout(out var body, out var footer, Doc.CardWidth);
+            _screen = ScreenBuilder.Build(Doc, body, footer, ActOf);
+        }
 
-            var card = Stacks.Card(body, "SettingsChoiceCard", PanelWidth - 60);
-
-            Labels.Create(card, "Title", "Settings differ", TextRole.Title, centred: false);
-
-            // Written by Show, so Dynamic; a paragraph that wraps, so it grows to what it draws.
-            _introLabel = Labels.Create(card, "Intro", "", TextRole.Small, tone: Tone.Secondary,
-                                        policy: TextPolicy.Dynamic, fill: Fill.Stretch,
-                                        minHeight: UIStyles.MultiLineSmall, autoHeight: true);
-
-            Stacks.Spacer(card, 8);
-
-            // One row per section, rebuilt on every Show
-            _sectionsHost = Stacks.Vertical(card, "Sections", spacing: UIStyles.SmallSpacing);
-
-            Stacks.Spacer(card, 8);
-
-            _backupLabel = Labels.Create(card, "BackupNote",
-                "Your current file is backed up before anything is replaced.", TextRole.Hint);
-            _backupLabel.Italic = false;
-
-            _cancelBtn = Buttons.Secondary(footer, "CancelBtn", "Keep mine");
-            _cancelBtn.Clicked += OnCancelClicked;
-
-            // 🔴 **The same word as the main panel's Compare, opening the same page the OTHER way
-            // round.** This one is `toLocal: true` — what is validated there comes back into the
-            // file on this machine and publishes nothing. Two buttons that read identically and
-            // write to opposite sides: the marks are the only thing separating them, which is
-            // precisely their job (see name-things-in-ui: the scope tells where it writes, the
-            // label carries the verb).
-            _compareBtn = Buttons.Secondary(footer, "CompareBtn", "Compare",
-                scope: EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: false));
-            _compareBtn.Clicked += OnCompareClicked;
-
-            _applyBtn = Buttons.Primary(footer, "ApplyBtn", "Apply");
-            _applyBtn.Clicked += OnApplyClicked;
+        private Action ActOf(string act)
+        {
+            switch (act)
+            {
+                case "apply": return OnApplyClicked;
+                case "compare": return OnCompareClicked;
+                case "cancel": return OnCancelClicked;
+                default: return null;
+            }
         }
 
         private void BuildSectionRows(List<SettingsSectionPlan> decisions)
         {
             _toggles.Clear();
-            if (_sectionsHost == null) return;
-
-            _sectionsHost.Clear();
+            var sections = _screen.Host("Sections");
+            sections.Clear();
 
             if (decisions == null) return;
 
             foreach (var plan in decisions)
             {
-                var row = Stacks.Horizontal(_sectionsHost, $"Row_{plan.Section}", spacing: 8,
+                var row = Stacks.Horizontal(sections, $"Row_{plan.Section}", spacing: 8,
                                             pad: Pad.Of(10, 6), placement: Placement.MiddleLeft,
                                             surface: Surface.Elevated, minHeight: UIStyles.RowHeightLarge);
 

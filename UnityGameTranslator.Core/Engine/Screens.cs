@@ -4,7 +4,7 @@ using System.Collections.Generic;
 namespace UnityGameTranslator.Core
 {
     /// <summary>
-    /// The screens the mod can put in front of a player — the thirteen windows that take the
+    /// The screens the mod can put in front of a player — the twelve windows that take the
     /// game's input while they are up. The corner overlay is NOT one: a notification is glanced
     /// at while playing and never owns the controls (TranslatorUIManager.ShouldCaptureInput).
     /// (Named ScreenId, not Screen: UnityEngine.Screen is in scope wherever the engine is.)
@@ -18,7 +18,6 @@ namespace UnityGameTranslator.Core
         Upload,
         UploadSetup,
         Merge,
-        Language,
         Backups,
         Confirmation,
         SettingsChoice,

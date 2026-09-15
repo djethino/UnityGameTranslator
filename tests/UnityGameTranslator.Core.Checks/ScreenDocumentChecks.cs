@@ -55,6 +55,15 @@ namespace UnityGameTranslator.Core.Checks
             check(confirm.Name == "Confirm" && confirm.Width == 400 && confirm.MinHeight == 150 && !confirm.Persist && confirm.CardWidth == 360,
                 "identity, size and chrome come from the document", "what TranslatorPanelBase used to get from overrides");
 
+            // ── The settings choice: a frame with a host the code fills ────────
+            var choice = ScreenDocument.FromFile(Path.Combine(folder, "settings-choice.json"));
+            check(choice.Binds.Keys.SequenceEqual(new[] { "intro" }) && choice.Acts.Keys.OrderBy(k => k).SequenceEqual(new[] { "apply", "cancel", "compare" }),
+                "settings-choice.json asks for one slot and three acts", $"got {string.Join(",", choice.Binds.Keys)} / {string.Join(",", choice.Acts.Keys)}");
+            check(choice.Nodes.TryGetValue("Sections", out var sections) && sections.Kind == "stack" && sections.Children.Count == 0,
+                "the rows' host is a stack the document leaves empty", "one row per section both sides changed, built at show time");
+            check(choice.Acts["compare"].Props["scope"] != null,
+                "Compare says where it writes", "two buttons that read identically write to opposite sides; the mark is what tells them apart");
+
             // ── Refusals ──────────────────────────────────────────────────────
             Refuses(check, "an unknown kind", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[{""kind"":""gauge"",""name"":""G""}],""footer"":[]}", "gauge");
             Refuses(check, "a button without an act", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[],""footer"":[{""kind"":""button"",""name"":""B"",""text"":""Go""}]}", "asks for no act");

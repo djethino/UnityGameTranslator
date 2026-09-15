@@ -47,8 +47,8 @@ namespace UnityGameTranslator.Core.Checks
                 var (router, _) = Build();
                 check(!router.AnyVisible && router.Visible().Count == 0,
                     "nothing is up after registration", "a screen is born hidden; showing one is an act");
-                check(Enum.GetValues(typeof(ScreenId)).Length == 13,
-                    "thirteen screens", "the windows that take the input; the overlay is not one");
+                check(Enum.GetValues(typeof(ScreenId)).Length == 12,
+                    "twelve screens", "the windows that take the input; the overlay is not one (the language chooser went 2026-09-15: nothing had opened it since the uGUI migration)");
             }
 
             {

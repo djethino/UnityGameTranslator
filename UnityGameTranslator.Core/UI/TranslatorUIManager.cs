@@ -123,7 +123,6 @@ namespace UnityGameTranslator.Core.UI
         public static Panels.UploadPanel UploadPanel { get; private set; }
         public static Panels.UploadSetupPanel UploadSetupPanel { get; private set; }
         public static Panels.MergePanel MergePanel { get; private set; }
-        public static Panels.LanguagePanel LanguagePanel { get; private set; }
 
         /// <summary>This game's translation as it stood at earlier moments.</summary>
         public static Panels.BackupsPanel BackupsPanel { get; private set; }
@@ -1280,7 +1279,6 @@ namespace UnityGameTranslator.Core.UI
             UploadPanel = new Panels.UploadPanel(UiBase);
             UploadSetupPanel = new Panels.UploadSetupPanel(UiBase);
             MergePanel = new Panels.MergePanel(UiBase);
-            LanguagePanel = new Panels.LanguagePanel(UiBase);
             BackupsPanel = new Panels.BackupsPanel(UiBase);
             StatusOverlay = new Panels.StatusOverlay(UiBase);
             ConfirmationPanel = new Panels.ConfirmationPanel(UiBase);
@@ -1297,7 +1295,6 @@ namespace UnityGameTranslator.Core.UI
             _interactivePanels.Add(UploadPanel);
             _interactivePanels.Add(UploadSetupPanel);
             _interactivePanels.Add(MergePanel);
-            _interactivePanels.Add(LanguagePanel);
             _interactivePanels.Add(BackupsPanel);
             _interactivePanels.Add(ConfirmationPanel);
             _interactivePanels.Add(SettingsChoicePanel);
@@ -1314,7 +1311,6 @@ namespace UnityGameTranslator.Core.UI
             Screens.Register(ScreenId.Upload, UploadPanel);
             Screens.Register(ScreenId.UploadSetup, UploadSetupPanel);
             Screens.Register(ScreenId.Merge, MergePanel);
-            Screens.Register(ScreenId.Language, LanguagePanel);
             Screens.Register(ScreenId.Backups, BackupsPanel);
             Screens.Register(ScreenId.Confirmation, ConfirmationPanel);
             Screens.Register(ScreenId.SettingsChoice, SettingsChoicePanel);

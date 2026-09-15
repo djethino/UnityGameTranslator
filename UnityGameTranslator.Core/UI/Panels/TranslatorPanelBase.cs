@@ -628,6 +628,19 @@ namespace UnityGameTranslator.Core.UI.Panels
         }
 
         /// <summary>
+        /// The tallest a window may be on this screen — the same bound the opening size respects,
+        /// for a panel that works its own ceiling out from its content.
+        /// </summary>
+        protected int TallestOnThisScreen => UIStyles.CalculateMaxPanelHeight(Screen.height);
+
+        /// <summary>
+        /// Asked every tick while the panel is shown, for a screen that shows facts the engine
+        /// changes on its own — a translation growing line by line. The economy is the panel's:
+        /// compare, and redraw only on a change.
+        /// </summary>
+        public virtual void FollowFacts() { }
+
+        /// <summary>
         /// The panel's body has a size that can be measured, and it has changed.
         ///
         /// ⚠ **What is posed here is a SIZE, never a rebuild.** Rebuilding a screen while the handle
@@ -652,6 +665,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         protected void ResizeTo(int height)
         {
+            // What the screen can hold bounds every height this panel gives itself.
+            height = Math.Min(height, TallestOnThisScreen);
             if (Rect == null || Math.Abs(Rect.rect.height - height) < 0.5f) return;
 
             _isProgrammaticResize = true;
@@ -798,9 +813,15 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // small for everybody who had ever dragged its edge, with no way to find out
                 // except by resizing it again by hand. The minimum is what the content requires;
                 // a remembered preference cannot be allowed to go under it.
+                //
+                // 🔴 **And never taller than this screen** (2026-09-15). A window whose ceiling is
+                // its content could be dragged past the bottom of the screen, and the height was
+                // saved as dragged: restored, it opened with its lower half off the screen and
+                // nothing to scroll, since everything was "shown". What the screen can hold is a
+                // bound on any size, remembered or not.
                 Rect.sizeDelta = new Vector2(
                     Math.Max(pref.width, MinWidth),
-                    Math.Max(pref.height, MinPanelHeight));
+                    Math.Min(Math.Max(pref.height, MinPanelHeight), TallestOnThisScreen));
                 _userChoseSize = true;
                 _needsFirstShowSizing = false;
                 _initialSizingComplete = true;

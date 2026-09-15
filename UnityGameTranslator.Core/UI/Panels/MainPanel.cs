@@ -974,6 +974,31 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
         }
 
+        /// <summary>How many lines the screen last said the translation holds.</summary>
+        private int _shownEntries = -1;
+
+        /// <summary>
+        /// A translation grows on its own — the worker adds a line every time the game shows a new
+        /// text — and nothing announces it: the screen said "Entries: 0" and greyed Upload until it
+        /// was closed and opened again. So the count is followed, and a change redraws the screen
+        /// as any other event does. Reconciled from the state rather than wired to the writer,
+        /// which has several and would need every one of them to remember.
+        /// </summary>
+        public override void FollowFacts()
+        {
+            int entries = TranslatorCore.TranslationCache?.Count ?? 0;
+            if (entries == _shownEntries) return;
+
+            // Recorded before the redraw, so a redraw that cannot write the count yet does not
+            // become a redraw on every tick.
+            _shownEntries = entries;
+
+            // ⚠ Redrawn from the facts already here, without asking the server again: a line
+            // arrives every few seconds while a translation is being made, and a check that has
+            // not answered yet would otherwise be asked for again on each of them.
+            RedrawFromFacts();
+        }
+
         public void RefreshUI()
         {
             // Whoever set update checks to "Never" still needs a panel that knows
@@ -982,6 +1007,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             // silences notifications without blinding the interface.
             TranslatorUIManager.EnsureServerStateKnown();
 
+            RedrawFromFacts();
+        }
+
+        /// <summary>Every section, from what the engine holds right now.</summary>
+        private void RedrawFromFacts()
+        {
             // Detect and cache current state
             _currentLayoutState = DetectCurrentState();
 
@@ -1576,6 +1607,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Counts stay inside the string: the pipeline turns numbers into placeholders, so every
             // count shares one cache entry. Languages, usernames and ids are concatenated instead.
+            _shownEntries = entryCount;
             _entriesLabel.Say($"Entries: {entryCount}");
             _targetLabel.Show(Tr("Target:") + $" {targetLang}");
 

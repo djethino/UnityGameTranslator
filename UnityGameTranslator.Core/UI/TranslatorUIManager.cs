@@ -1216,6 +1216,10 @@ namespace UnityGameTranslator.Core.UI
                 // several lists has to be told when its body's size moves, and the alternative —
                 // only at the end of a resize — stopped the lists following the handle at all.
                 panel.FollowBodySize();
+
+                // And the facts a screen shows that the engine changes on its own — a translation
+                // growing while its screen is open. A compare per open panel, a redraw on change.
+                panel.FollowFacts();
             }
         }
 

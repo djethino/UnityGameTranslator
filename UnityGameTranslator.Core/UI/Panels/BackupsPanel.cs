@@ -56,7 +56,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// under them — "agrandir la fenêtre crée du vide". The ceiling is the same measure as the
         /// floor with every list at its whole content; before it is known, the base's own answer.
         /// </summary>
-        public override int MaxHeight => _ceiling > 0 ? _ceiling : base.MaxHeight;
+        public override int MaxHeight => _ceiling > 0 ? Math.Min(_ceiling, TallestOnThisScreen) : base.MaxHeight;
 
         /// <summary>
         /// What the panel opens at: the body with every list showing everything it holds.
@@ -325,9 +325,12 @@ namespace UnityGameTranslator.Core.UI.Panels
             // hidden, can be under the floor or over the ceiling that were just measured. Under,
             // it wraps a scrollbar around its own content; over, it shows a band of nothing. It is
             // put back between the two, and this is asked again with the body that gives.
+            // ⚠ The ceiling is bounded by the screen, like every height this panel takes: a
+            // window taller than the screen shows everything and can be read to the bottom by
+            // nobody — it was dragged there once, saved, and opened half off the screen.
             var height = Rect.rect.height;
             if (height < _floor - 0.5f) ResizeTo(_floor);
-            else if (height > _ceiling + 0.5f) ResizeTo(_ceiling);
+            else if (height > MaxHeight + 0.5f) ResizeTo(MaxHeight);
         }
 
         /// <summary>

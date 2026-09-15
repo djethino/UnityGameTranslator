@@ -109,6 +109,35 @@ namespace UnityGameTranslator.Core.Checks
             check(!setup.Nodes["TargetSettled"].StartsVisible,
                 "the note under the target starts hidden", "shown once the code has read that the file's target is settled");
 
+            // ── Every panel built from a document hands the builder what the document needs ──
+            // 🔴 The builder refuses a document with a header or a help bar it was given nowhere
+            // to put — at construction, inside CreatePanels, which then aborts: the panels after
+            // it are never made and a half-built one stays on screen at its raw size. Reported as
+            // "le panel backup prend toute la page quand j'ouvre un jeu". Read off the source,
+            // since a panel cannot be constructed here.
+            string panels = Find("UnityGameTranslator", "UnityGameTranslator.Core", "UI", "Panels");
+            check(panels != null, "the panels are found", "without them this proves nothing");
+            if (panels != null)
+            {
+                foreach (var file in Directory.GetFiles(panels, "*.cs"))
+                {
+                    string source = File.ReadAllText(file);
+                    var embedded = System.Text.RegularExpressions.Regex.Match(source, @"FromEmbedded\(""([a-z-]+)""\)");
+                    if (!embedded.Success) continue;
+
+                    var doc = ScreenDocument.FromFile(Path.Combine(folder, embedded.Groups[1].Value + ".json"));
+                    var build = System.Text.RegularExpressions.Regex.Match(source, @"ScreenBuilder\.Build\([^;]*\);");
+                    string panel = Path.GetFileName(file);
+                    check(build.Success, $"{panel} builds its document", "a document read and never built is a screen with nothing on it");
+                    if (!build.Success) continue;
+
+                    check(doc.Header.Count == 0 || build.Value.Contains("header:"),
+                        $"{panel} gives its header a fixed place", "the builder refuses a header with nowhere to go, at construction");
+                    check(doc.Help == null || build.Value.Contains("help:"),
+                        $"{panel} hands the builder its help bar", "the builder refuses a help bar it was not given, at construction");
+                }
+            }
+
             // ── Refusals ──────────────────────────────────────────────────────
             Refuses(check, "a dropdown that does not say where its choices come from", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[{""kind"":""dropdown"",""name"":""D"",""act"":""pick""}],""footer"":[]}", "choices come from");
             Refuses(check, "a dropdown without an act", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[{""kind"":""dropdown"",""name"":""D"",""options"":""languages""}],""footer"":[]}", "asks for no act");

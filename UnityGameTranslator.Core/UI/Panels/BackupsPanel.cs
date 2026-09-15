@@ -168,7 +168,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // note are what somebody reads BEFORE choosing a row — scrolled away by the twelfth
             // entry, they would have to scroll back up to remember where they stand. The document
             // says so by putting them in its header; this is where a header goes.
-            _screen = ScreenBuilder.Build(Doc, body, footer, ActOf, header: FixedHeader("BackupsHeader"));
+            _screen = ScreenBuilder.Build(Doc, body, footer, ActOf, header: FixedHeader("BackupsHeader"), help: _helpZone);
 
             // The socle's words, shared with the Manager's window — written, not copied into the
             // document, so the two screens cannot drift apart.

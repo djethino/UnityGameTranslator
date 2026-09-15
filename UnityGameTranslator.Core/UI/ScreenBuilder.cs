@@ -15,6 +15,9 @@ namespace UnityGameTranslator.Core.UI
         private readonly Dictionary<string, ButtonHandle> _buttons = new Dictionary<string, ButtonHandle>(StringComparer.Ordinal);
         private readonly Dictionary<string, Host> _hosts = new Dictionary<string, Host>(StringComparer.Ordinal);
         private readonly Dictionary<string, StatusLine> _statuses = new Dictionary<string, StatusLine>(StringComparer.Ordinal);
+        private readonly Dictionary<string, FieldHandle> _fields = new Dictionary<string, FieldHandle>(StringComparer.Ordinal);
+        private readonly Dictionary<string, SearchableDropdown> _dropdowns = new Dictionary<string, SearchableDropdown>(StringComparer.Ordinal);
+        private readonly Dictionary<string, ScrollList> _lists = new Dictionary<string, ScrollList>(StringComparer.Ordinal);
 
         internal BuiltScreen(ScreenDocument doc) { _doc = doc; }
 
@@ -22,11 +25,17 @@ namespace UnityGameTranslator.Core.UI
         internal void Add(string name, ButtonHandle button) => _buttons[name] = button;
         internal void Add(string name, Host host) => _hosts[name] = host;
         internal void Add(string name, StatusLine status) => _statuses[name] = status;
+        internal void Add(string name, FieldHandle field) => _fields[name] = field;
+        internal void Add(string name, SearchableDropdown dropdown) => _dropdowns[name] = dropdown;
+        internal void Add(string name, ScrollList list) => _lists[name] = list;
 
         public LabelHandle Label(string name) => _labels.TryGetValue(name, out var l) ? l : throw new ScreenDocumentException($"{_doc.Name}: no label named '{name}'");
         public ButtonHandle Button(string name) => _buttons.TryGetValue(name, out var b) ? b : throw new ScreenDocumentException($"{_doc.Name}: no button named '{name}'");
         public Host Host(string name) => _hosts.TryGetValue(name, out var h) ? h : throw new ScreenDocumentException($"{_doc.Name}: no host named '{name}'");
         public StatusLine Status(string name) => _statuses.TryGetValue(name, out var s) ? s : throw new ScreenDocumentException($"{_doc.Name}: no status line named '{name}'");
+        public FieldHandle Field(string name) => _fields.TryGetValue(name, out var f) ? f : throw new ScreenDocumentException($"{_doc.Name}: no field named '{name}'");
+        public SearchableDropdown Dropdown(string name) => _dropdowns.TryGetValue(name, out var d) ? d : throw new ScreenDocumentException($"{_doc.Name}: no dropdown named '{name}'");
+        public ScrollList List(string name) => _lists.TryGetValue(name, out var s) ? s : throw new ScreenDocumentException($"{_doc.Name}: no list named '{name}'");
 
         /// <summary>
         /// Write a slot. The document names it and says which piece holds it; the code says what
@@ -55,48 +64,86 @@ namespace UnityGameTranslator.Core.UI
     {
         /// <param name="actOf">The handler for each act the document asks for; asked once per button, at build time, so an act nobody handles fails the build and not the click.</param>
         /// <param name="header">Where the document's fixed header goes — required when it has one, since a header drawn into the scrolling body would scroll.</param>
-        public static BuiltScreen Build(ScreenDocument doc, Host body, Host footer, Func<string, Action> actOf, Host header = null)
+        /// <param name="help">The help bar the document's `help` sentences go to — required when the document has any, and the panel's to create from the document's own resting sentence.</param>
+        public static BuiltScreen Build(ScreenDocument doc, Host body, Host footer, Func<string, Action> actOf,
+                                        Host header = null, HelpZone help = null)
         {
             if (doc == null) throw new ArgumentNullException(nameof(doc));
             if (actOf == null) throw new ArgumentNullException(nameof(actOf));
             if (doc.Header.Count > 0 && header == null)
                 throw new ScreenDocumentException($"{doc.Name}: the document has a header and the panel gave it nowhere fixed to go");
+            if (doc.Help != null && help == null)
+                throw new ScreenDocumentException($"{doc.Name}: the document declares a help bar and the panel built none");
 
             var built = new BuiltScreen(doc);
-            foreach (var node in doc.Header) Place(doc, node, header, built, actOf);
-            foreach (var node in doc.Body) Place(doc, node, body, built, actOf);
-            foreach (var node in doc.Footer) Place(doc, node, footer, built, actOf);
+            var site = new Site { Doc = doc, Built = built, ActOf = actOf, Help = help };
+            foreach (var node in doc.Header) Place(site, node, header);
+            foreach (var node in doc.Body) Place(site, node, body);
+            foreach (var node in doc.Footer) Place(site, node, footer);
             return built;
         }
 
-        private static void Place(ScreenDocument doc, ScreenNode node, Host parent, BuiltScreen built, Func<string, Action> actOf)
+        /// <summary>What every piece is placed with — carried down the tree rather than passed five times.</summary>
+        private sealed class Site
         {
+            public ScreenDocument Doc;
+            public BuiltScreen Built;
+            public Func<string, Action> ActOf;
+            public HelpZone Help;
+        }
+
+        /// <summary>The help sentence the document gives a piece, attached to what was built for it.</summary>
+        private static void Describe(Site site, ScreenNode node, Handle handle)
+        {
+            var text = ScreenDocument.HelpOf(node);
+            if (text != null) site.Help.Describe(handle, text);
+        }
+
+        private static Action Act(Site site, ScreenNode node)
+            => site.ActOf(node.Act)
+               ?? throw new ScreenDocumentException($"{site.Doc.Name}: the act '{node.Act}' has no handler");
+
+        private static void Place(Site site, ScreenNode node, Host parent)
+        {
+            var doc = site.Doc;
+            var built = site.Built;
             switch (node.Kind)
             {
                 case "card":
                 {
                     var host = Stacks.Card(parent, node.Name, node.Int("width") ?? doc.CardWidth);
                     built.Add(node.Name, host);
-                    foreach (var child in node.Children) Place(doc, child, host, built, actOf);
+                    Describe(site, node, host);
+                    foreach (var child in node.Children) Place(site, child, host);
+                    break;
+                }
+                case "section":
+                {
+                    var host = Stacks.Section(parent, node.Name, MinHeight(node) ?? 0);
+                    built.Add(node.Name, host);
+                    Describe(site, node, host);
+                    foreach (var child in node.Children) Place(site, child, host);
                     break;
                 }
                 case "stack":
                 {
                     var host = Stacks.Vertical(parent, node.Name, Spacing(node) ?? 0);
                     built.Add(node.Name, host);
-                    foreach (var child in node.Children) Place(doc, child, host, built, actOf);
+                    Describe(site, node, host);
+                    foreach (var child in node.Children) Place(site, child, host);
                     break;
                 }
                 case "row":
                 {
-                    // A plain row unless the document says more: then the horizontal stack, with
-                    // its padding, placement, surface, fill and floor spelt out.
-                    bool plain = node.Word("pad") == null && node.Int("pad") == null && node.Word("placement") == null
-                                 && node.Word("surface") == null && node.Word("fill") == null
-                                 && node.Word("minHeight") == null && node.Int("minHeight") == null;
+                    // The panel's ordinary row — its own padding, a floor, a placement — unless the
+                    // document says more: then the horizontal stack, with padding, surface and fill
+                    // spelt out.
+                    bool bare = node.Word("pad") == null && node.Int("pad") == null
+                                && node.Word("surface") == null && node.Word("fill") == null;
                     Host host;
-                    if (plain)
-                        host = Stacks.Row(parent, node.Name, Spacing(node) ?? 10);
+                    if (bare)
+                        host = Stacks.Row(parent, node.Name, Spacing(node) ?? 10, MinHeight(node),
+                                          Enum(node.Word("placement"), Placement.MiddleLeft));
                     else
                     {
                         int pad = Spacing(node, "pad") ?? 0;
@@ -108,7 +155,8 @@ namespace UnityGameTranslator.Core.UI
                     }
                     host.Visible = node.StartsVisible;
                     built.Add(node.Name, host);
-                    foreach (var child in node.Children) Place(doc, child, host, built, actOf);
+                    Describe(site, node, host);
+                    foreach (var child in node.Children) Place(site, child, host);
                     break;
                 }
                 case "spacer":
@@ -117,6 +165,52 @@ namespace UnityGameTranslator.Core.UI
                 case "status":
                     built.Add(node.Name, StatusLine.Create(parent, node.Name, node.Flag("centred") ?? true));
                     break;
+                case "field":
+                {
+                    var field = Fields.Create(parent, node.Name, node.Word("placeholder") ?? "",
+                                              Enum(node.Word("input"), FieldKind.Text),
+                                              minHeight: MinHeight(node),
+                                              fill: Enum(node.Word("fill"), Fill.Stretch),
+                                              minWidth: node.Int("minWidth"));
+                    field.Visible = node.StartsVisible;
+                    built.Add(node.Name, field);
+                    Describe(site, node, field);
+                    break;
+                }
+                case "dropdown":
+                {
+                    // The choices come from where the document says, never from the document: the
+                    // languages are the catalogue's, the one list every product offers.
+                    SearchableDropdown dropdown;
+                    switch (node.Word("options"))
+                    {
+                        case "languages":
+                            dropdown = SearchableDropdown.ForLanguages(node.Name, LanguageHelper.GetLanguageNames(), "");
+                            break;
+                        default:
+                            throw new ScreenDocumentException($"{doc.Name}: '{node.Name}' takes its choices from '{node.Word("options")}', which this engine does not offer");
+                    }
+                    var changed = Act(site, node);
+                    var host = dropdown.CreateUI(parent, _ => changed(), node.Int("width") ?? 200);
+                    host.Visible = node.StartsVisible;
+                    built.Add(node.Name, dropdown);
+                    Describe(site, node, host);
+                    break;
+                }
+                case "list":
+                {
+                    var list = ScrollList.Create(parent, node.Name,
+                                                 minHeight: node.Int("minHeight") ?? 0,
+                                                 preferredHeight: node.Int("preferredHeight"),
+                                                 fillHeight: node.Flag("fill") ?? true,
+                                                 emptyText: node.Word("empty"),
+                                                 spacing: node.Int("spacing") ?? 5,
+                                                 padding: node.Int("padding") ?? 5);
+                    list.Visible = node.StartsVisible;
+                    built.Add(node.Name, list);
+                    Describe(site, node, list.Handle);
+                    break;
+                }
                 case "label":
                 {
                     // A bound text is written at show time, so it is Dynamic — translated at the
@@ -132,18 +226,21 @@ namespace UnityGameTranslator.Core.UI
                                               policy: policy,
                                               fill: Enum(node.Word("fill"), Fill.Content),
                                               minHeight: MinHeight(node),
-                                              autoHeight: node.Flag("autoHeight") ?? false);
+                                              autoHeight: node.Flag("autoHeight") ?? false,
+                                              minWidth: node.Int("minWidth"),
+                                              align: node.Word("align") != null ? Enum(node.Word("align"), Placement.MiddleLeft) : (Placement?)null);
                     // Said only to override the role's own choice — a Hint is italic unless told otherwise.
                     if (node.Flag("italic") is bool italic) label.Italic = italic;
                     if (node.Flag("bold") is bool bold) label.Bold = bold;
                     label.Visible = node.StartsVisible;
                     built.Add(node.Name, label);
+                    Describe(site, node, label);
                     break;
                 }
                 case "button":
                 {
                     var policy = node.Bind != null ? TextPolicy.Dynamic : Enum(node.Word("policy"), TextPolicy.UiText);
-                    var size = node.Word("size") == "Compact" ? ButtonSize.Compact : ButtonSize.Normal;
+                    var size = Enum(node.Word("size"), ButtonSize.Normal);
                     // Where the verb writes, as two facts; the mark beside the label follows.
                     EditSide? scope = null;
                     if (node.Props["scope"] is Newtonsoft.Json.Linq.JObject scopeFacts)
@@ -152,11 +249,10 @@ namespace UnityGameTranslator.Core.UI
                                                 Enum(node.Word("tone"), ButtonTone.Secondary), size,
                                                 minWidth: node.Int("minWidth"), fill: Enum(node.Word("fill"), Fill.Content),
                                                 scope: scope, policy: policy);
-                    var handler = actOf(node.Act)
-                                  ?? throw new ScreenDocumentException($"{doc.Name}: the act '{node.Act}' has no handler");
-                    button.Clicked += handler;
+                    button.Clicked += Act(site, node);
                     button.Visible = node.StartsVisible;
                     built.Add(node.Name, button);
+                    Describe(site, node, button);
                     break;
                 }
                 default:

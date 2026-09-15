@@ -15,20 +15,27 @@ namespace UnityGameTranslator.Core.UI.Panels
     /// the mod. It used to say "LanguageSelector", a component this panel stopped using and which
     /// nothing constructed any more — it was removed on 2026-09-12 along with the two UIStyles
     /// factories that served only it.
+    ///
+    /// ⚠ Described in data since 2026-09-15 (<c>common/spec/screens/upload-setup.json</c>): every
+    /// piece, its help sentence and the acts are the document's. What stays here is the rules —
+    /// which game is shown and in which tone, what the validation line says, whether Continue is
+    /// offered, the search and its rows, whether the target is settled.
     /// </summary>
     public class UploadSetupPanel : TranslatorPanelBase
     {
-        public override string Name => "New Upload Setup";
-        public override int MinWidth => 500;
-        public override int MinHeight => 400;
-        public override int PanelWidth => 500;
-        public override int PanelHeight => 600;
+        private static readonly ScreenDocument Doc = ScreenDocument.FromEmbedded("upload-setup");
 
-        protected override int MinPanelHeight => 400;
+        public override string Name => Doc.Name;
+        public override int MinWidth => Doc.MinWidth;
+        public override int MinHeight => Doc.MinHeight;
+        public override int PanelWidth => Doc.Width;
+        public override int PanelHeight => Doc.Height;
 
-        // Language dropdowns (reusable components)
-        private SearchableDropdown _sourceDropdown;
-        private SearchableDropdown _targetDropdown;
+        protected override int MinPanelHeight => Doc.MinHeight;
+        protected override bool PersistWindowPreferences => Doc.Persist;
+        protected override bool UseBackdrop => Doc.Backdrop;
+
+        private BuiltScreen _screen;
 
         // Game
         private GameInfo _selectedGame = null;
@@ -37,23 +44,22 @@ namespace UnityGameTranslator.Core.UI.Panels
         // Callback
         private Action<GameInfo, string, string> _onSetupComplete;
 
-        // Game UI
-        private LabelHandle _gameDisplayLabel;
-        private LabelHandle _gameSourceLabel;
-        private FieldHandle _gameSearchInput;
-        private ButtonHandle _gameSearchBtn;
-        private ScrollList _resultsList;
-        private LabelHandle _gameSearchStatus;
-
-        // Validation
-        private LabelHandle _validationLabel;
-        private ButtonHandle _continueBtn;
-
-        // Under the target dropdown, saying why it does not open once the file holds lines
-        private LabelHandle _targetSettledHint;
-
         // Contextual help
         private HelpZone _helpZone;
+
+        private SearchableDropdown SourceDropdown => _screen.Dropdown("Source");
+        private SearchableDropdown TargetDropdown => _screen.Dropdown("Target");
+        private LabelHandle GameDisplay => _screen.Label("GameName");
+        private LabelHandle GameSource => _screen.Label("GameSource");
+        private FieldHandle GameSearchInput => _screen.Field("GameSearchInput");
+        private ButtonHandle GameSearchBtn => _screen.Button("SearchBtn");
+        private ScrollList ResultsList => _screen.List("ResultsScroll");
+        private LabelHandle GameSearchStatus => _screen.Label("SearchStatus");
+        private LabelHandle Validation => _screen.Label("Validation");
+        private ButtonHandle ContinueBtn => _screen.Button("ContinueBtn");
+
+        // Under the target dropdown, saying why it does not open once the file holds lines
+        private LabelHandle TargetSettledHint => _screen.Label("TargetSettled");
 
         public UploadSetupPanel(UIBase owner) : base(owner)
         {
@@ -105,7 +111,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // and the source only becomes a value when somebody declares it, which is now.
             if (!string.IsNullOrEmpty(configSource) && configSource.ToLower() != "auto")
             {
-                _sourceDropdown.SelectedValue = configSource;
+                SourceDropdown.SelectedValue = configSource;
             }
 
             // 🔴 **The target is not a question: it is what the file IS.** It settled with the
@@ -122,25 +128,25 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             if (targetSettled)
             {
-                _targetDropdown.SelectedValue = TranslatorCore.FileTargetLanguage;
+                TargetDropdown.SelectedValue = TranslatorCore.FileTargetLanguage;
             }
             else if (!string.IsNullOrEmpty(configTarget) && configTarget.ToLower() != "auto")
             {
                 // A file written before it said so: the config is the same answer, one step older.
-                _targetDropdown.SelectedValue = configTarget;
+                TargetDropdown.SelectedValue = configTarget;
             }
             else
             {
                 string systemLang = LanguageHelper.GetSystemLanguageName();
-                _targetDropdown.SelectedValue = systemLang;
+                TargetDropdown.SelectedValue = systemLang;
             }
 
-            _targetDropdown.SetInteractable(!targetSettled);
-            if (_targetSettledHint != null) _targetSettledHint.Visible = targetSettled;
+            TargetDropdown.SetInteractable(!targetSettled);
+            TargetSettledHint.Visible = targetSettled;
 
             // Reset search state
             _gameSearchResults = null;
-            _resultsList?.Clear();
+            ResultsList.Clear();
 
             RefreshGameDisplay();
             UpdateValidation();
@@ -157,10 +163,10 @@ namespace UnityGameTranslator.Core.UI.Panels
                     // Search server by steam_id to get the canonical name/image if it exists
                     AutoSelectBySteamId(currentGame);
                 }
-                else if (_gameSearchInput != null)
+                else
                 {
                     // No steam_id — help user find the game via search
-                    _gameSearchInput.Text = currentGame.name;
+                    GameSearchInput.Text = currentGame.name;
                     PerformGameSearch();
                 }
             }
@@ -168,125 +174,46 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         protected override void ConstructPanelContent()
         {
-            // Initialize components (must be here, not in constructor - base calls ConstructUI first)
-            var languages = LanguageHelper.GetLanguageNames();
-            // No default for source - must be explicitly selected (required field)
-            _sourceDropdown = SearchableDropdown.ForLanguages("Source", languages, "");
-            _targetDropdown = SearchableDropdown.ForLanguages("Target", languages, "");
+            Layout(out var body, out var footer, Doc.CardWidth);
 
-            Layout(out var scrollContent, out var buttonRow, PanelWidth - 40);
+            // Contextual help bar between content and footer — the document's own resting sentence,
+            // and the sentence of each piece is the document's too.
+            _helpZone = CreateHelpZone(footer, Doc.Help);
 
-            // Contextual help bar between content and footer
-            _helpZone = CreateHelpZone(buttonRow, "Hover an element to see what it does");
+            _screen = ScreenBuilder.Build(Doc, body, footer, ActOf, help: _helpZone);
 
-            var card = Stacks.Card(scrollContent, "SetupCard", PanelWidth - 40);
-
-            Labels.Create(card, "Title", "New Upload Setup", TextRole.Title);
-
-            Labels.Create(card, "Instructions", "Configure your translation before uploading:", TextRole.Small);
-
-            Stacks.Spacer(card, 10);
-
-            // === GAME SECTION ===
-            Labels.Create(card, "GameTitle", "1. Game", TextRole.SectionTitle);
-
-            var gameBox = Stacks.Section(card, "GameBox");
-
-            // Current game display
-            var gameRow = Stacks.Row(gameBox, "GameRow", spacing: 5, minHeight: UIStyles.RowHeightNormal);
-
-            _gameDisplayLabel = Labels.Create(gameRow, "GameName", "Unknown", TextRole.Body,
-                                              policy: TextPolicy.Dynamic, fill: Fill.Stretch);
-            _gameDisplayLabel.Bold = true;
-
-            // ⚠ Right-anchored in the original (TextAnchor.MiddleRight) rather than the role's own
-            // left anchor: the vocabulary's `align:` always stretches the label to reach that edge,
-            // which here would fight the name label above for the row's flexible space. Left
-            // alignment is kept instead — see the migration report.
-            _gameSourceLabel = Labels.Create(gameRow, "GameSource", "(auto-detected)", TextRole.Small,
-                                             policy: TextPolicy.Excluded, minWidth: 100,
-                                             align: Placement.MiddleRight);
-            _gameSourceLabel.Italic = true;
-
-            // Game search row
-            var searchRow = Stacks.Row(gameBox, "SearchRow", spacing: 5, minHeight: UIStyles.RowHeightLarge);
-
-            _gameSearchInput = Fields.Create(searchRow, "GameSearchInput", "Search for a game...",
-                                             minHeight: UIStyles.InputHeight);
-            _helpZone?.Describe(_gameSearchInput,
-                "Type a game title to find it in the catalog and online databases. Use this if the detected game is wrong or missing.");
-
-            // As tall as the field it sits beside.
-            _gameSearchBtn = Buttons.Create(searchRow, "SearchBtn", "Search", ButtonTone.Primary,
-                                            ButtonSize.Field, minWidth: 70);
-            _gameSearchBtn.Clicked += PerformGameSearch;
-            _helpZone?.Describe(_gameSearchBtn,
-                "Run the search for the title you typed and list the matching games below.");
-
-            // Search status
-            _gameSearchStatus = Labels.Create(gameBox, "SearchStatus", "", TextRole.Small, policy: TextPolicy.Dynamic);
-
-            // Legend for the search result markers
-            Labels.Create(gameBox, "ResultsLegend", GameCandidates.Legend, TextRole.Hint);
-
-            // Search results scroll. Padding was 2px on every side by hand; ScrollList's own is
-            // 5px — see the migration report.
-            _resultsList = ScrollList.Create(gameBox, "ResultsScroll", minHeight: 80, fillHeight: false,
-                                             spacing: 2, padding: 2);
-
-            Stacks.Spacer(card, 10);
-
-            // === SOURCE LANGUAGE SECTION ===
-            Labels.Create(card, "SourceTitle", "2. Source Language (original game language)", TextRole.SectionTitle);
-            var srcHost = _sourceDropdown.CreateUI(card, (lang) => UpdateValidation(), width: 200);
-            _helpZone?.Describe(srcHost,
-                "The language the game is written in. Pick the original text language, not your translation.");
-
-            Stacks.Spacer(card, 10);
-
-            // === TARGET LANGUAGE SECTION ===
-            Labels.Create(card, "TargetTitle", "3. Target Language (your translation)", TextRole.SectionTitle);
-            var tgtHost = _targetDropdown.CreateUI(card, (lang) => UpdateValidation(), width: 200);
-            _helpZone?.Describe(tgtHost,
-                "The language this translation is written in. Settled with its first line — clear the translation to change it.");
-
-            // Why the dropdown above does not open, in the words Options uses for the same lock.
-            // Shown only while it is true (ShowForSetup), which on a publishable file is always.
-            _targetSettledHint = Labels.Create(card, "TargetSettled",
-                "Settled: this file already holds lines in this language.", TextRole.Hint);
-
-            Stacks.Spacer(card, 10);
-
-            // === VALIDATION ===
-            _validationLabel = Labels.Create(card, "Validation", "", TextRole.Body, policy: TextPolicy.Dynamic,
-                                             centred: true, minHeight: UIStyles.RowHeightLarge);
-            _validationLabel.Bold = true;
-
-            // === BUTTONS ===
-            var cancelBtn = Buttons.Secondary(buttonRow, "CancelBtn", "Cancel");
-            cancelBtn.Clicked += () => SetActive(false);
-
-            _continueBtn = Buttons.Primary(buttonRow, "ContinueBtn", "Continue to Upload");
-            _continueBtn.Clicked += OnContinue;
-            _helpZone?.Describe(_continueBtn,
-                "Confirm the game and languages and move on to the upload step. Enabled once all fields are valid.");
+            // The socle's legend for the search result markers — the same words the Manager uses.
+            _screen.Say("legend", GameCandidates.Legend);
 
             // Initial population
             RefreshGameDisplay();
             UpdateValidation();
         }
 
+        private Action ActOf(string act)
+        {
+            switch (act)
+            {
+                case "search": return PerformGameSearch;
+                case "sourceChanged":
+                case "targetChanged": return UpdateValidation;
+                case "cancel": return () => SetActive(false);
+                case "continue": return OnContinue;
+                default: return null;
+            }
+        }
+
         private void RefreshGameDisplay()
         {
-            if (_gameDisplayLabel == null) return;
+            if (_screen == null) return;
 
             if (_selectedGame != null && !string.IsNullOrEmpty(_selectedGame.name))
             {
                 // Game confirmed by user selection
-                _gameDisplayLabel.Show(_selectedGame.name);
-                _gameDisplayLabel.Tone = Tone.Success;
-                _gameSourceLabel.Show("✓ " + Tr("confirmed"));
-                _gameSourceLabel.Tone = Tone.Success;
+                GameDisplay.Show(_selectedGame.name);
+                GameDisplay.Tone = Tone.Success;
+                GameSource.Show("✓ " + Tr("confirmed"));
+                GameSource.Tone = Tone.Success;
             }
             else
             {
@@ -294,17 +221,17 @@ namespace UnityGameTranslator.Core.UI.Panels
                 var detected = TranslatorCore.CurrentGame;
                 if (detected != null && !string.IsNullOrEmpty(detected.name))
                 {
-                    _gameDisplayLabel.Show(detected.name);
-                    _gameDisplayLabel.Tone = Tone.Warning;
-                    _gameSourceLabel.Show("⚠ " + Tr("confirm below"));
-                    _gameSourceLabel.Tone = Tone.Warning;
+                    GameDisplay.Show(detected.name);
+                    GameDisplay.Tone = Tone.Warning;
+                    GameSource.Show("⚠ " + Tr("confirm below"));
+                    GameSource.Tone = Tone.Warning;
                 }
                 else
                 {
-                    _gameDisplayLabel.Say("No game detected");
-                    _gameDisplayLabel.Tone = Tone.Warning;
-                    _gameSourceLabel.Show("- " + Tr("please search"));
-                    _gameSourceLabel.Tone = Tone.Muted;
+                    GameDisplay.Say("No game detected");
+                    GameDisplay.Tone = Tone.Warning;
+                    GameSource.Show("- " + Tr("please search"));
+                    GameSource.Tone = Tone.Muted;
                 }
             }
 
@@ -355,20 +282,20 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private async void PerformGameSearch()
         {
-            string query = _gameSearchInput?.Text?.Trim();
+            string query = GameSearchInput.Text?.Trim();
             if (string.IsNullOrEmpty(query) || query.Length < 2)
             {
-                _gameSearchStatus.Say("Enter at least 2 characters");
-                _gameSearchStatus.Tone = Tone.Warning;
+                GameSearchStatus.Say("Enter at least 2 characters");
+                GameSearchStatus.Tone = Tone.Warning;
                 return;
             }
 
-            _gameSearchBtn.Enabled = false;
-            _gameSearchStatus.Say("Searching...");
-            _gameSearchStatus.Tone = Tone.Muted;
+            GameSearchBtn.Enabled = false;
+            GameSearchStatus.Say("Searching...");
+            GameSearchStatus.Tone = Tone.Muted;
 
             // Clear previous results
-            _resultsList?.Clear();
+            ResultsList.Clear();
 
             try
             {
@@ -384,23 +311,23 @@ namespace UnityGameTranslator.Core.UI.Panels
                     if (success && games != null && games.Count > 0)
                     {
                         _gameSearchResults = games;
-                        _gameSearchStatus.Say($"Found {games.Count} game(s)");
-                        _gameSearchStatus.Tone = Tone.Success;
+                        GameSearchStatus.Say($"Found {games.Count} game(s)");
+                        GameSearchStatus.Tone = Tone.Success;
 
                         PopulateGameResults();
                     }
                     else if (success)
                     {
-                        _gameSearchStatus.Say("No games found");
-                        _gameSearchStatus.Tone = Tone.Muted;
+                        GameSearchStatus.Say("No games found");
+                        GameSearchStatus.Tone = Tone.Muted;
                     }
                     else
                     {
-                        _gameSearchStatus.Show($"Error: {error}");
-                        _gameSearchStatus.Tone = Tone.Error;
+                        GameSearchStatus.Show($"Error: {error}");
+                        GameSearchStatus.Tone = Tone.Error;
                     }
 
-                    _gameSearchBtn.Enabled = true;
+                    GameSearchBtn.Enabled = true;
                 });
             }
             catch (Exception e)
@@ -409,18 +336,19 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TranslatorUIManager.RunOnMainThread(() =>
                 {
                     TranslatorCore.LogWarning($"[UploadSetup] Game search error: {errorMsg}");
-                    _gameSearchStatus.Show($"Error: {errorMsg}");
-                    _gameSearchStatus.Tone = Tone.Error;
-                    _gameSearchBtn.Enabled = true;
+                    GameSearchStatus.Show($"Error: {errorMsg}");
+                    GameSearchStatus.Tone = Tone.Error;
+                    GameSearchBtn.Enabled = true;
                 });
             }
         }
 
         private void PopulateGameResults()
         {
-            _resultsList?.Clear();
+            var list = ResultsList;
+            list.Clear();
 
-            if (_gameSearchResults == null || _resultsList == null) return;
+            if (_gameSearchResults == null) return;
 
             // Calculate confidence for each result and sort by confidence (highest first)
             var sortedResults = _gameSearchResults
@@ -434,7 +362,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 int confidence = item.Confidence;
 
                 // Name, source in brackets, mark — the socle's row, the same one the Manager lists.
-                var btn = Buttons.Create(_resultsList.Rows, $"Game_{game.Id}",
+                var btn = Buttons.Create(list.Rows, $"Game_{game.Id}",
                                          GameCandidates.Row(game.Name, game.Source, confidence),
                                          tone: ConfidenceTone(confidence), size: ButtonSize.Compact,
                                          fill: Fill.Stretch, policy: TextPolicy.Excluded);
@@ -444,7 +372,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 btn.Clicked += () => OnGameSelected(capturedGame);
             }
 
-            _resultsList.Filled();
+            list.Filled();
         }
 
         private void OnGameSelected(GameApiInfo gameApi)
@@ -457,16 +385,16 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // Clear search
             _gameSearchResults = null;
-            _gameSearchInput.Text = "";
-            _gameSearchStatus.Show("");
-            _resultsList?.Clear();
+            GameSearchInput.Text = "";
+            GameSearchStatus.Show("");
+            ResultsList.Clear();
 
             RefreshGameDisplay();
         }
 
         private void UpdateValidation()
         {
-            if (_validationLabel == null || _continueBtn == null) return;
+            if (_screen == null) return;
 
             // For NEW uploads, game MUST be confirmed by selecting from search results
             // No fallback to auto-detected game
@@ -474,41 +402,41 @@ namespace UnityGameTranslator.Core.UI.Panels
             bool hasGame = game != null && !string.IsNullOrEmpty(game.name);
 
             // Ensure language is selected (dropdown values are always from the list)
-            string source = _sourceDropdown?.SelectedValue;
-            string target = _targetDropdown?.SelectedValue;
+            string source = SourceDropdown.SelectedValue;
+            string target = TargetDropdown.SelectedValue;
             bool hasValidSource = !string.IsNullOrEmpty(source);
             bool hasValidTarget = !string.IsNullOrEmpty(target);
             bool differentLangs = hasValidSource && hasValidTarget && source != target;
 
             if (!hasGame)
             {
-                _validationLabel.Say("Please select a game");
-                _validationLabel.Tone = Tone.Warning;
-                _continueBtn.Enabled = false;
+                Validation.Say("Please select a game");
+                Validation.Tone = Tone.Warning;
+                ContinueBtn.Enabled = false;
             }
             else if (!hasValidSource)
             {
-                _validationLabel.Say("Please select a source language (original game language)");
-                _validationLabel.Tone = Tone.Warning;
-                _continueBtn.Enabled = false;
+                Validation.Say("Please select a source language (original game language)");
+                Validation.Tone = Tone.Warning;
+                ContinueBtn.Enabled = false;
             }
             else if (!hasValidTarget)
             {
-                _validationLabel.Say("Please select a target language");
-                _validationLabel.Tone = Tone.Warning;
-                _continueBtn.Enabled = false;
+                Validation.Say("Please select a target language");
+                Validation.Tone = Tone.Warning;
+                ContinueBtn.Enabled = false;
             }
             else if (!differentLangs)
             {
-                _validationLabel.Say("Source and target must be different!");
-                _validationLabel.Tone = Tone.Error;
-                _continueBtn.Enabled = false;
+                Validation.Say("Source and target must be different!");
+                Validation.Tone = Tone.Error;
+                ContinueBtn.Enabled = false;
             }
             else
             {
-                _validationLabel.Show($"{game.name}: {source} -> {target}");
-                _validationLabel.Tone = Tone.Success;
-                _continueBtn.Enabled = true;
+                Validation.Show($"{game.name}: {source} -> {target}");
+                Validation.Tone = Tone.Success;
+                ContinueBtn.Enabled = true;
             }
         }
 
@@ -531,7 +459,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // so re-declaring is free and cannot relabel anything.
             ApiClient.DeclareGame();
 
-            _onSetupComplete?.Invoke(_selectedGame, _sourceDropdown.SelectedValue, _targetDropdown.SelectedValue);
+            _onSetupComplete?.Invoke(_selectedGame, SourceDropdown.SelectedValue, TargetDropdown.SelectedValue);
             SetActive(false);
         }
     }

@@ -51,7 +51,10 @@ namespace UnityGameTranslator.Core
     public sealed class ScreenDocument
     {
         /// <summary>The closed vocabulary. The same list as the schema's enum — a check says so.</summary>
-        public static readonly string[] Kinds = { "card", "stack", "row", "spacer", "label", "button", "status" };
+        public static readonly string[] Kinds = { "card", "stack", "row", "spacer", "label", "button", "status", "section", "field", "dropdown", "list" };
+
+        /// <summary>What the help bar says over this piece, or null.</summary>
+        public static string HelpOf(ScreenNode node) => node.Word("help");
 
         public string Name { get; private set; }
         public int Width { get; private set; }
@@ -175,11 +178,26 @@ namespace UnityGameTranslator.Core
                         if (node.Int("height") == null)
                             throw new ScreenDocumentException($"{Name}: the spacer '{node.Name}' has a height");
                         break;
+                    case "dropdown":
+                        // The choices are never written in a document: they come from a source
+                        // every product shares, named here.
+                        if (node.Word("options") == null)
+                            throw new ScreenDocumentException($"{Name}: the dropdown '{node.Name}' says where its choices come from");
+                        if (string.IsNullOrEmpty(node.Act))
+                            throw new ScreenDocumentException($"{Name}: the dropdown '{node.Name}' asks for no act");
+                        if (Acts.ContainsKey(node.Act))
+                            throw new ScreenDocumentException($"{Name}: the act '{node.Act}' is asked for by two pieces");
+                        Acts[node.Act] = node;
+                        break;
                 }
+
+                if (HelpOf(node) != null && Help == null)
+                    throw new ScreenDocumentException($"{Name}: '{node.Name}' has a help sentence and the screen declares no help bar");
 
                 if (obj["children"] is JArray children)
                 {
-                    if (node.Kind == "label" || node.Kind == "button" || node.Kind == "spacer" || node.Kind == "status")
+                    if (node.Kind == "label" || node.Kind == "button" || node.Kind == "spacer" || node.Kind == "status"
+                        || node.Kind == "field" || node.Kind == "dropdown" || node.Kind == "list")
                         throw new ScreenDocumentException($"{Name}: a {node.Kind} holds nothing");
                     ReadInto(node.Children, children);
                 }

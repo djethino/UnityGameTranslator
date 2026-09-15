@@ -92,7 +92,28 @@ namespace UnityGameTranslator.Core.Checks
             check(backups.MinWidth == 560 && backups.MinHeight == backups.Height,
                 "the document says no height floor: that floor is measured", "what two lists cost at two rows each is known once they are laid out, not before");
 
+            // ── The upload setup: a field, two dropdowns, a list, help on the controls ──
+            var setup = ScreenDocument.FromFile(Path.Combine(folder, "upload-setup.json"));
+            check(setup.Acts.Keys.OrderBy(k => k).SequenceEqual(new[] { "cancel", "continue", "search", "sourceChanged", "targetChanged" }),
+                "upload-setup.json asks for five acts, two of them from dropdowns", $"got {string.Join(",", setup.Acts.Keys)}");
+            check(setup.Acts["sourceChanged"].Kind == "dropdown" && setup.Acts["sourceChanged"].Word("options") == "languages",
+                "a dropdown asks for an act when its choice changes, and names where its choices come from", "the languages are the catalogue's, never a list in a document");
+            check(setup.Binds.Keys.OrderBy(k => k).SequenceEqual(new[] { "game", "gameSource", "legend", "searchStatus", "validation" }),
+                "its five slots are the lines the code writes from the facts", $"got {string.Join(",", setup.Binds.Keys)}");
+            check(setup.Nodes["ResultsScroll"].Kind == "list" && setup.Nodes["ResultsScroll"].Children.Count == 0
+                  && setup.Nodes["GameSearchInput"].Kind == "field" && setup.Nodes["GameBox"].Kind == "section",
+                "a list the code fills, a field the code reads, a section around them", "forms, not rules");
+            check(ScreenDocument.HelpOf(setup.Nodes["GameSearchInput"]) != null && ScreenDocument.HelpOf(setup.Nodes["Source"]) != null
+                  && ScreenDocument.HelpOf(setup.Nodes["ContinueBtn"]) != null && ScreenDocument.HelpOf(setup.Nodes["Title"]) == null,
+                "the help sentences sit on the controls, not on the words", "what the bar says over each control is the document's; the bar itself is chrome.help");
+            check(!setup.Nodes["TargetSettled"].StartsVisible,
+                "the note under the target starts hidden", "shown once the code has read that the file's target is settled");
+
             // ── Refusals ──────────────────────────────────────────────────────
+            Refuses(check, "a dropdown that does not say where its choices come from", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[{""kind"":""dropdown"",""name"":""D"",""act"":""pick""}],""footer"":[]}", "choices come from");
+            Refuses(check, "a dropdown without an act", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[{""kind"":""dropdown"",""name"":""D"",""options"":""languages""}],""footer"":[]}", "asks for no act");
+            Refuses(check, "rows written into a list", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[{""kind"":""list"",""name"":""L"",""children"":[]}],""footer"":[]}", "holds nothing");
+            Refuses(check, "a help sentence on a screen with no help bar", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[{""kind"":""field"",""name"":""F"",""help"":""Type here""}],""footer"":[]}", "no help bar");
             Refuses(check, "a help bar with no sentence", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""chrome"":{""help"":""""},""body"":[],""footer"":[]}", "resting sentence");
             Refuses(check, "a name used in the header and again in the body", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""header"":[{""kind"":""spacer"",""name"":""A"",""height"":1}],""body"":[{""kind"":""spacer"",""name"":""A"",""height"":1}],""footer"":[]}", "used twice");
             Refuses(check, "an unknown kind", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[{""kind"":""gauge"",""name"":""G""}],""footer"":[]}", "gauge");

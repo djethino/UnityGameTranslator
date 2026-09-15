@@ -64,6 +64,16 @@ namespace UnityGameTranslator.Core.Checks
             check(choice.Acts["compare"].Props["scope"] != null,
                 "Compare says where it writes", "two buttons that read identically write to opposite sides; the mark is what tells them apart");
 
+            // ── The login: pieces that start hidden, a status line, four acts ──
+            var login = ScreenDocument.FromFile(Path.Combine(folder, "login.json"));
+            check(login.Acts.Keys.OrderBy(k => k).SequenceEqual(new[] { "cancel", "copy", "openWebsite", "start" })
+                  && login.Binds.Keys.OrderBy(k => k).SequenceEqual(new[] { "code", "instructions" }),
+                "login.json asks for four acts and two slots", $"got {string.Join(",", login.Acts.Keys)} / {string.Join(",", login.Binds.Keys)}");
+            check(!login.Nodes["CodeRow"].StartsVisible && !login.Nodes["OpenWebsiteBtn"].StartsVisible && login.Nodes["StartLoginBtn"].StartsVisible,
+                "the code row and Open Website start hidden, Start Login shown", "which is shown when is the flow's business, in code; the document only says how it starts");
+            check(login.Nodes["Status"].Kind == "status" && login.Nodes["CodeLabel"].Word("role") == "Code",
+                "a status line and a code label are named as such", "the code writes the one with a tone and the other with a device code");
+
             // ── Refusals ──────────────────────────────────────────────────────
             Refuses(check, "an unknown kind", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[{""kind"":""gauge"",""name"":""G""}],""footer"":[]}", "gauge");
             Refuses(check, "a button without an act", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[],""footer"":[{""kind"":""button"",""name"":""B"",""text"":""Go""}]}", "asks for no act");

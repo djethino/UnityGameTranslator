@@ -1,5 +1,4 @@
 using System;
-using Newtonsoft.Json.Linq;
 using UniverseLib.UI;
 using UnityGameTranslator.Core.UI.Components;
 
@@ -7,24 +6,26 @@ namespace UnityGameTranslator.Core.UI.Panels
 {
     /// <summary>
     /// Login panel using Device Flow authentication via SSE.
+    ///
+    /// ⚠ Described in data since 2026-09-15 (<c>common/spec/screens/login.json</c>): every piece
+    /// is the document's, including the ones that start hidden. What stays here is the flow —
+    /// which piece is shown when, what the status line says, what the code writes — and the acts.
     /// </summary>
     public class LoginPanel : TranslatorPanelBase
     {
-        public override string Name => "Login";
-        public override int MinWidth => 380;
-        public override int MinHeight => 200;
-        public override int PanelWidth => 420;
-        public override int PanelHeight => 350;
+        private static readonly ScreenDocument Doc = ScreenDocument.FromEmbedded("login");
 
-        protected override int MinPanelHeight => 200;
+        public override string Name => Doc.Name;
+        public override int MinWidth => Doc.MinWidth;
+        public override int MinHeight => Doc.MinHeight;
+        public override int PanelWidth => Doc.Width;
+        public override int PanelHeight => Doc.Height;
 
-        private LabelHandle _instructions;
-        private LabelHandle _code;
-        private StatusLine _status;
-        private ButtonHandle _startLoginBtn;
-        private ButtonHandle _openWebsiteBtn;
-        private ButtonHandle _copyCodeBtn;
-        private Host _codeRow;
+        protected override int MinPanelHeight => Doc.MinHeight;
+        protected override bool PersistWindowPreferences => Doc.Persist;
+        protected override bool UseBackdrop => Doc.Backdrop;
+
+        private BuiltScreen _screen;
         private string _verificationUri;
         private SseClient _sseClient;
         private string _deviceCode;
@@ -35,63 +36,35 @@ namespace UnityGameTranslator.Core.UI.Panels
             "Click the button below to start the login process.\n" +
             "You will receive a code to enter on the website.";
 
+        private LabelHandle Instructions => _screen.Label("Instructions");
+        private LabelHandle Code => _screen.Label("CodeLabel");
+        private StatusLine Status => _screen.Status("Status");
+        private ButtonHandle StartLoginBtn => _screen.Button("StartLoginBtn");
+        private ButtonHandle OpenWebsiteBtn => _screen.Button("OpenWebsiteBtn");
+        private ButtonHandle CopyCodeBtn => _screen.Button("CopyCodeBtn");
+        private Host CodeRow => _screen.Host("CodeRow");
+
         public LoginPanel(UIBase owner) : base(owner)
         {
         }
 
         protected override void ConstructPanelContent()
         {
-            // Use scrollable layout - content scrolls if needed, buttons stay fixed
-            Layout(out var body, out var footer, PanelWidth - 40);
+            Layout(out var body, out var footer, Doc.CardWidth);
+            _screen = ScreenBuilder.Build(Doc, body, footer, ActOf);
+            _screen.Say("instructions", StartInstructions);
+        }
 
-            // Adaptive card - sizes to content
-            var card = Stacks.Card(body, "LoginCard", PanelWidth - 40);
-
-            Labels.Create(card, "Title", "Connect Account", TextRole.Title);
-
-            Stacks.Spacer(card, 10);
-
-            // Instructions — rewritten by the code as the flow advances, so Dynamic.
-            _instructions = Labels.Create(card, "Instructions", StartInstructions, TextRole.Description,
-                                          policy: TextPolicy.Dynamic, minHeight: UIStyles.MultiLineSmall);
-
-            Stacks.Spacer(card, 10);
-
-            // Code display row (initially hidden) - Excluded: device code, not translatable
-            //
-            // ⚠ Trough surface and small padding, as wide as its content: that is what this row has
-            // always shown. It was asked for transparent with no padding, but the factory reads a
-            // clear colour and a zero padding as "nothing given" and paints its defaults — the
-            // viewport colour, five pixels each side. Stated here so the screen does not change;
-            // whether the band is wanted is a decision for another day (see the report).
-            _codeRow = Stacks.Horizontal(card, "CodeRow", spacing: 8, pad: Pad.All(UIStyles.SmallSpacing),
-                                         placement: Placement.MiddleCenter, surface: Surface.Trough,
-                                         fill: Fill.Content, minHeight: UIStyles.CodeDisplayHeight);
-            _codeRow.Visible = false;
-
-            _code = Labels.Create(_codeRow, "CodeLabel", "", TextRole.Code, policy: TextPolicy.Excluded);
-
-            // Copy button
-            _copyCodeBtn = Buttons.Secondary(_codeRow, "CopyCodeBtn", "Copy", minWidth: 60, policy: TextPolicy.Dynamic);
-            _copyCodeBtn.Clicked += CopyCodeToClipboard;
-
-            // Open website button (initially hidden)
-            _openWebsiteBtn = Buttons.Create(card, "OpenWebsiteBtn", "Open Website", ButtonTone.Primary,
-                                             minWidth: 200, fill: Fill.Stretch);
-            _openWebsiteBtn.Clicked += OpenVerificationUrl;
-            _openWebsiteBtn.Visible = false;
-
-            // Status label
-            _status = StatusLine.Create(card, "Status");
-
-            // Start login button
-            _startLoginBtn = Buttons.Create(card, "StartLoginBtn", "Start Login", ButtonTone.Primary,
-                                            minWidth: 200, fill: Fill.Stretch);
-            _startLoginBtn.Clicked += StartLogin;
-
-            // Cancel button - in fixed footer (outside scroll)
-            var cancelBtn = Buttons.Secondary(footer, "CancelBtn", "Cancel");
-            cancelBtn.Clicked += CancelLogin;
+        private Action ActOf(string act)
+        {
+            switch (act)
+            {
+                case "start": return StartLogin;
+                case "openWebsite": return OpenVerificationUrl;
+                case "copy": return CopyCodeToClipboard;
+                case "cancel": return CancelLogin;
+                default: return null;
+            }
         }
 
         public override void SetActive(bool active)
@@ -110,12 +83,12 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             if (!TranslatorCore.Config.online_mode)
             {
-                _status.Say("Offline mode - enable Online Mode in Mod Options first", Tone.Error);
+                Status.Say("Offline mode - enable Online Mode in Mod Options first", Tone.Error);
                 return;
             }
 
-            _startLoginBtn.Enabled = false;
-            _status.Say("Requesting code...", Tone.Warning);
+            StartLoginBtn.Enabled = false;
+            Status.Say("Requesting code...", Tone.Warning);
 
             try
             {
@@ -137,14 +110,14 @@ namespace UnityGameTranslator.Core.UI.Panels
                         _userCode = userCode;
                         _verificationUri = verificationUri;
 
-                        _code.Show(_userCode);
-                        _codeRow.Visible = true;
+                        Code.Show(_userCode);
+                        CodeRow.Visible = true;
 
-                        _openWebsiteBtn.Visible = true;
-                        _startLoginBtn.Visible = false;
+                        OpenWebsiteBtn.Visible = true;
+                        StartLoginBtn.Visible = false;
 
-                        _instructions.Say("Click the button below to open the website,\nthen enter this code:");
-                        _status.Say("Waiting for authorization...", Tone.Info);
+                        Instructions.Say("Click the button below to open the website,\nthen enter this code:");
+                        Status.Say("Waiting for authorization...", Tone.Info);
 
                         // Recalculate size after content changed
                         RecalculateSize();
@@ -153,8 +126,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                     }
                     else
                     {
-                        _status.Show(Tr("Error:") + $" {error}", Tone.Error);
-                        _startLoginBtn.Enabled = true;
+                        Status.Show(Tr("Error:") + $" {error}", Tone.Error);
+                        StartLoginBtn.Enabled = true;
                     }
                 });
             }
@@ -163,8 +136,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 var errorMsg = e.Message;
                 TranslatorUIManager.RunOnMainThread(() =>
                 {
-                    _status.Show(Tr("Error:") + $" {errorMsg}", Tone.Error);
-                    _startLoginBtn.Enabled = true;
+                    Status.Show(Tr("Error:") + $" {errorMsg}", Tone.Error);
+                    StartLoginBtn.Enabled = true;
                 });
             }
         }
@@ -209,10 +182,10 @@ namespace UnityGameTranslator.Core.UI.Panels
                     switch (state)
                     {
                         case SseConnectionState.Reconnecting:
-                            _status.Say("Connection lost, reconnecting...", Tone.Warning);
+                            Status.Say("Connection lost, reconnecting...", Tone.Warning);
                             break;
                         case SseConnectionState.Connected:
-                            _status.Say("Waiting for authorization...", Tone.Info);
+                            Status.Say("Waiting for authorization...", Tone.Info);
                             break;
                     }
                 });
@@ -223,7 +196,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 var errorMsg = error;
                 TranslatorUIManager.RunOnMainThread(() =>
                 {
-                    _status.Show(Tr("Error:") + $" {errorMsg}", Tone.Error);
+                    Status.Show(Tr("Error:") + $" {errorMsg}", Tone.Error);
                     _sseClient = null;
                     ResetUI();
                 });
@@ -254,7 +227,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // by the account row when it lands.
                 _ = ApiClient.RefreshAccessCodeAsync();
 
-                _status.Show(Tr("Logged in as") + $" {userName}!", Tone.Success);
+                Status.Show(Tr("Logged in as") + $" {userName}!", Tone.Success);
 
                 // Every screen that shows who is signed in re-reads it
                 Intents.AccountChanged();
@@ -270,7 +243,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             catch (Exception e)
             {
                 TranslatorCore.LogError($"[Login] Error handling auth response: {e.Message}");
-                _status.Say("Login succeeded but error processing response", Tone.Error);
+                Status.Say("Login succeeded but error processing response", Tone.Error);
             }
         }
 
@@ -278,7 +251,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             _sseClient?.Disconnect();
             _sseClient = null;
-            _status.Say("Code expired. Please try again.", Tone.Error);
+            Status.Say("Code expired. Please try again.", Tone.Error);
             ResetUI();
         }
 
@@ -287,11 +260,11 @@ namespace UnityGameTranslator.Core.UI.Panels
             try
             {
                 string error = ApiReaders.ReadStreamError(ApiClient.ParseJsonSafe(jsonData)).Error ?? "Unknown error";
-                _status.Show(error, Tone.Error);
+                Status.Show(error, Tone.Error);
             }
             catch
             {
-                _status.Say("Connection error", Tone.Error);
+                Status.Say("Connection error", Tone.Error);
             }
             _sseClient?.Disconnect();
             _sseClient = null;
@@ -320,26 +293,26 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (!string.IsNullOrEmpty(_userCode))
             {
                 Platform.CopyToClipboard(_userCode);
-                _copyCodeBtn.Label = "Copied!";
+                CopyCodeBtn.Label = "Copied!";
 
                 // Reset button text after 2 seconds
                 TranslatorUIManager.RunDelayed(2f, () =>
                 {
-                    if (_copyCodeBtn != null)
-                        _copyCodeBtn.Label = "Copy";
+                    if (_screen != null)
+                        CopyCodeBtn.Label = "Copy";
                 });
             }
         }
 
         private void ResetUI()
         {
-            _startLoginBtn.Enabled = true;
-            _startLoginBtn.Visible = true;
-            _openWebsiteBtn.Visible = false;
-            _codeRow.Visible = false;
-            _copyCodeBtn.Label = "Copy";
-            _instructions.Show(StartInstructions);
-            _status.Clear();
+            StartLoginBtn.Enabled = true;
+            StartLoginBtn.Visible = true;
+            OpenWebsiteBtn.Visible = false;
+            CodeRow.Visible = false;
+            CopyCodeBtn.Label = "Copy";
+            Instructions.Show(StartInstructions);
+            Status.Clear();
             _verificationUri = null;
 
             // Recalculate size after content changed

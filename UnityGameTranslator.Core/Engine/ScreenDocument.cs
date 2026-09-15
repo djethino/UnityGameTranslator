@@ -23,6 +23,9 @@ namespace UnityGameTranslator.Core
         /// <summary>The verb a button asks for; null on anything else.</summary>
         public string Act => (string)Props["act"];
 
+        /// <summary>Hidden at first when the document says so; the code shows it when its moment comes.</summary>
+        public bool StartsVisible => Flag("visible") ?? true;
+
         public int? Int(string prop) => Props[prop] is JValue v && v.Type == JTokenType.Integer ? (int?)(int)v : null;
         public string Word(string prop) => Props[prop] is JValue v && v.Type == JTokenType.String ? (string)v : null;
         public bool? Flag(string prop) => Props[prop] is JValue v && v.Type == JTokenType.Boolean ? (bool?)(bool)v : null;
@@ -48,7 +51,7 @@ namespace UnityGameTranslator.Core
     public sealed class ScreenDocument
     {
         /// <summary>The closed vocabulary. The same list as the schema's enum — a check says so.</summary>
-        public static readonly string[] Kinds = { "card", "stack", "row", "spacer", "label", "button" };
+        public static readonly string[] Kinds = { "card", "stack", "row", "spacer", "label", "button", "status" };
 
         public string Name { get; private set; }
         public int Width { get; private set; }
@@ -168,7 +171,7 @@ namespace UnityGameTranslator.Core
 
                 if (obj["children"] is JArray children)
                 {
-                    if (node.Kind == "label" || node.Kind == "button" || node.Kind == "spacer")
+                    if (node.Kind == "label" || node.Kind == "button" || node.Kind == "spacer" || node.Kind == "status")
                         throw new ScreenDocumentException($"{Name}: a {node.Kind} holds nothing");
                     ReadInto(node.Children, children);
                 }

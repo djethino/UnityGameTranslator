@@ -14,16 +14,19 @@ namespace UnityGameTranslator.Core.UI
         private readonly Dictionary<string, LabelHandle> _labels = new Dictionary<string, LabelHandle>(StringComparer.Ordinal);
         private readonly Dictionary<string, ButtonHandle> _buttons = new Dictionary<string, ButtonHandle>(StringComparer.Ordinal);
         private readonly Dictionary<string, Host> _hosts = new Dictionary<string, Host>(StringComparer.Ordinal);
+        private readonly Dictionary<string, StatusLine> _statuses = new Dictionary<string, StatusLine>(StringComparer.Ordinal);
 
         internal BuiltScreen(ScreenDocument doc) { _doc = doc; }
 
         internal void Add(string name, LabelHandle label) => _labels[name] = label;
         internal void Add(string name, ButtonHandle button) => _buttons[name] = button;
         internal void Add(string name, Host host) => _hosts[name] = host;
+        internal void Add(string name, StatusLine status) => _statuses[name] = status;
 
         public LabelHandle Label(string name) => _labels.TryGetValue(name, out var l) ? l : throw new ScreenDocumentException($"{_doc.Name}: no label named '{name}'");
         public ButtonHandle Button(string name) => _buttons.TryGetValue(name, out var b) ? b : throw new ScreenDocumentException($"{_doc.Name}: no button named '{name}'");
         public Host Host(string name) => _hosts.TryGetValue(name, out var h) ? h : throw new ScreenDocumentException($"{_doc.Name}: no host named '{name}'");
+        public StatusLine Status(string name) => _statuses.TryGetValue(name, out var s) ? s : throw new ScreenDocumentException($"{_doc.Name}: no status line named '{name}'");
 
         /// <summary>
         /// Write a slot. The document names it and says which piece holds it; the code says what
@@ -79,13 +82,33 @@ namespace UnityGameTranslator.Core.UI
                 }
                 case "row":
                 {
-                    var host = Stacks.Row(parent, node.Name, Spacing(node) ?? 10);
+                    // A plain row unless the document says more: then the horizontal stack, with
+                    // its padding, placement, surface, fill and floor spelt out.
+                    bool plain = node.Word("pad") == null && node.Int("pad") == null && node.Word("placement") == null
+                                 && node.Word("surface") == null && node.Word("fill") == null
+                                 && node.Word("minHeight") == null && node.Int("minHeight") == null;
+                    Host host;
+                    if (plain)
+                        host = Stacks.Row(parent, node.Name, Spacing(node) ?? 10);
+                    else
+                    {
+                        int pad = Spacing(node, "pad") ?? 0;
+                        host = Stacks.Horizontal(parent, node.Name, Spacing(node) ?? 0, Pad.All(pad),
+                                                 Enum(node.Word("placement"), Placement.MiddleLeft),
+                                                 Enum(node.Word("surface"), Surface.None),
+                                                 Enum(node.Word("fill"), Fill.Stretch),
+                                                 MinHeight(node));
+                    }
+                    host.Visible = node.StartsVisible;
                     built.Add(node.Name, host);
                     foreach (var child in node.Children) Place(doc, child, host, built, actOf);
                     break;
                 }
                 case "spacer":
                     built.Add(node.Name, Stacks.Spacer(parent, node.Int("height") ?? 0, node.Name));
+                    break;
+                case "status":
+                    built.Add(node.Name, StatusLine.Create(parent, node.Name, node.Flag("centred") ?? true));
                     break;
                 case "label":
                 {
@@ -103,6 +126,7 @@ namespace UnityGameTranslator.Core.UI
                     // Said only to override the role's own choice — a Hint is italic unless told otherwise.
                     if (node.Flag("italic") is bool italic) label.Italic = italic;
                     if (node.Flag("bold") is bool bold) label.Bold = bold;
+                    label.Visible = node.StartsVisible;
                     built.Add(node.Name, label);
                     break;
                 }
@@ -116,10 +140,12 @@ namespace UnityGameTranslator.Core.UI
                         scope = EditScope.SideAfter((bool)scopeFacts["onThisMachine"], (bool)scopeFacts["yourPublishedCopy"]);
                     var button = Buttons.Create(parent, node.Name, node.Text ?? "",
                                                 Enum(node.Word("tone"), ButtonTone.Secondary), size,
-                                                minWidth: node.Int("minWidth"), scope: scope, policy: policy);
+                                                minWidth: node.Int("minWidth"), fill: Enum(node.Word("fill"), Fill.Content),
+                                                scope: scope, policy: policy);
                     var handler = actOf(node.Act)
                                   ?? throw new ScreenDocumentException($"{doc.Name}: the act '{node.Act}' has no handler");
                     button.Clicked += handler;
+                    button.Visible = node.StartsVisible;
                     built.Add(node.Name, button);
                     break;
                 }
@@ -140,19 +166,20 @@ namespace UnityGameTranslator.Core.UI
                 case "RowHeightXLarge": return UIStyles.RowHeightXLarge;
                 case "InputHeight": return UIStyles.InputHeight;
                 case "MultiLineSmall": return UIStyles.MultiLineSmall;
+                case "CodeDisplayHeight": return UIStyles.CodeDisplayHeight;
                 default: throw new ScreenDocumentException($"'{node.Name}': '{node.Word("minHeight")}' is not a height the theme names");
             }
         }
 
-        private static int? Spacing(ScreenNode node)
+        private static int? Spacing(ScreenNode node, string prop = "spacing")
         {
-            if (node.Int("spacing") is int pixels) return pixels;
-            switch (node.Word("spacing"))
+            if (node.Int(prop) is int pixels) return pixels;
+            switch (node.Word(prop))
             {
                 case null: return null;
                 case "SmallSpacing": return UIStyles.SmallSpacing;
                 case "ElementSpacing": return UIStyles.ElementSpacing;
-                default: throw new ScreenDocumentException($"'{node.Name}': '{node.Word("spacing")}' is not a spacing the theme names");
+                default: throw new ScreenDocumentException($"'{node.Name}': '{node.Word(prop)}' is not a spacing the theme names");
             }
         }
 

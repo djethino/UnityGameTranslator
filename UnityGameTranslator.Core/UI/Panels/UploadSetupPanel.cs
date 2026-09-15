@@ -58,7 +58,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         private LabelHandle Validation => _screen.Label("Validation");
         private ButtonHandle ContinueBtn => _screen.Button("ContinueBtn");
 
-        // Under the target dropdown, saying why it does not open once the file holds lines
+        // Under each dropdown, saying why it does not open once the file states that language
+        private LabelHandle SourceSettledHint => _screen.Label("SourceSettled");
         private LabelHandle TargetSettledHint => _screen.Label("TargetSettled");
 
         public UploadSetupPanel(UIBase owner) : base(owner)
@@ -106,13 +107,27 @@ namespace UnityGameTranslator.Core.UI.Panels
             string configSource = TranslatorCore.Config.source_language;
             string configTarget = TranslatorCore.Config.target_language;
 
-            // Source: use config if not auto, otherwise leave empty for user to select. This is
-            // the one language that IS a question here — "auto" means "detect", a working mode,
-            // and the source only becomes a value when somebody declares it, which is now.
-            if (!string.IsNullOrEmpty(configSource) && configSource.ToLower() != "auto")
+            // 🔴 **The source is a question only until the file states it** (2026-09-15). With
+            // strict source detection on and a source set, the file carries its source language
+            // from its first line — every line it holds was written against it, and changing it
+            // here would send a file whose lines say otherwise. Options already shows it settled;
+            // this screen went on asking. Same reading as the target below: from the FILE.
+            //
+            // Otherwise — "auto" means "detect", a working mode — the source only becomes a value
+            // when somebody declares it, which is now; the config is offered when it says one.
+            bool sourceSettled = Languages.IsSettled(TranslatorCore.FileSourceLanguage);
+
+            if (sourceSettled)
+            {
+                SourceDropdown.SelectedValue = TranslatorCore.FileSourceLanguage;
+            }
+            else if (!string.IsNullOrEmpty(configSource) && configSource.ToLower() != "auto")
             {
                 SourceDropdown.SelectedValue = configSource;
             }
+
+            SourceDropdown.SetInteractable(!sourceSettled);
+            SourceSettledHint.Visible = sourceSettled;
 
             // 🔴 **The target is not a question: it is what the file IS.** It settled with the
             // first translated line (TranslatorCore.SettleTargetLanguageOnFirstLine) and every

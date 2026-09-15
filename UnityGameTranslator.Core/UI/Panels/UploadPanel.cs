@@ -310,6 +310,20 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         public void OpenForUpload()
         {
+            // 🔴 **A translation the server has already said it does not know goes straight to
+            // its setup** (2026-09-15). This window opened first, asked the server, then closed
+            // and opened the setup — two windows for one click, and a visible jump since windows
+            // grow into place. The fact is usually known before the click: the main screen asks
+            // the server for it when it refreshes. Known, it decides here; unknown, the window
+            // opens and asks, as it always did. A fork keeps its own way in: it carries its
+            // languages and skips the setup.
+            var known = TranslatorCore.ServerState;
+            if (known != null && known.Checked && !known.Exists && TranslatorCore.PendingFork == null)
+            {
+                Intents.SetUpUpload((game, srcLang, tgtLang) => ContinueAfterSetup(game, srcLang, tgtLang));
+                return;
+            }
+
             _openingForDetails = false;
             _purposeStated = true;
             SetActive(true);

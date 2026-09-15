@@ -106,8 +106,8 @@ namespace UnityGameTranslator.Core.Checks
             check(ScreenDocument.HelpOf(setup.Nodes["GameSearchInput"]) != null && ScreenDocument.HelpOf(setup.Nodes["Source"]) != null
                   && ScreenDocument.HelpOf(setup.Nodes["ContinueBtn"]) != null && ScreenDocument.HelpOf(setup.Nodes["Title"]) == null,
                 "the help sentences sit on the controls, not on the words", "what the bar says over each control is the document's; the bar itself is chrome.help");
-            check(!setup.Nodes["TargetSettled"].StartsVisible,
-                "the note under the target starts hidden", "shown once the code has read that the file's target is settled");
+            check(!setup.Nodes["TargetSettled"].StartsVisible && !setup.Nodes["SourceSettled"].StartsVisible,
+                "the notes under the two languages start hidden", "shown once the code has read that the file states that language — the target with its first line, the source under strict detection");
 
             // ── Every panel built from a document hands the builder what the document needs ──
             // 🔴 The builder refuses a document with a header or a help bar it was given nowhere

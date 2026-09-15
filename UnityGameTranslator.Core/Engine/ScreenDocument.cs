@@ -33,8 +33,8 @@ namespace UnityGameTranslator.Core
 
     /// <summary>
     /// A screen of the mod as a document (common/spec/screens/*.json): its identity and size,
-    /// the tree of its body, the row of its footer, and what it asks of the code — the `bind`
-    /// slots it expects written and the `act` verbs it expects handled.
+    /// the fixed header when it has one, the tree of its body, the row of its footer, and what it
+    /// asks of the code — the `bind` slots it expects written and the `act` verbs it expects handled.
     ///
     /// 🔴 The document says the SHAPE and never a rule. What a label shows, whether a verb is
     /// offered, which tone it takes — those are decided in code from the facts, and written into
@@ -62,7 +62,11 @@ namespace UnityGameTranslator.Core
         public bool Persist { get; private set; } = true;
         /// <summary>The width the body's cards are laid out for; the window's width minus its margins when the document says nothing.</summary>
         public int CardWidth { get; private set; }
+        /// <summary>The resting sentence of the help bar above the footer; null for a screen with no such bar.</summary>
+        public string Help { get; private set; }
 
+        /// <summary>The fixed part between the title bar and the body — what stays put while the body scrolls. Empty for most screens.</summary>
+        public readonly List<ScreenNode> Header = new List<ScreenNode>();
         public readonly List<ScreenNode> Body = new List<ScreenNode>();
         public readonly List<ScreenNode> Footer = new List<ScreenNode>();
 
@@ -94,9 +98,13 @@ namespace UnityGameTranslator.Core
                 doc.Backdrop = (bool?)chrome["backdrop"] ?? true;
                 doc.Persist = (bool?)chrome["persist"] ?? true;
                 doc.CardWidth = (int?)chrome["cardWidth"] ?? 0;
+                doc.Help = (string)chrome["help"];
+                if (doc.Help != null && doc.Help.Length == 0)
+                    throw new ScreenDocumentException($"{doc.Name}: a help bar has a resting sentence");
             }
             if (doc.CardWidth <= 0) doc.CardWidth = doc.Width - 40;
 
+            if (root["header"] is JArray header) doc.ReadInto(doc.Header, header);
             doc.ReadInto(doc.Body, root["body"] as JArray ?? throw new ScreenDocumentException($"{doc.Name}: a screen has a body"));
             doc.ReadInto(doc.Footer, root["footer"] as JArray ?? throw new ScreenDocumentException($"{doc.Name}: a screen has a footer"));
             return doc;

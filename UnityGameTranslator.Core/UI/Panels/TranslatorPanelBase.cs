@@ -578,30 +578,53 @@ namespace UnityGameTranslator.Core.UI.Panels
         }
 
         /// <summary>
-        /// Follows the body's height, frame by frame, and tells the panel when it moves.
+        /// Follows the body's size, frame by frame, and tells the panel when it moves.
         ///
         /// ⚠ **Every frame, and the economy is the early return**, exactly as
-        /// <see cref="RefreshScopeStrip"/> does one line away in the same tick: a height that has
-        /// not moved costs a read and a compare. Gating this on "only while resizing" was tried for
-        /// the strips and removed — a panel's size changes in ways no flag is raised for, and a
-        /// screen that stops following at moments nobody can predict is worse than a comparison.
+        /// <see cref="RefreshScopeStrip"/> does one line away in the same tick: a size that has
+        /// not moved costs two reads and two compares. Gating this on "only while resizing" was
+        /// tried for the strips and removed — a panel's size changes in ways no flag is raised for,
+        /// and a screen that stops following at moments nobody can predict is worse than a
+        /// comparison.
         ///
         /// 🔴 It was first wired to the END of a resize only, and that showed: the lists stopped
         /// following the handle, so stretching the window did nothing until it was let go.
+        ///
+        /// ⚠ **The width too, not the height alone** (2026-09-15). What a body's chrome comes to
+        /// depends on the width — a sentence that wraps onto two lines at one width and one at
+        /// another — so a screen dividing its height between lists has to be asked again when only
+        /// the side edge was dragged, or it divides against a chrome that no longer holds and shows
+        /// a band of card or a scrollbar until the next vertical resize.
         /// </summary>
-        public void FollowBodyHeight()
+        public void FollowBodySize()
         {
-            var height = BodyHeight;
-            if (height <= 1f || Math.Abs(height - _lastBodyHeight) < 0.5f) return;
+            var size = BodySize;
+            if (size.y <= 1f) return;
+            if (Math.Abs(size.y - _lastBodySize.y) < 0.5f && Math.Abs(size.x - _lastBodySize.x) < 0.5f) return;
 
-            _lastBodyHeight = height;
+            _lastBodySize = size;
             BodySized();
         }
 
-        private float _lastBodyHeight;
+        private Vector2 _lastBodySize;
+
+        /// <summary>How wide and tall the scrolling body is right now — see <see cref="BodyHeight"/>.</summary>
+        private Vector2 BodySize
+        {
+            get
+            {
+                if (ContentRoot == null) return Vector2.zero;
+
+                var scroll = ContentRoot.transform.Find("PanelScroll");
+                var rect = scroll != null ? scroll.GetComponent<ScrollRect>() : null;
+                var viewport = rect != null ? rect.viewport : null;
+
+                return viewport != null ? viewport.rect.size : Vector2.zero;
+            }
+        }
 
         /// <summary>
-        /// The panel's body has a height that can be measured, and it has changed.
+        /// The panel's body has a size that can be measured, and it has changed.
         ///
         /// ⚠ **What is posed here is a SIZE, never a rebuild.** Rebuilding a screen while the handle
         /// is held tears down the scroll areas UniverseLib's auto-hiding scrollbar holds on to — the
@@ -609,6 +632,36 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// it can run on every frame of a drag.
         /// </summary>
         protected virtual void BodySized() { }
+
+        /// <summary>
+        /// Gives the window a height of the panel's own choosing — never the user's — and keeps it
+        /// off the record: a size set here is not saved as a preference and does not make the
+        /// panel stop sizing itself.
+        ///
+        /// 🔴 **For a window whose floor and ceiling are MEASURED and can move under it.** A size
+        /// restored from a preference is clamped at construction against a floor declared in
+        /// advance; the floor a screen of lists really has is known only once its lists are laid
+        /// out, and the ceiling — everything shown, nothing left over — only then too. A window
+        /// under its floor grows a scrollbar around its own content; one over its ceiling shows a
+        /// band of nothing. Both were reported, and both are answered by putting the window back
+        /// between the two the moment they are known.
+        /// </summary>
+        protected void ResizeTo(int height)
+        {
+            if (Rect == null || Math.Abs(Rect.rect.height - height) < 0.5f) return;
+
+            _isProgrammaticResize = true;
+            try
+            {
+                Rect.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, height);
+                EnsureValidPosition();
+                if (Dragger != null) Dragger.OnEndResize();
+            }
+            finally
+            {
+                _isProgrammaticResize = false;
+            }
+        }
 
         #region Dynamic Sizing
 

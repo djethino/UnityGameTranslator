@@ -37,6 +37,9 @@ namespace UnityGameTranslator.Core.UI
             if (!_doc.Binds.TryGetValue(bind, out var node))
                 throw new ScreenDocumentException($"{_doc.Name}: no slot named '{bind}'");
             if (node.Kind == "button") Button(node.Name).Label = text;
+            // A slot the document marks Excluded holds a figure or somebody's own words — written
+            // as they are, never through the mod's own translation.
+            else if (node.Word("policy") == "Excluded") Label(node.Name).Show(text);
             else Label(node.Name).Say(text);
         }
     }
@@ -51,12 +54,16 @@ namespace UnityGameTranslator.Core.UI
     internal static class ScreenBuilder
     {
         /// <param name="actOf">The handler for each act the document asks for; asked once per button, at build time, so an act nobody handles fails the build and not the click.</param>
-        public static BuiltScreen Build(ScreenDocument doc, Host body, Host footer, Func<string, Action> actOf)
+        /// <param name="header">Where the document's fixed header goes — required when it has one, since a header drawn into the scrolling body would scroll.</param>
+        public static BuiltScreen Build(ScreenDocument doc, Host body, Host footer, Func<string, Action> actOf, Host header = null)
         {
             if (doc == null) throw new ArgumentNullException(nameof(doc));
             if (actOf == null) throw new ArgumentNullException(nameof(actOf));
+            if (doc.Header.Count > 0 && header == null)
+                throw new ScreenDocumentException($"{doc.Name}: the document has a header and the panel gave it nowhere fixed to go");
 
             var built = new BuiltScreen(doc);
+            foreach (var node in doc.Header) Place(doc, node, header, built, actOf);
             foreach (var node in doc.Body) Place(doc, node, body, built, actOf);
             foreach (var node in doc.Footer) Place(doc, node, footer, built, actOf);
             return built;
@@ -112,9 +119,12 @@ namespace UnityGameTranslator.Core.UI
                     break;
                 case "label":
                 {
-                    // A bound text is written at show time, so it is Dynamic whatever the document
-                    // says: translated at the moment it is written, never registered as static UI text.
-                    var policy = node.Bind != null ? TextPolicy.Dynamic : Enum(node.Word("policy"), TextPolicy.UiText);
+                    // A bound text is written at show time, so it is Dynamic — translated at the
+                    // moment it is written, never registered as static UI text — unless the document
+                    // marks it Excluded: a count, a date, a name somebody wrote, shown as is.
+                    var policy = node.Bind != null
+                        ? (node.Word("policy") == "Excluded" ? TextPolicy.Excluded : TextPolicy.Dynamic)
+                        : Enum(node.Word("policy"), TextPolicy.UiText);
                     var label = Labels.Create(parent, node.Name, node.Text ?? "",
                                               Enum(node.Word("role"), TextRole.Body),
                                               tone: node.Word("tone") != null ? Enum(node.Word("tone"), Tone.Plain) : (Tone?)null,

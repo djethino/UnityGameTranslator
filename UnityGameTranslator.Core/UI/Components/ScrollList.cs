@@ -102,48 +102,68 @@ namespace UnityGameTranslator.Core.UI.Components
         /// already scrolled down, showing the middle of a list nobody had scrolled. Reported as
         /// "les 2 listes scrollées vers le bas".
         ///
+        /// 🔴 **Written as an OFFSET, not as a normalised position** (2026-09-15). The content of a
+        /// scroll view is pinned to the top of its viewport (pivot and anchors at the top, see
+        /// UIFactory.CreateScrollView), so an offset of zero IS the first row — whatever the content
+        /// and the viewport measure, now or once the layout has run. A normalised position is
+        /// worked out from those two sizes, and written before they were current it landed
+        /// somewhere else: that is what three attempts with coroutines and forced rebuilds were
+        /// chasing, and it is why the lists went on opening part-way down.
+        ///
         /// ⚠ Vertical only, and set rather than animated: this is not a movement somebody should
         /// see. What they should see is the top of the list they just asked for.
         /// </summary>
         public void ToTop()
         {
-            if (_scroll == null) return;
+            var content = ContentRect;
+            if (content == null) return;
 
-            UniverseLib.RuntimeHelper.StartCoroutine(TopOnceLaidOut());
+            content.anchoredPosition = new Vector2(content.anchoredPosition.x, 0f);
         }
 
         /// <summary>
-        /// 🔴 **One frame later, or it does nothing at all.** A ScrollRect works its position out
-        /// from the size of its content against the size of its viewport, and a list that has just
-        /// been filled has neither until the layout has run: the value is written, then recomputed
-        /// from what the scroller believes it holds — nothing — and the list stays exactly where it
-        /// was. Written straight after the rows were added, this call had no effect for as long as
-        /// it existed, and both lists went on opening part-way down.
+        /// Whether the list shows its first row — the same offset <see cref="ToTop"/> writes, read
+        /// back. A screen that poses this list's height asks it, so that a list nobody has scrolled
+        /// stays at its first row through a resize while one somebody is reading is left alone.
         /// </summary>
-        private System.Collections.IEnumerator TopOnceLaidOut()
+        public bool AtTop
         {
-            yield return null;
+            get
+            {
+                var content = ContentRect;
+                return content == null || content.anchoredPosition.y <= 0.5f;
+            }
+        }
 
-            var rect = _scroll != null ? _scroll.GetComponent<ScrollRect>() : null;
-            if (rect == null) yield break;
+        /// <summary>
+        /// What its rows come to, laid out at the current width, padding included — the height
+        /// this list would need to show everything without scrolling.
+        ///
+        /// ⚠ **Measured, never added up from a row height.** A row here is one, two or four lines
+        /// tall depending on what it has to say, so a declared figure per row either cut a list
+        /// short (it scrolled with room to spare beside it) or handed it a band of empty trough.
+        /// Asked once the layout has run — it forces the rows' own layout so the answer is current
+        /// at whatever width the panel has this frame.
+        /// </summary>
+        public float ContentHeight
+        {
+            get
+            {
+                var content = ContentRect;
+                if (content == null) return 0f;
 
-            // ⚠ Rebuilt first, and both halves of it: the position is worked out from the content's
-            // size against the viewport's, and a list whose height was posed this frame has neither
-            // until the layout has been asked for them. Without this the value is written against
-            // sizes that no longer hold and the list settles wherever its offset lands.
-            if (rect.content != null) LayoutRebuilder.ForceRebuildLayoutImmediate(rect.content);
-            LayoutRebuilder.ForceRebuildLayoutImmediate(_scroll.GetComponent<RectTransform>());
+                LayoutRebuilder.ForceRebuildLayoutImmediate(content);
+                return LayoutUtility.GetPreferredHeight(content);
+            }
+        }
 
-            rect.verticalNormalizedPosition = 1f;
-
-            // 🔴 **And again on the next frame.** uGUI settles a ScrollRect during its own late
-            // pass, after this coroutine has run: the position written here is correct and is then
-            // recomputed from the sizes it had before the rebuild. One more frame is what the
-            // difference between "put back at the top" and "put back at the top, then dropped"
-            // comes down to — reported three times as "tout apparaît scrollé en bas".
-            yield return null;
-
-            if (rect != null) rect.verticalNormalizedPosition = 1f;
+        private RectTransform ContentRect
+        {
+            get
+            {
+                var rect = _scroll != null ? _scroll.GetComponent<ScrollRect>() : null;
+                return rect != null ? rect.content : null;
+            }
         }
 
         /// <summary>The empty sentence, to reword it.</summary>

@@ -74,7 +74,27 @@ namespace UnityGameTranslator.Core.Checks
             check(login.Nodes["Status"].Kind == "status" && login.Nodes["CodeLabel"].Word("role") == "Code",
                 "a status line and a code label are named as such", "the code writes the one with a tone and the other with a device code");
 
+            // ── The backups: a fixed header, a help bar, a host the code fills, one verb ──
+            var backups = ScreenDocument.FromFile(Path.Combine(folder, "backups.json"));
+            check(backups.Header.Count == 1 && backups.Header[0].Kind == "card" && backups.Header[0].Children.Count == 4,
+                "backups.json has a header: one card, four pieces", "what somebody reads before choosing a row stays put while the rows scroll");
+            check(backups.Binds.Keys.OrderBy(k => k).SequenceEqual(new[] { "now", "privacy", "title" })
+                  && backups.Binds.Values.All(n => backups.Header[0].Children.Contains(n)),
+                "its three slots are all in the header", "the socle's words, written by the code rather than copied into the document");
+            check(backups.Binds["now"].Word("policy") == "Excluded",
+                "the line holding a count is Excluded", "a figure is written as it is, never through the mod's own translation");
+            check(backups.Acts.Keys.SequenceEqual(new[] { "close" }),
+                "backups.json asks for one act", $"got {string.Join(",", backups.Acts.Keys)}");
+            check(backups.Nodes.TryGetValue("List", out var list) && list.Kind == "stack" && list.Children.Count == 0,
+                "the blocks' host is a stack the document leaves empty", "two blocks built from the backups folder at show time, their heights a rule");
+            check(backups.Help == "Hover an element to see what it does" && confirm.Help == null,
+                "a help bar is declared by its resting sentence, and only where there is one", "what each control says there is the code's");
+            check(backups.MinWidth == 560 && backups.MinHeight == backups.Height,
+                "the document says no height floor: that floor is measured", "what two lists cost at two rows each is known once they are laid out, not before");
+
             // ── Refusals ──────────────────────────────────────────────────────
+            Refuses(check, "a help bar with no sentence", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""chrome"":{""help"":""""},""body"":[],""footer"":[]}", "resting sentence");
+            Refuses(check, "a name used in the header and again in the body", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""header"":[{""kind"":""spacer"",""name"":""A"",""height"":1}],""body"":[{""kind"":""spacer"",""name"":""A"",""height"":1}],""footer"":[]}", "used twice");
             Refuses(check, "an unknown kind", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[{""kind"":""gauge"",""name"":""G""}],""footer"":[]}", "gauge");
             Refuses(check, "a button without an act", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[],""footer"":[{""kind"":""button"",""name"":""B"",""text"":""Go""}]}", "asks for no act");
             Refuses(check, "a name used twice", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[{""kind"":""spacer"",""name"":""A"",""height"":1},{""kind"":""spacer"",""name"":""A"",""height"":1}],""footer"":[]}", "used twice");

@@ -1377,24 +1377,15 @@ namespace UnityGameTranslator.Core.UI.Panels
             }
             else if (Standings.OnABranch(standing))
             {
-                _statusCard.ConfigureAsBranchOwner(
-                    standing,
-                    entryCount,
-                    targetLang,
-                    serverState?.MainUsername ?? serverState?.Uploader,
-                    localChanges);
+                _statusCard.ConfigureAsBranchOwner(standing, entryCount, targetLang, localChanges);
             }
             else if (standing.Publication == Publication.NotYours)
             {
-                _statusCard.ConfigureAsHoldingAnothersLineage(
-                    standing,
-                    entryCount,
-                    targetLang,
-                    serverState?.Uploader);
+                _statusCard.ConfigureAsHoldingAnothersLineage(standing, entryCount, targetLang);
             }
             else if (standing.Publication == Publication.NeverPublished)
             {
-                _statusCard.ConfigureAsLocalOnly(entryCount, targetLang);
+                _statusCard.ConfigureAsLocalOnly(standing, entryCount, targetLang);
             }
             // ⚠ NotDownloaded never reaches here: RefreshLayoutVisibility has already hidden the
             // card for it — a card describing a file says nothing when there is no file. It used

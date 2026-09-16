@@ -477,8 +477,12 @@ namespace UnityGameTranslator.Core.UI.Components
         /// quality bar carries the review stage and the completeness, the vote row carries the
         /// votes. Showing them twice would spend attention on something already on screen.
         /// </summary>
+        /// <summary>The standing last shown — what the notice under the lines is read from.</summary>
+        private Standing _standing;
+
         public void SetStanding(Standing standing)
         {
+            _standing = standing;
             if (_badgeHost == null) return;
 
             UIHelpers.DestroyChildren(_badgeHost);
@@ -881,142 +885,50 @@ namespace UnityGameTranslator.Core.UI.Components
         }
 
         /// <summary>
-        /// The warning an author sees while playing the game their empty translation belongs to.
+        /// The notice under the lines, for an author looking at their own published translation.
         ///
-        /// Only once it is PUBLISHED and theirs: a file being built in capture mode is normal
-        /// work, and warning about it would be noise. The website says the same thing on "my
-        /// translations", but that is a page somebody visits on purpose — this is in front of
-        /// them at the moment the file is actually in their hands.
+        /// 🔴 **Which notice, in which order, and whether it can be put away are the socle's**
+        /// (StatusCards.Notice, corpus `status_card`), read off the standing this card shows. This
+        /// used to be a chain of five reads of the server state, each with its own sentence — and
+        /// the dismiss button of the one judgement among them was left as it was by the four facts
+        /// above it.
         /// </summary>
         private void RefreshEmptyWarning(LocalQualityStats stats)
         {
             if (_emptyRow == null) return;
 
-            var state = TranslatorCore.ServerState;
-            bool published = state != null && state.Exists && state.IsOwner;
-
-            if (!published)
-            {
-                _emptyRow.SetActive(false);
-                return;
-            }
-
-            // Orphaned first: it is the one nobody else can fix. A branch whose Main is gone can
-            // never be merged by anyone — the only way forward is to publish it as a translation
-            // of its own, which is what Fork does. Said here rather than left to be discovered,
-            // because from inside the game everything looks normal.
-            if (state.MainMissing == true)
-            {
-                if (_emptyLabel != null)
-                {
-                    _emptyLabel.color = UIStyles.StatusError;
-                    _emptyLabel.text = TranslatorCore.TranslateOwnUIDynamic(
-                        "The translation you contribute to is gone: nobody can merge this work any more.");
-                }
-
-                if (_emptyBtn?.ButtonText != null)
-                {
-                    _emptyBtn.ButtonText.text = TranslatorCore.TranslateOwnUIDynamic("Manage online");
-                }
-
-                _emptyRow.SetActive(true);
-                return;
-            }
-
-            // Then the Main whose owner is gone. Placed between the two on purpose: it ends like
-            // the orphan above — nobody will ever merge this — and reads like the closure below,
-            // since the translation is still there. What separates it from both is worth the
-            // extra notice: nothing was withdrawn and nothing was refused, so the file in this
-            // game stays perfectly good to play with.
-            if (state.MainAbandoned == true)
-            {
-                if (_emptyLabel != null)
-                {
-                    _emptyLabel.color = UIStyles.StatusError;
-                    _emptyLabel.text = TranslatorCore.TranslateOwnUIDynamic(
-                        "The account behind the translation you contribute to is gone: nobody can "
-                        + "merge this work any more. The translation itself still works.");
-                }
-
-                if (_emptyBtn?.ButtonText != null)
-                {
-                    _emptyBtn.ButtonText.text = TranslatorCore.TranslateOwnUIDynamic("Manage online");
-                }
-
-                _emptyRow.SetActive(true);
-                return;
-            }
-
-            // Then the road that closed. Like the orphan above, nothing in the game shows it and
-            // no amount of work will reopen it — the Main decided to work alone. Not dismissable
-            // for the same reason: it is not an opinion about somebody, it is what may still be
-            // done with this file.
-            if (state.BranchFrozen == true)
-            {
-                if (_emptyLabel != null)
-                {
-                    _emptyLabel.color = UIStyles.StatusError;
-                    _emptyLabel.text = TranslatorCore.TranslateOwnUIDynamic(
-                        "The translation you contribute to no longer takes contributions: this can no longer be sent.");
-                }
-
-                if (_emptyBtn?.ButtonText != null)
-                {
-                    _emptyBtn.ButtonText.text = TranslatorCore.TranslateOwnUIDynamic("Manage online");
-                }
-
-                _emptyRow.SetActive(true);
-                return;
-            }
-
-            // Told, came back, took nothing in. Not silence — that is dormancy, and it is said
-            // elsewhere — but a judgement about somebody else, so it is said ONCE and carries a
-            // way to put it away for good.
-            if (state.MainIgnoring == true && !IsNoticeDismissed(MainIgnoringNotice))
-            {
-                if (_emptyLabel != null)
-                {
-                    _emptyLabel.color = UIStyles.StatusWarning;
-                    _emptyLabel.text = TranslatorCore.TranslateOwnUIDynamic(
-                        "The Main does not seem to be taking the new work into account. You can publish your own version whenever you like.");
-                }
-
-                if (_emptyBtn?.ButtonText != null)
-                {
-                    _emptyBtn.ButtonText.text = TranslatorCore.TranslateOwnUIDynamic("Manage online");
-                }
-
-                if (_dismissBtn?.ButtonText != null)
-                {
-                    _dismissBtn.ButtonText.text = TranslatorCore.TranslateOwnUIDynamic("Dismiss");
-                    _dismissBtn.Component.gameObject.SetActive(true);
-                }
-
-                _emptyRow.SetActive(true);
-                return;
-            }
-
-            _dismissBtn?.Component.gameObject.SetActive(false);
-
-            bool captureOnly = TranslationQuality.IsCaptureOnly(
+            bool captureOnly = stats != null && TranslationQuality.IsCaptureOnly(
                 stats.HumanCount, stats.ValidatedCount, stats.SkippedCount, stats.AiCount, stats.CaptureCount);
 
-            if (!captureOnly)
+            var notice = StatusCards.Notice(_standing, StandingFacts.Server(),
+                                            IsNoticeDismissed(MainIgnoringNotice), captureOnly);
+
+            if (notice == null)
             {
+                _dismissBtn?.Component.gameObject.SetActive(false);
                 _emptyRow.SetActive(false);
                 return;
             }
+
+            var said = notice.Value;
 
             if (_emptyLabel != null)
             {
-                _emptyLabel.color = UIStyles.StatusWarning;
-                _emptyLabel.text = TranslatorCore.TranslateOwnUIDynamic(
-                    "Published with no translated line: players who download it see nothing change.");
+                _emptyLabel.color = said.Tone == NoticeTone.Error ? UIStyles.StatusError : UIStyles.StatusWarning;
+                _emptyLabel.text = TranslatorCore.TranslateOwnUIDynamic(said.Text);
             }
 
             if (_emptyBtn?.ButtonText != null)
             {
-                _emptyBtn.ButtonText.text = TranslatorCore.TranslateOwnUIDynamic("Manage online");
+                _emptyBtn.ButtonText.text = TranslatorCore.TranslateOwnUIDynamic(said.Verb);
+            }
+
+            // A judgement about somebody else can be put away; a fact about the file cannot.
+            if (_dismissBtn != null)
+            {
+                if (_dismissBtn.ButtonText != null)
+                    _dismissBtn.ButtonText.text = TranslatorCore.TranslateOwnUIDynamic("Dismiss");
+                _dismissBtn.Component.gameObject.SetActive(said.Dismissable);
             }
 
             _emptyRow.SetActive(true);
@@ -1088,16 +1000,12 @@ namespace UnityGameTranslator.Core.UI.Components
             SetDetails(entryCount, language);
             SetQualityStats(CalculateLocalStats());
 
-            if (waiting <= 0)
-            {
-                SetSecondaryInfo("You own this translation", needsAttention: false);
-                return;
-            }
-
-            // The socle's words, so this line and the Manager's signal row say one thing.
-            // ⚠ And the same weight: contributions waiting is the one thing on this card that
-            // asks the owner to do something, so it is not written in the colour of a footnote.
-            var said = Contributions.WhatIsWaiting(waiting, linesAvailable);
+            // The line is the socle's (StatusCards.Secondary, corpus `status_card`): "you own
+            // this", or what is waiting — in the words the Manager's signal row uses, and with the
+            // weight of the one sentence on this card that asks the owner to do something.
+            var line = StatusCards.Secondary(standing, StandingFacts.Server(), localChanges: 0);
+            SetSecondaryInfo(line.Text, needsAttention: line.NeedsAttention);
+            if (!line.NeedsAttention) return;
 
             // ⚠ The other axis, on its OWN line rather than appended with a dash. "41 lines to take"
             // and "59 to review" answer two questions and neither follows from the other; the tags
@@ -1106,7 +1014,6 @@ namespace UnityGameTranslator.Core.UI.Components
             // ⚠ The head is printed, the qualities are DRAWN. The socle still composes the whole
             // sentence for anything that can only print (a log, a tooltip); here the four letters
             // become the chips they are on the website — see SetContributionKinds.
-            SetSecondaryInfo(said, needsAttention: true);
             SetContributionKinds(Contributions.ToReview(linesToReview),
                                  Contributions.KindsOfWork(linesNew, linesDiffering));
         }
@@ -1120,55 +1027,46 @@ namespace UnityGameTranslator.Core.UI.Components
         /// stand, the button is where the decision is taken. Repeating an INFORMATION where it is
         /// needed is not the same fault as offering an action twice.
         /// </summary>
-        public void ConfigureAsBranchOwner(Standing standing, int entryCount, string language,
-                                           string mainOwner, int localChanges)
+        public void ConfigureAsBranchOwner(Standing standing, int entryCount, string language, int localChanges)
         {
             SetStanding(standing);
             SetDetails(entryCount, language);
             SetQualityStats(CalculateLocalStats());
 
-            // One translatable sentence per variant, ending just before the name: the number becomes
-            // a placeholder, so every count shares one cache entry, and the name is appended after.
-            string state = localChanges > 0
-                ? $"{localChanges} changes not sent yet"
-                : "Everything sent";
-
-            bool named = !string.IsNullOrEmpty(mainOwner);
-
-            SetSecondaryInfo(named ? state + " · your branch of" : state,
-                             named ? People.MentionOf(mainOwner, TranslatorCore.Config?.api_user)
-                                   : null);
+            // One translatable sentence per variant, ending just before the name — the socle's;
+            // the name is appended here, as data, in the one form the ecosystem uses.
+            var line = StatusCards.Secondary(standing, StandingFacts.Server(), localChanges);
+            SetSecondaryInfo(line.Text,
+                             line.Mention != null ? People.MentionOf(line.Mention, TranslatorCore.Config?.api_user) : null);
         }
 
         /// <summary>
         /// Configure card for same lineage state (same UUID, not owner, not yet uploaded).
         /// User hasn't decided yet whether to contribute (branch) or fork.
         /// </summary>
-        public void ConfigureAsHoldingAnothersLineage(Standing standing, int entryCount, string language, string mainOwner)
+        public void ConfigureAsHoldingAnothersLineage(Standing standing, int entryCount, string language)
         {
             SetStanding(standing);
             SetDetails(entryCount, language);
             SetQualityStats(CalculateLocalStats());
 
-            // Whose work this is. ⚠ It no longer spells out "contribute (Branch) or go independent
-            // (Fork)": the three buttons offering exactly that sit immediately below, in the same
-            // glance, each with its own label. Naming the ways out here made the sentence long
-            // enough to be skipped, and said nothing the buttons were not already saying.
-            SetSecondaryInfo(!string.IsNullOrEmpty(mainOwner) ? "Based on the translation of" : null,
-                             !string.IsNullOrEmpty(mainOwner)
-                                 ? People.MentionOf(mainOwner, TranslatorCore.Config?.api_user)
-                                 : null);
+            // Whose work this is — the socle's line, the Main named before the uploader. ⚠ It no
+            // longer spells out "contribute (Branch) or go independent (Fork)": the three buttons
+            // offering exactly that sit immediately below, each with its own label.
+            var line = StatusCards.Secondary(standing, StandingFacts.Server(), localChanges: 0);
+            SetSecondaryInfo(line.Text,
+                             line.Mention != null ? People.MentionOf(line.Mention, TranslatorCore.Config?.api_user) : null);
         }
 
         /// <summary>
         /// Configure card for local-only state (no server presence).
         /// </summary>
-        public void ConfigureAsLocalOnly(int entryCount, string language)
+        public void ConfigureAsLocalOnly(Standing standing, int entryCount, string language)
         {
-            SetStanding(new Standing { Publication = Publication.NeverPublished, Role = LineageRole.None });
+            SetStanding(standing);
             SetDetails(entryCount, language);
             SetQualityStats(CalculateLocalStats());
-            SetSecondaryInfo("Upload to share with others");
+            SetSecondaryInfo(StatusCards.Secondary(standing, StandingFacts.Server(), localChanges: 0).Text);
         }
 
         // ⚠ ConfigureAsNotLoggedIn and ConfigureAsNoLocal stood here and are gone with the states

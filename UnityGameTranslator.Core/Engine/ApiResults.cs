@@ -572,6 +572,7 @@ namespace UnityGameTranslator.Core
                 MainMissing = state.MainMissing,
                 MainAbandoned = state.MainAbandoned,
                 BranchFrozen = state.BranchFrozen,
+                MainIgnoring = state.MainIgnoring,
                 Status = state.Status,
             };
         }

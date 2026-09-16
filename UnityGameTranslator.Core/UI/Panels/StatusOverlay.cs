@@ -15,25 +15,29 @@ namespace UnityGameTranslator.Core.UI.Panels
     /// </summary>
     public class StatusOverlay : TranslatorPanelBase
     {
-        public override string Name => "StatusOverlay";
-        public override int MinWidth => 350;
-        public override int MinHeight => 50;
-        public override int PanelWidth => 350;
-        public override int PanelHeight => 180;
+        /// <summary>The screen as a document — common/spec/screens/overlay.json — read once; the base's constructor reads the sizes below through it.</summary>
+        private static readonly ScreenDocument Doc = ScreenDocument.FromEmbedded("overlay");
 
-        // We don't want drag/resize for this overlay
-        public override bool CanDragAndResize => false;
+        /// <summary>What the builder made of the document: every piece by name.</summary>
+        private BuiltScreen _screen;
 
-        // StatusOverlay should NOT dim the screen
-        protected override bool UseBackdrop => false;
+        public override string Name => Doc.Name;
+        public override int MinWidth => Doc.MinWidth;
+        public override int MinHeight => Doc.MinHeight;
+        public override int PanelWidth => Doc.Width;
+        public override int PanelHeight => Doc.Height;
 
-        // StatusOverlay has fixed size (not dynamic) and no persistence
-        protected override int MinPanelHeight => 50;
+        // Pinned to a corner: never dragged or resized by hand, never centred. The corner itself
+        // is a setting, applied in ApplyPositionFromConfig.
+        public override bool CanDragAndResize => !Doc.Pinned;
+        protected override bool UsesCenterAnchors => !Doc.Pinned;
+
+        protected override bool UseBackdrop => Doc.Backdrop;
+        protected override bool PersistWindowPreferences => Doc.Persist;
+
+        // The height is a rule — what the visible boxes add up to, see AdjustHeight — never the
+        // base's dynamic sizing.
         protected override bool UseDynamicSizing => false;
-        protected override bool PersistWindowPreferences => false;
-
-        // StatusOverlay uses top-right corner anchors, not center
-        protected override bool UsesCenterAnchors => false;
 
         // UI elements - Mod update notification
         private Host _modUpdateBox;
@@ -53,7 +57,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         private ButtonHandle _syncCompareBtn;   // Look before pushing (owners with changes)
 
         // UI elements - Website notifications relay
-        private Callout _webNotif;
+        private Host _webNotifBox;
+        private LabelHandle _webNotifTitle;
 
         // UI elements - AI queue status
         private Host _aiBox;
@@ -212,41 +217,83 @@ namespace UnityGameTranslator.Core.UI.Panels
             Overlays.PinToCorner(Window, position);
         }
 
+        /// <summary>
+        /// The screen is overlay.json; this builds it and keeps hold of what the code writes or
+        /// shows. What the document carries, and why — a document has no comments:
+        /// - one stack, its spacing and padding declared there and READ here (AdjustHeight sizes
+        ///   the window from them, never from a private copy that drifts);
+        /// - five boxes and a toast, all hidden at first: the mod update (Download before Get
+        ///   Manager: whoever came for a zip finds the zip first, the Manager stays beside it,
+        ///   Secondary on purpose), the sync notice with its five verbs (Branch, Fork, the action,
+        ///   Compare in the place it holds on the main panel, Settings, Ignore last), the website
+        ///   notification, the AI queue, the connection line;
+        /// - the connection line has no vertical padding: it says one thing on one line, and room
+        ///   around it pushes everything else up the screen for nothing. Its dot (U+25CF, the mark
+        ///   the status card uses) comes after the words so it sits against the right edge, with
+        ///   the width of its own glyph so the words stay flush against it — the dot is the state,
+        ///   the words are the courtesy;
+        /// - no title bar, no backdrop, nothing remembered: it is a corner, not a window.
+        /// </summary>
         protected override void ConstructPanelContent()
         {
-            // Remove default title bar for this overlay
-            TitleBarHost.Visible = false;
+            TitleBarHost.Visible = Doc.TitleBar;
 
-            // ⚠ Kept: it is the only thing that knows how tall the overlay has to be, spacing
-            // and padding included. See AdjustHeight.
-            _stack = Stacks.Vertical(Content, "OverlayStack",
-                                     spacing: StackSpacing, pad: Pad.All(StackPadding / 2));
-            var stack = _stack;
+            // No scrolling body and no footer here: the document's one stack goes straight into
+            // the content, and it is what the window is sized to.
+            _screen = ScreenBuilder.Build(Doc, Content, Content, ActOf);
 
-            // Mod Update Notification Box
-            CreateModUpdateBox(stack);
+            _stack = _screen.Host("OverlayStack");
 
-            // Translation Sync Notification Box
-            CreateSyncBox(stack);
+            _modUpdateBox = _screen.Host("ModUpdateBox");
+            _modUpdateLabel = _screen.Label("ModUpdateLabel");
+            _modManagerHint = _screen.Label("ModManagerHint");
+            _modUpdateBtn = _screen.Button("ModDownloadBtn");
+            _modManagerBtn = _screen.Button("ModManagerBtn");
 
-            // AI Queue Status Box
-            CreateAIBox(stack);
+            _syncBox = _screen.Host("SyncBox");
+            _syncLabel = _screen.Label("SyncLabel");
+            _syncBranchBtn = _screen.Button("SyncBranchBtn");
+            _syncForkBtn = _screen.Button("SyncForkBtn");
+            _syncActionBtn = _screen.Button("SyncActionBtn");
+            _syncCompareBtn = _screen.Button("SyncCompareBtn");
+            _syncHintLabel = _screen.Label("SyncHintLabel");
 
-            // SSE Connection Indicator
-            CreateConnectionBox(stack);
+            _webNotifBox = _screen.Host("WebNotifBox");
+            _webNotifTitle = _screen.Label("WebNotifTitle");
 
-            // Hotkey feedback toast
-            CreateToastBox(stack);
+            _aiBox = _screen.Host("AIBox");
+            _aiStatusLabel = _screen.Label("AIStatusLabel");
+            _aiQueueLabel = _screen.Label("AIQueueLabel");
+
+            _connectionBox = _screen.Host("ConnectionBox");
+            _connectionLabel = _screen.Label("ConnectionLabel");
+            _connectionDot = _screen.Label("ConnectionDot");
+
+            _toast = _screen.Toast("ToastBox");
 
             // Start hidden and with update
             RefreshOverlay();
         }
 
-        private void CreateToastBox(Host stack)
+        /// <summary>What each verb the document asks for does. A verb with no answer here fails at construction, not at the click.</summary>
+        private Action ActOf(string act)
         {
-            _toast = Toasts.Create(stack, "ToastBox");
+            switch (act)
+            {
+                case "modDownload": return OnModUpdateClicked;
+                case "modManager": return OnModManagerClicked;
+                case "modIgnore": return OnModIgnoreClicked;
+                case "syncBranch": return OnSyncBranchClicked;
+                case "syncFork": return OnSyncForkClicked;
+                case "syncAction": return OnSyncActionClicked;
+                case "syncCompare": return OnSyncCompareClicked;
+                case "syncSettings": return OnSyncSettingsClicked;
+                case "syncIgnore": return OnSyncIgnoreClicked;
+                case "webNotifView": return OnWebNotifViewClicked;
+                case "webNotifDismiss": return OnWebNotifDismissClicked;
+                default: return null;
+            }
         }
-
 
         /// <summary>
         /// Shows a short-lived toast message (used for hotkey feedback).
@@ -331,127 +378,18 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (!_toast.Tick()) RefreshOverlay();
         }
 
-        private void CreateModUpdateBox(Host stack)
-        {
-            _modUpdateBox = Callout.Box(stack, "ModUpdateBox", CalloutTone.Success,
-                                        pad: new Pad(8, 8, 5, 5));
-
-            _modUpdateLabel = Labels.Create(_modUpdateBox, "ModUpdateLabel",
-                                            "Mod update available: v?.?.?", TextRole.Body,
-                                            policy: TextPolicy.Excluded);
-            _modUpdateLabel.Bold = true;
-
-            // ⚠ Only shown when the Manager has to be fetched. "Open Manager" is a verb that
-            // explains itself; "Get Manager" is an offer, and an offer with no reason beside it is
-            // one nobody takes.
-            _modManagerHint = Labels.Create(_modUpdateBox, "ModManagerHint",
-                "Or let the Manager keep it up to date", TextRole.Small);
-
-            var btnRow = Stacks.Row(_modUpdateBox, "ModBtnRow", spacing: 5);
-
-            _modUpdateBtn = Buttons.Compact(btnRow, "ModDownloadBtn", "Download", ButtonTone.Primary,
-                                            minWidth: 80, policy: TextPolicy.Excluded);
-            _modUpdateBtn.Clicked += OnModUpdateClicked;
-
-            // The other way to update, beside the manual one rather than in place of it. Secondary
-            // on purpose: whoever came here to grab a zip should still find the zip first.
-            _modManagerBtn = Buttons.Compact(btnRow, "ModManagerBtn", "Get Manager", ButtonTone.Secondary,
-                                             minWidth: 100, policy: TextPolicy.Excluded);
-            _modManagerBtn.Clicked += OnModManagerClicked;
-
-            var modIgnoreBtn = Buttons.Compact(btnRow, "ModIgnoreBtn", "Ignore", ButtonTone.Secondary,
-                                               minWidth: 60);
-            modIgnoreBtn.Clicked += OnModIgnoreClicked;
-
-            _modUpdateBox.Visible = false;
-        }
-
-        private void CreateSyncBox(Host stack)
-        {
-            _syncBox = Callout.Box(stack, "SyncBox", CalloutTone.Warning, pad: new Pad(8, 8, 5, 5));
-
-            _syncLabel = Labels.Create(_syncBox, "SyncLabel", "Sync status", TextRole.Body,
-                                       policy: TextPolicy.Excluded);
-            _syncLabel.Bold = true;
-
-            var syncBtnRow = Stacks.Row(_syncBox, "SyncBtnRow", spacing: 3);
-
-            // Branch button (green) - contribute to main, shown for non-owners with local changes
-            _syncBranchBtn = Buttons.Compact(syncBtnRow, "SyncBranchBtn", "Branch", ButtonTone.Success,
-                                             minWidth: 65);
-            _syncBranchBtn.Clicked += OnSyncBranchClicked;
-
-            // Fork button (red) - create independent copy, shown for non-owners with local changes
-            _syncForkBtn = Buttons.Compact(syncBtnRow, "SyncForkBtn", "Fork", ButtonTone.Danger,
-                                           minWidth: 55);
-            _syncForkBtn.Clicked += OnSyncForkClicked;
-
-            // Generic action button (Download/Update/Merge) - for other scenarios
-            _syncActionBtn = Buttons.Compact(syncBtnRow, "SyncActionBtn", "Action", ButtonTone.Primary,
-                                             minWidth: 75, policy: TextPolicy.Excluded);
-            _syncActionBtn.Clicked += OnSyncActionClicked;
-
-            // Compare — between the action and Settings, the place it holds on the main panel.
-            //
-            // ⚠ It was on that panel only, so somebody who never opens a panel — which is the
-            // whole point of this corner — could push everything or nothing, and never look first.
-            // Same door, same condition: see TranslatorUIManager.CanCompareWithServer.
-            _syncCompareBtn = Buttons.Compact(syncBtnRow, "SyncCompareBtn", "Compare",
-                                              ButtonTone.Secondary, minWidth: 75,
-                                              policy: TextPolicy.Excluded);
-            _syncCompareBtn.Clicked += OnSyncCompareClicked;
-
-            // Settings button
-            var syncSettingsBtn = Buttons.Compact(syncBtnRow, "SyncSettingsBtn", "Settings",
-                                                  ButtonTone.Secondary, minWidth: 65);
-            syncSettingsBtn.Clicked += OnSyncSettingsClicked;
-
-            // Ignore button (last)
-            var syncIgnoreBtn = Buttons.Compact(syncBtnRow, "SyncIgnoreBtn", "Ignore",
-                                                ButtonTone.Secondary, minWidth: 55);
-            syncIgnoreBtn.Clicked += OnSyncIgnoreClicked;
-
-            // Plain-words explanation of the Branch/Fork choice (only shown with those buttons)
-            _syncHintLabel = Labels.Create(_syncBox, "SyncHintLabel", "", TextRole.Hint,
-                                           policy: TextPolicy.Excluded);
-
-            _syncBox.Visible = false;
-
-            CreateWebNotifBox(stack);
-        }
-
-        /// <summary>
-        /// Website notifications relay: contributions to review, announcements.
-        /// Discreet corner box with the first notification's summary.
-        /// </summary>
-        private void CreateWebNotifBox(Host stack)
-        {
-            _webNotif = Callout.Create(stack, "WebNotifBox", CalloutTone.Info, "",
-                                       policy: TextPolicy.Excluded);
-
-            var viewBtn = Buttons.Compact(_webNotif.Actions, "WebNotifViewBtn", "View",
-                                          ButtonTone.Primary, minWidth: 65);
-            viewBtn.Clicked += OnWebNotifViewClicked;
-
-            var dismissBtn = Buttons.Compact(_webNotif.Actions, "WebNotifDismissBtn", "Dismiss",
-                                             ButtonTone.Secondary, minWidth: 70);
-            dismissBtn.Clicked += OnWebNotifDismissClicked;
-
-            _webNotif.Visible = false;
-        }
-
         /// <summary>
         /// Show/hide the website notifications box from the latest poll result.
         /// </summary>
         public void RefreshNotificationsBox()
         {
-            if (_webNotif == null) return;
+            if (_webNotifBox == null) return;
 
             var result = TranslatorUIManager.WebsiteNotifications;
             bool show = !TranslatorUIManager.WebsiteNotificationsDismissed &&
                         result != null && result.Unread > 0 && result.Items.Count > 0;
 
-            _webNotif.Visible = show;
+            _webNotifBox.Visible = show;
             if (show)
             {
                 // Comes from the website, so it may carry line breaks — same one-line rule
@@ -460,7 +398,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 {
                     text += " " + Tr($"(+{result.Unread - 1} more)");
                 }
-                _webNotif.Title.Show(text);
+                _webNotifTitle.Show(text);
             }
         }
 
@@ -474,69 +412,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         private void OnWebNotifDismissClicked()
         {
             TranslatorUIManager.MarkWebsiteNotificationsRead();
-            if (_webNotif != null) _webNotif.Visible = false;
+            if (_webNotifBox != null) _webNotifBox.Visible = false;
         }
-
-        private void CreateAIBox(Host stack)
-        {
-            _aiBox = Callout.Box(stack, "AIBox", CalloutTone.Info, spacing: 3,
-                                 pad: new Pad(8, 8, 5, 5), minHeight: UIStyles.MultiLineSmall);
-
-            _aiStatusLabel = Labels.Create(_aiBox, "AIStatusLabel", "Translating...", TextRole.Body,
-                                           policy: TextPolicy.Excluded, minHeight: UIStyles.RowHeightSmall);
-
-            _aiQueueLabel = Labels.Create(_aiBox, "AIQueueLabel", "Queue: 0 pending", TextRole.Small,
-                                          policy: TextPolicy.Excluded);
-            // Exclude dynamic status labels from translation (they contain truncated game text!)
-            // (their creation above already registers them Excluded)
-
-            _aiBox.Visible = false;
-        }
-
-        /// <summary>
-        /// Where the link to the website stands: one line, and a dot.
-        ///
-        /// ⚠ **No vertical padding, on purpose.** This is the one box in the stack that says a
-        /// single thing in a single line — the others carry a headline, a hint and buttons — so
-        /// room around it is room that pushes everything else up the screen for nothing. The line
-        /// height is the box height.
-        ///
-        /// ⚠ **The dot is the state; the words are the courtesy.** Colour is read before text, and
-        /// at a glance from across a game it may be all that is read — so the dot carries green,
-        /// amber and red on its own, and would still be understood with the words removed. It is
-        /// the mark <see cref="StatusCard"/> already uses for the same job.
-        /// </summary>
-        private void CreateConnectionBox(Host stack)
-        {
-            _connectionBox = Stacks.Horizontal(stack, "ConnectionBox", spacing: 5,
-                                               pad: new Pad(8, 8, 0, 0), placement: Placement.MiddleRight,
-                                               minHeight: UIStyles.RowHeightSmall);
-
-            _connectionLabel = Labels.Create(_connectionBox, "ConnectionLabel", "", TextRole.Small,
-                                             policy: TextPolicy.Excluded, align: Placement.MiddleRight);
-
-            // After the words, so it sits against the right edge the box is aligned to.
-            //
-            // 🔴 **minWidth is what keeps the words on the right**, and it is not a size choice.
-            // Labels.Create stretches any label aligned right that has no width of its own — one
-            // does the right thing, TWO share the room between them, and "Connected" lands in the
-            // middle of the box. Giving the dot the width of its own glyph leaves the label the
-            // only stretched thing in the row, so the words stay flush against it.
-            _connectionDot = Labels.Create(_connectionBox, "ConnectionDot", StatusDot, TextRole.Small,
-                                           policy: TextPolicy.Excluded, align: Placement.MiddleRight,
-                                           minWidth: 12, wrap: false);
-
-            _connectionBox.Visible = false;
-        }
-
-        /// <summary>
-        /// The mark the dot is drawn with — U+25CF, the same one the status card uses.
-        ///
-        /// ⚠ A character rather than an image: it inherits the tone colours the rest of the
-        /// interface is built on, costs no texture, and cannot be lost by an atlas that failed to
-        /// warm on a runtime that strips things.
-        /// </summary>
-        private const string StatusDot = "●";
 
         /// <summary>
         /// Returns true if the overlay has any content to display.
@@ -885,12 +762,13 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         // What the stack costs around its boxes, and between them.
         //
-        // 🔴 **Declared here and READ by the stack**, rather than written twice. AdjustHeight has
-        // to know them to size the window, and the first attempt kept its own copy — which said
-        // ten and forgot the five between each pair, so three notifications came out ten pixels
-        // short and the last line of one was cut across the middle.
-        private const int StackPadding = 10;   // above the first box and below the last, together
-        private const int StackSpacing = 5;    // between each pair
+        // 🔴 **Declared ONCE, in the document, and read here** — never written twice. AdjustHeight
+        // has to know them to size the window, and an earlier version kept its own copy, which
+        // said ten and forgot the five between each pair, so three notifications came out ten
+        // pixels short and the last line of one was cut across the middle.
+        private static ScreenNode Stack => Doc.Nodes["OverlayStack"];
+        private static int StackPadding => 2 * (Stack.Int("pad") ?? 0);   // above the first box and below the last, together
+        private static int StackSpacing => Stack.Int("spacing") ?? 0;      // between each pair
 
 
         /// <summary>

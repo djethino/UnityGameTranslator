@@ -51,7 +51,7 @@ namespace UnityGameTranslator.Core
     public sealed class ScreenDocument
     {
         /// <summary>The closed vocabulary. The same list as the schema's enum — a check says so.</summary>
-        public static readonly string[] Kinds = { "card", "stack", "row", "spacer", "label", "button", "status", "section", "field", "dropdown", "list", "tabs", "tab", "callout", "collapsible", "title", "checkbox" };
+        public static readonly string[] Kinds = { "card", "stack", "row", "spacer", "label", "button", "status", "section", "field", "dropdown", "list", "tabs", "tab", "callout", "collapsible", "title", "checkbox", "toast" };
 
         /// <summary>What the help bar says over this piece, or null.</summary>
         public static string HelpOf(ScreenNode node) => node.Word("help");
@@ -63,6 +63,10 @@ namespace UnityGameTranslator.Core
         public int MinHeight { get; private set; }
         public bool Backdrop { get; private set; } = true;
         public bool Persist { get; private set; } = true;
+        /// <summary>The bar with the screen's name and its close button; off for a corner notification.</summary>
+        public bool TitleBar { get; private set; } = true;
+        /// <summary>Hangs from a screen corner chosen at run time instead of being centred: never dragged or resized by hand.</summary>
+        public bool Pinned { get; private set; }
         /// <summary>The width the body's cards are laid out for; the window's width minus its margins when the document says nothing.</summary>
         public int CardWidth { get; private set; }
         /// <summary>The resting sentence of the help bar above the footer; null for a screen with no such bar.</summary>
@@ -100,6 +104,8 @@ namespace UnityGameTranslator.Core
             {
                 doc.Backdrop = (bool?)chrome["backdrop"] ?? true;
                 doc.Persist = (bool?)chrome["persist"] ?? true;
+                doc.TitleBar = (bool?)chrome["titleBar"] ?? true;
+                doc.Pinned = (bool?)chrome["pinned"] ?? false;
                 doc.CardWidth = (int?)chrome["cardWidth"] ?? 0;
                 doc.Help = (string)chrome["help"];
                 if (doc.Help != null && doc.Help.Length == 0)
@@ -232,7 +238,7 @@ namespace UnityGameTranslator.Core
                 {
                     if (node.Kind == "label" || node.Kind == "button" || node.Kind == "spacer" || node.Kind == "status"
                         || node.Kind == "field" || node.Kind == "dropdown" || node.Kind == "list"
-                        || node.Kind == "title" || node.Kind == "checkbox")
+                        || node.Kind == "title" || node.Kind == "checkbox" || node.Kind == "toast")
                         throw new ScreenDocumentException($"{Name}: a {node.Kind} holds nothing");
                     ReadInto(node.Children, children, node.Kind);
                 }

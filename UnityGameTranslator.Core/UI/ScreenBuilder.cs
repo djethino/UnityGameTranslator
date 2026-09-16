@@ -40,6 +40,9 @@ namespace UnityGameTranslator.Core.UI
         internal void Add(string name, ToggleHandle toggle) => _toggles[name] = toggle;
         private readonly Dictionary<string, ToggleHandle> _toggles = new Dictionary<string, ToggleHandle>(StringComparer.Ordinal);
         public ToggleHandle Toggle(string name) => _toggles.TryGetValue(name, out var t) ? t : throw new ScreenDocumentException($"{_doc.Name}: no checkbox named '{name}'");
+        internal void Add(string name, Toasts toast) => _toasts[name] = toast;
+        private readonly Dictionary<string, Toasts> _toasts = new Dictionary<string, Toasts>(StringComparer.Ordinal);
+        public Toasts Toast(string name) => _toasts.TryGetValue(name, out var t) ? t : throw new ScreenDocumentException($"{_doc.Name}: no toast named '{name}'");
 
         public LabelHandle Label(string name) => _labels.TryGetValue(name, out var l) ? l : throw new ScreenDocumentException($"{_doc.Name}: no label named '{name}'");
         public ButtonHandle Button(string name) => _buttons.TryGetValue(name, out var b) ? b : throw new ScreenDocumentException($"{_doc.Name}: no button named '{name}'");
@@ -253,6 +256,9 @@ namespace UnityGameTranslator.Core.UI
                 case "status":
                     built.Add(node.Name, StatusLine.Create(parent, node.Name, node.Flag("centred") ?? true));
                     break;
+                case "toast":
+                    built.Add(node.Name, Toasts.Create(parent, node.Name));
+                    break;
                 case "title":
                 {
                     // Made by the panel, not here: the base keeps the strip for the window's resizes.
@@ -337,6 +343,7 @@ namespace UnityGameTranslator.Core.UI
                                               tone: node.Word("tone") != null ? Enum(node.Word("tone"), Tone.Plain) : (Tone?)null,
                                               centred: node.Flag("centred"),
                                               policy: policy,
+                                              wrap: node.Flag("wrap") ?? true,
                                               fill: Enum(node.Word("fill"), Fill.Content),
                                               minHeight: MinHeight(node),
                                               autoHeight: node.Flag("autoHeight") ?? false,

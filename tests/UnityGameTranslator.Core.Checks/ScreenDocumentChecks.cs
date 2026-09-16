@@ -28,9 +28,9 @@ namespace UnityGameTranslator.Core.Checks
                 try
                 {
                     var doc = ScreenDocument.FromFile(file);
-                    check(doc.Nodes.Count > 0 && doc.Footer.Count > 0,
+                    check(doc.Nodes.Count > 0 && doc.Acts.Count > 0,
                         $"{name} parses: {doc.Nodes.Count} pieces, {doc.Binds.Count} slot(s), {doc.Acts.Count} act(s)",
-                        "a screen has pieces, and a footer with at least one verb");
+                        "a screen has pieces, and at least one verb somewhere on it");
                 }
                 catch (ScreenDocumentException e)
                 {
@@ -155,6 +155,25 @@ namespace UnityGameTranslator.Core.Checks
             check(upload.Nodes["Status"].Kind == "status" && !upload.Nodes["BackBtn"].StartsVisible
                   && upload.Nodes["UploadBtn"].Props["scope"] != null && upload.Nodes["UploadBtn"].Word("policy") == "Dynamic",
                 "a status line, a Back hidden until a setup comes back, and the verb that publishes carrying its mark", "the button that actually publishes says where it writes");
+
+            // ── The corner notification: a pinned window with no title bar, one stack of hidden boxes ──
+            var overlay = ScreenDocument.FromFile(Path.Combine(folder, "overlay.json"));
+            check(overlay.Pinned && !overlay.TitleBar && !overlay.Backdrop && !overlay.Persist && overlay.Footer.Count == 0,
+                "overlay.json is a corner, not a window: pinned, no title bar, no backdrop, nothing remembered, no footer",
+                "the corner itself is a setting, applied by the code");
+            check(overlay.Body.Count == 1 && overlay.Body[0].Kind == "stack" && overlay.Body[0].Int("pad") != null && overlay.Body[0].Int("spacing") != null,
+                "one stack, whose spacing and padding the document states in pixels", "the code sizes the window from them — read there, never copied");
+            check(overlay.Body[0].Children.All(b => !b.StartsVisible || b.Kind == "toast")
+                  && overlay.Body[0].Children.Count(b => b.Kind == "callout") == 4 && overlay.Nodes["ToastBox"].Kind == "toast",
+                "every box starts hidden: four callouts, a connection line, a toast", "the code shows each when its moment comes");
+            check(overlay.Acts.Keys.OrderBy(k => k).SequenceEqual(new[] {
+                      "modDownload", "modIgnore", "modManager", "syncAction", "syncBranch", "syncCompare", "syncFork",
+                      "syncIgnore", "syncSettings", "webNotifDismiss", "webNotifView" }),
+                "overlay.json asks for the eleven acts its code handles", $"got {string.Join(",", overlay.Acts.Keys)}");
+            check(overlay.Nodes["ConnectionDot"].Flag("wrap") == false && overlay.Nodes["ConnectionDot"].Int("minWidth") == 12,
+                "the connection dot keeps its own glyph's width and never folds", "it is what keeps the words flush against it on the right");
+            check(!upload.Pinned && upload.TitleBar && ScreenDocument.Parse(JObject.Parse(@"{""name"":""X"",""size"":{""width"":500,""height"":200},""body"":[],""footer"":[]}")).TitleBar,
+                "a window keeps its title bar and is not pinned unless its document says so", "the defaults are the ordinary window's");
 
             // ── Every panel built from a document hands the builder what the document needs ──
             // 🔴 The builder refuses a document with a header or a help bar it was given nowhere

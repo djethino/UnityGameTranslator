@@ -437,17 +437,17 @@ namespace UnityGameTranslator.Core.UI.Panels
                         // sent the file, and let the server refuse it: the one thing this check
                         // exists to avoid. The sentence is the socle's, the same as the main
                         // panel's button and the Manager.
-                        bool ownRowIsABranch = result.Role == LineageRole.Branch;
-                        var ownAct = Uploads.ActOf(Publication.Published, ownRowIsABranch,
-                                                   result.AcceptsBranches, result.MainMissing,
-                                                   result.MainAbandoned, result.BranchFrozen);
-                        if (ownAct == UploadAct.Fork)
+                        // ⚠ The same button the main screen draws, judged on the state just
+                        // written — no second gluing of publication and role here. Without the
+                        // content hash: this runs off the main thread, and the act needs no verdict.
+                        var ownButton = Uploads.Button(
+                            StandingFacts.Now(out var ownLocal, out var ownServer, out var ownAccount, withContentHash: false),
+                            ownLocal, ownServer, ownAccount);
+                        if (ownButton.Act == UploadAct.Fork)
                         {
-                            string ownWall = Uploads.Wall(Publication.Published, ownRowIsABranch,
-                                                          result.MainUsername, result.AcceptsBranches,
-                                                          result.MainMissing, result.MainAbandoned,
-                                                          result.BranchFrozen)
-                                             ?? "This contribution can no longer be sent. Fork to carry on.";
+                            string ownWall = ownButton.HintIsTranslatable
+                                ? "This contribution can no longer be sent. Fork to carry on."
+                                : ownButton.Hint;
 
                             TranslatorUIManager.RunOnMainThread(() =>
                             {
@@ -553,14 +553,15 @@ namespace UnityGameTranslator.Core.UI.Panels
                         // predates the field, and null means "not asked" — behaving as a refusal
                         // there would put words in an author's mouth. The socle weighs it, so the
                         // wall reads the same here, on the main panel and in the Manager.
-                        var act = Uploads.ActOf(Publication.NotYours, false, result.AcceptsBranches,
-                                                result.MainMissing, result.MainAbandoned, null);
-                        if (act == UploadAct.Fork)
+                        // ⚠ The same button the main screen draws, on the state just written.
+                        var button = Uploads.Button(
+                            StandingFacts.Now(out var local, out var server, out var account, withContentHash: false),
+                            local, server, account);
+                        if (button.Act == UploadAct.Fork)
                         {
-                            string wall = Uploads.Wall(Publication.NotYours, false, uploader,
-                                                       result.AcceptsBranches, result.MainMissing,
-                                                       result.MainAbandoned, null)
-                                          ?? "This translation cannot take a contribution. Fork to carry on.";
+                            string wall = button.HintIsTranslatable
+                                ? "This translation cannot take a contribution. Fork to carry on."
+                                : button.Hint;
 
                             TranslatorUIManager.RunOnMainThread(() =>
                             {

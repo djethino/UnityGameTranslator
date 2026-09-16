@@ -47,9 +47,11 @@ namespace UnityGameTranslator.Core.Checks
                 if (path == null) return;
 
                 string text = File.ReadAllText(path);
-                // Either the act alone, or the whole button the socle composes from it (2026-09-16).
+                // The act alone, the whole button, or the whole notification — each composed by
+                // the socle from the same act (2026-09-16).
                 check(text.Contains("Uploads.ActOf", StringComparison.Ordinal)
-                      || text.Contains("Uploads.Button(", StringComparison.Ordinal),
+                      || text.Contains("Uploads.Button(", StringComparison.Ordinal)
+                      || text.Contains("Notices.Sync(", StringComparison.Ordinal),
                     $"{screen.What} asks the socle which act is available",
                     screen.Why);
             }
@@ -60,8 +62,10 @@ namespace UnityGameTranslator.Core.Checks
             // replacing every argument with `null` did not turn it red: the names were still there
             // a few lines below, in the sentence that explains the wall. A check that cannot fail
             // is decoration, so it reads the argument list.
-            string overlay = File.ReadAllText(Find("UnityGameTranslator.Core", "UI", "Panels", "StatusOverlay.cs"));
-            string call = Arguments(overlay, "Uploads.ActOf(");
+            // ⚠ Since 2026-09-16 the notification is composed by the socle (Notices.Sync), so the
+            // call that weighs the walls is the socle's own, and it is read there.
+            string notices = File.ReadAllText(Find("common", "src", "UnityGameTranslator.Common", "Notices.cs"));
+            string call = Arguments(notices, "Uploads.ActOf(");
 
             check(call != null, "the notification's call can be read",
                 "the check is anchored on it; renamed, it must say so rather than pass quietly");

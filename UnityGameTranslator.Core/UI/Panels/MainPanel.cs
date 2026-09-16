@@ -919,38 +919,13 @@ namespace UnityGameTranslator.Core.UI.Panels
         }
 
         /// <summary>
-        /// Where this translation stands, read off the facts the engine holds. The socle composes
-        /// it (<see cref="Standings.From"/>); this gathers what it asks for and nothing more.
-        ///
-        /// ⚠ The content hash costs a pass over every line, so it is computed only when there is a
-        /// published content to compare it with — the one case the sync verdict needs it.
+        /// Where this translation stands, read off the facts the engine holds — the socle composes
+        /// it, StandingFacts gathers what it asks for, and the sheets are kept beside it for the
+        /// button that is judged on them.
         /// </summary>
         private void ReadFacts()
         {
-            var server = TranslatorCore.ServerState;
-
-            var local = new LocalFacts
-            {
-                Lines = TranslatorCore.TranslationCache.Count,
-                LocalChanges = TranslatorCore.LocalChangesCount,
-                MetadataDirty = TranslatorCore.MetadataDirty,
-                LastSyncedHash = TranslatorCore.LastSyncedHash,
-                ContentHash = server != null && server.Exists ? TranslatorCore.ComputeContentHash() : null,
-                ForkStillTheCopy = TranslatorCore.ForkIsStillTheCopy,
-            };
-
-            // ⚠ From the point of view of the game itself, which holds its own credential: the
-            // question the manager asks — is this somebody else's game — cannot arise here.
-            var account = new AccountFacts
-            {
-                SignedIn = !string.IsNullOrEmpty(TranslatorCore.Config.api_token),
-                Online = TranslatorCore.Config.online_mode,
-            };
-
-            _local = local;
-            _server = ServerTranslationState.FactsOf(server);
-            _account = account;
-            _standing = Standings.From(_local, _server, _account);
+            _standing = StandingFacts.Now(out _local, out _server, out _account);
         }
 
         /// <summary>How many lines the screen last said the translation holds.</summary>

@@ -604,11 +604,6 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // 2. Translation sync notification (hidden when panels open - shown in MainPanel instead)
             var pending = PendingSyncWork.Current();
-            var serverState = pending.ServerState;
-            bool hasLocalChanges = pending.HasLocalChanges;
-            bool hasMetadataChanges = pending.HasMetadataChanges;
-            bool hasServerUpdate = pending.HasServerUpdate;
-            bool needsMerge = pending.NeedsMerge;
 
             bool showSyncNotification = !_panelsOpenMode && pending.Any &&
                                         !TranslatorUIManager.NotificationDismissed;
@@ -617,147 +612,42 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 _syncBox.Visible = true;
 
-                // Determine message and button visibility based on context
-                string message;
-                var direction = TranslatorUIManager.PendingUpdateDirection;
-
-                // Get role for role-specific messages
-                bool isBranch = serverState?.Role == LineageRole.Branch;
-                bool isOwner = serverState?.IsOwner == true;
-
-                // 🔴 **Whether a contribution can be made at all is the socle's to say**, from the
-                // walls the server reported: a Main marked solo work takes none, and neither does
-                // one whose author has removed it or erased their account. Offered anyway, the
-                // button names an act the server will refuse — and the hint beside it promised to
-                // send the lines "for review to @somebody" who had asked for no such thing.
-                //
-                // ⚠ The main panel and the upload screen already ask this; this corner did not,
-                // which is the same defect the panel's own comment records having paid for once.
-                bool existsOnServer = serverState != null && serverState.Exists
-                                      && serverState.SiteId.HasValue;
-                var publication = Publications.Of(hereOnDisk: TranslatorCore.TranslationCache.Count > 0,
-                                                  onTheSite: existsOnServer,
-                                                  yours: existsOnServer ? serverState.IsOwner : (bool?)null);
-                bool onABranch = existsOnServer && serverState.IsOwner
-                                 && serverState.Role == LineageRole.Branch;
-                var offered = Uploads.ActOf(publication, onABranch, serverState?.AcceptsBranches,
-                                            serverState?.MainMissing, serverState?.MainAbandoned,
-                                            serverState?.BranchFrozen);
-
-                // A lineage that takes no contribution leaves one way on, and it is the one the
-                // socle names: forking.
-                bool canBranch = offered == UploadAct.Contribute;
-
-                // Default: hide Branch/Fork buttons, show Action button
-                bool showBranchFork = false;
-                bool showAction = true;
-                string actionText = "Sync";
-                // The action button reads PendingUpdateDirection, which only ever
-                // describes THIS translation's own line. An upstream merge is a
-                // different exchange, so it is flagged here rather than smuggled
-                // into that enum — the two sources must not converge again.
-                bool actionIsUpstream = false;
-                bool actionIsReview = false;
-
-                // Get owner name for context
-                // One form for the ecosystem, and it marks your own name — see People.Mention.
-                string ownerName = People.MentionOf(serverState?.Uploader,
-                                                    TranslatorCore.Config.api_user);
-
-                // Translated as each message is built. Counts stay inline (the pipeline replaces
-                // numbers with placeholders, so every count shares one cache entry); the uploader
-                // name is appended, never sent for translation.
-                if (needsMerge)
+                // 🔴 **What this corner says, and what its button does, are the socle's** —
+                // Notices.Sync, held by the corpus (`notices`), on the standing every other screen
+                // reads. This chain used to compose the socle's rules with its own glue, two
+                // hundred lines beside a main screen answering the same questions its own way.
+                var work = new SyncWork
                 {
-                    message = isOwner
-                        ? Tr("Both local and server changed. Sync needed!")
-                        : Tr("Sync needed — translation updated by") + $" @{ownerName}";
-                    actionText = "Sync";
-                }
-                else if (hasServerUpdate)
-                {
-                    if (isOwner)
-                    {
-                        // Owner, Main or branch alike: it is THEIR OWN published
-                        // version that moved — another machine, or the site editor.
-                        // This used to claim "Parent translation update available!"
-                        // for a branch, which named the wrong source entirely: the
-                        // hash compared here has never been the Main's.
-                        message = Tr("Server update available!");
-                    }
-                    else
-                    {
-                        // Non-owner: the Main they downloaded from has been updated
-                        message = Tr("Translation updated by") + $" @{ownerName}";
-                    }
-                    actionText = "Download";
-                }
-                else if (pending.HasMainUpdate)
-                {
-                    // Genuinely upstream this time, and a different exchange: it is
-                    // merged into the branch, never downloaded over it
-                    message = Tr("The original translation has been updated by") + $" @{ownerName}";
-                    actionText = "Update";
-                    actionIsUpstream = true;
-                }
-                else if (hasLocalChanges)
-                {
-                    if (isOwner)
-                    {
-                        // Owner: show Update button
-                        message = Tr($"You have {TranslatorCore.LocalChangesCount} local changes to upload!");
-                        actionText = "Update";
-                    }
-                    else
-                    {
-                        // Non-owner: show Branch AND Fork options
-                        // User must choose to contribute (branch) or go independent (fork)
-                        message = Tr($"You changed {TranslatorCore.LocalChangesCount} line(s). Share them?");
-                        showBranchFork = true;
-                        showAction = false;
-                    }
-                }
-                else if (hasMetadataChanges)
-                {
-                    // No new lines, but settings that travel with the translation were edited
-                    if (isOwner)
-                    {
-                        message = Tr("Translation settings changed — not uploaded yet");
-                        actionText = "Update";
-                    }
-                    else
-                    {
-                        message = Tr("You changed translation settings. Share them?");
-                        showBranchFork = true;
-                        showAction = false;
-                    }
-                }
-                else if (pending.BranchesPendingReview > 0)
-                {
-                    // Last, and rightly so: nothing degrades while it waits. But a
-                    // contribution nobody ever hears about is a contributor lost —
-                    // and the branch COUNT never moved when someone pushed more
-                    // work to a branch already counted.
-                    message = Tr($"{pending.BranchesPendingReview} contribution(s) waiting for your review");
-                    actionText = "Review";
-                    actionIsReview = true;
-                }
-                else
-                {
-                    // Fallback for edge case (shouldn't happen with current logic)
-                    message = Tr($"{TranslatorCore.LocalChangesCount} local changes");
-                    actionText = "Sync";
-                }
+                    WaitingForAccount = pending.WaitingForAccount,
+                    HasLocalChanges = pending.HasLocalChanges,
+                    HasMetadataChanges = pending.HasMetadataChanges,
+                    HasServerUpdate = pending.HasServerUpdate,
+                    NeedsMerge = pending.NeedsMerge,
+                    HasMainUpdate = pending.HasMainUpdate,
+                    BranchesPendingReview = pending.BranchesPendingReview,
+                };
+                var standing = StandingFacts.Now(out var local, out var server, out var account);
+                var notice = Notices.Sync(work, standing, local, server, account);
 
+                // Translated as it is built. Counts stay inline (the pipeline replaces numbers with
+                // placeholders, so every count shares one cache entry); the person named is
+                // appended, never sent for translation — in the one form the ecosystem uses.
+                string message = Tr(notice.Message);
+                if (notice.Mention != null)
+                    message += " " + People.MentionOf(notice.Mention, TranslatorCore.Config.api_user);
                 _syncLabel.Show(message);
 
-                // Show/hide buttons based on context
+                // Somebody else's lineage is offered a CHOICE — contribute (branch) or go
+                // independent (fork) — in place of the one action button.
+                bool choosing = notice.Action == SyncAction.ChooseBranchOrFork;
+                bool showAction = !choosing;
+
                 // ⚠ Absent rather than greyed, and the two are decided differently on purpose:
                 // greyed says "later" — sign in, come back online — while a lineage that refuses
                 // contributions is not a "later", it is a road that does not exist. The hint below
                 // says which wall it is, in the socle's words.
-                if (_syncBranchBtn != null) _syncBranchBtn.Visible = showBranchFork && canBranch;
-                if (_syncForkBtn != null) _syncForkBtn.Visible = showBranchFork;
+                if (_syncBranchBtn != null) _syncBranchBtn.Visible = choosing && notice.OffersBranch;
+                if (_syncForkBtn != null) _syncForkBtn.Visible = choosing;
                 if (_syncActionBtn != null) _syncActionBtn.Visible = showAction;
 
                 // 🔴 **It turns into the way out, it does not go away.** It used to be hidden while
@@ -768,29 +658,12 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // an ecosystem may not do. Whoever opened it from here closes it from here.
                 RefreshCompareButton();
 
-                // 🔴 **The refusal is said before the click, not after the form.** This button
-                // opened the upload window whatever the state of the account, so somebody with no
-                // account filled it in and learnt there that they needed one — while the main
-                // panel, three inches away in another screen, greys its own Upload and says why.
-                // One rule for both: Uploads.ClosedReason.
-                string branchClosed = null;
-                string forkClosed = null;
-                if (showBranchFork)
+                // The refusal is said before the click, not after the form — the same rule the
+                // main screen greys its own Upload on, for each door separately.
+                if (choosing)
                 {
-                    bool online = TranslatorCore.Config.online_mode;
-                    bool signedIn = !string.IsNullOrEmpty(TranslatorCore.Config.api_token);
-                    int lines = TranslatorCore.TranslationCache.Count;
-                    bool untouchedCopy = serverState == null || !serverState.Exists
-                                         ? TranslatorCore.ForkIsStillTheCopy
-                                         : false;
-
-                    branchClosed = Uploads.ClosedReason(UploadAct.Contribute, lines, untouchedCopy,
-                                                        online, signedIn, inSync: false);
-                    forkClosed = Uploads.ClosedReason(UploadAct.Fork, lines, untouchedCopy,
-                                                      online, signedIn, inSync: false);
-
-                    if (_syncBranchBtn != null && canBranch) _syncBranchBtn.Enabled = branchClosed == null;
-                    if (_syncForkBtn != null) _syncForkBtn.Enabled = forkClosed == null;
+                    if (_syncBranchBtn != null && notice.OffersBranch) _syncBranchBtn.Enabled = notice.BranchClosed == null;
+                    if (_syncForkBtn != null) _syncForkBtn.Enabled = notice.ForkClosed == null;
                 }
 
                 if (_syncHintLabel != null)
@@ -799,43 +672,39 @@ namespace UnityGameTranslator.Core.UI.Panels
                     // neither an account nor the network, so it stays open and stays explained —
                     // it is the way on precisely when the other half is shut.
                     string hint = "";
-                    if (showBranchFork)
+                    if (choosing)
                     {
                         // The wall first when there is one — it is why the Branch button is not
-                        // there — then whatever is left to say about the way on.
-                        string wall = canBranch
-                            ? null
-                            : Uploads.Wall(publication, onABranch,
-                                           serverState?.MainUsername ?? serverState?.Uploader,
-                                           serverState?.AcceptsBranches, serverState?.MainMissing,
-                                           serverState?.MainAbandoned, serverState?.BranchFrozen);
-
+                        // there, and it names somebody, so it is written as it is — then whatever
+                        // is left to say about the way on.
+                        //
                         // ⚠ The reason is prefixed with the button it is ABOUT. On its own,
                         // "Login required" reads as a statement of fact beside a greyed button —
                         // it never says that signing in is what turns that button back on. The
                         // other half already names itself the same way.
-                        string branchHalf = wall != null
-                            ? Tr(wall)
-                            : branchClosed != null
-                                ? Tr("Branch:") + " " + Tr(branchClosed)
-                                : Tr("Branch: send them for review to") + $" @{ownerName}";
+                        string branchHalf = notice.Wall != null
+                            ? notice.Wall
+                            : notice.BranchClosed != null
+                                ? Tr("Branch:") + " " + Tr(notice.BranchClosed)
+                                : Tr("Branch: send them for review to") + " "
+                                  + People.MentionOf(server.Uploader, TranslatorCore.Config.api_user);
 
                         hint = branchHalf + " • "
-                               + (forkClosed != null
-                                   ? Tr(forkClosed)
+                               + (notice.ForkClosed != null
+                                   ? Tr(notice.ForkClosed)
                                    : Tr("Fork: start your own independent translation"));
                     }
 
                     _syncHintLabel.Show(hint);
-                    _syncHintLabel.Visible = showBranchFork;
+                    _syncHintLabel.Visible = choosing;
                 }
 
-                _syncActionIsUpstream = actionIsUpstream;
-                _syncActionIsReview = actionIsReview;
+                _syncActionIsUpstream = notice.Action == SyncAction.MergeFromMain;
+                _syncActionIsReview = notice.Action == SyncAction.Review;
 
-                if (showAction)
+                if (showAction && notice.Verb != null)
                 {
-                    _syncActionBtn.Label = actionText;
+                    _syncActionBtn.Label = notice.Verb;
                 }
             }
             else

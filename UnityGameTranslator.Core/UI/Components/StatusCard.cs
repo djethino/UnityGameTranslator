@@ -487,17 +487,13 @@ namespace UnityGameTranslator.Core.UI.Components
                                      : standing.Role == LineageRole.Branch ? (bool?)false : null,
                                  standing.BranchesWaiting,
 
-                                 // 🔴 **Read from ServerState, not from `standing` — and that was a
-                                 // bug.** MainPanel builds this Standing and never fills its
-                                 // MainMissing, so the chip read a field that is false for
-                                 // everybody: the badge saying a Main is gone has never once
-                                 // appeared in a game. The notice further down did work, because it
-                                 // reads ServerState directly, which is why nothing looked wrong.
-                                 //
-                                 // ⚠ The Manager reaches for its own row the same way rather than
-                                 // through Standing. One source per fact, and this is the one the
-                                 // site fills.
-                                 TranslatorCore.ServerState?.MainMissing == true,
+                                 // 🔴 **From the standing, which now carries it.** This used to read
+                                 // ServerState directly because the Standing the main screen built
+                                 // never filled MainMissing — the chip for a vanished Main never
+                                 // once appeared in a game while the notice below, reading the
+                                 // server state, did. Standings.From fills every field or none,
+                                 // so the card reads one source, and the corpus holds the case.
+                                 standing.MainMissing,
 
                                  standing.Sync,
                                  null, null, 0, 0,
@@ -506,23 +502,20 @@ namespace UnityGameTranslator.Core.UI.Components
                                  // The other way a lineage loses its head: the Main is still there
                                  // and its owner is not. Ignored by Badges when MainMissing is set
                                  // — a Main that is gone is the whole story.
-                                 mainAbandoned: TranslatorCore.ServerState?.MainAbandoned == true,
+                                 mainAbandoned: standing.MainAbandoned,
 
                                  // The third way this road ends, and the only one of the three that
                                  // had no chip. The notice below carries all three; the strip
                                  // carried two, so the same fact read differently depending on
                                  // where the eye landed — and differently again from the site and
                                  // the Manager, which both show it.
-                                 branchFrozen: TranslatorCore.ServerState?.BranchFrozen == true,
+                                 branchFrozen: standing.BranchFrozen,
 
                                  // ⚠ The author's own word, which nothing else on this card says.
                                  // Without it somebody cannot tell whether they still have to open
                                  // Edit details and declare it — the measurements beside it answer
                                  // a different question.
-                                 finished: TranslatorCore.ServerState?.Status is string published
-                                     ? string.Equals(published, "complete",
-                                                     StringComparison.OrdinalIgnoreCase)
-                                     : (bool?)null,
+                                 finished: standing.Finished,
 
                                  // The Main's other declaration, and the one a would-be
                                  // contributor needs before writing anything. Null on a server

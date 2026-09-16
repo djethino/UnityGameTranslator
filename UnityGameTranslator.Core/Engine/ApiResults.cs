@@ -547,6 +547,34 @@ namespace UnityGameTranslator.Core
     /// </summary>
     public class ServerTranslationState
     {
+        /// <summary>
+        /// This answer as the socle's fact sheet — what <see cref="Standings.From"/> composes a
+        /// standing from. Null state, nothing known: an empty sheet, never a claim.
+        /// </summary>
+        public static ServerFacts FactsOf(ServerTranslationState state)
+        {
+            if (state == null) return new ServerFacts();
+
+            return new ServerFacts
+            {
+                Checked = state.Checked,
+                Exists = state.Exists,
+                IsOwner = state.IsOwner,
+                Role = state.Role,
+                Hash = state.Hash,
+                Uploader = state.Uploader,
+                MainUsername = state.MainUsername,
+                BranchesCount = state.BranchesCount,
+                BranchesWithWork = state.BranchesWithWork,
+                LinesAvailable = state.LinesAvailable,
+                AcceptsBranches = state.AcceptsBranches,
+                MainMissing = state.MainMissing,
+                MainAbandoned = state.MainAbandoned,
+                BranchFrozen = state.BranchFrozen,
+                Status = state.Status,
+            };
+        }
+
         /// <summary>True if we've checked with the server (even if translation doesn't exist)</summary>
         public bool Checked { get; set; } = false;
 

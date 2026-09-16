@@ -22,15 +22,6 @@ namespace UnityGameTranslator.Core.UI.Panels
     /// Branch anyway: it is somebody holding a lineage that is not theirs, who has diverged and
     /// sent nothing. One becomes a Branch by uploading.
     /// </summary>
-    public enum LayoutState
-    {
-        NoLocal,                // Show download prominent
-        OwnerMain,              // Status + Update + Review Branches
-        OwnerBranch,            // Status + Upload + Fork option
-        HoldingAnothersLineage, // Contribute (branch) / Download / Fork — three choices
-        VisitorDiffUuid         // Download with lineage warning
-    }
-
     /// <summary>
     /// Main settings panel. Shows translation status, account info, sync status, and action buttons.
     /// Context-aware layout adapts to user state.
@@ -167,8 +158,16 @@ namespace UnityGameTranslator.Core.UI.Panels
         private const string TAB_MY_TRANSLATION = "My Translation";
         private const string TAB_COMMUNITY = "Community";
 
-        // Current layout state (cached for efficiency)
-        private LayoutState _currentLayoutState = LayoutState.NoLocal;
+        /// <summary>
+        /// Where this translation stands, as last read from the facts — the socle's four questions,
+        /// answered once per redraw and read by every section.
+        ///
+        /// 🔴 **One reading, not two** (2026-09-16). A layout state used to be derived from the
+        /// server state here, and a Standing rebuilt from the same state PLUS that layout state in
+        /// the card — and the two disagreed: the Standing never carried MainMissing, so the chip for
+        /// a vanished Main never appeared in a game. `Standings.From` fills every field or none.
+        /// </summary>
+        private Standing _standing;
 
         public MainPanel(UIBase owner) : base(owner)
         {
@@ -915,63 +914,34 @@ namespace UnityGameTranslator.Core.UI.Panels
         }
 
         /// <summary>
-        /// Detects the current layout state based on login, local translations, and server state.
+        /// Where this translation stands, read off the facts the engine holds. The socle composes
+        /// it (<see cref="Standings.From"/>); this gathers what it asks for and nothing more.
+        ///
+        /// ⚠ The content hash costs a pass over every line, so it is computed only when there is a
+        /// published content to compare it with — the one case the sync verdict needs it.
         /// </summary>
-        private LayoutState DetectCurrentState()
+        private static Standing CurrentStanding()
         {
-            int localCount = TranslatorCore.TranslationCache.Count;
-            var serverState = TranslatorCore.ServerState;
-            bool existsOnServer = serverState != null && serverState.Exists && serverState.SiteId.HasValue;
+            var server = TranslatorCore.ServerState;
 
-            // 🔴 **Having an account is NOT a layout state**, and testing it first here is what made
-            // the panel useless to the person who most needed it. Somebody with no account can
-            // download a community translation and go on adding lines: they diverge exactly like a
-            // branch would, while being neither branch nor fork because they never published. The
-            // mod already DETECTS that the main moved — StartSyncWatch has a public branch for
-            // precisely this case, see analyse/false-branch-role-after-download.md — and this line
-            // then hid the answer behind a "create an account" pitch.
-            //
-            // ⚠ The account decides which ACTIONS are offered, never what somebody is allowed to
-            // KNOW. Merging and taking the main's version again write nothing but the local file.
+            var local = new LocalFacts
+            {
+                Lines = TranslatorCore.TranslationCache.Count,
+                LocalChanges = TranslatorCore.LocalChangesCount,
+                MetadataDirty = TranslatorCore.MetadataDirty,
+                LastSyncedHash = TranslatorCore.LastSyncedHash,
+                ContentHash = server != null && server.Exists ? TranslatorCore.ComputeContentHash() : null,
+            };
 
-            // No local translation
-            if (localCount == 0)
+            // ⚠ From the point of view of the game itself, which holds its own credential: the
+            // question the manager asks — is this somebody else's game — cannot arise here.
+            var account = new AccountFacts
             {
-                return LayoutState.NoLocal;
-            }
+                SignedIn = !string.IsNullOrEmpty(TranslatorCore.Config.api_token),
+                Online = TranslatorCore.Config.online_mode,
+            };
 
-            // Has local translation - check server state
-            if (existsOnServer)
-            {
-                if (serverState.IsOwner)
-                {
-                    // User owns this translation
-                    return serverState.Role == LineageRole.Main
-                        ? LayoutState.OwnerMain
-                        : LayoutState.OwnerBranch;
-                }
-                else
-                {
-                    // User doesn't own - check if same UUID (same lineage)
-                    // ServerState.Exists means the UUID exists on server
-                    // We're working with the same UUID but not the owner
-                    return LayoutState.HoldingAnothersLineage;
-                }
-            }
-            else
-            {
-                // Not on server but has local - check if UUID exists but owned by someone else
-                if (serverState != null && serverState.Checked)
-                {
-                    if (serverState.Exists && !serverState.IsOwner)
-                    {
-                        // UUID exists on server but we don't own it
-                        return LayoutState.HoldingAnothersLineage;
-                    }
-                }
-                // Local only - treat as potential new upload or visitor
-                return LayoutState.VisitorDiffUuid;
-            }
+            return Standings.From(local, ServerTranslationState.FactsOf(server), account);
         }
 
         /// <summary>How many lines the screen last said the translation holds.</summary>
@@ -1013,8 +983,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// <summary>Every section, from what the engine holds right now.</summary>
         private void RedrawFromFacts()
         {
-            // Detect and cache current state
-            _currentLayoutState = DetectCurrentState();
+            // Where the translation stands, read once for every section below.
+            _standing = CurrentStanding();
 
             // Refresh all sections
             RefreshModUpdateBanner();
@@ -1071,7 +1041,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // The card describes a translation, so it appears whenever there is one — with or
             // without a name attached to it.
-            bool showStatusCard = _currentLayoutState != LayoutState.NoLocal;
+            bool showStatusCard = _standing.Publication != Publication.NotDownloaded;
 
             // 🔴 **The card goes, the section stays.** Hiding the whole section took the way into
             // Backups with it — and "there is no translation" is exactly the state in which somebody
@@ -1110,7 +1080,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // The three choices offered to somebody holding a lineage that is not theirs.
             if (_lineageChoiceSection != null)
             {
-                bool choosing = _currentLayoutState == LayoutState.HoldingAnothersLineage;
+                bool choosing = _standing.Publication == Publication.NotYours;
                 _lineageChoiceSection.Visible = choosing;
 
                 // 🔴 **The upload button steps aside for them.** In this state it reads
@@ -1183,7 +1153,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // The socle's verdict, the same one the card shows: the published version moved
                 // (Download), or both did (Merge). Reading the manager's summary here was one
                 // more derivation of the same fact.
-                var upstream = CurrentSync(TranslatorCore.ServerState);
+                var upstream = _standing.Sync;
                 bool upstreamWorthTaking = upstream == SyncDirection.Download
                                            || upstream == SyncDirection.Merge;
 
@@ -1249,9 +1219,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             var serverState = TranslatorCore.ServerState;
             int localCount = TranslatorCore.TranslationCache.Count;
 
-            switch (_currentLayoutState)
+            switch (_standing.Publication)
             {
-                case LayoutState.NoLocal:
+                case Publication.NotDownloaded:
                     // No local translation - guide user
                     if (TranslatorCore.Config.IsTranslationEnabled)
                     {
@@ -1263,8 +1233,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                     }
                     break;
 
-                case LayoutState.HoldingAnothersLineage:
-                    // Same UUID but not owner - show info about parent
+                case Publication.NotYours:
+                    // Somebody else's lineage - show info about parent
                     if (serverState != null)
                     {
                         int localChanges = TranslatorCore.LocalChangesCount;
@@ -1278,8 +1248,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                     }
                     break;
 
-                case LayoutState.VisitorDiffUuid:
-                    // Different UUID - local only
+                case Publication.NeverPublished:
+                    // Local only — said once the server has confirmed it knows nothing of it
                     if (serverState != null && serverState.Checked && !serverState.Exists)
                     {
                         message = "Your translation is local only. Upload it to share with the community!";
@@ -1301,9 +1271,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             _guidanceSection.Visible = hasMessage;
             if (hasMessage)
             {
-                // The HoldingAnothersLineage branch already translated (it appends a username);
-                // the others are plain sentences translated here.
-                if (_currentLayoutState == LayoutState.HoldingAnothersLineage)
+                // The NotYours branch already translated (it appends a username); the others are
+                // plain sentences translated here.
+                if (_standing.Publication == Publication.NotYours)
                     _guidanceLabel.Show(message);
                 else
                     _guidanceLabel.Say(message);
@@ -1340,7 +1310,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             // history and nothing to make one from, so the row says nothing at all.
             if (_backupsRow != null)
             {
-                _backupsRow.Visible = _currentLayoutState != LayoutState.NoLocal
+                _backupsRow.Visible = _standing.Publication != Publication.NotDownloaded
                                       || saved + automatic > 0;
             }
 
@@ -1396,55 +1366,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             // with the truth — see RefreshCountIfChanged.
             _shownLineCount = entryCount;
 
-            // Where this translation stands, on the four questions the socle keeps apart.
-            //
-            // ⚠ **The direction is kept.** "OutOfSync" said only that the two differed; which side
-            // had moved decides whether the answer is to take an update or to publish. The verdict
-            // is the socle's, on the facts, shared with the Actions row — see CurrentSync.
-            SyncDirection? sync = CurrentSync(serverState);
-
-            var standing = new Standing
-            {
-                // ⚠ `yours` decides between two sentences that describe opposite acts: publishing
-                // your own updates it, publishing into somebody else's lineage contributes to it.
-                // Without it the card said "Published" over a community translation the player had
-                // merely downloaded, and offered to update a file that is not theirs to update.
-                Publication = Publications.Of(hereOnDisk: entryCount > 0,
-                                              onTheSite: serverState != null && serverState.Exists,
-                                              yours: serverState != null && serverState.Exists
-                                                  ? serverState.IsOwner
-                                                  : (bool?)null),
-                Sync = sync,
-
-                // ⚠ From the point of view of the game itself, which holds its own credential: the
-                // question the manager asks — is this somebody else's game — cannot arise here.
-                Account = string.IsNullOrEmpty(TranslatorCore.Config.api_token)
-                    ? AccountStanding.Anonymous
-                    : AccountStanding.Ours,
-
-                // The server state's role IS this account's role, None when it has no row —
-                // the invariant every writer keeps since 2026-09-07. No need to rebuild it from
-                // the layout state, which was a second reading of the same fact.
-                Role = serverState?.Role ?? LineageRole.None,
-
-                // ⚠ What is actually WAITING, not how many people contribute. Falls back to the raw
-                // count only when the site could not answer: unknown is not zero, and showing
-                // nothing there would tell a Main their contributions are settled when nobody knows.
-                BranchesWaiting = _currentLayoutState == LayoutState.OwnerMain
-                    ? (serverState?.BranchesWithWork ?? serverState?.BranchesCount)
-                    : null,
-
-                LinesAvailable = _currentLayoutState == LayoutState.OwnerMain
-                    ? serverState?.LinesAvailable
-                    : null,
-
-                // ⚠ Whoever leads the lineage, and ONLY when it is not this account — the same two
-                // fields the card below already reads to say "Based on the translation of @x".
-                // Null when it is ours: there is then nobody else to name.
-                MainOwner = serverState != null && !serverState.IsOwner
-                    ? serverState.MainUsername ?? serverState.Uploader
-                    : null,
-            };
+            // Where this translation stands, on the four questions the socle keeps apart — read
+            // once per redraw (CurrentStanding), never rebuilt here from the same facts.
+            var standing = _standing;
             // Identity leads the card: which languages, whatever the mode
             _statusCard.SetIdentity(TranslatorCore.Config.GetSourceLanguage(), targetLang);
 
@@ -1455,54 +1379,49 @@ namespace UnityGameTranslator.Core.UI.Panels
             // WITHOUT its guards: Upload opened the upload screen while signed out, on a call that
             // could only fail. What each mode has to SAY is set by the ConfigureAs* below; what it
             // lets you DO is not this component's business.
-            switch (_currentLayoutState)
+            if (Standings.LeadsTheLineage(standing))
             {
-                case LayoutState.OwnerMain:
-                    // ⚠ Both axes travel together. How many rows need a decision is not how many are
-                    // worth taking, and what they are made of is what decides whether opening the
-                    // review is worth it — none of which a single total can say.
-                    _statusCard.ConfigureAsMainOwner(standing, entryCount, targetLang,
-                                                     standing.BranchesWaiting ?? 0,
-                                                     serverState?.LinesAvailable,
-                                                     serverState?.LinesToReview,
-                                                     serverState?.LinesNew ?? default(TagTally),
-                                                     serverState?.LinesDiffering ?? default(TagTally));
-                    break;
-
-                case LayoutState.OwnerBranch:
-                    _statusCard.ConfigureAsBranchOwner(
-                        standing,
-                        entryCount,
-                        targetLang,
-                        serverState?.MainUsername ?? serverState?.Uploader,
-                        localChanges);
-                    break;
-
-                case LayoutState.HoldingAnothersLineage:
-                    _statusCard.ConfigureAsHoldingAnothersLineage(
-                        standing,
-                        entryCount,
-                        targetLang,
-                        serverState?.Uploader);
-                    break;
-
-                case LayoutState.VisitorDiffUuid:
-                    _statusCard.ConfigureAsLocalOnly(entryCount, targetLang);
-                    break;
-
-                default:
-                    // ⚠ Only NoLocal reaches here, and RefreshLayoutVisibility has already hidden
-                    // the card for it: a card describing a file says nothing when there is no file.
-                    // It used to be configured anyway, with counts of zero and a language of "None".
-                    break;
+                // ⚠ Both axes travel together. How many rows need a decision is not how many are
+                // worth taking, and what they are made of is what decides whether opening the
+                // review is worth it — none of which a single total can say.
+                _statusCard.ConfigureAsMainOwner(standing, entryCount, targetLang,
+                                                 standing.BranchesWaiting ?? 0,
+                                                 standing.LinesAvailable,
+                                                 serverState?.LinesToReview,
+                                                 serverState?.LinesNew ?? default(TagTally),
+                                                 serverState?.LinesDiffering ?? default(TagTally));
             }
+            else if (Standings.OnABranch(standing))
+            {
+                _statusCard.ConfigureAsBranchOwner(
+                    standing,
+                    entryCount,
+                    targetLang,
+                    serverState?.MainUsername ?? serverState?.Uploader,
+                    localChanges);
+            }
+            else if (standing.Publication == Publication.NotYours)
+            {
+                _statusCard.ConfigureAsHoldingAnothersLineage(
+                    standing,
+                    entryCount,
+                    targetLang,
+                    serverState?.Uploader);
+            }
+            else if (standing.Publication == Publication.NeverPublished)
+            {
+                _statusCard.ConfigureAsLocalOnly(entryCount, targetLang);
+            }
+            // ⚠ NotDownloaded never reaches here: RefreshLayoutVisibility has already hidden the
+            // card for it — a card describing a file says nothing when there is no file. It used
+            // to be configured anyway, with counts of zero and a language of "None".
 
             // What the community made of this translation, and the player's own say. Whatever
             // the mode: an author is entitled to see their count, a player to give one back.
             // Hidden by the card itself when the server reported no vote at all.
             _statusCard.SetVote(
                 serverState?.Vote,
-                _currentLayoutState == LayoutState.OwnerMain
+                Standings.LeadsTheLineage(standing)
                     ? LineageRole.Main
                     : LineageRole.None);
 
@@ -1653,7 +1572,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
                 // Sync status — the socle's verdict, the same one the card and the Actions row show
                 int localChanges = TranslatorCore.LocalChangesCount;
-                var sync = CurrentSync(serverState);
+                var sync = _standing.Sync;
 
                 if (sync == SyncDirection.Merge)
                 {
@@ -1733,8 +1652,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             bool hasLocalChanges = TranslatorCore.LocalChangesCount > 0;
             bool hasMetadataChanges = TranslatorCore.MetadataDirty;
 
-            // One verdict, the socle's, shared with the card — see CurrentSync.
-            var sync = CurrentSync(state);
+            // One verdict, the socle's, shared with the card — the standing read for this redraw.
+            var sync = _standing.Sync;
             bool needsMerge = sync == SyncDirection.Merge;
             bool isInSync = sync == SyncDirection.InSync;
 
@@ -1978,26 +1897,6 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         private UploadAct? _uploadAct;
 
-        /// <summary>
-        /// Where this file stands against the published one — the socle's verdict on the four
-        /// facts it asks for, and nothing else.
-        ///
-        /// 🔴 ONE derivation for the card and the buttons. This panel had four: the card read the
-        /// manager's summary, the Actions row compared hashes itself, the merge test read the
-        /// summary again, and a dead section did it a fourth way. Four readings of one fact are
-        /// four chances to disagree with the chip on the card, which the socle already decides.
-        /// Settings that travel with the translation count as local work: an upload offered after
-        /// a font edit is not the mod losing track, it is work that has not left the machine.
-        /// </summary>
-        private static SyncDirection? CurrentSync(ServerTranslationState state)
-        {
-            if (state == null || !state.Exists) return null;
-
-            bool hasLocalWork = TranslatorCore.LocalChangesCount > 0 || TranslatorCore.MetadataDirty;
-            return Sync.Decide(TranslatorCore.ComputeContentHash(), state.Hash,
-                               TranslatorCore.LastSyncedHash, hasLocalWork);
-        }
-
         private async void OnUploadClicked()
         {
             // ⚠ Closes only the SEND. On a window showing the details act, this re-purposes it —
@@ -2020,7 +1919,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (!TranslatorCore.Config.online_mode) return;
 
             // Both sides moved: settle them first, on the same verdict the button was labelled from
-            if (CurrentSync(TranslatorCore.ServerState) == SyncDirection.Merge)
+            // — read again now, since a line edited since the last redraw changes it.
+            if (CurrentStanding().Sync == SyncDirection.Merge)
             {
                 await TranslatorUIManager.DownloadForMerge();
             }

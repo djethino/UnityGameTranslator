@@ -14,13 +14,17 @@ namespace UnityGameTranslator.Core.UI.Panels
     /// </summary>
     public class MergePanel : TranslatorPanelBase
     {
-        public override string Name => "Merge Translations";
-        public override int MinWidth => 650;
-        public override int MinHeight => 400;
-        public override int PanelWidth => 650;
-        public override int PanelHeight => 500;
+        /// <summary>The screen as a document — common/spec/screens/merge.json — read once; the base's constructor reads the sizes below through it.</summary>
+        private static readonly ScreenDocument Doc = ScreenDocument.FromEmbedded("merge");
 
-        protected override int MinPanelHeight => 400;
+        /// <summary>What the builder made of the document: every piece by name.</summary>
+        private BuiltScreen _screen;
+
+        public override string Name => Doc.Name;
+        public override int MinWidth => Doc.MinWidth;
+        public override int MinHeight => Doc.MinHeight;
+        public override int PanelWidth => Doc.Width;
+        public override int PanelHeight => Doc.Height;
 
         // Conflict list grows with the panel height to show more rows at once.
         protected override bool HasFlexibleContent => true;
@@ -111,78 +115,53 @@ namespace UnityGameTranslator.Core.UI.Panels
             RefreshConflictList();
         }
 
+        /// <summary>
+        /// The screen is merge.json; this builds it and keeps hold of what the code writes, fills
+        /// or enables. What the document carries, and why — a document has no comments:
+        /// - the card stretches so the conflict list absorbs the room when the window grows, and
+        ///   the list states a preferred height: without one it is weighed at its minimum when the
+        ///   panel adds up what it needs, and anything below it is never budgeted for
+        ///   (TranslatorPanelBase.ScrollingListHeightRule);
+        /// - the title's scope is Local, and so is Apply's and Replace's: the whole merge settles
+        ///   this machine's file and publishes nothing — the three buttons of the row say the same
+        ///   thing, and Replace, the most destructive of them, was the one saying nothing;
+        /// - Review on Website is the same act as the main panel's Review Branches: it rewrites
+        ///   the PUBLISHED Main and never comes back here on its own;
+        /// - the bulk choice is built into an empty host, and rebuilt: a choice cannot be told back
+        ///   to "nothing chosen" once picked, only recreated (RebuildBulkChoice).
+        ///
+        /// ⚠ Every act goes through the static singleton (_self) rather than capturing this, the
+        /// IL2CPP rule the handlers already followed.
+        /// </summary>
         protected override void ConstructPanelContent()
         {
-            // Use scrollable layout - content scrolls if needed, buttons stay fixed
-            Layout(out var scrollContent, out var buttonRow, PanelWidth - 40);
+            Layout(out var body, out var footer, Doc.CardWidth);
+            _helpZone = CreateHelpZone(footer, Doc.Help);
+            _screen = ScreenBuilder.Build(Doc, body, footer, ActOf, help: _helpZone, title: ScopedTitle);
 
-            // Contextual help bar between content and footer
-            _helpZone = CreateHelpZone(buttonRow, "Hover a button to see what it does");
+            _summaryLabel = _screen.Label("Summary");
+            _conflictList = _screen.List("ConflictScroll");
+            _bulkChoiceHost = _screen.Host("BulkChoiceHost");
+            _applyBtn = _screen.Button("ApplyBtn");
+            _reviewBtn = _screen.Button("ReviewBtn");
 
-            // Adaptive card for merge conflicts — stretchVertically so the inner conflict list
-            // can absorb the extra space when the user enlarges the panel.
-            var card = Stacks.Card(scrollContent, "MergeCard", PanelWidth - 40, stretchVertically: true);
-
-            ScopedTitle(card, "Title", "Merge Conflicts", EditSide.Local);
-
-            Stacks.Spacer(card, 5);
-
-            // Explanation
-            Labels.Create(card, "Explanation",
-                "Both you and the server made changes. Choose which version to keep for each conflict:",
-                TextRole.Small, minHeight: UIStyles.RowHeightMedium, fill: Fill.Stretch);
-
-            Stacks.Spacer(card, 3);
-
-            // Summary
-            _summaryLabel = Labels.Create(card, "Summary", "Conflicts to resolve:", TextRole.Info,
-                                          policy: TextPolicy.Excluded, minHeight: UIStyles.RowHeightMedium,
-                                          fill: Fill.Stretch);
-
-            // Conflict list scroll view
-            // See TranslatorPanelBase.ScrollingListHeightRule: without a preferred height this
-            // list is weighed at its minimum when the panel adds up what it needs, so anything
-            // below it is never budgeted for.
-            _conflictList = ScrollList.Create(card, "ConflictScroll", minHeight: 240, preferredHeight: 240, spacing: 5);
-
-            Stacks.Spacer(card, 10);
-
-            // Bulk action row
-            var bulkRow = Stacks.Row(card, "BulkRow", minHeight: UIStyles.RowHeightXLarge, placement: Placement.MiddleCenter);
-
-            _bulkChoiceHost = Stacks.Horizontal(bulkRow, "BulkChoiceHost", fill: Fill.Content);
             RebuildBulkChoice();
 
             // Apply Merge - starts disabled until user makes a choice
-            _applyBtn = Buttons.Primary(bulkRow, "ApplyBtn", "Apply Merge",
-                scope: EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: false));
-            // ⚠ Writes this machine's translation and publishes nothing — the whole merge panel
-            // settles a local file. Marked so the three buttons of this row say the same thing.
-            _applyBtn.Clicked += () => _self?.ApplyMerge();
             SetApplyButtonEnabled(false);
-            _helpZone?.Describe(_applyBtn,
-                "Save the merged result: non-conflicting changes from both sides plus your choices above");
+        }
 
-            // Bottom buttons - in fixed footer (outside scroll)
-            var cancelBtn = Buttons.Secondary(buttonRow, "CancelBtn", "Cancel");
-            cancelBtn.Clicked += () => _self?.CancelMerge();
-            _helpZone?.Describe(cancelBtn, "Close without changing anything — you can merge later");
-
-            // ⚠ Overwrites the local file with the online one. The most destructive act on this
-            // row, and it was the one saying nothing about where it lands.
-            var replaceBtn = Buttons.Create(buttonRow, "ReplaceBtn", "Replace with Server", ButtonTone.Danger,
-                minWidth: 130, scope: EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: false));
-            replaceBtn.Clicked += () => _self?.ReplaceWithRemote();
-            _helpZone?.Describe(replaceBtn, "Throw away ALL your local changes and take the website's version as-is");
-
-            // Review on Website in the footer (secondary action)
-            // ⚠ The same act as the main panel's Review Branches: it rewrites the PUBLISHED Main
-            // and never comes back here on its own.
-            _reviewBtn = Buttons.Create(buttonRow, "ReviewBtn", "Review on Website", ButtonTone.Link,
-                minWidth: 115, scope: EditScope.SideAfter(onThisMachine: false, yourPublishedCopy: true));
-            _reviewBtn.Clicked += () => _self?.OpenReviewPage();
-            _helpZone?.Describe(_reviewBtn,
-                "Open this merge in your browser: bigger screen, search, and line-by-line tools");
+        /// <summary>What each verb the document asks for does. A verb with no answer here fails at construction, not at the click.</summary>
+        private Action ActOf(string act)
+        {
+            switch (act)
+            {
+                case "apply": return () => _self?.ApplyMerge();
+                case "cancel": return () => _self?.CancelMerge();
+                case "replace": return () => _self?.ReplaceWithRemote();
+                case "review": return () => _self?.OpenReviewPage();
+                default: return null;
+            }
         }
 
         /// <summary>

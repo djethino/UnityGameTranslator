@@ -31,15 +31,21 @@ namespace UnityGameTranslator.Core.UI.Panels
     /// </summary>
     public class InspectorPanel : TranslatorPanelBase
     {
+        /// <summary>The screen as a document — common/spec/screens/inspector.json — read once; the base's constructor reads the sizes below through it.</summary>
+        private static readonly ScreenDocument Doc = ScreenDocument.FromEmbedded("inspector");
+
+        /// <summary>What the builder made of the document: every piece by name.</summary>
+        private BuiltScreen _screen;
+
+        // ⚠ The name is the key the window's position is remembered under, and each mode keeps
+        // its own: a rule, not a shape, so it stays here. The document names the ordinary one.
         public override string Name => _currentMode == InspectorMode.BitmapReplace ? "Image Inspector"
             : _currentMode == InspectorMode.FontOverride ? "Font Override Inspector"
-            : "Element Inspector";
-        public override int MinWidth => 420;
-        public override int MinHeight => 360;
-        public override int PanelWidth => 480;
-        public override int PanelHeight => 420;
-
-        protected override int MinPanelHeight => 360;
+            : Doc.Name;
+        public override int MinWidth => Doc.MinWidth;
+        public override int MinHeight => Doc.MinHeight;
+        public override int PanelWidth => Doc.Width;
+        public override int PanelHeight => Doc.Height;
 
         // TextEdit mode contains a scrollable list of child texts that benefits from extra
         // vertical room when the user enlarges the panel.
@@ -81,7 +87,7 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// not a limit on the list — it scrolls — but on how much window it may claim by itself;
         /// past that the panel is still resizable by hand, up to the screen.
         /// </summary>
-        private const int TextEditListMinHeight = 260;
+        private static int TextEditListMinHeight => Doc.Nodes["TextEditScroll"].Int("minHeight") ?? 0;
         private const int TextEditListMaxHeight = 560;
 
         /// <summary>Rough height of one edit row: labels + field + preview + buttons + spacing.</summary>
@@ -151,141 +157,70 @@ namespace UnityGameTranslator.Core.UI.Panels
             TranslatorCore.OnRetranslateFinished += OnRetranslateFinished;
         }
 
+        /// <summary>
+        /// The screen is inspector.json; this builds it and keeps hold of what the code writes,
+        /// shows or enables. What the document carries, and why — a document has no comments:
+        /// - the title sits above the card, with the Local scope: everything here writes this
+        ///   machine's files (exclusions, images, edited lines) and publishes nothing;
+        /// - the card stretches so the text-edit list absorbs the room when the window grows; the
+        ///   list states its floor once, and SizeTextEditList revises it once filled — the
+        ///   smallest useful box for one line is not the smallest useful box for a dozen;
+        /// - three rows of actions, one per mode (exclusion, image, text edit), shown by
+        ///   UpdateUIForMode; a fourth, Clear Selection, shared by all;
+        /// - the camera list is the picker's, set at show time (`options: code`).
+        /// </summary>
         protected override void ConstructPanelContent()
         {
-            Layout(out var scrollContent, out var buttonRow, PanelWidth - 40);
+            Layout(out var body, out var footer, Doc.Width - 40);
+            _helpZone = CreateHelpZone(footer, Doc.Help);
+            _screen = ScreenBuilder.Build(Doc, body, footer, ActOf, help: _helpZone, title: ScopedTitle);
 
-            // Contextual help bar between content and footer
-            _helpZone = CreateHelpZone(buttonRow, "Hover an element to see what it does");
+            _titleLabel = _screen.Label("Title");
+            _cameraDropdown = _screen.Dropdown("CameraTarget");
+            _hoveredPathLabel = _screen.Label("HoverPathValue");
+            _selectedPathLabel = _screen.Label("SelectedPathValue");
+            _spriteInfoLabel = _screen.Label("SpriteInfo");
+            _exclusionActionsRow = _screen.Host("ExclusionActionRow");
+            _excludeThisBtn = _screen.Button("ExcludeThisBtn");
+            _excludePatternBtn = _screen.Button("ExcludePatternBtn");
+            _imageActionsRow = _screen.Host("ImageActionRow");
+            _exportOriginalBtn = _screen.Button("ExportOriginalBtn");
+            _markReplaceBtn = _screen.Button("MarkReplaceBtn");
+            _textEditRow = _screen.Host("TextEditRow");
+            _textEditCountLabel = _screen.Label("TextEditCount");
+            _textEditList = _screen.List("TextEditScroll");
+            _cancelBtn = _screen.Button("CancelBtn");
+            _statusLabel = _screen.Label("Status");
 
-            // Title
-            _titleLabel = ScopedTitle(scrollContent, "Title", "Element Inspector", EditSide.Local,
-                                      policy: TextPolicy.Dynamic);
-
-            Stacks.Spacer(scrollContent, 5);
-
-            // Main card
-            var card = Stacks.Card(scrollContent, "InspectorCard", PanelWidth - 60, stretchVertically: true);
-
-            // Instructions
-            Labels.Create(card, "InstructionsLabel", "Instructions", TextRole.SectionTitle);
-            Labels.Create(card, "InstructionsHint", "Hover over any UI element to preview it. Click to select.",
-                         TextRole.Hint);
-
-            Stacks.Spacer(card, 8);
-
-            // --- Camera selection ---
-            Labels.Create(card, "CameraLabel", "Target", TextRole.SectionTitle);
-
-            _cameraDropdown = new Components.SearchableDropdown("CameraTarget",
-                new[] { "UI Only" }, "UI Only", popupHeight: 150);
-            var cameraHost = _cameraDropdown.CreateUI(card, OnCameraSelected, PanelWidth - 80, stretch: true);
-            _helpZone?.Describe(cameraHost,
-                "'UI Only' picks on-screen interface text. Choose a camera to pick objects in the game world instead.");
-
-            Stacks.Spacer(card, 8);
-
-            // --- Hovered Element section ---
-            Labels.Create(card, "HoverSectionLabel", "Hovered", TextRole.SectionTitle);
-
-            var hoverBox = Stacks.Section(card, "HoverBox");
-
-            _hoveredPathLabel = Labels.Create(hoverBox, "HoverPathValue", "(move cursor over a UI element)",
-                TextRole.Small, tone: Tone.Muted, policy: TextPolicy.Dynamic, fill: Fill.Stretch,
-                minHeight: UIStyles.RowHeightNormal);
-            _hoveredPathLabel.Italic = true;
-
-            Stacks.Spacer(card, 8);
-
-            // --- Selected Element section ---
-            Labels.Create(card, "SelectedSectionLabel", "Selected", TextRole.SectionTitle);
-
-            var selectedBox = Stacks.Section(card, "SelectedBox");
-
-            _selectedPathLabel = Labels.Create(selectedBox, "SelectedPathValue", "(click to select)",
-                TextRole.Small, tone: Tone.Muted, policy: TextPolicy.Dynamic, fill: Fill.Stretch,
-                minHeight: UIStyles.RowHeightNormal);
-            _selectedPathLabel.Italic = true;
-
-            Stacks.Spacer(card, 8);
-
-            // --- Sprite info (BitmapReplace mode only) ---
-            _spriteInfoLabel = Labels.Create(card, "SpriteInfo", "", TextRole.Small, tone: Tone.Secondary,
-                policy: TextPolicy.Dynamic, fill: Fill.Stretch, minHeight: UIStyles.RowHeightSmall);
-            _spriteInfoLabel.Visible = false;
-
-            Stacks.Spacer(card, 4);
-
-            // --- Action buttons ---
-            Labels.Create(card, "ActionsLabel", "Actions", TextRole.SectionTitle);
-
-            // Exclusion mode actions
-            _exclusionActionsRow = Stacks.Row(card, "ExclusionActionRow", spacing: 5, minHeight: UIStyles.ButtonHeight);
-
-            _excludeThisBtn = Buttons.Create(_exclusionActionsRow, "ExcludeThisBtn", "Exclude This Element",
-                ButtonTone.Primary, fill: Fill.Stretch);
+            // Nothing is hovered or selected yet: the sentences that say so, and the acts closed
+            // until something is.
+            _hoveredPathLabel.Say("(move cursor over a UI element)");
+            _selectedPathLabel.Say("(click to select)");
             _excludeThisBtn.Enabled = false;
-            _excludeThisBtn.Clicked += OnExcludeThisClicked;
-            _helpZone?.Describe(_excludeThisBtn, "Never translate this exact element (only this one)");
-
-            _excludePatternBtn = Buttons.Create(_exclusionActionsRow, "ExcludePatternBtn", "Exclude Pattern",
-                ButtonTone.Secondary, fill: Fill.Stretch);
             _excludePatternBtn.Enabled = false;
-            _excludePatternBtn.Clicked += OnExcludePatternClicked;
-            _helpZone?.Describe(_excludePatternBtn,
-                "Never translate ANY element with this name, anywhere in the game (e.g. every chat line)");
-
-            // BitmapReplace mode actions
-            _imageActionsRow = Stacks.Row(card, "ImageActionRow", spacing: 5, minHeight: UIStyles.ButtonHeight);
-
-            _exportOriginalBtn = Buttons.Create(_imageActionsRow, "ExportOriginalBtn", "Export Original",
-                ButtonTone.Primary, fill: Fill.Stretch);
             _exportOriginalBtn.Enabled = false;
-            _exportOriginalBtn.Clicked += OnExportOriginalClicked;
-            _helpZone?.Describe(_exportOriginalBtn, "Save the game's current image to disk as a template you can edit");
-
-            _markReplaceBtn = Buttons.Create(_imageActionsRow, "MarkReplaceBtn", "Mark for Replace",
-                ButtonTone.Secondary, fill: Fill.Stretch);
             _markReplaceBtn.Enabled = false;
-            _markReplaceBtn.Clicked += OnMarkReplaceClicked;
-            _helpZone?.Describe(_markReplaceBtn,
-                "Register this image for replacement: drop your edited version in the images folder and it swaps in-game");
-
-            _imageActionsRow.Visible = false; // Hidden by default (exclusion mode)
-
-            // TextEdit mode — scrollable list of child texts
-            _textEditRow = Stacks.Vertical(card, "TextEditRow", spacing: 4, fillHeight: true);
-
-            _textEditCountLabel = Labels.Create(_textEditRow, "TextEditCount", "", TextRole.Small,
-                tone: Tone.Secondary, policy: TextPolicy.Dynamic, minHeight: UIStyles.RowHeightSmall);
-
-            // See TranslatorPanelBase.ScrollingListHeightRule. Both numbers are revised once the
-            // list is filled (SizeTextEditList): the smallest useful box for one line is not the
-            // smallest useful box for a dozen, and this panel is regularly handed a dozen.
-            _textEditList = ScrollList.Create(_textEditRow, "TextEditScroll",
-                minHeight: TextEditListMinHeight, preferredHeight: TextEditListMinHeight);
-
-            _textEditRow.Visible = false; // Hidden by default
-
-            // Shared clear selection button
-            var actionRow2 = Stacks.Row(card, "ActionRow2", spacing: 5, minHeight: UIStyles.ButtonHeight);
-
-            _cancelBtn = Buttons.Create(actionRow2, "CancelBtn", "Clear Selection", ButtonTone.Secondary,
-                fill: Fill.Stretch);
             _cancelBtn.Enabled = false;
-            _cancelBtn.Clicked += OnCancelClicked;
-            _helpZone?.Describe(_cancelBtn,
-                "Deselect the current element and keep inspecting. Nothing is changed.");
 
-            // Status label
-            Stacks.Spacer(card, 5);
-            _statusLabel = Labels.Create(card, "Status", "", TextRole.Small, tone: Tone.Plain,
-                policy: TextPolicy.Dynamic, minHeight: UIStyles.RowHeightSmall);
+            // The picker's list arrives at show time; until then the one choice every mode has.
+            _cameraDropdown.SetOptions(new[] { "UI Only" });
+            _cameraDropdown.SelectedValue = "UI Only";
+        }
 
-            // Footer button (fixed at bottom)
-            var stopBtn = Buttons.Primary(buttonRow, "StopBtn", "Stop Inspecting");
-            stopBtn.Clicked += OnStopClicked;
-            _helpZone?.Describe(stopBtn, "Leave inspect mode and close this window. Element picking stops.");
+        /// <summary>What each verb the document asks for does. A verb with no answer here fails at construction, not at the click.</summary>
+        private Action ActOf(string act)
+        {
+            switch (act)
+            {
+                case "cameraChanged": return OnCameraSelected;
+                case "excludeThis": return OnExcludeThisClicked;
+                case "excludePattern": return OnExcludePatternClicked;
+                case "exportOriginal": return OnExportOriginalClicked;
+                case "markReplace": return OnMarkReplaceClicked;
+                case "clearSelection": return OnCancelClicked;
+                case "stop": return OnStopClicked;
+                default: return null;
+            }
         }
 
         /// <summary>
@@ -320,9 +255,9 @@ namespace UnityGameTranslator.Core.UI.Panels
             _cameraDropdown.SelectedValue = "UI Only";
         }
 
-        private void OnCameraSelected(string value)
+        private void OnCameraSelected()
         {
-            int index = Array.IndexOf(_picker.CameraNames, value);
+            int index = Array.IndexOf(_picker.CameraNames, _cameraDropdown.SelectedValue);
             _picker.SelectCamera(index);
 
             ClearSelection();

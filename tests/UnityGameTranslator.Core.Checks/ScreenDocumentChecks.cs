@@ -175,6 +175,39 @@ namespace UnityGameTranslator.Core.Checks
             check(!upload.Pinned && upload.TitleBar && ScreenDocument.Parse(JObject.Parse(@"{""name"":""X"",""size"":{""width"":500,""height"":200},""body"":[],""footer"":[]}")).TitleBar,
                 "a window keeps its title bar and is not pinned unless its document says so", "the defaults are the ordinary window's");
 
+            // ── Merge, inspector, wizard ──────────────────────────────────────────
+            var merge = ScreenDocument.FromFile(Path.Combine(folder, "merge.json"));
+            check(merge.Acts.Keys.OrderBy(k => k).SequenceEqual(new[] { "apply", "cancel", "replace", "review" })
+                  && merge.Nodes["ConflictScroll"].Kind == "list" && merge.Nodes["ConflictScroll"].Int("preferredHeight") != null
+                  && merge.Nodes["BulkChoiceHost"].Kind == "row" && merge.Nodes["BulkChoiceHost"].Children.Count == 0,
+                "merge.json: four acts, a list stating its preferred height, an empty host for the bulk choice",
+                "the rows are built from the conflicts; the choice is rebuilt because it cannot be told back to nothing chosen");
+            check(merge.Nodes["Title"].Kind == "title" && (bool)merge.Nodes["Title"].Props["scope"]["onThisMachine"] && !(bool)merge.Nodes["Title"].Props["scope"]["yourPublishedCopy"]
+                  && (bool)merge.Nodes["ApplyBtn"].Props["scope"]["onThisMachine"] && !(bool)merge.Nodes["ApplyBtn"].Props["scope"]["yourPublishedCopy"],
+                "the merge's title and Apply both say Local", "the whole merge settles this machine's file and publishes nothing");
+
+            var inspector = ScreenDocument.FromFile(Path.Combine(folder, "inspector.json"));
+            check(inspector.Acts.Keys.OrderBy(k => k).SequenceEqual(new[] { "cameraChanged", "clearSelection", "excludePattern", "excludeThis", "exportOriginal", "markReplace", "stop" })
+                  && inspector.Nodes["CameraTarget"].Word("options") == "code"
+                  && inspector.Nodes["ImageActionRow"].StartsVisible == false && inspector.Nodes["TextEditRow"].StartsVisible == false && inspector.Nodes["ExclusionActionRow"].StartsVisible,
+                "inspector.json: seven acts, the camera list the code's, the exclusion row up and the two other modes' rows down",
+                "which row shows is the mode's, decided by the code");
+            check(inspector.Nodes["TextEditScroll"].Int("minHeight") == 260,
+                "the text-edit list's floor is stated once, in the document", "the code reads it there and revises the box once the list is filled");
+
+            var wizard = ScreenDocument.FromFile(Path.Combine(folder, "wizard.json"));
+            check(wizard.Body.Count == 7 && wizard.Body.All(s => s.Kind == "stack" && !s.StartsVisible) && wizard.Footer.Count == 0 && !wizard.Persist,
+                "wizard.json: seven steps, all hidden, no shared footer, nothing remembered", "one step at a time, each with its own buttons; the window is sized to the step");
+            check(wizard.Nodes["OnlineToggle"].Text == null && wizard.Nodes["OfflineToggle"].Text == null && wizard.Nodes["DeepLFreeToggle"].Text != null,
+                "the two mode boxes are bare, the DeepL one carries its words", "a bare box's words are the title beside it, and the whole box is highlighted");
+            check(wizard.Acts.Count == 31 && wizard.Acts.Values.Count(n => n.Kind == "field") == 5 && wizard.Acts.Values.Count(n => n.Kind == "dropdown") == 4
+                  && wizard.Acts.Values.Count(n => n.Kind == "checkbox") == 4
+                  && wizard.Nodes["AIUrl"].Word("placeholder") == UnityGameTranslator.Common.Endpoints.OllamaDefault,
+                "wizard.json asks for 31 acts — five as fields are typed in, four as choices change, four as boxes flip — and offers the socle's default AI address",
+                $"got {wizard.Acts.Count} acts; the address is {wizard.Nodes["AIUrl"].Word("placeholder")}");
+            check(wizard.Nodes["HotkeyHost"].Children.Count == 0 && wizard.Nodes["TranslationListHost"].Children.Count == 0,
+                "the hotkey capture and the community list have hosts the document leaves empty", "two components the vocabulary does not describe");
+
             // ── Every panel built from a document hands the builder what the document needs ──
             // 🔴 The builder refuses a document with a header or a help bar it was given nowhere
             // to put — at construction, inside CreatePanels, which then aborts: the panels after
@@ -227,7 +260,9 @@ namespace UnityGameTranslator.Core.Checks
             Refuses(check, "a callout without a tone", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[{""kind"":""callout"",""name"":""C""}],""footer"":[]}", "has a tone");
             Refuses(check, "a collapsible without a title", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[{""kind"":""collapsible"",""name"":""C""}],""footer"":[]}", "has a title");
             Refuses(check, "a title without its scope", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[{""kind"":""title"",""name"":""T"",""text"":""Upload""}],""footer"":[]}", "which copy");
-            Refuses(check, "a checkbox without its words", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[{""kind"":""checkbox"",""name"":""C""}],""footer"":[]}", "has a text");
+            var bare = ScreenDocument.Parse(JObject.Parse(@"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[{""kind"":""checkbox"",""name"":""C""},{""kind"":""field"",""name"":""F"",""act"":""typed""}],""footer"":[{""kind"":""button"",""name"":""B"",""text"":""Go"",""act"":""go""}]}"));
+            check(bare.Nodes["C"].Text == null && bare.Acts.ContainsKey("typed") && bare.Acts["typed"].Kind == "field",
+                "a checkbox without words is bare, and a field may ask for an act as it is typed in", "the words of a bare box are elsewhere on its row; a field's act is how a wizard keeps its state as the person types");
             Refuses(check, "two checkboxes asking for one act", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[{""kind"":""checkbox"",""name"":""A"",""text"":""a"",""act"":""flip""},{""kind"":""checkbox"",""name"":""B"",""text"":""b"",""act"":""flip""}],""footer"":[]}", "two pieces");
 
             var defaults = ScreenDocument.Parse(JObject.Parse(@"{""name"":""X"",""size"":{""width"":500,""height"":200},""body"":[],""footer"":[]}"));

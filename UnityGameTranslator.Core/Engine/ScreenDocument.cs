@@ -186,8 +186,9 @@ namespace UnityGameTranslator.Core
                             throw new ScreenDocumentException($"{Name}: the title '{node.Name}' says which copy the screen writes to (scope)");
                         goto case "label";
                     case "checkbox":
-                        if (node.Text == null)
-                            throw new ScreenDocumentException($"{Name}: the checkbox '{node.Name}' has a text");
+                    case "field":
+                        // A box without words is bare: its words are elsewhere on its row. Both
+                        // may ask for an act as they change, or be read by the code when it needs them.
                         if (node.Act != null)
                         {
                             if (Acts.ContainsKey(node.Act))

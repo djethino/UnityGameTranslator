@@ -273,12 +273,16 @@ namespace UnityGameTranslator.Core.UI
                 case "checkbox":
                 {
                     Action changed = node.Act != null ? Act(site, node) : null;
-                    var toggle = CheckBoxes.Create(parent, node.Name, node.Text,
-                                                   initial: node.Flag("initial") ?? false,
-                                                   onChanged: changed != null ? (Action<bool>)(_ => changed()) : null,
-                                                   policy: Enum(node.Word("policy"), TextPolicy.UiText),
-                                                   tone: Enum(node.Word("tone"), Tone.Plain),
-                                                   fill: Enum(node.Word("fill"), Fill.Content));
+                    var onChanged = changed != null ? (Action<bool>)(_ => changed()) : null;
+                    // Without words the box is bare: its words are elsewhere on its row.
+                    var toggle = node.Text == null
+                        ? CheckBoxes.Bare(parent, node.Name, initial: node.Flag("initial") ?? false, onChanged: onChanged)
+                        : CheckBoxes.Create(parent, node.Name, node.Text,
+                                            initial: node.Flag("initial") ?? false,
+                                            onChanged: onChanged,
+                                            policy: Enum(node.Word("policy"), TextPolicy.UiText),
+                                            tone: Enum(node.Word("tone"), Tone.Plain),
+                                            fill: Enum(node.Word("fill"), Fill.Content));
                     toggle.Visible = node.StartsVisible;
                     built.Add(node.Name, toggle);
                     Describe(site, node, toggle);
@@ -291,6 +295,11 @@ namespace UnityGameTranslator.Core.UI
                                               minHeight: MinHeight(node),
                                               fill: Enum(node.Word("fill"), Fill.Stretch),
                                               minWidth: node.Int("minWidth"));
+                    if (node.Act != null)
+                    {
+                        var changed = Act(site, node);
+                        field.Changed += _ => changed();
+                    }
                     field.Visible = node.StartsVisible;
                     built.Add(node.Name, field);
                     Describe(site, node, field);
@@ -306,11 +315,16 @@ namespace UnityGameTranslator.Core.UI
                         case "languages":
                             dropdown = SearchableDropdown.ForLanguages(node.Name, LanguageHelper.GetLanguageNames(), "");
                             break;
+                        case "code":
+                            // The code sets the choices and the initial one at show time (SetOptions, SelectedValue).
+                            dropdown = new SearchableDropdown(node.Name, new string[0], "", node.Int("popupHeight") ?? 200);
+                            break;
                         default:
                             throw new ScreenDocumentException($"{doc.Name}: '{node.Name}' takes its choices from '{node.Word("options")}', which this engine does not offer");
                     }
                     var changed = Act(site, node);
-                    var host = dropdown.CreateUI(parent, _ => changed(), node.Int("width") ?? 200);
+                    var host = dropdown.CreateUI(parent, _ => changed(), node.Int("width") ?? 200,
+                                                 stretch: node.Flag("stretch") ?? false);
                     host.Visible = node.StartsVisible;
                     built.Add(node.Name, dropdown);
                     Describe(site, node, host);
@@ -397,6 +411,9 @@ namespace UnityGameTranslator.Core.UI
                 case "InputHeight": return UIStyles.InputHeight;
                 case "MultiLineSmall": return UIStyles.MultiLineSmall;
                 case "CodeDisplayHeight": return UIStyles.CodeDisplayHeight;
+                case "ButtonHeight": return UIStyles.ButtonHeight;
+                // A row of a screen's own buttons: the button, and the room a row of them keeps around itself.
+                case "ButtonRowHeight": return UIStyles.ButtonHeight + 16;
                 default: throw new ScreenDocumentException($"'{node.Name}': '{node.Word("minHeight")}' is not a height the theme names");
             }
         }

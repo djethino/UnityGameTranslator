@@ -139,6 +139,23 @@ namespace UnityGameTranslator.Core.Checks
                   && main.Nodes["ForkBtn"].Act == "fork" && main.Nodes["CreateIndependentBtn"].Act == "createIndependent",
                 "the two doors to one act ask for it under two names", "an act is asked for by one button; the code answers both names with the same handler");
 
+            // ── The upload screen: a scoped title, two boxes the code reads, a status line ──
+            var upload = ScreenDocument.FromFile(Path.Combine(folder, "upload.json"));
+            check(upload.Acts.Keys.OrderBy(k => k).SequenceEqual(new[] { "back", "cancel", "upload" }),
+                "upload.json asks for three acts", $"got {string.Join(",", upload.Acts.Keys)}");
+            check(upload.Binds.Keys.OrderBy(k => k).SequenceEqual(new[] { "entries", "game", "modeInfo", "statusInherited" }),
+                "its four slots are the lines the code writes on every opening", $"got {string.Join(",", upload.Binds.Keys)}");
+            check(upload.Nodes["TitleLabel"].Kind == "title" && upload.Nodes["TitleLabel"].Props["scope"] != null
+                  && upload.Nodes["TitleLabel"].Word("policy") == "Dynamic" && upload.Nodes["TitleLabel"].Bind == null,
+                "the title carries its scope switch and stays Dynamic with its words in the document",
+                "the code retitles it per mode (Update, Contribute, Fork, Edit details) but not while the server is still being asked");
+            check(upload.Nodes["StatusToggle"].Kind == "checkbox" && upload.Nodes["AcceptBranchesToggle"].Kind == "checkbox"
+                  && upload.Nodes["StatusToggle"].Act == null && upload.Nodes["AcceptBranchesToggle"].Act == null,
+                "the two declarations are boxes the code reads, asking for no act", "read at the moment of sending, never acted on");
+            check(upload.Nodes["Status"].Kind == "status" && !upload.Nodes["BackBtn"].StartsVisible
+                  && upload.Nodes["UploadBtn"].Props["scope"] != null && upload.Nodes["UploadBtn"].Word("policy") == "Dynamic",
+                "a status line, a Back hidden until a setup comes back, and the verb that publishes carrying its mark", "the button that actually publishes says where it writes");
+
             // ── Every panel built from a document hands the builder what the document needs ──
             // 🔴 The builder refuses a document with a header or a help bar it was given nowhere
             // to put — at construction, inside CreatePanels, which then aborts: the panels after
@@ -165,6 +182,8 @@ namespace UnityGameTranslator.Core.Checks
                         $"{panel} gives its header a fixed place", "the builder refuses a header with nowhere to go, at construction");
                     check(doc.Help == null || build.Value.Contains("help:"),
                         $"{panel} hands the builder its help bar", "the builder refuses a help bar it was not given, at construction");
+                    check(!doc.Nodes.Values.Any(n => n.Kind == "title") || build.Value.Contains("title:"),
+                        $"{panel} hands the builder its way of making a scoped title", "the base keeps the strip for the window's resizes; the builder refuses a title it cannot make, at construction");
                 }
             }
 
@@ -188,6 +207,9 @@ namespace UnityGameTranslator.Core.Checks
             Refuses(check, "a tab without its words", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[{""kind"":""tabs"",""name"":""R"",""children"":[{""kind"":""tab"",""name"":""T""}]}],""footer"":[]}", "has a text");
             Refuses(check, "a callout without a tone", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[{""kind"":""callout"",""name"":""C""}],""footer"":[]}", "has a tone");
             Refuses(check, "a collapsible without a title", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[{""kind"":""collapsible"",""name"":""C""}],""footer"":[]}", "has a title");
+            Refuses(check, "a title without its scope", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[{""kind"":""title"",""name"":""T"",""text"":""Upload""}],""footer"":[]}", "which copy");
+            Refuses(check, "a checkbox without its words", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[{""kind"":""checkbox"",""name"":""C""}],""footer"":[]}", "has a text");
+            Refuses(check, "two checkboxes asking for one act", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[{""kind"":""checkbox"",""name"":""A"",""text"":""a"",""act"":""flip""},{""kind"":""checkbox"",""name"":""B"",""text"":""b"",""act"":""flip""}],""footer"":[]}", "two pieces");
 
             var defaults = ScreenDocument.Parse(JObject.Parse(@"{""name"":""X"",""size"":{""width"":500,""height"":200},""body"":[],""footer"":[]}"));
             check(defaults.MinWidth == 500 && defaults.MinHeight == 200 && defaults.Backdrop && defaults.Persist && defaults.CardWidth == 460,

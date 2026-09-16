@@ -20,13 +20,17 @@ namespace UnityGameTranslator.Core.UI.Panels
     /// </summary>
     public class UploadPanel : TranslatorPanelBase
     {
-        public override string Name => "Upload Translation";
-        public override int MinWidth => 450;
-        public override int MinHeight => 300;
-        public override int PanelWidth => 450;
-        public override int PanelHeight => 420;
+        /// <summary>The screen as a document — common/spec/screens/upload.json — read once; the base's constructor reads the sizes below through it.</summary>
+        private static readonly ScreenDocument Doc = ScreenDocument.FromEmbedded("upload");
 
-        protected override int MinPanelHeight => 300;
+        /// <summary>What the builder made of the document: every piece by name.</summary>
+        private BuiltScreen _screen;
+
+        public override string Name => Doc.Name;
+        public override int MinWidth => Doc.MinWidth;
+        public override int MinHeight => Doc.MinHeight;
+        public override int PanelWidth => Doc.Width;
+        public override int PanelHeight => Doc.Height;
 
         // UI elements
         private LabelHandle _titleLabel;
@@ -87,138 +91,69 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
         }
 
+        /// <summary>
+        /// The screen is upload.json; this builds it and keeps hold of what the code writes,
+        /// reads or shows. What the document carries, and why — a document has no comments:
+        /// - the title's scope is Both, not Server: what this screen sends is the file from here,
+        ///   so afterwards the published translation and this machine carry the same thing;
+        /// - the mode line wraps with no fixed height: in Branch mode it says two things — who
+        ///   receives the work, and that players will not be able to download it;
+        /// - the two boxes ("complete", "let others contribute") are the author's own declarations,
+        ///   the same shape as the site's screen: a Main owner chooses, a Branch inherits and is
+        ///   told so (the line under the first box) rather than shown a control that does nothing;
+        /// - the reminder on the second box says what a contribution IS: somebody publishing their
+        ///   first translation has no idea, and a box whose subject is unknown gets left alone;
+        /// - the footer's Upload is the button that actually publishes, so it carries the mark;
+        ///   Back is hidden until a new translation comes back from its setup.
+        /// </summary>
         protected override void ConstructPanelContent()
         {
-            // Use scrollable layout - content scrolls if needed, buttons stay fixed
-            Layout(out var scrollContent, out var buttonRow, PanelWidth - 40);
+            Layout(out var body, out var footer, Doc.CardWidth);
+            _helpZone = CreateHelpZone(footer, Doc.Help);
+            _screen = ScreenBuilder.Build(Doc, body, footer, ActOf, help: _helpZone, title: ScopedTitle);
 
-            // Contextual help bar between content and footer
-            _helpZone = CreateHelpZone(buttonRow, "Hover an element to see what it does");
+            _titleLabel = _screen.Label("TitleLabel");
+            _entriesLabel = _screen.Label("EntriesLabel");
+            _gameLabel = _screen.Label("GameLabel");
+            _modeInfoLabel = _screen.Label("ModeInfoLabel");
+            _statusToggle = _screen.Toggle("StatusToggle");
+            _statusInherited = _screen.Label("StatusInherited");
+            _acceptBranchesToggle = _screen.Toggle("AcceptBranchesToggle");
+            _notesInput = _screen.Field("NotesInput");
+            _resourcesUrlInput = _screen.Field("ResourcesUrlInput");
+            _status = _screen.Status("Status");
+            _backBtn = _screen.Button("BackBtn");
+            _uploadBtn = _screen.Button("UploadBtn");
+        }
 
-            // Adaptive card - sizes to content (PanelWidth - 2*PanelPadding)
-            var card = Stacks.Card(scrollContent, "UploadCard", PanelWidth - 40);
-
-            // Title
-            // ⚠ Both, not Server. What this screen sends is the file from here, so afterwards the
-            // published translation and this machine carry the same thing — which is the question
-            // the strip answers, rather than "which file does it write".
-            _titleLabel = ScopedTitle(card, "TitleLabel", "Upload Translation",
-                                      EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: true),
-                                      TextPolicy.Dynamic);
-
-            Stacks.Spacer(card, 5);
-
-            // Info section
-            var infoBox = Stacks.Section(card, "InfoBox");
-
-            _entriesLabel = Labels.Create(infoBox, "EntriesLabel", "Entries: 0", TextRole.Body,
-                                          policy: TextPolicy.Dynamic);
-
-            _gameLabel = Labels.Create(infoBox, "GameLabel", "Game: Unknown", TextRole.Info,
-                                       policy: TextPolicy.Excluded);
-
-            // Top-aligned and wrapping, with no fixed height: in Branch mode this says two things
-            // — who receives the work, and that players will not be able to download it — and a
-            // single-row minHeight would have cut the second line off. Same rule as the quality
-            // legend: the label reports the height its wrapped text needs at the width it is
-            // given, and the row takes it.
-            _modeInfoLabel = Labels.Create(infoBox, "ModeInfoLabel", "", TextRole.Small,
-                                           policy: TextPolicy.Excluded, wrap: true, fill: Fill.Stretch,
-                                           align: Placement.TopLeft);
-            _modeInfoLabel.Italic = true;
-
-            Stacks.Spacer(card, 10);
-
-            // 🔴 **Whether this translation is finished — the author's own word.** The mod posted
-            // "in_progress" unconditionally, so it had two effects and both were wrong: nobody
-            // could ever declare a translation complete from the game, and republishing from the
-            // game silently UNDID a "complete" set on the website.
-            //
-            // ⚠ Same shape as the site's own screen, deliberately: a Main owner chooses, a Branch
-            // inherits its Main's and is told so rather than shown a control that does nothing.
-            var statusBox = Stacks.Section(card, "StatusBox");
-
-            _statusToggle = CheckBoxes.Create(statusBox, "StatusToggle", "Mark this translation as complete");
-            _helpZone?.Describe(_statusToggle,
-                "Your own declaration that this translation is finished. Players see it on the "
-                + "listing, and it is what separates a translation you can play with from one still "
-                + "being written.");
-
-            _statusInherited = Labels.Create(statusBox, "StatusInherited", "", TextRole.Small,
-                                             policy: TextPolicy.Dynamic);
-
-            // 🔴 **Whether anybody may contribute — the Main's other declaration.** Beside the
-            // first for the same reason: only a Main can take it, only a Main is shown it, and it
-            // is off unless somebody says otherwise. Keeping a translation open to contributions
-            // is work nobody agreed to by publishing.
-            //
-            // ⚠ The reminder says what a contribution IS. Somebody publishing their first
-            // translation has no idea, and a checkbox whose subject is unknown gets left alone —
-            // which happens to be the safe answer here, but for the wrong reason.
-            _acceptBranchesToggle = CheckBoxes.Create(statusBox, "AcceptBranchesToggle", "Let others contribute to this translation");
-            _helpZone?.Describe(_acceptBranchesToggle,
-                "A contribution is a copy of your work with someone else's changes, sent to you to "
-                + "accept or not. Leave this off to work alone — others can still publish their "
-                + "own version of it.");
-
-            // Note: Translation type is now auto-calculated by server from HVASM tags
-            // (Human/Validated/AI/System/Missing percentages in the file)
-
-            // Notes
-            var notesLabel = Labels.Create(card, "NotesLabel", "Notes (optional):", TextRole.Small);
-
-            _notesInput = Fields.Create(card, "NotesInput", "Add any notes about this translation...",
-                                       minHeight: UIStyles.MultiLineSmall);
-            _helpZone?.Describe(_notesInput,
-                "Shown to other players on the website next to your translation");
-
-            // Resources URL
-            var urlLabel = Labels.Create(card, "UrlLabel", "Resources URL (optional):", TextRole.Small);
-
-            _resourcesUrlInput = Fields.Create(card, "ResourcesUrlInput", "https://... (link to fonts/images)");
-            _helpZone?.Describe(_resourcesUrlInput,
-                "Optional public link to the fonts and images pack players need for text to render correctly. Shown to anyone who downloads this translation.");
-
-            var urlHint = Labels.Create(card, "UrlHint",
-                "External link to custom fonts or replacement images. Not hosted by us.", TextRole.Hint);
-
-            // Status
-            _status = StatusLine.Create(card, "Status");
-
-            // Buttons - in fixed footer (outside scroll)
-            var cancelBtn = Buttons.Secondary(buttonRow, "CancelBtn", "Cancel");
-            cancelBtn.Clicked += () =>
+        /// <summary>What each verb the document asks for does. A verb with no answer here fails at construction, not at the click.</summary>
+        private Action ActOf(string act)
+        {
+            switch (act)
             {
-                // Clear fork context when cancelling
-                TranslatorCore.PendingFork = null;
-                SetActive(false);
-            };
+                case "cancel": return () =>
+                {
+                    // Clear fork context when cancelling
+                    TranslatorCore.PendingFork = null;
+                    SetActive(false);
+                };
+                case "back": return OnBackToSetup;
+                case "upload": return OnUploadClicked;
+                default: return null;
+            }
+        }
 
-            // Back button - only visible for NEW mode to go back to setup
-            _backBtn = Buttons.Secondary(buttonRow, "BackBtn", "← Back");
-            _backBtn.Clicked += OnBackToSetup;
-            _backBtn.Visible = false; // Hidden by default
-
-            // 🔴 **This is the button that actually publishes.** The main panel's Upload
-            // Translation and Edit details only lead here, and both were adorned while the act
-            // itself said nothing — the destination announced along the way and dropped at the
-            // moment it happens.
-            _uploadBtn = Buttons.Primary(buttonRow, "UploadBtn", "Upload",
-                                         scope: EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: true),
-                                         policy: TextPolicy.Dynamic);
-            _uploadBtn.Clicked += () =>
+        private void OnUploadClicked()
+        {
+            try
             {
-                try
-                {
-                    TranslatorCore.LogInfo("[UploadPanel] Upload button clicked!");
-                    ConfirmThenUpload();
-                }
-                catch (Exception e)
-                {
-                    TranslatorCore.LogError($"[UploadPanel] Exception in click handler: {e}");
-                }
-            };
-            DescribeUploadButton("Publish this translation online so others can find and download it for this game");
+                TranslatorCore.LogInfo("[UploadPanel] Upload button clicked!");
+                ConfirmThenUpload();
+            }
+            catch (Exception e)
+            {
+                TranslatorCore.LogError($"[UploadPanel] Exception in click handler: {e}");
+            }
         }
 
         /// <summary>

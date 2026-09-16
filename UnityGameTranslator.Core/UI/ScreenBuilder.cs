@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using UnityGameTranslator.Common;
 using UnityGameTranslator.Core.UI.Components;
 
@@ -36,6 +37,9 @@ namespace UnityGameTranslator.Core.UI
         internal void Add(string name, FieldHandle field) => _fields[name] = field;
         internal void Add(string name, SearchableDropdown dropdown) => _dropdowns[name] = dropdown;
         internal void Add(string name, ScrollList list) => _lists[name] = list;
+        internal void Add(string name, ToggleHandle toggle) => _toggles[name] = toggle;
+        private readonly Dictionary<string, ToggleHandle> _toggles = new Dictionary<string, ToggleHandle>(StringComparer.Ordinal);
+        public ToggleHandle Toggle(string name) => _toggles.TryGetValue(name, out var t) ? t : throw new ScreenDocumentException($"{_doc.Name}: no checkbox named '{name}'");
 
         public LabelHandle Label(string name) => _labels.TryGetValue(name, out var l) ? l : throw new ScreenDocumentException($"{_doc.Name}: no label named '{name}'");
         public ButtonHandle Button(string name) => _buttons.TryGetValue(name, out var b) ? b : throw new ScreenDocumentException($"{_doc.Name}: no button named '{name}'");
@@ -74,8 +78,10 @@ namespace UnityGameTranslator.Core.UI
         /// <param name="header">Where the document's fixed header goes — required when it has one, since a header drawn into the scrolling body would scroll.</param>
         /// <param name="help">The help bar the document's `help` sentences go to — required when the document has any, and the panel's to create from the document's own resting sentence.</param>
         /// <param name="layoutChanged">Told when a piece changes the screen's height on its own — a collapsible opening — so the panel can size itself again.</param>
+        /// <param name="title">The panel's own way of making a title with its scope switch (<c>TranslatorPanelBase.ScopedTitle</c>) — required when the document has a `title`, because the base keeps hold of the strip for the window's resizes.</param>
         public static BuiltScreen Build(ScreenDocument doc, Host body, Host footer, Func<string, Action> actOf,
-                                        Host header = null, HelpZone help = null, Action layoutChanged = null)
+                                        Host header = null, HelpZone help = null, Action layoutChanged = null,
+                                        Func<Host, string, string, EditSide, TextPolicy, LabelHandle> title = null)
         {
             if (doc == null) throw new ArgumentNullException(nameof(doc));
             if (actOf == null) throw new ArgumentNullException(nameof(actOf));
@@ -83,9 +89,11 @@ namespace UnityGameTranslator.Core.UI
                 throw new ScreenDocumentException($"{doc.Name}: the document has a header and the panel gave it nowhere fixed to go");
             if (doc.Help != null && help == null)
                 throw new ScreenDocumentException($"{doc.Name}: the document declares a help bar and the panel built none");
+            if (title == null && doc.Nodes.Values.Any(n => n.Kind == "title"))
+                throw new ScreenDocumentException($"{doc.Name}: the document has a title with a scope switch and the panel gave no way to make one");
 
             var built = new BuiltScreen(doc);
-            var site = new Site { Doc = doc, Built = built, ActOf = actOf, Help = help, Body = body, LayoutChanged = layoutChanged };
+            var site = new Site { Doc = doc, Built = built, ActOf = actOf, Help = help, Body = body, LayoutChanged = layoutChanged, Title = title };
             foreach (var node in doc.Header) Place(site, node, header);
             foreach (var node in doc.Body) Place(site, node, body);
             foreach (var node in doc.Footer) Place(site, node, footer);
@@ -102,7 +110,14 @@ namespace UnityGameTranslator.Core.UI
             /// <summary>The scrolling body — where a row of tabs placed in the header puts its contents.</summary>
             public Host Body;
             public Action LayoutChanged;
+            public Func<Host, string, string, EditSide, TextPolicy, LabelHandle> Title;
         }
+
+        /// <summary>Where a verb writes, as the document's two facts; null when the piece says nothing.</summary>
+        private static EditSide? ScopeOf(ScreenNode node)
+            => node.Props["scope"] is Newtonsoft.Json.Linq.JObject facts
+               ? EditScope.SideAfter((bool)facts["onThisMachine"], (bool)facts["yourPublishedCopy"])
+               : (EditSide?)null;
 
         /// <summary>A piece's padding: one figure for all sides, or one across and one down.</summary>
         private static Pad PadOf(ScreenNode node)
@@ -238,6 +253,31 @@ namespace UnityGameTranslator.Core.UI
                 case "status":
                     built.Add(node.Name, StatusLine.Create(parent, node.Name, node.Flag("centred") ?? true));
                     break;
+                case "title":
+                {
+                    // Made by the panel, not here: the base keeps the strip for the window's resizes.
+                    var policy = node.Bind != null
+                        ? (node.Word("policy") == "Excluded" ? TextPolicy.Excluded : TextPolicy.Dynamic)
+                        : Enum(node.Word("policy"), TextPolicy.UiText);
+                    var label = site.Title(parent, node.Name, node.Text ?? "", ScopeOf(node).Value, policy);
+                    built.Add(node.Name, label);
+                    Describe(site, node, label);
+                    break;
+                }
+                case "checkbox":
+                {
+                    Action changed = node.Act != null ? Act(site, node) : null;
+                    var toggle = CheckBoxes.Create(parent, node.Name, node.Text,
+                                                   initial: node.Flag("initial") ?? false,
+                                                   onChanged: changed != null ? (Action<bool>)(_ => changed()) : null,
+                                                   policy: Enum(node.Word("policy"), TextPolicy.UiText),
+                                                   tone: Enum(node.Word("tone"), Tone.Plain),
+                                                   fill: Enum(node.Word("fill"), Fill.Content));
+                    toggle.Visible = node.StartsVisible;
+                    built.Add(node.Name, toggle);
+                    Describe(site, node, toggle);
+                    break;
+                }
                 case "field":
                 {
                     var field = Fields.Create(parent, node.Name, node.Word("placeholder") ?? "",
@@ -319,13 +359,10 @@ namespace UnityGameTranslator.Core.UI
                         : Enum(node.Word("policy"), TextPolicy.UiText);
                     var size = Enum(node.Word("size"), ButtonSize.Normal);
                     // Where the verb writes, as two facts; the mark beside the label follows.
-                    EditSide? scope = null;
-                    if (node.Props["scope"] is Newtonsoft.Json.Linq.JObject scopeFacts)
-                        scope = EditScope.SideAfter((bool)scopeFacts["onThisMachine"], (bool)scopeFacts["yourPublishedCopy"]);
                     var button = Buttons.Create(parent, node.Name, node.Text ?? "",
                                                 Enum(node.Word("tone"), ButtonTone.Secondary), size,
                                                 minWidth: node.Int("minWidth"), fill: Enum(node.Word("fill"), Fill.Content),
-                                                scope: scope, policy: policy);
+                                                scope: ScopeOf(node), policy: policy);
                     button.Clicked += Act(site, node);
                     button.Visible = node.StartsVisible;
                     built.Add(node.Name, button);

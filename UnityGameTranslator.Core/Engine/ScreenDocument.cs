@@ -51,7 +51,7 @@ namespace UnityGameTranslator.Core
     public sealed class ScreenDocument
     {
         /// <summary>The closed vocabulary. The same list as the schema's enum — a check says so.</summary>
-        public static readonly string[] Kinds = { "card", "stack", "row", "spacer", "label", "button", "status", "section", "field", "dropdown", "list", "tabs", "tab", "callout", "collapsible" };
+        public static readonly string[] Kinds = { "card", "stack", "row", "spacer", "label", "button", "status", "section", "field", "dropdown", "list", "tabs", "tab", "callout", "collapsible", "title", "checkbox" };
 
         /// <summary>What the help bar says over this piece, or null.</summary>
         public static string HelpOf(ScreenNode node) => node.Word("help");
@@ -173,6 +173,22 @@ namespace UnityGameTranslator.Core
                         if (node.Word("title") == null)
                             throw new ScreenDocumentException($"{Name}: the collapsible '{node.Name}' has a title");
                         break;
+                    case "title":
+                        // The scope switch is the point of a title: which copy the screen writes
+                        // to, on every screen that shows translation lines, without exception.
+                        if (!(node.Props["scope"] is JObject))
+                            throw new ScreenDocumentException($"{Name}: the title '{node.Name}' says which copy the screen writes to (scope)");
+                        goto case "label";
+                    case "checkbox":
+                        if (node.Text == null)
+                            throw new ScreenDocumentException($"{Name}: the checkbox '{node.Name}' has a text");
+                        if (node.Act != null)
+                        {
+                            if (Acts.ContainsKey(node.Act))
+                                throw new ScreenDocumentException($"{Name}: the act '{node.Act}' is asked for by two pieces");
+                            Acts[node.Act] = node;
+                        }
+                        break;
                     case "label":
                     case "button":
                         if (node.Text == null && node.Bind == null)
@@ -215,7 +231,8 @@ namespace UnityGameTranslator.Core
                 if (obj["children"] is JArray children)
                 {
                     if (node.Kind == "label" || node.Kind == "button" || node.Kind == "spacer" || node.Kind == "status"
-                        || node.Kind == "field" || node.Kind == "dropdown" || node.Kind == "list")
+                        || node.Kind == "field" || node.Kind == "dropdown" || node.Kind == "list"
+                        || node.Kind == "title" || node.Kind == "checkbox")
                         throw new ScreenDocumentException($"{Name}: a {node.Kind} holds nothing");
                     ReadInto(node.Children, children, node.Kind);
                 }

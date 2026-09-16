@@ -19,13 +19,17 @@ namespace UnityGameTranslator.Core.UI.Panels
     /// </summary>
     public class TranslationParametersPanel : TranslatorPanelBase
     {
-        public override string Name => "Translation Tools";
-        public override int MinWidth => 580;
-        public override int MinHeight => 400;
-        public override int PanelWidth => 600;
-        public override int PanelHeight => 520;
+        /// <summary>The screen as a document — common/spec/screens/tools.json — read once; the base's constructor reads the sizes below through it.</summary>
+        private static readonly ScreenDocument Doc = ScreenDocument.FromEmbedded("tools");
 
-        protected override int MinPanelHeight => 400;
+        /// <summary>What the builder made of the document: every piece by name.</summary>
+        private BuiltScreen _screen;
+
+        public override string Name => Doc.Name;
+        public override int MinWidth => Doc.MinWidth;
+        public override int MinHeight => Doc.MinHeight;
+        public override int PanelWidth => Doc.Width;
+        public override int PanelHeight => Doc.Height;
 
         // Every tab here holds a scrollable list (exclusions, fonts, overrides, images, vars)
         // that should grow when the user enlarges the panel.
@@ -105,57 +109,102 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
         }
 
+        /// <summary>
+        /// The screen is tools.json; this builds it and keeps hold of what the code writes, fills
+        /// or reads. What the document carries, and why — a document has no comments:
+        /// - five tabs in the fixed header, their contents in the scrolling body; the Fonts tab
+        ///   holds nothing of its own — a second row of tabs (Global, Overrides) sits in a host in
+        ///   the header, shown only while Fonts is open, and its contents go INTO the Fonts tab
+        ///   (`contentsIn`), so the scrollbar covers the settings and not the switcher above them;
+        /// - every list states a preferred height as well as a floor (the base's
+        ///   ScrollingListHeightRule): the panel sizes itself to the content's preferred height
+        ///   exactly, so a list asking for its minimum leaves it no slack — one pixel over and it
+        ///   grows its own scrollbar next to the list's; the "find" lists start hidden and do not
+        ///   take spare height;
+        /// - the two editor buttons carry the Local scope: both write this machine's file and
+        ///   publish nothing;
+        /// - the sharpness choices are the code's (`options: code`), bounded by the GPU.
+        /// The rows of every list are built by the code from what it lists.
+        /// </summary>
         protected override void ConstructPanelContent()
         {
-            // Use scrollable layout - content scrolls if needed, buttons stay fixed
-            Layout(out var scrollContent, out var buttonRow, PanelWidth - 40);
+            Layout(out var body, out var footer, Doc.Width - 40);
+            _helpZone = CreateHelpZone(footer, Doc.Help);
+            _screen = ScreenBuilder.Build(Doc, body, footer, ActOf, header: FixedHeader(), help: _helpZone);
 
-            // Contextual help bar between content and footer
-            _helpZone = CreateHelpZone(buttonRow, "Hover an element to see what it does");
+            _tabBar = _screen.Tabs("Tabs");
+            _fontsSubTabHost = _screen.Host("FontsSubTabHost");
+            _fontsSubTabBar = _screen.Tabs("FontsSubTabs");
 
-            // Fixed header: tab buttons stay put, only tab content scrolls
-            var header = FixedHeader();
-
-            // No big title here — the window title bar already shows "Translation Tools" (redundant).
-
-            // Create tab bar — buttons in the fixed header, contents in the scroll area
-            _tabBar = new TabBar();
-            _tabBar.CreateUI(header, scrollContent);
-
-            // Create tab contents
-            var behaviorTab = _tabBar.Tab("Tools");
-            var exclusionsTab = _tabBar.Tab("Exclusions");
-            var fontsTab = _tabBar.Tab("Fonts");
-            var imagesTab = _tabBar.Tab("Images");
-            var variablesTab = _tabBar.Tab("Variables");
-
-            // The TabBar registers its own tab labels for localization now — nothing left to do here.
-
-            // Explain what lives behind each tab
-            _helpZone?.Describe(_tabBar.Button("Tools"),
-                "Text editors (in-game and browser) and text detection settings");
-            _helpZone?.Describe(_tabBar.Button("Exclusions"),
-                "Prevent specific texts or UI elements from being translated");
-            _helpZone?.Describe(_tabBar.Button("Fonts"),
-                "Replace the game's fonts when they can't display your language's characters");
-            _helpZone?.Describe(_tabBar.Button("Images"),
-                "Replace images that contain baked-in text");
-            _helpZone?.Describe(_tabBar.Button("Variables"),
-                "Protect dynamic values (numbers, names) inside translated texts");
-
-            // Host for the Fonts sub-tab buttons: they belong to the chrome, not to the content,
-            // so they sit in the fixed header like the main tabs instead of scrolling away with
-            // the settings they switch between. Shown only while the Fonts tab is open.
-            _fontsSubTabHost = Stacks.Vertical(header, "FontsSubTabHost");
+            // The sub-tab buttons belong to the chrome, shown only while the Fonts tab is open.
             _tabBar.OnTabChanged += (_, tabName) => _fontsSubTabHost.Visible = tabName == "Fonts";
             _fontsSubTabHost.Visible = _tabBar.SelectedName == "Fonts";
 
-            // Build each tab's content
-            CreateBehaviorTabContent(behaviorTab);
-            CreateExclusionsTabContent(exclusionsTab);
-            CreateFontsTabContent(fontsTab);
-            CreateImagesTabContent(imagesTab);
-            CreateVariablesTabContent(variablesTab);
+            // Tools
+            _browserEditorBtn = _screen.Button("BrowserEditorBtn");
+            _browserEditorStatus = _screen.Label("BrowserEditorStatus");
+            _typewritingDetectionToggle = _screen.Toggle("TypewritingToggle");
+            _concatDetectionToggle = _screen.Toggle("ConcatToggle");
+
+            // Exclusions
+            _manualPatternInput = _screen.Field("PatternInput");
+            _findByValueInput = _screen.Field("FindValueInput");
+            _findResultsList = _screen.List("FindResultsScroll");
+            _exclusionsList = _screen.List("ExclusionsScroll");
+            _exclusionsStatus = _screen.Label("ExclusionsStatus");
+
+            // Fonts — global
+            _enableFontReplacementToggle = _screen.Toggle("EnableFontReplacementToggle");
+            _fontAtlasSizeDropdown = _screen.Dropdown("FontSharpness");
+            _fontsStatus = _screen.Label("FontsStatus");
+            _fontsList = _screen.List("FontsScroll");
+
+            // Fonts — overrides
+            _fontOverrideFindInput = _screen.Field("FindOverrideInput");
+            _fontOverrideFindResultsList = _screen.List("OverrideFindResults");
+            _fontOverrideManualInput = _screen.Field("ManualOverrideInput");
+            _overridesCountLabel = _screen.Label("OverridesCount");
+            _fontOverridesList = _screen.List("OverridesScroll");
+            _fontOverrideStatus = _screen.Label("OverrideStatus");
+
+            // Images
+            _enableImageReplacementToggle = _screen.Toggle("EnableImageReplacementToggle");
+            _imagesList = _screen.List("ImagesScroll");
+            _imagesStatus = _screen.Label("ImagesStatus");
+
+            // Variables
+            _scanValueInput = _screen.Field("ScanValueInput");
+            _scanResultsList = _screen.List("ScanResultsScroll");
+            _variablesList = _screen.List("VarsScroll");
+            _variablesStatus = _screen.Label("VarsStatus");
+
+            _applyBtn = _screen.Button("ApplyBtn");
+
+            // Font sharpness = max SDF atlas dimension. Higher = crisper when the translation
+            // scales text up, at a VRAM cost. LAYOUT-NEUTRAL (text size unchanged). Options are
+            // bounded dynamically by the GPU texture limit; pending until Apply, takes effect on
+            // the next font rebuild (auto-detected — no manual .gen deletion).
+            int maxTex = FontManager.GetMaxTextureSize();
+            var sharpOptions = new List<string> { "Auto" };
+            foreach (int s in new[] { 4096, 8192, 16384 })
+                if (s <= maxTex) sharpOptions.Add(s.ToString());
+            int curBudget = TranslatorCore.Config?.max_font_atlas_size ?? 0;
+            string sharpInitial = (curBudget > 0 && sharpOptions.Contains(curBudget.ToString()))
+                ? curBudget.ToString() : "Auto";
+            _pendingAtlasSize = curBudget;
+            _fontAtlasSizeDropdown.SetOptions(sharpOptions.ToArray());
+            _fontAtlasSizeDropdown.SelectedValue = sharpInitial;
+
+            // What the config says, written into the boxes.
+            _typewritingDetectionToggle.IsOn = TranslatorCore.TypewritingDetection;
+            _concatDetectionToggle.IsOn = TranslatorCore.ConcatDetection;
+            _enableFontReplacementToggle.IsOn = TranslatorCore.Config.enable_font_replacement;
+            _enableImageReplacementToggle.IsOn = TranslatorCore.Config.enable_image_replacement;
+
+            RefreshBrowserEditorUI();
+            RefreshFontOverridesList();
+            RefreshImageReplacementsList();
+            RefreshVariablesList();
 
             // Clear font highlight when leaving the Fonts tab
             _tabBar.OnTabChanged += (index, name) =>
@@ -167,16 +216,44 @@ namespace UnityGameTranslator.Core.UI.Panels
                 }
             };
 
-            // Buttons - in fixed footer (outside scroll)
-            var cancelBtn = Buttons.Secondary(buttonRow, "CancelBtn", "Cancel");
-            cancelBtn.Clicked += () => SetActive(false);
-
-            _applyBtn = Buttons.Primary(buttonRow, "ApplyBtn", "Apply", policy: TextPolicy.Dynamic);
-            _applyBtn.Clicked += OnApplyClicked;
-            // Dynamic: code-managed text ("Apply"/"Close"/"Apply (N)") — async translation would
-            // race with UpdateApplyButtonText and break the button. Static labels stay UiText.
-
             RegisterPendingFields();
+        }
+
+        /// <summary>What each verb the document asks for does. A verb with no answer here fails at construction, not at the click.</summary>
+        private Action ActOf(string act)
+        {
+            switch (act)
+            {
+                case "textEditor": return OnStartTextEditorClicked;
+                case "browserEditor": return OnBrowserEditorClicked;
+                case "typewritingChanged":
+                case "concatChanged": return UpdateApplyButtonText;
+                case "startInspector": return OnStartInspectorClicked;
+                case "addPattern": return OnAddManualPatternClicked;
+                case "findByValue": return OnFindByValueClicked;
+                case "fontReplacementChanged": return OnEnableFontReplacementChanged;
+                case "sharpnessChanged": return OnFontSharpnessChanged;
+                // Explicit user request: this is the one place the ranking is allowed to re-rank.
+                case "refreshFonts": return () => { InvalidateFontOrder(); RefreshFontsList(); };
+                case "overrideInspector": return OnStartFontOverrideInspector;
+                case "findOverride": return OnFindForFontOverride;
+                case "addOverride": return OnAddManualFontOverride;
+                case "imageReplacementChanged": return OnEnableImageReplacementChanged;
+                case "imageInspector": return OnStartImageInspectorClicked;
+                case "loadAll": return OnLoadAllReplacementsClicked;
+                case "scan": return OnScanClicked;
+                case "cancel": return () => SetActive(false);
+                case "apply": return OnApplyClicked;
+                default: return null;
+            }
+        }
+
+        /// <summary>Pending only — applied (and fonts rebuilt) on Apply, like every other setting.</summary>
+        private void OnFontSharpnessChanged()
+        {
+            string val = _fontAtlasSizeDropdown.SelectedValue;
+            _pendingAtlasSize = (val == "Auto" || !int.TryParse(val, out int b)) ? 0 : b;
+            UpdateApplyButtonText();
         }
 
         /// <summary>
@@ -194,73 +271,6 @@ namespace UnityGameTranslator.Core.UI.Panels
         }
 
         #region Tools Tab (formerly Behavior)
-
-        private void CreateBehaviorTabContent(Host parent)
-        {
-            var card = Stacks.Card(parent, "ToolsCard", PanelWidth - 60, stretchVertically: true);
-
-            // Text Editor section
-            Labels.Create(card, "TextEditorLabel", "Text Editor", TextRole.SectionTitle);
-
-            Labels.Create(card, "TextEditorHint",
-                "Click on any text in-game to edit its translation or retranslate it with AI.", TextRole.Hint);
-
-            var editorBtn = Buttons.Primary(card, "TextEditorBtn", "Start Text Editor", PanelWidth - 100,
-                scope: EditSide.Local);
-            editorBtn.Clicked += OnStartTextEditorClicked;
-            // L'éditeur en jeu écrit le fichier d'ici, comme l'éditeur navigateur juste dessous.
-            _helpZone?.Describe(editorBtn,
-                "Pick any text on screen to fix its translation without leaving the game");
-
-            Stacks.Spacer(card, 15);
-
-            // Browser Editor section (live edit session on the website, no account needed)
-            Labels.Create(card, "BrowserEditorLabel", "Browser Editor", TextRole.SectionTitle);
-
-            Labels.Create(card, "BrowserEditorHint",
-                "Edit your translation file comfortably in your browser while playing — no account needed, nothing is published. Each save is applied in-game automatically.",
-                TextRole.Hint);
-
-            _browserEditorBtn = Buttons.Primary(card, "BrowserEditorBtn", "Edit in browser", PanelWidth - 100,
-                scope: EditSide.Local, policy: TextPolicy.Dynamic);
-            _browserEditorBtn.Clicked += OnBrowserEditorClicked;
-            // Éditer dans le navigateur ne change que le fichier d'ici — rien n'est publié.
-            _helpZone?.Describe(_browserEditorBtn,
-                "Open your translation in a browser editor: search, filters, and every save applied in-game live");
-
-            _browserEditorStatus = Labels.Create(card, "BrowserEditorStatus", "", TextRole.Hint,
-                policy: TextPolicy.Excluded);
-            RefreshBrowserEditorUI();
-
-            Stacks.Spacer(card, 15);
-
-            // Detection section
-            Labels.Create(card, "DetectionLabel", "Detection", TextRole.SectionTitle);
-
-            Labels.Create(card, "DetectionHint",
-                "Control how the mod detects special text patterns. Disable if causing issues with your game.",
-                TextRole.Hint);
-
-            // Typewriting detection toggle
-            _typewritingDetectionToggle = CheckBoxes.Create(card, "TypewritingToggle", "Typewriting detection",
-                TranslatorCore.TypewritingDetection, _ => UpdateApplyButtonText());
-            _helpZone?.Describe(_typewritingDetectionToggle,
-                "Detects text that appears letter by letter, like dialogues, and waits for it to settle before translating. Disable if it causes issues.");
-
-            Labels.Create(card, "TypewritingHint",
-                "Text that appears letter by letter (dialogues, cutscenes). Waits for the text to stabilize before translating.",
-                TextRole.Hint);
-
-            // Concat detection toggle
-            _concatDetectionToggle = CheckBoxes.Create(card, "ConcatToggle", "Procedural text detection",
-                TranslatorCore.ConcatDetection, _ => UpdateApplyButtonText());
-            _helpZone?.Describe(_concatDetectionToggle,
-                "Detects text assembled in parts, like tooltips or item stats, and translates each part for better cache reuse. Disable if it causes issues.");
-
-            Labels.Create(card, "ConcatHint",
-                "Text built in multiple steps (tooltips, item stats). Translates each part separately for better cache reuse.",
-                TextRole.Hint);
-        }
 
         private void OnStartTextEditorClicked()
         {
@@ -465,81 +475,6 @@ namespace UnityGameTranslator.Core.UI.Panels
         #endregion
 
         #region Exclusions Tab
-
-        private void CreateExclusionsTabContent(Host parent)
-        {
-            var card = Stacks.Card(parent, "ExclusionsCard", PanelWidth - 60, stretchVertically: true);
-
-            // Header and explanation
-            Labels.Create(card, "ExclusionsLabel", "UI Exclusions", TextRole.SectionTitle);
-
-            Labels.Create(card, "ExclusionsHint",
-                "Exclude UI elements from translation (chat windows, player names, etc.). Exclusions are shared when you upload your translation.",
-                TextRole.Hint);
-
-            Stacks.Spacer(card, 10);
-
-            // Inspector button
-            var inspectorBtn = Buttons.Primary(card, "InspectorBtn", "Start Inspector Mode", PanelWidth - 100);
-            inspectorBtn.Clicked += OnStartInspectorClicked;
-            _helpZone?.Describe(inspectorBtn,
-                "Closes this panel so you can click UI elements in-game to exclude them from translation.");
-
-            Labels.Create(card, "InspectorHint", "Click on UI elements to exclude them", TextRole.Hint);
-
-            Stacks.Spacer(card, 10);
-
-            // Manual add section
-            Labels.Create(card, "ManualLabel", "Add pattern manually:", TextRole.Small);
-
-            var addRow = Stacks.Row(card, "AddRow", spacing: 5, minHeight: UIStyles.InputHeight);
-
-            _manualPatternInput = Fields.Create(addRow, "PatternInput", "e.g., **/ChatPanel/**");
-            _helpZone?.Describe(_manualPatternInput,
-                "Type a hierarchy path pattern to exclude. Use ** for any depth and * for a single level.");
-
-            var addBtn = Buttons.Secondary(addRow, "AddBtn", "Add", 60);
-            addBtn.Clicked += OnAddManualPatternClicked;
-            _helpZone?.Describe(addBtn,
-                "Adds the typed pattern to the exclusion list. Takes effect on Apply.");
-
-            Labels.Create(card, "PatternHint", "Use ** for any depth, * for single level", TextRole.Hint);
-
-            Stacks.Spacer(card, 10);
-
-            // Find by value section
-            Labels.Create(card, "FindLabel", "Find by text content:", TextRole.Small);
-
-            var findRow = Stacks.Row(card, "FindRow", spacing: 5, minHeight: UIStyles.InputHeight);
-
-            _findByValueInput = Fields.Create(findRow, "FindValueInput", "Enter text visible in-game...");
-            _helpZone?.Describe(_findByValueInput,
-                "Type text visible in-game to locate the UI element that shows it, then exclude it.");
-
-            var findBtn = Buttons.Secondary(findRow, "FindBtn", "Find", 60);
-            findBtn.Clicked += OnFindByValueClicked;
-            _helpZone?.Describe(findBtn,
-                "Searches the scene for UI components displaying the entered text.");
-
-            Labels.Create(card, "FindHint", "Find which UI component displays this text, then exclude it", TextRole.Hint);
-
-            // Find results (hidden until search)
-            _findResultsList = ScrollList.Create(card, "FindResultsScroll", minHeight: 0, preferredHeight: 80,
-                fillHeight: false, emptyText: "No UI component found with this text.");
-            _findResultsList.Visible = false;
-
-            Stacks.Spacer(card, 10);
-
-            // Current exclusions list
-            Labels.Create(card, "ListLabel", "Current Exclusions:", TextRole.Small);
-
-            // Scrollable container for exclusions
-            _exclusionsList = ScrollList.Create(card, "ExclusionsScroll", minHeight: 200, preferredHeight: 200,
-                emptyText: "No exclusions defined");
-
-            // Status label
-            _exclusionsStatus = Labels.Create(card, "ExclusionsStatus", "", TextRole.Small, policy: TextPolicy.Dynamic);
-        }
 
         /// <summary>
         /// Open panel and switch directly to the Exclusions tab.
@@ -794,175 +729,6 @@ namespace UnityGameTranslator.Core.UI.Panels
         private ScrollList _fontOverridesList;
         private TabBar _fontsSubTabBar;
         private Host _fontsSubTabHost;
-
-        private void CreateFontsTabContent(Host parent)
-        {
-            // Sub-tab buttons in the fixed header, their contents in the scrolling tab body:
-            // the scrollbar then covers the settings only, not the switcher above them.
-            _fontsSubTabBar = new TabBar();
-            _fontsSubTabBar.CreateUI(_fontsSubTabHost, parent, tabRowHeight: 26); // Compact height for sub-tabs
-
-            var globalTab = _fontsSubTabBar.Tab("Global");
-            var overridesTab = _fontsSubTabBar.Tab("Overrides");
-
-            _helpZone?.Describe(_fontsSubTabBar.Button("Global"),
-                "Global font settings for every detected font, including fallbacks and sharpness.");
-            _helpZone?.Describe(_fontsSubTabBar.Button("Overrides"),
-                "Per-element rules that override the font size for specific UI elements.");
-
-            CreateFontsGlobalSubTab(globalTab);
-            CreateFontsOverridesSubTab(overridesTab);
-        }
-
-        private void CreateFontsGlobalSubTab(Host parent)
-        {
-            var card = Stacks.Card(parent, "FontsCard", PanelWidth - 60, stretchVertically: true);
-
-            // Header and explanation
-            Labels.Create(card, "FontsLabel", "Font Management", TextRole.SectionTitle);
-
-            Labels.Create(card, "FontsHint",
-                "Configure translation for detected fonts. Add fallback fonts for non-Latin scripts (Hindi, Arabic, Chinese, etc.). Settings are saved with translations.",
-                TextRole.Hint);
-
-            Stacks.Spacer(card, 5);
-
-            // Debug toggle: globally disable font replacement (for translators).
-            _enableFontReplacementToggle = CheckBoxes.Create(card, "EnableFontReplacementToggle",
-                "Enable font replacement (uncheck to debug with original fonts)",
-                TranslatorCore.Config.enable_font_replacement, OnEnableFontReplacementChanged);
-            _helpZone?.Describe(_enableFontReplacementToggle,
-                "Replaces game fonts so your language's characters display correctly. Uncheck to debug with the original fonts.");
-
-            // Font sharpness = max SDF atlas dimension. Higher = crisper when the translation
-            // scales text up, at a VRAM cost. LAYOUT-NEUTRAL (text size unchanged). Options are
-            // bounded dynamically by the GPU texture limit; applied immediately (SaveConfig),
-            // takes effect on the next font rebuild (auto-detected — no manual .gen deletion).
-            var sharpRow = Stacks.Row(card, "FontSharpnessRow", spacing: 5, minHeight: UIStyles.RowHeightMedium);
-            Labels.Create(sharpRow, "FontSharpnessLabel", "Font sharpness:", TextRole.Small, minWidth: 100);
-
-            int maxTex = FontManager.GetMaxTextureSize();
-            var sharpOptions = new List<string> { "Auto" };
-            foreach (int s in new[] { 4096, 8192, 16384 })
-                if (s <= maxTex) sharpOptions.Add(s.ToString());
-            int curBudget = TranslatorCore.Config?.max_font_atlas_size ?? 0;
-            string sharpInitial = (curBudget > 0 && sharpOptions.Contains(curBudget.ToString()))
-                ? curBudget.ToString() : "Auto";
-
-            _pendingAtlasSize = curBudget;
-            _fontAtlasSizeDropdown = new SearchableDropdown("FontSharpness", sharpOptions.ToArray(),
-                sharpInitial, popupHeight: 150);
-            var sharpHost = _fontAtlasSizeDropdown.CreateUI(sharpRow, (val) =>
-            {
-                // Pending only — applied (and fonts rebuilt) on Apply, like every other setting.
-                _pendingAtlasSize = (val == "Auto" || !int.TryParse(val, out int b)) ? 0 : b;
-                UpdateApplyButtonText();
-            }, width: 140);
-            _helpZone?.Describe(sharpHost, "How finely replacement fonts are rendered. Higher = crisper when the translation scales text up, but uses more video memory. 'Auto' is a safe default. Text size is unchanged. Takes effect on the next font rebuild.");
-
-            Stacks.Spacer(card, 10);
-
-            // Refresh button
-            var refreshRow = Stacks.Row(card, "RefreshRow", spacing: 5, minHeight: UIStyles.RowHeightNormal);
-
-            var refreshBtn = Buttons.Secondary(refreshRow, "RefreshFontsBtn", "Refresh List", 100);
-            // Explicit user request: this is the one place the ranking is allowed to re-rank.
-            refreshBtn.Clicked += () => { InvalidateFontOrder(); RefreshFontsList(); };
-            _helpZone?.Describe(refreshBtn,
-                "Rescans the game for fonts currently in use and updates the list below.");
-
-            _fontsStatus = Labels.Create(refreshRow, "FontsStatus", "", TextRole.Small,
-                policy: TextPolicy.Dynamic, fill: Fill.Stretch);
-
-            Stacks.Spacer(card, 10);
-
-            // Detected fonts list
-            Labels.Create(card, "FontsListLabel", "Detected Fonts:", TextRole.Small);
-
-            // Scrollable container for fonts
-            //  - preferred = a COMFORTABLE height, not the minimum. The panel sizes itself to the
-            //    content's preferred height exactly, so a list asking for its minimum leaves the
-            //    panel no slack at all: one pixel over and it grows its own scrollbar next to the
-            //    list's. Asking for more gives the panel room it can take back under pressure.
-            //  - min = how far the list may be squeezed on a small screen before the panel scrolls.
-            //  - flexible (fillHeight) = it soaks up any spare height when the window is enlarged.
-            // Without the preferred height the tab would instead claim the WHOLE list's height,
-            // which overflows the screen for the same double-scrollbar result.
-            _fontsList = ScrollList.Create(card, "FontsScroll", minHeight: 180, preferredHeight: 180,
-                emptyText: "No fonts detected yet. Play the game to detect fonts.");
-        }
-
-        private void CreateFontsOverridesSubTab(Host parent)
-        {
-            var card = Stacks.Card(parent, "OverridesCard", PanelWidth - 60, stretchVertically: true);
-
-            Labels.Create(card, "OverridesLabel", "Font Overrides", TextRole.SectionTitle);
-
-            Labels.Create(card, "OverridesHint",
-                "Override font size for specific UI elements. Use inspector, search, or manual pattern.", TextRole.Hint);
-
-            Stacks.Spacer(card, 5);
-
-            // Inspector button — click on element to add override
-            var inspectorBtn = Buttons.Primary(card, "FontOverrideInspectorBtn", "Inspect Element", PanelWidth - 100);
-            inspectorBtn.Clicked += OnStartFontOverrideInspector;
-            _helpZone?.Describe(inspectorBtn,
-                "Closes this panel so you can click a UI element in-game to create a font override for it.");
-
-            Labels.Create(card, "InspectorHint", "Click on a UI element to create an override for it", TextRole.Hint);
-
-            Stacks.Spacer(card, 5);
-
-            // Find by content
-            Labels.Create(card, "FindLabel", "Find by text content:", TextRole.Small);
-
-            var findRow = Stacks.Row(card, "FindOverrideRow", spacing: 5, minHeight: UIStyles.InputHeight);
-
-            _fontOverrideFindInput = Fields.Create(findRow, "FindOverrideInput", "Enter text visible in-game...");
-            _helpZone?.Describe(_fontOverrideFindInput,
-                "Type text visible in-game to locate the UI element that shows it, then create an override.");
-
-            var findBtn = Buttons.Secondary(findRow, "FindOverrideBtn", "Find", 60);
-            findBtn.Clicked += OnFindForFontOverride;
-            _helpZone?.Describe(findBtn,
-                "Searches the scene for UI components displaying the entered text.");
-
-            // Find results (hidden until search)
-            _fontOverrideFindResultsList = ScrollList.Create(card, "OverrideFindResults", minHeight: 0,
-                preferredHeight: 80, fillHeight: false, emptyText: "No UI component found with this text.");
-            _fontOverrideFindResultsList.Visible = false;
-
-            Stacks.Spacer(card, 5);
-
-            // Manual add
-            Labels.Create(card, "ManualLabel", "Add pattern manually:", TextRole.Small);
-
-            var addRow = Stacks.Row(card, "AddOverrideRow", spacing: 5, minHeight: UIStyles.InputHeight);
-            _fontOverrideManualInput = Fields.Create(addRow, "ManualOverrideInput", "path:**/TablePanel/**");
-            _helpZone?.Describe(_fontOverrideManualInput,
-                "Type a rule to match elements. Prefix with path:, font:, or text: to match by hierarchy, font name, or content.");
-
-            var addBtn = Buttons.Secondary(addRow, "AddOverrideBtn", "Add", 60);
-            addBtn.Clicked += OnAddManualFontOverride;
-            _helpZone?.Describe(addBtn,
-                "Adds the typed pattern as a new override rule. Takes effect on Apply.");
-
-            Labels.Create(card, "PatternHint", "Prefixes: path: (hierarchy), font: (name), text: (content)", TextRole.Hint);
-
-            Stacks.Spacer(card, 5);
-
-            // Count label
-            _overridesCountLabel = Labels.Create(card, "OverridesCount", "", TextRole.Small, tone: Tone.Muted,
-                policy: TextPolicy.Excluded);
-
-            // Scrollable list of overrides
-            _fontOverridesList = ScrollList.Create(card, "OverridesScroll", minHeight: 200, preferredHeight: 200);
-
-            // Status label
-            _fontOverrideStatus = Labels.Create(card, "OverrideStatus", "", TextRole.Small, policy: TextPolicy.Dynamic);
-
-            RefreshFontOverridesList();
-        }
 
         // Font override UI fields
         private LabelHandle _overridesCountLabel;
@@ -1773,62 +1539,6 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         #region Images Tab
 
-        private void CreateImagesTabContent(Host parent)
-        {
-            var card = Stacks.Card(parent, "ImagesCard", PanelWidth - 60, stretchVertically: true);
-
-            // Section title
-            Labels.Create(card, "ImagesLabel", "Bitmap Replacements", TextRole.SectionTitle);
-
-            Labels.Create(card, "ImagesHint",
-                "Replace images that contain text (bitmap text) with translated versions. " +
-                "Use the inspector to select images, export originals as templates, " +
-                "then import your translated PNG files.", TextRole.Hint);
-
-            Stacks.Spacer(card, 5);
-
-            // Debug toggle: globally disable image replacement (for translators).
-            _enableImageReplacementToggle = CheckBoxes.Create(card, "EnableImageReplacementToggle",
-                "Enable image replacement (uncheck to debug with original images)",
-                TranslatorCore.Config.enable_image_replacement, OnEnableImageReplacementChanged);
-            _helpZone?.Describe(_enableImageReplacementToggle,
-                "Swaps images that contain baked-in text for your translated versions. Uncheck to debug with the original images.");
-
-            Stacks.Spacer(card, 5);
-
-            // Start Image Inspector button
-            var inspectorBtn = Buttons.Primary(card, "ImageInspectorBtn", "Start Image Inspector", PanelWidth - 100);
-            inspectorBtn.Clicked += OnStartImageInspectorClicked;
-            _helpZone?.Describe(inspectorBtn,
-                "Closes this panel so you can click images in-game to mark them for replacement.");
-
-            Labels.Create(card, "ImageInspectorHint", "Click on images in the game to mark them for replacement", TextRole.Hint);
-
-            Stacks.Spacer(card, 8);
-
-            // Current replacements list
-            Labels.Create(card, "ListLabel", "Current Replacements:", TextRole.Small).Bold = true;
-
-            _imagesList = ScrollList.Create(card, "ImagesScroll", minHeight: 200, preferredHeight: 200,
-                emptyText: "No images marked for replacement yet.\nUse the Image Inspector to select images.");
-
-            // Apply All button
-            Stacks.Spacer(card, 5);
-
-            var applyRow = Stacks.Row(card, "ApplyRow", spacing: 5, minHeight: UIStyles.ButtonHeight);
-            var applyAllBtn = Buttons.Create(applyRow, "ApplyAllBtn", "Load All Replacements",
-                ButtonTone.Primary, fill: Fill.Stretch);
-            applyAllBtn.Clicked += OnLoadAllReplacementsClicked;
-            _helpZone?.Describe(applyAllBtn,
-                "Reloads your edited PNG files from disk and applies them in-game. Use after editing the exported templates.");
-
-            // Status label
-            _imagesStatus = Labels.Create(card, "ImagesStatus", "", TextRole.Small, policy: TextPolicy.Dynamic);
-
-            // Initial populate
-            RefreshImageReplacementsList();
-        }
-
         private void RefreshImageReplacementsList()
         {
             if (_imagesList == null) return;
@@ -1913,58 +1623,6 @@ namespace UnityGameTranslator.Core.UI.Panels
         #endregion
 
         #region Variables Tab
-
-        private void CreateVariablesTabContent(Host parent)
-        {
-            var card = Stacks.Card(parent, "VariablesCard", PanelWidth - 60, stretchVertically: true);
-
-            // Section title
-            Labels.Create(card, "VarsLabel", "Game Variables", TextRole.SectionTitle);
-
-            Labels.Create(card, "VarsHint",
-                "Capture dynamic game values (player name, clan name, etc.) so translations can be reused regardless of the actual value. " +
-                "Variables are replaced with placeholders before translation.", TextRole.Hint);
-
-            Stacks.Spacer(card, 8);
-
-            // Capture section
-            Labels.Create(card, "CaptureLabel", "Capture Variable", TextRole.SectionTitle);
-
-            Labels.Create(card, "CaptureHint",
-                "Enter the current value of a game variable (e.g. your character name) to find it in memory.", TextRole.Hint);
-
-            var captureRow = Stacks.Row(card, "CaptureRow", spacing: 5, minHeight: UIStyles.RowHeightNormal);
-
-            _scanValueInput = Fields.Create(captureRow, "ScanValueInput", "Enter value to search...");
-            _helpZone?.Describe(_scanValueInput,
-                "Type the current value of a game variable, like your character name, to find it in memory.");
-
-            var scanBtn = Buttons.Primary(captureRow, "ScanBtn", "Scan", 70);
-            scanBtn.Clicked += OnScanClicked;
-            _helpZone?.Describe(scanBtn,
-                "Searches game memory for the entered value so it can be turned into a reusable placeholder.");
-
-            Stacks.Spacer(card, 5);
-
-            // Scan results (hidden until scan)
-            _scanResultsList = ScrollList.Create(card, "ScanResultsScroll", minHeight: 80, preferredHeight: 100,
-                fillHeight: false, emptyText: "No matching fields found in game memory.");
-            _scanResultsList.Visible = false;
-
-            Stacks.Spacer(card, 8);
-
-            // Current variables list
-            Labels.Create(card, "ListLabel", "Defined Variables:", TextRole.Small).Bold = true;
-
-            _variablesList = ScrollList.Create(card, "VarsScroll", minHeight: 200, preferredHeight: 200);
-
-            // Status label
-            Stacks.Spacer(card, 5);
-            _variablesStatus = Labels.Create(card, "VarsStatus", "", TextRole.Small, policy: TextPolicy.Dynamic);
-
-            // Initial populate
-            RefreshVariablesList();
-        }
 
         private void OnScanClicked()
         {
@@ -2164,13 +1822,13 @@ namespace UnityGameTranslator.Core.UI.Panels
             UpdateApplyButtonText();
         }
 
-        private void OnEnableFontReplacementChanged(bool enabled)
+        private void OnEnableFontReplacementChanged()
         {
             // Just notify the Apply button — actual application happens on Apply.
             UpdateApplyButtonText();
         }
 
-        private void OnEnableImageReplacementChanged(bool enabled)
+        private void OnEnableImageReplacementChanged()
         {
             UpdateApplyButtonText();
         }

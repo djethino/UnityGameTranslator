@@ -208,6 +208,43 @@ namespace UnityGameTranslator.Core.Checks
             check(wizard.Nodes["HotkeyHost"].Children.Count == 0 && wizard.Nodes["TranslationListHost"].Children.Count == 0,
                 "the hotkey capture and the community list have hosts the document leaves empty", "two components the vocabulary does not describe");
 
+            // ── Tools and options: the two big tabbed screens ─────────────────────
+            var tools = ScreenDocument.FromFile(Path.Combine(folder, "tools.json"));
+            check(tools.Header.Count == 2 && tools.Header[0].Kind == "tabs" && tools.Header[0].Children.Count == 5
+                  && tools.Header[1].Kind == "stack" && tools.Header[1].Children.Count == 1 && tools.Header[1].Children[0].Kind == "tabs"
+                  && tools.Header[1].Children[0].Word("contentsIn") == "FontsTab" && tools.Header[1].Children[0].Int("rowHeight") == 26
+                  && tools.Nodes["FontsTab"].Children.Count == 0,
+                "tools.json: five tabs, and a row of sub-tabs in a header host whose contents go into the Fonts tab",
+                "the sub-tab buttons are chrome, shown only while Fonts is open; the Fonts tab holds nothing but what they show");
+            check(tools.Nodes.Values.Where(n => n.Kind == "list").All(n => n.Int("preferredHeight") != null)
+                  && tools.Nodes.Values.Count(n => n.Kind == "list") == 8
+                  && tools.Nodes.Values.Where(n => n.Kind == "list" && !n.StartsVisible).All(n => n.Flag("fill") == false),
+                "every one of the eight lists states its preferred height, and the hidden find lists take no spare height",
+                "ScrollingListHeightRule: a list weighed at its minimum leaves the panel no slack");
+            check(tools.Acts.Count == 19 && tools.Nodes["FontSharpness"].Word("options") == "code"
+                  && (bool)tools.Nodes["TextEditorBtn"].Props["scope"]["onThisMachine"] && !(bool)tools.Nodes["TextEditorBtn"].Props["scope"]["yourPublishedCopy"],
+                "tools.json asks for 19 acts; the sharpness choices are the GPU's; the editors write locally", $"got {tools.Acts.Count} acts");
+
+            var options = ScreenDocument.FromFile(Path.Combine(folder, "options.json"));
+            check(options.Header.Count == 1 && options.Header[0].Kind == "tabs" && options.Header[0].Children.Count == 5 && options.Body.Count == 0,
+                "options.json: five tabs in the header, the body theirs", "the tab buttons stay put while the settings scroll");
+            check(options.Nodes.Values.Count(n => n.Kind == "slider") == 2 && options.Nodes["OpacityFocused"].Number("min") == 0.4f
+                  && options.Nodes["OpacityFocused"].Word("format") == "Percent",
+                "the two opacity sliders floor at 40% and read as percentages", "lower is not translucent but unreadable — uGUI applies the alpha to the text too");
+            check(options.Nodes["SourceLang"].Word("first") == "auto (Detect)" && options.Nodes["TargetLang"].Word("first") == "auto (System)",
+                "the language pickers offer an answer before the catalogue's list", "auto is a choice that is not a language");
+            check(options.Nodes.Values.Count(n => n.Kind == "field" && n.Word("caption") != null) == 7
+                  && options.Nodes["MaxAttempts"].Word("input") == null,
+                "the seven advanced numbers are captioned Text fields", "Decimal is locale-aware and refuses the dot these values are written with; validation happens at Apply");
+            check(options.Nodes.Values.Count(n => n.Kind == "stack" && n.Name.EndsWith("Host")) == 11
+                  && options.Nodes.Values.Where(n => n.Kind == "stack" && n.Name.EndsWith("Host")).All(n => n.Children.Count == 0),
+                "eleven empty hosts, one per hotkey capture", "the capture control is the code's");
+            check(options.Nodes["CaptureKeyboardWhy"].Bind != null && !options.Nodes["CaptureKeyboardWhy"].StartsVisible
+                  && !options.Nodes["PauseWhy"].StartsVisible && !options.Nodes["PauseBlocked"].StartsVisible,
+                "each capture box has a hidden line for the runtime's own reason; freezing has its three", "whether an intention can be honoured is the game's to say");
+            check(options.Acts.Count == 38 && options.Nodes["AiAdvanced"].Kind == "collapsible" && options.Nodes["AiAdvanced"].Flag("expanded") == false,
+                "options.json asks for 38 acts and folds the AI's advanced settings", $"got {options.Acts.Count} acts");
+
             // ── Every panel built from a document hands the builder what the document needs ──
             // 🔴 The builder refuses a document with a header or a help bar it was given nowhere
             // to put — at construction, inside CreatePanels, which then aborts: the panels after
@@ -236,6 +273,21 @@ namespace UnityGameTranslator.Core.Checks
                         $"{panel} hands the builder its help bar", "the builder refuses a help bar it was not given, at construction");
                     check(!doc.Nodes.Values.Any(n => n.Kind == "title") || build.Value.Contains("title:"),
                         $"{panel} hands the builder its way of making a scoped title", "the base keeps the strip for the window's resizes; the builder refuses a title it cannot make, at construction");
+
+                    // 🔴 Every act the document asks for has a case in the panel's ActOf, and no
+                    // case answers for an act the document does not ask — read off the source,
+                    // because the builder's own refusal fires at construction, inside a game.
+                    var actOf = System.Text.RegularExpressions.Regex.Match(source, @"private Action ActOf\(string act\)\s*\{(.*?)\n        \}", System.Text.RegularExpressions.RegexOptions.Singleline);
+                    check(actOf.Success, $"{panel} answers the document's acts in ActOf", "a screen built from a document routes its verbs through one table");
+                    if (!actOf.Success) continue;
+                    var cases = System.Text.RegularExpressions.Regex.Matches(actOf.Groups[1].Value, @"case ""([A-Za-z0-9]+)"":")
+                        .Cast<System.Text.RegularExpressions.Match>().Select(m => m.Groups[1].Value).ToList();
+                    var missing = doc.Acts.Keys.Where(a => !cases.Contains(a)).ToList();
+                    var dead = cases.Where(c => !doc.Acts.ContainsKey(c)).ToList();
+                    check(missing.Count == 0, $"{panel} answers every act {Path.GetFileName(embedded.Groups[1].Value)}.json asks for",
+                        missing.Count == 0 ? "the builder would refuse at construction otherwise" : $"no case for: {string.Join(", ", missing)}");
+                    check(dead.Count == 0, $"{panel} answers no act its document does not ask for",
+                        dead.Count == 0 ? "a case nothing asks for is dead code" : $"unasked: {string.Join(", ", dead)}");
                 }
             }
 
@@ -263,6 +315,7 @@ namespace UnityGameTranslator.Core.Checks
             var bare = ScreenDocument.Parse(JObject.Parse(@"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[{""kind"":""checkbox"",""name"":""C""},{""kind"":""field"",""name"":""F"",""act"":""typed""}],""footer"":[{""kind"":""button"",""name"":""B"",""text"":""Go"",""act"":""go""}]}"));
             check(bare.Nodes["C"].Text == null && bare.Acts.ContainsKey("typed") && bare.Acts["typed"].Kind == "field",
                 "a checkbox without words is bare, and a field may ask for an act as it is typed in", "the words of a bare box are elsewhere on its row; a field's act is how a wizard keeps its state as the person types");
+            Refuses(check, "a slider without its range", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[{""kind"":""slider"",""name"":""S"",""caption"":""Size:""}],""footer"":[]}", "caption and a range");
             Refuses(check, "two checkboxes asking for one act", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[{""kind"":""checkbox"",""name"":""A"",""text"":""a"",""act"":""flip""},{""kind"":""checkbox"",""name"":""B"",""text"":""b"",""act"":""flip""}],""footer"":[]}", "two pieces");
 
             var defaults = ScreenDocument.Parse(JObject.Parse(@"{""name"":""X"",""size"":{""width"":500,""height"":200},""body"":[],""footer"":[]}"));

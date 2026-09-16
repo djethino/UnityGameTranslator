@@ -27,6 +27,7 @@ namespace UnityGameTranslator.Core
         public bool StartsVisible => Flag("visible") ?? true;
 
         public int? Int(string prop) => Props[prop] is JValue v && v.Type == JTokenType.Integer ? (int?)(int)v : null;
+        public float? Number(string prop) => Props[prop] is JValue v && (v.Type == JTokenType.Float || v.Type == JTokenType.Integer) ? (float?)(float)v : null;
         public string Word(string prop) => Props[prop] is JValue v && v.Type == JTokenType.String ? (string)v : null;
         public bool? Flag(string prop) => Props[prop] is JValue v && v.Type == JTokenType.Boolean ? (bool?)(bool)v : null;
     }
@@ -51,7 +52,7 @@ namespace UnityGameTranslator.Core
     public sealed class ScreenDocument
     {
         /// <summary>The closed vocabulary. The same list as the schema's enum — a check says so.</summary>
-        public static readonly string[] Kinds = { "card", "stack", "row", "spacer", "label", "button", "status", "section", "field", "dropdown", "list", "tabs", "tab", "callout", "collapsible", "title", "checkbox", "toast" };
+        public static readonly string[] Kinds = { "card", "stack", "row", "spacer", "label", "button", "status", "section", "field", "dropdown", "list", "tabs", "tab", "callout", "collapsible", "title", "checkbox", "toast", "slider" };
 
         /// <summary>What the help bar says over this piece, or null.</summary>
         public static string HelpOf(ScreenNode node) => node.Word("help");
@@ -185,9 +186,13 @@ namespace UnityGameTranslator.Core
                         if (!(node.Props["scope"] is JObject))
                             throw new ScreenDocumentException($"{Name}: the title '{node.Name}' says which copy the screen writes to (scope)");
                         goto case "label";
+                    case "slider":
+                        if (node.Word("caption") == null || node.Props["min"] == null || node.Props["max"] == null)
+                            throw new ScreenDocumentException($"{Name}: the slider '{node.Name}' has a caption and a range");
+                        goto case "field";
                     case "checkbox":
                     case "field":
-                        // A box without words is bare: its words are elsewhere on its row. Both
+                        // A box without words is bare: its words are elsewhere on its row. All three
                         // may ask for an act as they change, or be read by the code when it needs them.
                         if (node.Act != null)
                         {
@@ -239,7 +244,7 @@ namespace UnityGameTranslator.Core
                 {
                     if (node.Kind == "label" || node.Kind == "button" || node.Kind == "spacer" || node.Kind == "status"
                         || node.Kind == "field" || node.Kind == "dropdown" || node.Kind == "list"
-                        || node.Kind == "title" || node.Kind == "checkbox" || node.Kind == "toast")
+                        || node.Kind == "title" || node.Kind == "checkbox" || node.Kind == "toast" || node.Kind == "slider")
                         throw new ScreenDocumentException($"{Name}: a {node.Kind} holds nothing");
                     ReadInto(node.Children, children, node.Kind);
                 }

@@ -42,6 +42,9 @@ namespace UnityGameTranslator.Core.UI
         public ToggleHandle Toggle(string name) => _toggles.TryGetValue(name, out var t) ? t : throw new ScreenDocumentException($"{_doc.Name}: no checkbox named '{name}'");
         internal void Add(string name, Toasts toast) => _toasts[name] = toast;
         private readonly Dictionary<string, Toasts> _toasts = new Dictionary<string, Toasts>(StringComparer.Ordinal);
+        internal void Add(string name, SliderHandle slider) => _sliders[name] = slider;
+        private readonly Dictionary<string, SliderHandle> _sliders = new Dictionary<string, SliderHandle>(StringComparer.Ordinal);
+        public SliderHandle Slider(string name) => _sliders.TryGetValue(name, out var s) ? s : throw new ScreenDocumentException($"{_doc.Name}: no slider named '{name}'");
         public Toasts Toast(string name) => _toasts.TryGetValue(name, out var t) ? t : throw new ScreenDocumentException($"{_doc.Name}: no toast named '{name}'");
 
         public LabelHandle Label(string name) => _labels.TryGetValue(name, out var l) ? l : throw new ScreenDocumentException($"{_doc.Name}: no label named '{name}'");
@@ -164,10 +167,12 @@ namespace UnityGameTranslator.Core.UI
                 }
                 case "tabs":
                 {
-                    // The buttons where the piece is placed, the contents in the body: a row of
-                    // tabs in the header stays put while what it shows scrolls.
+                    // The buttons where the piece is placed, the contents in the body — or in the
+                    // piece the document names, a tab of another row for sub-tabs: a row of tabs
+                    // in the header stays put while what it shows scrolls.
                     var bar = new TabBar();
-                    bar.CreateUI(parent, site.Body);
+                    var contents = node.Word("contentsIn") != null ? built.Host(node.Word("contentsIn")) : site.Body;
+                    bar.CreateUI(parent, contents, node.Int("rowHeight") ?? 32);
                     built.Add(node.Name, bar);
                     foreach (var tab in node.Children)
                     {
@@ -259,6 +264,22 @@ namespace UnityGameTranslator.Core.UI
                 case "toast":
                     built.Add(node.Name, Toasts.Create(parent, node.Name));
                     break;
+                case "slider":
+                {
+                    Action changed = node.Act != null ? Act(site, node) : null;
+                    float min = node.Number("min") ?? 0f, max = node.Number("max") ?? 1f;
+                    Func<float, string> format = node.Word("format") == "Percent"
+                        ? (Func<float, string>)(v => $"{v * 100f:0}%")
+                        : v => v.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+                    // Its value at show time is the code's; built at the floor of its range.
+                    var slider = Sliders.Labelled(parent, node.Name, node.Word("caption"), min, max, min, format,
+                                                  onChanged: changed != null ? (Action<float>)(_ => changed()) : null,
+                                                  captionWidth: node.Int("captionWidth") ?? 120,
+                                                  wholeNumbers: node.Flag("wholeNumbers") ?? false);
+                    built.Add(node.Name, slider);
+                    Describe(site, node, slider);
+                    break;
+                }
                 case "title":
                 {
                     // Made by the panel, not here: the base keeps the strip for the window's resizes.
@@ -290,11 +311,18 @@ namespace UnityGameTranslator.Core.UI
                 }
                 case "field":
                 {
-                    var field = Fields.Create(parent, node.Name, node.Word("placeholder") ?? "",
-                                              Enum(node.Word("input"), FieldKind.Text),
-                                              minHeight: MinHeight(node),
-                                              fill: Enum(node.Word("fill"), Fill.Stretch),
-                                              minWidth: node.Int("minWidth"));
+                    // With a caption, the field and its words share a row of their own.
+                    var field = node.Word("caption") != null
+                        ? Fields.Captioned(parent, node.Name, node.Word("caption"), node.Word("placeholder") ?? "",
+                                           Enum(node.Word("input"), FieldKind.Text),
+                                           captionWidth: node.Int("captionWidth") ?? 120,
+                                           fieldMinWidth: node.Int("minWidth"),
+                                           fieldFill: Enum(node.Word("fill"), Fill.Stretch))
+                        : Fields.Create(parent, node.Name, node.Word("placeholder") ?? "",
+                                        Enum(node.Word("input"), FieldKind.Text),
+                                        minHeight: MinHeight(node),
+                                        fill: Enum(node.Word("fill"), Fill.Stretch),
+                                        minWidth: node.Int("minWidth"));
                     if (node.Act != null)
                     {
                         var changed = Act(site, node);
@@ -313,8 +341,21 @@ namespace UnityGameTranslator.Core.UI
                     switch (node.Word("options"))
                     {
                         case "languages":
-                            dropdown = SearchableDropdown.ForLanguages(node.Name, LanguageHelper.GetLanguageNames(), "");
+                        {
+                            // The catalogue's list, with one answer before it when the document
+                            // says so ("auto (Detect)") — a choice that is not a language.
+                            var names = LanguageHelper.GetLanguageNames();
+                            string first = node.Word("first");
+                            if (first != null)
+                            {
+                                var withFirst = new string[names.Length + 1];
+                                withFirst[0] = first;
+                                Array.Copy(names, 0, withFirst, 1, names.Length);
+                                names = withFirst;
+                            }
+                            dropdown = SearchableDropdown.ForLanguages(node.Name, names, first ?? "");
                             break;
+                        }
                         case "code":
                             // The code sets the choices and the initial one at show time (SetOptions, SelectedValue).
                             dropdown = new SearchableDropdown(node.Name, new string[0], "", node.Int("popupHeight") ?? 200);
@@ -324,7 +365,8 @@ namespace UnityGameTranslator.Core.UI
                     }
                     var changed = Act(site, node);
                     var host = dropdown.CreateUI(parent, _ => changed(), node.Int("width") ?? 200,
-                                                 stretch: node.Flag("stretch") ?? false);
+                                                 stretch: node.Flag("stretch") ?? false,
+                                                 minHeight: MinHeight(node));
                     host.Visible = node.StartsVisible;
                     built.Add(node.Name, dropdown);
                     Describe(site, node, host);

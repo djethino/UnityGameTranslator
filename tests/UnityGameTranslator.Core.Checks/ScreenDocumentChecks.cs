@@ -109,6 +109,36 @@ namespace UnityGameTranslator.Core.Checks
             check(!setup.Nodes["TargetSettled"].StartsVisible && !setup.Nodes["SourceSettled"].StartsVisible,
                 "the notes under the two languages start hidden", "shown once the code has read that the file states that language — the target with its first line, the source under strict detection");
 
+            // ── The main screen: a row of tabs in the header, its contents in the body ─────
+            var main = ScreenDocument.FromFile(Path.Combine(folder, "main.json"));
+            check(main.Acts.Keys.OrderBy(k => k).SequenceEqual(new[] {
+                      "backups", "close", "compare", "contribute", "createIndependent", "ctaLogin", "download", "downloadLatest",
+                      "editDetails", "fork", "loginLogout", "mergeWithMain", "modManager", "modUpdate", "options", "resourcesOpen",
+                      "review", "search", "transParams", "updateFromMain", "upload" }),
+                "main.json asks for the twenty-one acts its code handles", $"got {string.Join(",", main.Acts.Keys)}");
+            check(main.Binds.Keys.OrderBy(k => k).SequenceEqual(new[] {
+                      "account", "aiStatus", "backups", "branchDesc", "communityGame", "downloadDesc", "entries", "guidance",
+                      "loginLogout", "mergeDesc", "modManager", "modUpdate", "modUpdateVerb", "resourcesBy", "resourcesUrl",
+                      "role", "roleActionsHint", "source", "syncStatus", "target", "upload", "uploadHint" }),
+                "its slots are the lines the code writes on every redraw", $"got {string.Join(",", main.Binds.Keys)}");
+            check(main.Body.Count == 0 && main.Header.Count == 5 && main.Header[4].Kind == "tabs" && main.Header[4].Children.Count == 2
+                  && main.Header[4].Children.All(t => t.Kind == "tab" && t.Text != null && ScreenDocument.HelpOf(t) != null),
+                "the row of tabs stays in the header and holds two named tabs; the body is theirs",
+                "the buttons stay put while what they show scrolls — the builder puts a tab's contents in the body");
+            check(main.Nodes["StatusCardHost"].Kind == "stack" && main.Nodes["StatusCardHost"].Children.Count == 0
+                  && main.Nodes["TranslationListHost"].Kind == "stack" && main.Nodes["TranslationListHost"].Children.Count == 0,
+                "the status card and the community list have hosts the document leaves empty", "two components the vocabulary does not describe, built by the code");
+            check(main.Nodes["ModUpdateBanner"].Kind == "callout" && main.Nodes["ModUpdateBanner"].Word("tone") == "Success" && !main.Nodes["ModUpdateBanner"].StartsVisible
+                  && main.Nodes["Glossary"].Kind == "collapsible" && main.Nodes["Glossary"].Flag("expanded") == false
+                  && !main.Nodes["ResourcesLinkSection"].StartsVisible,
+                "the update banner is a hidden callout, the glossary a folded collapsible, the resources block hidden", "shown by the code when their moment comes");
+            check(main.Nodes["DownloadLatestBtn"].Bind == null && main.Nodes["DownloadLatestBtn"].Word("policy") == "Excluded"
+                  && main.Nodes["ReviewBtn"].Bind == null && main.Nodes["ReviewBtn"].Word("policy") == "Dynamic",
+                "a verb the code rewrites only on some paths keeps its words in the document", "a bound verb starts empty; these must read right before the first refresh that reaches them");
+            check(main.Nodes["MergeWithMainBtn"].Act == "mergeWithMain" && main.Nodes["UpdateFromMainBtn"].Act == "updateFromMain"
+                  && main.Nodes["ForkBtn"].Act == "fork" && main.Nodes["CreateIndependentBtn"].Act == "createIndependent",
+                "the two doors to one act ask for it under two names", "an act is asked for by one button; the code answers both names with the same handler");
+
             // ── Every panel built from a document hands the builder what the document needs ──
             // 🔴 The builder refuses a document with a header or a help bar it was given nowhere
             // to put — at construction, inside CreatePanels, which then aborts: the panels after
@@ -152,6 +182,12 @@ namespace UnityGameTranslator.Core.Checks
             Refuses(check, "a slot written into two pieces", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[{""kind"":""label"",""name"":""A"",""text"":{""bind"":""t""}},{""kind"":""label"",""name"":""B"",""text"":{""bind"":""t""}}],""footer"":[]}", "two pieces");
             Refuses(check, "children under a label", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[{""kind"":""label"",""name"":""L"",""text"":""x"",""children"":[]}],""footer"":[]}", "holds nothing");
             Refuses(check, "a screen without a size", @"{""name"":""X"",""body"":[],""footer"":[]}", "has a size");
+            Refuses(check, "a tab outside a row of tabs", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[{""kind"":""tab"",""name"":""T"",""text"":""One""}],""footer"":[]}", "not in a row of tabs");
+            Refuses(check, "a label in a row of tabs", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[{""kind"":""tabs"",""name"":""R"",""children"":[{""kind"":""label"",""name"":""L"",""text"":""x""}]}],""footer"":[]}", "holds only tabs");
+            Refuses(check, "a row of tabs with no tab", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[{""kind"":""tabs"",""name"":""R""}],""footer"":[]}", "holds no tab");
+            Refuses(check, "a tab without its words", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[{""kind"":""tabs"",""name"":""R"",""children"":[{""kind"":""tab"",""name"":""T""}]}],""footer"":[]}", "has a text");
+            Refuses(check, "a callout without a tone", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[{""kind"":""callout"",""name"":""C""}],""footer"":[]}", "has a tone");
+            Refuses(check, "a collapsible without a title", @"{""name"":""X"",""size"":{""width"":400,""height"":200},""body"":[{""kind"":""collapsible"",""name"":""C""}],""footer"":[]}", "has a title");
 
             var defaults = ScreenDocument.Parse(JObject.Parse(@"{""name"":""X"",""size"":{""width"":500,""height"":200},""body"":[],""footer"":[]}"));
             check(defaults.MinWidth == 500 && defaults.MinHeight == 200 && defaults.Backdrop && defaults.Persist && defaults.CardWidth == 460,

@@ -51,7 +51,7 @@ namespace UnityGameTranslator.Core
     public sealed class ScreenDocument
     {
         /// <summary>The closed vocabulary. The same list as the schema's enum — a check says so.</summary>
-        public static readonly string[] Kinds = { "card", "stack", "row", "spacer", "label", "button", "status", "section", "field", "dropdown", "list" };
+        public static readonly string[] Kinds = { "card", "stack", "row", "spacer", "label", "button", "status", "section", "field", "dropdown", "list", "tabs", "tab", "callout", "collapsible" };
 
         /// <summary>What the help bar says over this piece, or null.</summary>
         public static string HelpOf(ScreenNode node) => node.Word("help");
@@ -133,7 +133,7 @@ namespace UnityGameTranslator.Core
             }
         }
 
-        private void ReadInto(List<ScreenNode> into, JArray nodes)
+        private void ReadInto(List<ScreenNode> into, JArray nodes, string parentKind = null)
         {
             foreach (var item in nodes)
             {
@@ -153,8 +153,26 @@ namespace UnityGameTranslator.Core
                     throw new ScreenDocumentException($"{Name}: the name '{node.Name}' is used twice");
                 Nodes[node.Name] = node;
 
+                // A tab is nothing else's child, and a row of tabs holds nothing else.
+                if (node.Kind == "tab" && parentKind != "tabs")
+                    throw new ScreenDocumentException($"{Name}: the tab '{node.Name}' is not in a row of tabs");
+                if (parentKind == "tabs" && node.Kind != "tab")
+                    throw new ScreenDocumentException($"{Name}: '{node.Name}' is a {node.Kind} in a row of tabs, which holds only tabs");
+
                 switch (node.Kind)
                 {
+                    case "tab":
+                        if (node.Text == null)
+                            throw new ScreenDocumentException($"{Name}: the tab '{node.Name}' has a text");
+                        break;
+                    case "callout":
+                        if (node.Word("tone") == null)
+                            throw new ScreenDocumentException($"{Name}: the callout '{node.Name}' has a tone");
+                        break;
+                    case "collapsible":
+                        if (node.Word("title") == null)
+                            throw new ScreenDocumentException($"{Name}: the collapsible '{node.Name}' has a title");
+                        break;
                     case "label":
                     case "button":
                         if (node.Text == null && node.Bind == null)
@@ -199,7 +217,11 @@ namespace UnityGameTranslator.Core
                     if (node.Kind == "label" || node.Kind == "button" || node.Kind == "spacer" || node.Kind == "status"
                         || node.Kind == "field" || node.Kind == "dropdown" || node.Kind == "list")
                         throw new ScreenDocumentException($"{Name}: a {node.Kind} holds nothing");
-                    ReadInto(node.Children, children);
+                    ReadInto(node.Children, children, node.Kind);
+                }
+                else if (node.Kind == "tabs")
+                {
+                    throw new ScreenDocumentException($"{Name}: the row of tabs '{node.Name}' holds no tab");
                 }
 
                 into.Add(node);

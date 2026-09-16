@@ -28,15 +28,22 @@ namespace UnityGameTranslator.Core.UI.Panels
     /// </summary>
     public class MainPanel : TranslatorPanelBase
     {
-        public override string Name => "Unity Game Translator";
+        /// <summary>The screen as a document — common/spec/screens/main.json — read once; the base's constructor reads the sizes below through it.</summary>
+        private static readonly ScreenDocument Doc = ScreenDocument.FromEmbedded("main");
 
-        // ⚠ **The extra 30 is the scrollbar's.** The cards inside are sized from PanelWidth once,
-        // at construction; the viewport is NOT, because DynamicScrollbar takes 28 pixels off it the
-        // moment the content is long enough to scroll. At 450 the two figures crossed and labels
-        // lost their last characters — only on the screens long enough to scroll, which is why it
-        // looked intermittent.
+        /// <summary>What the builder made of the document: every piece by name.</summary>
+        private BuiltScreen _screen;
+
+        public override string Name => Doc.Name;
+
+        // ⚠ **The extra 30 is the scrollbar's.** The cards inside are sized from the document's
+        // cardWidth once, at construction; the viewport is NOT, because DynamicScrollbar takes 28
+        // pixels off it the moment the content is long enough to scroll. At 450 the two figures
+        // crossed and labels lost their last characters — only on the screens long enough to
+        // scroll, which is why it looked intermittent.
         //
-        // 🔴 **580, and both raises were measured rather than guessed.**
+        // 🔴 **580, and both raises were measured rather than guessed.** The figure is main.json's;
+        // the reasons are here because a document carries no comment.
         //
         // 480 -> 520: two adorned buttons do not fit in 480. The fitter's own trace reports
         // "Upload Translation" at 199 and "Review on Website" at 200 once their scope marks are
@@ -48,12 +55,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         // A 3) · 35 differing (V 17, A 18)" — and it grows with the work: a quality more on either
         // side adds a chip and its count. At 520 it fitted only while both groups held two
         // qualities. A row that is one line ON PURPOSE has to be given the width that keeps it one.
-        public override int MinWidth => 580;
-        public override int MinHeight => 350;
-        public override int PanelWidth => 580;
-        public override int PanelHeight => 600;
-
-        protected override int MinPanelHeight => 350;
+        public override int MinWidth => Doc.MinWidth;
+        public override int MinHeight => Doc.MinHeight;
+        public override int PanelWidth => Doc.Width;
+        public override int PanelHeight => Doc.Height;
 
         // The Community tab embeds a scrollable translation list that benefits from
         // extra room when the user enlarges the window.
@@ -155,8 +160,9 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         // Tab system
         private TabBar _tabBar;
-        private const string TAB_MY_TRANSLATION = "My Translation";
-        private const string TAB_COMMUNITY = "Community";
+        // The words on the two tabs are the document's; the code names the pieces.
+        private static string TAB_MY_TRANSLATION => Doc.Nodes["MyTranslationTab"].Text;
+        private static string TAB_COMMUNITY => Doc.Nodes["CommunityTab"].Text;
 
         /// <summary>
         /// Where this translation stands, as last read from the facts — the socle's four questions,
@@ -179,97 +185,169 @@ namespace UnityGameTranslator.Core.UI.Panels
             // Note: Components initialized in ConstructPanelContent() - base constructor calls ConstructUI() first
         }
 
+        /// <summary>
+        /// The screen is main.json; this builds it and keeps hold of what the code writes or shows.
+        ///
+        /// What the document carries, and why — a document has no comments, so the reasons the
+        /// layout was argued into its shape stay here:
+        /// - a section's title sits OUTSIDE the frame it names ("Current Translation", "Actions",
+        ///   "Community Translations"): a heading names what follows, it is not part of it;
+        /// - the three lineage choices live inside Actions with no heading of their own: they had
+        ///   one, directly under a row already offering "Contribute" — one question asked twice,
+        ///   and the copy with the heading was the one without the guards;
+        /// - every action button is the size of its label and centred with its sentence; the one
+        ///   that stretches (Open in Browser) answers for its whole block;
+        /// - Merge with Main sits above Take Main's version, the Manager's order: the safe act is
+        ///   met first, the one that drops work is read second, next to the sentence saying so;
+        /// - Create Independent is not red: red is for something wrong or refused, and a copy of a
+        ///   translation is the third of three legitimate answers;
+        /// - on the update banner, Get Manager comes before Download: read left to right, the tool
+        ///   that does the whole job comes first and the manual zip stays beside it;
+        /// - the Community tab's Download is under its own list, not in the footer: that row
+        ///   carries what applies to the whole mod on every tab, and a fourth button pushed Close
+        ///   off its edge;
+        /// - Backups is one line and a way in, in the status section: backups are the history of
+        ///   the very thing that section shows, and the list lives in its own panel;
+        /// - the footer's three buttons concern the whole mod and belong to every tab.
+        ///
+        /// ⚠ Two components the vocabulary does not describe — the status card and the community
+        /// list — are built here into the two hosts the document leaves empty.
+        /// </summary>
         protected override void ConstructPanelContent()
         {
-            // Initialize components (must be here, not in constructor - base calls ConstructUI first)
             _translationList = new TranslationList();
 
-            // Use scrollable layout - content scrolls if needed, buttons stay fixed
-            Layout(out var scrollContent, out var buttonRow, PanelWidth - 40);
+            // The panel's chrome: the scrolling body, the fixed footer, the help bar between them,
+            // the fixed header. What goes in them is the document's.
+            Layout(out var body, out var footer, Doc.Width - 40);
+            _helpZone = CreateHelpZone(footer, Doc.Help);
+            _screen = ScreenBuilder.Build(Doc, body, footer, ActOf, header: FixedHeader(), help: _helpZone,
+                                          layoutChanged: RecalculateSize);
 
-            // Contextual help bar between content and footer
-            _helpZone = CreateHelpZone(buttonRow, "Hover an element to see what it does");
+            _tabBar = _screen.Tabs("Tabs");
 
-            // === FIXED HEADER (outside the scroll — only tab content scrolls) ===
-            var header = FixedHeader();
+            _accountLabel = _screen.Label("AccountLabel");
+            _loginLogoutBtn = _screen.Button("LoginLogoutBtn");
 
-            // No big title here — the window title bar already shows the mod name (redundant, wasted height).
+            _modUpdateBanner = _screen.Host("ModUpdateBanner");
+            _modUpdateLabel = _screen.Label("ModUpdateLabel");
+            _modManagerBtn = _screen.Button("ModManagerBtn");
+            _modUpdateBtn = _screen.Button("ModUpdateBtn");
 
-            // Account Section (compact, inline)
-            CreateAccountSection(header);
+            _loginCTASection = _screen.Host("LoginCTASection");
+            _loginCTABtn = _screen.Button("CTALoginBtn");
 
-            Stacks.Spacer(header, 5);
+            _statusSection = _screen.Host("StatusSection");
+            _backupsRow = _screen.Host("BackupsRow");
+            _backupsLabel = _screen.Label("BackupsLabel");
+            _backupsBtn = _screen.Button("BackupsBtn");
+            _resourcesLinkSection = _screen.Host("ResourcesLinkSection");
+            _resourcesByLabel = _screen.Label("ResourcesByLabel");
+            _resourcesUrlLabel = _screen.Label("ResourcesUrlLabel");
+            _resourcesLinkBtn = _screen.Button("ResourcesOpenBtn");
 
-            // Mod Update Banner (between account and tabs, visible only when update available)
-            CreateModUpdateBanner(header);
+            _translationInfoSection = _screen.Host("TranslationInfoSection");
+            _entriesLabel = _screen.Label("EntriesLabel");
+            _targetLabel = _screen.Label("TargetLabel");
+            _sourceLabel = _screen.Label("SourceLabel");
+            _roleLabel = _screen.Label("RoleLabel");
+            _syncStatusLabel = _screen.Label("SyncStatusLabel");
+            _aiStatusLabel = _screen.Label("AIStatusLabel");
 
-            // === TAB BAR (buttons in the fixed header, contents in the scroll area) ===
-            _tabBar = new TabBar();
-            _tabBar.CreateUI(header, scrollContent);
+            _syncActionsRow = _screen.Host("SyncActionsRow");
+            _uploadBtn = _screen.Button("UploadBtn");
+            _compareWithServerBtn = _screen.Button("CompareBtn");
+            _lineageChoiceSection = _screen.Host("LineageChoiceSection");
+            _branchRow = _screen.Host("BranchRow");
+            _contributeAsBranchBtn = _screen.Button("ContributeBtn");
+            _branchDesc = _screen.Label("BranchDesc");
+            _mergeRow = _screen.Host("MergeRow");
+            _mergeWithMainBtn = _screen.Button("MergeWithMainBtn");
+            _mergeDesc = _screen.Label("MergeDesc");
+            _downloadRow = _screen.Host("DownloadRow");
+            _downloadLatestBtn = _screen.Button("DownloadLatestBtn");
+            _downloadDesc = _screen.Label("DownloadDesc");
+            _createIndependentBtn = _screen.Button("CreateIndependentBtn");
+            _uploadHintLabel = _screen.Label("UploadHintLabel");
+            _roleActionsRow = _screen.Host("RoleActionsRow");
+            _reviewOnWebsiteBtn = _screen.Button("ReviewBtn");
+            _editDetailsBtn = _screen.Button("EditDetailsBtn");
+            _updateFromMainBtn = _screen.Button("UpdateFromMainBtn");
+            _forkBtn = _screen.Button("ForkBtn");
+            _roleActionsHint = _screen.Label("RoleActionsHint");
 
-            // Create tab contents - each tab will create its own card
-            var myTranslationTab = _tabBar.Tab(TAB_MY_TRANSLATION);
-            var communityTab = _tabBar.Tab(TAB_COMMUNITY);
+            _guidanceSection = _screen.Host("GuidanceSection");
+            _guidanceLabel = _screen.Label("GuidanceLabel");
 
-            _helpZone?.Describe(_tabBar.Button(TAB_MY_TRANSLATION),
-                "Your own translation for this game: its sync status, role, and the actions you can take on it.");
-            _helpZone?.Describe(_tabBar.Button(TAB_COMMUNITY),
-                "Translations other players shared for this game. Search and download one to use it.");
+            _communitySection = _screen.Host("CommunitySection");
+            _communityGameLabel = _screen.Label("GameLabel");
+            _searchBtn = _screen.Button("SearchBtn");
+            _downloadBtn = _screen.Button("DownloadBtn");
 
-            // === MY TRANSLATION TAB (content in a stretching card) ===
-            var myTransCard = Stacks.Card(myTranslationTab, "MyTranslationCard", PanelWidth - 60, stretchVertically: true);
+            _transParamsBtn = _screen.Button("TransParamsBtn");
+            _optionsBtn = _screen.Button("OptionsBtn");
 
-            // Login CTA Section (only visible when not logged in)
-            CreateLoginCTASection(myTransCard);
+            // The status card: what the translation IS, in the host at the top of its section.
+            _statusCard = new StatusCard();
+            _statusCard.CreateUI(_screen.Host("StatusCardHost"));
+            _helpZone.Describe(_statusCard.Handle,
+                "Your translation at a glance: sync state with the website, your role (Main = owner, Branch = contributor), and quality (Human / Validated / AI lines)");
 
-            // Status Section with StatusCard (visible when logged in + has local)
-            CreateStatusSection(myTransCard);
-
-            Stacks.Spacer(myTransCard, 5);
-
-            // Legacy Translation Info Section (kept for backward compatibility, will be hidden when StatusCard is shown)
-            CreateTranslationInfoSection(myTransCard);
-
-            Stacks.Spacer(myTransCard, 10);
-
-            // Actions Section (context-dependent)
-            CreateActionsSection(myTransCard);
-
-            // The three choices offered when holding another lineage (GAP 8: HoldingAnothersLineage state)
-
-            // Guidance Section (GAP 9: contextual messages)
-            CreateGuidanceSection(myTransCard);
-
-            // Collapsed glossary for the sharing model vocabulary
-            CreateGlossarySection(myTransCard);
-
-            // === COMMUNITY TAB (content in a stretching card) ===
-            var communityCard = Stacks.Card(communityTab, "CommunityCard", PanelWidth - 60, stretchVertically: true);
-            CreateCommunitySection(communityCard);
-
-            // Bottom buttons - in fixed footer (outside scroll). These three concern the whole
-            // mod and belong to every tab; a tab's own action has no business here — added as a
-            // fourth it pushed Close off the edge of the row.
-            // ⚠ Kept as fields: a button that opens a window has to be told, afterwards, that the
-            // window is there — and that it is gone again. See RefreshOpenerStates.
-            _transParamsBtn = Buttons.Secondary(buttonRow, "TransParamsBtn", "Translation Tools");
-            _transParamsBtn.Clicked += () => Intents.Toggle(ScreenId.TranslationParameters);
-            var transParamsBtn = _transParamsBtn;
-            _helpZone?.Describe(transParamsBtn,
-                "Text editors, exclusions, fonts, images and variables");
-
-            _optionsBtn = Buttons.Secondary(buttonRow, "OptionsBtn", "Mod Options");
-            _optionsBtn.Clicked += () => Intents.Toggle(ScreenId.Options);
-            var optionsBtn = _optionsBtn;
-            _helpZone?.Describe(optionsBtn,
-                "General settings: hotkeys, online mode, translation backend");
-
-            var closeBtn = Buttons.Primary(buttonRow, "CloseBtn", "Close");
-            closeBtn.Clicked += () => SetActive(false);
-            _helpZone?.Describe(closeBtn,
-                "Close this window. Translation and syncing keep running in the background.");
+            // The community list, in the host between the search row and its own action row —
+            // the list takes the spare height and that row keeps its own.
+            _translationList.CreateUI(_screen.Host("TranslationListHost"), 200, onSelectionChanged: (t) =>
+            {
+                if (_downloadBtn != null)
+                {
+                    _downloadBtn.Enabled = t != null;
+                    SetCommunityDownloadState(t != null);
+                }
+            }, help: _helpZone);
+            _downloadBtn.Enabled = false;
+            SetCommunityDownloadState(false);
 
             RefreshUI();
+        }
+
+        /// <summary>What each verb the document asks for does. A verb with no answer here fails at construction, not at the click.</summary>
+        private Action ActOf(string act)
+        {
+            switch (act)
+            {
+                case "loginLogout": return OnLoginLogoutClicked;
+                case "modManager": return OnModManagerClicked;
+                case "modUpdate": return OnModUpdateClicked;
+                case "ctaLogin": return () => Intents.OpenLogin();
+                case "backups": return () =>
+                {
+                    if (Intents.IsOpen(ScreenId.Backups)) Intents.Close(ScreenId.Backups);
+                    else Intents.OpenBackups();
+                };
+                case "resourcesOpen": return OnResourcesLinkClicked;
+                case "upload": return OnUploadClicked;
+                case "compare": return OnCompareWithServerClicked;
+                case "contribute": return OnContributeAsBranchClicked;
+                // ⚠ One act behind two buttons, never two copies of it: a Branch's "Merge with
+                // Main" and the lineage choice's are never on screen at once, and one guard helper
+                // drives both, so they cannot drift the way two fork buttons once did.
+                case "mergeWithMain":
+                case "updateFromMain": return OnUpdateFromMainClicked;
+                case "downloadLatest": return OnDownloadLatestClicked;
+                // Same thing for the two ways into a fork.
+                case "createIndependent":
+                case "fork": return OnCreateIndependentClicked;
+                case "review": return OnReviewOnWebsiteClicked;
+                case "editDetails": return OnEditDetailsClicked;
+                case "search": return OnSearchCommunityClicked;
+                case "download": return OnDownloadCommunityClicked;
+                // The footer's three concern the whole mod. ⚠ Kept as fields: a button that opens
+                // a window has to be told, afterwards, that the window is there — and that it is
+                // gone again. See RefreshOpenerStates.
+                case "transParams": return () => Intents.Toggle(ScreenId.TranslationParameters);
+                case "options": return () => Intents.Toggle(ScreenId.Options);
+                case "close": return () => SetActive(false);
+                default: return null;
+            }
         }
 
         /// <summary>
@@ -295,56 +373,6 @@ namespace UnityGameTranslator.Core.UI.Panels
         public void OpenMyTranslationTab()
         {
             SelectTab(TAB_MY_TRANSLATION);
-        }
-
-        private void CreateAccountSection(Host parent)
-        {
-            Labels.Create(parent, "AccountSectionLabel", "Account", TextRole.SectionTitle);
-
-            // Grouped in a card (like "Current Translation") so the account block reads as a unit.
-            var accountBox = Stacks.Card(parent, "AccountBox", PanelWidth - 60);
-
-            var accountRow = Stacks.Row(accountBox, "AccountRow", minHeight: UIStyles.RowHeightLarge);
-
-            _accountLabel = Labels.Create(accountRow, "AccountLabel", "Not connected", TextRole.Body,
-                                          tone: Tone.Secondary, policy: TextPolicy.Dynamic, fill: Fill.Stretch);
-            _accountLabel.Italic = true;
-
-            _loginLogoutBtn = Buttons.Secondary(accountRow, "LoginLogoutBtn", "Login", 80, policy: TextPolicy.Dynamic);
-            _loginLogoutBtn.Clicked += OnLoginLogoutClicked;
-            _helpZone?.Describe(_loginLogoutBtn,
-                "An account is only needed to SHARE translations. Downloading and playing work without one.");
-        }
-
-        private void CreateModUpdateBanner(Host parent)
-        {
-            // Mod update banner - colored box at top when update available
-            _modUpdateBanner = Callout.HorizontalBox(parent, "ModUpdateBanner", CalloutTone.Success,
-                                                     spacing: 8, pad: Pad.Of(10, 5),
-                                                     minHeight: UIStyles.RowHeightLarge);
-
-            _modUpdateLabel = Labels.Create(_modUpdateBanner, "ModUpdateLabel", "Update available: v?.?.?",
-                                            TextRole.Body, policy: TextPolicy.Excluded, fill: Fill.Stretch);
-            _modUpdateLabel.Bold = true;
-
-            // ⚠ Before the download button, and it is the only place on this banner where order is
-            // a statement: read left to right, the tool that does the whole job comes first and the
-            // manual zip stays available beside it. Neither is taken away.
-            _modManagerBtn = Buttons.Compact(_modUpdateBanner, "ModManagerBtn", "Get Manager",
-                                             ButtonTone.Secondary, minWidth: 110, policy: TextPolicy.Excluded);
-            _modManagerBtn.Clicked += OnModManagerClicked;
-            _helpZone?.Describe(_modManagerBtn,
-                "The Manager installs and updates the mod for every game on this machine. "
-                + "Opens it when it is already here, otherwise opens the page to get it.");
-
-            _modUpdateBtn = Buttons.Compact(_modUpdateBanner, "ModUpdateBtn", "Download",
-                                            ButtonTone.Primary, minWidth: 90, policy: TextPolicy.Excluded);
-            _modUpdateBtn.Clicked += OnModUpdateClicked;
-            _helpZone?.Describe(_modUpdateBtn,
-                "Get the newer mod version: downloads it if available, otherwise opens the release page in your browser.");
-
-            // Start hidden
-            _modUpdateBanner.Visible = false;
         }
 
         private void OnModUpdateClicked()
@@ -378,473 +406,6 @@ namespace UnityGameTranslator.Core.UI.Panels
                 TranslatorCore.LogInfo($"[MainPanel] Opening external resources: {url}");
                 TranslatorCore.OpenUrlSafe(url);
             }
-        }
-
-        private void CreateLoginCTASection(Host parent)
-        {
-            // Login CTA - prominent call-to-action for not logged in users
-            _loginCTASection = Stacks.Vertical(parent, "LoginCTASection", UIStyles.SmallSpacing);
-
-            // a prominent CTA — must read as a card, not blend into the panel
-            var ctaCard = Stacks.Card(_loginCTASection, "CTACard", PanelWidth - 60, surface: Surface.Elevated);
-
-            var ctaTitle = Labels.Create(ctaCard, "CTATitle", "Login to sync your translations",
-                                         TextRole.Body, centred: true, minHeight: UIStyles.RowHeightMedium);
-            ctaTitle.Bold = true;
-
-            Labels.Create(ctaCard, "CTADesc",
-                "Sync your work across devices and contribute to community translations.",
-                TextRole.Description, minHeight: UIStyles.RowHeightMedium);
-
-            Stacks.Spacer(ctaCard, 5);
-
-            var ctaBtnRow = Stacks.Row(ctaCard, "CTABtnRow", spacing: 0, minHeight: UIStyles.RowHeightLarge,
-                                       placement: Placement.MiddleCenter);
-
-            _loginCTABtn = Buttons.Primary(ctaBtnRow, "CTALoginBtn", "Create Account / Login", 200);
-            _loginCTABtn.Tone = ButtonTone.Success;
-            _loginCTABtn.Clicked += () => Intents.OpenLogin();
-            _helpZone?.Describe(_loginCTABtn,
-                "An account is only needed to SHARE translations. Downloading and playing work without one.");
-        }
-
-        private void CreateStatusSection(Host parent)
-        {
-            // 🔴 **The title goes OUTSIDE the frame, as "Actions" does.** It used to sit inside the
-            // section, which carries a background — so one heading was written on the box it names
-            // and the other above it, and the two sections of this tab read as different kinds of
-            // thing. A heading names what follows; it is not part of it.
-            //
-            // ⚠ Written exactly the way Actions writes it — CreateSectionTitle straight into the
-            // parent, no row of its own. The row existed to give the title the left margin of the
-            // content BELOW it, which is a problem that only arises inside the frame.
-            Labels.Create(parent, "StatusSectionLabel", "Current Translation", TextRole.SectionTitle);
-
-            // Status section - shows sync status using StatusCard widget
-            _statusSection = Stacks.Vertical(parent, "StatusSection", 0);
-
-            // Create StatusCard widget
-            _statusCard = new StatusCard();
-            _statusCard.CreateUI(_statusSection);
-            _helpZone?.Describe(_statusCard.Handle,
-                "Your translation at a glance: sync state with the website, your role (Main = owner, Branch = contributor), and quality (Human / Validated / AI lines)");
-
-            // 🔴 **One line, and a way in — not a section.** Backups are the HISTORY of the very
-            // thing this section shows, so this is where somebody looks for them; but a dozen rows
-            // with three verbs each would swamp the card that says what the translation IS. The
-            // list lives in its own panel, exactly as Merge, Upload and Login do.
-            //
-            // ⚠ Not in "Actions" either: that row is about the world — publishing, comparing,
-            // arbitrating, forking. What you keep on your own machine is a different subject.
-            var backupsRow = Stacks.Row(_statusSection, "BackupsRow", spacing: 8,
-                                        minHeight: UIStyles.RowHeightNormal);
-            _backupsRow = backupsRow;
-
-            _backupsLabel = Labels.Create(backupsRow, "BackupsLabel", "", TextRole.Hint,
-                                          tone: Tone.Secondary, policy: TextPolicy.Excluded, fill: Fill.Stretch);
-
-            _backupsBtn = Buttons.Secondary(backupsRow, "BackupsBtn", "Backups…");
-            _backupsBtn.Clicked += () =>
-            {
-                if (Intents.IsOpen(ScreenId.Backups)) Intents.Close(ScreenId.Backups);
-                else Intents.OpenBackups();
-            };
-            var backupsBtn = _backupsBtn;
-            _helpZone?.Describe(backupsBtn,
-                "Your translation as it stood at earlier moments — kept here when something "
-                + "replaces it, and whenever you ask.");
-
-            // External Resources section (visible only when ResourcesUrl is set)
-            _resourcesLinkSection = Stacks.Vertical(_statusSection, "ResourcesLinkSection", UIStyles.SmallSpacing,
-                                                    Pad.Of(12, 10), surface: Surface.Elevated);
-
-            // "External Resources uploaded by @username"
-            _resourcesByLabel = Labels.Create(_resourcesLinkSection, "ResourcesByLabel", "External Resources",
-                                              TextRole.Small, tone: Tone.Plain, policy: TextPolicy.Excluded,
-                                              minHeight: UIStyles.RowHeightSmall);
-            _resourcesByLabel.Bold = true;
-
-            // URL displayed in FULL, never shortened: the user must see where the link leads before
-            // opening it. A long URL therefore wraps, so the label has to reserve the height it
-            // draws — otherwise its second line ran under the button below.
-            _resourcesUrlLabel = Labels.Create(_resourcesLinkSection, "ResourcesUrlLabel", "", TextRole.Hint,
-                                               tone: Tone.Accent, policy: TextPolicy.Excluded,
-                                               fill: Fill.Stretch, minHeight: UIStyles.RowHeightSmall,
-                                               autoHeight: true, align: Placement.TopLeft);
-
-            // Open button (centered), kept clear of the URL above it
-            var openBtnRow = Stacks.Horizontal(_resourcesLinkSection, "OpenBtnRow", 0,
-                                               new Pad(0, 0, UIStyles.SmallSpacing, 0), Placement.MiddleCenter,
-                                               minHeight: UIStyles.RowHeightLarge);
-
-            // Fill the card width (bounded, no floating/overflowing button) and keep a consistent height.
-            _resourcesLinkBtn = Buttons.Create(openBtnRow, "ResourcesOpenBtn", "Open in Browser",
-                                               ButtonTone.Link, minWidth: 140, fill: Fill.Stretch);
-            _resourcesLinkBtn.Clicked += OnResourcesLinkClicked;
-            _helpZone?.Describe(_resourcesLinkBtn,
-                "Open the external link the translation's author attached (custom fonts or images). Not hosted by us.");
-
-            // Disclaimer
-            Labels.Create(_resourcesLinkSection, "ResourcesDisclaimer",
-                "Third-party content. We are not responsible for external links.",
-                TextRole.Hint, tone: Tone.Muted, minHeight: UIStyles.RowHeightSmall);
-
-            _resourcesLinkSection.Visible = false;
-        }
-
-        private void CreateTranslationInfoSection(Host parent)
-        {
-            // Wrap in container for visibility control (legacy section, hidden when StatusCard is shown)
-            _translationInfoSection = Stacks.Vertical(parent, "TranslationInfoSection", 0);
-
-            Labels.Create(_translationInfoSection, "TranslationSectionLabel", "Current Translation", TextRole.SectionTitle);
-
-            var infoBox = Stacks.Section(_translationInfoSection, "TranslationBox");
-
-            _entriesLabel = Labels.Create(infoBox, "EntriesLabel", "Entries: 0", TextRole.Body,
-                                          policy: TextPolicy.Dynamic, minHeight: UIStyles.RowHeightNormal);
-
-            _targetLabel = Labels.Create(infoBox, "TargetLabel", "Target: auto", TextRole.Body,
-                                         tone: Tone.Secondary, policy: TextPolicy.Excluded,
-                                         minHeight: UIStyles.RowHeightNormal);
-
-            _sourceLabel = Labels.Create(infoBox, "SourceLabel", "Source: Local", TextRole.Body,
-                                         tone: Tone.Secondary, policy: TextPolicy.Dynamic,
-                                         minHeight: UIStyles.RowHeightNormal);
-
-            _roleLabel = Labels.Create(infoBox, "RoleLabel", "", TextRole.Body,
-                                       policy: TextPolicy.Dynamic, minHeight: UIStyles.RowHeightNormal);
-            _roleLabel.Bold = true;
-
-            _syncStatusLabel = Labels.Create(infoBox, "SyncStatusLabel", "", TextRole.Body,
-                                             policy: TextPolicy.Dynamic, minHeight: UIStyles.RowHeightNormal);
-            _syncStatusLabel.Bold = true;
-
-            _aiStatusLabel = Labels.Create(infoBox, "AIStatusLabel", "", TextRole.Small,
-                                           policy: TextPolicy.Excluded);
-        }
-
-        private void CreateActionsSection(Host parent)
-        {
-            Labels.Create(parent, "ActionsSectionLabel", "Actions", TextRole.SectionTitle);
-
-            var actionsBox = Stacks.Section(parent, "ActionsBox");
-
-            // Pushing your content and inspecting what you are about to push are the same
-            // question, so they share a row. Everything else (reviewing others' work, editing the
-            // description, forking) is a different subject and lives on the row below.
-            // 🔴 **Buttons and their sentences are centred together.** The sentences were left
-            // aligned on the reasoning that prose starts where the eye looks for its first word —
-            // true on a page, wrong here: each sentence belongs to the button above it, and pulling
-            // it to the far left left the block looking pinned to one edge with its captions
-            // adrift. Judged on the screen rather than from the rule, which is where it was wrong.
-            _syncActionsRow = Stacks.Row(actionsBox, "SyncActionsRow", spacing: UIStyles.SmallSpacing,
-                                         minHeight: UIStyles.RowHeightLarge, placement: Placement.MiddleCenter);
-
-            // 🔴 **These are FLOORS for a button with no label yet, nothing more.** What a button
-            // ends up wide is measured by ButtonLabelFitter from its label plus whatever shares its
-            // row — the marks included. An earlier note here said Adorn raised the minimum by what
-            // it inserts; that stopped being true when the fitter took the job over, and a figure
-            // computed by hand would now be overwritten on the first label change anyway.
-            // 🔴 **No flexibleWidth: an action button is as wide as what it says.** This one had it
-            // and its neighbours did not, so it alone stretched as the window grew — and, while the
-            // measurement below was wrong, it alone looked right, because a button handed the room
-            // that is left never has to ask how much it needs. That is what made a fault shared by
-            // the whole row read as "these buttons are not built the same way".
-            //
-            // ⚠ Stretching IS right elsewhere and stays: a lone button under a description
-            // (Contribute as Branch, Open in Browser) fills the card because it answers for the
-            // whole block. Two actions side by side do not.
-            // Publier laisse les deux côtés porteurs du même fichier : c'est Both, pas Server.
-            // ⚠ Server voudrait dire « le publié a le résultat, pas cette machine » — ce qui ne
-            // peut pas arriver depuis un jeu, puisque le fichier envoyé est celui d'ici.
-            _uploadBtn = Buttons.Primary(_syncActionsRow, "UploadBtn", "Upload Translation", 150,
-                                         scope: EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: true),
-                                         policy: TextPolicy.Dynamic);
-            _uploadBtn.Clicked += OnUploadClicked;
-            _helpZone?.Describe(_uploadBtn,
-                "Send your local translation to the website so others can use it");
-
-            // Compare with Server — belongs next to the push it qualifies
-            // 🔴 **The same word opens this page in both directions, and only the marks say which.**
-            // This one is the publishing direction (toLocal: false): what is validated there
-            // updates the online version. The Compare in the settings window opens the same screen
-            // towards the local file. Nothing else on the button distinguishes them — which is
-            // exactly what the scope marks are for, rather than a longer label repeating it.
-            _compareWithServerBtn = Buttons.Secondary(_syncActionsRow, "CompareBtn", "Compare", 85,
-                                                      scope: EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: true),
-                                                      policy: TextPolicy.Dynamic);
-            _compareWithServerBtn.Clicked += OnCompareWithServerClicked;
-            // ⚠ It used to say "See the differences", promising a read. Validating there writes.
-            _helpZone?.Describe(_compareWithServerBtn,
-                "Compare your local file with the published version and choose line by line what to publish");
-
-            // 🔴 **The three lineage choices live HERE, in Actions.** They had a section of their
-            // own titled "What would you like to do?", directly under a row already offering
-            // "Contribute" — the same act, three inches apart, one of them without the guards. Two
-            // headings for one question, and the second one full-width where every other action
-            // button on this card is the size of its own label.
-            CreateLineageChoices(actionsBox);
-
-            _uploadHintLabel = Labels.Create(actionsBox, "UploadHintLabel", "", TextRole.Hint,
-                                             centred: true, policy: TextPolicy.Dynamic);
-
-            // Role-specific action buttons row
-            // Centred, like the row above it — see there.
-            _roleActionsRow = Stacks.Row(actionsBox, "RoleActionsRow", minHeight: UIStyles.RowHeightLarge,
-                                         placement: Placement.MiddleCenter);
-
-            // Review on Website button (Main only) - opens page to review branches
-            //
-            // ⚠ Carries its count — "Review Branches (3)" — so how many are waiting is read where
-            // the decision is taken. Dynamic, not UiText: the label is written by the code on every
-            // refresh, and letting the async pipeline write it too would put two writers on one
-            // label. The pipeline turns the number into a placeholder, so every count shares one
-            // cache entry.
-            // ⚠ Taking in a contribution rewrites the PUBLISHED Main and leaves this machine's file
-            // untouched — the one action here whose result never comes back to the game on its own.
-            // Marked accordingly: published alone, not both.
-            _reviewOnWebsiteBtn = Buttons.Secondary(_roleActionsRow, "ReviewBtn", "Review Branches", 105,
-                                                    scope: EditScope.SideAfter(onThisMachine: false, yourPublishedCopy: true),
-                                                    policy: TextPolicy.Dynamic);
-            _reviewOnWebsiteBtn.Tone = ButtonTone.Link;
-            _reviewOnWebsiteBtn.Clicked += OnReviewOnWebsiteClicked;
-            _helpZone?.Describe(_reviewOnWebsiteBtn,
-                "Open the website to accept or reject changes proposed by other players");
-
-            // Edit details (owners) — the description and the resources link were only reachable
-            // through the upload screen, which is closed once everything is in sync. Fixing a dead
-            // link or rewording a description then had no path at all.
-            // ⚠ Opens a panel in the game, where a second confirmation actually sends — the mark
-            // says where this ends up, not that it happens on click. Same as Start Text Editor,
-            // which is adorned for the file it will eventually write.
-            _editDetailsBtn = Buttons.Secondary(_roleActionsRow, "EditDetailsBtn", "Edit details", 90,
-                                                scope: EditScope.SideAfter(onThisMachine: false, yourPublishedCopy: true));
-            _editDetailsBtn.Clicked += OnEditDetailsClicked;
-            _helpZone?.Describe(_editDetailsBtn,
-                "Change the description and the resources link of your published translation, without waiting for new translated lines");
-
-            // Merge with Main (Branch only) — the other direction of the exchange.
-            // A branch could publish its work but never take in what the Main had
-            // published since: it drifted further apart with every update, without
-            // anything ever saying so.
-            // ⚠ Brings the Main INTO this machine's file and publishes nothing — the opposite side
-            // from its two neighbours on this row. It sat between two adorned buttons saying
-            // nothing, which is the one arrangement that makes a mark look decorative.
-            _updateFromMainBtn = Buttons.Secondary(_roleActionsRow, "UpdateFromMainBtn", "Merge with Main", 120,
-                                                   scope: EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: false));
-            _updateFromMainBtn.Tone = ButtonTone.Success;
-            _updateFromMainBtn.Clicked += OnUpdateFromMainClicked;
-            _helpZone?.Describe(_updateFromMainBtn,
-                "Bring in what the original translation added or corrected since your last update. Your own lines are kept, and you review everything before it applies.");
-
-            // Fork button (Branch only) - creates independent fork
-            // 🔴 **The same handler as "Create Independent" below, because it is the same act.**
-            // There were two, and only one of them ever got a correction: this one still said "You
-            // will become the Main owner" — which forking does not do, it sends nothing — and
-            // opened the upload screen for people who could not use it.
-            // Forker crée une lignée à soi sur le site, à partir du fichier d'ici : après, les deux
-            // portent la même chose.
-            _forkBtn = Buttons.Secondary(_roleActionsRow, "ForkBtn", "Fork", 80,
-                                         scope: EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: true));
-            _forkBtn.Tone = ButtonTone.Danger;
-            _forkBtn.Clicked += OnCreateIndependentClicked;
-            _helpZone?.Describe(_forkBtn,
-                "Leave the owner's translation and continue on your own — asks for confirmation first");
-
-            // One-line explanation for whichever role buttons are visible
-            _roleActionsHint = Labels.Create(actionsBox, "RoleActionsHint", "", TextRole.Hint,
-                                             centred: true, policy: TextPolicy.Excluded);
-        }
-
-        /// <summary>
-        /// The three answers open to somebody holding a lineage that is not theirs, inside Actions.
-        ///
-        /// 🔴 **No heading of their own.** They had one — "What would you like to do?" — directly
-        /// under a row already offering "Contribute", which is the first of these three. One
-        /// question asked twice, and the copy with the heading was the one without the guards.
-        ///
-        /// ⚠ **Each button is the size of its label, and centred**, like every other action on this
-        /// card. They stretched the full width, which made them read as a different kind of control
-        /// on a different screen. Their sentences stay under them: prose starts at the left margin,
-        /// buttons sit in the middle — the rule the sync row above already states at length.
-        /// </summary>
-        private void CreateLineageChoices(Host parent)
-        {
-            _lineageChoiceSection = Stacks.Vertical(parent, "LineageChoiceSection", UIStyles.SmallSpacing);
-
-            // Contribute as Branch
-            _branchRow = Stacks.Row(_lineageChoiceSection, "BranchRow", spacing: UIStyles.SmallSpacing,
-                                    minHeight: UIStyles.RowHeightLarge, placement: Placement.MiddleCenter);
-
-            // La branche créée porte le fichier d'ici — les deux côtés en step.
-            _contributeAsBranchBtn = Buttons.Primary(_branchRow, "ContributeBtn", "Contribute as Branch", 180,
-                                                     scope: EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: true));
-            _contributeAsBranchBtn.Tone = ButtonTone.Success;
-            _contributeAsBranchBtn.Clicked += OnContributeAsBranchClicked;
-            _helpZone?.Describe(_contributeAsBranchBtn,
-                "Your changes are sent to the owner, who can merge them into the main translation");
-
-            _branchDesc = Labels.Create(_lineageChoiceSection, "BranchDesc",
-                "Your changes will help improve the main translation", TextRole.Hint,
-                centred: true, policy: TextPolicy.Dynamic);
-
-            // Merge with Main — the safe way to take in what the Main added.
-            //
-            // 🔴 **Above Take, and that order is the Manager's.** Its two buttons sit the same way
-            // round, with the same reasoning written beside them: "Merge, above, keeps both sides;
-            // this one does not pretend to." The safe act is met first; the one that drops work is
-            // read second, next to the sentence saying what it drops.
-            //
-            // ⚠ **Same handler as the Branch's button**, never a second copy of the act: the two
-            // are never on screen at once (a Branch has its own row) and one guard helper drives
-            // both, so they cannot drift the way the two fork buttons did.
-            _mergeRow = Stacks.Row(_lineageChoiceSection, "MergeRow", spacing: UIStyles.SmallSpacing,
-                                   minHeight: UIStyles.RowHeightLarge, placement: Placement.MiddleCenter);
-
-            // Brings the Main INTO this machine's file and publishes nothing.
-            _mergeWithMainBtn = Buttons.Secondary(_mergeRow, "MergeWithMainBtn", "Merge with Main", 150,
-                                                  scope: EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: false));
-            _mergeWithMainBtn.Tone = ButtonTone.Success;
-            _mergeWithMainBtn.Clicked += OnUpdateFromMainClicked;
-            _helpZone?.Describe(_mergeWithMainBtn,
-                "Bring in what the Main added or corrected. Your own lines are kept, and you review everything before it applies.");
-
-            _mergeDesc = Labels.Create(_lineageChoiceSection, "MergeDesc",
-                "Take in what the Main added — your own lines are kept", TextRole.Hint,
-                centred: true, policy: TextPolicy.Dynamic);
-
-            // Take Main's version
-            _downloadRow = Stacks.Row(_lineageChoiceSection, "DownloadRow", spacing: UIStyles.SmallSpacing,
-                                      minHeight: UIStyles.RowHeightLarge, placement: Placement.MiddleCenter);
-
-            // ⚠ Le côté DÉPEND du rôle, il est donc corrigé à chaque rafraîchissement par
-            // SetDownloadLatestState. Construit au plus prudent.
-            _downloadLatestBtn = Buttons.Secondary(_downloadRow, "DownloadLatestBtn", "Take Main's version", 150,
-                                                   scope: EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: false),
-                                                   policy: TextPolicy.Excluded);
-            _downloadLatestBtn.Tone = ButtonTone.Primary;
-            _downloadLatestBtn.Clicked += OnDownloadLatestClicked;
-            _helpZone?.Describe(_downloadLatestBtn,
-                "Replace your local file with the owner's latest version from the website");
-
-            _downloadDesc = Labels.Create(_lineageChoiceSection, "DownloadDesc",
-                "Get the owner's latest version (replaces your local)", TextRole.Hint,
-                centred: true, policy: TextPolicy.Dynamic);
-
-            // Create Independent (Fork)
-            var forkRow = Stacks.Row(_lineageChoiceSection, "ForkRow", spacing: UIStyles.SmallSpacing,
-                                     minHeight: UIStyles.RowHeightLarge, placement: Placement.MiddleCenter);
-
-            // ⚠ **Not red.** Red is what this product uses for something wrong or refused, and
-            // making a copy of a translation is neither — it is the third of three legitimate
-            // answers. It also sat as the loudest thing on the card while being the least common
-            // choice, with white text on a bright fill nobody could read comfortably.
-            // Une lignée neuve, faite du fichier d'ici — les deux côtés en step.
-            _createIndependentBtn = Buttons.Secondary(forkRow, "CreateIndependentBtn", "Create Independent", 170,
-                                                       scope: EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: true));
-            _createIndependentBtn.Clicked += OnCreateIndependentClicked;
-            _helpZone?.Describe(_createIndependentBtn,
-                "Start your own translation from the file in this game — asks for confirmation first");
-
-            // ⚠ **Says what it starts FROM.** "Start your own independent translation" left the
-            // reader to guess whether it began from nothing or from the lines they have: the
-            // difference between losing an afternoon's work and keeping it.
-            Labels.Create(_lineageChoiceSection, "ForkDesc",
-                "A copy of this translation as it is now, yours. It keeps the credit to its author, and stops following their updates",
-                TextRole.Hint, centred: true);
-        }
-
-        /// <summary>
-        /// Collapsed glossary explaining the sharing model vocabulary
-        /// (Main / Branch / Fork and the H/V/A quality tags) for first-time users.
-        /// </summary>
-        private void CreateGlossarySection(Host parent)
-        {
-            var glossary = Collapsible.Create(parent, "Glossary", "What do Main, Branch and Fork mean?",
-                                              expanded: false, onToggled: _ => RecalculateSize());
-            _helpZone?.Describe(glossary.Handle,
-                "Expand a short glossary of the sharing terms Main, Branch and Fork and the line quality tags.");
-
-            Labels.Create(glossary.Body, "GlossaryText",
-                "• Main — the reference translation, owned by its creator and public on the website.\n" +
-                "• Branch — your improvements to someone else's Main; they are sent to the owner for review.\n" +
-                "• Fork — your own independent translation: you become the owner and it is no longer linked to the original.\n\n" +
-                "Line quality tags: H = written by a human, V = AI line validated by a human, A = raw AI.",
-                TextRole.Small, tone: Tone.Secondary, fill: Fill.Stretch, minHeight: UIStyles.MultiLineLarge,
-                align: Placement.TopLeft);
-        }
-
-        /// <summary>
-        /// Creates the guidance section for contextual messages (GAP 9).
-        /// </summary>
-        private void CreateGuidanceSection(Host parent)
-        {
-            _guidanceSection = Stacks.Vertical(parent, "GuidanceSection", UIStyles.SmallSpacing);
-
-            var guidanceBox = Stacks.Card(_guidanceSection, "GuidanceBox", PanelWidth - 60, surface: Surface.Elevated);
-
-            _guidanceLabel = Labels.Create(guidanceBox, "GuidanceLabel", "", TextRole.Body,
-                                           tone: Tone.Info, centred: true, policy: TextPolicy.Dynamic,
-                                           fill: Fill.Stretch, minHeight: UIStyles.RowHeightLarge);
-        }
-
-        private void CreateCommunitySection(Host parent)
-        {
-            // The heading names the frame, so it sits outside it — same as "Current Translation"
-            // and "Actions". See CreateStatusSection for why.
-            Labels.Create(parent, "CommunitySectionLabel", "Community Translations", TextRole.SectionTitle);
-
-            // Community section - now a full tab, no longer collapsible
-            _communitySection = Stacks.Vertical(parent, "CommunitySection", 5, fillHeight: true);
-
-            // Game info and search row
-            var searchRow = Stacks.Row(_communitySection, "SearchRow", minHeight: UIStyles.RowHeightLarge);
-
-            _communityGameLabel = Labels.Create(searchRow, "GameLabel", "Game: Unknown", TextRole.Body,
-                                                tone: Tone.Secondary, policy: TextPolicy.Dynamic, fill: Fill.Stretch);
-
-            _searchBtn = Buttons.Secondary(searchRow, "SearchBtn", "Search", 80);
-            _searchBtn.Clicked += OnSearchCommunityClicked;
-            _helpZone?.Describe(_searchBtn,
-                "Search the translations other players shared for this game");
-
-            // Translation list - ensure initialized (larger height for dedicated tab)
-            if (_translationList == null)
-            {
-                TranslatorCore.LogWarning("[MainPanel] _translationList was null - reinitializing");
-                _translationList = new TranslationList();
-            }
-            _translationList.CreateUI(_communitySection, 200, onSelectionChanged: (t) =>
-            {
-                if (_downloadBtn != null)
-                {
-                    _downloadBtn.Enabled = t != null;
-                    SetCommunityDownloadState(t != null);
-                }
-            }, help: _helpZone);
-
-            Stacks.Spacer(_communitySection, 5);
-
-            // The tab's OWN action bar, under its own list. It belongs here and not in the
-            // panel footer: that row carries what applies to the whole mod on every tab, and a
-            // fourth button pushed Close off its edge. Staying visible is the list's business —
-            // the list above takes the spare height and this row keeps its own, which is how
-            // every other list-and-action tab in the mod is built.
-            var downloadRow = Stacks.Row(_communitySection, "DownloadRow", spacing: 0,
-                                         minHeight: UIStyles.RowHeightLarge, placement: Placement.MiddleCenter);
-
-            // ⚠ Même chose : prendre une traduction de la communauté, c'est presque toujours prendre
-            // celle de quelqu'un d'autre — donc Local. RetargetDownloadButtons corrige le seul cas
-            // où c'est la nôtre.
-            _downloadBtn = Buttons.Primary(downloadRow, "DownloadBtn", "Download Selected", 160,
-                                           scope: EditScope.SideAfter(onThisMachine: true, yourPublishedCopy: false));
-            _downloadBtn.Tone = ButtonTone.Success;
-            _downloadBtn.Clicked += OnDownloadCommunityClicked;
-            _downloadBtn.Enabled = false;
-            SetCommunityDownloadState(false);
-            _helpZone?.Describe(_downloadBtn,
-                "Use the selected translation in your game — the mod asks before replacing anything you changed");
         }
 
         public override void SetActive(bool active)

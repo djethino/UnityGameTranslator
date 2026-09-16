@@ -18,8 +18,16 @@ namespace UnityGameTranslator.Core.UI
         private readonly Dictionary<string, FieldHandle> _fields = new Dictionary<string, FieldHandle>(StringComparer.Ordinal);
         private readonly Dictionary<string, SearchableDropdown> _dropdowns = new Dictionary<string, SearchableDropdown>(StringComparer.Ordinal);
         private readonly Dictionary<string, ScrollList> _lists = new Dictionary<string, ScrollList>(StringComparer.Ordinal);
+        private readonly Dictionary<string, TabBar> _tabBars = new Dictionary<string, TabBar>(StringComparer.Ordinal);
+        private readonly Dictionary<string, Collapsible> _collapsibles = new Dictionary<string, Collapsible>(StringComparer.Ordinal);
 
         internal BuiltScreen(ScreenDocument doc) { _doc = doc; }
+
+        internal void Add(string name, TabBar tabs) => _tabBars[name] = tabs;
+        internal void Add(string name, Collapsible collapsible) => _collapsibles[name] = collapsible;
+
+        public TabBar Tabs(string name) => _tabBars.TryGetValue(name, out var t) ? t : throw new ScreenDocumentException($"{_doc.Name}: no row of tabs named '{name}'");
+        public Collapsible Collapsible(string name) => _collapsibles.TryGetValue(name, out var c) ? c : throw new ScreenDocumentException($"{_doc.Name}: no collapsible named '{name}'");
 
         internal void Add(string name, LabelHandle label) => _labels[name] = label;
         internal void Add(string name, ButtonHandle button) => _buttons[name] = button;
@@ -65,8 +73,9 @@ namespace UnityGameTranslator.Core.UI
         /// <param name="actOf">The handler for each act the document asks for; asked once per button, at build time, so an act nobody handles fails the build and not the click.</param>
         /// <param name="header">Where the document's fixed header goes — required when it has one, since a header drawn into the scrolling body would scroll.</param>
         /// <param name="help">The help bar the document's `help` sentences go to — required when the document has any, and the panel's to create from the document's own resting sentence.</param>
+        /// <param name="layoutChanged">Told when a piece changes the screen's height on its own — a collapsible opening — so the panel can size itself again.</param>
         public static BuiltScreen Build(ScreenDocument doc, Host body, Host footer, Func<string, Action> actOf,
-                                        Host header = null, HelpZone help = null)
+                                        Host header = null, HelpZone help = null, Action layoutChanged = null)
         {
             if (doc == null) throw new ArgumentNullException(nameof(doc));
             if (actOf == null) throw new ArgumentNullException(nameof(actOf));
@@ -76,7 +85,7 @@ namespace UnityGameTranslator.Core.UI
                 throw new ScreenDocumentException($"{doc.Name}: the document declares a help bar and the panel built none");
 
             var built = new BuiltScreen(doc);
-            var site = new Site { Doc = doc, Built = built, ActOf = actOf, Help = help };
+            var site = new Site { Doc = doc, Built = built, ActOf = actOf, Help = help, Body = body, LayoutChanged = layoutChanged };
             foreach (var node in doc.Header) Place(site, node, header);
             foreach (var node in doc.Body) Place(site, node, body);
             foreach (var node in doc.Footer) Place(site, node, footer);
@@ -90,7 +99,22 @@ namespace UnityGameTranslator.Core.UI
             public BuiltScreen Built;
             public Func<string, Action> ActOf;
             public HelpZone Help;
+            /// <summary>The scrolling body — where a row of tabs placed in the header puts its contents.</summary>
+            public Host Body;
+            public Action LayoutChanged;
         }
+
+        /// <summary>A piece's padding: one figure for all sides, or one across and one down.</summary>
+        private static Pad PadOf(ScreenNode node)
+        {
+            int all = Spacing(node, "pad") ?? 0;
+            int x = Spacing(node, "padX") ?? all;
+            int y = Spacing(node, "padY") ?? all;
+            return Pad.Of(x, y);
+        }
+
+        private static bool HasPad(ScreenNode node)
+            => node.Props["pad"] != null || node.Props["padX"] != null || node.Props["padY"] != null;
 
         /// <summary>The help sentence the document gives a piece, attached to what was built for it.</summary>
         private static void Describe(Site site, ScreenNode node, Handle handle)
@@ -111,10 +135,56 @@ namespace UnityGameTranslator.Core.UI
             {
                 case "card":
                 {
-                    var host = Stacks.Card(parent, node.Name, node.Int("width") ?? doc.CardWidth);
+                    var host = Stacks.Card(parent, node.Name, node.Int("width") ?? doc.CardWidth,
+                                           stretchVertically: node.Flag("stretch") ?? false,
+                                           surface: Enum(node.Word("surface"), Surface.Card));
+                    host.Visible = node.StartsVisible;
                     built.Add(node.Name, host);
                     Describe(site, node, host);
                     foreach (var child in node.Children) Place(site, child, host);
+                    break;
+                }
+                case "tabs":
+                {
+                    // The buttons where the piece is placed, the contents in the body: a row of
+                    // tabs in the header stays put while what it shows scrolls.
+                    var bar = new TabBar();
+                    bar.CreateUI(parent, site.Body);
+                    built.Add(node.Name, bar);
+                    foreach (var tab in node.Children)
+                    {
+                        var content = bar.Tab(tab.Text);
+                        built.Add(tab.Name, content);
+                        Describe(site, tab, bar.Button(tab.Text));
+                        foreach (var child in tab.Children) Place(site, child, content);
+                    }
+                    break;
+                }
+                case "callout":
+                {
+                    var tone = Enum(node.Word("tone"), CalloutTone.Info);
+                    Pad? pad = HasPad(node) ? PadOf(node) : (Pad?)null;
+                    Host host = node.Word("direction") == "Stack"
+                        ? Callout.Box(parent, node.Name, tone, Spacing(node) ?? 5, pad, MinHeight(node) ?? 0)
+                        : Callout.HorizontalBox(parent, node.Name, tone, Spacing(node) ?? 8, pad,
+                                                Enum(node.Word("placement"), Placement.MiddleLeft), MinHeight(node) ?? 0);
+                    host.Visible = node.StartsVisible;
+                    built.Add(node.Name, host);
+                    Describe(site, node, host);
+                    foreach (var child in node.Children) Place(site, child, host);
+                    break;
+                }
+                case "collapsible":
+                {
+                    // Opening it changes the screen's height: the panel is told, so it sizes itself again.
+                    var changed = site.LayoutChanged;
+                    var block = Collapsible.Create(parent, node.Name, node.Word("title"),
+                                                   expanded: node.Flag("expanded") ?? false,
+                                                   onToggled: changed != null ? (Action<bool>)(_ => changed()) : null);
+                    built.Add(node.Name, block);
+                    built.Add(node.Name, block.Body);
+                    Describe(site, node, block.Handle);
+                    foreach (var child in node.Children) Place(site, child, block.Body);
                     break;
                 }
                 case "section":
@@ -127,7 +197,12 @@ namespace UnityGameTranslator.Core.UI
                 }
                 case "stack":
                 {
-                    var host = Stacks.Vertical(parent, node.Name, Spacing(node) ?? 0);
+                    var host = Stacks.Vertical(parent, node.Name, Spacing(node) ?? 0, PadOf(node),
+                                               surface: Enum(node.Word("surface"), Surface.None),
+                                               fill: Enum(node.Word("fill"), Fill.Stretch),
+                                               minHeight: MinHeight(node),
+                                               fillHeight: node.Flag("fillHeight") ?? false);
+                    host.Visible = node.StartsVisible;
                     built.Add(node.Name, host);
                     Describe(site, node, host);
                     foreach (var child in node.Children) Place(site, child, host);
@@ -138,16 +213,14 @@ namespace UnityGameTranslator.Core.UI
                     // The panel's ordinary row — its own padding, a floor, a placement — unless the
                     // document says more: then the horizontal stack, with padding, surface and fill
                     // spelt out.
-                    bool bare = node.Word("pad") == null && node.Int("pad") == null
-                                && node.Word("surface") == null && node.Word("fill") == null;
+                    bool bare = !HasPad(node) && node.Word("surface") == null && node.Word("fill") == null;
                     Host host;
                     if (bare)
                         host = Stacks.Row(parent, node.Name, Spacing(node) ?? 10, MinHeight(node),
                                           Enum(node.Word("placement"), Placement.MiddleLeft));
                     else
                     {
-                        int pad = Spacing(node, "pad") ?? 0;
-                        host = Stacks.Horizontal(parent, node.Name, Spacing(node) ?? 0, Pad.All(pad),
+                        host = Stacks.Horizontal(parent, node.Name, Spacing(node) ?? 0, PadOf(node),
                                                  Enum(node.Word("placement"), Placement.MiddleLeft),
                                                  Enum(node.Word("surface"), Surface.None),
                                                  Enum(node.Word("fill"), Fill.Stretch),
@@ -239,7 +312,11 @@ namespace UnityGameTranslator.Core.UI
                 }
                 case "button":
                 {
-                    var policy = node.Bind != null ? TextPolicy.Dynamic : Enum(node.Word("policy"), TextPolicy.UiText);
+                    // A bound verb is Dynamic like a bound label, and Excluded on the same terms:
+                    // a version number written on a button is shown as it is.
+                    var policy = node.Bind != null
+                        ? (node.Word("policy") == "Excluded" ? TextPolicy.Excluded : TextPolicy.Dynamic)
+                        : Enum(node.Word("policy"), TextPolicy.UiText);
                     var size = Enum(node.Word("size"), ButtonSize.Normal);
                     // Where the verb writes, as two facts; the mark beside the label follows.
                     EditSide? scope = null;
@@ -267,7 +344,10 @@ namespace UnityGameTranslator.Core.UI
             {
                 case null: return null;
                 case "RowHeightSmall": return UIStyles.RowHeightSmall;
+                case "RowHeightMedium": return UIStyles.RowHeightMedium;
                 case "RowHeightNormal": return UIStyles.RowHeightNormal;
+                case "MultiLineMedium": return UIStyles.MultiLineMedium;
+                case "MultiLineLarge": return UIStyles.MultiLineLarge;
                 case "RowHeightLarge": return UIStyles.RowHeightLarge;
                 case "RowHeightXLarge": return UIStyles.RowHeightXLarge;
                 case "InputHeight": return UIStyles.InputHeight;

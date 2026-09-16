@@ -380,9 +380,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                             ownLocal, ownServer, ownAccount);
                         if (ownButton.Act == UploadAct.Fork)
                         {
-                            string ownWall = ownButton.HintIsTranslatable
-                                ? "This contribution can no longer be sent. Fork to carry on."
-                                : ownButton.Hint;
+                            // The whole wall: this window has no status card stating the fact.
+                            string ownWall = ownButton.Wall ?? "This contribution can no longer be sent. Fork to carry on.";
 
                             TranslatorUIManager.RunOnMainThread(() =>
                             {
@@ -391,7 +390,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                                 _titleLabel.Say("This contribution can no longer be sent");
                                 _modeInfoLabel.Show(ownWall);
                                 _uploadBtn.Label = Uploads.Verb(UploadAct.Update);
-                                DescribeUploadButton("This can no longer be sent as a contribution. Fork instead — it keeps your lines and publishes them under your own name.");
+                                DescribeUploadButton("This can no longer be sent as a contribution. Fork keeps your lines as your own version.");
                                 _status.Clear();
                                 _isChecking = false;
                                 _uploadBtn.Enabled = false;
@@ -494,9 +493,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                             local, server, account);
                         if (button.Act == UploadAct.Fork)
                         {
-                            string wall = button.HintIsTranslatable
-                                ? "This translation cannot take a contribution. Fork to carry on."
-                                : button.Hint;
+                            // The whole wall: this window has no status card stating the fact.
+                            string wall = button.Wall ?? "This translation cannot take a contribution. Fork to carry on.";
 
                             TranslatorUIManager.RunOnMainThread(() =>
                             {
@@ -505,7 +503,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                                 _titleLabel.Say("This translation cannot take a contribution");
                                 _modeInfoLabel.Show(wall);
                                 _uploadBtn.Label = Uploads.Verb(UploadAct.Contribute);
-                                DescribeUploadButton("This translation does not take contributions. Fork instead — it keeps your lines and publishes them under your own name.");
+                                DescribeUploadButton("This translation does not take contributions. Fork keeps your lines as your own version.");
                                 _status.Clear();
                                 _isChecking = false;
                                 _uploadBtn.Enabled = false;

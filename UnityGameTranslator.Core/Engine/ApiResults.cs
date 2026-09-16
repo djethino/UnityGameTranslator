@@ -561,6 +561,7 @@ namespace UnityGameTranslator.Core
                 Exists = state.Exists,
                 IsOwner = state.IsOwner,
                 Role = state.Role,
+                SiteId = state.SiteId,
                 Hash = state.Hash,
                 Uploader = state.Uploader,
                 MainUsername = state.MainUsername,

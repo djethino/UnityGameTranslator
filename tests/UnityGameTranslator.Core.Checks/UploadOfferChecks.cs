@@ -47,7 +47,9 @@ namespace UnityGameTranslator.Core.Checks
                 if (path == null) return;
 
                 string text = File.ReadAllText(path);
-                check(text.Contains("Uploads.ActOf", StringComparison.Ordinal),
+                // Either the act alone, or the whole button the socle composes from it (2026-09-16).
+                check(text.Contains("Uploads.ActOf", StringComparison.Ordinal)
+                      || text.Contains("Uploads.Button(", StringComparison.Ordinal),
                     $"{screen.What} asks the socle which act is available",
                     screen.Why);
             }

@@ -216,8 +216,6 @@ namespace UnityGameTranslator.Core.UI.Panels
             _failShares.Attach(_screen.Splitter("ListSplit"), _failuresList, _sourceList);
             _failShares.Attach(_screen.Splitter("TextSplit"), _sourceList, _attemptList);
             _failShares.Attach(_screen.Splitter("FieldSplit"), _attemptList, _failInput.Area);
-            // A tab in a fixed window: a lone list stops at its rows rather than taking the body.
-            _failShares.CapAtContent = true;
             // The tab's heights are posed when it is the one shown — a hidden hierarchy measures nothing.
             _tabBar.OnTabChanged += (_, name) => { if (name == "Failures") { ShareFailures(); ShareFailuresSoon(); } };
             // Noted from the worker thread, settled from this one: the event marshals.
@@ -616,6 +614,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         {
             _failShares.Forget();
             _sharesForBlocks = OpenBlocks();
+            // Nothing open: the list is the tab, and takes the body like any list alone — a
+            // hundred lines scroll in it. A line open: the field is what the room is for, and
+            // every area stops at its content so the rest of the body is the field's.
+            _failShares.CapAtContent = _failure != null;
             int lines = TranslatorCore.Failures.Count;
             _failShares.Add(_failuresList, () => Math.Max(1, lines), UIStyles.RowHeightNormal + 4, 8);
             if (_failure == null) return;

@@ -196,12 +196,14 @@ namespace UnityGameTranslator.Core.UI.Panels
             _failInputCheck = _screen.Label("FailInputCheck");
             _failSaveBtn = _screen.Button("FailSaveBtn");
             _proposals = _screen.Collapsible("Proposals");
-            // FieldHandle.Changed, never a raw InputField event — see UIHelpers.
-            _failInput.Changed += _ => OnFailInputChanged();
             _prevAttemptBtn = _screen.Button("PrevAttemptBtn");
             _nextAttemptBtn = _screen.Button("NextAttemptBtn");
             _useAttemptBtn = _screen.Button("UseAttemptBtn");
             _failInput = _screen.Field("FailInput");
+            // FieldHandle.Changed, never a raw InputField event — see UIHelpers. After the handle
+            // exists: subscribed a line too early, this threw in the constructor and left every
+            // panel built after this one unbuilt, with this window open over the whole screen.
+            _failInput.Changed += _ => OnFailInputChanged();
             _failStatus = _screen.Label("FailStatus");
             // The tab's heights are posed when it is the one shown — a hidden hierarchy measures nothing.
             _tabBar.OnTabChanged += (_, name) => { if (name == "Failures") ShareFailures(); };

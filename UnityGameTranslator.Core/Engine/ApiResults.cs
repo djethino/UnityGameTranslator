@@ -29,6 +29,14 @@ namespace UnityGameTranslator.Core
         public string Type { get; set; }
         public string Text { get; set; }
         public string Url { get; set; }
+        /// <summary>The lineage it is about, or null. Null too on a server that predates the field.</summary>
+        public string Uuid { get; set; }
+
+        /// <summary>
+        /// A wall on a contribution — its Main closed, or gone. The fact the game's own screen
+        /// states, with Fork as the way out, for the translation it holds.
+        /// </summary>
+        public bool IsWall => Type == "branches_closed" || Type == "branch_orphaned";
     }
 
     public class TranslationSearchResult

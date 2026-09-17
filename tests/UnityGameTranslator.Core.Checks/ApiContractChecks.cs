@@ -277,6 +277,7 @@ namespace UnityGameTranslator.Core.Checks
                         d[$"Items.{i}.Type"] = r.Items[i].Type;
                         d[$"Items.{i}.Text"] = r.Items[i].Text;
                         d[$"Items.{i}.Url"] = r.Items[i].Url;
+                        d[$"Items.{i}.Uuid"] = r.Items[i].Uuid;
                     }
                     return d;
                 }

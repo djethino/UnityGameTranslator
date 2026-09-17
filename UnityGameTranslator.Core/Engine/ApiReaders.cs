@@ -598,6 +598,7 @@ namespace UnityGameTranslator.Core
                         Type = item["type"]?.ToString(),
                         Text = item["text"]?.ToString(),
                         Url = item["url"]?.ToString(),
+                        Uuid = item["uuid"]?.Type == JTokenType.String ? item["uuid"].ToString() : null,
                     });
                 }
             }

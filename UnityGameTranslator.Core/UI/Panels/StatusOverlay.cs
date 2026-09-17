@@ -59,6 +59,15 @@ namespace UnityGameTranslator.Core.UI.Panels
         // UI elements - Website notifications relay
         private Host _webNotifBox;
         private LabelHandle _webNotifTitle;
+        private ButtonHandle _webNotifViewBtn;
+
+        /// <summary>
+        /// Where View leads for the notification shown: the Main of this game, when the
+        /// notification is a wall on the very translation the game holds. The site's page for it
+        /// offers a convert-and-download by hand, which nobody does when the game's own screen
+        /// states the fact and its own Fork settles it, locally.
+        /// </summary>
+        private bool _webNotifOpensMain;
 
         // UI elements - AI queue status
         private Host _aiBox;
@@ -260,6 +269,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             _webNotifBox = _screen.Host("WebNotifBox");
             _webNotifTitle = _screen.Label("WebNotifTitle");
+            _webNotifViewBtn = _screen.Button("WebNotifViewBtn");
 
             _aiBox = _screen.Host("AIBox");
             _aiStatusLabel = _screen.Label("AIStatusLabel");
@@ -395,13 +405,23 @@ namespace UnityGameTranslator.Core.UI.Panels
             _webNotifBox.Visible = show;
             if (show)
             {
+                var item = result.Items[0];
+
                 // Comes from the website, so it may carry line breaks — same one-line rule
-                string text = Flatten(result.Items[0].Text);
+                string text = Flatten(item.Text);
                 if (result.Unread > 1)
                 {
                     text += " " + Tr($"(+{result.Unread - 1} more)");
                 }
                 _webNotifTitle.Show(text);
+
+                // A wall on THIS game's translation is answered here, in the Main: the card states
+                // the fact, Fork is the way out, and nothing leaves the machine. A wall on another
+                // lineage has nothing to open from here — the sentence names whose it is, and the
+                // way out is in the game holding it. Anything else has its page on the site.
+                bool aboutThisFile = item.Uuid != null && TranslatorCore.IsUuidMatch(item.Uuid);
+                _webNotifOpensMain = item.IsWall && aboutThisFile;
+                _webNotifViewBtn.Visible = _webNotifOpensMain || (!item.IsWall && item.Url != null);
             }
 
             // A box that appeared or went, a sentence that may wrap: the window is sized again.
@@ -410,6 +430,12 @@ namespace UnityGameTranslator.Core.UI.Panels
 
         private void OnWebNotifViewClicked()
         {
+            if (_webNotifOpensMain)
+            {
+                Intents.ShowMain();
+                return;
+            }
+
             var result = TranslatorUIManager.WebsiteNotifications;
             string url = result?.Items.Count > 0 ? result.Items[0].Url : null;
             TranslatorCore.OpenUrlSafe(url ?? $"{ApiClient.WebsiteBaseUrl}/notifications");

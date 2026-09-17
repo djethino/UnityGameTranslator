@@ -93,7 +93,10 @@ namespace UnityGameTranslator.Core.UI.Panels
         private LabelHandle _failElementLabel, _attemptIndexLabel, _failErrorsLabel, _failStatus;
         private ButtonHandle _prevAttemptBtn, _nextAttemptBtn, _useAttemptBtn;
         private FieldHandle _failInput;
-        private BuiltScreen _sourceRow, _attemptRow;   // the one row of each text area, written in place
+        // The rows of each text area — one per piece of text a label can draw (TextChunks) —
+        // written in place when their number holds, rebuilt when it does not.
+        private readonly List<BuiltScreen> _sourceRows = new List<BuiltScreen>();
+        private readonly List<BuiltScreen> _attemptRows = new List<BuiltScreen>();
         private readonly List<KeyValuePair<string, BuiltScreen>> _failureRows = new List<KeyValuePair<string, BuiltScreen>>();
         private FailedLine _failure;                   // the one open in the editor, or null
         private PreparedText? _failurePrepared;        // the open line as the model was given it: what an answer is restored against
@@ -646,10 +649,7 @@ namespace UnityGameTranslator.Core.UI.Panels
 
             // The game text, in a scroll area of its own: raw, tags and placeholders as the model
             // has to keep them — rendered as rich text, a tag the model broke would swallow the rest.
-            _sourceList.Clear();
-            _sourceRow = _screen.Instantiate("TextRow", _sourceList.Rows, _ => null);
-            _sourceRow.Say("text", line.Source ?? line.Key);
-            _sourceList.Filled();
+            FillText(_sourceList, _sourceRows, line.Source ?? line.Key);
 
             // The exclusion buttons need an element; the worker only knows one once the text has
             // been shown in this session, which a line failed at launch may not have been yet.
@@ -659,10 +659,6 @@ namespace UnityGameTranslator.Core.UI.Panels
                 : Tr("Element not seen yet: it is known once the text shows in-game"));
             _failExcludeRow.Visible = known;
 
-            // One row for the proposal shown; the pager writes into it rather than rebuilding it.
-            _attemptList.Clear();
-            _attemptRow = _screen.Instantiate("TextRow", _attemptList.Rows, _ => null);
-            _attemptList.Filled();
             _attemptAt = 0;
 
             _failInput.Text = "";
@@ -680,11 +676,11 @@ namespace UnityGameTranslator.Core.UI.Panels
         /// </summary>
         private void ShowAttempt()
         {
-            if (_failure == null || _attemptRow == null) return;
+            if (_failure == null) return;
             int count = _failure.Attempts.Count;
             if (count == 0)
             {
-                _attemptRow.Say("text", "");
+                FillText(_attemptList, _attemptRows, "");
                 _failErrorsLabel.Show(Tr("No proposal kept"));
                 _attemptIndexLabel.Show("0/0");
                 _prevAttemptBtn.Enabled = _nextAttemptBtn.Enabled = _useAttemptBtn.Enabled = false;
@@ -693,7 +689,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 _attemptAt = Math.Max(0, Math.Min(_attemptAt, count - 1));
                 var attempt = _failure.Attempts[_attemptAt];
-                _attemptRow.Say("text", Readable(attempt.Value));
+                FillText(_attemptList, _attemptRows, Readable(attempt.Value));
                 _failErrorsLabel.Show(string.Join("; ", attempt.Errors));
                 _attemptIndexLabel.Show($"{_attemptAt + 1}/{count}");
                 _prevAttemptBtn.Enabled = _attemptAt > 0;
@@ -724,12 +720,32 @@ namespace UnityGameTranslator.Core.UI.Panels
             _failInput.Text = Readable(_failure.Attempts[_attemptAt].Value);
         }
 
+        /// <summary>
+        /// A text into a scroll area, as many rows as a label can draw (TextChunks.Split). The
+        /// rows are written in place while their number holds — turning a page changes the words
+        /// and nothing else — and rebuilt only when a text needs more or fewer of them.
+        /// </summary>
+        private void FillText(ScrollList list, List<BuiltScreen> rows, string text)
+        {
+            var pieces = TextChunks.Split(text);
+            if (rows.Count != pieces.Count)
+            {
+                list.Clear();
+                rows.Clear();
+                for (int i = 0; i < pieces.Count; i++)
+                    rows.Add(_screen.Instantiate("TextRow", list.Rows, _ => null));
+                list.Filled();
+            }
+            for (int i = 0; i < pieces.Count; i++)
+                rows[i].Say("text", pieces[i]);
+        }
+
         private void CloseFailureEditor()
         {
             _failure = null;
             _failurePrepared = null;
-            _sourceRow = null;
-            _attemptRow = null;
+            _sourceRows.Clear();
+            _attemptRows.Clear();
             _failureEditor.Visible = false;
             HighlightOpenFailure();
             RegisterFailureShares();

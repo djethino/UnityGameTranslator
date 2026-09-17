@@ -136,6 +136,8 @@ namespace UnityGameTranslator.Core.UI.Panels
         private Host _branchRow;
         private Host _mergeRow;
         private Host _downloadRow;
+        private Host _forkRow;
+        private LabelHandle _forkDesc;
         private ButtonHandle _mergeWithMainBtn;
         private LabelHandle _mergeDesc;
         private LabelHandle _branchDesc;
@@ -266,6 +268,8 @@ namespace UnityGameTranslator.Core.UI.Panels
             _mergeWithMainBtn = _screen.Button("MergeWithMainBtn");
             _mergeDesc = _screen.Label("MergeDesc");
             _downloadRow = _screen.Host("DownloadRow");
+            _forkRow = _screen.Host("ForkRow");
+            _forkDesc = _screen.Label("ForkDesc");
             _downloadLatestBtn = _screen.Button("DownloadLatestBtn");
             _downloadDesc = _screen.Label("DownloadDesc");
             _createIndependentBtn = _screen.Button("CreateIndependentBtn");
@@ -630,7 +634,19 @@ namespace UnityGameTranslator.Core.UI.Panels
             if (_lineageChoiceSection != null)
             {
                 bool choosing = _standing.Publication == Publication.NotYours;
-                _lineageChoiceSection.Visible = choosing;
+
+                // 🔴 **An owner whose published copy moved elsewhere has one thing to do here:
+                // take it in.** The section used to be the "not yours" choice only, so a Main
+                // published from another machine left this one with a closed Upload and a way in
+                // that lived in the corner notification alone. The Download row is that way in,
+                // for the owner too; the three other rows stay the stranger's.
+                bool ownerBehind = _standing.Publication == Publication.Published
+                                   && _standing.Sync == SyncDirection.Download;
+                _lineageChoiceSection.Visible = choosing || ownerBehind;
+                if (_mergeRow != null) _mergeRow.Visible = choosing;
+                if (_mergeDesc != null) _mergeDesc.Visible = choosing;
+                if (_forkRow != null) _forkRow.Visible = choosing;
+                if (_forkDesc != null) _forkDesc.Visible = choosing;
 
                 // 🔴 **The upload button steps aside for them.** In this state it reads
                 // "Contribute" and does the same thing as the first of the three below it — two
@@ -670,8 +686,8 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // it, and unknown is not "no": hiding the button there would take the act away over
                 // a question nobody answered.
                 bool refusesBranches = TranslatorCore.ServerState?.AcceptsBranches == false;
-                if (_branchRow != null) _branchRow.Visible = !refusesBranches;
-                if (_branchDesc != null) _branchDesc.Visible = !refusesBranches;
+                if (_branchRow != null) _branchRow.Visible = choosing && !refusesBranches;
+                if (_branchDesc != null) _branchDesc.Visible = choosing && !refusesBranches;
 
                 if (_contributeAsBranchBtn != null && !refusesBranches)
                 {
@@ -728,11 +744,15 @@ namespace UnityGameTranslator.Core.UI.Panels
                     _downloadLatestBtn.Enabled = serverMoved;
                     SetDownloadLatestState(serverMoved);
 
+                    // The owner's own copy is "the site's", not "the Main's" — they ARE the Main.
+                    _downloadLatestBtn.Label = ownerBehind ? "Download latest" : "Take Main's version";
                     if (_downloadDesc != null)
                     {
-                        _downloadDesc.Say(serverMoved
-                            ? "Replaces this file with the Main's — your own lines are dropped"
-                            : "You already have the Main's version");
+                        _downloadDesc.Say(ownerBehind
+                            ? "Replaces this file with the copy on the site. Compare shows what changed first."
+                            : serverMoved
+                                ? "Replaces this file with the Main's — your own lines are dropped"
+                                : "You already have the Main's version");
                     }
                 }
 
@@ -1767,7 +1787,7 @@ namespace UnityGameTranslator.Core.UI.Panels
                 // ⚠ Nothing is passed back for the label: by the time the browser is up, the
                 // comparison is in flight and the verb has changed. OpenComparison refreshes this
                 // screen AND the corner notification, which carries the same button.
-                await TranslatorUIManager.OpenComparison(siteId, toLocal: false);
+                await TranslatorUIManager.OpenComparison(siteId, toLocal: TranslatorUIManager.ComparisonGoesToLocal);
             }
             catch (System.Exception e)
             {

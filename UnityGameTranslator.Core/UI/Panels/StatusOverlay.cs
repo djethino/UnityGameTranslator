@@ -999,7 +999,7 @@ namespace UnityGameTranslator.Core.UI.Panels
             {
                 // ⚠ Nothing is passed back for the label: by the time the browser is up the verb
                 // has changed, and OpenComparison tells both screens itself.
-                await TranslatorUIManager.OpenComparison(siteId.Value, toLocal: false);
+                await TranslatorUIManager.OpenComparison(siteId.Value, toLocal: TranslatorUIManager.ComparisonGoesToLocal);
             }
             catch (System.Exception e)
             {

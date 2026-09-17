@@ -111,9 +111,35 @@ namespace UnityGameTranslator.Core.UI
                        && state.Exists
                        && state.SiteId.HasValue
                        && state.IsOwner
-                       && TranslatorCore.LocalChangesCount > 0;
+                       && (TranslatorCore.LocalChangesCount > 0 || ServerCopyMoved);
             }
         }
+
+        /// <summary>
+        /// The published copy moved and nothing here did — the socle's Download verdict, from the
+        /// same facts the Main's card reads. An owner in that state has something to LOOK AT
+        /// before taking it in, which is what the comparison is for; the compare button used to
+        /// wait for local changes, so a copy published from another machine could only be taken
+        /// blind.
+        /// </summary>
+        public static bool ServerCopyMoved
+        {
+            get
+            {
+                var state = TranslatorCore.ServerState;
+                if (state == null || !state.Exists || string.IsNullOrEmpty(state.Hash)) return false;
+                return Sync.Decide(TranslatorCore.ComputeContentHash() ?? "", state.Hash,
+                                   TranslatorCore.LastSyncedHash ?? "",
+                                   TranslatorCore.LocalChangesCount > 0 || TranslatorCore.MetadataDirty)
+                       == SyncDirection.Download;
+            }
+        }
+
+        /// <summary>
+        /// Which way a comparison opened now writes: into this file when only the site moved,
+        /// onto the site otherwise. The page is the same; what Apply does is not.
+        /// </summary>
+        public static bool ComparisonGoesToLocal => ServerCopyMoved;
 
         // Panels
         public static Panels.WizardPanel WizardPanel { get; private set; }

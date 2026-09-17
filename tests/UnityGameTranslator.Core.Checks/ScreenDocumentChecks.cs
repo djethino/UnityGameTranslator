@@ -326,6 +326,8 @@ namespace UnityGameTranslator.Core.Checks
                     var unanswered = acts.Where(a => !source.Contains($"\"{a}\"")).ToList();
                     check(unanswered.Count == 0, $"{component} answers every act {embedded.Groups[1].Value}.json asks for",
                         unanswered.Count == 0 ? "the builder would refuse at construction otherwise" : $"nothing names: {string.Join(", ", unanswered)}");
+
+                    Wiring(check, component, source, part);
                 }
                 check(owners == 2, "two components own a part: the status card and the community list", $"found {owners}");
             }
@@ -373,6 +375,8 @@ namespace UnityGameTranslator.Core.Checks
                         missing.Count == 0 ? "the builder would refuse at construction otherwise" : $"no case for: {string.Join(", ", missing)}");
                     check(dead.Count == 0, $"{panel} answers no act its document does not ask for",
                         dead.Count == 0 ? "a case nothing asks for is dead code" : $"unasked: {string.Join(", ", dead)}");
+
+                    Wiring(check, panel, source, doc);
                 }
             }
 
@@ -448,6 +452,87 @@ namespace UnityGameTranslator.Core.Checks
             var defaults = ScreenDocument.Parse(JObject.Parse(@"{""name"":""X"",""size"":{""width"":500,""height"":200},""body"":[],""footer"":[]}"));
             check(defaults.MinWidth == 500 && defaults.MinHeight == 200 && defaults.Backdrop && defaults.Persist && defaults.CardWidth == 460,
                 "what a document leaves unsaid takes the base's defaults", "minimums equal the size, backdrop and persistence on, cards the width minus the margins");
+        }
+
+        /// <summary>Which kinds each accessor of a built screen hands back.</summary>
+        private static readonly Dictionary<string, string[]> Accessors = new Dictionary<string, string[]>
+        {
+            { "Label", new[] { "label", "title" } }, { "Button", new[] { "button" } },
+            { "Host", new[] { "card", "callout", "collapsible", "section", "stack", "row", "spacer", "tab" } },
+            { "Status", new[] { "status" } }, { "Field", new[] { "field" } }, { "Dropdown", new[] { "dropdown" } },
+            { "List", new[] { "list" } }, { "Toggle", new[] { "checkbox" } }, { "Slider", new[] { "slider" } },
+            { "Choice", new[] { "choice" } }, { "Chip", new[] { "chip" } }, { "Toast", new[] { "toast" } },
+            { "Tabs", new[] { "tabs" } }, { "Collapsible", new[] { "collapsible" } },
+        };
+
+        /// <summary>
+        /// 🔴 Everything the code asks a built screen for exists in its document, of the kind the
+        /// accessor hands back — and everything the document leaves to the code is reached from it.
+        ///
+        /// The builder refuses an unknown name at construction, inside a game, where one bad name
+        /// takes every panel after it down with it. The other direction fails in silence: a slot
+        /// nothing writes stays blank, a hidden row nothing shows stays hidden, a host nothing
+        /// fills stays empty — and each reads as a screen that simply lacks the thing. Read off the
+        /// source: the names are string literals, so a rename on either side goes red here.
+        /// </summary>
+        private static void Wiring(Action<bool, string, string> check, string who, string source, ScreenDocument doc)
+        {
+            var nodes = new Dictionary<string, ScreenNode>(doc.Nodes);
+            var binds = new Dictionary<string, ScreenNode>(doc.Binds);
+            foreach (var t in doc.Templates.Values)
+            {
+                foreach (var n in t.Pieces.Nodes) nodes[n.Key] = n.Value;
+                foreach (var b in t.Pieces.Binds) binds[b.Key] = b.Value;
+            }
+
+            var wrong = new List<string>();
+            var reached = new HashSet<string>(StringComparer.Ordinal);
+            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(source,
+                         @"\.(Label|Button|Host|Status|Field|Dropdown|List|Toggle|Slider|Choice|Chip|Toast|Tabs|Collapsible)\(""([A-Za-z0-9]+)""\)"))
+            {
+                string accessor = m.Groups[1].Value, name = m.Groups[2].Value;
+                reached.Add(name);
+                if (!nodes.TryGetValue(name, out var node)) wrong.Add($"{accessor}(\"{name}\") names nothing");
+                else if (Array.IndexOf(Accessors[accessor], node.Kind) < 0) wrong.Add($"{accessor}(\"{name}\") is a {node.Kind}");
+            }
+            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(source, @"\.Say\(""([a-zA-Z0-9]+)"""))
+            {
+                reached.Add(m.Groups[1].Value);
+                if (!binds.ContainsKey(m.Groups[1].Value)) wrong.Add($"Say(\"{m.Groups[1].Value}\") writes no slot");
+            }
+            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(source, @"\.Instantiate\(""([A-Za-z0-9]+)"""))
+            {
+                reached.Add(m.Groups[1].Value);
+                if (!doc.Templates.ContainsKey(m.Groups[1].Value)) wrong.Add($"Instantiate(\"{m.Groups[1].Value}\") names no template");
+            }
+            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(source, @"ScreenBuilder\.Part\(Part, ""([A-Za-z0-9]+)"""))
+            {
+                reached.Add(m.Groups[1].Value);
+                if (!doc.Templates.ContainsKey(m.Groups[1].Value)) wrong.Add($"Part(\"{m.Groups[1].Value}\") names no template");
+            }
+            check(wrong.Count == 0, $"{who} asks its document only for what it describes",
+                wrong.Count == 0 ? "an unknown name is refused at construction, inside a game" : string.Join("; ", wrong));
+
+            // The other way round: what the document leaves to the code, the code reaches. A name
+            // handed to a helper (`PlaceHotkey(capture, "HkForceScanHost", …)`) counts as reached:
+            // any literal that is exactly a piece's name is a reach, whichever door it goes through.
+            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(source, @"""([A-Za-z][A-Za-z0-9]*)"""))
+                if (nodes.ContainsKey(m.Groups[1].Value)) reached.Add(m.Groups[1].Value);
+            var unwritten = binds.Where(b => !reached.Contains(b.Key) && !reached.Contains(b.Value.Name)).Select(b => b.Key).ToList();
+            check(unwritten.Count == 0, $"{who} writes every slot its document declares",
+                unwritten.Count == 0 ? "a slot nothing writes is a blank on the screen" : $"never written: {string.Join(", ", unwritten)}");
+
+            var neverShown = nodes.Values.Where(n => !n.StartsVisible && !reached.Contains(n.Name)).Select(n => n.Name).ToList();
+            check(neverShown.Count == 0, $"{who} reaches every piece that starts hidden",
+                neverShown.Count == 0 ? "a hidden piece nothing shows is a piece that does not exist" : $"never reached: {string.Join(", ", neverShown)}");
+
+            var unfilled = nodes.Values.Where(n => (n.Kind == "stack" || n.Kind == "row") && n.Children.Count == 0 && !reached.Contains(n.Name)).Select(n => n.Name).ToList();
+            check(unfilled.Count == 0, $"{who} fills every host its document leaves empty",
+                unfilled.Count == 0 ? "an empty host nothing fills is a gap on the screen" : $"never reached: {string.Join(", ", unfilled)}");
+
+            var uninstantiated = doc.Templates.Keys.Where(t => !reached.Contains(t)).ToList();
+            check(uninstantiated.Count == 0, $"{who} instantiates every template its document describes",
+                uninstantiated.Count == 0 ? "a template nobody instantiates is dead" : $"never instantiated: {string.Join(", ", uninstantiated)}");
         }
 
         private static void Refuses(Action<bool, string, string> check, string what, string json, string expectedWord)
